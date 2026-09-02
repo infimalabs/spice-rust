@@ -80,10 +80,7 @@ fn real_codex_rollout_compaction_is_published_once_from_complete_jsonl() {
 
     let records = scan(&mut cursor).expect("session transcript scans");
     assert_eq!(records.len(), 1, "only the completed boundary is visible");
-    assert_eq!(
-        records[0].authored.as_deref(),
-        Some("2030-04-12T18:44:09.271Z")
-    );
+    assert_eq!(records[0].authored, "2030-04-12T18:44:09.271Z");
     assert!(matches!(records[0].decoded, listen::Event::Compaction(_)));
 
     let publisher = Messages::default();
@@ -138,10 +135,10 @@ fn mixed_claude_calls_report_only_terminals_unavailable_at_each_boundary() {
             "{\"type\":\"tool_use\",\"id\":\"call-a\",\"name\":\"Bash\",\"input\":{\"command\":\"cargo test\"}},",
             "{\"type\":\"tool_use\",\"id\":\"call-b\",\"name\":\"Read\",\"input\":{\"path\":\"Cargo.toml\"}}]}}\n",
             "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"call-b\",\"content\":\"ok\",\"is_error\":false}]}}\n",
-            "{\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
+            "{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
             "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[",
             "{\"type\":\"tool_use\",\"id\":\"call-c\",\"name\":\"Read\",\"input\":{\"path\":\"src/lib.rs\"}}]}}\n",
-            "{\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
+            "{\"timestamp\":\"2030-04-12T18:44:10.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
         ),
     )
     .expect("mixed Claude transcript is written");
@@ -192,7 +189,7 @@ fn typed_image_result_resolves_only_its_own_call_before_compaction() {
             "{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"view_image\",\"arguments\":\"{\\\"path\\\":\\\"capture.png\\\"}\",\"call_id\":\"call-image\"}}\n",
             "{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"cargo test\\\"}\",\"call_id\":\"call-command\"}}\n",
             "{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"call_id\":\"call-image\",\"output\":[{\"type\":\"image\",\"data\":\"iVBORw0KGgo=\",\"mimeType\":\"image/png\"}]}}\n",
-            "{\"type\":\"compacted\"}\n",
+            "{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"compacted\"}\n",
         ),
     )
     .expect("image-result transcript is written");
@@ -212,7 +209,7 @@ fn claude_earlier_same_length_call_replacement_rebuilds_pending_calls() {
     const OLD_CALL: &str = "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"old\",\"name\":\"Read\",\"input\":{\"path\":\"old.rs\"}}]}}\n";
     const NEW_CALL: &str = "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"new\",\"name\":\"Read\",\"input\":{\"path\":\"new.rs\"}}]}}\n";
     const STABLE: &str = "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"stable final record\"}]}}\n";
-    const BOUNDARY: &str = "{\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n";
+    const BOUNDARY: &str = "{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n";
     assert_eq!(OLD_CALL.len(), NEW_CALL.len());
     let scratch = Scratch::new("claude-prefix-replacement");
     let transcript = scratch.transcript();
@@ -276,7 +273,7 @@ fn unchanged_append_only_prefix_never_replays_an_earlier_boundary() {
     let transcript = scratch.transcript();
     fs::write(
         &transcript,
-        "{\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
+        "{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
     )
     .expect("initial boundary is written");
     let mut cursor = cursor(&transcript, listen::Dialect::Claude);
@@ -289,7 +286,7 @@ fn unchanged_append_only_prefix_never_replays_an_earlier_boundary() {
     assert!(scan(&mut cursor).expect("call append scans").is_empty());
     append(
         &transcript,
-        b"{\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
+        b"{\"timestamp\":\"2030-04-12T18:44:10.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
     );
     let records = scan(&mut cursor).expect("later boundary scans");
     assert_eq!(records.len(), 1, "the earlier boundary is not replayed");
@@ -342,7 +339,7 @@ fn large_prefix_validation_is_bounded_and_restarts_after_generation_movement() {
 #[test]
 fn append_only_growth_preserves_progress_and_stays_behind_the_held_boundary() {
     const LATER_CALL: &str = "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"later\",\"name\":\"Read\",\"input\":{\"path\":\"later.rs\"}}]}}\n";
-    const LATER_BOUNDARY: &str = "{\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n";
+    const LATER_BOUNDARY: &str = "{\"timestamp\":\"2030-04-12T18:44:10.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n";
     let scratch = Scratch::new("append-during-validation");
     let transcript = scratch.transcript();
     fs::write(&transcript, large_claude_transcript_with_pending('x', 192))
@@ -701,19 +698,19 @@ fn rewrite_between_authentication_slices_cannot_publish_stale_records() {
 }
 
 #[test]
-fn claude_preserved_boundary_uses_the_same_typed_projection() {
+fn timestamped_claude_boundary_uses_the_same_typed_projection() {
     let scratch = Scratch::new("claude");
     let transcript = scratch.transcript();
     fs::write(
         &transcript,
-        b"{\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
+        b"{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
     )
     .expect("Claude boundary is written");
     let mut cursor = cursor(&transcript, listen::Dialect::Claude);
     let records = scan(&mut cursor).expect("Claude session scans");
 
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].authored, None);
+    assert_eq!(records[0].authored, "2030-04-12T18:44:09.271Z");
     assert!(matches!(records[0].decoded, listen::Event::Compaction(_)));
 
     let publisher = Messages::default();
@@ -724,27 +721,28 @@ fn claude_preserved_boundary_uses_the_same_typed_projection() {
         &publisher,
         &mut MessageState::default(),
     )
-    .expect("timestamp-less Claude boundary publishes");
+    .expect("timestamped Claude boundary publishes");
     let messages = publisher.0.lock().expect("message lock");
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].activity, wire::AgentActivityKind::Compaction);
-    assert!(messages[0].authored_synthetic);
+    assert!(!messages[0].authored_synthetic);
     assert!(messages[0].unavailable_tool_terminals.is_empty());
     assert_eq!(
         messages[0].locus.member,
         session_member("018f7777-7777-7444-8888-999999999999"),
-        "synthetic chronology does not erase the preserved-session identity",
+        "source chronology does not erase the preserved-session identity",
     );
     assert_eq!(
         messages[0].authored,
-        "2000-01-01T00:00:00.000Z"
+        "2030-04-12T18:44:09.271Z"
             .parse::<wire::Instant>()
-            .expect("session synthetic authored instant parses"),
+            .expect("session authored instant parses"),
     );
+    assert_eq!(messages[0].observed, None);
 }
 
 #[test]
-fn timestamp_less_claude_boundary_survives_live_poll_and_resident_reload_once() {
+fn timestamped_claude_boundary_survives_live_poll_and_resident_reload_once() {
     const THREAD: &str = "018f7777-7777-7444-8888-999999999999";
 
     let scratch = Scratch::new("claude-synchronize");
@@ -770,13 +768,13 @@ fn timestamp_less_claude_boundary_survives_live_poll_and_resident_reload_once() 
         &transcript,
         concat!(
             "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"call-live\",\"name\":\"Bash\",\"input\":{\"command\":\"cargo test\"}}]}}\n",
-            "{\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
+            "{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
         )
         .as_bytes(),
     );
     compactions
         .synchronize(&residency, &publisher, &mut state, &mut diagnostic)
-        .expect("live polling publishes the timestamp-less boundary");
+        .expect("live polling publishes the timestamped boundary");
     compactions
         .synchronize(&residency, &publisher, &mut state, &mut diagnostic)
         .expect("an unchanged live poll remains quiet");
@@ -805,21 +803,84 @@ fn timestamp_less_claude_boundary_survives_live_poll_and_resident_reload_once() 
     let messages = publisher.0.lock().expect("message lock");
     assert_eq!(messages.len(), 1, "poll and reload retain one boundary");
     assert_eq!(messages[0].activity, wire::AgentActivityKind::Compaction);
-    assert!(messages[0].authored_synthetic);
+    assert!(!messages[0].authored_synthetic);
     assert_eq!(
         messages[0].unavailable_tool_terminals,
         ["Bash: cargo test"],
         "reload replays the same boundary-bound unavailable terminal",
     );
     assert_eq!(
-        messages[0].observed,
-        Some(observation_instant()),
-        "the durable lane observation places the late session boundary",
+        messages[0].observed, None,
+        "the transcript timestamp is the only compaction chronology source",
     );
     assert!(
         diagnostic.is_empty(),
         "{}",
         String::from_utf8_lossy(&diagnostic)
+    );
+}
+
+#[test]
+fn timestamp_less_claude_boundary_is_refused_without_a_chronology_fallback() {
+    const THREAD: &str = "018f7777-7777-7444-8888-999999999999";
+
+    let scratch = Scratch::new("claude-missing-time");
+    let transcript = scratch
+        .0
+        .join("projects")
+        .join(format!("session-{THREAD}.jsonl"));
+    fs::create_dir_all(transcript.parent().expect("transcript parent"))
+        .expect("Claude project directory exists");
+    fs::write(
+        &transcript,
+        concat!(
+            "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[",
+            "{\"type\":\"tool_use\",\"id\":\"stale-call\",\"name\":\"Read\",\"input\":{\"path\":\"stale.rs\"}}]}}\n",
+            "{\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
+        ),
+    )
+    .expect("timestamp-less Claude boundary is written");
+    let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163e5");
+    let author = uuid("018f82d4-6f59-7d06-92e3-bce9131163ef");
+    let publisher = Messages::default();
+    let mut state = observed_state(lane);
+    let mut diagnostic = Vec::new();
+    let mut compactions = SessionCompactions::new(claude_environment(&scratch.0));
+
+    compactions
+        .synchronize(
+            &session_residency(lane, author, THREAD),
+            &publisher,
+            &mut state,
+            &mut diagnostic,
+        )
+        .expect("a malformed preserved boundary does not stop the resident");
+
+    assert!(publisher.0.lock().expect("message lock").is_empty());
+    assert!(
+        String::from_utf8(diagnostic.clone())
+            .expect("diagnostic is UTF-8")
+            .contains("preserved session compaction record carries no timestamp"),
+        "the missing contract field is diagnosed without another chronology source",
+    );
+
+    append(
+        &transcript,
+        b"{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
+    );
+    compactions
+        .synchronize(
+            &session_residency(lane, author, THREAD),
+            &publisher,
+            &mut state,
+            &mut diagnostic,
+        )
+        .expect("a later valid boundary remains publishable");
+    let messages = publisher.0.lock().expect("message lock");
+    assert_eq!(messages.len(), 1);
+    assert!(
+        messages[0].unavailable_tool_terminals.is_empty(),
+        "the refused boundary clears its unavailable-tool epoch",
     );
 }
 
@@ -908,7 +969,6 @@ fn cursor(path: &Path, dialect: listen::Dialect) -> Cursor {
         dialect,
         author: uuid("018f82d4-6f59-7d06-92e3-bce9131163ef"),
         member: session_member("018f7777-7777-7444-8888-999999999999"),
-        observed: None,
         next: 0,
         next_call: 0,
         pending: BTreeMap::new(),
@@ -975,14 +1035,14 @@ fn large_claude_transcript(fill: char) -> String {
         "{{\"type\":\"assistant\",\"message\":{{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"{text}\"}}]}}}}\n",
     );
     format!(
-        "{}{{\"type\":\"system\",\"subtype\":\"compact_boundary\"}}\n",
+        "{}{{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}}\n",
         record.repeat(96),
     )
 }
 
 fn large_claude_transcript_with_pending(fill: char, records: usize) -> String {
     const PENDING_CALL: &str = "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"held\",\"name\":\"Read\",\"input\":{\"path\":\"held.rs\"}}]}}\n";
-    const BOUNDARY: &str = "{\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n";
+    const BOUNDARY: &str = "{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n";
     let text = fill.to_string().repeat(4 * 1024);
     let record = format!(
         "{{\"type\":\"assistant\",\"message\":{{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"{text}\"}}]}}}}\n",

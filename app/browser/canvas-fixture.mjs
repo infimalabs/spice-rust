@@ -49,7 +49,6 @@ export { monitorPage } from "./canvas-monitor.mjs";
 export const VENDOR_PID_LEDGER = ".spice-vendor-pids";
 const PRIMARY_FIXTURE_SESSION = "018f7777-7777-7444-8888-999999999999";
 const UNAVAILABLE_TOOL_CALL_RECORD = '{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"tool_use","id":"call-compacted-verifier","name":"Bash","input":{"command":"cargo test --locked -p spice"}}]}}\n';
-const COMPACTION_BOUNDARY_RECORD = '{"type":"system","subtype":"compact_boundary"}\n';
 
 const execute = promisify(execFile);
 const SHUTDOWN_COMMAND_MS = 25_000;
@@ -76,7 +75,11 @@ async function appendPrimaryCompactionRecords(fixture, prefix) {
     ".git/spice-home/.claude/projects/canvas",
     `${PRIMARY_FIXTURE_SESSION}.jsonl`,
   );
-  const boundary = Buffer.from(COMPACTION_BOUNDARY_RECORD);
+  const boundary = Buffer.from(`${JSON.stringify({
+    timestamp: new Date().toISOString(),
+    type: "system",
+    subtype: "compact_boundary",
+  })}\n`);
   const record = Buffer.concat([prefix, boundary]);
   const file = await open(transcript, "a");
   let offset;
