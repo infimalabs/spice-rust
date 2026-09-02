@@ -44,7 +44,7 @@ mod watchband;
 use connection::{request_external_speech, run_surface};
 use view::{CanvasRender, render_canvas};
 use watchband::ComposerAction;
-use watchband::{ComposerDrafts, LineageControlAction, LineageControls};
+use watchband::{ComposerDrafts, LineageControlAction, LineageControls, LineageSpeech};
 
 /// Source identity injected by installed Spice `dev xtask -- app` and verified before publish.
 const APP_SOURCE_IDENTITY: &str = match option_env!("SPICE_APP_SOURCE_IDENTITY") {
@@ -126,7 +126,7 @@ enum SpeechStatus {
 struct NarrationBatch {
     lineage: String,
     materialization: bool,
-    enabled: bool,
+    mode: LineageSpeech,
     messages: Vec<NarrationMessage>,
 }
 
@@ -501,7 +501,7 @@ fn canvas_app() -> Html {
     let surface = use_state(SurfaceData::default);
     let axis = use_state(|| Axis::Topology);
     let mosaic = use_state(|| true);
-    let lineage_controls = use_reducer(LineageControls::default);
+    let lineage_controls = use_reducer(LineageControls::restore);
     let composer_drafts = use_reducer(ComposerDrafts::default);
     let submission_status = use_state(SubmissionStatus::default);
     let submissions = SubmissionHandle {
@@ -904,11 +904,15 @@ fn narration_callback(
             store_narration_cursors(&cursors);
             lines
         };
-        if !batch.enabled {
-            return;
-        }
         for line in lines {
-            speak.emit(SpeechRequest::narration(batch.lineage.clone(), line.text));
+            let text = match batch.mode {
+                LineageSpeech::Quiet => None,
+                LineageSpeech::Speak => line.automatic_speech,
+                LineageSpeech::Narrate => Some(line.text),
+            };
+            if let Some(text) = text {
+                speak.emit(SpeechRequest::narration(batch.lineage.clone(), text));
+            }
         }
     })
 }

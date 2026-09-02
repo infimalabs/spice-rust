@@ -111,7 +111,7 @@ fn narration_cursors_suppress_materialized_history_and_admit_only_live_suffixes(
 
     let live = vec![
         history[0].clone(),
-        message("agent-a", "a2", "live a"),
+        automatic_message("agent-a", "a2", "live a", "selected a"),
         history[1].clone(),
         message("agent-b", "b2", "live b"),
     ];
@@ -121,10 +121,12 @@ fn narration_cursors_suppress_materialized_history_and_admit_only_live_suffixes(
             app::speech_queue::NarrationLine {
                 lane: "agent-b".to_owned(),
                 text: "live b".to_owned(),
+                automatic_speech: None,
             },
             app::speech_queue::NarrationLine {
                 lane: "agent-a".to_owned(),
                 text: "live a".to_owned(),
+                automatic_speech: Some("selected a".to_owned()),
             },
         ]
     );
@@ -211,5 +213,13 @@ fn message(lane: &str, key: &str, text: &str) -> NarrationMessage {
         lane: lane.to_owned(),
         key: key.to_owned(),
         text: text.to_owned(),
+        automatic_speech: None,
+    }
+}
+
+fn automatic_message(lane: &str, key: &str, text: &str, speech: &str) -> NarrationMessage {
+    NarrationMessage {
+        automatic_speech: Some(speech.to_owned()),
+        ..message(lane, key, text)
     }
 }

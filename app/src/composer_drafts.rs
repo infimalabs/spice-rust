@@ -309,6 +309,7 @@ mod tests {
             observed: None,
             activity: wire::AgentActivityKind::Prose,
             text: "quoted prose".to_owned(),
+            automatic_speech: None,
             unavailable_tool_terminals: Vec::new(),
             media: Vec::new(),
         }

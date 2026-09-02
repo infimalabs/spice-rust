@@ -10,6 +10,7 @@ use wire::{AgentActivityKind, CanonicalUuid, Outcome};
 use super::{CommandResult, lane_surface, store_fault};
 use super::{RuntimePaths, taste_surface};
 
+mod automatic_speech;
 mod backlog;
 mod session_compaction;
 mod tool_preview;
@@ -301,22 +302,23 @@ fn publish_agent_event(
         observations,
         unavailable_tool_terminals,
     } = event;
-    let (activity, locus, text, media) = match decoded {
-        listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => (
-            AgentActivityKind::Prose,
-            prose.locus,
-            present_steering_acknowledgements(
-                &prose.text,
-                steering,
-                PresentationEvent {
-                    lane,
-                    source: source.or_else(|| observations.source(lane, prose.locus)),
-                    locus: prose.locus,
-                    ordinal,
-                },
-            )?,
-            prose.media.clone(),
-        ),
+    let presentation_event = |locus| PresentationEvent {
+        lane,
+        source: source.or_else(|| observations.source(lane, locus)),
+        locus,
+        ordinal,
+    };
+    let (activity, locus, text, automatic_speech, media) = match decoded {
+        listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => {
+            let event = presentation_event(prose.locus);
+            (
+                AgentActivityKind::Prose,
+                prose.locus,
+                present_steering_acknowledgements(&prose.text, steering, event)?,
+                automatic_speech::classify(prose, steering, event),
+                prose.media.clone(),
+            )
+        }
         listen::Event::Tool(tool) => {
             let activity = tool_preview::activity(lane, tool, previews);
             let media = match &tool.moment {
@@ -331,6 +333,7 @@ fn publish_agent_event(
                 } else {
                     String::new()
                 },
+                None,
                 media,
             )
         }
@@ -342,6 +345,7 @@ fn publish_agent_event(
                 .clone()
                 .filter(|summary| !summary.trim().is_empty())
                 .unwrap_or_else(|| "Context compacted".to_owned()),
+            None,
             Vec::new(),
         ),
         _ => return Ok(()),
@@ -367,6 +371,7 @@ fn publish_agent_event(
             observed,
             activity,
             text,
+            automatic_speech,
             unavailable_tool_terminals: unavailable_tool_terminals.to_vec(),
             media,
         })

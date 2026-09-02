@@ -73,6 +73,7 @@ import {
   assertSurvivingVendorsAreReported,
 } from "./canvas-vendor-reap.mjs";
 import {
+  assertAutomaticSpeechEngines,
   assertSpeechVariants,
   installBrowserSpeech,
   installSocketControl,
@@ -1009,6 +1010,14 @@ try {
         await assertTaskEffortSurface(lightPage, fixture, seeded);
         lightMonitor.assertClean();
         await light.close();
+      });
+      await run.scenario("automatic-speech", async () => {
+        await assertAutomaticSpeechEngines(
+          resident.discovery.endpoint,
+          fixture,
+          worktrees[0],
+          seeded.lane,
+        );
       });
     } else if (run.owns("lease")) {
       light = await browser.newContext({ colorScheme: "light", viewport: { width: 1440, height: 900 } });

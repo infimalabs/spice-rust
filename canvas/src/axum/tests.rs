@@ -99,6 +99,7 @@ fn agent_message(author: u8, offset: u64, text: &str) -> wire::AgentMessage {
         observed: None,
         activity: wire::AgentActivityKind::Prose,
         text: text.to_owned(),
+        automatic_speech: None,
         unavailable_tool_terminals: Vec::new(),
         media: Vec::new(),
     }

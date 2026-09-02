@@ -45,6 +45,26 @@ pub enum AgentActivityKind {
     Compaction,
 }
 
+/// Why one assistant message is eligible for automatic Speak playback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AutomaticSpeechKind {
+    /// A vendor-declared completed answer.
+    Final,
+    /// One or more positively acknowledged steering directives.
+    Acknowledgement,
+}
+
+/// Resident-selected text for one automatic Speak delivery.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AutomaticSpeech {
+    /// Eligibility that selected this utterance.
+    pub kind: AutomaticSpeechKind,
+    /// Cleaned text handed to the configured speech backend.
+    pub text: String,
+}
+
 impl AgentActivityKind {
     /// Whether this activity belongs in the prose card plane.
     #[must_use]
@@ -118,6 +138,16 @@ pub struct AgentMessage {
     pub activity: AgentActivityKind,
     /// Visible assistant prose or concise tool preview.
     pub text: String,
+    /// Optional resident-classified automatic Speak delivery.
+    ///
+    /// Its absence is the compatibility spelling and means this activity must
+    /// remain silent in Speak mode. Narrate mode continues to use [`Self::text`].
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub automatic_speech: Option<AutomaticSpeech>,
     /// Tool calls whose terminal result was unavailable at this compaction boundary.
     ///
     /// This projection is evidence of an absent terminal record, not an inferred
@@ -193,6 +223,7 @@ mod message_retention_tests {
             observed: None,
             activity: AgentActivityKind::Prose,
             text: "fixture".to_owned(),
+            automatic_speech: None,
             unavailable_tool_terminals: Vec::new(),
             media: Vec::new(),
         }
