@@ -799,7 +799,10 @@ fn assert_tool_media_prose_and_compaction_activity(
     let result = updates.try_recv().expect("tool result publishes once");
     assert_eq!(result.authored, authored);
     assert_eq!(result.activity, wire::AgentActivityKind::Tool);
-    assert_eq!(result.text, "Bash: git status --short succeeded");
+    assert!(
+        result.text.is_empty(),
+        "the media card does not inherit its correlated command preview"
+    );
     assert_eq!(result.media.as_slice(), std::slice::from_ref(media));
     assert_eq!(
         result.locus,

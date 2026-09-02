@@ -171,10 +171,11 @@ fn tool(
                 .get("exit_code")
                 .and_then(Value::as_i64)
                 .and_then(|code| i32::try_from(code).ok()),
-            media: item.get("aggregated_output").map_or_else(
-                || Ok(Vec::new()),
-                |output| crate::media::value(output, "tool-image"),
-            )?,
+            media: item
+                .get("aggregated_output")
+                .map(|output| crate::media::content(output, "tool-image"))
+                .transpose()?
+                .map_or_else(Vec::new, |content| content.media),
         }),
     };
     Ok(vec![Event::Tool(Tool {
@@ -360,7 +361,7 @@ fn rollout_message(payload: &Object, locus: Locus) -> Events {
                 }
             }
             Some("image" | "input_image" | "output_image") => {
-                media.extend(crate::media::value(value, "message-image")?);
+                media.extend(crate::media::content(value, "message-image")?.media);
             }
             Some(other) => return Err(drift(&format!("message:content:{other}"))),
         }
@@ -548,11 +549,12 @@ fn rollout_tool_call(payload: &Object, locus: Locus) -> Events {
 
 fn rollout_tool_result(payload: &Object, locus: Locus) -> Events {
     let call_id = string(payload, "call_id")?.to_owned();
-    let output = payload.get("output").map(render_output);
-    let media = payload.get("output").map_or_else(
-        || Ok(Vec::new()),
-        |output| crate::media::value(output, "tool-image"),
-    )?;
+    let content = payload
+        .get("output")
+        .map(|output| crate::media::content(output, "tool-image"))
+        .transpose()?;
+    let output = content.as_ref().map(|content| content.text.clone());
+    let media = content.map_or_else(Vec::new, |content| content.media);
     let exit_code = output.as_deref().and_then(output_exit_code);
     let result = match exit_code {
         Some(0) => ToolResult::Succeeded,
@@ -576,7 +578,7 @@ fn rollout_mcp_result(payload: &Object, locus: Locus) -> Events {
     let result = payload.get("result").ok_or(ResidueKind::Absent {
         field: "payload.result",
     })?;
-    let media = crate::media::value(result, "tool-image")?;
+    let content = crate::media::content(result, "tool-image")?;
     let standing = if result.get("Err").is_some() {
         ToolResult::Failed
     } else if let Some(ok) = result.get("Ok").and_then(Value::as_object) {
@@ -592,9 +594,9 @@ fn rollout_mcp_result(payload: &Object, locus: Locus) -> Events {
         call_id,
         moment: ToolMoment::Result(ToolOutcome {
             result: standing,
-            output: Some(render_output(result)),
+            output: Some(content.text),
             exit_code: None,
-            media,
+            media: content.media,
         }),
         locus,
     })])
@@ -668,23 +670,6 @@ fn rollout_usage(payload: &Object, locus: Locus) -> Events {
         reasoning_output_tokens: optional_unsigned(usage, "reasoning_output_tokens")?,
         locus,
     })])
-}
-
-fn render_output(value: &Value) -> String {
-    match value {
-        Value::String(text) => text.clone(),
-        Value::Array(values) => values
-            .iter()
-            .filter_map(|value| {
-                value
-                    .get("text")
-                    .or_else(|| value.get("content"))
-                    .and_then(Value::as_str)
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        other => other.to_string(),
-    }
 }
 
 fn output_exit_code(output: &str) -> Option<i32> {

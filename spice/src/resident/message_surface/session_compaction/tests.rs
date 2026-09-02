@@ -183,6 +183,31 @@ fn codex_terminal_result_prevents_an_unavailable_marker() {
 }
 
 #[test]
+fn typed_image_result_resolves_only_its_own_call_before_compaction() {
+    let scratch = Scratch::new("codex-image-resolved");
+    let transcript = scratch.transcript();
+    fs::write(
+        &transcript,
+        concat!(
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"view_image\",\"arguments\":\"{\\\"path\\\":\\\"capture.png\\\"}\",\"call_id\":\"call-image\"}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"cargo test\\\"}\",\"call_id\":\"call-command\"}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"call_id\":\"call-image\",\"output\":[{\"type\":\"image\",\"data\":\"iVBORw0KGgo=\",\"mimeType\":\"image/png\"}]}}\n",
+            "{\"type\":\"compacted\"}\n",
+        ),
+    )
+    .expect("image-result transcript is written");
+    let mut cursor = cursor(&transcript, listen::Dialect::Codex);
+
+    let records = scan(&mut cursor).expect("image-result transcript scans");
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        records[0].unavailable_tool_terminals,
+        ["exec command: cargo test"],
+        "media bytes neither become a command nor disturb the unrelated pending call",
+    );
+}
+
+#[test]
 fn claude_earlier_same_length_call_replacement_rebuilds_pending_calls() {
     const OLD_CALL: &str = "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"old\",\"name\":\"Read\",\"input\":{\"path\":\"old.rs\"}}]}}\n";
     const NEW_CALL: &str = "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"new\",\"name\":\"Read\",\"input\":{\"path\":\"new.rs\"}}]}}\n";
