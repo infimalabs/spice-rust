@@ -3,6 +3,7 @@ use tape::Locus;
 use crate::{
     Compaction, Event, Events, Failure, Object, Prose, ProseRole, Reasoning, ReasoningContent,
     ResidueKind, SessionDeclaration, Tool, ToolMoment, ToolOutcome, ToolResult, Usage, array,
+    media::{self, OwnedContent},
     object, optional_boolean, optional_unsigned, required, string,
 };
 
@@ -54,7 +55,7 @@ fn assistant(record: &Object, locus: Locus) -> Events {
                 let text = string(block, "text")?.to_owned();
                 events.push(Event::Prose(Prose {
                     role: ProseRole::Assistant,
-                    media: crate::media::markdown(&text)?,
+                    media: media::decompose(OwnedContent::AuthoredText(&text))?.media,
                     text,
                     phase: phase.clone(),
                     locus,
@@ -128,7 +129,7 @@ fn user(record: &Object, locus: Locus) -> Events {
     if let Some(text) = content.as_str() {
         return Ok(vec![Event::Prose(Prose {
             role: ProseRole::Operator,
-            media: crate::media::markdown(text)?,
+            media: media::decompose(OwnedContent::AuthoredText(text))?.media,
             text: text.to_owned(),
             phase: Some("prompt".to_owned()),
             locus,
@@ -150,14 +151,18 @@ fn user(record: &Object, locus: Locus) -> Events {
                 let text = string(block, "text")?.to_owned();
                 events.push(Event::Prose(Prose {
                     role: ProseRole::Operator,
-                    media: crate::media::markdown(&text)?,
+                    media: media::decompose(OwnedContent::AuthoredText(&text))?.media,
                     text,
                     phase: Some("prompt".to_owned()),
                     locus,
                 }));
             }
             "image" => {
-                let media = crate::media::content(value, "message-image")?.media;
+                let media = media::decompose(OwnedContent::ProviderValue {
+                    value,
+                    default_name: "message-image",
+                })?
+                .media;
                 if let Some(Event::Prose(prose)) = events.last_mut() {
                     prose.media.extend(media);
                     wire::media::admit_media(&prose.media).map_err(|_| ResidueKind::Malformed {
@@ -177,7 +182,12 @@ fn user(record: &Object, locus: Locus) -> Events {
             "tool_result" => {
                 let content = block
                     .get("content")
-                    .map(|content| crate::media::content(content, "tool-image"))
+                    .map(|content| {
+                        media::decompose(OwnedContent::ProviderValue {
+                            value: content,
+                            default_name: "tool-image",
+                        })
+                    })
                     .transpose()?;
                 let result = match optional_boolean(block, "is_error")? {
                     Some(true) => ToolResult::Failed,

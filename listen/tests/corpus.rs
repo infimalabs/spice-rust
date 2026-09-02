@@ -817,23 +817,50 @@ fn provider_tool_blocks_separate_neighbor_text_from_owning_media() {
 }
 
 #[test]
-fn malformed_provider_image_fails_as_media_instead_of_becoming_text() {
-    let malformed = serde_json::to_vec(&serde_json::json!({
-        "type": "response_item",
-        "payload": {
-            "type": "function_call_output",
-            "call_id": "call-image",
-            "output": [{"type": "image", "data": "iVBORw0KGgo="}],
-        },
-    }))
-    .expect("malformed media fixture encodes");
-    let decoded = decode(Dialect::Codex, &malformed, locus(&malformed))
-        .expect("matching malformed-media locus");
-    assert!(matches!(
-        decoded,
-        Decoded::Residue(ref residue)
-            if matches!(residue.kind, ResidueKind::Malformed { field: "media", .. })
-    ));
+fn malformed_and_unowned_media_fail_as_media_instead_of_becoming_text() {
+    let records = [
+        serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": "call-malformed-image",
+                "output": [{"type": "image", "data": "iVBORw0KGgo="}],
+            },
+        }),
+        serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": "call-unowned-image",
+                "output": [{
+                    "type": "text",
+                    "text": "must not become tool output",
+                    "image_url": "data:image/png;base64,iVBORw0KGgo=",
+                }],
+            },
+        }),
+        serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{
+                    "type": "input_text",
+                    "text": "![capture.png](data:image/png;base64,%%%)",
+                }],
+            },
+        }),
+    ];
+    for record in records {
+        let record = serde_json::to_vec(&record).expect("media refusal fixture encodes");
+        let decoded =
+            decode(Dialect::Codex, &record, locus(&record)).expect("matching media-refusal locus");
+        assert!(matches!(
+            decoded,
+            Decoded::Residue(ref residue)
+                if matches!(residue.kind, ResidueKind::Malformed { field: "media", .. })
+        ));
+    }
 }
 
 #[test]
