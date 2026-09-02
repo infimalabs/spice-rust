@@ -1,4 +1,6 @@
 use super::*;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const HISTORY_LENGTH: u64 = 300;
 const QUIET_HISTORY_LENGTH: u64 = 40;
@@ -213,6 +215,135 @@ fn late_session_boundaries_are_inserted_before_retention_selects_its_floor() {
         retained.last().expect("retained tail").locus.offset,
         HISTORY_LENGTH - 1,
     );
+    drop(source);
+    bus.shutdown().expect("bus shuts down");
+}
+
+#[derive(Debug)]
+struct FixtureHistory {
+    messages: Vec<AgentMessage>,
+    reads: AtomicUsize,
+}
+
+impl MessageHistoryProvider for FixtureHistory {
+    fn history(
+        &self,
+        lane: wire::CanonicalUuid,
+        before: &AgentMessage,
+        limit: usize,
+    ) -> Result<Option<MessageHistoryPage>, String> {
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        let visible = self
+            .messages
+            .iter()
+            .filter(|message| {
+                message.lane == lane && message.chronology_key() < before.chronology_key()
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let start = visible.len().saturating_sub(limit);
+        Ok(Some(MessageHistoryPage {
+            messages: visible[start..].to_vec(),
+            more: start > 0,
+        }))
+    }
+}
+
+#[test]
+fn cold_history_keeps_one_page_and_loads_older_pages_without_live_updates() {
+    let bus = fixture(1);
+    let source = Source::new(bus.reader(), epoch(), 10);
+    let publisher = source.message_publisher();
+    let lane = message(0xe5, 0).lane;
+    let startup = (0..80)
+        .map(|offset| message(0xe5, offset))
+        .collect::<Vec<_>>();
+    for activity in &startup {
+        publisher
+            .publish(activity.clone())
+            .expect("startup history publishes");
+    }
+    let mut durable = startup.clone();
+    durable[54].text = "stale source projection".to_owned();
+    let history = Arc::new(FixtureHistory {
+        messages: durable,
+        reads: AtomicUsize::new(0),
+    });
+    publisher
+        .set_history_provider(history.clone())
+        .expect("durable history provider installs");
+    publisher
+        .bound_initial_history()
+        .expect("startup history is bounded");
+    let mut updates = source.subscribe_messages();
+
+    let (_, frames) = source
+        .begin(
+            &accepted(Actor::Operator),
+            &request(0xc4, vec![ViewSubject::Messages], None),
+        )
+        .expect("message subscription begins");
+    let StreamFrame::Messages { messages, more, .. } = &frames[0] else {
+        panic!("expected retained message snapshot")
+    };
+    assert_eq!(messages.len(), INITIAL_MESSAGE_LIMIT);
+    assert_eq!(messages[0].locus.offset, 55);
+    assert_eq!(more, &[lane]);
+
+    let restored = complete_lane_history(&source, lane, messages, more);
+    assert_eq!(
+        restored
+            .iter()
+            .map(|message| message.locus.offset)
+            .collect::<Vec<_>>(),
+        (0..80).collect::<Vec<_>>(),
+    );
+    assert_eq!(history.reads.load(Ordering::Relaxed), 2);
+    assert_eq!(restored[54].text, startup[54].text);
+    assert!(matches!(
+        updates.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+    drop(source);
+    bus.shutdown().expect("bus shuts down");
+}
+
+#[test]
+fn cold_history_starts_at_a_compaction_inside_the_initial_window() {
+    let bus = fixture(1);
+    let source = Source::new(bus.reader(), epoch(), 10);
+    let publisher = source.message_publisher();
+    for offset in 0..40 {
+        let mut activity = message(0xe6, offset);
+        if matches!(offset, 30) {
+            activity.activity = wire::AgentActivityKind::Compaction;
+        }
+        publisher
+            .publish(activity)
+            .expect("startup history publishes");
+    }
+    publisher
+        .bound_initial_history()
+        .expect("startup history is bounded");
+
+    let (_, frames) = source
+        .begin(
+            &accepted(Actor::Operator),
+            &request(0xc5, vec![ViewSubject::Messages], None),
+        )
+        .expect("message subscription begins");
+    let StreamFrame::Messages { messages, more, .. } = &frames[0] else {
+        panic!("expected retained message snapshot")
+    };
+    assert_eq!(
+        messages
+            .iter()
+            .map(|message| message.locus.offset)
+            .collect::<Vec<_>>(),
+        (30..40).collect::<Vec<_>>(),
+    );
+    assert!(more.is_empty());
+
     drop(source);
     bus.shutdown().expect("bus shuts down");
 }

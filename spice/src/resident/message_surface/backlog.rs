@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use super::*;
 
@@ -10,7 +11,7 @@ use super::*;
 mod tests;
 
 /// First newest-record window; sparse tapes expand geometrically until enough cards exist.
-const INITIAL_WINDOW_BYTES: u64 = 256 * 1024;
+const INITIAL_WINDOW_BYTES: u64 = 32 * 1024;
 
 /// Source-authenticated per-lane continuation state for repeated backlog reads.
 #[derive(Debug, Default)]
@@ -55,14 +56,203 @@ impl BacklogReader {
 pub(in crate::resident) fn restore_agent_messages(
     paths: &RuntimePaths,
     residency: &wire::ResidencyHead,
-    publisher: &impl AgentMessagePublisher,
+    publisher: &canvas::stream::MessagePublisher,
     reader: &mut BacklogReader,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     for row in &residency.lanes {
         restore_lane(paths, row, publisher, reader, diagnostic)?;
     }
+    publisher
+        .set_history_provider(Arc::new(DurableHistory::new(paths, residency, reader)))
+        .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
+    publisher
+        .bound_initial_history()
+        .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
     Ok(())
+}
+
+#[derive(Debug)]
+struct DurableHistory {
+    lanes: BTreeMap<CanonicalUuid, DurableLane>,
+    observations: MessageObservations,
+    steering: PresentationDirectives,
+}
+
+#[derive(Debug)]
+struct DurableLane {
+    tape: std::path::PathBuf,
+    dialect: listen::Dialect,
+    author: CanonicalUuid,
+    source: Option<listen::SourceId>,
+    session: Option<DurableSession>,
+}
+
+#[derive(Debug)]
+struct DurableSession {
+    path: std::path::PathBuf,
+    dialect: listen::Dialect,
+    thread: String,
+}
+
+impl DurableHistory {
+    fn new(paths: &RuntimePaths, residency: &wire::ResidencyHead, reader: &BacklogReader) -> Self {
+        let environment = crate::session_environment();
+        let lanes = residency
+            .lanes
+            .iter()
+            .filter_map(|row| {
+                let author = row
+                    .occupant
+                    .or_else(|| row.session.as_ref().map(|session| session.occupant))
+                    .or_else(|| row.lineage.last().copied())?;
+                let dialect = super::super::ingest_vendor(&row.vendor)?.dialect();
+                let session = row.session.as_ref().and_then(|session| {
+                    crate::session_command::vendor_thread_transcript(
+                        &session.identity,
+                        &session.vendor,
+                        &environment,
+                    )
+                    .ok()
+                    .map(|(path, dialect)| DurableSession {
+                        path,
+                        dialect,
+                        thread: session.identity.clone(),
+                    })
+                });
+                Some((
+                    row.lane,
+                    DurableLane {
+                        tape: paths
+                            .tape
+                            .join(row.lane.to_string())
+                            .join(row.vendor.as_str()),
+                        dialect,
+                        author,
+                        source: reader
+                            .cursors
+                            .get(&row.lane)
+                            .map(|checkpoint| checkpoint.source.clone()),
+                        session,
+                    },
+                ))
+            })
+            .collect();
+        Self {
+            lanes,
+            observations: reader.state.observations.clone(),
+            steering: reader.steering.clone(),
+        }
+    }
+}
+
+impl canvas::stream::MessageHistoryProvider for DurableHistory {
+    fn history(
+        &self,
+        lane: CanonicalUuid,
+        before: &wire::AgentMessage,
+        limit: usize,
+    ) -> Result<Option<canvas::stream::MessageHistoryPage>, String> {
+        let Some(source) = self.lanes.get(&lane) else {
+            return Ok(None);
+        };
+        let mut visible = if source.tape.is_dir() {
+            self.tape_messages(lane, source)?
+        } else if source.source.is_some() {
+            return Err("the transcript source disappeared after Canvas bootstrap".to_owned());
+        } else {
+            Vec::new()
+        };
+        if let Some(session) = &source.session {
+            visible.extend(
+                session_compaction::retained_messages(
+                    session.path.clone(),
+                    session.dialect,
+                    session.thread.clone(),
+                    lane,
+                    source.author,
+                    &self.observations,
+                )
+                .map_err(|error| format!("{error:?}"))?,
+            );
+        }
+        visible.sort_by_key(wire::AgentMessage::chronology_key);
+        visible.dedup_by(|right, left| right.locus == left.locus);
+        let activities = visible
+            .iter()
+            .map(|message| message.activity)
+            .collect::<Vec<_>>();
+        let floor =
+            wire::AgentActivityKind::retention_start(&activities, canvas::stream::MESSAGE_CAPACITY);
+        let end =
+            visible.partition_point(|message| message.chronology_key() < before.chronology_key());
+        let start = end.saturating_sub(limit).max(floor.min(end));
+        Ok(Some(canvas::stream::MessageHistoryPage {
+            messages: visible[start..end].to_vec(),
+            more: start > floor,
+        }))
+    }
+}
+
+impl DurableHistory {
+    fn tape_messages(
+        &self,
+        lane: CanonicalUuid,
+        source: &DurableLane,
+    ) -> Result<Vec<wire::AgentMessage>, String> {
+        let scan =
+            retained_tail(&source.tape, source.dialect).map_err(|error| error.to_string())?;
+        if source
+            .source
+            .as_ref()
+            .is_some_and(|expected| *expected != scan.checkpoint.source)
+        {
+            return Err("the transcript source changed after Canvas bootstrap".to_owned());
+        }
+        let messages = CollectedMessages::default();
+        let mut reader = BacklogReader {
+            cursors: BTreeMap::new(),
+            state: MessageState {
+                previews: CallPreviews::default(),
+                observations: self.observations.clone(),
+            },
+            steering: self.steering.clone(),
+        };
+        let mut diagnostic = Vec::new();
+        publish_scan(
+            scan,
+            lane,
+            source.author,
+            &messages,
+            &mut reader,
+            &mut diagnostic,
+        )
+        .map_err(|error| format!("{error:?}"))?;
+        if !diagnostic.is_empty() {
+            return Err(String::from_utf8_lossy(&diagnostic).trim().to_owned());
+        }
+        messages
+            .0
+            .into_inner()
+            .map_err(|_| "durable history collection is unavailable".to_owned())
+            .map(|messages| messages.into_iter().filter(visible_message).collect())
+    }
+}
+
+#[derive(Debug, Default)]
+struct CollectedMessages(Mutex<Vec<wire::AgentMessage>>);
+
+impl AgentMessagePublisher for CollectedMessages {
+    fn publish(
+        &self,
+        message: wire::AgentMessage,
+    ) -> Result<bool, canvas::stream::MessagePublishError> {
+        self.0
+            .lock()
+            .map_err(|_| canvas::stream::MessagePublishError::Unavailable)?
+            .push(message);
+        Ok(true)
+    }
 }
 
 fn restore_lane(
@@ -214,6 +404,23 @@ fn tail_backlog(tape: &Path, dialect: listen::Dialect) -> Result<listen::Scan, l
     let mut bytes = INITIAL_WINDOW_BYTES;
     loop {
         let tail = listen::scan_tail(tape, dialect, bytes)?;
+        if visible_cards(&tail.scan) > canvas::stream::INITIAL_MESSAGE_LIMIT
+            || tail.start.next == listen::Position::start()
+        {
+            return Ok(tail.scan);
+        }
+        let expanded = bytes.saturating_mul(2);
+        if expanded == bytes {
+            return Ok(tail.scan);
+        }
+        bytes = expanded;
+    }
+}
+
+fn retained_tail(tape: &Path, dialect: listen::Dialect) -> Result<listen::Scan, listen::ScanError> {
+    let mut bytes = INITIAL_WINDOW_BYTES;
+    loop {
+        let tail = listen::scan_tail(tape, dialect, bytes)?;
         if visible_cards(&tail.scan) >= canvas::stream::MESSAGE_CAPACITY
             || tail.start.next == listen::Position::start()
         {
@@ -245,4 +452,11 @@ fn visible_cards(scan: &listen::Scan) -> usize {
             _ => false,
         })
         .count()
+}
+
+fn visible_message(message: &wire::AgentMessage) -> bool {
+    matches!(
+        message.activity,
+        wire::AgentActivityKind::Prose | wire::AgentActivityKind::Compaction
+    ) || !message.media.is_empty()
 }

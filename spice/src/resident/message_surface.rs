@@ -74,7 +74,7 @@ struct MessageObservation {
     at: wire::Instant,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct MessageObservations(Vec<MessageObservation>);
 
 impl MessageObservations {
@@ -484,10 +484,10 @@ fn present_steering_acknowledgements(
         .map_err(|detail| store_fault("canvas::message-steering-presentation-invalid", &detail))
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(super) struct PresentationDirectives(BTreeMap<steer::Key, PresentationDirective>);
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct PresentationDirective {
     lane: CanonicalUuid,
     text: String,

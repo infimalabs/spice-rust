@@ -23,14 +23,33 @@ pub(super) struct MessageSnapshot {
     pub(super) more: Vec<wire::CanonicalUuid>,
 }
 
-pub(super) struct MessageHistoryPage {
-    pub(super) messages: Vec<AgentMessage>,
-    pub(super) more: bool,
+/// One source-backed page immediately preceding a retained message.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageHistoryPage {
+    /// Older visible messages in display chronology.
+    pub messages: Vec<AgentMessage>,
+    /// Whether another source-backed page remains inside the retention horizon.
+    pub more: bool,
+}
+
+/// Durable older-message reader installed by the resident that owns the source.
+pub trait MessageHistoryProvider: fmt::Debug + Send + Sync {
+    /// Read one bounded visible page before `before`.
+    ///
+    /// `None` means the provider does not own that lane or cursor. Errors name
+    /// source failures without weakening the Canvas request admission path.
+    fn history(
+        &self,
+        lane: wire::CanonicalUuid,
+        before: &AgentMessage,
+        limit: usize,
+    ) -> Result<Option<MessageHistoryPage>, String>;
 }
 
 #[derive(Clone, Debug)]
 pub(super) struct MessageFeed {
     retained: Arc<Mutex<VecDeque<AgentMessage>>>,
+    history: Arc<Mutex<Option<Arc<dyn MessageHistoryProvider>>>>,
     pub(super) updates: tokio::sync::broadcast::Sender<AgentMessage>,
     capacity: usize,
 }
@@ -40,6 +59,7 @@ impl MessageFeed {
         let (updates, _) = tokio::sync::broadcast::channel(MESSAGE_CAPACITY);
         Self {
             retained: Arc::new(Mutex::new(VecDeque::new())),
+            history: Arc::new(Mutex::new(None)),
             updates,
             capacity: MESSAGE_CAPACITY,
         }
@@ -98,15 +118,97 @@ impl MessageFeed {
         let Some(end) = visible.iter().position(|message| message.locus == before) else {
             return Ok(None);
         };
-        let start = end.saturating_sub(MESSAGE_HISTORY_PAGE_LIMIT);
-        Ok(Some(MessageHistoryPage {
-            messages: visible[start..end]
-                .iter()
-                .map(|message| (*message).clone())
-                .collect(),
-            more: start > 0,
-        }))
+        let before_message = (*visible[end]).clone();
+        let history = self
+            .history
+            .lock()
+            .map_err(|_| MessagePublishError::Unavailable)?
+            .clone();
+        if let Some(history) = history {
+            drop(retained);
+            if let Some(mut page) = history
+                .history(lane, &before_message, MESSAGE_HISTORY_PAGE_LIMIT)
+                .map_err(MessagePublishError::History)?
+            {
+                self.retain_history_page(lane, &before_message, &mut page)?;
+                return Ok(Some(page));
+            }
+            let retained = self
+                .retained
+                .lock()
+                .map_err(|_| MessagePublishError::Unavailable)?;
+            return retained_history(&retained, lane, before);
+        }
+        retained_history(&retained, lane, before)
     }
+
+    fn retain_history_page(
+        &self,
+        lane: wire::CanonicalUuid,
+        before: &AgentMessage,
+        page: &mut MessageHistoryPage,
+    ) -> Result<(), MessagePublishError> {
+        let mut retained = self
+            .retained
+            .lock()
+            .map_err(|_| MessagePublishError::Unavailable)?;
+        for message in &mut page.messages {
+            if let Some(current) = retained
+                .iter()
+                .find(|current| current.lane == message.lane && current.locus == message.locus)
+            {
+                *message = current.clone();
+            }
+        }
+        validate_history_page(lane, before, page)?;
+        for message in &page.messages {
+            retain_message(&mut retained, message.clone(), self.capacity)?;
+        }
+        Ok(())
+    }
+}
+
+fn retained_history(
+    retained: &VecDeque<AgentMessage>,
+    lane: wire::CanonicalUuid,
+    before: wire::MessageLocus,
+) -> Result<Option<MessageHistoryPage>, MessagePublishError> {
+    let visible = retained
+        .iter()
+        .filter(|message| message.lane == lane && visible_message(message))
+        .collect::<Vec<_>>();
+    let Some(end) = visible.iter().position(|message| message.locus == before) else {
+        return Ok(None);
+    };
+    let start = end.saturating_sub(MESSAGE_HISTORY_PAGE_LIMIT);
+    Ok(Some(MessageHistoryPage {
+        messages: visible[start..end]
+            .iter()
+            .map(|message| (*message).clone())
+            .collect(),
+        more: start > 0,
+    }))
+}
+
+fn validate_history_page(
+    lane: wire::CanonicalUuid,
+    before: &AgentMessage,
+    page: &MessageHistoryPage,
+) -> Result<(), MessagePublishError> {
+    if page.messages.len() > MESSAGE_HISTORY_PAGE_LIMIT
+        || page.messages.iter().any(|message| {
+            message.lane != lane
+                || !visible_message(message)
+                || message.chronology_key() >= before.chronology_key()
+        })
+        || page
+            .messages
+            .windows(2)
+            .any(|pair| pair[0].chronology_key() >= pair[1].chronology_key())
+    {
+        return Err(MessagePublishError::InvalidHistory);
+    }
+    Ok(())
 }
 
 /// Generation-scoped ingress for agent activity already committed to tape.
@@ -116,6 +218,36 @@ pub struct MessagePublisher {
 }
 
 impl MessagePublisher {
+    /// Install the generation's authenticated durable history reader.
+    pub fn set_history_provider(
+        &self,
+        provider: Arc<dyn MessageHistoryProvider>,
+    ) -> Result<(), MessagePublishError> {
+        *self
+            .feed
+            .history
+            .lock()
+            .map_err(|_| MessagePublishError::Unavailable)? = Some(provider);
+        Ok(())
+    }
+
+    /// Keep only one initial page plus a look-behind card in each lane.
+    pub fn bound_initial_history(&self) -> Result<(), MessagePublishError> {
+        let mut retained = self
+            .feed
+            .retained
+            .lock()
+            .map_err(|_| MessagePublishError::Unavailable)?;
+        let lanes = retained
+            .iter()
+            .map(|message| message.lane)
+            .collect::<BTreeSet<_>>();
+        for lane in lanes {
+            trim_visible_lane(&mut retained, lane, INITIAL_MESSAGE_LIMIT + 1);
+        }
+        Ok(())
+    }
+
     /// Retain and broadcast one transcript activity exactly once.
     ///
     /// # Errors
@@ -130,32 +262,45 @@ impl MessagePublisher {
             .retained
             .lock()
             .map_err(|_| MessagePublishError::Unavailable)?;
-        if let Some(existing) = retained
-            .iter()
-            .find(|existing| existing.lane == message.lane && existing.locus == message.locus)
-        {
-            return if existing == &message {
-                Ok(false)
-            } else {
-                Err(MessagePublishError::IdentityConflict)
-            };
-        }
-        let visible = visible_message(&message);
-        if !visible {
-            retained.retain(|existing| existing.lane != message.lane || visible_message(existing));
-        }
-        let insertion = retained
-            .iter()
-            .position(|existing| existing.chronology_key() > message.chronology_key())
-            .unwrap_or(retained.len());
-        retained.insert(insertion, message.clone());
-        if visible {
-            trim_visible_lane(&mut retained, message.lane, self.feed.capacity);
+        let inserted = retain_message(&mut retained, message.clone(), self.feed.capacity)?;
+        if !inserted {
+            return Ok(false);
         }
         drop(retained);
         let _ = self.feed.updates.send(message);
         Ok(true)
     }
+}
+
+fn retain_message(
+    retained: &mut VecDeque<AgentMessage>,
+    message: AgentMessage,
+    capacity: usize,
+) -> Result<bool, MessagePublishError> {
+    if let Some(existing) = retained
+        .iter()
+        .find(|existing| existing.lane == message.lane && existing.locus == message.locus)
+    {
+        return if existing == &message {
+            Ok(false)
+        } else {
+            Err(MessagePublishError::IdentityConflict)
+        };
+    }
+    let visible = visible_message(&message);
+    if !visible {
+        retained.retain(|existing| existing.lane != message.lane || visible_message(existing));
+    }
+    let lane = message.lane;
+    let insertion = retained
+        .iter()
+        .position(|existing| existing.chronology_key() > message.chronology_key())
+        .unwrap_or(retained.len());
+    retained.insert(insertion, message);
+    if visible {
+        trim_visible_lane(retained, lane, capacity);
+    }
+    Ok(true)
 }
 
 /// Whether one activity consumes a lane's visible-card retention budget.
@@ -196,6 +341,10 @@ pub enum MessagePublishError {
     Unavailable,
     /// One tape event identity was reused for different content.
     IdentityConflict,
+    /// A durable history reader returned an invalid page shape.
+    InvalidHistory,
+    /// The durable history source could not answer a page.
+    History(String),
 }
 
 impl fmt::Display for MessagePublishError {
@@ -207,6 +356,10 @@ impl fmt::Display for MessagePublishError {
             Self::Unavailable => formatter.write_str("canvas message retention is unavailable"),
             Self::IdentityConflict => {
                 formatter.write_str("a transcript event identity named different message content")
+            }
+            Self::InvalidHistory => formatter.write_str("a transcript history page was invalid"),
+            Self::History(detail) => {
+                write!(formatter, "transcript history is unavailable: {detail}")
             }
         }
     }
