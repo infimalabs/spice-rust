@@ -610,7 +610,8 @@ body:has(.shell--mosaic),
   color: var(--ink);
   box-shadow: inset 0 0 0 1px var(--line-soft);
 }
-.team-mode-badge {
+.team-mode-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-mode-badge { flex: none;
   min-width: 19px;
   padding: 0 5px;
   border-radius: 999px;
@@ -620,7 +621,6 @@ body:has(.shell--mosaic),
   font-size: 9px;
   font-weight: 700;
 }
-
 @container (max-width: 20rem) {
   .team-toolbar { gap: 4px; padding-inline: 5px; }
   .team-toolbar:has(.team-drag-handle) {

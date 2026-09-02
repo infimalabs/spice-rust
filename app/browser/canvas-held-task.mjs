@@ -124,6 +124,11 @@ export async function assertHeldTaskCount(
     Number(proseTicker.authored) >= Number(resultTicker.authored),
     "the prose status ages the displayed prose rather than the prior tool result",
   );
+  await assertModeLabelEllipsis(
+    team,
+    "desktop mode rail",
+    artifacts && join(artifacts, "canvas-mode-label-desktop.png"),
+  );
   await assertTickerAcrossModes(team, ticker, proseLine, lanes[0], "desktop assistant prose");
 
   if (artifacts) {
@@ -134,6 +139,11 @@ export async function assertHeldTaskCount(
       fullPage: false,
     });
     await page.setViewportSize({ width: 480, height: viewport?.height ?? 900 });
+    await assertModeLabelEllipsis(
+      team,
+      "narrow mode rail",
+      join(artifacts, "canvas-mode-label-narrow.png"),
+    );
     await assertTickerAcrossModes(team, ticker, proseLine, lanes[0], "narrow assistant prose");
     await page.screenshot({
       path: join(artifacts, "canvas-lane-status-narrow.png"),
@@ -636,6 +646,64 @@ async function assertTickerAcrossModes(team, ticker, expected, lane, message) {
       `${message}: ${mode}`,
     );
   }
+}
+
+async function assertModeLabelEllipsis(team, message, screenshot) {
+  const label = team.locator(".team-mode-label").first();
+  const original = await label.textContent();
+  const long = "Compose mode label that stays inside its allotted tab without moving controls";
+  const before = await label.evaluate(modeLabelGeometry);
+  assert.equal(before.title, original, `${message}: short label remains available as a title`);
+  try {
+    await label.evaluate((node, text) => {
+      node.textContent = text;
+    }, long);
+    const after = await label.evaluate(modeLabelGeometry);
+    assert.equal(
+      await team.getByRole("tab", { name: new RegExp(`^${long}`) }).count(),
+      1,
+      `${message}: the full clipped label remains the tab's accessible name`,
+    );
+    assert.equal(after.textOverflow, "ellipsis", `${message}: long label declares an ellipsis`);
+    assert.equal(after.overflowX, "hidden", `${message}: long label clips inside its tab`);
+    assert.equal(after.whiteSpace, "nowrap", `${message}: long label stays on one line`);
+    assert.ok(after.scrollWidth > after.clientWidth, `${message}: long label exercises truncation`);
+    assert.equal(after.contained, true, `${message}: long label remains inside its tab`);
+    assert.equal(after.nonOverlapping, true, `${message}: mode tabs do not overlap`);
+    assert.deepEqual(after.controls, before.controls, `${message}: labels move no controls`);
+    if (screenshot) await label.page().screenshot({ path: screenshot, fullPage: false });
+  } finally {
+    await label.evaluate((node, text) => {
+      node.textContent = text;
+    }, original);
+  }
+  assert.equal(await label.textContent(), original, `${message}: short label is unchanged`);
+}
+
+function modeLabelGeometry(node) {
+  const button = node.parentElement;
+  const surface = node.closest(".team-surface");
+  const bounds = node.getBoundingClientRect();
+  const buttonBounds = button.getBoundingClientRect();
+  const modes = [...surface.querySelectorAll(".team-mode")]
+    .map((mode) => mode.getBoundingClientRect());
+  const controls = [surface.querySelector(".team-mode-rail"), surface.querySelector(".team-menu")]
+    .map((control) => {
+      const rect = control.getBoundingClientRect();
+      return [rect.left, rect.top, rect.width, rect.height];
+    });
+  const style = getComputedStyle(node);
+  return {
+    clientWidth: node.clientWidth,
+    contained: bounds.left >= buttonBounds.left && bounds.right <= buttonBounds.right,
+    controls,
+    nonOverlapping: modes.every((mode, index) => index === 0 || modes[index - 1].right <= mode.left),
+    overflowX: style.overflowX,
+    scrollWidth: node.scrollWidth,
+    textOverflow: style.textOverflow,
+    title: node.title,
+    whiteSpace: style.whiteSpace,
+  };
 }
 
 function assertTickerPresentation(actual, expected, lane, activityClass, message) {
