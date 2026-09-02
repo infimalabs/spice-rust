@@ -330,7 +330,8 @@ export async function installActivityReplay(context) {
         lane: captured.frame.message.lane,
         locus: captured.frame.message.locus,
       };
-      const before = await team.locator(".ticker").innerText();
+      const ticker = team.locator(".ticker");
+      const before = await ticker.evaluate(tickerIdentity);
       await page.evaluate((expected) => {
         const socket = window.__canvasSockets.at(-1);
         if (!socket) throw new Error("canvas WebSocket was not captured");
@@ -363,11 +364,20 @@ export async function installActivityReplay(context) {
       await page.evaluate(() => new Promise((resolve) => {
         requestAnimationFrame(() => requestAnimationFrame(resolve));
       }));
-      assert.equal(
-        await team.locator(".ticker").innerText(),
+      assert.deepEqual(
+        await ticker.evaluate(tickerIdentity),
         before,
         "a replayed older activity does not walk the status strip backwards",
       );
     },
+  };
+}
+
+function tickerIdentity(node) {
+  return {
+    lane: node.dataset.agentLane,
+    authored: node.querySelector("[data-age-authored]")?.dataset.ageAuthored,
+    prefix: node.querySelector(".ticker-prefix")?.textContent,
+    detail: node.querySelector(".ticker-detail")?.textContent,
   };
 }

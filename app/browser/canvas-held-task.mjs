@@ -78,7 +78,8 @@ export async function assertHeldTaskCount(
   await writeFile(join(fixture, ".spice-tool-trigger"), "emit\n");
   const toolLine = `tool: ${TOOL_ACTIVITY_TEXT}`;
   await ticker.filter({ hasText: toolLine }).waitFor({ timeout: 15_000 });
-  assertNewestLaneActivity(await ticker.innerText(), toolLine);
+  const toolTicker = await captureTicker(ticker);
+  assertTickerPresentation(toolTicker, toolLine, lanes[0], "tool", "tool call");
   assertComposerProvenance(
     await composerProvenance(), claim.provenance,
     "a tool call cannot retarget the prose header or its timestamp",
@@ -90,7 +91,12 @@ export async function assertHeldTaskCount(
   await writeFile(join(fixture, ".spice-tool-result-trigger"), "emit\n");
   const resultLine = `${toolLine} succeeded`;
   await ticker.filter({ hasText: resultLine }).waitFor({ timeout: 15_000 });
-  assertNewestLaneActivity(await ticker.innerText(), resultLine);
+  const resultTicker = await captureTicker(ticker);
+  assertTickerPresentation(resultTicker, resultLine, lanes[0], "tool", "tool result");
+  assert.ok(
+    Number(resultTicker.authored) >= Number(toolTicker.authored),
+    "the result status ages the result activity rather than the older tool call",
+  );
   assertComposerProvenance(
     await composerProvenance(), claim.provenance,
     "a tool result cannot retarget the prose header or its timestamp",
@@ -112,30 +118,43 @@ export async function assertHeldTaskCount(
   await writeFile(join(fixture, ".spice-prose-trigger"), "emit\n");
   const proseLine = "assistant: newest lane prose witness";
   await ticker.filter({ hasText: proseLine }).waitFor({ timeout: 15_000 });
-  assertNewestLaneActivity(await ticker.innerText(), proseLine);
-
-  // Falsification: restore the exact old receipt shape in the production DOM
-  // and run the same assertion. It must reject the regression before the
-  // observed activity line is restored for the remainder of the fixture.
-  const observed = await ticker.innerText();
-  await ticker.evaluate((node) => {
-    node.textContent = "Lane snapshot: 4 lanes";
-  });
-  const restoredReceipt = await ticker.innerText();
-  assert.equal(
-    restoredReceipt,
-    "Lane snapshot: 4 lanes",
-    "the old receipt is restored in the DOM",
+  const proseTicker = await captureTicker(ticker);
+  assertTickerPresentation(proseTicker, proseLine, lanes[0], "prose", "assistant prose");
+  assert.ok(
+    Number(proseTicker.authored) >= Number(resultTicker.authored),
+    "the prose status ages the displayed prose rather than the prior tool result",
   );
+  await assertTickerAcrossModes(team, ticker, proseLine, lanes[0], "desktop assistant prose");
+
+  if (artifacts) {
+    const page = ticker.page();
+    const viewport = page.viewportSize();
+    await page.screenshot({
+      path: join(artifacts, "canvas-lane-status-desktop.png"),
+      fullPage: false,
+    });
+    await page.setViewportSize({ width: 480, height: viewport?.height ?? 900 });
+    await assertTickerAcrossModes(team, ticker, proseLine, lanes[0], "narrow assistant prose");
+    await page.screenshot({
+      path: join(artifacts, "canvas-lane-status-narrow.png"),
+      fullPage: false,
+    });
+    if (viewport) await page.setViewportSize(viewport);
+  }
+
+  // Falsification: feed the exact old receipt shape through the production
+  // assertion. This remains a pure falsification so it
+  // cannot destroy the structured age and attribution nodes the screenshot
+  // and later Yew renders rely on.
+  const restoredReceipt = "Lane snapshot: 4 lanes";
   assert.throws(
     () => assertNewestLaneActivity(restoredReceipt, proseLine),
     /newest lane activity/,
     "the production assertion rejects the former snapshot receipt",
   );
-  await ticker.evaluate((node, text) => {
-    node.textContent = text;
-  }, observed);
-  assertNewestLaneActivity(await ticker.innerText(), proseLine);
+  assertTickerPresentation(
+    await captureTicker(ticker), proseLine, lanes[0], "prose", "settled assistant prose",
+  );
 }
 
 async function claimAutomatically({
@@ -542,4 +561,98 @@ function assertNewestLaneActivity(actual, expected) {
     "newest lane activity never shows a raw vendor tool identifier",
   );
   assert.equal(actual, expected, "newest lane activity wins across tool and prose shapes");
+}
+
+async function captureTicker(ticker) {
+  return ticker.evaluate((node) => {
+    const surface = node.closest(".team-surface");
+    const lane = node.dataset.agentLane;
+    const agent = surface?.querySelector(`.team-agent[data-agent-lane="${lane}"]`);
+    const pip = surface?.querySelector(`.team-light[data-lane-light-target-id="${lane}"]`);
+    const age = node.querySelector(".ticker-age");
+    const prefix = node.querySelector(".ticker-prefix");
+    const detail = node.querySelector(".ticker-detail");
+    const toolbar = surface?.querySelector(":scope > .team-toolbar");
+    const pane = surface?.querySelector(":scope > .team-pane");
+    const bounds = node.getBoundingClientRect();
+    const surfaceBounds = surface?.getBoundingClientRect();
+    const toolbarBounds = toolbar?.getBoundingClientRect();
+    const paneBounds = pane?.getBoundingClientRect();
+    return {
+      accent: node.dataset.accent,
+      agentAccent: agent?.dataset.accent,
+      aria: node.getAttribute("aria-label"),
+      authored: age?.dataset.ageAuthored,
+      ageClock: age?.dataset.ageClock,
+      ageColor: age ? getComputedStyle(age).color : null,
+      ageLabel: age?.textContent?.trim(),
+      className: node.className,
+      directTickers: surface
+        ? Array.from(surface.children).filter((child) => child.matches(".ticker")).length
+        : 0,
+      lane,
+      line: [prefix?.textContent?.trim(), detail?.textContent?.trim()]
+        .filter(Boolean).join(" "),
+      mode: pane?.dataset.teamMode,
+      nestedTickers: surface?.querySelectorAll(".team-mode-pane .ticker").length ?? 0,
+      nonOverlapping: Boolean(
+        toolbarBounds
+          && paneBounds
+          && bounds.top >= toolbarBounds.bottom - 1
+          && bounds.bottom <= paneBounds.top + 1,
+      ),
+      pipColor: pip ? getComputedStyle(pip).backgroundColor : null,
+      pipStatus: pip?.dataset.laneStatus,
+      prefixColor: prefix ? getComputedStyle(prefix).color : null,
+      sourceColor: agent?.querySelector(".composer-shard-prose")
+        ? getComputedStyle(agent.querySelector(".composer-shard-prose")).color
+        : null,
+      status: node.dataset.laneStatus,
+      underToolbar: toolbar?.nextElementSibling === node && node.nextElementSibling === pane,
+      withinSurface: Boolean(
+        surfaceBounds
+          && bounds.left >= surfaceBounds.left - 1
+          && bounds.right <= surfaceBounds.right + 1
+          && bounds.top >= surfaceBounds.top - 1,
+      ),
+    };
+  });
+}
+
+async function assertTickerAcrossModes(team, ticker, expected, lane, message) {
+  for (const mode of ["Tasks", "Metrics", "Info", "Compose"]) {
+    await team.getByRole("tab", { name: new RegExp(`^${mode}`) }).click();
+    const actual = await captureTicker(ticker);
+    assert.equal(
+      actual.mode,
+      mode,
+      `${message}: ${mode} is the active mode`,
+    );
+    assertTickerPresentation(
+      actual,
+      expected,
+      lane,
+      "prose",
+      `${message}: ${mode}`,
+    );
+  }
+}
+
+function assertTickerPresentation(actual, expected, lane, activityClass, message) {
+  assertNewestLaneActivity(actual.line, expected);
+  assert.equal(actual.lane, lane, `${message}: status names the producing lane`);
+  assert.match(actual.className, new RegExp(`(?:^| )${activityClass}(?: |$)`));
+  assert.equal(actual.directTickers, 1, `${message}: lineage owns one direct status row`);
+  assert.equal(actual.nestedTickers, 0, `${message}: mode panes own no duplicate status row`);
+  assert.equal(actual.underToolbar, true, `${message}: status sits between toolbar and pane`);
+  assert.equal(actual.nonOverlapping, true, `${message}: status overlaps neither sibling`);
+  assert.equal(actual.withinSurface, true, `${message}: status remains inside its lineage width`);
+  assert.match(actual.ageLabel ?? "", /^(?:now|\d+[smhd])$/, `${message}: age is relative`);
+  assert.ok(Number.isFinite(Number(actual.authored)), `${message}: age carries activity time`);
+  assert.equal(actual.ageClock, "deadline", `${message}: age uses the shared ticking clock`);
+  assert.equal(actual.status, actual.pipStatus, `${message}: age and source pip share lane status`);
+  assert.equal(actual.ageColor, actual.pipColor, `${message}: age and source pip share color`);
+  assert.equal(actual.accent, actual.agentAccent, `${message}: ticker selects the source accent`);
+  assert.equal(actual.prefixColor, actual.sourceColor, `${message}: prefix carries source color`);
+  assert.ok(actual.aria?.endsWith(expected), `${message}: accessible name includes agent and status`);
 }

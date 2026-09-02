@@ -146,6 +146,11 @@ pub(super) fn render_populated_fleet(
                             &lineage_standings,
                             render,
                         )}
+                        {view::chrome::render_lineage_ticker(
+                            render.runtime,
+                            lineage,
+                            &lineage_standings,
+                        )}
                         <div class="team-pane" data-team-mode={mode.label()}>
                             <div
                                 class="team-mode-pane"
@@ -178,7 +183,6 @@ pub(super) fn render_populated_fleet(
                                     data-active="true"
                                     aria-hidden="false"
                                 >
-                                    {view::chrome::render_lineage_ticker(render.runtime, lineage)}
                                     {match mode {
                                         LineageMode::Tasks => render_tasks(
                                             render.runtime,

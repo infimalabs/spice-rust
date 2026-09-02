@@ -644,15 +644,10 @@ body:has(.shell--mosaic),
   color: var(--muted);
   font-size: 1rem;
 }
-
-.team-surface .ticker {
-  min-height: 26px;
-  padding: 6px 10px;
-  border-top: 1px solid var(--control-line-soft);
-  background: var(--panel);
-  font-size: .65rem;
-}
-
+.team-surface > .ticker { flex: 0 0 auto; min-height: 26px; padding: 6px 10px; border-bottom: 1px solid var(--control-line-soft); background: var(--panel); font-size: .65rem; }
+.team-surface .ticker-age { display: inline-block; width: 3ch; margin-right: 5px; color: var(--accent); text-align: right; }
+.team-surface .ticker-age.queued { color: var(--warning); } .team-surface .ticker-age.bound, .team-surface .ticker-age.unbound { color: var(--muted); opacity: .7; }
+.team-surface .ticker-prefix { color: var(--accent-slot, var(--accent)); font-weight: 700; }
 .team-pane {
   position: relative;
   display: flex;
