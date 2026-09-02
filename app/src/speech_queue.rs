@@ -206,6 +206,8 @@ pub struct NarrationMessage {
     pub key: String,
     /// Prose to enqueue if the cursor admits it as live.
     pub text: String,
+    /// Resident-classified utterance eligible for default Speak mode.
+    pub automatic_speech: Option<String>,
 }
 
 /// One message that crossed a per-agent cursor as live narration.
@@ -215,6 +217,8 @@ pub struct NarrationLine {
     pub lane: String,
     /// Prose to enqueue through the global arbiter.
     pub text: String,
+    /// Resident-classified utterance eligible for default Speak mode.
+    pub automatic_speech: Option<String>,
 }
 
 /// Bounded, recency-ordered per-agent narration cursors.
@@ -256,6 +260,7 @@ impl NarrationCursors {
             .map(|message| NarrationLine {
                 lane: message.lane.clone(),
                 text: message.text.clone(),
+                automatic_speech: message.automatic_speech.clone(),
             })
             .collect()
     }

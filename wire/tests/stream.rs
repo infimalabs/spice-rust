@@ -1,7 +1,7 @@
 use wire::{
-    Actor, AgentActivityKind, AgentMessage, CanonicalUuid, Envelope, Fact, MessageLocus, Packed,
-    StreamAdmissionError, StreamCursor, StreamFact, StreamFrame, StreamRequest, ViewSubject,
-    WireVersion,
+    Actor, AgentActivityKind, AgentMessage, AutomaticSpeech, AutomaticSpeechKind, CanonicalUuid,
+    Envelope, Fact, MessageLocus, Packed, StreamAdmissionError, StreamCursor, StreamFact,
+    StreamFrame, StreamRequest, ViewSubject, WireVersion,
 };
 
 fn uuid(value: &str) -> CanonicalUuid {
@@ -143,9 +143,8 @@ fn lane_seated_stream_fact_is_strict_and_credential_free() {
     assert_eq!(packed.rows[0].body()["name"], "Ava");
 }
 
-#[test]
-fn transcript_activity_defaults_only_the_documented_prose_shape() {
-    let prose = AgentMessage {
+fn prose_message() -> AgentMessage {
+    AgentMessage {
         lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163d8"),
         author: uuid("018f82d4-6f59-7d06-92e3-bce9131163d9"),
         locus: MessageLocus {
@@ -159,9 +158,15 @@ fn transcript_activity_defaults_only_the_documented_prose_shape() {
         observed: None,
         activity: AgentActivityKind::Prose,
         text: "settled".to_owned(),
+        automatic_speech: None,
         unavailable_tool_terminals: Vec::new(),
         media: Vec::new(),
-    };
+    }
+}
+
+#[test]
+fn transcript_activity_defaults_only_the_documented_prose_shape() {
+    let prose = prose_message();
     let encoded = wire::encode(&prose).expect("prose activity encodes");
     let encoded_text = String::from_utf8_lossy(&encoded);
     assert!(
@@ -180,13 +185,16 @@ fn transcript_activity_defaults_only_the_documented_prose_shape() {
         !encoded_text.contains("unavailable_tool_terminals"),
         "ordinary messages keep the established wire shape"
     );
+    assert!(
+        !encoded_text.contains("automatic_speech"),
+        "silent prose keeps the established wire shape"
+    );
     let decoded_prose = wire::decode::<AgentMessage>(&encoded).expect("default prose decodes");
     assert_eq!(decoded_prose.activity, AgentActivityKind::Prose);
     assert!(
         !decoded_prose.authored_synthetic,
         "retained messages from the old wire shape default to source-authored"
     );
-
     let synthetic = AgentMessage {
         authored_synthetic: true,
         ..prose.clone()
@@ -256,5 +264,34 @@ fn transcript_activity_defaults_only_the_documented_prose_shape() {
     assert!(
         wire::decode::<AgentMessage>(unknown.as_bytes()).is_err(),
         "an unknown activity kind fails instead of choosing a fallback"
+    );
+}
+
+#[test]
+fn automatic_speech_is_typed_and_has_one_absence_spelling() {
+    let prose = prose_message();
+    let mut explicit_null = serde_json::to_value(&prose).expect("prose becomes JSON");
+    explicit_null["automatic_speech"] = serde_json::Value::Null;
+    assert!(
+        wire::decode::<AgentMessage>(
+            &serde_json::to_vec(&explicit_null).expect("explicit-null prose encodes")
+        )
+        .is_err(),
+        "automatic speech has omission as its only absence spelling"
+    );
+
+    let spoken = AgentMessage {
+        automatic_speech: Some(AutomaticSpeech {
+            kind: AutomaticSpeechKind::Final,
+            text: "selected final".to_owned(),
+        }),
+        ..prose
+    };
+    let encoded = wire::encode(&spoken).expect("automatic speech encodes");
+    assert_eq!(
+        wire::decode::<AgentMessage>(&encoded)
+            .expect("automatic speech decodes")
+            .automatic_speech,
+        spoken.automatic_speech,
     );
 }

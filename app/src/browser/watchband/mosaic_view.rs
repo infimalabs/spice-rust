@@ -630,6 +630,10 @@ fn use_narration(
                     message.locus.event,
                 ),
                 text: message.text.clone(),
+                automatic_speech: message
+                    .automatic_speech
+                    .as_ref()
+                    .map(|speech| speech.text.clone()),
             },
         })
         .collect::<Vec<_>>();
@@ -639,7 +643,7 @@ fn use_narration(
         narrate.emit(NarrationBatch {
             lineage: lineage.to_string(),
             materialization: first,
-            enabled: *speech == LineageSpeech::Narrate,
+            mode: *speech,
             messages: messages.clone(),
         });
     });

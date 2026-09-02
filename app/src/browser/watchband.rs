@@ -20,8 +20,8 @@ use composer::{
     AgentMessageCard, agent_message_source_id, drop_on_lane, focus_after_render, keyboard_submit,
     paste_images, primary_textarea_id, render_image_indicators, render_quote_shards, update_body,
 };
-pub(super) use controls::{LineageControlAction, LineageControls};
-use controls::{LineageLife, LineageSpeech, render_lineage_controls};
+pub(super) use controls::{LineageControlAction, LineageControls, LineageSpeech};
+use controls::{LineageLife, render_lineage_controls};
 use fleet::{
     FleetRender, LineageMode, carries_lineage, render_empty_fleet, render_populated_fleet,
 };

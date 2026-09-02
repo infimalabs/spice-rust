@@ -1,5 +1,7 @@
 use super::*;
 
+const LINEAGE_SPEECH_STORAGE: &str = "spice:lineage-speech:v1";
+
 /// One policy shared by every agent member in the visual lane.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LineageLife {
@@ -83,6 +85,14 @@ impl LineageSpeech {
             Self::Speak => 1,
             Self::Narrate => 2,
         }
+    }
+
+    const fn storage_value(self) -> u8 {
+        self.index() as u8
+    }
+
+    fn from_storage(value: u8) -> Option<Self> {
+        Self::ALL.get(usize::from(value)).copied()
     }
 }
 
@@ -211,6 +221,29 @@ impl Reducible for LineageControls {
 }
 
 impl LineageControls {
+    pub(in crate::browser) fn restore() -> Self {
+        let mut controls = Self::default();
+        let Some(storage) =
+            web_sys::window().and_then(|window| window.local_storage().ok().flatten())
+        else {
+            return controls;
+        };
+        let Some(document) = storage.get_item(LINEAGE_SPEECH_STORAGE).ok().flatten() else {
+            return controls;
+        };
+        let Ok(rows) = serde_json::from_str::<Vec<(String, u8)>>(&document) else {
+            return controls;
+        };
+        for (lineage, value) in rows {
+            let (Ok(lineage), Some(speech)) = (lineage.parse(), LineageSpeech::from_storage(value))
+            else {
+                continue;
+            };
+            controls.lineages.entry(lineage).or_default().speech = speech;
+        }
+        controls
+    }
+
     pub(super) fn current(
         &self,
         lineage: CanonicalUuid,
@@ -290,6 +323,23 @@ impl LineageControls {
                 ..LineageControl::default()
             })
             .speech = speech;
+        self.store_speech();
+    }
+
+    fn store_speech(&self) {
+        let Some(storage) =
+            web_sys::window().and_then(|window| window.local_storage().ok().flatten())
+        else {
+            return;
+        };
+        let rows = self
+            .lineages
+            .iter()
+            .map(|(lineage, control)| (lineage.to_string(), control.speech.storage_value()))
+            .collect::<Vec<_>>();
+        if let Ok(document) = serde_json::to_string(&rows) {
+            let _ = storage.set_item(LINEAGE_SPEECH_STORAGE, &document);
+        }
     }
 
     fn request_life(

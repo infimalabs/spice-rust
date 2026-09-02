@@ -13,6 +13,7 @@ const EXPECTED_SCENARIOS = [
   "firefox-restored-mosaic",
   "reference-composer",
   "authority-task-flow",
+  "automatic-speech",
   "composer-lease",
   "variant-surfaces",
   "socket-resilience",
@@ -40,6 +41,7 @@ export const CANVAS_SHARDS = Object.freeze([
       "reference-composer",
       "firefox-restored-mosaic",
       "authority-task-flow",
+      "automatic-speech",
     ]),
   }),
   Object.freeze({

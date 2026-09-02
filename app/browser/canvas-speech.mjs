@@ -1,5 +1,7 @@
 // Speech installation and backend scenarios for the Canvas browser suite.
 import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import {
   assertOfflineObserved,
@@ -7,7 +9,11 @@ import {
   chooseCanvasView,
   CONNECT_MS,
   monitorPage,
+  reply,
+  TRANSITION_MS,
+  waitForPageFunction as waitForPage,
 } from "./canvas-fixture.mjs";
+import { launchBrowser } from "./headless-launch.mjs";
 
 async function routeSpeechBootstrap(page, speech) {
   await page.route("**/bootstrap", async (route) => {
@@ -129,6 +135,146 @@ export async function installSocketControl(context) {
       }
     };
   });
+}
+
+export async function assertAutomaticSpeechEngines(endpoint, fixture, worktree, lane) {
+  for (const engine of ["chromium", "firefox"]) {
+    await assertAutomaticSpeechEngine(engine, endpoint, fixture, worktree, lane);
+  }
+}
+
+async function assertAutomaticSpeechEngine(engine, endpoint, fixture, worktree, lane) {
+  const browser = await launchBrowser(engine);
+  const context = await browser.newContext({ viewport: { width: 1000, height: 720 } });
+  await installBrowserSpeech(context);
+  const page = await context.newPage();
+  const monitor = monitorPage(page);
+  try {
+    await page.goto(endpoint, { waitUntil: "networkidle" });
+    await chooseCanvasView(page, "Agents");
+    const surface = page.locator(".team-surface", {
+      has: page.locator(`[data-agent-lane="${lane}"]`),
+    });
+    await surface.getByRole("tab", { name: /^Compose/ }).click();
+    const mode = surface.locator('.team-speech input[type="range"]');
+    assert.equal(await mode.inputValue(), "1", `${engine} defaults to Speak`);
+    assert.equal(await speechCount(page), 0, `${engine} materialized history stays silent`);
+
+    await emitAssistantRecord(worktree, page, lane, `${engine} ordinary progress`);
+    assert.equal(await speechCount(page), 0, `${engine} Speak ignores commentary`);
+
+    const acked = await reply(fixture, ["steer", lane, `${engine} acknowledged direction`]);
+    await emitAssistantRecord(worktree, page, lane, `ACK ${acked.body.key}: applied ${engine}`);
+    await waitForSpeech(page, 1, `${engine} canonical ACK`);
+    assert.equal(await latestSpeechText(page), `applied ${engine}`);
+    await settleLatestSpeech(page);
+
+    await resetSpeech(page);
+    await emitAssistantRecord(worktree, page, lane, "ACK not-a-key: malformed");
+    assert.equal(await speechCount(page), 0, `${engine} malformed ACK stays silent`);
+    const declined = await reply(fixture, ["steer", lane, `${engine} declined direction`]);
+    await emitAssistantRecord(worktree, page, lane, `NACK ${declined.body.key}: unsafe`);
+    assert.equal(await speechCount(page), 0, `${engine} NACK-only prose stays silent`);
+
+    const finalText = [
+      `Opened [the ${engine} final](https://example.test).`,
+      "middle paragraph must stay silent",
+      "Landed 7a12bc99.",
+    ].join("\n\n");
+    await emitAssistantRecord(worktree, page, lane, finalText, { final: true });
+    await waitForSpeech(page, 1, `${engine} final answer`);
+    assert.equal(
+      await latestSpeechText(page),
+      `Opened the ${engine} final. Landed commit 7 a 1 2 b c 9.`,
+    );
+    await settleLatestSpeech(page);
+
+    await page.reload({ waitUntil: "networkidle" });
+    await chooseCanvasView(page, "Agents");
+    assert.equal(await speechCount(page), 0, `${engine} reload replays no speech`);
+    assert.equal(await mode.inputValue(), "1", `${engine} retains default Speak after reload`);
+
+    await mode.fill("0");
+    await page.reload({ waitUntil: "networkidle" });
+    await chooseCanvasView(page, "Agents");
+    assert.equal(await mode.inputValue(), "0", `${engine} persists Quiet`);
+    await emitAssistantRecord(worktree, page, lane, `${engine} quiet final`, { final: true });
+    assert.equal(await speechCount(page), 0, `${engine} Quiet suppresses a final answer`);
+
+    await mode.fill("2");
+    await page.reload({ waitUntil: "networkidle" });
+    await chooseCanvasView(page, "Agents");
+    assert.equal(await mode.inputValue(), "2", `${engine} persists Narrate`);
+    await emitAssistantRecord(worktree, page, lane, `${engine} narrated commentary`);
+    await waitForSpeech(page, 1, `${engine} Narrate commentary`);
+    assert.equal(await latestSpeechText(page), `${engine} narrated commentary`);
+    await settleLatestSpeech(page);
+    await mode.fill("1");
+    monitor.assertClean();
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+}
+
+async function emitAssistantRecord(worktree, page, lane, text, { final = false } = {}) {
+  const cards = page.locator(
+    `[data-card-kind="agent-message"][data-agent-lane="${lane}"]`,
+  );
+  const before = await cards.count();
+  const message = {
+    type: "message",
+    role: "assistant",
+    content: [{ type: "text", text }],
+    usage: {
+      input_tokens: 1,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+      output_tokens: 1,
+    },
+  };
+  if (final) message.stop_reason = "end_turn";
+  await writeFile(join(worktree, ".spice-authored-prose-trigger"), `${JSON.stringify({
+    timestamp: new Date().toISOString(),
+    type: "assistant",
+    message,
+  })}\n`);
+  await cards.nth(before).waitFor({ timeout: CONNECT_MS });
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
+    () => requestAnimationFrame(resolve),
+  )));
+}
+
+function speechCount(page) {
+  return page.evaluate(() => window.__speechLog.filter((row) => row.action === "speak").length);
+}
+
+function latestSpeechText(page) {
+  return page.evaluate(() => window.__speechLog.filter((row) => row.action === "speak").at(-1)?.text);
+}
+
+function resetSpeech(page) {
+  return page.evaluate(() => {
+    window.__speechLog = [];
+    window.__speechUtterances = [];
+    window.__speechActive = 0;
+  });
+}
+
+async function waitForSpeech(page, count, label) {
+  await waitForPage(page, `${label} dispatches speech`, TRANSITION_MS,
+    (expected) => window.__speechLog.filter((row) => row.action === "speak").length === expected,
+    count);
+}
+
+async function settleLatestSpeech(page) {
+  await page.evaluate(() => {
+    const utterance = window.__speechUtterances.at(-1);
+    if (!utterance?.onend) throw new Error("automatic speech has no completion callback");
+    utterance.onend(new Event("end"));
+  });
+  await waitForPage(page, "automatic speech settles", TRANSITION_MS,
+    () => window.__speechActive === 0);
 }
 
 export async function assertSpeechVariants(browser, endpoint) {

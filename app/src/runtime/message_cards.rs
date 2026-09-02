@@ -34,6 +34,7 @@ struct MessageCardFingerprint<'a> {
     authored_synthetic: bool,
     observed: Option<&'a wire::Instant>,
     text: &'a str,
+    automatic_speech: Option<&'a wire::AutomaticSpeech>,
     unavailable_tool_terminals: &'a [String],
     media: &'a [wire::Media],
 }
@@ -55,6 +56,7 @@ fn fingerprint(message: &AgentMessage) -> Option<MessageCardFingerprint<'_>> {
         authored_synthetic: message.authored_synthetic,
         observed: message.observed.as_ref(),
         text: &message.text,
+        automatic_speech: message.automatic_speech.as_ref(),
         unavailable_tool_terminals: &message.unavailable_tool_terminals,
         media: &message.media,
     })
@@ -224,6 +226,7 @@ mod tests {
             observed: None,
             activity,
             text: offset.to_string(),
+            automatic_speech: None,
             unavailable_tool_terminals: Vec::new(),
             media: Vec::new(),
         }
