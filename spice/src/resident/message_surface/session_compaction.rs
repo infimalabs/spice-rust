@@ -1,5 +1,7 @@
 //! Structured compaction boundaries recovered from preserved vendor sessions.
 
+#[cfg(test)]
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{self, BufRead as _, BufReader, Read as _, Seek as _, SeekFrom};
@@ -58,6 +60,7 @@ const RECORD_GUARD_BYTES: usize = 256;
 const SCAN_BYTE_BUDGET: usize = 256 * 1024;
 const SCAN_RECORD_BUDGET: usize = 128;
 const VALIDATION_BYTE_BUDGET: usize = 256 * 1024;
+const AUTHENTICATION_BYTE_BUDGET: usize = VALIDATION_BYTE_BUDGET * 2;
 
 struct PrefixValidation {
     length: u64,
@@ -65,7 +68,23 @@ struct PrefixValidation {
     offset: u64,
     observed: blake3::Hasher,
     stamp: FileStamp,
+    authentication: Option<PrefixAuthentication>,
     records: Vec<CompactionRecord>,
+    #[cfg(test)]
+    after_authentication_read: Option<Box<dyn FnOnce()>>,
+}
+
+struct PrefixAuthentication {
+    length: u64,
+    expected: blake3::Hash,
+    offset: u64,
+    observed: blake3::Hasher,
+    stamp: FileStamp,
+}
+
+#[cfg(test)]
+thread_local! {
+    static VALIDATION_BYTES_READ: Cell<u64> = const { Cell::new(0) };
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -302,7 +321,10 @@ fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
         offset: 0,
         observed: blake3::Hasher::new(),
         stamp,
+        authentication: None,
         records,
+        #[cfg(test)]
+        after_authentication_read: None,
     });
     advance_validation(cursor)
 }
@@ -343,9 +365,41 @@ fn advance_validation(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> 
         .as_mut()
         .expect("prefix validation advances only while pending");
     let mut file = File::open(&cursor.path)?;
-    let observed = validation.observed.clone().finalize();
-    if !admit_validation_stamp(&mut file, validation, validation.offset, observed)? {
+    let stamp = FileStamp::read(&file)?;
+    if validation.authentication.is_none() {
+        let Some(extension) = validation.stamp.extension(stamp, validation.length) else {
+            reset(cursor);
+            return Ok(Vec::new());
+        };
+        if extension != validation.stamp {
+            begin_prefix_authentication(validation, extension);
+        }
+    }
+    if validation.authentication.is_some() {
+        match advance_prefix_authentication(&mut file, validation)? {
+            AuthenticationProgress::Pending => {}
+            AuthenticationProgress::Moved => return Ok(Vec::new()),
+            AuthenticationProgress::Complete => {}
+            AuthenticationProgress::Invalid => {
+                reset(cursor);
+                return Ok(Vec::new());
+            }
+        }
+    }
+    if validation.authentication.is_some() && validation.offset == validation.length {
+        return Ok(Vec::new());
+    }
+    let main_stamp = validation
+        .authentication
+        .as_ref()
+        .map_or(validation.stamp, |authentication| authentication.stamp);
+    let observed_stamp = FileStamp::read(&file)?;
+    let Some(observed_stamp) = main_stamp.extension(observed_stamp, validation.length) else {
         reset(cursor);
+        return Ok(Vec::new());
+    };
+    if observed_stamp != main_stamp {
+        begin_prefix_authentication(validation, observed_stamp);
         return Ok(Vec::new());
     }
     file.seek(SeekFrom::Start(validation.offset))?;
@@ -353,7 +407,7 @@ fn advance_validation(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> 
     let limit = usize::try_from(remaining.min(VALIDATION_BYTE_BUDGET as u64))
         .expect("the bounded validation read fits usize");
     let mut bytes = vec![0; limit];
-    if file.read_exact(&mut bytes).is_err() {
+    if read_validation_exact(&mut file, &mut bytes).is_err() {
         reset(cursor);
         return Ok(Vec::new());
     }
@@ -362,13 +416,25 @@ fn advance_validation(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> 
     let offset = validation
         .offset
         .saturating_add(u64::try_from(bytes.len()).expect("a validation buffer fits u64"));
-    if !admit_validation_stamp(&mut file, validation, offset, observed.clone().finalize())? {
+    let stamp = FileStamp::read(&file)?;
+    let Some(extension) = main_stamp.extension(stamp, validation.length) else {
         reset(cursor);
+        return Ok(Vec::new());
+    };
+    if extension != main_stamp {
+        begin_prefix_authentication(validation, extension);
         return Ok(Vec::new());
     }
     validation.observed = observed;
     validation.offset = offset;
+    if let Some(authentication) = validation.authentication.as_mut() {
+        authentication.length = validation.offset;
+        authentication.expected = validation.observed.clone().finalize();
+    }
     if validation.offset < validation.length {
+        return Ok(Vec::new());
+    }
+    if validation.authentication.is_some() {
         return Ok(Vec::new());
     }
     if validation.observed.finalize() != validation.expected {
@@ -382,41 +448,107 @@ fn advance_validation(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> 
         .records)
 }
 
-fn admit_validation_stamp(
+enum AuthenticationProgress {
+    Pending,
+    Moved,
+    Complete,
+    Invalid,
+}
+
+fn begin_prefix_authentication(validation: &mut PrefixValidation, stamp: FileStamp) {
+    if validation.offset == 0 {
+        validation.stamp = stamp;
+        return;
+    }
+    validation.authentication = Some(PrefixAuthentication {
+        length: validation.offset,
+        expected: validation.observed.clone().finalize(),
+        offset: 0,
+        observed: blake3::Hasher::new(),
+        stamp,
+    });
+}
+
+fn advance_prefix_authentication(
     file: &mut File,
     validation: &mut PrefixValidation,
-    observed_length: u64,
-    observed_hash: blake3::Hash,
-) -> io::Result<bool> {
+) -> io::Result<AuthenticationProgress> {
+    let authentication = validation
+        .authentication
+        .as_ref()
+        .expect("extension authentication advances only while pending");
     let stamp = FileStamp::read(file)?;
-    let Some(extension) = validation.stamp.extension(stamp, validation.length) else {
-        return Ok(false);
+    let Some(stamp) = authentication.stamp.extension(stamp, validation.length) else {
+        return Ok(AuthenticationProgress::Invalid);
     };
-    if extension == validation.stamp {
-        return Ok(true);
+    let remaining = authentication.length.saturating_sub(authentication.offset);
+    let limit = usize::try_from(remaining.min(AUTHENTICATION_BYTE_BUDGET as u64))
+        .expect("the bounded authentication read fits usize");
+    file.seek(SeekFrom::Start(authentication.offset))?;
+    let mut bytes = vec![0; limit];
+    if read_validation_exact(file, &mut bytes).is_err() {
+        return Ok(AuthenticationProgress::Invalid);
     }
 
-    // Extent growth alone cannot prove that earlier writes were append-only.
-    file.seek(SeekFrom::Start(0))?;
-    let mut remaining = observed_length;
-    let mut hasher = blake3::Hasher::new();
-    let mut bytes = vec![0; VALIDATION_BYTE_BUDGET];
-    let capacity = u64::try_from(bytes.len()).expect("validation budget fits u64");
-    while remaining > 0 {
-        let length = usize::try_from(remaining.min(capacity))
-            .expect("the bounded validation read fits usize");
-        if file.read_exact(&mut bytes[..length]).is_err() {
-            return Ok(false);
-        }
-        hasher.update(&bytes[..length]);
-        remaining =
-            remaining.saturating_sub(u64::try_from(length).expect("a validation buffer fits u64"));
+    #[cfg(test)]
+    if let Some(after_read) = validation.after_authentication_read.take() {
+        after_read();
     }
-    if hasher.finalize() != observed_hash {
-        return Ok(false);
+
+    let post = FileStamp::read(file)?;
+    let Some(post) = stamp.extension(post, validation.length) else {
+        return Ok(AuthenticationProgress::Invalid);
+    };
+    if post != stamp {
+        let authentication = validation
+            .authentication
+            .as_mut()
+            .expect("moving authentication remains pending");
+        authentication.offset = 0;
+        authentication.observed = blake3::Hasher::new();
+        authentication.stamp = post;
+        return Ok(AuthenticationProgress::Moved);
     }
-    validation.stamp = extension;
-    Ok(true)
+
+    let authentication = validation
+        .authentication
+        .as_mut()
+        .expect("stable authentication remains pending");
+    authentication.stamp = post;
+    authentication.observed.update(&bytes);
+    authentication.offset = authentication
+        .offset
+        .saturating_add(u64::try_from(bytes.len()).expect("an authentication buffer fits u64"));
+    if authentication.offset < authentication.length {
+        return Ok(AuthenticationProgress::Pending);
+    }
+    if authentication.observed.finalize() != authentication.expected {
+        return Ok(AuthenticationProgress::Invalid);
+    }
+    validation.stamp = authentication.stamp;
+    validation.authentication = None;
+    Ok(AuthenticationProgress::Complete)
+}
+
+fn read_validation_exact(file: &mut File, bytes: &mut [u8]) -> io::Result<()> {
+    #[cfg(test)]
+    VALIDATION_BYTES_READ.with(|read| {
+        read.set(
+            read.get()
+                .saturating_add(u64::try_from(bytes.len()).expect("a validation read fits u64")),
+        );
+    });
+    file.read_exact(bytes)
+}
+
+#[cfg(test)]
+fn reset_validation_bytes_read() {
+    VALIDATION_BYTES_READ.with(|read| read.set(0));
+}
+
+#[cfg(test)]
+fn validation_bytes_read() -> u64 {
+    VALIDATION_BYTES_READ.with(Cell::get)
 }
 
 fn guard_matches(file: &mut File, cursor: &Cursor) -> io::Result<bool> {

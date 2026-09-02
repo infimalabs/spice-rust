@@ -343,6 +343,7 @@ fn append_only_growth_preserves_progress_and_stays_behind_the_held_boundary() {
     let frozen_next_call = cursor.next_call;
 
     let mut records = Vec::new();
+    let mut validation_reads = 0_u64;
     for serial in 0..8 {
         let suffix = if serial == 0 {
             LATER_CALL.to_owned()
@@ -355,7 +356,14 @@ fn append_only_growth_preserves_progress_and_stays_behind_the_held_boundary() {
             .as_ref()
             .expect("validation remains pending before the poll")
             .offset;
+        reset_validation_bytes_read();
         records = scan(&mut cursor).expect("growing transcript validates");
+        let read = validation_bytes_read();
+        validation_reads = validation_reads.saturating_add(read);
+        assert!(
+            read <= (VALIDATION_BYTE_BUDGET * 3) as u64,
+            "one growing poll stays inside the fixed authentication and validation bound",
+        );
         assert_eq!(cursor.next, frozen_next, "suffix remains unconsumed");
         assert_eq!(cursor.next_call, frozen_next_call);
         if !records.is_empty() {
@@ -373,6 +381,10 @@ fn append_only_growth_preserves_progress_and_stays_behind_the_held_boundary() {
         );
     }
     assert_eq!(records.len(), 1, "the held boundary eventually publishes");
+    assert!(
+        validation_reads <= (VALIDATION_BYTE_BUDGET * 3 * 8) as u64,
+        "repeated growth has a linear cumulative read bound",
+    );
     assert_eq!(
         records[0].unavailable_tool_terminals,
         ["Read: held.rs"],
@@ -465,6 +477,80 @@ fn prefix_mutation_hidden_by_growth_resets_validation() {
     let records = scan_until_boundary(&mut cursor, "rewritten generation replays");
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].unavailable_tool_terminals, ["Read: held.rs"]);
+}
+
+#[test]
+fn mutation_during_extension_authentication_discards_the_moving_slice() {
+    const SUFFIX: &str = "{\"type\":\"progress\",\"serial\":1}\n";
+    let scratch = Scratch::new("mutation-during-authentication");
+    let transcript = scratch.transcript();
+    let original = large_claude_transcript_with_pending('x', 192);
+    let mutation = u64::try_from(original.find("xxxx").expect("fixture text exists"))
+        .expect("fixture offset fits u64");
+    fs::write(&transcript, original).expect("large original transcript is written");
+    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+    for _ in 0..8 {
+        assert!(scan(&mut cursor).expect("prefix scans").is_empty());
+        if cursor.validation.is_some() {
+            break;
+        }
+    }
+    let frozen = cursor
+        .validation
+        .as_ref()
+        .expect("validation is pending")
+        .offset;
+    append(&transcript, SUFFIX.as_bytes());
+    let moving = transcript.clone();
+    cursor
+        .validation
+        .as_mut()
+        .expect("validation remains pending")
+        .after_authentication_read = Some(Box::new(move || {
+        let mut rewritten = OpenOptions::new()
+            .write(true)
+            .open(&moving)
+            .expect("transcript opens for an in-flight rewrite");
+        rewritten
+            .seek(std::io::SeekFrom::Start(mutation))
+            .expect("in-flight mutation seeks");
+        rewritten
+            .write_all(b"y")
+            .expect("in-flight mutation writes");
+        drop(rewritten);
+        append(&moving, SUFFIX.as_bytes());
+    }));
+
+    reset_validation_bytes_read();
+    assert!(
+        scan(&mut cursor)
+            .expect("moving authentication defers")
+            .is_empty()
+    );
+    assert!(validation_bytes_read() <= VALIDATION_BYTE_BUDGET as u64);
+    let validation = cursor
+        .validation
+        .as_ref()
+        .expect("the uncommitted authentication keeps original scan state");
+    assert_eq!(validation.offset, frozen);
+    assert_eq!(
+        validation
+            .authentication
+            .as_ref()
+            .expect("moved slice restarts authentication")
+            .offset,
+        0,
+    );
+
+    assert!(
+        scan(&mut cursor)
+            .expect("rewritten prefix refuses")
+            .is_empty()
+    );
+    assert_eq!(cursor.next, 0, "mixed-generation scan state is discarded");
+    assert_eq!(cursor.next_call, 0);
+    assert!(cursor.pending.is_empty());
+    assert!(cursor.validation.is_none());
 }
 
 #[test]
