@@ -390,7 +390,15 @@ export async function assertModeSwitchPreservesDeferredMosaic(
 export async function armPlacementProbe(plane, excluded = []) {
   return plane.evaluate((element, excludedKeys) => {
     const token = crypto.randomUUID();
-    const attributes = ["data-track", "data-span", "data-base", "data-row", "data-rows", "style"];
+    const attributes = [
+      "data-creation-index",
+      "data-track",
+      "data-span",
+      "data-base",
+      "data-row",
+      "data-rows",
+      "style",
+    ];
     const cards = [...element.querySelectorAll('.mosaic-message-card[data-layout-phase="committed"]')]
       .filter((card) => !excludedKeys.includes(card.dataset.mosaicCardKey));
     const keys = cards.map((card) => card.dataset.mosaicCardKey);
@@ -432,6 +440,7 @@ export async function armPlacementProbe(plane, excluded = []) {
         const box = card.getBoundingClientRect();
         return {
           key: card.dataset.mosaicCardKey,
+          creationIndex: card.dataset.creationIndex,
           order: [...element.querySelectorAll(".mosaic-message-card")].indexOf(card),
           track: card.dataset.track,
           span: card.dataset.span,
@@ -472,6 +481,7 @@ export async function finishPlacementProbe(plane, armed) {
           const box = card.getBoundingClientRect();
           return {
             key: card.dataset.mosaicCardKey,
+            creationIndex: card.dataset.creationIndex,
             order: cards.indexOf(card),
             track: card.dataset.track,
             span: card.dataset.span,
@@ -485,8 +495,20 @@ export async function finishPlacementProbe(plane, armed) {
   }, armed);
 }
 
+function assertCreationIndexesStable(armed, finished, label) {
+  const earlier = new Map(armed.cards.map((card) => [card.key, card.creationIndex]));
+  for (const card of finished.cards) {
+    assert.equal(
+      card.creationIndex,
+      earlier.get(card.key),
+      `${label} preserves creation index for ${JSON.stringify(card.key)}`,
+    );
+  }
+}
+
 export function assertUnmoved(armed, finished, label) {
   assert.ok(finished.retained, `${label} retains every committed card node`);
+  assertCreationIndexesStable(armed, finished, label);
   assert.deepEqual(finished.writes, [], `${label} writes no card placement`);
   assert.deepEqual(
     finished.cards,
@@ -500,6 +522,7 @@ export function assertPlacementStable(armed, finished, label) {
     .map(({ order: _order, ...card }) => card)
     .sort((left, right) => left.key.localeCompare(right.key));
   assert.ok(finished.retained, `${label} retains every committed card node`);
+  assertCreationIndexesStable(armed, finished, label);
   assert.deepEqual(finished.writes, [], `${label} writes no card placement`);
   assert.deepEqual(
     withoutOrder(finished.cards),
@@ -511,6 +534,7 @@ export function assertPlacementStable(armed, finished, label) {
 export function assertPlacementRetained(armed, finished, label) {
   const withoutBox = (cards) => cards.map(({ box: _box, ...card }) => card);
   assert.ok(finished.retained, `${label} retains every committed card node`);
+  assertCreationIndexesStable(armed, finished, label);
   assert.deepEqual(finished.writes, [], `${label} writes no card placement`);
   assert.deepEqual(
     withoutBox(finished.cards),

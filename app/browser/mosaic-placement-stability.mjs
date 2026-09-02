@@ -1,39 +1,5 @@
 import assert from "node:assert/strict";
 
-/// Read placement from committed attributes, not animated viewport geometry.
-export async function captureCanonicalPlacements(plane, selectedKeys = null) {
-  return plane.evaluate((element, requested) => {
-    const requestedSet = requested === null ? null : new Set(requested);
-    const cards = [...element.querySelectorAll('.mosaic-message-card[data-layout-phase="committed"]')]
-      .filter((card) => requestedSet === null || requestedSet.has(card.dataset.mosaicCardKey))
-      .map((card) => {
-        const key = card.dataset.mosaicCardKey;
-        const raw = [card.dataset.track, card.dataset.base, card.dataset.span, card.dataset.rows];
-        const tuple = raw.map(Number);
-        if (!key || raw.some((value) => value === undefined)
-          || tuple.some((value) => !Number.isSafeInteger(value))) {
-          throw new Error(`card has a non-canonical committed placement: ${JSON.stringify({ key, raw })}`);
-        }
-        return { key, tuple, bytes: JSON.stringify(tuple) };
-      })
-      .sort((left, right) => left.key.localeCompare(right.key));
-    const keys = cards.map(({ key }) => key);
-    if (new Set(keys).size !== keys.length) {
-      throw new Error(`canonical placement snapshot contains duplicate identities: ${JSON.stringify(keys)}`);
-    }
-    if (requestedSet !== null) {
-      const missing = requested.filter((key) => !keys.includes(key));
-      if (missing.length > 0) {
-        throw new Error(`canonical placement snapshot is missing selected cards: ${JSON.stringify(missing)}`);
-      }
-    }
-    if (cards.length === 0) {
-      throw new Error("canonical placement snapshot found no committed Mosaic cards");
-    }
-    return cards;
-  }, selectedKeys);
-}
-
 function indexed(snapshot, label) {
   const cards = new Map(snapshot.map((card) => [card.key, card]));
   assert.equal(cards.size, snapshot.length, `${label} has unique card identities`);
