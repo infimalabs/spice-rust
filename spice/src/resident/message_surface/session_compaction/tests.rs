@@ -322,6 +322,99 @@ fn unchanged_append_only_prefix_never_replays_an_earlier_boundary() {
 }
 
 #[test]
+fn resident_reload_bootstraps_every_boundary_in_the_retained_visible_tail() {
+    let scratch = Scratch::new("retained-tail-bootstrap");
+    let transcript = scratch.transcript();
+    let filler = "x".repeat(1_800);
+    let mut contents = String::new();
+    for index in 0..300 {
+        contents.push_str(&claude_assistant_record(index, &filler));
+        if matches!(index, 80 | 180 | 260) {
+            contents.push_str(
+                "{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
+            );
+        }
+    }
+    fs::write(&transcript, &contents).expect("long preserved transcript is written");
+    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+    cursor.initialized = false;
+
+    let records = scan(&mut cursor).expect("resident tail bootstrap scans");
+
+    assert_eq!(records.len(), 3, "every retained-tail boundary is admitted");
+    assert!(cursor.initialized);
+    assert_eq!(
+        cursor.next,
+        u64::try_from(contents.len()).expect("fixture length fits u64"),
+        "bootstrap continues at the complete durable tail",
+    );
+    assert_eq!(cursor.prefix_start, cursor.next);
+    assert!(cursor.validation.is_none());
+    assert!(
+        records.windows(2).all(|pair| {
+            let earlier = pair[0].decoded.locus();
+            let later = pair[1].decoded.locus();
+            (earlier.member, earlier.offset, earlier.length)
+                < (later.member, later.offset, later.length)
+        }),
+        "tail boundaries preserve source chronology",
+    );
+}
+
+#[test]
+fn resident_reload_does_not_manufacture_a_boundary_from_a_long_prose_tail() {
+    let scratch = Scratch::new("prose-only-tail-bootstrap");
+    let transcript = scratch.transcript();
+    let filler = "x".repeat(1_800);
+    let contents = (0..300)
+        .map(|index| claude_assistant_record(index, &filler))
+        .collect::<String>();
+    fs::write(&transcript, &contents).expect("long prose transcript is written");
+    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+    cursor.initialized = false;
+
+    assert!(
+        scan(&mut cursor)
+            .expect("prose-only tail bootstrap scans")
+            .is_empty(),
+        "only typed durable compactions create boundaries",
+    );
+    assert!(cursor.initialized);
+    assert_eq!(cursor.prefix_start, cursor.next);
+}
+
+#[test]
+fn live_boundary_after_tail_bootstrap_authenticates_only_the_new_context_epoch() {
+    const CALL: &str = "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"later\",\"name\":\"Read\",\"input\":{\"path\":\"later.rs\"}}]}}\n";
+    const BOUNDARY: &str = "{\"timestamp\":\"2030-04-12T19:44:10.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n";
+    let scratch = Scratch::new("post-bootstrap-live-boundary");
+    let transcript = scratch.transcript();
+    let filler = "x".repeat(1_800);
+    let contents = (0..300)
+        .map(|index| claude_assistant_record(index, &filler))
+        .collect::<String>();
+    fs::write(&transcript, &contents).expect("long prose transcript is written");
+    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+    cursor.initialized = false;
+    assert!(scan(&mut cursor).expect("tail bootstrap scans").is_empty());
+    let epoch_start = cursor.next;
+    append(&transcript, format!("{CALL}{BOUNDARY}").as_bytes());
+
+    reset_validation_bytes_read();
+    let records = scan(&mut cursor).expect("live boundary scans");
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].unavailable_tool_terminals, ["Read: later.rs"]);
+    assert_eq!(cursor.prefix_start, cursor.next);
+    assert!(cursor.prefix_start > epoch_start);
+    assert!(
+        validation_bytes_read()
+            <= u64::try_from(CALL.len() + BOUNDARY.len()).expect("suffix length fits u64"),
+        "the live boundary does not re-authenticate the long preserved prefix",
+    );
+}
+
+#[test]
 fn large_prefix_validation_is_bounded_and_restarts_after_generation_movement() {
     let scratch = Scratch::new("progressive-validation");
     let transcript = scratch.transcript();
@@ -997,7 +1090,9 @@ fn cursor(path: &Path, dialect: listen::Dialect) -> Cursor {
         dialect,
         author: uuid("018f82d4-6f59-7d06-92e3-bce9131163ef"),
         member: session_member("018f7777-7777-7444-8888-999999999999"),
+        initialized: true,
         next: 0,
+        prefix_start: 0,
         next_call: 0,
         pending: BTreeMap::new(),
         prefix: blake3::Hasher::new(),
@@ -1065,6 +1160,12 @@ fn large_claude_transcript(fill: char) -> String {
     format!(
         "{}{{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}}\n",
         record.repeat(96),
+    )
+}
+
+fn claude_assistant_record(index: usize, filler: &str) -> String {
+    format!(
+        "{{\"type\":\"assistant\",\"message\":{{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"{index} {filler}\"}}]}}}}\n",
     )
 }
 

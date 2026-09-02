@@ -37,7 +37,9 @@ struct Cursor {
     dialect: listen::Dialect,
     author: CanonicalUuid,
     member: u64,
+    initialized: bool,
     next: u64,
+    prefix_start: u64,
     next_call: u64,
     pending: BTreeMap<String, PendingTool>,
     prefix: blake3::Hasher,
@@ -57,12 +59,14 @@ struct RecordGuard {
 }
 
 const RECORD_GUARD_BYTES: usize = 256;
+const INITIAL_WINDOW_BYTES: u64 = 256 * 1024;
 const SCAN_BYTE_BUDGET: usize = 256 * 1024;
 const SCAN_RECORD_BUDGET: usize = 128;
 const VALIDATION_BYTE_BUDGET: usize = 256 * 1024;
 const AUTHENTICATION_BYTE_BUDGET: usize = VALIDATION_BYTE_BUDGET * 2;
 
 struct PrefixValidation {
+    start: u64,
     length: u64,
     expected: blake3::Hash,
     offset: u64,
@@ -75,6 +79,7 @@ struct PrefixValidation {
 }
 
 struct PrefixAuthentication {
+    start: u64,
     length: u64,
     expected: blake3::Hash,
     offset: u64,
@@ -213,7 +218,9 @@ impl SessionCompactions {
                         dialect,
                         author: session.occupant,
                         member: session_member(&session.identity),
+                        initialized: false,
                         next: 0,
+                        prefix_start: 0,
                         next_call: 0,
                         pending: BTreeMap::new(),
                         prefix: blake3::Hasher::new(),
@@ -246,6 +253,9 @@ struct CompactionRecord {
 }
 
 fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
+    if !cursor.initialized {
+        return bootstrap(cursor);
+    }
     if cursor.validation.is_some() {
         return advance_validation(cursor);
     }
@@ -264,55 +274,8 @@ fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
         if read == 0 || bytes.last() != Some(&b'\n') {
             break;
         }
-        let length = u64::try_from(read).expect("a record buffer length fits u64");
         scanned = scanned.saturating_add(read);
-        let locus = listen::Locus {
-            member: cursor.member,
-            offset: cursor.next,
-            length,
-        };
-        let offset = cursor.next;
-        cursor.next = cursor.next.saturating_add(length);
-        cursor.prefix.update(&bytes);
-        cursor.guard = Some(RecordGuard {
-            offset,
-            length,
-            hash: record_guard_hash(&bytes),
-        });
-        let decoded = listen::decode(cursor.dialect, &bytes, locus)
-            .expect("the locus is built from the exact session record bytes");
-        let authored = decoded
-            .context()
-            .and_then(|context| context.timestamp.clone());
-        for (ordinal, event) in decoded.events().iter().enumerate() {
-            let ordinal = u32::try_from(ordinal)
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
-            match event {
-                listen::Event::Tool(tool) => fold_tool(cursor, tool),
-                listen::Event::Compaction(_) => {
-                    let Some(authored) = authored.clone() else {
-                        cursor.pending.clear();
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "preserved session compaction record carries no timestamp",
-                        ));
-                    };
-                    let mut unavailable = cursor.pending.values().collect::<Vec<_>>();
-                    unavailable.sort_by_key(|tool| tool.order);
-                    records.push(CompactionRecord {
-                        decoded: event.clone(),
-                        authored,
-                        ordinal,
-                        unavailable_tool_terminals: unavailable
-                            .into_iter()
-                            .map(|tool| tool.preview.clone())
-                            .collect(),
-                    });
-                    cursor.pending.clear();
-                }
-                _ => {}
-            }
-        }
+        decode_record(cursor, &bytes, &mut records)?;
         if !records.is_empty() || scanned >= SCAN_BYTE_BUDGET {
             break;
         }
@@ -323,9 +286,10 @@ fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
     let stamp = FileStamp::read(reader.get_ref())?;
     drop(reader);
     cursor.validation = Some(PrefixValidation {
+        start: cursor.prefix_start,
         length: cursor.next,
         expected: cursor.prefix.clone().finalize(),
-        offset: 0,
+        offset: cursor.prefix_start,
         observed: blake3::Hasher::new(),
         stamp,
         authentication: None,
@@ -334,6 +298,158 @@ fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
         after_authentication_read: None,
     });
     advance_validation(cursor)
+}
+
+/// Seed a new resident from the same bounded visible tail Canvas retains.
+///
+/// A forward replay from byte zero makes the hundredth boundary pay for the
+/// first ninety-nine prefixes again. Read a stable newest-record window once,
+/// expanding only until it covers the visible-card capacity, and continue live
+/// scanning from that authenticated snapshot.
+fn bootstrap(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
+    let mut window = INITIAL_WINDOW_BYTES;
+    loop {
+        let mut file = File::open(&cursor.path)?;
+        let stamp = FileStamp::read(&file)?;
+        let start = tail_start(&mut file, stamp.length, window)?;
+        file.seek(SeekFrom::Start(start))?;
+        let mut reader = BufReader::new(file.take(stamp.length.saturating_sub(start)));
+
+        cursor.next = start;
+        cursor.prefix_start = start;
+        cursor.next_call = 0;
+        cursor.pending.clear();
+        cursor.prefix = blake3::Hasher::new();
+        cursor.guard = None;
+        cursor.validation = None;
+
+        let mut records = Vec::new();
+        let mut visible = 0_usize;
+        let mut bytes = Vec::new();
+        loop {
+            bytes.clear();
+            let read = reader.read_until(b'\n', &mut bytes)?;
+            if read == 0 || bytes.last() != Some(&b'\n') {
+                break;
+            }
+            match decode_record(cursor, &bytes, &mut records) {
+                Ok(count) => visible = visible.saturating_add(count),
+                Err(error) => {
+                    drop(reader);
+                    if FileStamp::read(&File::open(&cursor.path)?)? == stamp {
+                        cursor.initialized = true;
+                        cursor.prefix_start = cursor.next;
+                        cursor.prefix = blake3::Hasher::new();
+                    } else {
+                        reset(cursor);
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        drop(reader);
+
+        if FileStamp::read(&File::open(&cursor.path)?)? != stamp {
+            reset(cursor);
+            return Ok(Vec::new());
+        }
+        if visible >= canvas::stream::MESSAGE_CAPACITY || start == 0 {
+            cursor.initialized = true;
+            cursor.prefix_start = cursor.next;
+            cursor.prefix = blake3::Hasher::new();
+            return Ok(records);
+        }
+        let expanded = window.saturating_mul(2);
+        if expanded == window {
+            cursor.initialized = true;
+            cursor.prefix_start = cursor.next;
+            cursor.prefix = blake3::Hasher::new();
+            return Ok(records);
+        }
+        window = expanded;
+    }
+}
+
+fn tail_start(file: &mut File, length: u64, bytes: u64) -> io::Result<u64> {
+    let candidate = length.saturating_sub(bytes);
+    if candidate == 0 {
+        return Ok(0);
+    }
+    file.seek(SeekFrom::Start(candidate))?;
+    let mut reader = BufReader::new(file);
+    let mut discarded = Vec::new();
+    let read = reader.read_until(b'\n', &mut discarded)?;
+    Ok(candidate.saturating_add(u64::try_from(read).expect("a record buffer length fits u64")))
+}
+
+fn decode_record(
+    cursor: &mut Cursor,
+    bytes: &[u8],
+    records: &mut Vec<CompactionRecord>,
+) -> io::Result<usize> {
+    let length = u64::try_from(bytes.len()).expect("a record buffer length fits u64");
+    let locus = listen::Locus {
+        member: cursor.member,
+        offset: cursor.next,
+        length,
+    };
+    let offset = cursor.next;
+    cursor.next = cursor.next.saturating_add(length);
+    cursor.prefix.update(bytes);
+    cursor.guard = Some(RecordGuard {
+        offset,
+        length,
+        hash: record_guard_hash(bytes),
+    });
+    let decoded = listen::decode(cursor.dialect, bytes, locus)
+        .expect("the locus is built from the exact session record bytes");
+    let authored = decoded
+        .context()
+        .and_then(|context| context.timestamp.clone());
+    let mut visible = 0_usize;
+    for (ordinal, event) in decoded.events().iter().enumerate() {
+        visible = visible.saturating_add(usize::from(visible_event(event)));
+        let ordinal = u32::try_from(ordinal)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+        match event {
+            listen::Event::Tool(tool) => fold_tool(cursor, tool),
+            listen::Event::Compaction(_) => {
+                let Some(authored) = authored.clone() else {
+                    cursor.pending.clear();
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "preserved session compaction record carries no timestamp",
+                    ));
+                };
+                let mut unavailable = cursor.pending.values().collect::<Vec<_>>();
+                unavailable.sort_by_key(|tool| tool.order);
+                records.push(CompactionRecord {
+                    decoded: event.clone(),
+                    authored,
+                    ordinal,
+                    unavailable_tool_terminals: unavailable
+                        .into_iter()
+                        .map(|tool| tool.preview.clone())
+                        .collect(),
+                });
+                cursor.pending.clear();
+            }
+            _ => {}
+        }
+    }
+    Ok(visible)
+}
+
+fn visible_event(event: &listen::Event) -> bool {
+    match event {
+        listen::Event::Prose(prose) => prose.role == listen::ProseRole::Assistant,
+        listen::Event::Compaction(_) => true,
+        listen::Event::Tool(tool) => match &tool.moment {
+            listen::ToolMoment::Result(outcome) => !outcome.media.is_empty(),
+            listen::ToolMoment::Call { .. } | listen::ToolMoment::Update { .. } => false,
+        },
+        _ => false,
+    }
 }
 
 fn fold_tool(cursor: &mut Cursor, tool: &listen::Tool) {
@@ -358,7 +474,9 @@ fn fold_tool(cursor: &mut Cursor, tool: &listen::Tool) {
 }
 
 fn reset(cursor: &mut Cursor) {
+    cursor.initialized = false;
     cursor.next = 0;
+    cursor.prefix_start = 0;
     cursor.next_call = 0;
     cursor.pending.clear();
     cursor.prefix = blake3::Hasher::new();
@@ -448,11 +566,14 @@ fn advance_validation(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> 
         reset(cursor);
         return Ok(Vec::new());
     }
-    Ok(cursor
+    let records = cursor
         .validation
         .take()
         .expect("completed validation remains pending")
-        .records)
+        .records;
+    cursor.prefix_start = cursor.next;
+    cursor.prefix = blake3::Hasher::new();
+    Ok(records)
 }
 
 enum AuthenticationProgress {
@@ -463,14 +584,15 @@ enum AuthenticationProgress {
 }
 
 fn begin_prefix_authentication(validation: &mut PrefixValidation, stamp: FileStamp) {
-    if validation.offset == 0 {
+    if validation.offset == validation.start {
         validation.stamp = stamp;
         return;
     }
     validation.authentication = Some(PrefixAuthentication {
+        start: validation.start,
         length: validation.offset,
         expected: validation.observed.clone().finalize(),
-        offset: 0,
+        offset: validation.start,
         observed: blake3::Hasher::new(),
         stamp,
     });
@@ -518,7 +640,7 @@ fn advance_prefix_authentication(
             .authentication
             .as_mut()
             .expect("moving authentication remains pending");
-        authentication.offset = 0;
+        authentication.offset = authentication.start;
         authentication.observed = blake3::Hasher::new();
         authentication.stamp = post;
         return Ok(AuthenticationProgress::Moved);
