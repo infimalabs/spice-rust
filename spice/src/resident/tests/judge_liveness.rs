@@ -7,6 +7,7 @@ use sill::{
 use std::os::unix::fs::PermissionsExt as _;
 use std::process::Command as ProcessCommand;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::Duration;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -22,7 +23,6 @@ fn real_judge_does_not_block_the_current_thread_resident_surface() {
         .enable_all()
         .build()
         .expect("current-thread resident runtime");
-
     let judge_pid = runtime.block_on(async {
         let bus = &setup.bus;
         let paths = &setup.paths;
@@ -87,6 +87,7 @@ fn real_judge_does_not_block_the_current_thread_resident_surface() {
             config,
             &reads,
         );
+        let pending_events = setup.adjudication.observe_pending();
         let (submitter, completions) = setup.adjudication.parts();
         let entered_path = setup.judge.entered.clone();
         let entered = tokio::task::spawn_blocking(move || {
@@ -98,6 +99,7 @@ fn real_judge_does_not_block_the_current_thread_resident_surface() {
             reporter,
             proof_commits,
             entered,
+            pending_events,
             lanes.taste_lane,
             lanes.taste_occupant,
             lanes.failure_lane,
@@ -285,11 +287,6 @@ fn finish_liveness(setup: LivenessSetup, judge_pid: &str) {
         setup.seats.is_empty(),
         "Down drains every supervised occupant"
     );
-    assert_eq!(
-        setup.adjudication.pending_len(),
-        2,
-        "the later capture reached the submitter while the first judge stayed open"
-    );
     let cancellation_started = std::time::Instant::now();
     drop(setup.adjudication);
     assert!(
@@ -315,6 +312,7 @@ async fn exercise_live_surface(
     reporter: std::sync::Arc<dyn lane::capture::CaptureReporter>,
     mut commits: bus::BroadcastSubscriber,
     entered: tokio::task::JoinHandle<String>,
+    pending_events: Receiver<usize>,
     taste_lane: CanonicalUuid,
     taste_occupant: CanonicalUuid,
     failure_lane: CanonicalUuid,
@@ -352,6 +350,7 @@ async fn exercise_live_surface(
             true,
         ))
         .expect("later taste record reports");
+    wait_for_two_pending(pending_events).await;
     reporter.failed(lane::capture::CaptureFailure {
         lane: failure_lane,
         occupant: failure_occupant,
@@ -385,6 +384,31 @@ async fn exercise_live_surface(
         .await,
     );
     judge_pid
+}
+
+async fn wait_for_two_pending(pending_events: Receiver<usize>) {
+    tokio::task::spawn_blocking(move || {
+        let deadline = std::time::Instant::now() + PROOF_BOUND;
+        loop {
+            let remaining = deadline
+                .checked_duration_since(std::time::Instant::now())
+                .expect("the later capture reaches the submitter within the fixture bound");
+            match pending_events.recv_timeout(remaining) {
+                Ok(pending) if pending >= 2 => return,
+                Ok(_) => {}
+                Err(RecvTimeoutError::Timeout) => {
+                    panic!(
+                        "the later capture reaches the submitter while the first judge stays open"
+                    )
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    panic!("the judge submission observer stays connected")
+                }
+            }
+        }
+    })
+    .await
+    .expect("the judge submission observer joins");
 }
 
 async fn execute_command(
