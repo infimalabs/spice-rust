@@ -42,13 +42,19 @@ export async function assertOwningImageRevision(card, label, expectedRevision = 
 }
 
 export async function imageCardInvariant(card) {
-  return card.evaluate((element) => ({
-    key: element.dataset.mosaicCardKey,
-    ariaLabel: element.getAttribute("aria-label"),
-    lane: element.dataset.agentLane,
-    activity: element.dataset.agentActivity,
-    producer: element.dataset.producerTargetId,
-    span: element.dataset.span,
-    commands: [...element.querySelectorAll("button")].map((button) => button.getAttribute("aria-label")),
-  }));
+  return card.evaluate((element) => {
+    const body = element.querySelector(".message-body")?.cloneNode(true);
+    for (const status of body?.querySelectorAll("[data-mosaic-image-status]") ?? []) status.remove();
+    return {
+      key: element.dataset.mosaicCardKey,
+      ariaLabel: element.getAttribute("aria-label"),
+      lane: element.dataset.agentLane,
+      activity: element.dataset.agentActivity,
+      producer: element.dataset.producerTargetId,
+      span: element.dataset.span,
+      text: body?.textContent,
+      attribution: element.querySelector(".message-agent-name")?.getAttribute("aria-label"),
+      commands: [...element.querySelectorAll("button")].map((button) => button.getAttribute("aria-label")),
+    };
+  });
 }
