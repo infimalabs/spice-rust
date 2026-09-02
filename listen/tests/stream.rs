@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use listen::{
-    Checkpoint, Dialect, EventKind, Position, RecordPayload, Scan, ScanError, Span, scan, scan_tail,
+    Checkpoint, Dialect, EventKind, Position, RecordPayload, Scan, ScanError, Span, scan,
+    scan_before, scan_tail,
 };
 use tape::Tape;
 
@@ -138,6 +139,35 @@ fn tail_scan_starts_near_eof_and_its_source_checkpoint_reads_only_appends() {
     let appended = scan(scratch.path(), Dialect::Codex, Some(&tail.scan.checkpoint))
         .expect("source checkpoint resumes");
     assert_eq!(appended.records.len(), 1, "only the append is decoded");
+    scratch.remove();
+}
+
+#[test]
+fn bounded_history_windows_end_at_the_supplied_checkpoint_without_overlap() {
+    let scratch = Scratch::new("history-window");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+    let prose = line(PROSE);
+    for _ in 0..12 {
+        tape.tee(&prose).expect("history record is durable");
+    }
+    let complete = scan(scratch.path(), Dialect::Codex, None).expect("season scans");
+    let before = complete.records[9].next.clone();
+    let bytes = u64::try_from(prose.len() * 3).expect("window fits");
+    tape.tee(&prose)
+        .expect("an append after the history boundary is durable");
+
+    let newer = scan_before(scratch.path(), Dialect::Codex, &before, bytes)
+        .expect("newer history window scans");
+    assert_eq!(newer.scan.records.len(), 3);
+    assert_eq!(newer.scan.checkpoint, before);
+    let older = scan_before(scratch.path(), Dialect::Codex, &newer.start, bytes)
+        .expect("adjacent older history window scans");
+    assert_eq!(older.scan.records.len(), 3);
+    assert_eq!(older.scan.checkpoint, newer.start);
+    assert!(
+        older.scan.records.last().expect("older record").next.next <= newer.start.next,
+        "the older window never reads into the already-served newer window",
+    );
     scratch.remove();
 }
 

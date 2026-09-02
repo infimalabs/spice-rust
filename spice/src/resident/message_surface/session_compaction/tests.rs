@@ -380,20 +380,44 @@ fn on_demand_history_recovers_boundaries_across_the_retained_horizon() {
         }
     }
     fs::write(&transcript, contents).expect("long preserved transcript is written");
+    let end = history_checkpoint(&transcript).expect("preserved transcript checkpoint reads");
+    let before = wire::AgentMessage {
+        lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163e5"),
+        author: uuid("018f82d4-6f59-7d06-92e3-bce9131163ef"),
+        locus: wire::MessageLocus {
+            member: session_member("018f7777-7777-7444-8888-999999999999"),
+            offset: u64::MAX,
+            length: 1,
+            event: 0,
+        },
+        authored: "2031-04-12T18:44:09.271Z".parse().expect("fixture instant"),
+        authored_synthetic: false,
+        observed: None,
+        activity: wire::AgentActivityKind::Prose,
+        final_answer: false,
+        text: "page boundary".to_owned(),
+        automatic_speech: None,
+        unavailable_tool_terminals: Vec::new(),
+        media: Vec::new(),
+    };
 
-    let messages = retained_messages(
-        transcript,
-        listen::Dialect::Claude,
-        "018f7777-7777-7444-8888-999999999999".to_owned(),
-        uuid("018f82d4-6f59-7d06-92e3-bce9131163e5"),
-        uuid("018f82d4-6f59-7d06-92e3-bce9131163ef"),
-        &MessageObservations::default(),
-    )
+    let messages = retained_messages(HistoryRequest {
+        path: transcript,
+        dialect: listen::Dialect::Claude,
+        thread: "018f7777-7777-7444-8888-999999999999".to_owned(),
+        lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163e5"),
+        author: uuid("018f82d4-6f59-7d06-92e3-bce9131163ef"),
+        observations: &MessageObservations::default(),
+        before: &before,
+        end: &end,
+        limit: canvas::stream::MESSAGE_CAPACITY,
+    })
     .expect("retained compaction history reads");
 
-    assert_eq!(messages.len(), 4);
+    assert_eq!(messages.messages.len(), 4);
     assert!(
         messages
+            .messages
             .windows(2)
             .all(|pair| pair[0].chronology_key() < pair[1].chronology_key()),
         "on-demand boundaries preserve source chronology",

@@ -51,6 +51,13 @@ fn complete_message_history(
         window.splice(0..0, messages);
         page += 1;
     }
+    let activities = window
+        .iter()
+        .map(|message| message.activity)
+        .collect::<Vec<_>>();
+    let floor =
+        wire::AgentActivityKind::retention_start(&activities, canvas::stream::MESSAGE_CAPACITY);
+    window.drain(..floor);
     window
 }
 

@@ -347,3 +347,46 @@ fn cold_history_starts_at_a_compaction_inside_the_initial_window() {
     drop(source);
     bus.shutdown().expect("bus shuts down");
 }
+
+#[test]
+fn a_full_page_that_exhausts_capacity_closes_after_compaction_trimming() {
+    let bus = fixture(1);
+    let source = Source::new(bus.reader(), epoch(), 10);
+    let publisher = source.message_publisher();
+    let lane = message(0xe5, 0).lane;
+    let mut durable = (0..300)
+        .map(|offset| message(0xe5, offset))
+        .collect::<Vec<_>>();
+    durable[80].activity = wire::AgentActivityKind::Compaction;
+    for activity in &durable[244..] {
+        publisher
+            .publish(activity.clone())
+            .expect("retained history publishes");
+    }
+    let history = Arc::new(FixtureHistory {
+        messages: durable,
+        reads: AtomicUsize::new(0),
+    });
+    publisher
+        .set_history_provider(history.clone())
+        .expect("durable history provider installs");
+    let mut before = message(0xe5, 244).locus;
+    for page_number in 1..=4 {
+        let page = publisher
+            .feed
+            .history(lane, before)
+            .expect("older message page reads")
+            .expect("retained cursor is known");
+        assert_eq!(page.messages.len(), MESSAGE_HISTORY_PAGE_LIMIT);
+        assert_eq!(page.more, page_number < 4);
+        before = page.messages[0].locus;
+    }
+    assert_eq!(
+        history.reads.load(Ordering::Relaxed),
+        4,
+        "four full pages exhaust the cumulative 256-card budget",
+    );
+
+    drop(source);
+    bus.shutdown().expect("bus shuts down");
+}
