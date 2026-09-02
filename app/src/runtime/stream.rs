@@ -2,6 +2,9 @@
 
 use super::*;
 
+#[cfg(test)]
+use super::message_cards::{message_chronology_key, trim_agent_message_lane};
+
 const OPERATOR_MESSAGE_LIMIT: usize = 256;
 
 /// One operator-authored direction projected from durable steering authority.
@@ -466,7 +469,9 @@ impl CanvasRuntime {
     }
 
     fn observe_message(&mut self, message: &AgentMessage) -> bool {
-        self.observe_message_with_retained(message, None)
+        let activity_changed = self.push_activity(LaneActivity::from_message(message));
+        let card_changed = self.message_cards.merge(std::iter::once(message));
+        activity_changed || card_changed
     }
 
     fn apply_message_snapshot(
@@ -477,25 +482,13 @@ impl CanvasRuntime {
     ) -> StreamApplication {
         let next_more = more.iter().copied().collect::<BTreeSet<_>>();
         let history_changed = self.message_history_more != next_more;
-        let changed = !self.message_snapshot_matches(limit, messages);
-        self.message_limit = Some(limit);
+        let cards_changed = self.message_cards.snapshot(limit, messages);
+        let activities_changed = self.apply_activity_snapshot(limit, messages);
         self.message_history_more = next_more;
-        if changed {
-            let previous = std::mem::take(&mut self.messages);
-            self.activities.clear();
-            for message in messages {
-                let retained = previous
-                    .iter()
-                    .find(|existing| {
-                        existing.lane == message.lane
-                            && existing.locus == message.locus
-                            && existing.as_ref() == message
-                    })
-                    .cloned();
-                self.observe_message_with_retained(message, retained);
-            }
-        }
-        StreamApplication::new(Vec::new(), changed || history_changed)
+        StreamApplication::new(
+            Vec::new(),
+            cards_changed || activities_changed || history_changed,
+        )
     }
 
     fn apply_message_history(
@@ -504,90 +497,15 @@ impl CanvasRuntime {
         messages: &[AgentMessage],
         more: bool,
     ) -> StreamApplication {
-        let mut changed = false;
-        for message in messages {
-            if message.lane == lane {
-                changed |= self.observe_history_message(message);
-            }
-        }
+        let changed = self
+            .message_cards
+            .merge(messages.iter().filter(|message| message.lane == lane));
         let history_changed = if more {
             self.message_history_more.insert(lane)
         } else {
             self.message_history_more.remove(&lane)
         };
         StreamApplication::new(Vec::new(), changed || history_changed)
-    }
-
-    fn observe_message_with_retained(
-        &mut self,
-        message: &AgentMessage,
-        retained: Option<Rc<AgentMessage>>,
-    ) -> bool {
-        let (class, title) = match message.activity {
-            AgentActivityKind::Prose => ("prose", "assistant"),
-            AgentActivityKind::Tool => ("tool", "tool"),
-            AgentActivityKind::Compaction => ("compaction", "compaction"),
-        };
-        let activity_changed = self.push_activity(LaneActivity {
-            lane: message.lane,
-            display_millis: agent_message_display_millis(message),
-            class,
-            title: title.to_owned(),
-            detail: message.text.clone(),
-            source: ActivitySource {
-                lane: message.lane,
-                locus: message.locus,
-            },
-        });
-        if !visible_message_card(message) {
-            return activity_changed;
-        }
-        if self.message_limit == Some(0) {
-            return activity_changed;
-        }
-        let duplicate = self
-            .messages
-            .iter()
-            .any(|existing| existing.lane == message.lane && existing.locus == message.locus);
-        if duplicate {
-            return activity_changed;
-        }
-        let retained = retained.unwrap_or_else(|| Rc::new(message.clone()));
-        let insertion = self
-            .messages
-            .iter()
-            .position(|existing| {
-                message_chronology_key(existing) > message_chronology_key(&retained)
-            })
-            .unwrap_or(self.messages.len());
-        self.messages.insert(insertion, retained);
-        if let Some(limit) = self.message_limit {
-            trim_agent_message_lane(&mut self.messages, message.lane, limit);
-        }
-        true
-    }
-
-    /// Merge an older visible card without walking the live status strip backwards.
-    fn observe_history_message(&mut self, message: &AgentMessage) -> bool {
-        if !visible_message_card(message)
-            || self.message_limit == Some(0)
-            || self
-                .messages
-                .iter()
-                .any(|existing| existing.lane == message.lane && existing.locus == message.locus)
-        {
-            return false;
-        }
-        let insertion = self
-            .messages
-            .iter()
-            .position(|existing| message_chronology_key(existing) > message_chronology_key(message))
-            .unwrap_or(self.messages.len());
-        self.messages.insert(insertion, Rc::new(message.clone()));
-        if let Some(limit) = self.message_limit {
-            trim_agent_message_lane(&mut self.messages, message.lane, limit);
-        }
-        true
     }
 
     pub(crate) fn retain_operator_message(
@@ -620,10 +538,7 @@ impl CanvasRuntime {
         true
     }
 
-    /// Whether one snapshot projects to the exact message and activity slices
-    /// already retained, without cloning any of their payload bodies.
-    fn message_snapshot_matches(&self, limit: usize, incoming: &[AgentMessage]) -> bool {
-        let mut messages = Vec::<&AgentMessage>::new();
+    fn apply_activity_snapshot(&mut self, limit: usize, incoming: &[AgentMessage]) -> bool {
         let mut activities = Vec::<&AgentMessage>::new();
         for message in incoming {
             if !activities
@@ -633,34 +548,14 @@ impl CanvasRuntime {
                 activities.insert(0, message);
                 retain_first_for_lane(&mut activities, message.lane, limit, |row| row.lane);
             }
-            if visible_message_card(message)
-                && !messages.iter().any(|existing| {
-                    existing.lane == message.lane && existing.locus == message.locus
-                })
-            {
-                messages.push(message);
-                if messages
-                    .iter()
-                    .filter(|existing| existing.lane == message.lane)
-                    .count()
-                    > limit
-                    && let Some(oldest) = messages
-                        .iter()
-                        .position(|existing| existing.lane == message.lane)
-                {
-                    messages.remove(oldest);
-                }
-            }
         }
-        messages.sort_by_key(|message| message_chronology_key(message));
-        let activity_count = activities.len();
-        self.messages.iter().map(Rc::as_ref).eq(messages)
-            && self
-                .activities
-                .iter()
-                .zip(activities)
-                .all(|(retained, projected)| retained.matches_message(projected))
-            && self.activities.len() == activity_count
+        let next = activities
+            .into_iter()
+            .map(LaneActivity::from_message)
+            .collect::<Vec<_>>();
+        let changed = self.activities != next;
+        self.activities = next;
+        changed
     }
 
     fn begin_thread(&mut self, epoch: CanonicalUuid, seq: Seq) -> StreamDirective {
@@ -690,37 +585,30 @@ impl CanvasRuntime {
     }
 
     fn push_activity(&mut self, activity: LaneActivity) -> bool {
-        if self
+        if let Some(index) = self
             .activities
             .iter()
-            .any(|existing| existing.source == activity.source)
+            .position(|existing| existing.source == activity.source)
         {
-            return false;
+            if self.activities[index] == activity {
+                return false;
+            }
+            self.activities[index] = activity;
+            return true;
         }
-        if self.message_limit == Some(0) {
+        if self.message_cards.limit() == Some(0) {
             return false;
         }
         // Keep the bounded arrival history, not only one row per lane. The
         // renderer takes the first matching row, while this history lets a
         // reconnect recognize an older identity replayed after newer work.
         self.activities.insert(0, activity);
-        if let Some(limit) = self.message_limit {
+        if let Some(limit) = self.message_cards.limit() {
             let lane = self.activities[0].lane;
             retain_first_for_lane(&mut self.activities, lane, limit, |activity| activity.lane);
         }
         true
     }
-}
-
-fn message_chronology_key(message: &AgentMessage) -> (i64, CanonicalUuid, u64, u64, u64, u32) {
-    (
-        agent_message_display_millis(message),
-        message.lane,
-        message.locus.member,
-        message.locus.offset,
-        message.locus.length,
-        message.locus.event,
-    )
 }
 
 fn trim_operator_messages(messages: &mut Vec<OperatorMessage>, limit: usize) {
@@ -731,27 +619,6 @@ fn trim_operator_messages(messages: &mut Vec<OperatorMessage>, limit: usize) {
     for lane in lanes {
         trim_operator_lane(messages, lane, limit);
     }
-}
-
-fn trim_agent_message_lane(
-    messages: &mut Vec<Rc<AgentMessage>>,
-    lane: CanonicalUuid,
-    limit: usize,
-) {
-    let activities = messages
-        .iter()
-        .filter(|message| message.lane == lane)
-        .map(|message| message.activity)
-        .collect::<Vec<_>>();
-    let mut discard = AgentActivityKind::retention_start(&activities, limit);
-    messages.retain(|message| {
-        if message.lane != lane || discard == 0 {
-            true
-        } else {
-            discard -= 1;
-            false
-        }
-    });
 }
 
 fn trim_operator_lane(messages: &mut Vec<OperatorMessage>, lane: CanonicalUuid, limit: usize) {
@@ -770,32 +637,6 @@ fn trim_operator_lane(messages: &mut Vec<OperatorMessage>, lane: CanonicalUuid, 
             .expect("a lane above its bound has an oldest operator message");
         messages.remove(oldest);
     }
-}
-
-impl LaneActivity {
-    fn matches_message(&self, message: &AgentMessage) -> bool {
-        let (class, title) = match message.activity {
-            AgentActivityKind::Prose => ("prose", "assistant"),
-            AgentActivityKind::Tool => ("tool", "tool"),
-            AgentActivityKind::Compaction => ("compaction", "compaction"),
-        };
-        self.lane == message.lane
-            && self.class == class
-            && self.title == title
-            && self.detail == message.text
-            && self.source
-                == (ActivitySource {
-                    lane: message.lane,
-                    locus: message.locus,
-                })
-    }
-}
-
-fn visible_message_card(message: &AgentMessage) -> bool {
-    matches!(
-        message.activity,
-        AgentActivityKind::Prose | AgentActivityKind::Compaction
-    ) || !message.media.is_empty()
 }
 
 /// Keep the first bounded rows for one lane without evicting sibling-lane history.
