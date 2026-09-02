@@ -3,10 +3,15 @@ import assert from "node:assert/strict";
 
 export function monitorPage(page) {
   const pageErrors = [];
+  const pageWarnings = [];
   const requestFailures = [];
   let expectedNetworkInterruption = false;
   page.on("pageerror", (error) => pageErrors.push(error.stack ?? error.toString()));
   page.on("console", (message) => {
+    if (message.type() === "warning") {
+      pageWarnings.push(`console: ${message.text()}`);
+      return;
+    }
     if (message.type() !== "error") return;
     if (
       expectedNetworkInterruption
@@ -24,6 +29,13 @@ export function monitorPage(page) {
   return {
     expectNetworkInterruption(value) {
       expectedNetworkInterruption = value;
+    },
+    evidence() {
+      return {
+        errors: [...pageErrors],
+        requestFailures: [...requestFailures],
+        warnings: [...pageWarnings],
+      };
     },
     assertClean() {
       assert.deepEqual(pageErrors, [], "page emits no uncaught errors");
