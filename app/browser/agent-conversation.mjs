@@ -316,8 +316,8 @@ export async function seatLeaseAgent(page, fixture, worktrees) {
     await reply(fixture, ["lane", "drain", lane.lane]);
   }
   await console.getByRole("tab", { name: /^Compose/ }).click();
-  await console.locator('.team-lifetime input[type="range"]').fill("2");
-  await console.getByRole("button", { name: "Drain", exact: true }).waitFor();
+  await console.locator('.team-lifetime input[type="range"]').fill("1");
+  await console.getByRole("button", { name: "Drive", exact: true }).waitFor();
   for (const worktree of [expiryWorktree, releaseWorktree]) {
     await waitForLeaseAgentOccupant(fixture, worktree, AGENT_SEAT_MS * 2);
   }
