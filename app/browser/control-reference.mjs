@@ -4,7 +4,7 @@ import { reply, TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs"
 import { assertTeamActions } from "./team-actions.mjs";
 
 const darkPalette = {
-  quiet: "rgb(138, 169, 232)",
+  quiet: "rgb(142, 162, 255)",
   drain: "rgb(230, 180, 78)",
   green: "rgb(116, 198, 157)",
   // One ink prints every submit state, the way the predecessor's `.primary`
@@ -79,10 +79,10 @@ function measureReference(surface) {
     probe.style.color = "";
     return resolved;
   };
-  probe.style.color = "var(--accent-2)";
+  probe.style.color = "var(--accent-1)";
   const armedAccent = getComputedStyle(probe).color;
   probe.style.color = "";
-  const stateBorder = { quiet: mix("--accent-2"), drain: mix("--warning") };
+  const stateBorder = { quiet: mix("--accent-1"), drain: mix("--warning") };
   probe.remove();
   return {
     armedAccent,
@@ -271,7 +271,7 @@ function assertReferenceGeometry(geometry) {
   assert.equal(
     geometry.armedAccent,
     darkPalette.quiet,
-    "the Rust armed accent keeps its named periwinkle divergence",
+    "the Rust armed accent matches the reference periwinkle",
   );
   assert.equal(geometry.speech.border, geometry.stateBorder.quiet, "Quiet uses cool periwinkle");
   assert.equal(geometry.lifetime.border, geometry.stateBorder.drain, "Drain uses amber/gold");
