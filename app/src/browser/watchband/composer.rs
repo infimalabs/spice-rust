@@ -171,7 +171,7 @@ fn render_agent_message_card(
     let is_compaction = message.activity == wire::AgentActivityKind::Compaction;
     let rendered_markdown = crate::composer_markdown::render_received(&message.text);
     let card_label = if is_compaction {
-        format!("Context compacted by {attribution}")
+        format!("Context compacted by {footer_label}")
     } else {
         format!("Agent message from {attribution}")
     };
@@ -227,7 +227,7 @@ fn render_agent_message_card(
             data-measure-span={layout.measure_span.to_string()}
         >
             if is_compaction {
-                {render_compaction_boundary(message, &attribution)}
+                {render_compaction_boundary(message, footer_label)}
             } else {
                 <div class="message-body markdown-body">{rendered_html}</div>
                 {render_agent_message_media(unlinked_media)}

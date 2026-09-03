@@ -173,7 +173,6 @@ async function assertFirefoxCompactionBoundaries(
   console,
   label,
   expectedAttribution,
-  { expectEmptyAttributionTruncated = false } = {},
 ) {
   const boundaries = console.locator('[data-card-kind="compaction"]');
   const unresolved = console.locator(
@@ -203,7 +202,6 @@ async function assertFirefoxCompactionBoundaries(
     empty,
     `${label} empty divider`,
     expectedAttribution,
-    { expectAttributionTruncated: expectEmptyAttributionTruncated },
   );
   await assertNoUnavailableToolTerminal(
     empty,
@@ -297,7 +295,6 @@ export async function assertFirefoxRestoredMosaic(
       console,
       "Firefox narrow",
       expectedAttribution,
-      { expectEmptyAttributionTruncated: true },
     );
     await assertNaturalMessageFooterInsets(console, "Firefox narrow restored Mosaic");
     await assertQuoteBlockDensity(quoteCards, "Firefox narrow Mosaic");
