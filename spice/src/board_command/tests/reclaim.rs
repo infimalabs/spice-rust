@@ -149,7 +149,7 @@ fn assert_authority_recovery(outcome: Outcome<CommandAnswer>, reason: &str) {
     assert_eq!(diagnostic.reason(), reason);
     assert_eq!(command.arguments(), ["task", "status"]);
     let detail = diagnostic.detail().expect("recovery detail is present");
-    assert!(detail.contains("spice task next"));
+    assert!(detail.contains("when it reports no claim for this lane, run spice task next"));
     assert!(!detail.contains("spice task reclaim"));
 }
 
@@ -184,6 +184,19 @@ fn client_reclaim_preflight_routes_missing_inactive_and_foreign_claims_through_s
     assert_authority_recovery(
         reclaim_claim(at(&inactive, &task), &task, &owner).unwrap_err(),
         "claim::ownership-refused",
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn client_reclaim_without_handle_routes_a_missing_claim_through_status() {
+    let (root, bus, epoch, seats) = fixture("reclaim-client-no-handle", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let available = board(&bus, epoch, lane);
+
+    assert_authority_recovery(
+        reclaim_active(&available).expect_err("the lane has no active claim"),
+        "claim::active-missing",
     );
     clean(&root, bus);
 }
