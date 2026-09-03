@@ -342,7 +342,7 @@ fn render_agent_message_media(unlinked_media: Vec<&wire::Media>) -> Html {
                 html! {
                     <a
                         class="message-image message-image--openable"
-                        href="about:blank"
+                        href={media.data_url.clone()}
                         target="_blank"
                         rel="noopener"
                         title={action.clone()}

@@ -375,7 +375,11 @@ export async function assertPersistentMosaic(
   await assertImageLifecycle(embeddedPreview, "embedded ordinary preview", "loaded");
   await assertOwningImageRevision(readyCard, "embedded mixed prose and image");
   await assertImagePreview(embeddedPreview, "embedded ordinary preview", 140);
-  await assertFullSizeTarget(embeddedPreview, "embedded ordinary preview", "about:blank");
+  await assertFullSizeTarget(
+    embeddedPreview,
+    "embedded ordinary preview",
+    `data:image/png;base64,${PIXEL_PNG}`,
+  );
   assert.equal(await embeddedPreview.getAttribute("data-full-size-data-image"), "true");
   await openAndAssertIsolated(page, embeddedPreview, "embedded image preview", /^blob:/);
 
@@ -465,8 +469,7 @@ export async function assertPersistentMosaic(
   await assertImageLifecycle(malformedCard.locator("span.message-image"),
     "malformed raster preview", "error");
 
-  const attachmentText = "unlinked attachment preview";
-  const attachment = await activityReplay.injectAgentProse(page, member.lane, attachmentText, [{
+  const attachment = await activityReplay.injectAgentToolMedia(page, member.lane, [{
     name: "attachment.png",
     content_type: "image/png",
     data_url: `data:image/png;base64,${PIXEL_PNG}`,
@@ -480,12 +483,26 @@ export async function assertPersistentMosaic(
     return card?.dataset.layoutPhase === "committed"
       && card.dataset.mosaicImageRevision === "1";
   }, attachment.key);
-  await assertImagePreview(attachmentPreview, "unlinked attachment preview", 140);
+  await assertImagePreview(attachmentPreview, "unlinked attachment preview", 252);
   await assertImageLifecycle(attachmentPreview, "unlinked attachment preview", "loaded");
   await assertOwningImageRevision(attachmentCard, "unlinked attachment preview");
+  assert.equal(await attachmentCard.getAttribute("data-agent-activity"), "tool",
+    "the hotlink belongs to the inspected-image tool result");
+  assert.equal(await attachmentCard.locator(".message-body").innerText(), "",
+    "the durable data URL is not exposed as visible transcript text");
   assert.ok(await attachmentPreview.locator("img").getAttribute("data-media-identity"),
     "the loaded attachment retains its admitted media identity");
-  await assertFullSizeTarget(attachmentPreview, "unlinked attachment preview", "about:blank");
+  await assertFullSizeTarget(
+    attachmentPreview,
+    "unlinked attachment preview",
+    `data:image/png;base64,${PIXEL_PNG}`,
+  );
+  await openAndAssertIsolated(
+    page,
+    attachmentPreview,
+    "unlinked attachment preview",
+    /^blob:/,
+  );
 
   const originalViewport = page.viewportSize();
   await page.setViewportSize({ width: 390, height: 844 });
