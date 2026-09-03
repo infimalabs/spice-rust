@@ -724,7 +724,7 @@ body:has(.shell--mosaic),
   background: var(--control);
   box-shadow: none;
 }
-.team-surface .team-agent:focus-within { border-color: var(--accent); }
+.team-surface .team-agent:focus-within { border-color: var(--control-line-soft); }
 .team-surface .team-agent--vacant { opacity: .72; }
 
 .agent-composer-stack {
@@ -748,6 +748,10 @@ body:has(.shell--mosaic),
   border: 1px solid var(--control-line-soft);
   border-radius: 7px;
   background: var(--control);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+.composer-shard:focus-within {
+  border-color: color-mix(in srgb, var(--accent-slot, var(--accent)) 62%, var(--line));
 }
 /* Quote shards are the context leading into the primary draft, so the visible
    stack and the submitted Markdown share quote-then-primary order. */
@@ -765,33 +769,46 @@ body:has(.shell--mosaic),
 .composer-shard--quote {
   order: 0;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
-  background: color-mix(in srgb, var(--accent) 5%, var(--panel));
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--line));
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
 }
 
 .composer-shard-heading {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto 22px;
   align-items: center;
-  gap: 4px;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--accent-slot, var(--line));
-  color: var(--muted);
+  gap: 6px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0 5px 0 8px;
+  border-bottom: 2px solid color-mix(
+    in srgb,
+    var(--accent-slot, var(--accent)) 64%,
+    var(--line-soft)
+  );
+  color: var(--ink);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: .56rem;
+  font-size: 12px;
 }
 .composer-shard-heading strong {
   overflow: hidden;
-  color: var(--accent-slot, var(--ink));
-  font-size: .58rem;
-  font-weight: 500;
+  color: color-mix(in srgb, var(--accent-slot, var(--muted)) 70%, var(--ink));
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.composer-shard-heading strong:has(+ .composer-shard-image-indicators:not(:empty)) {
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent);
+}
 .composer-shard-link {
   color: var(--accent);
+  font-variant-numeric: tabular-nums;
   text-decoration: underline;
   text-underline-offset: 2px;
+  white-space: pre;
 }
 .composer-shard-age { color: var(--accent); }
 .composer-shard-age.queued { color: var(--warning); }
@@ -800,126 +817,47 @@ body:has(.shell--mosaic),
   color: var(--muted);
   opacity: .7;
 }
-/* A third of the message-card thumbnail, keeping its border, radius, and crop
-   so a draft image reads as the same object at heading scale. The strip is
-   bounded and scrolls, so attachments never push the prose out of the row. An
-   empty strip stays laid out at zero width rather than `display: none`: it owns
-   the third heading column, and dropping out of the grid would slide the final
-   control a whole column left until the first image arrives. */
+/* Reference-size cover crops fill from the trailing control toward the age.
+   The bounded strip scrolls, so attachments never push the prose out of the
+   row. An empty strip stays laid out at zero width rather than `display: none`:
+   it owns the third heading column, and dropping out of the grid would slide
+   the final control a whole column left until the first image arrives. */
 .composer-shard-image-indicators {
   display: flex;
-  gap: 3px;
+  flex-direction: row-reverse;
+  gap: 2px;
+  height: 28px;
+  justify-content: flex-start;
   min-width: 0;
-  max-width: 42%;
+  max-width: min(50%, 222px);
   overflow-x: auto;
+  overflow-y: hidden;
   overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 .composer-shard-image-indicator {
   display: block;
-  flex: none;
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
   min-height: 0;
   padding: 0;
-  border: 0;
-  background: none;
+  overflow: hidden;
+  border: 1px solid var(--control-line-soft);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--control) 84%, var(--page));
+  box-shadow: inset 0 0 0 1px var(--line-soft);
 }
 .composer-shard-image-indicator img {
   display: block;
-  width: 24px;
-  height: 18px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  object-fit: contain;
-}
-.composer-shard-image-indicator:hover img { border-color: var(--accent); }
-.composer-shard-heading > button,
-.agent-action-menu > summary {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  min-width: 22px;
-  height: 22px;
-  min-height: 22px;
-  padding: 0;
-  border-radius: 50%;
-  color: var(--muted);
-  font-size: .55rem;
-}
-.agent-action-menu { position: static; }
-.agent-action-menu > summary {
-  list-style: none;
-  cursor: pointer;
-}
-.agent-action-menu > summary::-webkit-details-marker { display: none; }
-.agent-action-menu[open] > summary {
-  position: relative;
-  z-index: 5;
-  background: var(--panel);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.agent-action-drawer {
-  position: absolute;
-  z-index: 4;
-  inset: 0;
-  display: grid;
-  width: auto;
-  min-width: 0;
-  align-content: start;
-  gap: 4px;
-  padding: 34px 7px 7px;
-  border: 1px solid color-mix(in srgb, var(--accent-slot, var(--accent)) 58%, var(--line));
-  border-radius: 7px;
-  background: var(--panel);
-  box-shadow: var(--shadow);
-}
-.agent-action-drawer button {
   width: 100%;
-  min-height: 25px;
-  padding: 4px 6px;
-  border-radius: 5px;
-  color: var(--ink);
-  font: .58rem/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
-  text-align: left;
-}
-.agent-renew-request {
-  display: grid;
-  gap: 2px;
-  min-height: 34px;
-  padding: 5px 7px;
-  border-color: color-mix(in srgb, var(--accent-slot, var(--accent)) 58%, var(--line));
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--accent-slot, var(--accent)) 8%, var(--panel));
-  color: var(--ink);
-  text-align: left;
-}
-.agent-renew-request strong {
-  overflow: hidden;
-  font: 600 .65rem/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.agent-renew-request span {
-  color: var(--muted);
-  font: .56rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-.agent-renew-request:disabled { opacity: .46; }
-
-.team-surface .mosaic-composer {
-  gap: 5px;
-  height: auto;
-  padding: 7px;
-  background: color-mix(in srgb, var(--accent) 2%, var(--panel));
-}
-.team-surface .mosaic-composer textarea {
+  min-width: 100%;
   height: 100%;
-  min-height: 0;
-  padding: 7px 8px;
-  overflow-y: auto;
-  resize: none;
-  font-size: .72rem;
-  line-height: 1.35;
+  border: 0;
+  border-radius: 3px;
+  object-fit: cover;
 }
-
+.composer-shard-image-indicator:hover { border-color: var(--accent); }
 /* The lineage control stack is sized against the canonical control reference, which
    fixes every item to one height and one width so the two sliders and the send
    button read as a single column of equal pills. */

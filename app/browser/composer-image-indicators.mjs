@@ -22,37 +22,6 @@ export async function pasteImages(composer, names) {
   }, { encoded: PIXEL_PNG, names });
 }
 
-/// Read the live rule the message cards use, off a throwaway element carrying
-/// their classes. Pinning the literals instead would pass even after the card
-/// treatment moved on, which is the parity this acceptance is about.
-async function messageCardTreatment(page) {
-  return page.evaluate(async (pixel) => {
-    const card = document.createElement("article");
-    card.className = "mosaic-message-card";
-    const host = document.createElement("div");
-    host.className = "message-attachments";
-    const preview = document.createElement("span");
-    preview.className = "message-image";
-    const image = document.createElement("img");
-    image.src = `data:image/png;base64,${pixel}`;
-    preview.append(image);
-    host.append(preview);
-    card.append(host);
-    document.body.append(card);
-    await image.decode();
-    const style = getComputedStyle(image);
-    const read = {
-      width: image.getBoundingClientRect().width,
-      height: image.getBoundingClientRect().height,
-      border: style.borderTopWidth + " " + style.borderTopStyle + " " + style.borderTopColor,
-      borderRadius: style.borderRadius,
-      objectFit: style.objectFit,
-    };
-    card.remove();
-    return read;
-  }, PIXEL_PNG);
-}
-
 /// `composer-shard-image-indicator` is the heading's reserved name for a draft
 /// image; thumbnail is what it looks like, so the readings below keep that word
 /// while every selector uses the reserved one.
@@ -68,7 +37,7 @@ function measureHeading(heading) {
       link: box(".composer-shard-link"),
       title: box("strong"),
       thumbs: box(".composer-shard-image-indicators"),
-      menu: box(".agent-action-menu"),
+      menu: box(".agent-action-menu, .composer-shard-heading > button"),
       strip: strip && {
         clientWidth: strip.clientWidth,
         scrollWidth: strip.scrollWidth,
@@ -79,14 +48,38 @@ function measureHeading(heading) {
             Math.round(thumb.getBoundingClientRect().top),
           ),
         ).size,
+        images: [...strip.querySelectorAll(".composer-shard-image-indicator img")].map((image) => ({
+          alt: image.alt,
+          box: image.getBoundingClientRect().toJSON(),
+          chip: image.closest(".composer-shard-image-indicator").getBoundingClientRect().toJSON(),
+          objectFit: getComputedStyle(image).objectFit,
+        })),
       },
     };
   });
 }
 
-/// Exercise the picker-less composer: attachments are heading thumbnails wearing
-/// the message-card treatment, and filling the row to MAX_ATTACHMENTS displaces
-/// neither the title, the deep link, nor the primary-only hamburger.
+export async function assertComposerAttachmentTreatment(composer, label) {
+  const measured = await measureHeading(composer.locator(".composer-shard-heading"));
+  assert.ok(measured.strip?.images.length > 0, `${label} exposes at least one draft image`);
+  assert.ok(
+    measured.strip.images.every((image) => (
+      image.chip.width === 26 && image.chip.height === 26 &&
+      image.box.width === 24 && image.box.height === 24 && image.objectFit === "cover"
+    )),
+    `${label} images fill square 26px chips: ${JSON.stringify(measured.strip.images)}`,
+  );
+  assert.ok(
+    measured.title.width > 0 &&
+      measured.title.right <= measured.thumbs.left + 0.5 &&
+      measured.thumbs.right <= measured.menu.left + 0.5,
+    `${label} images preserve the label and trailing control: ${JSON.stringify(measured)}`,
+  );
+}
+
+/// Exercise the picker-less composer: attachments fill square reference chips,
+/// and filling the row to MAX_ATTACHMENTS displaces neither the title, the deep
+/// link, nor the primary-only hamburger.
 export async function assertComposerImageIndicators(page, composer, names) {
   const heading = composer.locator(".composer-shard-heading");
   const bare = await measureHeading(heading);
@@ -122,28 +115,23 @@ export async function assertComposerImageIndicators(page, composer, names) {
     await heading.getByRole("img", { name }).waitFor();
   }
 
-  const reference = await messageCardTreatment(page);
   const thumb = await thumbs.first().locator("img").evaluate((image) => {
     const style = getComputedStyle(image);
     return {
       width: image.getBoundingClientRect().width,
       height: image.getBoundingClientRect().height,
-      border: style.borderTopWidth + " " + style.borderTopStyle + " " + style.borderTopColor,
       borderRadius: style.borderRadius,
       objectFit: style.objectFit,
     };
   });
   assert.deepEqual(
-    { border: thumb.border, borderRadius: thumb.borderRadius, objectFit: thumb.objectFit },
-    { border: reference.border, borderRadius: reference.borderRadius, objectFit: reference.objectFit },
-    "a heading thumbnail wears the message-card attachment treatment",
-  );
-  assert.ok(
-    thumb.width * 2 <= reference.width && thumb.height * 2 <= reference.height,
-    `a heading thumbnail is far smaller than the message-card image: ${JSON.stringify({ thumb, reference })}`,
+    { width: thumb.width, height: thumb.height, borderRadius: thumb.borderRadius, objectFit: thumb.objectFit },
+    { width: 24, height: 24, borderRadius: "3px", objectFit: "cover" },
+    "a draft image fills the reference-sized square chip with a cover crop",
   );
 
   const filled = await measureHeading(heading);
+  await assertComposerAttachmentTreatment(composer, "primary composer");
   assert.equal(filled.strip.rows, 1, "eight thumbnails stay on the single heading row");
   assert.ok(
     filled.thumbs.width <= filled.header.width / 2 && filled.title.width > 0,
@@ -162,6 +150,12 @@ export async function assertComposerImageIndicators(page, composer, names) {
   assert.ok(
     filled.title.right <= filled.thumbs.left + 0.5 && filled.thumbs.right <= filled.menu.left + 0.5,
     `thumbnails sit between the title and the hamburger without overlapping either: ${JSON.stringify(filled)}`,
+  );
+  assert.ok(
+    filled.strip.images.every((image, index, images) => (
+      index === 0 || images[index - 1].box.left > image.box.left
+    )),
+    `attachment DOM order fills the strip from right to left: ${JSON.stringify(filled.strip.images)}`,
   );
   assert.ok(
     Math.abs(filled.link.left - bare.link.left) < 0.5 &&

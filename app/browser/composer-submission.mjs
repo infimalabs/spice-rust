@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 import {
+  assertComposerAttachmentTreatment,
   assertComposerImageIndicators,
   pasteImages,
 } from "./composer-image-indicators.mjs";
@@ -41,6 +42,7 @@ export async function assertCompleteComposerSubmission({
   await assertComposerImageIndicators(page, composer, ["pixel.png", "pixel-copy.png"]);
   await pasteImages(quotedComposer, ["quoted-pixel.png"]);
   await quotedComposer.getByRole("img", { name: "quoted-pixel.png" }).waitFor();
+  await assertComposerAttachmentTreatment(quotedComposer, "quoted composer");
   assert.equal(
     await composer.getByRole("img", { name: "quoted-pixel.png", exact: true }).count(),
     0,

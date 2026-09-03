@@ -195,6 +195,16 @@ pub fn standing_title(standing: &Standing) -> String {
     parts.join("; ")
 }
 
+/// Browser composer emblem class for a vendor with a known visual identity.
+#[must_use]
+pub fn composer_vendor_icon_class(vendor: &str) -> Option<&'static str> {
+    match vendor {
+        "claude" => Some("composer-vendor-icon--claude"),
+        "codex" | "openai" => Some("composer-vendor-icon--openai"),
+        _ => None,
+    }
+}
+
 /// The fraction of a team's width, at either edge, that joins rather than
 /// reorders.
 ///
@@ -713,8 +723,18 @@ pub fn truncate(text: &str, budget: usize) -> String {
 mod tests {
     use super::{
         MAX_LINEAGE_VISUAL_WEIGHT, agent_message_attribution, agent_message_label,
-        lineage_visual_weight,
+        composer_vendor_icon_class, lineage_visual_weight,
     };
+
+    #[test]
+    fn composer_icons_admit_only_known_vendor_identities() {
+        for vendor in ["claude", "codex", "openai"] {
+            assert!(composer_vendor_icon_class(vendor).is_some(), "{vendor}");
+        }
+        for vendor in ["", "agent", "gemini", "Claude", "open-ai"] {
+            assert_eq!(composer_vendor_icon_class(vendor), None, "{vendor}");
+        }
+    }
 
     #[test]
     fn unnamed_agent_attribution_still_names_author_lane_and_worktree() {

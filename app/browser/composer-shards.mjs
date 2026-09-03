@@ -3,7 +3,10 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { reply, TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
-import { assertQuotedComposerParity } from "./composer-parity.mjs";
+import {
+  assertComposerReferenceTreatment,
+  assertQuotedComposerParity,
+} from "./composer-parity.mjs";
 
 /// Production resolves one destination per primary shard, in one order
 /// (`primary_stream_link` in app/src/browser/watchband.rs): the last rendered
@@ -816,6 +819,7 @@ export async function assertComposerShards({
     "the complete nested message remains reachable from the shard",
   );
   await assertQuotedComposerParity(previewShard, headingChildren);
+  await assertComposerReferenceTreatment(quotePrimary, previewShard);
   const overflowingReply = Array.from(
     { length: 16 },
     (_, index) => `independently scrolling quote reply line ${index + 1}`,
@@ -1004,7 +1008,7 @@ export async function assertComposerShards({
   assert.equal(await drawer.getAttribute("data-agent-drawer-target-id"), seeded.quoteLane);
   assert.deepEqual(
     (await drawer.getByRole("button").allInnerTexts()).map((text) => text.replaceAll("\n", " ")),
-    ["Focus message editor", "Renew this agent request renewal"],
+    ["Focus message editor return to editor", "Renew this agent request renewal"],
     "the hamburger opens actions scoped to this agent",
   );
   assert.equal(

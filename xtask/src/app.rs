@@ -16,11 +16,12 @@ mod source;
 const REMAPPED_CARGO_HOME: &str = "/cargo-home";
 const APP_SOURCE_IDENTITY_ENV: &str = "SPICE_APP_SOURCE_IDENTITY"; // env-policy: allow
 const GENERATED_MODULE_REFERENCES: usize = 2;
-const GENERATED_REFERENCES: [(&str, usize); 5] = [
+const GENERATED_REFERENCES: [(&str, usize); 6] = [
     ("/app.module", 2),
     ("/app_bg.wasm", 2),
     ("/style.css", 1),
     ("/mosaic.css", 1),
+    ("/composer.css", 1),
     ("/responsive.css", 1),
 ];
 static NEXT_BUILD: AtomicU64 = AtomicU64::new(0);
