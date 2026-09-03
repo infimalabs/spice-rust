@@ -196,7 +196,7 @@ fn client_reclaim(
                 let heads = task_heads(&board, &task)?;
                 (task, heads)
             }
-            None => sole_active(&board)?,
+            None => reclaim_active(&board)?,
         };
         let seconds = matches.get_one::<String>("lease-seconds").map_or(
             Ok(spice::claim_lease::DEFAULT_RECLAIM_SECONDS),
@@ -245,6 +245,18 @@ fn client_reclaim(
             .expect("typed intent encodes"),
         ))
     })
+}
+
+/// Resolve the implicit reclaim target without losing status-first recovery.
+pub(super) fn reclaim_active(
+    board: &BoardAnswer,
+) -> Result<(TaskHandle, &BoardTask), Outcome<CommandAnswer>> {
+    match sole_active(board) {
+        Err(Outcome::Refusal(refusal)) if refusal.reason() == "claim::active-missing" => Err(
+            reclaim_authority_refusal("claim::active-missing", Some(board.principal.to_string())),
+        ),
+        outcome => outcome,
+    }
 }
 
 pub(super) fn reclaim_claim<'a>(
