@@ -461,7 +461,7 @@ export async function assertCompactionBoundary(
       await assertCompactionDivider(
         dividers[index],
         `${witness.label} narrow compaction boundary`,
-        seeded.agentAttribution,
+        seeded.agentName,
       );
       await assertUnavailableToolTerminal(
         dividers[index],
@@ -537,7 +537,7 @@ export async function assertCompactionBoundary(
       await assertCompactionDivider(
         dividers[index],
         `${witness.label} narrow unresolved compaction boundary after empty boundary`,
-        seeded.agentAttribution,
+        seeded.agentName,
       );
       await assertUnavailableToolTerminal(
         dividers[index],
@@ -547,13 +547,12 @@ export async function assertCompactionBoundary(
       await assertCompactionDivider(
         emptyDividers[index],
         `${witness.label} narrow empty compaction boundary`,
-        seeded.agentAttribution,
-        { expectAttributionTruncated: true },
+        seeded.agentName,
       );
       await assertNoUnavailableToolTerminal(
         emptyDividers[index],
         `${witness.label} narrow empty compaction boundary`,
-        seeded.agentAttribution,
+        seeded.agentName,
       );
     }
     await resizeTransitionWitnesses(witnesses, TRANSITION_WIDE, "restored wide viewport");
@@ -561,7 +560,7 @@ export async function assertCompactionBoundary(
       await assertCompactionDivider(
         dividers[index],
         `${witness.label} wide compaction boundary`,
-        seeded.agentAttribution,
+        seeded.agentName,
       );
       await assertUnavailableToolTerminal(
         dividers[index],
@@ -571,12 +570,12 @@ export async function assertCompactionBoundary(
       await assertCompactionDivider(
         emptyDividers[index],
         `${witness.label} wide empty compaction boundary`,
-        seeded.agentAttribution,
+        seeded.agentName,
       );
       await assertNoUnavailableToolTerminal(
         emptyDividers[index],
         `${witness.label} wide empty compaction boundary`,
-        seeded.agentAttribution,
+        seeded.agentName,
       );
     }
     await assertSharedProseAppend(

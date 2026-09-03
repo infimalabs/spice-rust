@@ -227,7 +227,7 @@ export async function assertCompactionBoundaryPersistence(page, seeded, boundary
   await assertNoUnavailableToolTerminal(
     restoredEmpty,
     "reloaded empty compaction boundary",
-    seeded.agentAttribution,
+    seeded.agentName,
   );
 
   const socketCount = await page.evaluate(() => window.__canvasSockets?.length ?? 0);
@@ -255,7 +255,7 @@ export async function assertCompactionBoundaryPersistence(page, seeded, boundary
   await assertNoUnavailableToolTerminal(
     restoredEmpty,
     "reconnected empty compaction boundary",
-    seeded.agentAttribution,
+    seeded.agentName,
   );
 }
 

@@ -19,6 +19,11 @@ import {
   rearmRetainedMosaicIdentity,
   waitForMosaicReady,
 } from "./agent-conversation-mosaic.mjs";
+import {
+  assertCompactionDivider,
+  assertNoUnavailableToolTerminal,
+  waitForCompactionReady,
+} from "./compaction-boundary-reference.mjs";
 import { assertCompactionBoundary } from "./mosaic-transitions.mjs";
 import {
   assertFirefoxRestoredMosaic,
@@ -563,6 +568,27 @@ async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
   const compactionBoundary = await assertCompactionBoundary(
     page, fixture, team, seeded, artifacts, restoredMosaic,
   );
+  const unnamedCompaction = await activityReplay.injectCompaction(page, seeded.quoteLane);
+  const unnamedDivider = team.locator(
+    `[data-mosaic-card-key="${unnamedCompaction.key}"]`,
+  );
+  const unnamedAfter = await activityReplay.injectAgentProse(
+    page,
+    seeded.quoteLane,
+    "The unnamed lane continues after compaction.",
+  );
+  await team.locator(`[data-mosaic-card-key="${unnamedAfter.key}"]`).waitFor();
+  await waitForCompactionReady(page, unnamedDivider, "unnamed compaction boundary");
+  await assertCompactionDivider(
+    unnamedDivider,
+    "unnamed compaction boundary",
+    longWorktreeBasename,
+  );
+  await assertNoUnavailableToolTerminal(
+    unnamedDivider,
+    "unnamed compaction boundary",
+    longWorktreeBasename,
+  );
 
   const quoteSourceBody = (await quoteSource.locator(".message-body").innerText()).trim();
   await quoteSource.getByRole("button", { name: "Quote this message" }).click();
@@ -993,7 +1019,7 @@ try {
         await assertFirefoxRestoredMosaic(
           resident.discovery.endpoint,
           artifacts,
-          seeded.agentAttribution,
+          seeded.agentName,
           seeded.acknowledgementReply,
         );
         assertCandidateMeasurementPaintEngineInventory();

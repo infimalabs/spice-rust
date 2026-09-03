@@ -126,6 +126,7 @@ export async function assertCompactionDivider(
     return {
       card: {
         ...measured(boundary),
+        accessibleLabel: boundary.getAttribute("aria-label"),
         clientWidth: boundary.clientWidth,
         scrollWidth: boundary.scrollWidth,
         creationIndex: Number(boundary.dataset.creationIndex),
@@ -198,7 +199,19 @@ export async function assertCompactionDivider(
     ["mosaic-compaction-age", "", "mosaic-compaction-context"],
     `${label} keeps age, separator, and compacted-context hierarchy`,
   );
+  assert.equal(
+    geometry.card.accessibleLabel,
+    `Context compacted by ${expectedAttribution}`,
+    `${label} uses the friendly attribution in its accessible label`,
+  );
   assert.equal(geometry.agent.text, expectedAttribution);
+  const identityPattern = /(?:\b[0-9a-f]{8}\/[0-9a-f]{8}\b|\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b)/i;
+  assert.doesNotMatch(geometry.agent.text, identityPattern, `${label} hides visible identity IDs`);
+  assert.doesNotMatch(
+    geometry.card.accessibleLabel,
+    identityPattern,
+    `${label} hides identity IDs from assistive text`,
+  );
   const attributionEvidence = JSON.stringify({
     agent: geometry.agent,
     contextGroup: geometry.contextGroup,
