@@ -69,6 +69,17 @@ pub(crate) use spice::claim_lease::{AUTOMATIC_MAXIMUM_SECONDS, AUTOMATIC_PROVISI
 pub(crate) const AUTOMATIC_HEARTBEAT_SECONDS: i64 = 20;
 pub(crate) const AUTOMATIC_ROLLING_SECONDS: i64 = 100;
 
+fn reclaim_authority_refusal(reason: &str, observed: Option<String>) -> Outcome<CommandAnswer> {
+    let command = wire::SpiceCommand::new("task", ["status"])
+        .expect("task status is a structural Spice recovery command");
+    Outcome::Refusal(Refusal::repairable(
+        command,
+        wire::RefusalDiagnostic::new(reason, None, None, observed).with_detail(
+            "run spice task status to read current authority; when it reports no claim for this lane, run spice task next",
+        ),
+    ))
+}
+
 // `mod` rather than `include!`, which reverses the decision EFFORT-1kKrXfRq
 // recorded here. That decision's measurements survive the reversal: a child
 // module does already read its ancestors' private items, so the guard tests

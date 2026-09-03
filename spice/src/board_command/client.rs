@@ -217,21 +217,7 @@ fn client_reclaim(
                 "request a positive bounded lease extension",
             ));
         }
-        let claim = heads.claim.as_ref().ok_or_else(|| {
-            refusal(
-                "claim::head-missing",
-                Some(task.to_string()),
-                "reclaim only the current lane's active task",
-            )
-        })?;
-        if claim.body.disposition != ClaimDisposition::Active || claim.body.actor != board.principal
-        {
-            return Err(refusal(
-                "claim::ownership-refused",
-                Some(task.to_string()),
-                "reclaim only an active claim owned by this lane capability",
-            ));
-        }
+        let claim = reclaim_claim(heads, &task, &board.principal)?;
         let lease = heads.lease.as_ref().ok_or_else(|| {
             protocol_fault(
                 "claim::lease-missing",
@@ -259,6 +245,24 @@ fn client_reclaim(
             .expect("typed intent encodes"),
         ))
     })
+}
+
+pub(super) fn reclaim_claim<'a>(
+    heads: &'a BoardTask,
+    task: &TaskHandle,
+    principal: &Actor,
+) -> Result<&'a Positioned<ClaimHead>, Outcome<CommandAnswer>> {
+    let claim = heads
+        .claim
+        .as_ref()
+        .ok_or_else(|| reclaim_authority_refusal("claim::head-missing", Some(task.to_string())))?;
+    if claim.body.disposition != ClaimDisposition::Active || claim.body.actor != *principal {
+        return Err(reclaim_authority_refusal(
+            "claim::ownership-refused",
+            Some(task.to_string()),
+        ));
+    }
+    Ok(claim)
 }
 
 fn client_add(
