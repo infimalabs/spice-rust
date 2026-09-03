@@ -426,7 +426,7 @@ fn render(snapshot: &WorkingState) -> String {
                 text.push_str(&phase);
             }
             if let Some(elapsed) = claim.elapsed {
-                text.push_str(&format!(" for {}s", elapsed.as_secs()));
+                text.push_str(&format!(" held for {}s", elapsed.as_secs()));
             }
             parts.push(text);
             let tier = LeaseTier::from_remaining(claim.remaining);
@@ -547,7 +547,7 @@ mod tests {
 
         assert_eq!(
             line,
-            "🌶️ Working state: 1 pending inbox; claim METER-00000001 todo for 90s; \
+            "🌶️ Working state: 1 pending inbox; claim METER-00000001 todo held for 90s; \
              last taste fallbacks."
         );
         assert!(!line.contains('\n'));
@@ -731,6 +731,8 @@ mod tests {
                 warning.map(|warning| warning.rsplit_once(' ').expect("label").1),
             );
             if warning.is_some() {
+                assert!(line.contains("todo held for 90s"));
+                assert!(!line.contains("todo for 90s"));
                 assert!(line.contains(&format!("has {remaining}s remaining")));
                 assert!(line.contains("run spice task reclaim METER-00000001"));
                 assert!(!line.contains(" ACK"));
