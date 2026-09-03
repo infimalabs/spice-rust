@@ -588,6 +588,9 @@ async function captureTicker(ticker) {
     const surfaceBounds = surface?.getBoundingClientRect();
     const toolbarBounds = toolbar?.getBoundingClientRect();
     const paneBounds = pane?.getBoundingClientRect();
+    const ageBounds = age?.getBoundingClientRect();
+    const style = getComputedStyle(node);
+    const surfaceStyle = surface ? getComputedStyle(surface) : null;
     return {
       accent: node.dataset.accent,
       agentAccent: agent?.dataset.accent,
@@ -595,6 +598,7 @@ async function captureTicker(ticker) {
       authored: age?.dataset.ageAuthored,
       ageClock: age?.dataset.ageClock,
       ageColor: age ? getComputedStyle(age).color : null,
+      ageInlineStartInset: ageBounds ? ageBounds.left - bounds.left : null,
       ageLabel: age?.textContent?.trim(),
       className: node.className,
       directTickers: surface
@@ -611,6 +615,9 @@ async function captureTicker(ticker) {
           && bounds.top >= toolbarBounds.bottom - 1
           && bounds.bottom <= paneBounds.top + 1,
       ),
+      overflowsInline: node.scrollWidth > node.clientWidth + 1,
+      paddingInlineEnd: style.paddingInlineEnd,
+      paddingInlineStart: style.paddingInlineStart,
       pipColor: pip ? getComputedStyle(pip).backgroundColor : null,
       pipStatus: pip?.dataset.laneStatus,
       prefixColor: prefix ? getComputedStyle(prefix).color : null,
@@ -618,6 +625,12 @@ async function captureTicker(ticker) {
         ? getComputedStyle(agent.querySelector(".composer-shard-prose")).color
         : null,
       status: node.dataset.laneStatus,
+      surfaceAgeInlineStartInset: ageBounds && surfaceBounds
+        ? ageBounds.left - surfaceBounds.left
+        : null,
+      surfaceBorderInlineStart: surfaceStyle
+        ? Number.parseFloat(surfaceStyle.borderInlineStartWidth)
+        : null,
       underToolbar: toolbar?.nextElementSibling === node && node.nextElementSibling === pane,
       withinSurface: Boolean(
         surfaceBounds
@@ -715,6 +728,19 @@ function assertTickerPresentation(actual, expected, lane, activityClass, message
   assert.equal(actual.underToolbar, true, `${message}: status sits between toolbar and pane`);
   assert.equal(actual.nonOverlapping, true, `${message}: status overlaps neither sibling`);
   assert.equal(actual.withinSurface, true, `${message}: status remains inside its lineage width`);
+  assert.equal(actual.paddingInlineStart, "6px", `${message}: status starts 6px from its own edge`);
+  assert.equal(actual.paddingInlineEnd, "10px", `${message}: status retains its 10px trailing inset`);
+  assert.ok(
+    Math.abs(actual.ageInlineStartInset - 6) <= 0.5,
+    `${message}: age begins at the declared 6px inset`,
+  );
+  assert.ok(
+    Math.abs(
+      actual.surfaceAgeInlineStartInset - (actual.surfaceBorderInlineStart + 6),
+    ) <= 0.5,
+    `${message}: age begins 6px inside the lineage border`,
+  );
+  assert.equal(actual.overflowsInline, false, `${message}: status has no horizontal overflow`);
   assert.match(actual.ageLabel ?? "", /^(?:now|\d+[smhd])$/, `${message}: age is relative`);
   assert.ok(Number.isFinite(Number(actual.authored)), `${message}: age carries activity time`);
   assert.equal(actual.ageClock, "deadline", `${message}: age uses the shared ticking clock`);
