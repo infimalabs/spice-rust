@@ -15,6 +15,7 @@ import {
 } from "./compaction-boundary-reference.mjs";
 import { assertComposerPointerSelection } from "./composer-shards.mjs";
 import { launchBrowser } from "./headless-launch.mjs";
+import { assertLaneHeaderPipMatrix } from "./lane-header-pips.mjs";
 import { assertNaturalMessageFooterInsets } from "./message-card-reference.mjs";
 import { assertCandidateMeasurementPaintAtomic } from "./mosaic-candidate-paint.mjs";
 import {
@@ -265,6 +266,7 @@ export async function assertFirefoxRestoredMosaic(
     await chooseCanvasView(page, "Agents");
     const console = page.locator('[data-pane="agent-console"]');
     await console.getByRole("tab", { name: /^Compose/ }).click();
+    await assertLaneHeaderPipMatrix(page, console, artifacts, "firefox", "dark");
     const before = await settledMosaicCards(page, "before reload");
     assert.ok(before.length > 0, "Firefox receives restored Mosaic cards");
     const userQuoteFixture = await installFirefoxQuoteFixture(page);
