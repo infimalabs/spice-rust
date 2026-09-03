@@ -210,6 +210,9 @@ export async function installActivityReplay(context) {
     injectAgentProse(page, lane, text, media = undefined) {
       return injectAgentMessage(page, lane, text, { media });
     },
+    injectAgentToolMedia(page, lane, media) {
+      return injectAgentMessage(page, lane, "", { activity: "tool", media });
+    },
     injectAgentFinal(page, lane, text) {
       return injectAgentMessage(page, lane, text, { finalAnswer: true });
     },

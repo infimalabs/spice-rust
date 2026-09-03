@@ -253,7 +253,7 @@ fn image_preview_html(source: &str, authored_title: &str, alt: &str) -> String {
     );
     if openable_data_image {
         format!(
-            "<a class=\"message-image message-image--openable\" href=\"about:blank\" \
+            "<a class=\"message-image message-image--openable\" href=\"{source}\" \
              target=\"_blank\" rel=\"noopener\" title=\"{action}\" aria-label=\"{action}\" \
              data-full-size-data-image=\"true\">{preview}</a>"
         )
@@ -743,6 +743,7 @@ mod tests {
         let cached = render_received(&format!("![cached]({OPENABLE_PNG})"));
         assert!(cached.html.contains("data-mosaic-image-state=\"pending\""));
         assert_eq!(cached.html.matches("data-mosaic-image-status=").count(), 1);
+        assert!(cached.html.contains(&format!("href=\"{OPENABLE_PNG}\"")));
 
         let malformed = render_received("![broken](data:image/png;base64,%%%)");
         assert!(malformed.html.contains("data-mosaic-image-state=\"error\""));
