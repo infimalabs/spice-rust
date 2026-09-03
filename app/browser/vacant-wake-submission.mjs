@@ -93,6 +93,10 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
       const stack = agent.querySelector(".agent-composer-stack");
       const primary = stack.querySelector(".composer-shard--primary");
       const controls = node.querySelector(".team-composer-controls");
+      const activity = node.nextElementSibling;
+      if (!activity?.classList.contains("team-activity-grid")) {
+        throw new Error("the vacant composer has no adjacent activity lane");
+      }
       return {
         bodyWidth: document.body.scrollWidth,
         viewportWidth: innerWidth,
@@ -101,6 +105,7 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
         stack: rect(stack),
         primary: rect(primary),
         controls: rect(controls),
+        activity: rect(activity),
         placeholder: primary.querySelector("textarea")?.placeholder,
         standingBanners: agent.querySelectorAll(".composer-shard-standing").length,
       };
@@ -119,6 +124,16 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
         Math.abs(geometry.agent.bottom - geometry.controls.bottom) < 1 &&
         Math.abs(geometry.agent.height - geometry.controls.height) < 1,
       `${label}: composer and controls close on the same frame: ${JSON.stringify(geometry)}`,
+    );
+    assert.equal(
+      Math.round(geometry.activity.top - geometry.controls.bottom),
+      10,
+      `${label}: controls keep the reference gap above activity`,
+    );
+    assert.equal(
+      Math.round(geometry.activity.top - geometry.agent.bottom),
+      10,
+      `${label}: composer shards keep the reference gap above activity`,
     );
     assert.ok(
       Math.abs(geometry.stack.height - geometry.agent.height) < 1 &&

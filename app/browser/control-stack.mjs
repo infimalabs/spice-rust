@@ -11,6 +11,7 @@ import { observedBoundedWait, TRANSITION_MS } from "./canvas-fixture.mjs";
 const referenceItemWidth = 112;
 const referenceItemHeight = 36;
 const referenceGap = 6;
+const referenceComposerEdgeGap = 10;
 const referenceRadius = "999px";
 const referenceLabelFontSize = "11px";
 const referenceSendFontSize = "16px";
@@ -81,6 +82,11 @@ function describeStack(node) {
   };
   const button = node.querySelector(".team-send");
   const buttonStyle = getComputedStyle(button);
+  const composer = node.closest(".team-composer");
+  const activity = composer?.nextElementSibling;
+  if (!composer || !activity?.classList.contains("team-activity-grid")) {
+    throw new Error("the reference control stack has no adjacent activity lane");
+  }
   return {
     tokens,
     speech: slider(".team-speech"),
@@ -93,7 +99,28 @@ function describeStack(node) {
       background: buttonStyle.backgroundColor,
       color: buttonStyle.color,
     },
+    edge: {
+      controls: measure(node),
+      activity: measure(activity),
+      agents: [...composer.querySelectorAll(".team-agent")].map(measure),
+    },
   };
+}
+
+function assertComposerEdgeGap(stack, state) {
+  assert.equal(
+    stack.edge.activity.top - stack.edge.controls.bottom,
+    referenceComposerEdgeGap,
+    `${state} control rail keeps the reference gap above activity`,
+  );
+  assert.ok(stack.edge.agents.length > 0, `${state} renders at least one composer shard`);
+  for (const agent of stack.edge.agents) {
+    assert.equal(
+      stack.edge.activity.top - agent.bottom,
+      referenceComposerEdgeGap,
+      `${state} composer shards keep the reference gap above activity`,
+    );
+  }
 }
 
 function assertReferenceShape(stack, state) {
@@ -146,6 +173,7 @@ function assertReferenceShape(stack, state) {
   );
   assert.match(stack.send.family, /mono/i, `${state} send button stays monospace`);
   assert.equal(stack.send.color, stack.tokens.page, `${state} send button prints on the page ink`);
+  assertComposerEdgeGap(stack, state);
 }
 
 /// One accent drives a state everywhere it shows: the reference tints the
@@ -249,6 +277,7 @@ async function assertNarrowStack(page, controls, viewport) {
         `narrow ${named[index]} keeps the reference gap below ${named[index - 1]}`,
       );
     }
+    assertComposerEdgeGap(stack, "narrow reference stack");
   } finally {
     await page.setViewportSize(viewport);
   }
