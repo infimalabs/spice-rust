@@ -22,13 +22,11 @@ const referenceSendFontSize = "16px";
 /// accent disc from byte-identical CSS. Pinning it here would pin the user
 /// agent rather than the Rust surface.
 ///
-/// The exact accent hues are the second named divergence. The reference draws
-/// its armed and maxed states from the predecessor palette (`--final-accent`
-/// #8ea2ff and `--say-accent` #f2c14e in dark); Rust keeps its own `--accent-2`
-/// #8aa9e8 and `--warning` #e6b44e, which every other Rust surface already
-/// shares. The role each colour plays is what the reference fixes, so the roles
-/// are asserted through the live tokens below and the hues are left alone
-/// rather than forking a control-only palette.
+/// The maxed hue is the remaining named divergence. The reference draws it
+/// from `--say-accent` (#f2c14e in dark), while Rust keeps its own `--warning`
+/// #e6b44e, which every other Rust surface already shares. Armed follows the
+/// reference final accent in palette slot 1. The role each colour plays is what
+/// the reference fixes, so the roles are asserted through the live tokens below.
 const states = [
   { name: "steer", speech: "1", lifetime: "0" },
   { name: "drain", speech: "1", lifetime: "2" },
@@ -46,7 +44,7 @@ function describeStack(node) {
     return resolved;
   };
   const tokens = {
-    armed: resolve("var(--accent-2)"),
+    armed: resolve("var(--accent-1)"),
     maxed: resolve("var(--warning)"),
     muted: resolve("var(--muted)"),
     page: resolve("var(--page)"),

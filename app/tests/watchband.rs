@@ -360,6 +360,52 @@ fn a_lane_keeps_its_accent_when_the_table_reorders() {
 }
 
 #[test]
+fn the_stylesheet_matches_the_reference_accent_palette() {
+    const STYLESHEET: &str = include_str!("../style.css");
+    const LIGHT: [&str; ACCENTS] = [
+        "#1b4332", "#4f63b5", "#8b5f00", "#b3402a", "#007c89", "#8a4fbf",
+    ];
+    const DARK: [&str; ACCENTS] = [
+        "#95d5b2", "#8ea2ff", "#f2c14e", "#e0734f", "#5fd6d0", "#d1a3ff",
+    ];
+
+    let root = STYLESHEET
+        .split_once(":root {")
+        .expect("the stylesheet declares the light root")
+        .1
+        .split_once('}')
+        .expect("the light root is closed")
+        .0;
+    let dark = STYLESHEET
+        .split_once("@media (prefers-color-scheme: dark) {")
+        .expect("the stylesheet declares a dark palette")
+        .1
+        .split_once(":root {")
+        .expect("the dark media query declares a root")
+        .1
+        .split_once('}')
+        .expect("the dark root is closed")
+        .0;
+
+    for (palette, expected) in [(root, LIGHT), (dark, DARK)] {
+        let actual = palette
+            .lines()
+            .filter_map(|line| {
+                let declaration = line.trim().strip_prefix("--accent-")?;
+                let (slot, value) = declaration.split_once(':')?;
+                Some((
+                    slot.parse::<usize>().ok()?,
+                    value.trim().trim_end_matches(';'),
+                ))
+            })
+            .collect::<Vec<_>>();
+        let expected = expected.into_iter().enumerate().collect::<Vec<_>>();
+
+        assert_eq!(actual, expected, "the ordered accent palette drifted");
+    }
+}
+
+#[test]
 fn two_lanes_sharing_one_accent_slot_are_still_told_apart_by_name() {
     // Nothing contrived picks this pair. LANE_A and LANE_D are two of the four
     // lanes this file already declares, and all four sit on two of the six
