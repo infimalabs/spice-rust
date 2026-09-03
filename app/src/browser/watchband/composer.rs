@@ -421,6 +421,7 @@ pub(super) fn render_quote_shards(
     status: crate::runtime::LaneStatus,
     drafts: &UseReducerHandle<ComposerDrafts>,
     target_submit: Callback<KeyboardEvent>,
+    placeholder: &str,
 ) -> Html {
     html! {
         <div class="composer-quote-stack" data-composer-quote-stack-target-id={lane_key.to_owned()}>
@@ -497,7 +498,7 @@ pub(super) fn render_quote_shards(
                             data-quote-draft-id={quote.identity.clone()}
                             rows="2"
                             value={quote.body.clone()}
-                            placeholder="Reply to this quoted message"
+                            placeholder={placeholder.to_owned()}
                             oninput={update}
                             onkeydown={target_submit.clone()}
                             {onpaste}

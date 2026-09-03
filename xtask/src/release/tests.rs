@@ -33,6 +33,8 @@ impl Fixture {
         fs::write(app.join("style.css"), b"lane-built style").expect("write lane style");
         fs::write(app.join("mosaic.css"), b"lane-built Mosaic style")
             .expect("write lane Mosaic style");
+        fs::write(app.join("composer.css"), b"lane-built composer style")
+            .expect("write lane composer style");
         fs::write(app.join("responsive.css"), b"lane-built responsive style")
             .expect("write lane responsive style");
         fs::write(

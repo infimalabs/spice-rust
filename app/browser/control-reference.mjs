@@ -711,14 +711,21 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
   const trigger = menu.locator(":scope > summary");
   const focus = menu.getByRole("button", { name: "Focus message editor" });
   const renew = menu.locator(".agent-renew-request:not(:disabled)");
+  const vendorIcon = composer.locator(".composer-vendor-icon");
+  await vendorIcon.waitFor();
   assert.equal(await renew.isVisible(), false, "renewal is hidden while its drawer is closed");
   await trigger.click();
   await renew.waitFor();
+  assert.equal(await vendorIcon.isVisible(), false, "the open menu clears the body vendor icon");
   const geometry = await menu.evaluate((details) => {
     const composer = details.closest(".composer-shard--primary");
     const drawer = details.querySelector(".agent-action-drawer");
     const trigger = details.querySelector(":scope > summary");
-    if (!composer || !drawer || !trigger) throw new Error("agent menu geometry is incomplete");
+    const heading = details.closest(".composer-shard-heading");
+    const actions = [...details.querySelectorAll(".agent-action-drawer > button")];
+    if (!composer || !drawer || !trigger || !heading || actions.length < 2) {
+      throw new Error("agent menu geometry is incomplete");
+    }
     const rect = (element) => element.getBoundingClientRect().toJSON();
     const composerBox = rect(composer);
     const drawerBox = rect(drawer);
@@ -729,16 +736,35 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
     return {
       composer: composerBox,
       drawer: drawerBox,
+      heading: rect(heading),
       trigger: rect(trigger),
+      actions: actions.map((action) => ({
+        box: rect(action),
+        scrollWidth: action.scrollWidth,
+        clientWidth: action.clientWidth,
+        scrollHeight: action.scrollHeight,
+        clientHeight: action.clientHeight,
+      })),
       drawerOwnsComposerInterior: hit !== null && drawer.contains(hit),
     };
   });
-  for (const edge of ["top", "right", "bottom", "left"]) {
+  for (const edge of ["right", "bottom", "left"]) {
     assert.ok(
       Math.abs(geometry.drawer[edge] - geometry.composer[edge]) <= 1,
-      `the open agent menu covers the composer's ${edge} edge: ${JSON.stringify(geometry)}`,
+      `the open agent menu fills the composer body's ${edge} edge: ${JSON.stringify(geometry)}`,
     );
   }
+  assert.ok(
+    Math.abs(geometry.drawer.top - geometry.heading.bottom) <= 1,
+    `the action grid replaces the editor below the retained header: ${JSON.stringify(geometry)}`,
+  );
+  assert.ok(
+    geometry.actions.every((action) => (
+      action.box.width > 0 && action.box.height >= 72 &&
+      action.scrollWidth <= action.clientWidth && action.scrollHeight <= action.clientHeight
+    )),
+    `every menu action is a full-size unclipped label/detail control: ${JSON.stringify(geometry.actions)}`,
+  );
   assert.ok(
     geometry.trigger.left >= geometry.composer.left &&
       geometry.trigger.right <= geometry.composer.right &&
@@ -763,6 +789,15 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
     textboxId,
   );
 
+  await trigger.click();
+  await renew.waitFor();
+  const siblingEditor = surface.locator(".team-agent").nth(1).getByRole("textbox");
+  await siblingEditor.click();
+  assert.equal(
+    await menu.getAttribute("open"),
+    null,
+    "clicking outside the action menu dismisses it",
+  );
   await trigger.click();
   await renew.waitFor();
   assert.equal(

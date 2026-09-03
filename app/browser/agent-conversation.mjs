@@ -169,14 +169,14 @@ export async function seatAgentTeam(
   if (assertInvalidVendor) {
     // A refused submission has to say why. The vendor field is free text with
     // no datalist, so a proper name is the trip an operator actually takes.
-    await console.getByLabel("Vendor").fill("My Agent");
+    await console.getByLabel("Vendor", { exact: true }).fill("My Agent");
     await console.getByRole("button", { name: "Seat agent" }).click();
     await refusal.waitFor({ timeout: 10_000 });
     assert.match(await refusal.innerText(), /Vendor must be one lower-case word/);
   }
 
   await assignTeamLaneIds(page);
-  await console.getByLabel("Vendor").fill("Claude");
+  await console.getByLabel("Vendor", { exact: true }).fill("Claude");
   await console.getByRole("button", { name: "Seat agent" }).click();
   await refusal.waitFor({ state: "detached", timeout: 10_000 });
   await waitForElement(page, "first external agent seat renders", AGENT_SEAT_MS,
@@ -203,7 +203,7 @@ export async function seatAgentTeam(
     await console.getByLabel("Name").fill(teamSeatNames[index + 1] ?? "");
     await console.getByLabel("Worktree").fill(worktree);
     await console.getByLabel("Life").fill("steer");
-    await console.getByLabel("Vendor").fill("Claude");
+    await console.getByLabel("Vendor", { exact: true }).fill("Claude");
     await console.getByRole("button", { name: "Seat agent" }).click();
     await waitForElement(page, "next external agent seat renders", AGENT_SEAT_MS,
       console.locator(".team-detail-card").nth(index + 1));
@@ -284,7 +284,7 @@ export async function seatLeaseAgent(page, fixture, worktrees) {
   await console.getByLabel("Worktree").fill(expiryWorktree);
   await console.getByLabel("Life").fill("steer");
   await assignTeamLaneIds(page);
-  await console.getByLabel("Vendor").fill("Claude");
+  await console.getByLabel("Vendor", { exact: true }).fill("Claude");
   await console.getByRole("button", { name: "Seat agent" }).click();
   await waitForElement(page, "automatic lease agent renders", AGENT_SEAT_MS,
     console.locator(".team-detail-card").first());
@@ -292,7 +292,7 @@ export async function seatLeaseAgent(page, fixture, worktrees) {
   await console.getByLabel("Name").fill(agentNames[1]);
   await console.getByLabel("Worktree").fill(releaseWorktree);
   await console.getByLabel("Life").fill("steer");
-  await console.getByLabel("Vendor").fill("Claude");
+  await console.getByLabel("Vendor", { exact: true }).fill("Claude");
   await console.getByRole("button", { name: "Seat agent" }).click();
   await waitForElement(page, "explicit release lease agent renders", AGENT_SEAT_MS,
     console.locator(".team-detail-card").nth(1));
