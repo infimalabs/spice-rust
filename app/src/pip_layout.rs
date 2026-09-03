@@ -20,6 +20,13 @@ pub(crate) struct PipColumn {
     pub(crate) lower: usize,
 }
 
+/// Two-row lane-header stack filled bottom-to-top, then right-to-left.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PipStack {
+    count: usize,
+    columns: usize,
+}
+
 impl PipGrid {
     pub(crate) fn new(count: usize) -> Self {
         Self {
@@ -54,6 +61,26 @@ impl PipGrid {
         (1..=self.columns).map(move |column| PipColumn {
             upper: (column <= full_columns).then_some(self.columns + full_columns - column),
             lower: self.columns - column,
+        })
+    }
+}
+
+impl PipStack {
+    pub(crate) fn new(count: usize) -> Self {
+        Self {
+            count,
+            columns: count / ROWS + count % ROWS,
+        }
+    }
+
+    pub(crate) fn rows(self) -> usize {
+        self.count.min(ROWS)
+    }
+
+    pub(crate) fn position(self, index: usize) -> Option<PipPosition> {
+        (index < self.count).then(|| PipPosition {
+            column: self.columns - index / ROWS,
+            row: self.rows() - index % ROWS,
         })
     }
 }
@@ -135,6 +162,36 @@ mod tests {
                 },
             ],
         );
+    }
+
+    #[test]
+    fn lane_stack_fills_each_inside_column_before_growing_left() {
+        let stack = PipStack::new(5);
+
+        assert_eq!(stack.rows(), 2);
+        assert_eq!(stack.columns, 3);
+        assert_eq!(
+            (0..5)
+                .map(|index| stack.position(index).unwrap())
+                .collect::<Vec<_>>(),
+            vec![
+                PipPosition { column: 3, row: 2 },
+                PipPosition { column: 3, row: 1 },
+                PipPosition { column: 2, row: 2 },
+                PipPosition { column: 2, row: 1 },
+                PipPosition { column: 1, row: 2 },
+            ],
+        );
+    }
+
+    #[test]
+    fn lane_stack_keeps_one_and_two_member_headers_in_one_column() {
+        let single = PipStack::new(1);
+        let pair = PipStack::new(2);
+
+        assert_eq!(single.position(0), Some(PipPosition { column: 1, row: 1 }));
+        assert_eq!(pair.position(0), Some(PipPosition { column: 1, row: 2 }));
+        assert_eq!(pair.position(1), Some(PipPosition { column: 1, row: 1 }));
     }
 
     #[test]

@@ -378,6 +378,7 @@ fn render_lineage_toolbar(
     standings: &[Standing],
     render: &FleetRender<'_>,
 ) -> Html {
+    let pip_stack = crate::pip_layout::PipStack::new(standings.len());
     let control = render
         .lineage_controls
         .current(lineage.lane, lineage.subscription);
@@ -398,16 +399,23 @@ fn render_lineage_toolbar(
                 role="group"
                 aria-label={format!("{} admitted agents", standings.len())}
             >
-                {for standings.iter().filter_map(|standing| {
+                {for standings.iter().enumerate().filter_map(|(index, standing)| {
                     let member = lineage.member(standing.lane)?;
                     let status = member.status(standing.pending);
+                    let position = pip_stack
+                        .position(index)
+                        .expect("standing index belongs to the lane pip stack");
+                    let label = format!("{}: {}", standing.label, status.label());
                     Some(html! {
                         <span
                             class={classes!("team-light", status.key())}
                             role="img"
                             data-lane-light-target-id={member.lane.to_string()}
                             data-lane-status={status.key()}
-                            aria-label={format!("{}: {}", standing.label, status.label())}
+                            data-pip-column={position.column.to_string()}
+                            data-pip-row={position.row.to_string()}
+                            aria-label={label.clone()}
+                            title={label}
                         ></span>
                     })
                 })}

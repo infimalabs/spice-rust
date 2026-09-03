@@ -120,8 +120,8 @@
   .status-copy { display: none; }
   .refresh { min-width: 36px; padding: 0 8px; }
   .content { padding: 18px 14px 28px; }
-  .team-toolbar { grid-template-columns: 22px minmax(0, 1fr) 30px; padding-inline: 4px; }
-  .team-toolbar:has(.team-drag-handle) { grid-template-columns: 12px 22px minmax(0, 1fr) 30px; }
+  .team-toolbar { grid-template-columns: max-content minmax(0, 1fr) 30px; padding-inline: 4px; }
+  .team-toolbar:has(.team-drag-handle) { grid-template-columns: 12px max-content minmax(0, 1fr) 30px; }
   .team-mode { padding-inline: 4px; font-size: .6rem; }
   .team-mode-badge { display: none; }
   .team-task-workspace { padding-inline: 8px; }

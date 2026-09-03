@@ -28,6 +28,7 @@ import {
 } from "./canvas-fixture.mjs";
 import { assertAgentWorkspaceGeometry } from "./canvas-readiness.mjs";
 import { assertCandidateMeasurementPaintAtomic } from "./mosaic-candidate-paint.mjs";
+import { assertLaneHeaderPipMatrix } from "./lane-header-pips.mjs";
 import {
   assertQuoteBlockDensity,
   captureQuoteBlockDensity,
@@ -988,6 +989,7 @@ async function assertRosterPips(page, console, seated, artifacts) {
     teamRoster.every((entry) => ["running", "running-stale"].includes(entry.status)),
     "every supervised member has a lit liveness pip",
   );
+  await assertLaneHeaderPipMatrix(page, console, artifacts, "chromium", "light");
 
   await chooseCanvasView(page, "Flow");
   const brandPips = page.locator(".brand-dot");

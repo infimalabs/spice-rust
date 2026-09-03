@@ -535,7 +535,7 @@ body:has(.shell--mosaic),
 
 .team-toolbar {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) 30px;
+  grid-template-columns: max-content minmax(0, 1fr) 30px;
   align-items: center;
   gap: 8px;
   min-height: 44px;
@@ -545,7 +545,7 @@ body:has(.shell--mosaic),
 }
 
 /* The grip only earns a column when a team can actually be arranged. */
-.team-toolbar:has(.team-drag-handle) { grid-template-columns: 13px 24px minmax(0, 1fr) 30px; }
+.team-toolbar:has(.team-drag-handle) { grid-template-columns: 13px max-content minmax(0, 1fr) 30px; }
 
 .team-drag-handle {
   display: grid;
@@ -559,13 +559,6 @@ body:has(.shell--mosaic),
 }
 .team-drag-handle:active { cursor: grabbing; }
 .team-drag-handle:hover { color: var(--ink); }
-
-.team-lights {
-  display: grid;
-  grid-template-columns: repeat(2, 9px);
-  gap: 4px 5px;
-  justify-content: center;
-}
 
 .team-light {
   width: 9px;
@@ -624,7 +617,7 @@ body:has(.shell--mosaic),
 @container (max-width: 20rem) {
   .team-toolbar { gap: 4px; padding-inline: 5px; }
   .team-toolbar:has(.team-drag-handle) {
-    grid-template-columns: 10px 18px minmax(0, 1fr) 28px;
+    grid-template-columns: 10px max-content minmax(0, 1fr) 28px;
   }
   .team-mode-rail { gap: 0; padding: 2px; }
   .team-mode { gap: 2px; padding-inline: 3px; font-size: .56rem; }
