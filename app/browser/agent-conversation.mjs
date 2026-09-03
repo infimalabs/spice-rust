@@ -53,14 +53,8 @@ function messageFooterLabel(member) {
   return member.name ?? basename(member.worktree);
 }
 
-/// The fourth identity ends in 6 rather than 3 on purpose, and tidying it back
-/// to a run of four consecutive values would silently delete coverage. An
-/// accent slot is the lane identity modulo six, so consecutive identities can
-/// never collide, and a fixture built from them would prove only the easy half
-/// of the contract. Ending in 6 puts the fourth lane on the first lane's slot,
-/// which is the ordinary case a lineage meets -- six members hold six distinct
-/// slots 720 times in 46656 -- and lets this file assert that a shared colour
-/// still leaves two agents told apart by name.
+/// Fixed lane identities keep the browser fixture deterministic. Accent slots
+/// come from canonical member order, independently of these UUID values.
 const teamLaneIds = [
   "00000000-0000-4000-8000-000000000000", "00000000-0000-4000-8000-000000000001",
   "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000006",
@@ -642,21 +636,19 @@ export async function assertAgentConversation(
   await assertPersistentMosaic(page, fixture, console, plane, seated[0], activityReplay);
   await assertCandidateMeasurementPaintAtomic(page, "chromium");
 
-  // The first and fourth lanes hold one slot between them, by the construction
-  // teamLaneIds explains. That is the ordinary case for a lineage, so the
-  // colour is decoration and the assertions below are what an operator and a
-  // test actually read to tell the two apart. A message card leads with short
-  // canonical author/lane identity and a worktree leaf, then keeps the
-  // configured producer name or the unnamed lane's worktree basename.
+  // Every message projection uses the producer's current canonical member
+  // position. Identity remains explicit in the accessible attribution rather
+  // than being inferred from that decorative slot.
   const messageChrome = await console.locator('[data-card-kind="agent-message"]').evaluateAll(
     (cards) => cards.map((card) => ({
       lane: card.dataset.agentLane,
       accent: card.dataset.accent,
+      accentSlot: card.dataset.accentSlot,
       producer: card.querySelector(".message-agent-name")?.textContent?.trim() ?? "",
       producerAria: card.querySelector(".message-agent-name")?.getAttribute("aria-label") ?? "",
     })),
   );
-  for (const member of seated) {
+  for (const [position, member] of seated.entries()) {
     const expected = messageFooterLabel(member);
     const attribution = canonicalAgentAttribution(member);
     assert.ok(
@@ -670,19 +662,23 @@ export async function assertAgentConversation(
       )),
       `lane ${member.lane} preserves canonical attribution for its copy control`,
     );
+    assert.ok(
+      messageChrome.filter((card) => card.lane === member.lane)
+        .every((card) => (
+          card.accent === String(position) && card.accentSlot === String(position)
+        )),
+      `lane ${member.lane} message cards use canonical accent slot ${position}`,
+    );
   }
-  const sharedSlot = [seated[0].lane, seated[3].lane].map(
+  const separated = [seated[0].lane, seated[3].lane].map(
     (lane) => messageChrome.find((card) => card.lane === lane),
   );
-  assert.ok(sharedSlot.every(Boolean), "both lanes sharing a slot render a message card");
-  assert.equal(
-    sharedSlot[0].accent, sharedSlot[1].accent,
-    "the seeded pair holds one accent slot, so the colour names neither lane",
-  );
-  assert.notEqual(sharedSlot[0].lane, sharedSlot[1].lane);
+  assert.ok(separated.every(Boolean), "the first and fourth lanes render message cards");
+  assert.notEqual(separated[0].accent, separated[1].accent);
+  assert.notEqual(separated[0].lane, separated[1].lane);
   assert.notEqual(
-    sharedSlot[0].producer, sharedSlot[1].producer,
-    "the producer name is what stays distinct when the colour does not",
+    separated[0].producer, separated[1].producer,
+    "producer names remain distinct independently of color",
   );
   const expectedActions = [
     { label: "Speak this message", icon: "▶" },

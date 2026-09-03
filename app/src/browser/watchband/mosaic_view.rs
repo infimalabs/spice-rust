@@ -17,6 +17,7 @@ use image_resolution::{
 #[derive(Clone)]
 pub(super) enum ActivityCard {
     Agent {
+        accent: usize,
         member: crate::runtime::LaneMember,
         quote_lane: CanonicalUuid,
         message: Rc<wire::AgentMessage>,
@@ -28,17 +29,20 @@ impl PartialEq for ActivityCard {
         match (self, other) {
             (
                 Self::Agent {
+                    accent: left_accent,
                     member: left_member,
                     quote_lane: left_quote_lane,
                     message: left_message,
                 },
                 Self::Agent {
+                    accent: right_accent,
                     member: right_member,
                     quote_lane: right_quote_lane,
                     message: right_message,
                 },
             ) => {
-                left_member.lane == right_member.lane
+                left_accent == right_accent
+                    && left_member.lane == right_member.lane
                     && left_member.name == right_member.name
                     && left_member.worktree == right_member.worktree
                     && left_quote_lane == right_quote_lane
@@ -1054,12 +1058,14 @@ fn render_activity_cards(
                 .expect("Mosaic creation index fits the quote ordering field");
             match activity {
                 ActivityCard::Agent {
+                    accent,
                     member,
                     quote_lane,
                     message,
                 } => html! {
                     <AgentMessageCard
                         key={key}
+                        accent={*accent}
                         member={member.clone()}
                         quote_lane={*quote_lane}
                         message={message.clone()}
