@@ -8,6 +8,7 @@
 
 use super::*;
 use crate::browser::clock::Age;
+use crate::task_pill::{TaskPill, TaskPillAvailability, TaskPillIndex};
 use crate::watchband;
 
 /// Characters the ticker line is allowed.
@@ -70,35 +71,6 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
             <span class="bar-meta">{format!("cursor {}", render.cursor)}</span>
             {render_canvas_menu(&render, runtime)}
         </header>
-    }
-}
-
-#[derive(Default)]
-struct TaskPill {
-    stem: String,
-    hidden: bool,
-    ready: usize,
-    active: usize,
-    unavailable: usize,
-}
-
-impl TaskPill {
-    fn count(&self) -> String {
-        if self.hidden {
-            (self.ready + self.active + self.unavailable).to_string()
-        } else {
-            format!("{}·{}·{}", self.ready, self.active, self.unavailable)
-        }
-    }
-
-    fn title(&self) -> String {
-        if self.hidden {
-            return format!("{} deferred or system tasks", self.count());
-        }
-        format!(
-            "{} ready, {} active or in flight, {} blocked or deferred across {}.*",
-            self.ready, self.active, self.unavailable, self.stem
-        )
     }
 }
 
@@ -287,7 +259,7 @@ fn task_pills(runtime: Option<&CanvasRuntime>) -> Vec<TaskPill> {
     let Some(board) = runtime.and_then(CanvasRuntime::board) else {
         return Vec::new();
     };
-    let mut pills = BTreeMap::<String, TaskPill>::new();
+    let mut pills = TaskPillIndex::default();
     for task in &board.tasks {
         let workflow = &task.workflow.body;
         if workflow.status != "pending" || workflow.completion.is_some() {
@@ -308,17 +280,12 @@ fn task_pills(runtime: Option<&CanvasRuntime>) -> Vec<TaskPill> {
                     .unwrap_or("task")
                     .to_owned()
             });
-        let pill = pills.entry(stem.clone()).or_insert_with(|| TaskPill {
-            stem,
-            hidden,
-            ..TaskPill::default()
-        });
-        if task
+        let availability = if task
             .claim
             .as_ref()
             .is_some_and(|claim| claim.body.disposition == wire::head::ClaimDisposition::Active)
         {
-            pill.active += 1;
+            TaskPillAvailability::Active
         } else if workflow.deferral.is_some()
             || task.statement.body.dependencies.iter().any(|dependency| {
                 board.tasks.iter().any(|candidate| {
@@ -327,12 +294,13 @@ fn task_pills(runtime: Option<&CanvasRuntime>) -> Vec<TaskPill> {
                 })
             })
         {
-            pill.unavailable += 1;
+            TaskPillAvailability::Unavailable
         } else {
-            pill.ready += 1;
-        }
+            TaskPillAvailability::Ready
+        };
+        pills.record(hidden, stem, availability);
     }
-    pills.into_values().collect()
+    pills.into_pills()
 }
 
 fn render_pill(

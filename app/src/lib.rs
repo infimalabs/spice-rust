@@ -55,6 +55,8 @@ pub mod speech_owner;
 pub mod speech_queue;
 pub mod state;
 #[cfg(any(target_arch = "wasm32", test))]
+mod task_pill;
+#[cfg(any(target_arch = "wasm32", test))]
 mod thread_refresh;
 pub mod view;
 pub mod watchband;

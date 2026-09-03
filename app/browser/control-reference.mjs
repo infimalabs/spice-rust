@@ -163,10 +163,21 @@ function measureReference(surface) {
 function assertReferenceGeometry(geometry) {
   assert.equal(geometry.versionDisplays, 0, "the task strip never becomes a version display");
   assert.ok(geometry.taskPills.length > 0, "the live board renders task-stem pills");
+  const taskPillOrder = geometry.taskPills.map(({ hidden, stem }) => ({ hidden, stem }));
   assert.equal(
-    new Set(geometry.taskPills.map((pill) => pill.stem)).size,
+    new Set(taskPillOrder.map(({ hidden, stem }) => `${hidden}:${stem}`)).size,
     geometry.taskPills.length,
-    "each live board stem renders exactly one pill",
+    "each live board visibility/stem pair renders exactly one pill",
+  );
+  assert.deepEqual(
+    taskPillOrder,
+    [...taskPillOrder].sort((left, right) => {
+      if (left.hidden !== right.hidden) return Number(left.hidden) - Number(right.hidden);
+      if (left.stem < right.stem) return -1;
+      if (left.stem > right.stem) return 1;
+      return 0;
+    }),
+    "public task stems precede system stems and each class is ascending",
   );
   assert.equal(geometry.taskStrip.gap, "6px", "task-pill-strip gap matches the canonical reference");
   for (const pill of geometry.taskPills) {
