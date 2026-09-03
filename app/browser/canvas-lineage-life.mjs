@@ -93,6 +93,7 @@ async function measureComposerStrip(strip) {
       members: [...node.querySelectorAll(":scope > .team-agent")].map((member) => {
         const box = member.getBoundingClientRect();
         return {
+          accent: member.dataset.accent,
           lane: member.dataset.agentLane,
           left: box.left,
           top: box.top,
@@ -113,6 +114,11 @@ function assertComposerStripGeometry(geometry, members) {
     geometry.members.map(({ lane }) => lane),
     members.map(({ lane }) => lane),
     "all seven composers retain resident member order",
+  );
+  assert.deepEqual(
+    geometry.members.map(({ accent }) => accent),
+    ["0", "1", "2", "3", "4", "5", "0"],
+    "the complete predecessor palette starts green and wraps only after slot six",
   );
   assert.ok(
     geometry.members.every(({ top }) => Math.abs(top - geometry.members[0].top) <= 1),
@@ -169,18 +175,22 @@ export async function assertSevenMemberComposerStrip(browser) {
     await reply(fixture, ["trust", "grant", pending.body.digest]);
     const { host, members } = await admitSevenMemberLineage(fixture, worktrees);
 
-    context = await browser.newContext({
-      colorScheme: "light",
-      viewport: { width: 520, height: 720 },
-    });
-    const { monitor, strip } = await findSevenMemberComposer(
-      context,
-      resident.discovery.endpoint,
-      host.lineage_id,
-    );
-    assertComposerStripGeometry(await measureComposerStrip(strip), members);
-    await assertEasternComposerVisible(strip);
-    monitor.assertClean();
+    for (const colorScheme of ["light", "dark"]) {
+      context = await browser.newContext({
+        colorScheme,
+        viewport: { width: 520, height: 720 },
+      });
+      const { monitor, strip } = await findSevenMemberComposer(
+        context,
+        resident.discovery.endpoint,
+        host.lineage_id,
+      );
+      assertComposerStripGeometry(await measureComposerStrip(strip), members);
+      await assertEasternComposerVisible(strip);
+      monitor.assertClean();
+      await context.close();
+      context = undefined;
+    }
   } finally {
     if (context) await context.close();
     await cleanupLineageFixture({ fixture, resident, owner });

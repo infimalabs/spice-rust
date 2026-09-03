@@ -226,6 +226,15 @@ async function waitForMemberIn(scope, lane) {
   return member;
 }
 
+async function assertMemberAccents(scope, expected, message) {
+  assert.deepEqual(
+    await scope.locator(":scope > .canvas-team-members > .canvas-team-member")
+      .evaluateAll((members) => members.map((member) => member.dataset.accent)),
+    expected,
+    message,
+  );
+}
+
 async function assertResidentLineage(fixture, lane, lineage, policyLineage, reason) {
   const answer = await reply(fixture, ["lane"]);
   const member = answer.body.lanes.find((row) => row.lane === lane);
@@ -331,11 +340,17 @@ export async function assertTeamMenu(page, fixture, artifacts) {
     };
   });
   let originalTeam = panel.locator(`.canvas-team[data-team-lineage="${host}"]`);
+  await assertMemberAccents(
+    originalTeam,
+    ["0", "1", "2", "3"],
+    "the team menu deals accents from its first canonical member",
+  );
   let member = await waitForMemberIn(originalTeam, moved);
   await member.dragTo(panel.locator('[data-team-drop="unteamed"]'));
 
   panel = await openSpiceMenu(page);
   member = await waitForMemberIn(panel.locator(".canvas-unteamed"), moved);
+  assert.equal(await member.getAttribute("data-accent"), "0", "a solo member starts at green");
   assert.equal(await panel.locator(".canvas-team").count(), 1);
   assert.equal(await panel.locator(".canvas-team").locator(".canvas-team-member").count(), 3);
   await assertResidentLineage(fixture, moved, moved, host, "removing an agent from its team");
@@ -346,6 +361,11 @@ export async function assertTeamMenu(page, fixture, artifacts) {
   originalTeam = panel.locator(`.canvas-team[data-team-lineage="${host}"]`);
   member = await waitForMemberIn(originalTeam, moved);
   assert.equal(await originalTeam.locator(".canvas-team-member").count(), 4);
+  await assertMemberAccents(
+    originalTeam,
+    ["0", "1", "2", "3"],
+    "returning the member redeals the canonical team sequence",
+  );
   await assertResidentLineage(fixture, moved, host, host, "returning an agent to its team");
 
   await member.dragTo(panel.locator('[data-team-drop="new"]'));

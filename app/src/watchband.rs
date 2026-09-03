@@ -22,11 +22,9 @@ use crate::runtime::LaneRow;
 
 /// Accent slots the band cycles through.
 ///
-/// Keyed to lane identity rather than to row position, so a lane keeps its
-/// colour when the table reorders under it and the operator can follow one
-/// agent across a redraw. Following is all the colour is for: six slots dealt
-/// per identity repeat inside one lineage, so [`accent`] carries no claim that
-/// two agents wear different ones.
+/// Slots are dealt in canonical lineage-member order, matching the predecessor:
+/// green first, then blue, gold, red, teal, and plum. Identity remains visible
+/// in labels and data attributes rather than being inferred from color.
 pub const ACCENTS: usize = 6;
 
 /// Largest member-count weight the team console assigns to layout.
@@ -365,8 +363,14 @@ pub fn split_lineage(
 pub fn standings(lanes: &[LaneRow], inbox: &[LaneInbox], tasks: &[BoardTask]) -> Vec<Standing> {
     lanes
         .iter()
-        .flat_map(|lineage| lineage.members.iter().map(move |member| (lineage, member)))
-        .map(|(lineage, member)| {
+        .flat_map(|lineage| {
+            lineage
+                .members
+                .iter()
+                .enumerate()
+                .map(move |(position, member)| (lineage, position, member))
+        })
+        .map(|(lineage, position, member)| {
             let waiting = inbox.iter().find(|row| row.lane == member.lane);
             let held = held_task(tasks, member.lane);
             Standing {
@@ -395,7 +399,7 @@ pub fn standings(lanes: &[LaneRow], inbox: &[LaneInbox], tasks: &[BoardTask]) ->
                 phase: held.map(|task| task.workflow.body.phase.to_string()),
                 held_since: held.and_then(|task| lease_instant(task, |lease| lease.start)),
                 renewed_at: held.and_then(|task| lease_instant(task, |lease| lease.renewal)),
-                accent: accent(member.lane),
+                accent: accent(position),
             }
         })
         .collect()
@@ -430,39 +434,13 @@ fn lease_instant(
         .map(|lease| pick(&lease.body).get().as_millisecond())
 }
 
-/// The accent slot an identity keeps.
+/// The accent slot dealt to one canonical lineage-member position.
 ///
-/// The identity's own low bits, which a version-4 lane fills with randomness,
-/// so the slots spread without the app hashing anything. Hashing the canonical
-/// spelling instead would fold on the structure lane identities share: the
-/// fixed version and variant nibbles sit at fixed offsets, and a digest
-/// narrowed to six slots clusters the self-similar spellings a test writes.
-/// The modulo clusters those same spellings harder than that reads: every
-/// identity spelled from one repeated digit lands on slot 0 or slot 3, so a
-/// fixture wanting two colours picks identities that differ mod 6 rather than
-/// identities that merely look unalike.
-///
-/// # The slot decorates an attribution rather than carrying one
-///
-/// Six slots dealt per identity, with nothing arbitrating between members,
-/// repeat inside a single lineage. The chance that some two members share a
-/// slot runs 16.67% at two members, 44.44% at three, 72.22% at four, 90.74% at
-/// five and 98.46% at six, and is certainty above six, where six slots cannot
-/// seat a seventh member however they are dealt. A lineage of six wearing six
-/// distinct colours is the 720-in-46656 case rather than the rule, and capping
-/// membership at six moves none of those numbers, because the repetition is in
-/// the dealing and not in the size.
-///
-/// So the colour is not what tells two agents apart and no surface may read it
-/// that way. A card names its lane in `data-agent-lane`, retains the canonical
-/// author/lane and worktree attribution in its accessible label, and visibly
-/// names the configured agent or worktree leaf beside its actions. Those stay
-/// distinct when the colours do not. What the colour buys is continuity across
-/// a redraw, a reorder, and a reseat — which a slot dealt per lineage could not
-/// buy without recolouring a seated member because a different member arrived.
+/// The seventh member intentionally returns to green. Color decorates visible
+/// attribution; lane identity and accessible labels remain authoritative.
 #[must_use]
-pub fn accent(id: CanonicalUuid) -> usize {
-    usize::try_from(id.get().as_u128() % ACCENTS as u128).unwrap_or(0)
+pub const fn accent(position: usize) -> usize {
+    position % ACCENTS
 }
 
 /// The part of a worktree path that names one lane rather than the fleet.

@@ -12,6 +12,9 @@ const LANE_A: &str = "11111111-1111-4111-8111-111111111111";
 const LANE_B: &str = "22222222-2222-4222-8222-222222222222";
 const LANE_C: &str = "66666666-6666-4666-8666-666666666666";
 const LANE_D: &str = "77777777-7777-4777-8777-777777777777";
+const LANE_E: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const LANE_F: &str = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+const LANE_G: &str = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const LINEAGE_ONE: &str = "88888888-8888-4888-8888-888888888888";
 const LINEAGE_TWO: &str = "99999999-9999-4999-8999-999999999999";
 const LINEAGE_THREE: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -337,26 +340,37 @@ fn a_standing_carries_lease_instants_that_age_after_the_row_is_built() {
 }
 
 #[test]
-fn a_lane_keeps_its_accent_when_the_table_reorders() {
-    let forward = [lane(LANE_A, "main-c"), lane(LANE_B, "main-g")];
-    let reversed = [lane(LANE_B, "main-g"), lane(LANE_A, "main-c")];
+fn lineage_members_receive_the_complete_palette_in_canonical_order() {
+    let members = [
+        (LANE_A, "main-a"),
+        (LANE_B, "main-b"),
+        (LANE_C, "main-c"),
+        (LANE_D, "main-d"),
+        (LANE_E, "main-e"),
+        (LANE_F, "main-f"),
+    ];
+    let mut reversed = members;
+    reversed.reverse();
 
-    let first = standings(&forward, &[], &[]);
-    let second = standings(&reversed, &[], &[]);
+    let first = standings(&[seated(EPOCH, &members)], &[], &[]);
+    let second = standings(&[seated(EPOCH, &reversed)], &[], &[]);
 
-    // An accent read from the row index would move with the reorder, and one
-    // fixed for every lane would survive the reorder but collapse the two
-    // lanes onto one slot; the pair of claims admits neither.
-    assert_eq!(first[0].accent, second[1].accent);
-    assert_eq!(first[1].accent, second[0].accent);
-    assert_ne!(
-        first[0].accent, first[1].accent,
-        "one slot fixed for every lane would survive the reorder as well, and \
-         this pair is what rules that out; it is not a promise that two lanes \
-         differ, which they often do not"
+    let complete_palette = (0..ACCENTS).collect::<Vec<_>>();
+    assert_eq!(
+        first.iter().map(|row| row.accent).collect::<Vec<_>>(),
+        complete_palette
     );
-    assert!(first.iter().all(|row| row.accent < ACCENTS));
-    assert!(accent(uuid(LANE_A)) < ACCENTS);
+    assert_eq!(
+        second.iter().map(|row| row.accent).collect::<Vec<_>>(),
+        complete_palette
+    );
+    assert_eq!(first[0].lane, second[5].lane);
+    assert_eq!(first[0].accent, 0);
+    assert_eq!(
+        second[5].accent, 5,
+        "a reordered member receives its new position's slot"
+    );
+    assert_eq!(accent(ACCENTS), 0, "the seventh member wraps to green");
 }
 
 #[test]
@@ -406,25 +420,27 @@ fn the_stylesheet_matches_the_reference_accent_palette() {
 }
 
 #[test]
-fn two_lanes_sharing_one_accent_slot_are_still_told_apart_by_name() {
-    // Nothing contrived picks this pair. LANE_A and LANE_D are two of the four
-    // lanes this file already declares, and all four sit on two of the six
-    // slots, because every identity spelled from one repeated digit lands on
-    // slot 0 or slot 3. Six members wear six distinct colours 720 times in
-    // 46656, so sharing is the ordinary case and the colour never names a lane.
-    let lanes = [lane(LANE_A, "main-c"), lane(LANE_D, "main-h")];
-
-    let rows = standings(&lanes, &[], &[]);
-
-    assert_eq!(
-        rows[0].accent, rows[1].accent,
-        "the decided contract deals slots per identity, so this pair collides; \
-         dealing them per lineage instead would break here first"
+fn wrapped_lineage_accents_do_not_replace_member_identity() {
+    let lineage = seated(
+        EPOCH,
+        &[
+            (LANE_A, "main-a"),
+            (LANE_B, "main-b"),
+            (LANE_C, "main-c"),
+            (LANE_D, "main-d"),
+            (LANE_E, "main-e"),
+            (LANE_F, "main-f"),
+            (LANE_G, "main-g"),
+        ],
     );
-    assert_ne!(rows[0].lane, rows[1].lane);
+
+    let rows = standings(&[lineage], &[], &[]);
+
+    assert_eq!(rows[0].accent, rows[6].accent);
+    assert_ne!(rows[0].lane, rows[6].lane);
     assert_ne!(
-        rows[0].name, rows[1].name,
-        "the name is what stays distinct when the colour does not"
+        rows[0].name, rows[6].name,
+        "identity stays distinct when colors wrap"
     );
 }
 

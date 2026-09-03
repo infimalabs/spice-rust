@@ -209,9 +209,10 @@ fn render_lineage(
                 }
             </header>
             <div class="canvas-team-members">
-                {for lineage.members.iter().map(|member| {
+                {for lineage.members.iter().enumerate().map(|(position, member)| {
                     render_member(
                         member,
+                        watchband::accent(position),
                         waiting,
                         lineage.lane,
                         can_configure,
@@ -226,6 +227,7 @@ fn render_lineage(
 
 fn render_member(
     member: &crate::runtime::LaneMember,
+    accent: usize,
     waiting: &[wire::intent::LaneInbox],
     source: CanonicalUuid,
     can_configure: bool,
@@ -252,7 +254,7 @@ fn render_member(
             aria-disabled={(!can_configure).to_string()}
             data-team-member={member.lane.to_string()}
             data-source-lineage={source.to_string()}
-            data-accent={watchband::accent(member.lane).to_string()}
+            data-accent={accent.to_string()}
             {ondragstart}
         >
             <span class={classes!("canvas-member-presence", status.key())}></span>
@@ -328,6 +330,7 @@ fn render_solo_members_drop(
                     {for members.iter().map(|member| {
                         render_member(
                             member,
+                            watchband::accent(0),
                             render.waiting,
                             member.lane,
                             render.can_configure,

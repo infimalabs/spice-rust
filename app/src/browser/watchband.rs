@@ -231,8 +231,13 @@ fn activity_cards(runtime: &CanvasRuntime, lineage: &crate::runtime::LaneRow) ->
         .messages()
         .iter()
         .filter_map(|message| {
-            let member = lineage.member(message.lane)?;
+            let (position, member) = lineage
+                .members
+                .iter()
+                .enumerate()
+                .find(|(_, member)| member.lane == message.lane)?;
             Some(ActivityCard::Agent {
+                accent: watchband::accent(position),
                 member: member.clone(),
                 quote_lane: crate::composer_drafts::quote_lane(&lineage.members, message),
                 message: Rc::clone(message),

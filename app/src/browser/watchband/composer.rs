@@ -88,6 +88,7 @@ pub(super) fn focus_after_render(id: String) {
 
 #[derive(Properties)]
 pub(super) struct AgentMessageCardProps {
+    pub(super) accent: usize,
     pub(super) member: crate::runtime::LaneMember,
     pub(super) quote_lane: CanonicalUuid,
     pub(super) message: Rc<wire::AgentMessage>,
@@ -102,7 +103,8 @@ pub(super) struct AgentMessageCardProps {
 
 impl PartialEq for AgentMessageCardProps {
     fn eq(&self, other: &Self) -> bool {
-        self.member.lane == other.member.lane
+        self.accent == other.accent
+            && self.member.lane == other.member.lane
             && self.member.name == other.member.name
             && self.member.worktree == other.member.worktree
             && self.quote_lane == other.quote_lane
@@ -135,7 +137,7 @@ pub(super) fn agent_message_card(props: &AgentMessageCardProps) -> Html {
         })
     };
     let correspondent = agent_message_correspondent(
-        &props.member,
+        props.accent,
         props.quote_lane,
         &props.message,
         &props.quote_dispatcher,
@@ -281,7 +283,7 @@ fn render_compaction_boundary(message: &wire::AgentMessage, attribution: &str) -
 }
 
 fn agent_message_correspondent(
-    member: &crate::runtime::LaneMember,
+    accent: usize,
     quote_lane: CanonicalUuid,
     message: &wire::AgentMessage,
     quote_dispatcher: &UseReducerDispatcher<ComposerDrafts>,
@@ -298,7 +300,7 @@ fn agent_message_correspondent(
     let focus_lane = lane_key.clone();
     let quote_dispatcher = quote_dispatcher.clone();
     view::chrome::Correspondent {
-        accent: watchband::accent(member.lane),
+        accent,
         speak: speak.clone(),
         speaking,
         quote: Callback::from(move |()| {
