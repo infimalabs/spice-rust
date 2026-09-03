@@ -198,18 +198,18 @@ fn client_reclaim(
             }
             None => sole_active(&board)?,
         };
-        let seconds =
-            matches
-                .get_one::<String>("lease-seconds")
-                .map_or(Ok(60 * 60), |written| {
-                    written.parse::<u64>().map_err(|error| {
-                        refusal(
-                            "claim::lease-seconds-invalid",
-                            Some(written.clone()),
-                            &error.to_string(),
-                        )
-                    })
-                })?;
+        let seconds = matches.get_one::<String>("lease-seconds").map_or(
+            Ok(spice::claim_lease::DEFAULT_RECLAIM_SECONDS),
+            |written| {
+                written.parse::<u64>().map_err(|error| {
+                    refusal(
+                        "claim::lease-seconds-invalid",
+                        Some(written.clone()),
+                        &error.to_string(),
+                    )
+                })
+            },
+        )?;
         if seconds == 0 {
             return Err(refusal(
                 "claim::lease-seconds-zero",

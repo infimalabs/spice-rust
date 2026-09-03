@@ -421,7 +421,11 @@ impl Runtime {
             std::time::Duration::from_secs(crate::board_command::AUTOMATIC_ROLLING_SECONDS as u64),
         )?;
         let until = std::cmp::max(rolling, armed.authority.lease.body().expiry);
-        let maximum = std::cmp::max(until, armed.authority.lease.body().maximum);
+        let reclaim_horizon = shifted(
+            at,
+            std::time::Duration::from_secs(crate::board_command::AUTOMATIC_MAXIMUM_SECONDS as u64),
+        )?;
+        let maximum = std::cmp::max(reclaim_horizon, armed.authority.lease.body().maximum);
         let authority = armed.authority;
         let origin = resident_origin(authority.epoch)?;
         let mut proposal = JournalWrite::new(Actor::Spice, origin, at, Producer::BusTimer);

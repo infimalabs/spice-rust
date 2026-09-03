@@ -196,22 +196,32 @@ fn collect(
     let current = heads
         .as_ref()
         .and_then(|heads| current_owner(heads, residency.body().epoch, lane.occupant, actor));
-    let claim = heads.as_ref().and_then(|heads| {
-        current.as_ref()?;
-        let lease = heads.lease()?.body();
-        let now = jiff::Timestamp::now();
-        Some(ClaimState {
-            handle: TaskHandle::for_project(
-                &heads.statement().body().project,
-                &heads.statement().body().born,
-            )
-            .to_string(),
-            phase: heads.workflow().body().phase.to_string(),
-            elapsed: duration_since(now, lease.start.get()),
-            remaining: duration_since(lease.expiry.get(), now).or(Some(Duration::ZERO)),
-            reclaim_extends: lease.expiry < lease.maximum,
+    let claim = heads
+        .as_ref()
+        .and_then(|heads| {
+            current.as_ref()?;
+            Some((heads, heads.claim()?.body(), heads.lease()?.body()))
         })
-    });
+        .map(|(heads, claim, lease)| {
+            let automatic = read
+                .fact_page(journal::FactPageStart::At(claim.claimed), claim.claimed, 1)?
+                .rows
+                .first()
+                .is_some_and(|fact| crate::claim_lease::is_automatic_claim_fact(claim, fact));
+            let now = jiff::Timestamp::now();
+            Ok(ClaimState {
+                handle: TaskHandle::for_project(
+                    &heads.statement().body().project,
+                    &heads.statement().body().born,
+                )
+                .to_string(),
+                phase: heads.workflow().body().phase.to_string(),
+                elapsed: duration_since(now, lease.start.get()),
+                remaining: duration_since(lease.expiry.get(), now).or(Some(Duration::ZERO)),
+                reclaim_extends: automatic || lease.expiry < lease.maximum,
+            })
+        })
+        .transpose()?;
     Ok(BoardObservation {
         state: WorkingState {
             pending_inbox_count,

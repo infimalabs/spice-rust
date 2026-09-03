@@ -138,6 +138,128 @@ fn free_active(bus: &Bus, epoch: CanonicalUuid, lane: &Actor, seat: &Seat, task:
     ));
 }
 
+fn claim_with_legacy_automatic_lease(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: &Actor,
+    seat: &Seat,
+    task: &TaskHandle,
+) -> Instant {
+    let available = board(bus, epoch, lane.clone());
+    let heads = at(&available, task);
+    let started = fixture_instant("automatic claim start");
+    let expiry = fixture_instant_after(started, AUTOMATIC_PROVISIONAL_SECONDS);
+    let mut write = JournalWrite::new(
+        lane.clone(),
+        format!("task:{task}").parse().expect("fixture task origin"),
+        started,
+        Producer::CommandDoor,
+    );
+    board::allocate::mint(
+        &mut write,
+        board::allocate::Mint {
+            task: &heads.statement.body.born,
+            actor: lane,
+            workflow: &heads.workflow.body,
+            project: &heads.statement.body.project,
+            lane: seat.lane,
+            occupant: seat.occupant,
+            epoch,
+            at: started,
+            expiry,
+            maximum: expiry,
+            git: None,
+            recovery: None,
+            source: body::SourceBoundary::Proven { heads: Vec::new() },
+        },
+    )
+    .expect("legacy automatic claim mints");
+    assert!(matches!(
+        bus.commit(write).expect("automatic claim commits"),
+        CommitOutcome::Committed(_)
+    ));
+    started
+}
+
+#[test]
+fn maximum_bound_automatic_claim_reclaims_in_place_for_one_hour() {
+    let (root, bus, epoch, seats) = fixture("reclaim-automatic-maximum", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "RECLAIM-auto01",
+        "Promote one healthy automatic claim",
+        Some("todo"),
+    );
+    let started = claim_with_legacy_automatic_lease(&bus, epoch, &lane, &seats[0], &task);
+    let before = board(&bus, epoch, lane.clone());
+    let before_heads = at(&before, &task);
+    let before_lease = before_heads.lease.as_ref().expect("automatic lease");
+    assert_eq!(before_lease.body.expiry, before_lease.body.maximum);
+    let reclaimed_at = fixture_instant_after(started, 1);
+
+    assert_committed(reclaim_at(
+        &bus,
+        epoch,
+        &lane,
+        &task,
+        active_witnesses(&before, &task, &seats[0]),
+        reclaimed_at,
+    ));
+
+    let after = board(&bus, epoch, lane.clone());
+    let after_heads = at(&after, &task);
+    let after_lease = after_heads.lease.as_ref().expect("reclaimed lease");
+    assert_eq!(after_heads.statement, before_heads.statement);
+    assert_eq!(after_heads.workflow, before_heads.workflow);
+    assert_eq!(after_heads.claim, before_heads.claim);
+    assert_eq!(after_lease.body.expiry, after_lease.body.maximum);
+    assert_eq!(
+        after_lease.body.maximum,
+        fixture_instant_after(reclaimed_at, AUTOMATIC_MAXIMUM_SECONDS)
+    );
+    assert!(matches!(
+        reclaim_at(
+            &bus,
+            epoch,
+            &lane,
+            &task,
+            active_witnesses(&after, &task, &seats[0]),
+            reclaimed_at,
+        ),
+        Outcome::Refusal(Refusal::Bare { ref diagnostic })
+            if diagnostic.reason() == "claim::lease-nonextending"
+    ));
+    let facts = bus.fact_snapshot().expect("automatic reclaim facts");
+    assert_eq!(
+        facts
+            .facts()
+            .iter()
+            .filter(|fact| fact.fact.kind() == wire::FactKind::ClaimWon)
+            .count(),
+        1
+    );
+    assert_eq!(
+        facts
+            .facts()
+            .iter()
+            .filter(|fact| fact.fact.kind() == wire::FactKind::ClaimFreed)
+            .count(),
+        0
+    );
+    assert_eq!(
+        facts
+            .facts()
+            .iter()
+            .filter(|fact| fact.fact.kind() == wire::FactKind::ClaimRenewed)
+            .count(),
+        1
+    );
+    clean(&root, bus);
+}
+
 #[test]
 fn free_and_next_mints_a_fresh_durable_maximum() {
     let (root, bus, epoch, seats) = fixture("reclaim-maximum-reset", 1);
