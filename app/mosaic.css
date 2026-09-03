@@ -683,11 +683,12 @@ body:has(.shell--mosaic),
    place to keep in step. */
 .team-composer {
   --team-composer-block-size: 120px;
+  --team-composer-edge-gap: 10px;
   display: grid;
   flex: 0 0 auto;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
-  padding: 8px 8px 0;
+  padding: 8px 8px var(--team-composer-edge-gap);
 }
 
 /* Agent columns keep a usable editing width and make their own east/west

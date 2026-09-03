@@ -68,6 +68,7 @@ function measureReference(surface) {
   const rail = rect(".team-mode-rail");
   const composer = rect(".team-composer");
   const controls = rect(".team-composer-controls");
+  const activity = rect(".team-activity-grid");
   // The armed and maxed sliders carry the state accent blended 70% into the
   // resting line, the way the predecessor mixes it, so the hue role has to be
   // read back through the same mix rather than through the raw token.
@@ -112,6 +113,7 @@ function measureReference(surface) {
     rail,
     composer,
     controls,
+    activity,
     selected: rect(".team-mode.selected"),
     menu: rect(".team-menu"),
     speech: rect(".team-speech"),
@@ -132,7 +134,13 @@ function measureReference(surface) {
     })),
     agents: [...surface.querySelectorAll(".team-agent")].map((agent) => {
       const box = agent.getBoundingClientRect();
-      return { left: box.left, right: box.right, top: box.top, width: box.width };
+      return {
+        left: box.left,
+        right: box.right,
+        top: box.top,
+        bottom: box.bottom,
+        width: box.width,
+      };
     }),
     labels: [...surface.querySelectorAll(".team-slider span")].map((label) => ({
       text: label.textContent,
@@ -321,6 +329,15 @@ function assertReferenceGeometry(geometry) {
   assert.ok(
     geometry.agents.at(-1).right <= geometry.controls.left + 1,
     "the control stack does not overlap the agent grid",
+  );
+  assert.equal(
+    Math.round(geometry.activity.top - geometry.controls.bottom),
+    10,
+    "the control rail keeps the reference gap above the activity lane",
+  );
+  assert.ok(
+    geometry.agents.every((agent) => Math.round(geometry.activity.top - agent.bottom) === 10),
+    "every composer shard keeps the reference gap above the activity lane",
   );
   assert.ok(
     geometry.surface.scrollWidth <= geometry.surface.clientWidth + 1,
