@@ -138,6 +138,137 @@ fn free_active(bus: &Bus, epoch: CanonicalUuid, lane: &Actor, seat: &Seat, task:
     ));
 }
 
+fn assert_authority_recovery(outcome: Outcome<CommandAnswer>, reason: &str) {
+    let Outcome::Refusal(Refusal::Repairable {
+        command,
+        diagnostic,
+    }) = outcome
+    else {
+        panic!("lost reclaim did not return repairable guidance: {outcome:?}");
+    };
+    assert_eq!(diagnostic.reason(), reason);
+    assert_eq!(command.arguments(), ["task", "status"]);
+    let detail = diagnostic.detail().expect("recovery detail is present");
+    assert!(detail.contains("spice task next"));
+    assert!(!detail.contains("spice task reclaim"));
+}
+
+#[test]
+fn client_reclaim_preflight_routes_missing_inactive_and_foreign_claims_through_status() {
+    let (root, bus, epoch, seats) = fixture("reclaim-client-authority", 2);
+    let owner = Actor::Lane(seats[0].lane);
+    let peer = Actor::Lane(seats[1].lane);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "RECLAIM-client",
+        "Read authoritative ownership before reclaim",
+        Some("todo"),
+    );
+    let available = board(&bus, epoch, owner.clone());
+    assert_authority_recovery(
+        reclaim_claim(at(&available, &task), &task, &owner).unwrap_err(),
+        "claim::head-missing",
+    );
+
+    claim_next(&bus, epoch, &owner, &seats[0], &task);
+    let foreign = board(&bus, epoch, peer.clone());
+    assert_authority_recovery(
+        reclaim_claim(at(&foreign, &task), &task, &peer).unwrap_err(),
+        "claim::ownership-refused",
+    );
+
+    free_active(&bus, epoch, &owner, &seats[0], &task);
+    let inactive = board(&bus, epoch, owner.clone());
+    assert_authority_recovery(
+        reclaim_claim(at(&inactive, &task), &task, &owner).unwrap_err(),
+        "claim::ownership-refused",
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn reclaim_refuses_residency_outside_the_claim_lineage_without_mutation() {
+    let (root, bus, epoch, seats) = fixture("reclaim-moved-residency", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "RECLAIM-moved1",
+        "Refuse stale reclaim authority",
+        Some("todo"),
+    );
+    claim_next(&bus, epoch, &lane, &seats[0], &task);
+    let claimed = board(&bus, epoch, lane.clone());
+    let mut residency = claimed.residency.body.clone();
+    let successor = uuid(9_001);
+    let row = residency.lanes.first_mut().expect("fixture lane exists");
+    row.occupant = Some(successor);
+    row.lineage = vec![successor];
+    let mut write = JournalWrite::new(
+        Actor::Spice,
+        format!("resident:{epoch}")
+            .parse()
+            .expect("resident origin"),
+        fixture_instant_after(
+            at(&claimed, &task)
+                .lease
+                .as_ref()
+                .expect("claim lease")
+                .body
+                .start,
+            1,
+        ),
+        Producer::CommandDoor,
+    );
+    let seated = write
+        .fact(body::UpSeated { epoch }, FactCause::Root)
+        .expect("successor residency fact builds");
+    write.residency_head(seated, move |_| residency);
+    assert!(matches!(
+        bus.commit(write).expect("successor residency commits"),
+        CommitOutcome::Committed(_)
+    ));
+
+    let moved = board(&bus, epoch, lane.clone());
+    let heads = at(&moved, &task);
+    let before_facts = bus
+        .fact_snapshot()
+        .expect("facts before refusal")
+        .facts()
+        .len();
+    let expected = vec![
+        Witness::Claim {
+            task: heads.statement.body.born.clone(),
+            head: Some(heads.claim.as_ref().expect("active claim").position),
+        },
+        Witness::Lease {
+            task: heads.statement.body.born.clone(),
+            head: heads.lease.as_ref().expect("active lease").position,
+        },
+        residency_witness(&moved, seats[0].lane, successor),
+    ];
+    let reclaim_at_time =
+        fixture_instant_after(heads.lease.as_ref().expect("active lease").body.start, 2);
+    assert_authority_recovery(
+        reclaim_at(&bus, epoch, &lane, &task, expected, reclaim_at_time),
+        "claim::residency-moved",
+    );
+
+    let after = board(&bus, epoch, lane);
+    assert_eq!(at(&after, &task), heads);
+    assert_eq!(
+        bus.fact_snapshot()
+            .expect("facts after refusal")
+            .facts()
+            .len(),
+        before_facts
+    );
+    clean(&root, bus);
+}
+
 fn claim_with_legacy_automatic_lease(
     bus: &Bus,
     epoch: CanonicalUuid,

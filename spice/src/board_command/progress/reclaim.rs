@@ -132,11 +132,7 @@ fn active_claim<'a>(
     at: Instant,
 ) -> Result<&'a ClaimHead, Outcome<CommandAnswer>> {
     let claim = entry.claim().ok_or_else(|| {
-        refusal(
-            "claim::head-missing",
-            Some(renew.task.to_string()),
-            "reclaim only the current lane's active task",
-        )
+        reclaim_authority_refusal("claim::head-missing", Some(renew.task.to_string()))
     })?;
     let Actor::Lane(_) = command.actor() else {
         return Err(refusal(
@@ -146,18 +142,13 @@ fn active_claim<'a>(
         ));
     };
     if claim.disposition != ClaimDisposition::Active || claim.actor != *command.actor() {
-        return Err(refusal(
+        return Err(reclaim_authority_refusal(
             "claim::ownership-refused",
             Some(claim.actor.to_string()),
-            "reclaim only an active claim owned by this lane capability",
         ));
     }
     board::Active::admit(entry, command.actor(), at).map_err(|error| {
-        refusal(
-            "claim::active-refused",
-            Some(error.to_string()),
-            "reclaim before lapse; use task next after reallocation",
-        )
+        reclaim_authority_refusal("claim::active-refused", Some(error.to_string()))
     })?;
     Ok(claim)
 }
@@ -210,14 +201,7 @@ fn reclaim_residency(
 }
 
 fn moved_refusal(renew: &ClaimRenew) -> Outcome<CommandAnswer> {
-    refusal(
-        "claim::residency-moved",
-        Some(renew.task.to_string()),
-        &format!(
-            "run spice task reclaim {} from the current same-lineage seat",
-            renew.task
-        ),
-    )
+    reclaim_authority_refusal("claim::residency-moved", Some(renew.task.to_string()))
 }
 
 pub(super) fn append_reclaim(
