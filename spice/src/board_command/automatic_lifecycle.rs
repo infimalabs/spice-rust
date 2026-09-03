@@ -227,7 +227,7 @@ fn prepare_git(
 fn claim_deadlines() -> Result<(Instant, Instant, Instant), Outcome<CommandAnswer>> {
     let at = current_instant()?;
     let expiry = instant_after(at, AUTOMATIC_PROVISIONAL_SECONDS)?;
-    let maximum = expiry;
+    let maximum = instant_after(at, AUTOMATIC_MAXIMUM_SECONDS)?;
     Ok((at, expiry, maximum))
 }
 
@@ -238,17 +238,7 @@ pub(crate) fn is_automatic_claim(
     let Ok(index) = facts.binary_search_by_key(&claim.claimed, |envelope| envelope.seq) else {
         return false;
     };
-    let envelope = &facts[index];
-    let Some(won) = envelope.fact.read::<body::ClaimWon>() else {
-        return false;
-    };
-    envelope
-        .at
-        .get()
-        .checked_add(jiff::SignedDuration::from_secs(
-            AUTOMATIC_PROVISIONAL_SECONDS,
-        ))
-        .is_ok_and(|expiry| won.until.get() == expiry)
+    spice::claim_lease::is_automatic_claim_fact(claim, &facts[index])
 }
 
 fn claim_source_boundary(
@@ -423,4 +413,24 @@ fn active_claim(
         &heads.statement().body().born,
     );
     Ok((observed, actor, handle))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn automatic_claim_starts_short_with_a_one_hour_reclaim_horizon() {
+        let (at, expiry, maximum) = claim_deadlines().expect("automatic deadlines build");
+
+        assert_eq!(
+            expiry,
+            instant_after(at, AUTOMATIC_PROVISIONAL_SECONDS).expect("provisional deadline builds")
+        );
+        assert_eq!(
+            maximum,
+            instant_after(at, AUTOMATIC_MAXIMUM_SECONDS).expect("maximum deadline builds")
+        );
+        assert!(expiry < maximum);
+    }
 }

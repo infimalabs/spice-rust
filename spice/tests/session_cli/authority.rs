@@ -224,6 +224,8 @@ fn seed_recall_authority(path: &Path, thread: &str) {
         SESSION_PROJECT,
         "review",
         instant(1),
+        instant(2),
+        instant(2),
     );
     mint_claim(
         &mut journal,
@@ -235,6 +237,8 @@ fn seed_recall_authority(path: &Path, thread: &str) {
         SESSION_PROJECT,
         "todo",
         instant(2),
+        instant(40),
+        instant(50),
     );
 }
 
@@ -485,13 +489,11 @@ fn real_run_stream_reports_working_state_and_wakes_at_warning_boundary() {
     assert!(lines[1].contains("CLAIM LEASE WARNING"));
     let handle = wire::TaskHandle::for_project(SESSION_PROJECT, &stamp("SESSION-held"));
     assert!(
-        lines[1].contains(&format!(
-            "run spice task free {handle}, then spice task next"
-        )),
-        "warning recommends freeing the maximum-bound fixture claim: {:?}",
+        lines[1].contains(&format!("run spice task reclaim {handle}")),
+        "warning recommends reclaiming the automatic fixture claim: {:?}",
         lines[1]
     );
-    assert!(!lines[1].contains("task reclaim"));
+    assert!(!lines[1].contains("task free"));
 
     scratch.remove();
 }
@@ -524,12 +526,10 @@ fn short_run_processes_share_suppression_and_tier_changes_speak() {
     assert!(warning.contains("CLAIM LEASE WARNING"));
     assert!(warning.contains("s remaining"));
     assert!(
-        warning.contains(&format!(
-            "run spice task free {handle}, then spice task next"
-        )),
-        "warning recommends freeing the maximum-bound fixture claim: {warning:?}"
+        warning.contains(&format!("run spice task reclaim {handle}")),
+        "warning recommends reclaiming the automatic fixture claim: {warning:?}"
     );
-    assert!(!warning.contains("task reclaim"));
+    assert!(!warning.contains("task free"));
     assert!(!warning.contains(" ACK"));
     assert!(!warning.contains(" NACK"));
     assert!(second.err.is_empty(), "same tier is durably suppressed");
@@ -538,12 +538,10 @@ fn short_run_processes_share_suppression_and_tier_changes_speak() {
     assert!(urgent.contains("CLAIM LEASE URGENT"));
     assert!(urgent.contains("s remaining"));
     assert!(
-        urgent.contains(&format!(
-            "run spice task free {handle}, then spice task next"
-        )),
-        "urgent warning recommends freeing the maximum-bound fixture claim: {urgent:?}"
+        urgent.contains(&format!("run spice task reclaim {handle}")),
+        "urgent warning recommends reclaiming the automatic fixture claim: {urgent:?}"
     );
-    assert!(!urgent.contains("task reclaim"));
+    assert!(!urgent.contains("task free"));
     assert!(!urgent.contains(" ACK"));
     assert!(!urgent.contains(" NACK"));
     assert_eq!(fact_count(&authority), urgent_generation_facts);
@@ -681,6 +679,8 @@ fn mint_claim(
     project: &str,
     phase: &str,
     at: Instant,
+    expiry: Instant,
+    maximum: Instant,
 ) {
     let mut write = JournalWrite::new(
         actor.clone(),
@@ -701,8 +701,8 @@ fn mint_claim(
             occupant,
             epoch,
             at,
-            expiry: instant(40),
-            maximum: instant(50),
+            expiry,
+            maximum,
             git: None,
             recovery: None,
             source: body::SourceBoundary::Proven { heads: Vec::new() },

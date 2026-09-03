@@ -377,11 +377,19 @@ fn promoted_lease(
         .map_err(|error| store_fault("lifecycle::claim-promotion-invalid", &error.to_string()))?;
     let until = wire::Instant::new(deadline)
         .map_err(|error| store_fault("lifecycle::claim-promotion-invalid", &error.to_string()))?;
+    let maximum = at
+        .get()
+        .checked_add(jiff::SignedDuration::from_secs(
+            crate::board_command::AUTOMATIC_MAXIMUM_SECONDS,
+        ))
+        .map_err(|error| store_fault("lifecycle::claim-promotion-invalid", &error.to_string()))?;
+    let maximum = wire::Instant::new(maximum)
+        .map_err(|error| store_fault("lifecycle::claim-promotion-invalid", &error.to_string()))?;
     let mut lease = observed.clone();
     lease.epoch = epoch;
     lease.renewal = at;
     lease.expiry = until;
-    lease.maximum = until;
+    lease.maximum = std::cmp::max(maximum, observed.maximum);
     Ok(lease)
 }
 
@@ -663,7 +671,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_ready_promotes_provisional_lease_to_one_hundred_seconds() {
+    fn startup_ready_promotes_expiry_and_preserves_a_one_hour_reclaim_horizon() {
         let epoch = "018f82d4-6f59-7d06-92e3-bce9131163aa"
             .parse()
             .expect("fixture epoch");
@@ -683,11 +691,20 @@ mod tests {
         let ready: wire::Instant = "2026-08-30T08:00:10.000Z"
             .parse()
             .expect("fixture ready time");
+        let initial_maximum = wire::Instant::new(
+            start
+                .get()
+                .checked_add(jiff::SignedDuration::from_secs(
+                    crate::board_command::AUTOMATIC_MAXIMUM_SECONDS,
+                ))
+                .expect("maximum deadline shifts"),
+        )
+        .expect("maximum deadline");
         let promoted = promoted_lease(
             &wire::LeaseHead {
                 start,
                 renewal: start,
-                maximum: provisional,
+                maximum: initial_maximum,
                 expiry: provisional,
                 epoch: prior_epoch,
             },
@@ -699,7 +716,6 @@ mod tests {
         assert_eq!(promoted.start, start);
         assert_eq!(promoted.renewal, ready);
         assert_eq!(promoted.epoch, epoch);
-        assert_eq!(promoted.expiry, promoted.maximum);
         assert_eq!(
             promoted.expiry,
             wire::Instant::new(
@@ -712,6 +728,19 @@ mod tests {
             )
             .expect("rolling deadline")
         );
+        assert_eq!(
+            promoted.maximum,
+            wire::Instant::new(
+                ready
+                    .get()
+                    .checked_add(jiff::SignedDuration::from_secs(
+                        crate::board_command::AUTOMATIC_MAXIMUM_SECONDS,
+                    ))
+                    .expect("maximum deadline shifts")
+            )
+            .expect("maximum deadline")
+        );
+        assert!(promoted.expiry < promoted.maximum);
     }
 
     #[test]

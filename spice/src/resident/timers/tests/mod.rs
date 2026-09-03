@@ -83,7 +83,14 @@ fn automatic_claim_heartbeat_rolls_one_hundred_seconds_and_rearms_lapse() {
             crate::board_command::AUTOMATIC_ROLLING_SECONDS,
         )
     );
-    assert_eq!(lease.body().maximum, lease.body().expiry);
+    assert_eq!(
+        lease.body().maximum,
+        shifted(
+            lease.body().renewal,
+            crate::board_command::AUTOMATIC_MAXIMUM_SECONDS,
+        )
+    );
+    assert!(lease.body().expiry < lease.body().maximum);
     assert_eq!(
         timers
             .claims
@@ -694,6 +701,7 @@ fn automatic_fixture_with_age(age_seconds: i64) -> Fixture {
     let now = Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
     let start = shifted(now, -age_seconds);
     let expiry = shifted(start, crate::board_command::AUTOMATIC_PROVISIONAL_SECONDS);
+    let maximum = shifted(start, crate::board_command::AUTOMATIC_MAXIMUM_SECONDS);
     let authority = Authority {
         task: task(),
         lane: uuid(20),
@@ -702,7 +710,7 @@ fn automatic_fixture_with_age(age_seconds: i64) -> Fixture {
         worktree: format!("/fixture/{}", uuid(20)),
         start,
         expiry,
-        maximum: expiry,
+        maximum,
     };
     let mut journal = Journal::in_memory().expect("fixture journal opens");
     journal

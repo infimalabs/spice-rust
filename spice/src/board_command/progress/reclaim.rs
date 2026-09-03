@@ -76,14 +76,24 @@ pub(super) fn reclaim_window(
                 "request a positive representable lease duration",
             )
         })?;
-    let requested = std::cmp::min(instant_after(at, seconds)?, lease.maximum);
+    let automatic = snapshot
+        .facts
+        .iter()
+        .find(|fact| fact.seq == claim.claimed)
+        .is_some_and(|fact| spice::claim_lease::is_automatic_claim_fact(claim, fact));
+    let maximum = if automatic {
+        std::cmp::max(lease.maximum, instant_after(at, AUTOMATIC_MAXIMUM_SECONDS)?)
+    } else {
+        lease.maximum
+    };
+    let requested = std::cmp::min(instant_after(at, seconds)?, maximum);
     let until = match residency {
         ReclaimResidency::Exact if requested <= lease.expiry => {
-            if lease.expiry < lease.maximum {
+            if automatic || lease.expiry < maximum {
                 return Err(refusal(
                     "claim::lease-nonextending",
                     Some(lease.expiry.to_string()),
-                    "request a duration that extends expiry before the durable maximum",
+                    "request a duration that extends the current expiry",
                 ));
             }
             let command =
@@ -106,9 +116,11 @@ pub(super) fn reclaim_window(
         ReclaimResidency::Rebound { .. } => std::cmp::max(requested, lease.expiry),
         ReclaimResidency::Exact => requested,
     };
+    let mut lease = lease.clone();
+    lease.maximum = maximum;
     Ok(ReclaimWindow {
         until,
-        lease: lease.clone(),
+        lease,
         residency,
     })
 }

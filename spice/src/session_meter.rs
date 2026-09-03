@@ -78,7 +78,7 @@ pub struct ClaimState {
     pub elapsed: Option<Duration>,
     /// Time until this claim expires, when its timestamp was valid.
     pub remaining: Option<Duration>,
-    /// Whether the default task reclaim can extend expiry within the durable maximum.
+    /// Whether the default task reclaim can extend expiry in place.
     pub reclaim_extends: bool,
 }
 
