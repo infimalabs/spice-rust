@@ -195,6 +195,7 @@ async function claimAutomatically({
     Number.isInteger(heldBadgeCount) && heldBadgeCount >= 1,
     "Tasks counts at least the observed lane's held task",
   );
+  const memberIndex = await memberIndexForLane(team, lane);
   const placeholder = await team.locator(`.team-agent[data-agent-lane="${lane}"]`)
     .getByRole("textbox").getAttribute("placeholder");
   const [heldHandle, phase] = placeholder.split("\n").at(-1).split(", ");
@@ -220,18 +221,27 @@ async function claimAutomatically({
   );
   const taskTitle = (await taskRow.locator(".team-task-title").innerText()).trim();
   const taskAge = taskRow.locator(".team-task-age");
-  const initialExpiry = Number(await taskAge.getAttribute("data-expiry"));
+  const taskCountdown = await captureRelativeClock(taskAge);
+  const initialExpiry = Number(taskCountdown.expiry);
   assert.ok(Number.isFinite(initialExpiry), "the task row carries its authoritative lease expiry");
   assert.ok(initialExpiry > Date.now(), "an active task counts down from a future expiry");
-  assert.equal(await taskAge.getAttribute("data-age-clock"), "countdown");
-  assert.equal(await taskAge.getAttribute("data-age-authored"), null);
-  assert.match((await taskAge.innerText()).trim(), /^(?:now|\d+[smhd]\+?)$/);
+  assertCountdownClock(taskCountdown, initialExpiry, "the active Tasks row");
   if (artifacts) {
     await team.page().screenshot({
       path: join(artifacts, "canvas-tasks-active-claim.png"),
       fullPage: true,
     });
   }
+  await team.getByRole("tab", { name: /^Metrics/ }).click();
+  const metricExpiry = await captureRelativeClock(metricAge(team, memberIndex, "Expires"));
+  assertCountdownClock(metricExpiry, initialExpiry, "the active Metrics expiry");
+  const claimAge = await captureRelativeClock(metricAge(team, memberIndex, "Claim age"));
+  assert.ok(
+    claimAge.authored !== null && Number.isFinite(Number(claimAge.authored)),
+    "claim age retains its authoritative lease-start instant",
+  );
+  assert.equal(claimAge.clock, "deadline", "claim age remains an elapsed clock");
+  assert.equal(claimAge.expiry, null, "claim age cannot become an expiry countdown");
   await team.getByRole("tab", { name: /^Compose/ }).click();
   const promotedExpiry = await waitForPromotedClaimExpiry(
     fixture, lane, handle, replyAsLane, claimMs * 4,
@@ -273,7 +283,9 @@ async function claimAutomatically({
     (await replyAsLane(fixture, lane, ["task", "status"])).body.text,
   );
   assert.equal(heldStatus.claim, handle, "lane status names the renewed automatic claim");
-  return { badge, handle, heldBadgeCount, heldStatus, lifetime, provenance, renewedExpiry };
+  return {
+    badge, handle, heldBadgeCount, heldStatus, lifetime, memberIndex, provenance, renewedExpiry,
+  };
 }
 
 async function releaseClaimExplicitly({
@@ -285,7 +297,7 @@ async function releaseClaimExplicitly({
   team,
   transitionMs,
 }) {
-  const { badge, handle, heldStatus, lifetime } = claim;
+  const { badge, handle, heldStatus, lifetime, memberIndex } = claim;
   if (await lifetime.inputValue() !== "0") await lifetime.fill("0");
   await team.getByRole("button", { name: "Steer", exact: true }).waitFor();
   await waitForTaskPolicy(fixture, lane, "steer", reply, transitionMs);
@@ -314,6 +326,13 @@ async function releaseClaimExplicitly({
     queuedBefore,
     "explicit task release does not reinterpret queued direction",
   );
+  await team.getByRole("tab", { name: /^Metrics/ }).click();
+  const absentExpiry = await captureRelativeClock(metricAge(team, memberIndex, "Expires"));
+  assert.equal(absentExpiry.label, "—", "a released lane has no remaining lease duration");
+  assert.equal(absentExpiry.expiry, null, "a released lane carries no expiry instant");
+  assert.equal(absentExpiry.authored, null, "an absent expiry cannot masquerade as an age");
+  assert.equal(absentExpiry.clock, "countdown", "the vacant slot retains expiry semantics");
+  assert.match(absentExpiry.slot ?? "", /^\d+$/, "the vacant expiry keeps its fixed-width slot");
   const releasedStatus = parseTaskStatus(
     (await replyAsLane(fixture, lane, ["task", "status"])).body.text,
   );
@@ -357,7 +376,13 @@ async function lapseClaimNaturally({
   assertComposerProvenance(
     await composerProvenance(), provenance, "pre-expiry shutdown preserves provenance",
   );
-  await restartAfterExpiry(stoppedExpiry + transitionMs);
+  await team.getByRole("tab", { name: /^Tasks/ }).click();
+  const taskAge = team
+    .locator(`.team-task-row[data-task-handle="${handle}"] .team-task-age`);
+  await restartAfterExpiry(
+    stoppedExpiry + transitionMs,
+    () => observeCountdownThroughExpiry(taskAge, stoppedExpiry, transitionMs),
+  );
   await team.getByRole("tab", { name: /^Compose/ }).first().click();
   const lapsedBadgeCount = await waitForBadgeBelow(
     badge, preExpiryBadgeCount, transitionMs * 4,
@@ -420,6 +445,87 @@ async function waitForStableComposerProvenance(
     if (Date.now() - stableSince >= quietMs) return current;
   }
   throw new Error(`composer provenance did not remain stable for ${quietMs}ms`);
+}
+
+async function memberIndexForLane(team, lane) {
+  const memberLanes = await team.locator(".team-agent").evaluateAll(
+    (members) => members.map((member) => member.dataset.agentLane),
+  );
+  const index = memberLanes.indexOf(lane);
+  assert.ok(index >= 0, `the rendered lineage contains member ${lane}: ${memberLanes}`);
+  return index;
+}
+
+function metricAge(team, memberIndex, label) {
+  return team.locator(".team-detail-card").nth(memberIndex)
+    .getByText(label, { exact: true }).locator("..").locator(".claim-age");
+}
+
+async function captureRelativeClock(age) {
+  return age.evaluate((node) => {
+    const bounds = node.getBoundingClientRect();
+    return {
+      authored: node.getAttribute("data-age-authored"),
+      box: [bounds.width, bounds.height],
+      clock: node.getAttribute("data-age-clock"),
+      expiry: node.getAttribute("data-expiry"),
+      label: node.textContent?.trim(),
+      slot: node.getAttribute("data-age-slot"),
+    };
+  });
+}
+
+function assertCountdownClock(actual, expiry, message) {
+  assert.equal(actual.expiry, String(expiry), `${message} carries the authoritative expiry`);
+  assert.equal(actual.clock, "countdown", `${message} uses countdown semantics`);
+  assert.equal(actual.authored, null, `${message} carries no elapsed-age instant`);
+  assert.match(actual.label ?? "", /^(?:now|\d+[smhd]\+?)$/, `${message} is compact relative time`);
+}
+
+async function observeCountdownThroughExpiry(age, expiry, transitionMs) {
+  const before = await captureRelativeClock(age);
+  const renderedExpiry = Number(before.expiry);
+  assert.ok(
+    Number.isFinite(renderedExpiry) && renderedExpiry >= expiry,
+    "the stopped resident preserves the final rendered authoritative expiry",
+  );
+  assertCountdownClock(before, renderedExpiry, "the stopped resident's task countdown");
+  const near = await waitForCountdown(
+    age,
+    (snapshot) => snapshot.label === "1s",
+    renderedExpiry - Date.now() + transitionMs,
+  );
+  const expired = await waitForCountdown(
+    age,
+    (snapshot) => Date.now() >= renderedExpiry && snapshot.label === "now",
+    transitionMs * 2,
+  );
+  assert.notEqual(near.label, before.label, "the offline countdown visibly decreases");
+  assertCountdownClock(near, renderedExpiry, "the near-expiry task countdown");
+  assertCountdownClock(expired, renderedExpiry, "the expired task countdown");
+  assertRelativeClockBox(near.box, before.box, "the countdown slot does not move at one second");
+  assertRelativeClockBox(expired.box, before.box, "the countdown slot does not move at expiry");
+  assert.equal(near.slot, before.slot, "the near-expiry slot keeps its width contract");
+  assert.equal(expired.slot, before.slot, "the expired slot keeps its width contract");
+  return renderedExpiry + transitionMs;
+}
+
+function assertRelativeClockBox(actual, expected, message) {
+  assert.ok(
+    actual.every((value, index) => Math.abs(value - expected[index]) <= 0.5),
+    `${message}: expected ${expected}, observed ${actual}`,
+  );
+}
+
+async function waitForCountdown(age, accept, timeout) {
+  const deadline = Date.now() + timeout;
+  let last;
+  while (Date.now() < deadline) {
+    last = await captureRelativeClock(age);
+    if (accept(last)) return last;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`timed out waiting for task countdown state: ${JSON.stringify(last)}`);
 }
 
 async function waitForRenderedTaskExpiry(team, handle, minimum, timeout) {
