@@ -199,4 +199,17 @@ export async function assertComposerImageIndicators(page, composer, names) {
     [...names].sort(),
     "removal leaves exactly the attachments that were not clicked",
   );
+  const retained = await measureHeading(heading);
+  const retainedWidth = names.length * 26 + Math.max(0, names.length - 1) * 2;
+  assert.equal(
+    Math.round(retained.thumbs.width),
+    retainedWidth,
+    "the retained attachment strip uses the width of all remaining image chips",
+  );
+  assert.ok(
+    retained.strip.images.every((image) => (
+      image.chip.left >= retained.thumbs.left && image.chip.right <= retained.thumbs.right
+    )),
+    `every retained attachment remains simultaneously visible: ${JSON.stringify(retained)}`,
+  );
 }
