@@ -12,7 +12,6 @@ import {
 } from "./mosaic-placement-stability.mjs";
 import {
   assertNoUnavailableToolTerminal,
-  assertUnavailableToolTerminal,
 } from "./compaction-boundary-reference.mjs";
 
 const PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -219,9 +218,10 @@ export async function assertCompactionBoundaryPersistence(page, seeded, boundary
       "compacted context",
     );
   }
-  await assertUnavailableToolTerminal(
+  await assertNoUnavailableToolTerminal(
     restoredUnresolved,
     "reloaded unresolved compaction boundary",
+    seeded.agentName,
     "Bash: cargo test --locked -p spice",
   );
   await assertNoUnavailableToolTerminal(
@@ -247,9 +247,10 @@ export async function assertCompactionBoundaryPersistence(page, seeded, boundary
     ),
     { expectedKeys: Object.values(boundaryKeys), previousSockets: socketCount },
   );
-  await assertUnavailableToolTerminal(
+  await assertNoUnavailableToolTerminal(
     restoredUnresolved,
     "reconnected unresolved compaction boundary",
+    seeded.agentName,
     "Bash: cargo test --locked -p spice",
   );
   await assertNoUnavailableToolTerminal(

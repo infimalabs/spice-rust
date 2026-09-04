@@ -169,27 +169,6 @@
   flex: 1 1 auto;
 }
 .mosaic-compaction-age { color: var(--muted); font-weight: 500; }
-.mosaic-compaction-terminals {
-  display: grid; grid-column: 1 / -1; gap: 4px; min-width: 0;
-  margin: 0; padding: 0; list-style: none; text-align: left;
-}
-.mosaic-compaction-terminal {
-  display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr);
-  align-items: baseline; gap: 7px; min-width: 0; color: var(--muted);
-  font-family: ui-sans-serif, system-ui, sans-serif; font-size: .72rem;
-  letter-spacing: 0; line-height: 1.35;
-}
-.mosaic-compaction-tool {
-  overflow: hidden; color: color-mix(in srgb, var(--accent-slot, var(--ink)) 70%, var(--ink));
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600;
-  text-overflow: ellipsis; white-space: nowrap;
-}
-.mosaic-compaction-status { overflow-wrap: anywhere; }
-
-@container (max-width: 28rem) {
-  .mosaic-compaction-terminal { grid-template-columns: minmax(0, 1fr); gap: 2px; }
-  .mosaic-compaction-tool { white-space: normal; overflow-wrap: anywhere; }
-}
 
 .message-image {
   display: inline-grid; flex: 0 1 min(9.75rem, 100%); max-width: min(9.75rem, 100%);

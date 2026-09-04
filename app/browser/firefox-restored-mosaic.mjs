@@ -9,7 +9,6 @@ import { LIVENESS_PROBE_MS } from "./client-deadlines.mjs";
 import {
   assertCompactionDivider,
   assertNoUnavailableToolTerminal,
-  assertUnavailableToolTerminal,
   resizeCompactionViewport,
   waitForCompactionReady,
 } from "./compaction-boundary-reference.mjs";
@@ -175,40 +174,36 @@ async function assertFirefoxCompactionBoundaries(
   expectedAttribution,
 ) {
   const boundaries = console.locator('[data-card-kind="compaction"]');
-  const unresolved = console.locator(
-    '[data-card-kind="compaction"]:has([data-terminal-status="unavailable-after-compaction"])',
-  );
-  const empty = console.locator(
-    '[data-card-kind="compaction"]:not(:has([data-terminal-status]))',
-  );
+  const newest = boundaries.first();
+  const earlier = boundaries.last();
   assert.equal(await boundaries.count(), 2, `${label} has both real compaction boundaries`);
-  assert.equal(await unresolved.count(), 1, `${label} has one unresolved compaction boundary`);
-  assert.equal(await empty.count(), 1, `${label} has one empty compaction boundary`);
   await Promise.all([
-    waitForCompactionReady(console.page(), unresolved, `${label} unresolved divider`),
-    waitForCompactionReady(console.page(), empty, `${label} empty divider`),
+    waitForCompactionReady(console.page(), newest, `${label} newest divider`),
+    waitForCompactionReady(console.page(), earlier, `${label} earlier divider`),
   ]);
   await assertCompactionDivider(
-    unresolved,
-    `${label} unresolved divider`,
-    expectedAttribution,
-  );
-  await assertUnavailableToolTerminal(
-    unresolved,
-    `${label} unresolved divider`,
-    COMPACTED_TOOL_PREVIEW,
-  );
-  await assertCompactionDivider(
-    empty,
-    `${label} empty divider`,
+    newest,
+    `${label} newest divider`,
     expectedAttribution,
   );
   await assertNoUnavailableToolTerminal(
-    empty,
-    `${label} empty divider`,
+    newest,
+    `${label} newest divider`,
+    expectedAttribution,
+    COMPACTED_TOOL_PREVIEW,
+  );
+  await assertCompactionDivider(
+    earlier,
+    `${label} earlier divider`,
     expectedAttribution,
   );
-  return { empty, unresolved };
+  await assertNoUnavailableToolTerminal(
+    earlier,
+    `${label} earlier divider`,
+    expectedAttribution,
+    COMPACTED_TOOL_PREVIEW,
+  );
+  return { earlier, newest };
 }
 
 export async function captureFirefoxAgentPageSpacing(
@@ -287,7 +282,7 @@ export async function assertFirefoxRestoredMosaic(
     );
     await resizeCompactionViewport(
       page,
-      boundaries.unresolved,
+      boundaries.newest,
       { width: 390, height: 720 },
       "Firefox narrow compaction divider",
     );
@@ -303,14 +298,14 @@ export async function assertFirefoxRestoredMosaic(
     await imageFixture.screenshot({ path: join(artifacts, "firefox-image-previews-narrow.png") });
     await resizeCompactionViewport(
       page,
-      boundaries.unresolved,
+      boundaries.newest,
       { width: 1717, height: 1470 },
       "Firefox restored compaction divider",
     );
     await assertFirefoxCompactionBoundaries(console, "Firefox restored", expectedAttribution);
     await resizeCompactionViewport(
       page,
-      boundaries.unresolved,
+      boundaries.newest,
       { width: 480, height: 468 },
       "Firefox reported Agents viewport",
     );
@@ -318,7 +313,7 @@ export async function assertFirefoxRestoredMosaic(
     await page.screenshot({ path: join(artifacts, "firefox-agents-reported-480x468.png") });
     await resizeCompactionViewport(
       page,
-      boundaries.unresolved,
+      boundaries.newest,
       { width: 1717, height: 1470 },
       "Firefox restored Agents viewport",
     );
@@ -354,10 +349,10 @@ export async function assertFirefoxRestoredMosaic(
       "the liveness heartbeat never removes a restored Firefox card",
     );
     await page.screenshot({ path: join(artifacts, "firefox-restored-mosaic.png"), fullPage: true });
-    await reloadedBoundaries.unresolved.screenshot({
+    await reloadedBoundaries.earlier.screenshot({
       path: join(artifacts, "firefox-compaction-boundary.png"),
     });
-    await reloadedBoundaries.empty.screenshot({
+    await reloadedBoundaries.newest.screenshot({
       path: join(artifacts, "firefox-empty-compaction-boundary.png"),
     });
     monitor.assertClean();
