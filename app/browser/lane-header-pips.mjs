@@ -20,11 +20,19 @@ async function snapshot(stack) {
     return {
       bounds: { height: bounds.height, left: bounds.left, right: bounds.right, width: bounds.width },
       clientWidth: node.clientWidth,
+      description: node.getAttribute("aria-describedby")
+        ? document.getElementById(node.getAttribute("aria-describedby"))?.textContent.trim()
+        : null,
+      describedBy: node.getAttribute("aria-describedby"),
       dragHandle: node.hasAttribute("data-lane-drag-handle"),
       draggable: node.getAttribute("draggable"),
+      expanded: node.getAttribute("aria-expanded"),
       firstToolbarElement: node.closest(".team-toolbar")?.firstElementChild === node,
+      hasPopup: node.getAttribute("aria-haspopup"),
       legacyHandles: node.closest(".team-toolbar")?.querySelectorAll(":scope > .team-drag-handle").length,
+      role: node.getAttribute("role"),
       scrollWidth: node.scrollWidth,
+      tabIndex: node.tabIndex,
       toolbarHeight: toolbar?.height,
       railLeft: rail?.left,
       pips: [...node.querySelectorAll(":scope > .team-light")].map((pip) => {
@@ -44,15 +52,27 @@ async function snapshot(stack) {
   });
 }
 
-function assertStack(actual, single, label) {
+function assertStack(actual, single, label, arrangeable) {
   assert.ok(actual.pips.length >= 2, `${label}: fixture carries a multi-pip team`);
   const rows = Math.min(2, actual.pips.length);
   const columns = Math.ceil(actual.pips.length / 2);
   close(actual.bounds.width, Math.max(18, columns * 9 + (columns - 1) * 5), `${label} width`);
   close(actual.bounds.height, rows * 9 + (rows - 1) * 4, `${label} height`);
   assert.ok(actual.scrollWidth <= actual.clientWidth, `${label}: stack does not clip`);
-  assert.equal(actual.dragHandle, true, `${label}: pip stack is the team drag handle`);
-  assert.equal(actual.draggable, "true", `${label}: pip stack enables native team dragging`);
+  assert.equal(actual.dragHandle, arrangeable, `${label}: pip handle follows peer availability`);
+  assert.equal(actual.draggable, arrangeable.toString(), `${label}: native dragging follows peer availability`);
+  assert.equal(actual.role, arrangeable ? "button" : "group", `${label}: pip semantics follow peer availability`);
+  assert.equal(actual.tabIndex, arrangeable ? 0 : -1, `${label}: keyboard focus follows peer availability`);
+  assert.equal(actual.hasPopup, arrangeable ? "menu" : null, `${label}: only actionable pips announce a menu`);
+  assert.equal(actual.expanded, arrangeable ? "false" : null, `${label}: only actionable pips expose menu state`);
+  assert.equal(Boolean(actual.describedBy), arrangeable, `${label}: only actionable pips reference instructions`);
+  assert.equal(
+    actual.description,
+    arrangeable
+      ? "Press Enter or Space, or tap, to choose where to move or join this team."
+      : null,
+    `${label}: actionable pips expose keyboard and touch instructions`,
+  );
   assert.equal(actual.firstToolbarElement, true, `${label}: pips occupy the first toolbar column`);
   assert.equal(actual.legacyHandles, 0, `${label}: standalone drag symbol is absent`);
   close(actual.toolbarHeight, single.toolbarHeight, `${label} stack does not inflate toolbar`);
@@ -114,6 +134,7 @@ export async function assertLaneHeaderPipMatrix(page, scope, artifacts, engine, 
   assert.ok(originalViewport, `${engine}: pip matrix requires a fixed viewport`);
   const stack = scope.locator(".team-lights:has(> .team-light:nth-child(2))").first();
   await stack.waitFor();
+  const arrangeable = await scope.locator(".team-surface").count() > 1;
   try {
     for (const scheme of SCHEMES) {
       await page.emulateMedia({ colorScheme: scheme });
@@ -122,7 +143,7 @@ export async function assertLaneHeaderPipMatrix(page, scope, artifacts, engine, 
         await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
         const label = `${engine} ${scheme} ${viewport}`;
         const single = await assertSinglePip(stack, label);
-        assertStack(await snapshot(stack), single, label);
+        assertStack(await snapshot(stack), single, label, arrangeable);
         await stack.locator("xpath=ancestor::header[contains(@class, 'team-toolbar')]").screenshot({
           path: join(artifacts, `${engine}-lane-pips-${scheme}-${viewport}.png`),
         });

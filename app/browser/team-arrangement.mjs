@@ -116,6 +116,108 @@ function dragTeam(page, gesture) {
   }, gesture);
 }
 
+function teamPips(agents, lineage) {
+  return agents.locator(
+    `.team-surface[data-lineage-id="${lineage}"] .team-lights[data-lane-drag-handle]`,
+  );
+}
+
+function arrangementMenu(agents, lineage) {
+  return agents.locator(
+    `.team-surface[data-lineage-id="${lineage}"] .team-arrangement-menu`,
+  );
+}
+
+async function assertKeyboardArrangement(page, fixture, agents, primary, secondary) {
+  const primaryPips = teamPips(agents, primary.lineage);
+  await primaryPips.focus();
+  assert.equal(await primaryPips.evaluate((node) => document.activeElement === node), true,
+    "the team pips accept keyboard focus");
+  await primaryPips.press("Enter");
+  const primaryMenu = arrangementMenu(agents, primary.lineage);
+  await primaryMenu.waitFor();
+  assert.equal(await primaryPips.getAttribute("aria-expanded"), "true");
+  assert.equal(
+    await primaryMenu.locator(`[data-lineage-arrangement="after"][data-lineage-arrangement-target="${secondary.lineage}"]`).count(),
+    1,
+    "the first team offers its non-noop move-after action",
+  );
+  assert.equal(
+    await primaryMenu.locator(`[data-lineage-arrangement="join"][data-lineage-arrangement-target="${secondary.lineage}"]`).count(),
+    1,
+    "the keyboard menu offers a join action",
+  );
+  await agents.locator(
+    `.team-surface[data-lineage-id="${primary.lineage}"] .team-mode-rail`,
+  ).click({ position: { x: 4, y: 4 } });
+  await primaryMenu.waitFor({ state: "detached" });
+  assert.equal(await primaryPips.getAttribute("aria-expanded"), "false",
+    "activation outside the controls closes the arrangement menu");
+  await primaryPips.press("Enter");
+  await primaryMenu.waitFor();
+  await page.keyboard.press("Escape");
+  await primaryMenu.waitFor({ state: "detached" });
+  assert.equal(await primaryPips.evaluate((node) => document.activeElement === node), true,
+    "Escape closes the arrangement menu and returns focus to its pips");
+
+  const secondaryPips = teamPips(agents, secondary.lineage);
+  await secondaryPips.focus();
+  await secondaryPips.press("Space");
+  const secondaryMenu = arrangementMenu(agents, secondary.lineage);
+  const moveBefore = secondaryMenu.locator(
+    `[data-lineage-arrangement="before"][data-lineage-arrangement-target="${primary.lineage}"]`,
+  );
+  await moveBefore.waitFor();
+  await moveBefore.focus();
+  await page.keyboard.press("Enter");
+  await secondaryMenu.waitFor({ state: "detached" });
+  const reordered = [secondary, primary];
+  await waitForTeamOrder(page, "keyboard arrangement moves the selected team", [
+    secondary.lineage,
+    primary.lineage,
+  ]);
+  assert.deepEqual(
+    durableTeams((await reply(fixture, ["lane"])).body.lanes),
+    reordered,
+    "keyboard arrangement is durable resident state",
+  );
+  return reordered;
+}
+
+async function touchJoinTeam(page, fixture, dragged, target) {
+  const browser = page.context().browser();
+  assert.ok(browser, "touch arrangement requires the live browser");
+  const context = await browser.newContext({
+    colorScheme: "light",
+    hasTouch: true,
+    viewport: { width: 390, height: 844 },
+  });
+  const touch = await context.newPage();
+  try {
+    await touch.goto(page.url(), { waitUntil: "networkidle" });
+    const agents = touch.locator('[data-pane="agent-console"]');
+    const pips = teamPips(agents, dragged);
+    await pips.tap();
+    assert.equal(await pips.getAttribute("aria-expanded"), "true",
+      "a touch tap opens the pip arrangement menu");
+    await arrangementMenu(agents, dragged).locator(
+      `[data-lineage-arrangement="join"][data-lineage-arrangement-target="${target}"]`,
+    ).tap();
+    await waitForTeamOrder(touch, "touch arrangement joins the selected team", [target]);
+    const teams = durableTeams((await reply(fixture, ["lane"])).body.lanes);
+    assert.equal(teams.length, 1, "touch arrangement persists one joined team");
+    assert.equal(teams[0].lineage, target, "touch join preserves its target team identity");
+    const inertPips = agents.locator(
+      `.team-surface[data-lineage-id="${target}"] .team-lights`,
+    );
+    await inertPips.tap();
+    assert.equal(await agents.locator(".team-arrangement-menu").count(), 0,
+      "touch activation cannot open an unavailable arrangement menu");
+  } finally {
+    await context.close();
+  }
+}
+
 /// Dragging a team reorders teams; dropping on an edge joins them.
 export async function assertTeamArrangement(page, fixture, worktrees, artifacts) {
   const agents = page.locator('[data-pane="agent-console"]');
@@ -135,26 +237,38 @@ export async function assertTeamArrangement(page, fixture, worktrees, artifacts)
     "the pip stack replaces the standalone drag symbol",
   );
 
+  const reordered = await assertKeyboardArrangement(
+    page, fixture, agents, primary, secondary,
+  );
+
   const reorder = await dragTeam(page, {
-    dragged: secondary.lineage,
-    target: primary.lineage,
+    dragged: primary.lineage,
+    target: secondary.lineage,
     fraction: 0.5,
   });
   assert.deepEqual(reorder.types, [TEAM_MEDIA], "a dragged team carries only its own media");
-  assert.equal(reorder.carried, secondary.lineage, "the pips carry the team they belong to");
+  assert.equal(reorder.carried, primary.lineage, "the pips carry the team they belong to");
   assert.deepEqual(
     [reorder.offered, reorder.taken],
     [true, true],
     "a team surface offers itself as a drop target and takes the drop",
   );
-  const reordered = [secondary, primary];
-  await waitForTeamOrder(page, "the dragged team takes its target's place",
-    reordered.map((team) => team.lineage));
+  await waitForTeamOrder(page, "mouse drag moves the team back before its target",
+    seated.map((team) => team.lineage));
   assert.deepEqual(
     durableTeams((await reply(fixture, ["lane"])).body.lanes),
-    reordered,
+    seated,
     "the drag changes the durable order and moves no agent between teams",
   );
+  assert.equal(await agents.locator(".team-arrangement-menu").count(), 0,
+    "mouse dragging does not accidentally activate the pip menu");
+  await dragTeam(page, {
+    dragged: secondary.lineage,
+    target: primary.lineage,
+    fraction: 0.5,
+  });
+  await waitForTeamOrder(page, "mouse drag restores the keyboard arrangement",
+    reordered.map((team) => team.lineage));
 
   const crowded = reordered.find((team) => team.lanes.length >= 2);
   assert.ok(crowded, "proving the two laws apart needs one team holding two members");
@@ -312,6 +426,22 @@ export async function assertTeamArrangement(page, fixture, worktrees, artifacts)
     2,
     "lane removal abandons only that lane's queued entry",
   );
+  await touchJoinTeam(page, fixture, secondary.lineage, primary.lineage);
+  await waitForTeamOrder(page, "the primary page observes the touch join", [primary.lineage]);
+  const inertPips = agents.locator(
+    `.team-surface[data-lineage-id="${primary.lineage}"] .team-lights`,
+  );
+  assert.deepEqual(await inertPips.evaluate((node) => ({
+    dragHandle: node.hasAttribute("data-lane-drag-handle"),
+    hasPopup: node.hasAttribute("aria-haspopup"),
+    role: node.getAttribute("role"),
+    tabIndex: node.tabIndex,
+  })), {
+    dragHandle: false,
+    hasPopup: false,
+    role: "group",
+    tabIndex: -1,
+  }, "a team with no eligible peer exposes inert status pips");
   await page.screenshot({
     path: join(artifacts, "canvas-light-team-arrangement.png"),
     fullPage: true,

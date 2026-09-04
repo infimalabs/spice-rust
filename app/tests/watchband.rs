@@ -924,6 +924,25 @@ fn a_reorder_moves_the_dragged_lineage_into_the_target_position_without_moving_a
 }
 
 #[test]
+fn an_after_reorder_places_the_dragged_lineage_after_its_target() {
+    let lanes = [
+        seated(LINEAGE_ONE, &[(LANE_A, "main-a")]),
+        seated(LINEAGE_TWO, &[(LANE_C, "main-c")]),
+        seated(LINEAGE_THREE, &[(LANE_D, "main-d")]),
+    ];
+
+    let arranged = arranged(&lanes, LINEAGE_ONE, LINEAGE_TWO, LineageDrop::ReorderAfter);
+    assert_eq!(
+        arranged,
+        vec![
+            (uuid(LINEAGE_TWO), vec![uuid(LANE_C)]),
+            (uuid(LINEAGE_ONE), vec![uuid(LANE_A)]),
+            (uuid(LINEAGE_THREE), vec![uuid(LANE_D)]),
+        ],
+    );
+}
+
+#[test]
 fn a_join_gives_the_dragged_agents_to_the_target_and_keeps_its_primary_composer() {
     let lanes = [
         seated(LINEAGE_ONE, &[(LANE_A, "main-a")]),
@@ -1005,6 +1024,16 @@ fn a_drop_that_states_nothing_sends_nothing() {
         ),
         None,
         "a team dropped in front of the team it already precedes states nothing",
+    );
+    assert_eq!(
+        arrangement(
+            &topology(&lanes),
+            uuid(LINEAGE_TWO),
+            uuid(LINEAGE_ONE),
+            LineageDrop::ReorderAfter
+        ),
+        None,
+        "a team moved behind the team it already follows states nothing",
     );
     assert_eq!(
         arrangement(

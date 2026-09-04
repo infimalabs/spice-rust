@@ -224,6 +224,8 @@ pub enum LineageDrop {
     /// the row. Dragging one forward lands it one place ahead of where the
     /// target stood, since removing it first shifts the target back.
     Reorder,
+    /// Insert the dragged team immediately after the target team.
+    ReorderAfter,
     /// Give the dragged team's agents to the target team.
     Join,
 }
@@ -313,6 +315,7 @@ pub fn arrangement(
         .expect("the target survives removing a different team");
     match drop {
         LineageDrop::Reorder => arranged.insert(target_at, (dragged, moved)),
+        LineageDrop::ReorderAfter => arranged.insert(target_at + 1, (dragged, moved)),
         LineageDrop::Join => arranged[target_at].1.extend(moved),
     }
     (arranged != lineages).then_some(arranged)
