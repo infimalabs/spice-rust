@@ -154,8 +154,8 @@ pub struct Standing {
     /// resident is quiet, so a stored span would age into a lie; the reader
     /// subtracts a live clock from this instead.
     pub held_since: Option<i64>,
-    /// Epoch milliseconds at which the lease was last renewed.
-    pub renewed_at: Option<i64>,
+    /// Epoch milliseconds at which the current lease expires.
+    pub expires_at: Option<i64>,
     /// Accent slot this lane keeps across redraws.
     pub accent: usize,
 }
@@ -399,7 +399,7 @@ pub fn standings(lanes: &[LaneRow], inbox: &[LaneInbox], tasks: &[BoardTask]) ->
                 task_title: held.map(|task| task.presentation_title().to_owned()),
                 phase: held.map(|task| task.workflow.body.phase.to_string()),
                 held_since: held.and_then(|task| lease_instant(task, |lease| lease.start)),
-                renewed_at: held.and_then(|task| lease_instant(task, |lease| lease.renewal)),
+                expires_at: held.and_then(|task| lease_instant(task, |lease| lease.expiry)),
                 accent: accent(lineage.members.len(), position),
             }
         })
@@ -544,6 +544,21 @@ const MIN_TIMER_DELAY_MILLIS: i128 = 1;
 /// "long dead".
 #[must_use]
 pub fn elapsed_label(millis: i64) -> String {
+    relative_label(millis)
+}
+
+/// A remaining duration in the band's compact spelling.
+///
+/// Expired and sub-second deadlines read as `now`: no positive whole unit
+/// remains. Positive durations use the same unit boundaries and fixed-width
+/// budget as elapsed ages so replacing renewal age with expiry countdown does
+/// not move neighboring controls.
+#[must_use]
+pub fn remaining_label(millis: i64) -> String {
+    relative_label(millis)
+}
+
+fn relative_label(millis: i64) -> String {
     let seconds = millis / MILLIS_PER_SECOND;
     match seconds {
         ..=0 => "now".to_owned(),
@@ -589,6 +604,42 @@ pub fn elapsed_label_deadline_millis(millis: i64) -> Option<u32> {
         u32::try_from(delay.clamp(MIN_TIMER_DELAY_MILLIS, i128::from(u32::MAX)))
             .expect("delay is clamped to u32"),
     )
+}
+
+/// Delay until a decreasing [`remaining_label`] can return a new spelling.
+///
+/// Unlike an elapsed age, an expired deadline never changes without a new
+/// authoritative expiry. Far-future saturated labels still arm a bounded timer
+/// because they eventually descend from `99d+` into the ordinary day range.
+#[must_use]
+pub fn remaining_label_deadline_millis(millis: i64) -> Option<u32> {
+    let seconds = millis / MILLIS_PER_SECOND;
+    let delay = match seconds {
+        ..=0 => return None,
+        1..=LAST_SECOND_OF_MINUTE => i128::from(until_previous_multiple(millis, MILLIS_PER_SECOND)),
+        SECONDS_PER_MINUTE..=LAST_SECOND_OF_HOUR => {
+            i128::from(until_previous_multiple(millis, MILLIS_PER_MINUTE))
+        }
+        SECONDS_PER_HOUR..=LAST_SECOND_OF_DAY => {
+            i128::from(until_previous_multiple(millis, MILLIS_PER_HOUR))
+        }
+        _ if seconds / SECONDS_PER_DAY <= AGE_LABEL_MAX_DAYS => {
+            i128::from(until_previous_multiple(millis, MILLIS_PER_DAY))
+        }
+        _ => i128::from(
+            millis
+                .saturating_sub((AGE_LABEL_MAX_DAYS + 1) * MILLIS_PER_DAY)
+                .saturating_add(1),
+        ),
+    };
+    Some(
+        u32::try_from(delay.clamp(MIN_TIMER_DELAY_MILLIS, i128::from(u32::MAX)))
+            .expect("delay is clamped to u32"),
+    )
+}
+
+fn until_previous_multiple(millis: i64, quantum: i64) -> i64 {
+    millis.rem_euclid(quantum).saturating_add(1)
 }
 
 fn until_next_multiple(millis: i64, quantum: i64) -> i64 {

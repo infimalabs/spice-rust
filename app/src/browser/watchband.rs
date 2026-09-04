@@ -4,7 +4,7 @@ use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{DragEvent, HtmlInputElement};
 
-use super::clock::Age;
+use super::clock::{Age, Countdown};
 use super::*;
 use crate::composer_drafts::{ComposerDraft, compose};
 use crate::watchband::{self, Standing, TeamTaskSectionState};
@@ -398,7 +398,7 @@ fn render_task_row(standing: &Standing) -> Html {
         .phase
         .clone()
         .unwrap_or_else(|| "unknown".to_owned());
-    let renewed = lease_age(standing.renewed_at, "team-task-age", "unavailable");
+    let expiry = lease_countdown(standing.expires_at, "team-task-age", "unavailable");
     html! {
         <li
             class="team-task-row"
@@ -416,7 +416,7 @@ fn render_task_row(standing: &Standing) -> Html {
                     <span class="team-task-member-name">{standing.label.clone()}</span>
                 </span>
                 <span class="team-task-phase">{phase}</span>
-                <span class="team-task-renewed">{"renewed "}{renewed}</span>
+                <span class="team-task-renewed">{"expires "}{expiry}</span>
             </div>
         </li>
     }
@@ -462,6 +462,20 @@ fn lease_age(instant: Option<i64>, class: &'static str, vacant: &'static str) ->
     }
 }
 
+/// One authoritative lease expiry as a ticking countdown.
+fn lease_countdown(expiry: Option<i64>, class: &'static str, vacant: &'static str) -> Html {
+    match expiry {
+        Some(expiry) => html! { <Countdown {expiry} class={class} /> },
+        None => html! {
+            <span
+                class={class}
+                data-age-slot={watchband::AGE_LABEL_WIDTH.to_string()}
+                data-age-clock="countdown"
+            >{vacant}</span>
+        },
+    }
+}
+
 fn render_agent_details(
     member: &crate::runtime::LaneMember,
     standing: &Standing,
@@ -472,7 +486,7 @@ fn render_agent_details(
         .map(|value| value.to_string())
         .unwrap_or_else(|| "vacant".to_owned());
     let held = lease_age(standing.held_since, "claim-age", "—");
-    let renewed = lease_age(standing.renewed_at, "claim-age", "—");
+    let expiry = lease_countdown(standing.expires_at, "claim-age", "—");
     html! {
         <article
             class="team-detail-card"
@@ -489,7 +503,7 @@ fn render_agent_details(
                     <dl>
                         <div><dt>{"Pending"}</dt><dd>{standing.pending}</dd></div>
                         <div><dt>{"Claim age"}</dt><dd>{held}</dd></div>
-                        <div><dt>{"Renewed"}</dt><dd>{renewed}</dd></div>
+                        <div><dt>{"Expires"}</dt><dd>{expiry}</dd></div>
                         <div>
                             <dt>{"Liveness"}</dt>
                             <dd>{standing.liveness.as_str()}</dd>

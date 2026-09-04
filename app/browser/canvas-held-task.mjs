@@ -12,8 +12,8 @@ import { TOOL_ACTIVITY_TEXT, toolCallId } from "./canvas-activity-records.mjs";
 // no badge at all and the count stays unproven no matter how many tabs are
 // clicked. `mode_badge` counts standings carrying a handle, so raising it means
 // really claiming. This scenario reads the positive count and the held handle
-// off the card, proves an admitted renewal reaches the Tasks row, then covers
-// explicit release and natural lapse as separate badge-removal paths.
+// off the card, proves an admitted renewal moves the Tasks-row expiry countdown,
+// then covers explicit release and natural lapse as separate badge-removal paths.
 export async function assertHeldTaskCount(
   team,
   fixture,
@@ -219,10 +219,13 @@ async function claimAutomatically({
     "the team task row remains attributed to the claiming member",
   );
   const taskTitle = (await taskRow.locator(".team-task-title").innerText()).trim();
-  const initialRenewedAt = Number(
-    await taskRow.locator(".team-task-age").getAttribute("data-age-authored"),
-  );
-  assert.ok(Number.isFinite(initialRenewedAt), "the task row carries an admitted renewal instant");
+  const taskAge = taskRow.locator(".team-task-age");
+  const initialExpiry = Number(await taskAge.getAttribute("data-expiry"));
+  assert.ok(Number.isFinite(initialExpiry), "the task row carries its authoritative lease expiry");
+  assert.ok(initialExpiry > Date.now(), "an active task counts down from a future expiry");
+  assert.equal(await taskAge.getAttribute("data-age-clock"), "countdown");
+  assert.equal(await taskAge.getAttribute("data-age-authored"), null);
+  assert.match((await taskAge.innerText()).trim(), /^(?:now|\d+[smhd]\+?)$/);
   if (artifacts) {
     await team.page().screenshot({
       path: join(artifacts, "canvas-tasks-active-claim.png"),
@@ -242,10 +245,16 @@ async function claimAutomatically({
       "the resident heartbeat moves task lease expiry",
     );
     await team.getByRole("tab", { name: /^Tasks/ }).click();
-    const renewed = await waitForRenderedTaskRenewal(
-      team, handle, initialRenewedAt, transitionMs * 4,
+    const renewed = await waitForRenderedTaskExpiry(
+      team, handle, renewedExpiry, transitionMs * 4,
     );
-    assert.match(renewed.rendered, /^(?:now|\d+[smhd])$/, "renewal age remains readable");
+    assert.ok(
+      renewed.expiry >= renewedExpiry,
+      "the rendered countdown follows the renewed authoritative expiry",
+    );
+    assert.equal(renewed.clock, "countdown", "renewal preserves countdown semantics");
+    assert.equal(renewed.authored, null, "renewal cannot restore elapsed-since-renewal metadata");
+    assert.match(renewed.rendered, /^(?:now|\d+[smhd]\+?)$/, "expiry countdown remains readable");
     assert.equal(renewed.title, taskTitle, "renewal preserves the actor-facing title");
     assert.equal(renewed.phase, phase, "renewal preserves the authoritative workflow phase");
     assert.equal(renewed.lane, lane, "renewal preserves the claiming member attribution");
@@ -413,7 +422,7 @@ async function waitForStableComposerProvenance(
   throw new Error(`composer provenance did not remain stable for ${quietMs}ms`);
 }
 
-async function waitForRenderedTaskRenewal(team, handle, after, timeout) {
+async function waitForRenderedTaskExpiry(team, handle, minimum, timeout) {
   const deadline = Date.now() + timeout;
   let last;
   while (Date.now() < deadline) {
@@ -421,18 +430,20 @@ async function waitForRenderedTaskRenewal(team, handle, after, timeout) {
     if (await row.count() === 1) {
       const age = row.locator(".team-task-age");
       last = {
-        authored: Number(await age.getAttribute("data-age-authored")),
+        expiry: Number(await age.getAttribute("data-expiry")),
+        clock: await age.getAttribute("data-age-clock"),
+        authored: await age.getAttribute("data-age-authored"),
         rendered: (await age.innerText()).trim(),
         title: (await row.locator(".team-task-title").innerText()).trim(),
         phase: (await row.locator(".team-task-phase").innerText()).trim(),
         lane: await row.getAttribute("data-agent-lane"),
       };
-      if (Number.isFinite(last.authored) && last.authored > after) return last;
+      if (Number.isFinite(last.expiry) && last.expiry >= minimum) return last;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(
-    `timed out waiting for rendered renewal after ${after}: ${JSON.stringify(last)}`,
+    `timed out waiting for rendered expiry at least ${minimum}: ${JSON.stringify(last)}`,
   );
 }
 
