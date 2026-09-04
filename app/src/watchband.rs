@@ -22,9 +22,10 @@ use crate::runtime::LaneRow;
 
 /// Accent slots the band cycles through.
 ///
-/// Slots are dealt in canonical lineage-member order, matching the predecessor:
-/// green first, then blue, gold, red, teal, and plum. Identity remains visible
-/// in labels and data attributes rather than being inferred from color.
+/// Slots are dealt from the right control edge, matching the predecessor:
+/// green first, then blue, gold, red, teal, and plum moving left. Identity
+/// remains visible in labels and data attributes rather than being inferred
+/// from color.
 pub const ACCENTS: usize = 6;
 
 /// Largest member-count weight the team console assigns to layout.
@@ -399,7 +400,7 @@ pub fn standings(lanes: &[LaneRow], inbox: &[LaneInbox], tasks: &[BoardTask]) ->
                 phase: held.map(|task| task.workflow.body.phase.to_string()),
                 held_since: held.and_then(|task| lease_instant(task, |lease| lease.start)),
                 renewed_at: held.and_then(|task| lease_instant(task, |lease| lease.renewal)),
-                accent: accent(position),
+                accent: accent(lineage.members.len(), position),
             }
         })
         .collect()
@@ -434,13 +435,25 @@ fn lease_instant(
         .map(|lease| pick(&lease.body).get().as_millisecond())
 }
 
+/// The zero-based visual ordinal of one member counted from the right edge.
+///
+/// Canonical member order is also DOM order, from left to right. The predecessor
+/// renders the same order with `row-reverse`, so translating through this
+/// ordinal preserves Rust's geometry while keeping its right-handed deal.
+#[must_use]
+pub const fn right_edge_ordinal(members: usize, position: usize) -> usize {
+    assert!(position < members, "member position belongs to its lineage");
+    members - position - 1
+}
+
 /// The accent slot dealt to one canonical lineage-member position.
 ///
-/// The seventh member intentionally returns to green. Color decorates visible
+/// The rightmost member is green. Moving left advances through the six slots,
+/// and a seventh member intentionally returns to green. Color decorates visible
 /// attribution; lane identity and accessible labels remain authoritative.
 #[must_use]
-pub const fn accent(position: usize) -> usize {
-    position % ACCENTS
+pub const fn accent(members: usize, position: usize) -> usize {
+    right_edge_ordinal(members, position) % ACCENTS
 }
 
 /// The part of a worktree path that names one lane rather than the fleet.

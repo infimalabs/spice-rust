@@ -212,7 +212,7 @@ fn render_lineage(
                 {for lineage.members.iter().enumerate().map(|(position, member)| {
                     render_member(
                         member,
-                        watchband::accent(position),
+                        watchband::accent(lineage.members.len(), position),
                         waiting,
                         lineage.lane,
                         can_configure,
@@ -330,7 +330,7 @@ fn render_solo_members_drop(
                     {for members.iter().map(|member| {
                         render_member(
                             member,
-                            watchband::accent(0),
+                            watchband::accent(1, 0),
                             render.waiting,
                             member.lane,
                             render.can_configure,

@@ -117,8 +117,8 @@ function assertComposerStripGeometry(geometry, members) {
   );
   assert.deepEqual(
     geometry.members.map(({ accent }) => accent),
-    ["0", "1", "2", "3", "4", "5", "0"],
-    "the complete predecessor palette starts green and wraps only after slot six",
+    ["0", "5", "4", "3", "2", "1", "0"],
+    "the complete predecessor palette starts green at the right edge and wraps at the far left",
   );
   assert.ok(
     geometry.members.every(({ top }) => Math.abs(top - geometry.members[0].top) <= 1),

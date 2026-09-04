@@ -340,7 +340,7 @@ fn a_standing_carries_lease_instants_that_age_after_the_row_is_built() {
 }
 
 #[test]
-fn lineage_members_receive_the_complete_palette_in_canonical_order() {
+fn lineage_members_receive_the_complete_palette_from_the_right_edge() {
     let members = [
         (LANE_A, "main-a"),
         (LANE_B, "main-b"),
@@ -355,7 +355,7 @@ fn lineage_members_receive_the_complete_palette_in_canonical_order() {
     let first = standings(&[seated(EPOCH, &members)], &[], &[]);
     let second = standings(&[seated(EPOCH, &reversed)], &[], &[]);
 
-    let complete_palette = (0..ACCENTS).collect::<Vec<_>>();
+    let complete_palette = (0..ACCENTS).rev().collect::<Vec<_>>();
     assert_eq!(
         first.iter().map(|row| row.accent).collect::<Vec<_>>(),
         complete_palette
@@ -365,12 +365,25 @@ fn lineage_members_receive_the_complete_palette_in_canonical_order() {
         complete_palette
     );
     assert_eq!(first[0].lane, second[5].lane);
-    assert_eq!(first[0].accent, 0);
+    assert_eq!(first[0].accent, 5);
     assert_eq!(
-        second[5].accent, 5,
-        "a reordered member receives its new position's slot"
+        second[5].accent, 0,
+        "a member reordered to the right edge receives the green slot"
     );
-    assert_eq!(accent(ACCENTS), 0, "the seventh member wraps to green");
+    for members in 1..=ACCENTS + 1 {
+        assert_eq!(
+            accent(members, members - 1),
+            0,
+            "the rightmost member starts at green for a lineage of {members}"
+        );
+    }
+    assert_eq!(
+        (0..=ACCENTS)
+            .map(|position| accent(ACCENTS + 1, position))
+            .collect::<Vec<_>>(),
+        vec![0, 5, 4, 3, 2, 1, 0],
+        "the seventh member wraps at the far left without moving the right anchor"
+    );
 }
 
 #[test]

@@ -223,7 +223,8 @@ fn render_agent_roster(runtime: Option<&CanvasRuntime>, submissions: &Submission
             {for grid.columns_from_left().map(|column| html! {
                 <span key={column.lower.to_string()} class="brand-dot-column">
                     {for [column.upper, Some(column.lower)].into_iter().flatten().map(|index| {
-                        let (member, pending) = members[index];
+                        let member_index = watchband::right_edge_ordinal(members.len(), index);
+                        let (member, pending) = members[member_index];
                         let status = member.status(pending);
                         let label = member.name.as_deref().unwrap_or_else(|| {
                             member

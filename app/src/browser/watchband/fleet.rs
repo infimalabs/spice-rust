@@ -399,7 +399,9 @@ fn render_lineage_toolbar(
                 role="group"
                 aria-label={format!("{} admitted agents", standings.len())}
             >
-                {for standings.iter().enumerate().filter_map(|(index, standing)| {
+                {for (0..standings.len()).filter_map(|index| {
+                    let member_index = watchband::right_edge_ordinal(standings.len(), index);
+                    let standing = &standings[member_index];
                     let member = lineage.member(standing.lane)?;
                     let status = member.status(standing.pending);
                     let position = pip_stack

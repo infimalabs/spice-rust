@@ -342,8 +342,8 @@ export async function assertTeamMenu(page, fixture, artifacts) {
   let originalTeam = panel.locator(`.canvas-team[data-team-lineage="${host}"]`);
   await assertMemberAccents(
     originalTeam,
-    ["0", "1", "2", "3"],
-    "the team menu deals accents from its first canonical member",
+    ["3", "2", "1", "0"],
+    "the team menu deals accents from the right control edge",
   );
   let member = await waitForMemberIn(originalTeam, moved);
   await member.dragTo(panel.locator('[data-team-drop="unteamed"]'));
@@ -353,6 +353,11 @@ export async function assertTeamMenu(page, fixture, artifacts) {
   assert.equal(await member.getAttribute("data-accent"), "0", "a solo member starts at green");
   assert.equal(await panel.locator(".canvas-team").count(), 1);
   assert.equal(await panel.locator(".canvas-team").locator(".canvas-team-member").count(), 3);
+  await assertMemberAccents(
+    panel.locator(`.canvas-team[data-team-lineage="${host}"]`),
+    ["2", "1", "0"],
+    "removing a member keeps green anchored to the surviving right edge",
+  );
   await assertResidentLineage(fixture, moved, moved, host, "removing an agent from its team");
 
   originalTeam = panel.locator(`.canvas-team[data-team-lineage="${host}"]`);
@@ -363,8 +368,8 @@ export async function assertTeamMenu(page, fixture, artifacts) {
   assert.equal(await originalTeam.locator(".canvas-team-member").count(), 4);
   await assertMemberAccents(
     originalTeam,
-    ["0", "1", "2", "3"],
-    "returning the member redeals the canonical team sequence",
+    ["3", "2", "1", "0"],
+    "returning the member redeals the sequence from the right edge",
   );
   await assertResidentLineage(fixture, moved, host, host, "returning an agent to its team");
 
