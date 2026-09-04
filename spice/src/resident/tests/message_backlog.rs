@@ -6,6 +6,8 @@ const CODEX_PROSE: &[u8] = br#"{"timestamp":"2030-04-12T18:44:09.271Z","type":"i
 "#;
 const CODEX_PROSE_WITHOUT_TIME: &[u8] = br#"{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"durable restart backlog"}}
 "#;
+const CODEX_TURN_COMPLETE_WITHOUT_TIME: &[u8] = br#"{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}
+"#;
 const CODEX_COMPACTION_WITHOUT_TIME: &[u8] = br#"{"type":"compacted"}
 "#;
 const CODEX_APPEND: &[u8] = br#"{"timestamp":"2030-04-12T18:45:09.271Z","type":"item.completed","item":{"id":"item-2","type":"agent_message","text":"appended after initial backlog"}}
@@ -75,6 +77,8 @@ fn each_resident_generation_restores_durable_prose_before_canvas_subscription() 
         .expect("the backlog tape opens");
     tape.tee(CODEX_PROSE_WITHOUT_TIME)
         .expect("durable prose is captured");
+    tape.tee(CODEX_TURN_COMPLETE_WITHOUT_TIME)
+        .expect("durable turn completion is captured");
     tape.tee(CODEX_COMPACTION_WITHOUT_TIME)
         .expect("durable compaction is captured");
     let mut ingest_diagnostic = Vec::new();
@@ -132,6 +136,14 @@ fn each_resident_generation_restores_durable_prose_before_canvas_subscription() 
         assert_eq!(messages[0].lane, lane);
         assert_eq!(messages[0].author, author);
         assert_eq!(messages[0].text, "durable restart backlog");
+        assert!(messages[0].final_answer);
+        assert_eq!(
+            messages[0]
+                .automatic_speech
+                .as_ref()
+                .map(|speech| speech.kind),
+            Some(wire::AutomaticSpeechKind::Final),
+        );
         assert!(messages[0].authored_synthetic);
         assert_eq!(messages[0].observed.as_ref(), Some(&observed));
         assert_eq!(messages[1].lane, lane);

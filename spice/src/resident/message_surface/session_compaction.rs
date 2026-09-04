@@ -462,6 +462,7 @@ pub(super) fn retained_messages(request: HistoryRequest<'_>) -> CommandResult<Hi
     let mut state = MessageState {
         previews: CallPreviews::default(),
         observations: request.observations.clone(),
+        prose: BTreeMap::new(),
     };
     for record in records {
         publish(record, request.lane, request.author, &messages, &mut state)?;
@@ -517,6 +518,25 @@ impl AgentMessagePublisher for HistoryMessages {
             collected.messages.remove(0);
             collected.dropped = true;
         }
+        Ok(true)
+    }
+
+    fn revise_final(
+        &self,
+        message: wire::AgentMessage,
+    ) -> Result<bool, canvas::stream::MessagePublishError> {
+        let mut collected = self
+            .inner
+            .lock()
+            .map_err(|_| canvas::stream::MessagePublishError::Unavailable)?;
+        let Some(existing) = collected
+            .messages
+            .iter_mut()
+            .find(|existing| existing.lane == message.lane && existing.locus == message.locus)
+        else {
+            return Err(canvas::stream::MessagePublishError::IdentityConflict);
+        };
+        *existing = message;
         Ok(true)
     }
 }

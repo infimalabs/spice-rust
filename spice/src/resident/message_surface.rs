@@ -64,6 +64,13 @@ impl<'a> CaptureViews<'a> {
 pub(in crate::resident) struct MessageState {
     previews: CallPreviews,
     observations: MessageObservations,
+    prose: BTreeMap<CanonicalUuid, ProseState>,
+}
+
+#[derive(Debug)]
+struct ProseState {
+    published: wire::AgentMessage,
+    terminal: wire::AgentMessage,
 }
 
 #[derive(Clone, Debug)]
@@ -128,6 +135,11 @@ pub(super) trait AgentMessagePublisher {
         &self,
         message: wire::AgentMessage,
     ) -> Result<bool, canvas::stream::MessagePublishError>;
+
+    fn revise_final(
+        &self,
+        message: wire::AgentMessage,
+    ) -> Result<bool, canvas::stream::MessagePublishError>;
 }
 
 enum TasteRecognition<'a> {
@@ -142,6 +154,13 @@ impl AgentMessagePublisher for canvas::stream::MessagePublisher {
         message: wire::AgentMessage,
     ) -> Result<bool, canvas::stream::MessagePublishError> {
         Self::publish(self, message)
+    }
+
+    fn revise_final(
+        &self,
+        message: wire::AgentMessage,
+    ) -> Result<bool, canvas::stream::MessagePublishError> {
+        Self::revise_final(self, message)
     }
 }
 
@@ -245,31 +264,39 @@ pub(super) fn publish_agent_messages(
     state: &mut MessageState,
     steering: Option<&PresentationDirectives>,
 ) -> CommandResult<()> {
-    let authored = record
-        .decoded
-        .context()
-        .and_then(|context| context.timestamp.as_deref());
+    let Some(context) = record.decoded.context() else {
+        return Ok(());
+    };
+    let mut events = Vec::new();
     for (event, decoded) in record.decoded.events().iter().enumerate() {
         let event = u32::try_from(event)
             .map_err(|error| store_fault("canvas::message-locus-invalid", &error.to_string()))?;
-        publish_agent_event(
-            publisher,
-            AgentEvent {
-                lane: record.lane,
-                author: record.occupant,
-                source: None,
-                ordinal: event,
-                decoded,
-                authored,
-                observed: None,
-                observations: &state.observations,
-                unavailable_tool_terminals: &[],
-            },
-            &mut state.previews,
-            steering,
-        )?;
+        events.push((event, decoded));
     }
-    Ok(())
+    publish_agent_record(
+        publisher,
+        AgentRecord {
+            lane: record.lane,
+            author: record.occupant,
+            source: None,
+            context,
+            events: &events,
+            observed: None,
+            unavailable_tool_terminals: &[],
+        },
+        state,
+        steering,
+    )
+}
+
+struct AgentRecord<'a> {
+    lane: CanonicalUuid,
+    author: CanonicalUuid,
+    source: Option<CanonicalUuid>,
+    context: &'a listen::RecordContext,
+    events: &'a [(u32, &'a listen::Event)],
+    observed: Option<wire::Instant>,
+    unavailable_tool_terminals: &'a [String],
 }
 
 struct AgentEvent<'a> {
@@ -284,6 +311,123 @@ struct AgentEvent<'a> {
     unavailable_tool_terminals: &'a [String],
 }
 
+struct ProjectedMessage {
+    published: wire::AgentMessage,
+    terminal: Option<wire::AgentMessage>,
+}
+
+fn publish_agent_record(
+    publisher: &impl AgentMessagePublisher,
+    record: AgentRecord<'_>,
+    state: &mut MessageState,
+    steering: Option<&PresentationDirectives>,
+) -> CommandResult<()> {
+    if record.context.turn == Some(listen::TurnMoment::Started)
+        || record
+            .events
+            .iter()
+            .any(|(_, event)| matches!(event, listen::Event::Session(_)))
+    {
+        state.prose.remove(&record.lane);
+    }
+    let successful_terminal = record.context.turn == Some(listen::TurnMoment::Completed)
+        && record
+            .events
+            .iter()
+            .any(|(_, event)| matches!(event, listen::Event::Usage(_)));
+    let mut explicit_final = false;
+    for &(ordinal, decoded) in record.events {
+        let Some(projected) = project_agent_event(
+            AgentEvent {
+                lane: record.lane,
+                author: record.author,
+                source: record.source,
+                ordinal,
+                decoded,
+                authored: record.context.timestamp.as_deref(),
+                observed: record.observed,
+                observations: &state.observations,
+                unavailable_tool_terminals: record.unavailable_tool_terminals,
+            },
+            &mut state.previews,
+            steering,
+        )?
+        else {
+            continue;
+        };
+        if projected.published.activity != AgentActivityKind::Prose {
+            publish_message(publisher, projected.published)?;
+            continue;
+        }
+        if projected.published.final_answer {
+            explicit_final = true;
+            if let Some(previous) = state.prose.get(&record.lane)
+                && same_prose(&previous.published, &projected.published)
+            {
+                if !previous.published.final_answer {
+                    let terminal = previous.terminal.clone();
+                    revise_final_message(publisher, terminal.clone())?;
+                    state.prose.insert(
+                        record.lane,
+                        ProseState {
+                            published: terminal.clone(),
+                            terminal,
+                        },
+                    );
+                }
+                continue;
+            }
+        }
+        publish_message(publisher, projected.published.clone())?;
+        let terminal = projected
+            .terminal
+            .unwrap_or_else(|| projected.published.clone());
+        state.prose.insert(
+            record.lane,
+            ProseState {
+                published: projected.published,
+                terminal,
+            },
+        );
+    }
+    if successful_terminal
+        && !explicit_final
+        && let Some(previous) = state.prose.get(&record.lane)
+        && previous.published.author == record.author
+        && !previous.published.final_answer
+    {
+        revise_final_message(publisher, previous.terminal.clone())?;
+    }
+    if record.context.turn == Some(listen::TurnMoment::Completed) {
+        state.prose.remove(&record.lane);
+    }
+    Ok(())
+}
+
+fn same_prose(left: &wire::AgentMessage, right: &wire::AgentMessage) -> bool {
+    left.author == right.author && left.text == right.text && left.media == right.media
+}
+
+fn publish_message(
+    publisher: &impl AgentMessagePublisher,
+    message: wire::AgentMessage,
+) -> CommandResult<()> {
+    publisher
+        .publish(message)
+        .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))?;
+    Ok(())
+}
+
+fn revise_final_message(
+    publisher: &impl AgentMessagePublisher,
+    message: wire::AgentMessage,
+) -> CommandResult<()> {
+    publisher
+        .revise_final(message)
+        .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))?;
+    Ok(())
+}
+
 /// Project one typed tape event through the sole live/restored message policy.
 fn publish_agent_event(
     publisher: &impl AgentMessagePublisher,
@@ -291,6 +435,17 @@ fn publish_agent_event(
     previews: &mut CallPreviews,
     steering: Option<&PresentationDirectives>,
 ) -> CommandResult<()> {
+    if let Some(projected) = project_agent_event(event, previews, steering)? {
+        publish_message(publisher, projected.published)?;
+    }
+    Ok(())
+}
+
+fn project_agent_event(
+    event: AgentEvent<'_>,
+    previews: &mut CallPreviews,
+    steering: Option<&PresentationDirectives>,
+) -> CommandResult<Option<ProjectedMessage>> {
     let AgentEvent {
         lane,
         author,
@@ -351,7 +506,7 @@ fn publish_agent_event(
             None,
             Vec::new(),
         ),
-        _ => return Ok(()),
+        _ => return Ok(None),
     };
     let (authored, authored_synthetic) = parse_agent_message_authored(authored, locus, ordinal)?;
     let observed = authored_synthetic
@@ -359,28 +514,43 @@ fn publish_agent_event(
         .flatten();
     wire::media::admit_media(&media)
         .map_err(|error| store_fault("canvas::message-media-invalid", &error.to_string()))?;
-    publisher
-        .publish(wire::AgentMessage {
-            lane,
-            author,
-            locus: wire::MessageLocus {
-                member: locus.member,
-                offset: locus.offset,
-                length: locus.length,
-                event: ordinal,
-            },
-            authored,
-            authored_synthetic,
-            observed,
-            activity,
-            final_answer,
-            text,
-            automatic_speech,
-            unavailable_tool_terminals: unavailable_tool_terminals.to_vec(),
-            media,
-        })
-        .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))?;
-    Ok(())
+    let published = wire::AgentMessage {
+        lane,
+        author,
+        locus: wire::MessageLocus {
+            member: locus.member,
+            offset: locus.offset,
+            length: locus.length,
+            event: ordinal,
+        },
+        authored,
+        authored_synthetic,
+        observed,
+        activity,
+        final_answer,
+        text,
+        automatic_speech,
+        unavailable_tool_terminals: unavailable_tool_terminals.to_vec(),
+        media,
+    };
+    let terminal = if published.activity == AgentActivityKind::Prose && !published.final_answer {
+        let listen::Event::Prose(prose) = decoded else {
+            unreachable!("only assistant prose projects a prose card")
+        };
+        let mut terminal_prose = prose.clone();
+        terminal_prose.phase = Some("final_answer".to_owned());
+        let mut terminal = published.clone();
+        terminal.final_answer = true;
+        terminal.automatic_speech =
+            automatic_speech::classify(&terminal_prose, steering, presentation_event(prose.locus));
+        Some(terminal)
+    } else {
+        None
+    };
+    Ok(Some(ProjectedMessage {
+        published,
+        terminal,
+    }))
 }
 
 fn parse_agent_message_authored(
@@ -794,6 +964,21 @@ mod tests {
             self.0.lock().expect("message lock").push(message);
             Ok(true)
         }
+
+        fn revise_final(
+            &self,
+            message: wire::AgentMessage,
+        ) -> Result<bool, canvas::stream::MessagePublishError> {
+            let mut messages = self.0.lock().expect("message lock");
+            let Some(existing) = messages
+                .iter_mut()
+                .find(|existing| existing.lane == message.lane && existing.locus == message.locus)
+            else {
+                return Err(canvas::stream::MessagePublishError::IdentityConflict);
+            };
+            *existing = message;
+            Ok(true)
+        }
     }
 
     fn lane() -> CanonicalUuid {
@@ -809,6 +994,130 @@ mod tests {
             locus: listen::Locus::new(1, 0, 1),
             ordinal: 0,
         }
+    }
+
+    fn capture_record(bytes: &[u8], offset: u64) -> lane::capture::CaptureRecord {
+        capture_record_for(listen::Dialect::Codex, bytes, offset)
+    }
+
+    fn capture_record_for(
+        dialect: listen::Dialect,
+        bytes: &[u8],
+        offset: u64,
+    ) -> lane::capture::CaptureRecord {
+        let locus = listen::Locus::new(1, offset, bytes.len() as u64);
+        lane::capture::CaptureRecord {
+            lane: lane(),
+            occupant: lane(),
+            stream: vendor::RecordStream::Stdout,
+            boundary: sill::RecordBoundary::Complete,
+            locus,
+            declaration: None,
+            decoded: listen::decode(dialect, bytes, locus)
+                .expect("fixture transcript record decodes"),
+        }
+    }
+
+    #[test]
+    fn successful_codex_cli_turn_promotes_only_its_latest_agent_message() {
+        let publisher = Messages::default();
+        let mut state = MessageState::default();
+        let records = [
+            br#"{"type":"item.completed","item":{"id":"commentary","type":"agent_message","text":"working through it"}}"#.as_slice(),
+            br#"{"type":"item.completed","item":{"id":"final","type":"agent_message","text":"settled final"}}"#.as_slice(),
+            br#"{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}"#.as_slice(),
+        ];
+        let mut offset = 0;
+        for bytes in records {
+            let record = capture_record(bytes, offset);
+            offset += bytes.len() as u64;
+            publish_agent_messages(&publisher, &record, &mut state, None)
+                .expect("CLI transcript record publishes");
+        }
+
+        let messages = publisher.0.lock().expect("message lock");
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].text, "working through it");
+        assert!(!messages[0].final_answer);
+        assert_eq!(messages[1].text, "settled final");
+        assert!(messages[1].final_answer);
+        assert_eq!(
+            messages[1]
+                .automatic_speech
+                .as_ref()
+                .map(|speech| speech.kind),
+            Some(wire::AutomaticSpeechKind::Final),
+        );
+    }
+
+    #[test]
+    fn failed_codex_cli_turn_leaves_its_agent_message_nonfinal() {
+        let publisher = Messages::default();
+        let mut state = MessageState::default();
+        let records = [
+            br#"{"type":"item.completed","item":{"id":"failed","type":"agent_message","text":"not a final answer"}}"#.as_slice(),
+            br#"{"type":"turn.failed","error":{"message":"model failed"}}"#.as_slice(),
+        ];
+        let mut offset = 0;
+        for bytes in records {
+            let record = capture_record(bytes, offset);
+            offset += bytes.len() as u64;
+            publish_agent_messages(&publisher, &record, &mut state, None)
+                .expect("failed CLI transcript record publishes");
+        }
+
+        let messages = publisher.0.lock().expect("message lock");
+        assert_eq!(messages.len(), 1);
+        assert!(!messages[0].final_answer);
+        assert!(messages[0].automatic_speech.is_none());
+    }
+
+    #[test]
+    fn persisted_codex_final_and_task_complete_companion_share_one_card() {
+        let publisher = Messages::default();
+        let mut state = MessageState::default();
+        let records = [
+            br#"{"timestamp":"2030-04-12T18:44:09.271Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"settled final"}]}}"#.as_slice(),
+            br#"{"timestamp":"2030-04-12T18:44:09.272Z","type":"event_msg","payload":{"type":"task_complete","last_agent_message":"settled final"}}"#.as_slice(),
+        ];
+        let mut offset = 0;
+        for bytes in records {
+            let record = capture_record(bytes, offset);
+            offset += bytes.len() as u64;
+            publish_agent_messages(&publisher, &record, &mut state, None)
+                .expect("persisted transcript record publishes");
+        }
+
+        let messages = publisher.0.lock().expect("message lock");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].text, "settled final");
+        assert!(messages[0].final_answer);
+    }
+
+    #[test]
+    fn claude_promotes_terminal_stop_reasons_but_not_tool_use() {
+        let publisher = Messages::default();
+        let mut state = MessageState::default();
+        let records = [
+            br#"{"timestamp":"2030-04-12T18:44:09.271Z","type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"tool-bound prose"}],"usage":{"input_tokens":1,"output_tokens":1}}}"#.as_slice(),
+            br#"{"type":"stream_event","event":{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"input_tokens":1,"output_tokens":1}}}"#.as_slice(),
+            br#"{"timestamp":"2030-04-12T18:44:09.272Z","type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"terminal prose"}],"usage":{"input_tokens":1,"output_tokens":1}}}"#.as_slice(),
+            br#"{"type":"stream_event","event":{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":1,"output_tokens":1}}}"#.as_slice(),
+        ];
+        let mut offset = 0;
+        for bytes in records {
+            let record = capture_record_for(listen::Dialect::Claude, bytes, offset);
+            offset += bytes.len() as u64;
+            publish_agent_messages(&publisher, &record, &mut state, None)
+                .expect("Claude transcript record publishes");
+        }
+
+        let messages = publisher.0.lock().expect("message lock");
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].text, "tool-bound prose");
+        assert!(!messages[0].final_answer);
+        assert_eq!(messages[1].text, "terminal prose");
+        assert!(messages[1].final_answer);
     }
 
     #[test]

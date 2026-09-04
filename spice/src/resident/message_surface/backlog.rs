@@ -32,6 +32,7 @@ impl BacklogReader {
             state: MessageState {
                 previews: CallPreviews::default(),
                 observations: MessageObservations::from_snapshot(snapshot),
+                prose: BTreeMap::new(),
             },
             steering,
         })
@@ -296,6 +297,7 @@ impl DurableHistory {
             state: MessageState {
                 previews: CallPreviews::default(),
                 observations: self.observations.clone(),
+                prose: BTreeMap::new(),
             },
             steering: self.steering.clone(),
         };
@@ -418,6 +420,25 @@ impl AgentMessagePublisher for CollectedMessages {
         }
         Ok(true)
     }
+
+    fn revise_final(
+        &self,
+        message: wire::AgentMessage,
+    ) -> Result<bool, canvas::stream::MessagePublishError> {
+        let mut collected = self
+            .inner
+            .lock()
+            .map_err(|_| canvas::stream::MessagePublishError::Unavailable)?;
+        let Some(existing) = collected
+            .messages
+            .iter_mut()
+            .find(|existing| existing.lane == message.lane && existing.locus == message.locus)
+        else {
+            return Err(canvas::stream::MessagePublishError::IdentityConflict);
+        };
+        *existing = message;
+        Ok(true)
+    }
 }
 
 fn restore_lane(
@@ -485,6 +506,7 @@ fn forget_changed_source(
     if matches!(&error, listen::ScanError::SourceChanged { .. }) {
         reader.cursors.remove(&lane);
         reader.state.previews.clear_lane(lane);
+        reader.state.prose.remove(&lane);
     }
     let _ = writeln!(
         diagnostic,
@@ -512,37 +534,42 @@ fn publish_scan(
         let listen::RecordPayload::Events(events) = record.payload else {
             continue;
         };
-        for sourced in events {
-            let event = u32::try_from(sourced.ordinal).map_err(|error| {
-                store_fault("canvas::message-locus-invalid", &error.to_string())
-            })?;
-            if let Err(outcome) = publish_agent_event(
-                publisher,
-                AgentEvent {
-                    lane,
-                    author,
-                    source: Some(source),
-                    ordinal: event,
-                    decoded: &sourced.event,
-                    authored: sourced.context.timestamp.as_deref(),
-                    observed: None,
-                    observations: &reader.state.observations,
-                    unavailable_tool_terminals: &[],
-                },
-                &mut reader.state.previews,
-                Some(&reader.steering),
-            ) {
-                match outcome {
-                    Outcome::Fault(fault) => {
-                        published = false;
-                        let _ = writeln!(
-                            diagnostic,
-                            "canvas backlog unavailable for lane {lane}: {}: {}",
-                            fault.reason, fault.detail,
-                        );
-                    }
-                    other => return Err(other),
+        let Some(context) = events.first().map(|sourced| &sourced.context) else {
+            continue;
+        };
+        let decoded = events
+            .iter()
+            .map(|sourced| {
+                let event = u32::try_from(sourced.ordinal).map_err(|error| {
+                    store_fault("canvas::message-locus-invalid", &error.to_string())
+                })?;
+                Ok((event, &sourced.event))
+            })
+            .collect::<CommandResult<Vec<_>>>()?;
+        if let Err(outcome) = publish_agent_record(
+            publisher,
+            AgentRecord {
+                lane,
+                author,
+                source: Some(source),
+                context,
+                events: &decoded,
+                observed: None,
+                unavailable_tool_terminals: &[],
+            },
+            &mut reader.state,
+            Some(&reader.steering),
+        ) {
+            match outcome {
+                Outcome::Fault(fault) => {
+                    published = false;
+                    let _ = writeln!(
+                        diagnostic,
+                        "canvas backlog unavailable for lane {lane}: {}: {}",
+                        fault.reason, fault.detail,
+                    );
                 }
+                other => return Err(other),
             }
         }
     }

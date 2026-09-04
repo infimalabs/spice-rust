@@ -54,6 +54,21 @@ impl AgentMessagePublisher for Messages {
         messages.push(message);
         Ok(true)
     }
+
+    fn revise_final(
+        &self,
+        message: wire::AgentMessage,
+    ) -> Result<bool, canvas::stream::MessagePublishError> {
+        let mut messages = self.0.lock().expect("message lock");
+        let Some(existing) = messages
+            .iter_mut()
+            .find(|existing| existing.lane == message.lane && existing.locus == message.locus)
+        else {
+            return Err(canvas::stream::MessagePublishError::IdentityConflict);
+        };
+        *existing = message;
+        Ok(true)
+    }
 }
 
 #[test]
@@ -1071,6 +1086,7 @@ fn timestamp_less_claude_boundary_is_refused_without_a_chronology_fallback() {
 fn observed_state(lane: CanonicalUuid) -> MessageState {
     MessageState {
         previews: CallPreviews::default(),
+        prose: BTreeMap::new(),
         observations: MessageObservations(vec![MessageObservation {
             lane,
             source: uuid("018f82d4-6f59-7d06-92e3-bce9131163bb"),

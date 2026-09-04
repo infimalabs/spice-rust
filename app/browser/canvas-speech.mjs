@@ -137,13 +137,13 @@ export async function installSocketControl(context) {
   });
 }
 
-export async function assertAutomaticSpeechEngines(endpoint, fixture, worktree, lane) {
+export async function assertAutomaticSpeechEngines(endpoint, fixture, worktree, lane, artifacts) {
   for (const engine of ["chromium", "firefox"]) {
-    await assertAutomaticSpeechEngine(engine, endpoint, fixture, worktree, lane);
+    await assertAutomaticSpeechEngine(engine, endpoint, fixture, worktree, lane, artifacts);
   }
 }
 
-async function assertAutomaticSpeechEngine(engine, endpoint, fixture, worktree, lane) {
+async function assertAutomaticSpeechEngine(engine, endpoint, fixture, worktree, lane, artifacts) {
   const browser = await launchBrowser(engine);
   const context = await browser.newContext({ viewport: { width: 1000, height: 720 } });
   await installBrowserSpeech(context);
@@ -176,23 +176,31 @@ async function assertAutomaticSpeechEngine(engine, endpoint, fixture, worktree, 
     await emitAssistantRecord(worktree, page, lane, `NACK ${declined.body.key}: unsafe`);
     assert.equal(await speechCount(page), 0, `${engine} NACK-only prose stays silent`);
 
+    const marker = engine === "chromium" ? "C" : "F";
     const finalText = [
-      `Opened [the ${engine} final](https://example.test).`,
-      "middle paragraph must stay silent",
+      `Opened [the ${marker} final](https://example.test).`,
+      "middle stays silent",
       "Landed 7a12bc99.",
     ].join("\n\n");
-    await emitAssistantRecord(worktree, page, lane, finalText, { final: true });
+    const finalCard = await emitAssistantRecord(worktree, page, lane, finalText, { final: true });
     await waitForSpeech(page, 1, `${engine} final answer`);
     assert.equal(
       await latestSpeechText(page),
-      `Opened the ${engine} final. Landed commit 7 a 1 2 b c 9.`,
+      `Opened the ${marker} final. Landed commit 7 a 1 2 b c 9.`,
     );
+    await assertFinalCardPresentation(finalCard, `${engine} playing final`, true);
     await settleLatestSpeech(page);
+    await assertFinalCardMatrix(page, surface, finalCard, engine, artifacts);
 
     await page.reload({ waitUntil: "networkidle" });
     await chooseCanvasView(page, "Agents");
     assert.equal(await speechCount(page), 0, `${engine} reload replays no speech`);
     assert.equal(await mode.inputValue(), "1", `${engine} retains default Speak after reload`);
+    const replayedFinal = page.locator(
+      `[data-card-kind="agent-message"][data-agent-lane="${lane}"]`,
+      { hasText: `Opened the ${marker} final` },
+    );
+    await assertFinalCardPresentation(replayedFinal, `${engine} replayed final`, false);
 
     await mode.fill("0");
     await page.reload({ waitUntil: "networkidle" });
@@ -243,6 +251,115 @@ async function emitAssistantRecord(worktree, page, lane, text, { final = false }
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
     () => requestAnimationFrame(resolve),
   )));
+  return cards.nth(before);
+}
+
+async function assertFinalCardPresentation(card, label, nowPlaying) {
+  const presentation = await card.evaluate((element) => {
+    const style = getComputedStyle(element);
+    const bounds = element.getBoundingClientRect();
+    const painted = [...element.querySelectorAll(".message-body > *, .message-footer")]
+      .map((child) => child.getBoundingClientRect())
+      .filter((child) => child.width > 0 || child.height > 0);
+    const probe = document.createElement("span");
+    element.append(probe);
+    const color = (value) => {
+      probe.style.background = value;
+      const resolved = getComputedStyle(probe).backgroundColor;
+      probe.style.background = "";
+      return resolved;
+    };
+    const measured = {
+      final: element.dataset.messageFinal,
+      finalClass: element.classList.contains("final"),
+      nowPlaying: element.classList.contains("now-playing"),
+      background: style.backgroundColor,
+      expectedBackground: color("color-mix(in srgb, var(--accent-1) 8%, var(--panel))"),
+      panel: color("var(--panel)"),
+      borderTop: style.borderTopColor,
+      accent: color("var(--accent-1)"),
+      borderRight: style.borderRightColor,
+      producer: color("var(--accent-slot, var(--accent))"),
+      shadow: style.boxShadow,
+      warning: color("var(--warning)"),
+      playingBorder: color("color-mix(in srgb, var(--warning) 70%, var(--line))"),
+      contentBottom: painted.length > 0 ? Math.max(...painted.map((child) => child.bottom)) : null,
+      innerBottom: bounds.bottom - Number.parseFloat(style.borderBottomWidth),
+    };
+    probe.remove();
+    return measured;
+  });
+  assert.equal(presentation.final, "true", `${label} exposes final state`);
+  assert.equal(presentation.finalClass, true, `${label} carries the final class`);
+  assert.equal(presentation.nowPlaying, nowPlaying, `${label} composes playback state`);
+  assert.equal(
+    presentation.background,
+    presentation.expectedBackground,
+    `${label} uses the accent-tinted final surface`,
+  );
+  assert.notEqual(presentation.background, presentation.panel, `${label} is not a neutral card`);
+  assert.ok(
+    presentation.contentBottom === null || presentation.contentBottom <= presentation.innerBottom + 0.5,
+    `${label} contains its painted content: ${JSON.stringify(presentation)}`,
+  );
+  assert.equal(
+    presentation.borderTop,
+    nowPlaying ? presentation.playingBorder : presentation.accent,
+    `${label} keeps the expected border state`,
+  );
+  assert.equal(
+    presentation.borderRight,
+    presentation.producer,
+    `${label} preserves the producer accent on the right edge`,
+  );
+  assert.ok(
+    presentation.shadow.includes(presentation.accent),
+    `${label} retains the inset final top rule: ${presentation.shadow}`,
+  );
+  if (nowPlaying) {
+    assert.ok(
+      presentation.shadow.includes(presentation.warning),
+      `${label} retains the playback edge beside the final top rule: ${presentation.shadow}`,
+    );
+  }
+}
+
+async function waitForCommittedResize(page, surface, viewport, label) {
+  const current = page.viewportSize();
+  if (current?.width === viewport.width && current?.height === viewport.height) {
+    await settleSpeechBackend(page);
+    return;
+  }
+  const priorWidths = await surface.locator(".lane-mosaic-plane").evaluateAll(
+    (planes) => planes.map((plane) => Number(plane.dataset.committedWidth)),
+  );
+  await page.setViewportSize(viewport);
+  await waitForPage(page, `${label} mosaic width commits`, TRANSITION_MS, (before) => {
+    const planes = [...document.querySelectorAll(
+      '[data-pane="agent-console"] .lane-mosaic-plane',
+    )];
+    return planes.length === before.length && planes.every((plane, index) => (
+      plane.dataset.measurementPhase === "ready"
+      && Number(plane.dataset.committedWidth) !== before[index]
+      && Math.abs(Number(plane.dataset.committedWidth) - plane.clientWidth) <= 1
+    ));
+  }, priorWidths);
+}
+
+async function assertFinalCardMatrix(page, surface, card, engine, artifacts) {
+  const originalViewport = page.viewportSize();
+  for (const mode of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme: mode });
+    for (const [width, height, size] of [[1000, 720, "wide"], [390, 720, "narrow"]]) {
+      await waitForCommittedResize(page, surface, { width, height }, `${engine} ${mode} ${size}`);
+      await assertFinalCardPresentation(card, `${engine} ${mode} ${size} final`, false);
+      await card.screenshot({
+        path: join(artifacts, `canvas-final-${engine}-${mode}-${size}.png`),
+      });
+    }
+  }
+  await page.emulateMedia({ colorScheme: "light" });
+  await waitForCommittedResize(page, surface, originalViewport, `${engine} restored`);
 }
 
 function speechCount(page) {

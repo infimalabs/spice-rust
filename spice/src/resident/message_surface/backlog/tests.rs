@@ -6,6 +6,51 @@ use super::*;
 
 const SPARSE_TOOL_RECORDS: usize = 400;
 
+#[test]
+fn codex_completed_turn_materializes_history_as_one_final_card() {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "spice-backlog-final-history-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed),
+    ));
+    let tape = tape::Tape::open(&root).expect("final history tape opens");
+    tape.tee(
+        concat!(
+            "{\"type\":\"item.completed\",\"item\":{\"id\":\"final\",",
+            "\"type\":\"agent_message\",\"text\":\"settled final\"}}\n",
+            "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1,",
+            "\"cached_input_tokens\":0,\"output_tokens\":1}}\n",
+        )
+        .as_bytes(),
+    )
+    .expect("final history is durable");
+    let scan = listen::scan(&root, listen::Dialect::Codex, None).expect("final history scans");
+    let messages = CollectedMessages::new(canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT);
+    let mut reader = BacklogReader::default();
+    let mut diagnostic = Vec::new();
+    publish_scan(
+        scan,
+        "018f82d4-6f59-7d06-92e3-bce9131163e5"
+            .parse()
+            .expect("fixture lane"),
+        "018f82d4-6f59-7d06-92e3-bce9131163ef"
+            .parse()
+            .expect("fixture author"),
+        &messages,
+        &mut reader,
+        &mut diagnostic,
+    )
+    .expect("final history materializes");
+
+    assert!(diagnostic.is_empty());
+    let collected = messages.inner.into_inner().expect("history lock").messages;
+    assert_eq!(collected.len(), 1);
+    assert_eq!(collected[0].text, "settled final");
+    assert!(collected[0].final_answer);
+    fs::remove_dir_all(root).expect("final history fixture cleanup");
+}
+
 fn timestamp(index: usize) -> String {
     format!(
         "2030-04-12T18:{:02}:{:02}.000Z",

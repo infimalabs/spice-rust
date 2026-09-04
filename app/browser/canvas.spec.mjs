@@ -1044,6 +1044,7 @@ try {
           fixture,
           worktrees[0],
           seeded.lane,
+          artifacts,
         );
       });
     } else if (run.owns("lease")) {
