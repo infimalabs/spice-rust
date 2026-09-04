@@ -893,7 +893,8 @@ fn read_state(path: &Path) -> io::Result<State> {
             ),
         ));
     }
-    let state: State = serde_json::from_value(value).map_err(io::Error::other)?;
+    let state: State = serde_json::from_value(value)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     state.validate()
 }
 
@@ -1273,8 +1274,47 @@ mod tests {
                 serde_json::to_vec(&value).expect("invalid fixture encodes"),
             )
             .expect("invalid fixture writes");
-            assert!(read_state(&path).is_err(), "{label} state reached adoption");
+            let error = read_state(&path)
+                .err()
+                .unwrap_or_else(|| panic!("{label} state reached adoption"));
+            assert_eq!(error.kind(), io::ErrorKind::InvalidData, "{label}");
         }
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn contract_v1_request_is_refused_before_state_publication() {
+        let root = std::env::temp_dir().join(format!(
+            "spice-v1-supervisor-request-{}-{}",
+            std::process::id(),
+            now_millis().expect("fixture time")
+        ));
+        fs::create_dir_all(&root).expect("fixture directory creates");
+        let request_path = root.join("request.json");
+        let state_path = root.join("state.json");
+        publish_json(
+            &request_path,
+            &Request {
+                version: 1,
+                worktree: root.to_string_lossy().into_owned(),
+                vendor: "codex".to_owned(),
+                epoch: uuid(3),
+                lane: uuid(1),
+                occupant: uuid(2),
+                resume: None,
+                state: state_path.clone(),
+            },
+        )
+        .expect("legacy request fixture publishes");
+
+        let error = run(&request_path).expect_err("v1 request refuses");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported supervisor request version 1")
+        );
+        assert!(!state_path.exists(), "refused request published state");
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 
