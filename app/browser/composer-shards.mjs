@@ -415,22 +415,49 @@ async function activityMeasurementSnapshot(page, lane, label, expectedToken = nu
   return snapshot;
 }
 
-async function assertHorizontalComposerStrip(page, team) {
+async function touchPan(page, start, end) {
+  const session = await page.context().newCDPSession(page);
+  try {
+    await session.send("Input.synthesizeScrollGesture", {
+      x: start.x,
+      y: start.y,
+      xDistance: end.x - start.x,
+      yDistance: end.y - start.y,
+      gestureSourceType: "touch",
+      speed: 800,
+    });
+  } finally {
+    await session.detach();
+  }
+}
+
+async function assertHorizontalComposerStrip(page, team, artifactPath) {
   const viewport = page.viewportSize();
   assert.ok(viewport, "the composer-strip fixture has a viewport to restore");
   const strip = team.locator(".team-surface .team-agents").first();
   try {
-    await page.setViewportSize({ width: 520, height: viewport.height });
+    await page.setViewportSize({ width: 390, height: viewport.height });
     const geometry = await strip.evaluate((node) => {
       const box = node.getBoundingClientRect();
+      const controls = node.parentElement?.querySelector(".team-composer-controls")
+        ?.getBoundingClientRect();
+      const stack = node.querySelector(".agent-composer-stack");
+      const stackStyle = stack && getComputedStyle(stack);
       return {
         bodyWidth: document.body.scrollWidth,
         viewportWidth: innerWidth,
+        pageScrollLeft: scrollX,
         left: box.left,
         right: box.right,
         clientWidth: node.clientWidth,
         scrollWidth: node.scrollWidth,
         overflowX: getComputedStyle(node).overflowX,
+        touchAction: getComputedStyle(node).touchAction,
+        controls: controls && { left: controls.left, right: controls.right },
+        stackOverscroll: stackStyle && {
+          inline: stackStyle.overscrollBehaviorX,
+          block: stackStyle.overscrollBehaviorY,
+        },
         columns: [...node.querySelectorAll(":scope > .team-agent")].map((agent) => {
           const column = agent.getBoundingClientRect();
           return { left: column.left, right: column.right, width: column.width };
@@ -446,6 +473,10 @@ async function assertHorizontalComposerStrip(page, team) {
       `primary composers overflow their strip instead of compressing: ${JSON.stringify(geometry)}`,
     );
     assert.ok(
+      geometry.columns.length >= 3,
+      `the phone-width gesture proof has at least three primary composers: ${JSON.stringify(geometry)}`,
+    );
+    assert.ok(
       geometry.columns.every((column) => column.width >= 159),
       "every narrow-viewport composer retains its usable minimum width: "
         + JSON.stringify(geometry.columns),
@@ -454,11 +485,32 @@ async function assertHorizontalComposerStrip(page, team) {
       geometry.bodyWidth <= geometry.viewportWidth,
       `composer overflow stays inside its own strip: ${JSON.stringify(geometry)}`,
     );
+    assert.equal(geometry.pageScrollLeft, 0, "the document begins at its stable inline origin");
+    assert.equal(
+      geometry.touchAction,
+      "auto",
+      "the composer strip keeps native pan, zoom, and vertical navigation arbitration",
+    );
+    assert.deepEqual(
+      geometry.stackOverscroll,
+      { inline: "auto", block: "contain" },
+      "nested vertical stacks chain horizontal touch movement to the composer strip",
+    );
 
-    await strip.evaluate((node) => node.scrollTo({ left: node.scrollWidth, behavior: "instant" }));
+    const firstTextbox = strip.getByRole("textbox").first();
+    const touchTarget = await firstTextbox.boundingBox();
+    assert.ok(touchTarget, "the first primary textarea is a real touch hit target");
+    await touchPan(
+      page,
+      {
+        x: touchTarget.x + touchTarget.width - 16,
+        y: touchTarget.y + touchTarget.height / 2,
+      },
+      { x: touchTarget.x - geometry.scrollWidth, y: touchTarget.y + touchTarget.height / 2 },
+    );
     await waitForPageFunction(
       page,
-      "the primary composer strip scrolls east",
+      "a touch pan over the primary textarea scrolls its composer strip east",
       TRANSITION_MS,
       () => document.querySelector(".team-surface .team-agents")?.scrollLeft > 0,
     );
@@ -469,6 +521,14 @@ async function assertHorizontalComposerStrip(page, team) {
         scrollLeft: node.scrollLeft,
         stripLeft: stripBox.left,
         stripRight: stripBox.right,
+        bodyWidth: document.body.scrollWidth,
+        viewportWidth: innerWidth,
+        pageScrollLeft: scrollX,
+        controls: (() => {
+          const box = node.parentElement?.querySelector(".team-composer-controls")
+            ?.getBoundingClientRect();
+          return box && { left: box.left, right: box.right };
+        })(),
         last: last && { left: last.left, right: last.right },
       };
     });
@@ -479,6 +539,40 @@ async function assertHorizontalComposerStrip(page, team) {
         eastern.last.right <= eastern.stripRight + 1,
       `eastward scrolling reveals the final primary composer: ${JSON.stringify(eastern)}`,
     );
+    assert.ok(
+      eastern.bodyWidth <= eastern.viewportWidth && eastern.pageScrollLeft === 0,
+      `the touch gesture moves only the composer strip: ${JSON.stringify(eastern)}`,
+    );
+    assert.deepEqual(
+      eastern.controls,
+      geometry.controls,
+      "touch navigation leaves the surrounding team controls fixed",
+    );
+    await page.screenshot({ path: artifactPath });
+
+    const lastTextbox = strip.getByRole("textbox").last();
+    const originalDraft = await lastTextbox.inputValue();
+    const touchDraft = "touch navigation reaches this composer";
+    await lastTextbox.click();
+    await lastTextbox.fill(touchDraft);
+    await lastTextbox.press("ArrowLeft");
+    const editing = await lastTextbox.evaluate((textarea) => ({
+      active: document.activeElement === textarea,
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+    }));
+    assert.deepEqual(
+      editing,
+      {
+        active: true,
+        value: touchDraft,
+        selectionStart: touchDraft.length - 1,
+        selectionEnd: touchDraft.length - 1,
+      },
+      "the revealed final composer retains ordinary focus, editing, and caret movement",
+    );
+    await lastTextbox.fill(originalDraft);
     await strip.evaluate((node) => node.scrollTo({ left: 0, behavior: "instant" }));
   } finally {
     await page.setViewportSize(viewport);
@@ -574,7 +668,11 @@ export async function assertComposerShards({
     0,
     "the primary shard exposes no renewal action outside its hamburger drawer",
   );
-  await assertHorizontalComposerStrip(page, team);
+  await assertHorizontalComposerStrip(
+    page,
+    team,
+    join(artifacts, "canvas-mobile-composer-touch.png"),
+  );
 
   const quoteHeading = quotePrimary.locator(".composer-shard-heading");
   const quoteProse = quoteHeading.locator(".composer-shard-prose");
