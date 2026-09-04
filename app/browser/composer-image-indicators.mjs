@@ -52,7 +52,11 @@ function measureHeading(heading) {
           alt: image.alt,
           box: image.getBoundingClientRect().toJSON(),
           chip: image.closest(".composer-shard-image-indicator").getBoundingClientRect().toJSON(),
+          chipTag: image.closest(".composer-shard-image-indicator").tagName,
+          chipTitle: image.closest(".composer-shard-image-indicator").title,
           objectFit: getComputedStyle(image).objectFit,
+          remove: image.nextElementSibling?.getBoundingClientRect().toJSON(),
+          removeTitle: image.nextElementSibling?.title,
         })),
       },
     };
@@ -65,9 +69,13 @@ export async function assertComposerAttachmentTreatment(composer, label) {
   assert.ok(
     measured.strip.images.every((image) => (
       image.chip.width === 26 && image.chip.height === 26 &&
-      image.box.width === 24 && image.box.height === 24 && image.objectFit === "cover"
+      image.box.width === 24 && image.box.height === 24 && image.objectFit === "cover" &&
+      image.chipTag === "SPAN" && image.chipTitle === image.alt &&
+      image.removeTitle === "Remove image" &&
+      image.remove.left >= image.chip.left && image.remove.right <= image.chip.right &&
+      image.remove.top >= image.chip.top && image.remove.bottom <= image.chip.bottom
     )),
-    `${label} images fill square 26px chips: ${JSON.stringify(measured.strip.images)}`,
+    `${label} images and remove controls collect inside square 26px chips: ${JSON.stringify(measured.strip.images)}`,
   );
   assert.ok(
     measured.title.width > 0 &&
@@ -157,6 +165,19 @@ export async function assertComposerImageIndicators(page, composer, names) {
     )),
     `attachment DOM order fills the strip from right to left: ${JSON.stringify(filled.strip.images)}`,
   );
+  const firstChip = thumbs.first();
+  const firstRemove = firstChip.locator(".composer-shard-image-remove");
+  assert.equal(
+    await firstRemove.evaluate((button) => getComputedStyle(button).opacity),
+    "0",
+    "the compact remove control stays out of the image until its chip is hovered",
+  );
+  await firstChip.hover();
+  assert.equal(
+    await firstRemove.evaluate((button) => getComputedStyle(button).opacity),
+    "1",
+    "hovering an attachment reveals its overlaid remove control",
+  );
   assert.ok(
     Math.abs(filled.link.left - bare.link.left) < 0.5 &&
       Math.abs(filled.menu.right - bare.menu.right) < 0.5,
@@ -167,7 +188,7 @@ export async function assertComposerImageIndicators(page, composer, names) {
   // remove by name to prove the click removes the thumbnail it decorates.
   for (const name of FILLER) {
     await heading
-      .locator(`.composer-shard-image-indicator[aria-label="Remove image ${name}"]`)
+      .locator(`.composer-shard-image-remove[aria-label="Remove image ${name}"]`)
       .click();
   }
   assert.equal(await thumbs.count(), names.length, "clicking a heading thumbnail removes it");

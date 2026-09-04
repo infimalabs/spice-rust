@@ -515,12 +515,12 @@ pub(super) fn render_quote_shards(
     }
 }
 
-/// Draft images ride in the shard heading as message-card thumbnails shrunk to
-/// heading scale. The thumbnail is itself the remove control: a separate × would
-/// be wider than the image it decorates and would crowd the prose, deep link,
-/// and final control sharing that row. The strip is rendered even with no images
-/// so the heading keeps its fixed child order and its grid columns, which holds
-/// that final control still as the first image arrives.
+/// Draft images ride in the shard heading as compact thumbnail chips. Removal is
+/// an overlaid control, matching the predecessor: hovering the image describes
+/// the attachment itself instead of raising a wide native "Remove <name>"
+/// tooltip across the header. The strip is rendered even with no images so the
+/// heading keeps its fixed child order and its grid columns, which holds that
+/// final control still as the first image arrives.
 pub(super) fn render_image_indicators(
     lane_key: &str,
     attachments: &[DirectiveAttachment],
@@ -541,15 +541,19 @@ pub(super) fn render_image_indicators(
                     });
                 });
                 html! {
-                    <button
-                        type="button"
+                    <span
                         class="composer-shard-image-indicator"
-                        title={format!("Remove {}", attachment.name)}
-                        aria-label={format!("Remove image {}", attachment.name)}
-                        onclick={remove}
+                        title={attachment.name.clone()}
                     >
                         <img src={attachment.data_url.clone()} alt={attachment.name.clone()} />
-                    </button>
+                        <button
+                            type="button"
+                            class="composer-shard-image-remove"
+                            title="Remove image"
+                            aria-label={format!("Remove image {}", attachment.name)}
+                            onclick={remove}
+                        >{"×"}</button>
+                    </span>
                 }
             })}
         </span>

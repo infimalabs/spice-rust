@@ -830,13 +830,14 @@ body:has(.shell--mosaic),
   scrollbar-width: thin;
 }
 .composer-shard-image-indicator {
-  display: block;
+  display: inline-flex;
   flex: 0 0 26px;
   width: 26px;
   height: 26px;
   min-height: 0;
   padding: 0;
   overflow: hidden;
+  position: relative;
   border: 1px solid var(--control-line-soft);
   border-radius: 4px;
   background: color-mix(in srgb, var(--control) 84%, var(--page));
@@ -852,6 +853,33 @@ body:has(.shell--mosaic),
   object-fit: cover;
 }
 .composer-shard-image-indicator:hover { border-color: var(--accent); }
+.composer-shard-image-remove {
+  display: inline-flex;
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 12px;
+  min-width: 12px;
+  height: 12px;
+  min-height: 12px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--control) 80%, transparent);
+  color: var(--ink);
+  font-size: 10px;
+  line-height: 1;
+  opacity: 0;
+}
+.composer-shard-image-indicator:hover .composer-shard-image-remove,
+.composer-shard-image-remove:focus-visible { opacity: 1; }
+.composer-shard-image-remove:hover,
+.composer-shard-image-remove:focus-visible {
+  background: color-mix(in srgb, var(--danger) 70%, var(--control));
+  color: var(--page);
+}
 /* The lineage control stack is sized against the canonical control reference, which
    fixes every item to one height and one width so the two sliders and the send
    button read as a single column of equal pills. */
