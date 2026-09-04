@@ -296,11 +296,9 @@ fn rollout_web_search_companion(payload: &Object) -> Events {
         "completed" => {}
         other => return Err(drift(&format!("item:status:{other}"))),
     }
-    object(payload, "action")?;
-
-    // Codex persists this identity-free status/action projection alongside the
-    // authoritative web_search_end. It is duplicate accounting, not a lifecycle
-    // record, regardless of its position relative to that end event.
+    // Codex persists this identity-free status projection alongside the
+    // authoritative web_search_end. Some releases repeat the action and some
+    // omit it; neither shape can identify a lifecycle record.
     Ok(Vec::new())
 }
 
