@@ -682,9 +682,9 @@ export async function assertAgentConversation(
     "producer names remain distinct independently of color",
   );
   const expectedActions = [
-    { label: "Speak this message", icon: "▶" },
-    { label: "Quote this message", icon: "❝" },
-    { label: "Copy this message", icon: "⧉" },
+    { label: "Speak this message", icon: "", iconKind: "play" },
+    { label: "Quote this message", icon: "❝", iconKind: null },
+    { label: "Copy this message", icon: "⧉", iconKind: null },
   ];
   const actionCard = console.locator('[data-card-kind="agent-message"]').first();
   assert.ok((await actionCard.locator(".message-agent-name").innerText()).trim());
@@ -693,13 +693,15 @@ export async function assertAgentConversation(
       (buttons) => buttons.map((button) => ({
         label: button.getAttribute("aria-label"),
         icon: button.querySelector(".card-action-icon")?.textContent,
+        iconKind: button.querySelector(".card-action-icon")?.dataset.cardActionIcon ?? null,
         iconHidden: button.querySelector(".card-action-icon")?.getAttribute("aria-hidden"),
         title: button.title,
       })),
     ),
-    expectedActions.map(({ label, icon }) => ({
+    expectedActions.map(({ label, icon, iconKind }) => ({
       label,
       icon,
+      iconKind,
       iconHidden: "true",
       title: label,
     })),
