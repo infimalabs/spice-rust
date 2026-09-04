@@ -89,6 +89,9 @@ const fn is_lane(kind: wire::FactKind) -> bool {
             | wire::FactKind::LaneSessionDeclared
             | wire::FactKind::LaneStarted
             | wire::FactKind::LaneExited
+            | wire::FactKind::LaneTimedOut
+            | wire::FactKind::LaneCancelled
+            | wire::FactKind::LaneSignalled
             | wire::FactKind::LaneKilled
             | wire::FactKind::LaneCompacted
             | wire::FactKind::LaneRenewed
