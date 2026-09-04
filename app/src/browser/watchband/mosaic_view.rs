@@ -11,7 +11,7 @@ use history::use_history_paging;
 
 mod image_resolution;
 use image_resolution::{
-    ImageRevisions, use_data_image_open_events, use_element_width, use_image_resolution_events,
+    use_data_image_open_events, use_element_width, use_image_resolution_events,
 };
 
 #[derive(Clone)]
@@ -108,7 +108,6 @@ struct ActivityMeasurement {
     width: i32,
     key: String,
     fingerprint: ActivityFingerprint,
-    image_revision: u64,
     candidates: Vec<crate::mosaic::Candidate>,
     latched: Option<crate::mosaic::Candidate>,
     spans: Vec<usize>,
@@ -291,13 +290,10 @@ impl<'a> MeasurementIndex<'a> {
         key: &str,
         width: i32,
         activity: &ActivityCard,
-        image_revision: u64,
     ) -> Option<&'a ActivityMeasurement> {
         let fingerprint = activity.measurement_fingerprint();
         self.by_key.get(key)?.iter().copied().find(|measurement| {
-            measurement.width == width
-                && measurement.fingerprint == fingerprint
-                && measurement.image_revision == image_revision
+            measurement.width == width && measurement.fingerprint == fingerprint
         })
     }
 
@@ -316,10 +312,9 @@ fn activity_measurement<'a>(
     index: &MeasurementIndex<'a>,
     width: i32,
     activity: &ActivityCard,
-    image_revision: u64,
 ) -> Option<&'a ActivityMeasurement> {
     let key = activity.key();
-    index.get(&key, width, activity, image_revision)
+    index.get(&key, width, activity)
 }
 
 #[derive(Properties, PartialEq)]
@@ -341,7 +336,6 @@ pub(super) struct MosaicPlaneProps {
 struct MosaicPlaneView<'a> {
     properties: &'a MosaicPlaneProps,
     measurement_width: i32,
-    image_revisions: &'a ImageRevisions,
     measurements: &'a [ActivityMeasurement],
     plane: Option<&'a crate::mosaic_plane::PersistentLanePlane<String>>,
     geometry: crate::mosaic::Geometry,
@@ -355,7 +349,6 @@ impl MosaicPlaneView<'_> {
             self.measurements,
             &self.geometry,
             self.plane,
-            self.image_revisions,
         );
         let measurement_phase = if self.plane.is_some() {
             "ready"
@@ -437,7 +430,6 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     let host = use_node_ref();
     let width = use_element_width(host.clone());
     let measurement_width = width.round() as i32;
-    let image_revisions = use_reducer(ImageRevisions::default);
     use_history_paging(
         host.clone(),
         &properties.cards,
@@ -459,20 +451,12 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     );
     let committed_spans = committed_spans(committed.as_ref());
     let measurements = use_state_eq(Vec::<ActivityMeasurement>::new);
-    use_image_resolution_events(
-        host.clone(),
-        measurement_width,
-        properties.cards.clone(),
-        image_revisions.clone(),
-        measurements.clone(),
-        committed.clone(),
-    );
+    use_image_resolution_events(host.clone(), properties.cards.clone());
     use_data_image_open_events(host.clone());
     use_activity_measurements(
         host.clone(),
         measurement_width,
         properties.cards.clone(),
-        (*image_revisions).clone(),
         committed_spans,
         measurements.clone(),
     );
@@ -481,7 +465,6 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
         measurement_width,
         properties.cards.clone(),
         (*measurements).clone(),
-        (*image_revisions).clone(),
     );
     use_narration(
         properties.lane,
@@ -500,7 +483,6 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     MosaicPlaneView {
         properties,
         measurement_width,
-        image_revisions: &image_revisions,
         measurements: &measurements,
         plane: committed_plane,
         geometry,
@@ -652,7 +634,6 @@ fn use_activity_measurements(
     host: NodeRef,
     width: i32,
     cards: Vec<ActivityCard>,
-    image_revisions: ImageRevisions,
     committed_spans: Vec<(String, usize)>,
     measurements: UseStateHandle<Vec<ActivityMeasurement>>,
 ) {
@@ -660,8 +641,8 @@ fn use_activity_measurements(
         let measurements = measurements.clone();
         let prior = (*measurements).clone();
         use_effect_with(
-            (width, cards, image_revisions, committed_spans),
-            move |(width, cards, image_revisions, committed_spans)| {
+            (width, cards, committed_spans),
+            move |(width, cards, committed_spans)| {
                 let canceled = Rc::new(Cell::new(false));
                 let measurement_index = MeasurementIndex::new(&prior);
                 let committed_spans = committed_spans
@@ -673,12 +654,11 @@ fn use_activity_measurements(
                     .enumerate()
                     .filter_map(|(index, activity)| {
                         let key = activity.key();
-                        let image_revision = image_revisions.get(&key);
-                        activity_measurement(&measurement_index, *width, activity, image_revision)
+                        activity_measurement(&measurement_index, *width, activity)
                             .is_none()
                             .then(|| {
                                 let latched_span = committed_spans.get(key.as_str()).copied();
-                                (index, activity.clone(), image_revision, latched_span)
+                                (index, activity.clone(), latched_span)
                             })
                     })
                     .collect::<Vec<_>>();
@@ -721,7 +701,7 @@ fn use_activity_measurements(
 async fn measure_unknown(
     host: NodeRef,
     width: i32,
-    unknown: Vec<(usize, ActivityCard, u64, Option<usize>)>,
+    unknown: Vec<(usize, ActivityCard, Option<usize>)>,
     canceled: Rc<Cell<bool>>,
 ) -> Option<Vec<ActivityMeasurement>> {
     TimeoutFuture::new(0).await;
@@ -731,7 +711,7 @@ async fn measure_unknown(
     let host = host.cast::<web_sys::Element>()?;
     let geometry = crate::mosaic::Geometry::new(16.0, f64::from(width));
     let mut pending = Vec::with_capacity(unknown.len());
-    for (_index, activity, image_revision, latched_span) in unknown {
+    for (_index, activity, latched_span) in unknown {
         let selector = format!("[data-mosaic-card-key=\"{}\"]", activity.key());
         let Some(element) = host.query_selector(&selector).ok().flatten() else {
             continue;
@@ -748,7 +728,6 @@ async fn measure_unknown(
         pending.push(PendingActivityMeasurement {
             activity,
             element,
-            image_revision,
             latched_span,
             spans: Vec::with_capacity(3),
             widths: Vec::with_capacity(3),
@@ -784,7 +763,6 @@ async fn measure_unknown(
 struct PendingActivityMeasurement {
     activity: ActivityCard,
     element: web_sys::HtmlElement,
-    image_revision: u64,
     latched_span: Option<usize>,
     spans: Vec<usize>,
     widths: Vec<i32>,
@@ -824,7 +802,6 @@ impl PendingActivityMeasurement {
             width,
             key: self.activity.key(),
             fingerprint: self.activity.measurement_fingerprint(),
-            image_revision: self.image_revision,
             candidates,
             latched,
             spans: self.spans,
@@ -852,70 +829,6 @@ fn measure_pending_tier(
         item.widths.push(item.element.offset_width());
         item.heights.push(item.element.offset_height());
     }
-}
-
-fn measure_element(
-    element: &web_sys::HtmlElement,
-    width: i32,
-    activity: &ActivityCard,
-    image_revision: u64,
-    latched_span: Option<usize>,
-) -> Option<ActivityMeasurement> {
-    if !prepare_images(element) {
-        return None;
-    }
-    let geometry = crate::mosaic::Geometry::new(16.0, f64::from(width));
-    element
-        .set_attribute("data-mosaic-measurement-active", "true")
-        .expect("the fixed Mosaic measurement attribute is valid");
-    let mut spans = Vec::with_capacity(3);
-    let mut widths = Vec::with_capacity(3);
-    let mut heights = Vec::with_capacity(3);
-    let mut measure = |span: usize| {
-        set_measure_span(element, span);
-        spans.push(span);
-        widths.push(element.offset_width());
-        let height = element.offset_height();
-        heights.push(height);
-        f64::from(height)
-    };
-    let candidates = if activity.base_span(&geometry) == crate::mosaic::TRACK_COUNT {
-        let height = measure(crate::mosaic::TRACK_COUNT);
-        vec![crate::mosaic::Candidate {
-            span: crate::mosaic::TRACK_COUNT,
-            rows: if activity.is_boundary() {
-                crate::mosaic::boundary_rows_for(height, geometry.gap, geometry.module)
-            } else {
-                crate::mosaic::rows_for(height, geometry.gap, geometry.module)
-            },
-        }]
-    } else {
-        crate::mosaic::span_candidates(&geometry, &mut measure)
-    };
-    let latched = latched_span
-        .filter(|span| candidates.iter().all(|candidate| candidate.span != *span))
-        .map(|span| {
-            let height = measure(span);
-            crate::mosaic::Candidate {
-                span,
-                rows: crate::mosaic::rows_for(height, geometry.gap, geometry.module),
-            }
-        });
-    set_measure_span(element, activity.base_span(&geometry));
-    element
-        .remove_attribute("data-mosaic-measurement-active")
-        .expect("the fixed Mosaic measurement attribute is valid");
-    Some(ActivityMeasurement {
-        width,
-        key: activity.key(),
-        fingerprint: activity.measurement_fingerprint(),
-        image_revision,
-        candidates,
-        latched,
-        spans,
-        widths,
-        heights,
-    })
 }
 
 fn set_measure_span(element: &web_sys::HtmlElement, span: usize) {
@@ -949,11 +862,10 @@ fn prepare_images(element: &web_sys::HtmlElement) -> bool {
     ready
 }
 
-fn measured_activity_at_revisions(
+fn measured_activity(
     cards: &[ActivityCard],
     measurements: &[ActivityMeasurement],
     width: i32,
-    image_revisions: &ImageRevisions,
 ) -> Option<Vec<crate::mosaic_plane::MeasuredCard<String>>> {
     let measurement_index = MeasurementIndex::new(measurements);
     (width >= MIN_MEASURABLE_WIDTH_PX)
@@ -961,18 +873,14 @@ fn measured_activity_at_revisions(
             cards
                 .iter()
                 .map(|activity| {
-                    activity_measurement(
-                        &measurement_index,
-                        width,
-                        activity,
-                        image_revisions.get(&activity.key()),
-                    )
-                    .map(|measurement| crate::mosaic_plane::MeasuredCard {
-                        key: measurement.key.clone(),
-                        candidates: measurement.candidates.clone(),
-                        latched: measurement.latched,
-                        content_revision: measurement.image_revision,
-                        boundary: activity.is_boundary(),
+                    activity_measurement(&measurement_index, width, activity).map(|measurement| {
+                        crate::mosaic_plane::MeasuredCard {
+                            key: measurement.key.clone(),
+                            candidates: measurement.candidates.clone(),
+                            latched: measurement.latched,
+                            content_revision: 0,
+                            boundary: activity.is_boundary(),
+                        }
                     })
                 })
                 .collect::<Option<Vec<_>>>()
@@ -986,14 +894,11 @@ fn use_persistent_plane(
     width: i32,
     cards: Vec<ActivityCard>,
     measurements: Vec<ActivityMeasurement>,
-    image_revisions: ImageRevisions,
 ) {
     use_effect_with(
-        (width, cards, measurements, image_revisions),
-        move |(width, cards, measurements, image_revisions)| {
-            let Some(measured) =
-                measured_activity_at_revisions(cards, measurements, *width, image_revisions)
-            else {
+        (width, cards, measurements),
+        move |(width, cards, measurements)| {
+            let Some(measured) = measured_activity(cards, measurements, *width) else {
                 return;
             };
             let next = committed.as_ref().map_or_else(
@@ -1012,7 +917,6 @@ fn render_activity_cards(
     measurements: &[ActivityMeasurement],
     geometry: &crate::mosaic::Geometry,
     plane: Option<&crate::mosaic_plane::PersistentLanePlane<String>>,
-    image_revisions: &ImageRevisions,
 ) -> Html {
     let cards_by_key = properties
         .cards
@@ -1041,12 +945,9 @@ fn render_activity_cards(
         .enumerate()
         .map(|(order, activity)| {
             let key = activity.key();
-            let image_revision = image_revisions.get(&key);
             let placement = plane.zip(placements.get(key.as_str()).copied());
             let measurement = placement
-                .and_then(|(plane, _)| {
-                    measurement_index.get(&key, plane.geometry(), activity, image_revision)
-                })
+                .and_then(|(plane, _)| measurement_index.get(&key, plane.geometry(), activity))
                 .or_else(|| measurement_index.latest(&key, activity));
             let layout = match (placement, measurement) {
                 (Some((_plane, entry)), Some(measurement)) => {

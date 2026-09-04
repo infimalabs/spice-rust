@@ -715,7 +715,15 @@ export async function assertAgentConversation(
   for (const member of seated) {
     assert.ok(packedMembers.has(member.lane), "every worktree member reaches the lane plane");
   }
-  await assertPersistentMosaic(page, fixture, console, plane, seated[0], activityReplay);
+  await assertPersistentMosaic(
+    page,
+    fixture,
+    console,
+    plane,
+    seated[0],
+    activityReplay,
+    artifacts,
+  );
   await assertCandidateMeasurementPaintAtomic(page, "chromium");
 
   // Every message projection uses the producer's current canonical member

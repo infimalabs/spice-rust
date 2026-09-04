@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { join } from "node:path";
 
 import {
   reply,
@@ -7,7 +8,7 @@ import {
 } from "./canvas-fixture.mjs";
 import {
   assertImageLifecycle,
-  assertOwningImageRevision,
+  assertNoImageMeasurementRevision,
   imageCardInvariant,
 } from "./image-lifecycle.mjs";
 import { assertMosaicLattice } from "./mosaic-lattice.mjs";
@@ -70,6 +71,7 @@ export async function assertPersistentMosaic(
   plane,
   member,
   activityReplay,
+  artifacts,
 ) {
   await settleMosaicActivity(page, plane);
   const firstCard = console.locator('.mosaic-message-card[data-layout-phase="committed"]').first();
@@ -295,13 +297,11 @@ export async function assertPersistentMosaic(
     assert.equal(await plane.getAttribute("data-measurement-phase"), "ready");
     release();
     try {
-      await waitForPage(page, `late image ${outcome} corrects once`, TRANSITION_MS, (expected) => {
+      await waitForPage(page, `late image ${outcome} resolves in place`, TRANSITION_MS, (expected) => {
         const card = [...document.querySelectorAll(".mosaic-message-card")]
           .find((candidate) => candidate.dataset.mosaicCardKey === expected.key);
-        const plane = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
-        return card?.querySelector("img")?.getAttribute("data-mosaic-image-state") === expected.state
-          && Number(plane?.dataset.planeCommits) >= expected.commits + 1;
-      }, { key: cardKey, state: outcome === "load" ? "loaded" : "error", commits: pending.commits });
+        return card?.querySelector("img")?.getAttribute("data-mosaic-image-state") === expected.state;
+      }, { key: cardKey, state: outcome === "load" ? "loaded" : "error" });
     } catch (error) {
       const diagnosis = await plane.evaluate((element, key) => {
         const image = [...element.querySelectorAll(".mosaic-message-card")]
@@ -316,7 +316,8 @@ export async function assertPersistentMosaic(
     const resolved = await finishPlacementProbe(plane, resolutionProbe);
     assert.ok(resolved.retained, `late image ${outcome} retains untouched card nodes`);
     assert.deepEqual(resolved.writes, [], `late image ${outcome} writes no untouched placement`);
-    assert.equal(resolved.commits, pending.commits + 1, `late image ${outcome} corrects once`);
+    assert.equal(resolved.commits, pending.commits,
+      `late image ${outcome} resolves without a plane commit`);
     assert.equal(await card.locator("img").getAttribute("data-mosaic-image-state"),
       outcome === "load" ? "loaded" : "error");
     await assertImageLifecycle(
@@ -324,13 +325,13 @@ export async function assertPersistentMosaic(
       `resolved remote ${outcome} preview`,
       outcome === "load" ? "loaded" : "error",
     );
-    await assertOwningImageRevision(card, `late remote ${outcome}`);
+    await assertNoImageMeasurementRevision(card, `late remote ${outcome}`);
     assert.deepEqual(await imageCardInvariant(card), invariant,
       `late remote ${outcome} preserves fingerprint-facing identity, commands, and span latch`);
     assert.equal(
       await card.getAttribute("data-mosaic-card-key"),
       cardKey,
-      `reconciliation retains the authored ${outcome} assistant record`,
+      `in-place resolution retains the authored ${outcome} assistant record`,
     );
     const remotePreview = card.locator("a.message-image");
     await assertImagePreview(remotePreview, `remote ${outcome} preview`, 140);
@@ -351,13 +352,13 @@ export async function assertPersistentMosaic(
     activityReplay,
   );
   await readyCard.waitFor({ state: "attached", timeout: 10_000 });
-  await waitForPage(page, "already-complete image appends then corrects once", TRANSITION_MS, (expected) => {
+  await waitForPage(page, "already-complete image appends with final geometry", TRANSITION_MS, (expected) => {
     const card = [...document.querySelectorAll(".mosaic-message-card")]
       .find((candidate) => candidate.dataset.mosaicCardKey === expected.key);
     const plane = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
     return card?.dataset.layoutPhase === "committed"
-      && card.dataset.mosaicImageRevision === "1"
-      && Number(plane?.dataset.planeCommits) >= expected.commits + 2;
+      && card.querySelector("img")?.dataset.mosaicImageState === "loaded"
+      && Number(plane?.dataset.planeCommits) >= expected.commits + 1;
   }, {
     key: await readyCard.getAttribute("data-mosaic-card-key"),
     commits: readyProbe.commits,
@@ -368,12 +369,12 @@ export async function assertPersistentMosaic(
   const ready = await finishPlacementProbe(plane, readyProbe);
   assert.ok(ready.retained, "an already-complete image retains untouched card nodes");
   assert.deepEqual(ready.writes, [], "an already-complete image writes no untouched placement");
-  assert.equal(ready.commits, readyProbe.commits + 2,
-    "an already-complete image appends pending then corrects once");
+  assert.equal(ready.commits, readyProbe.commits + 1,
+    "an already-complete image needs only its append commit");
 
   const embeddedPreview = readyCard.locator("a.message-image");
   await assertImageLifecycle(embeddedPreview, "embedded ordinary preview", "loaded");
-  await assertOwningImageRevision(readyCard, "embedded mixed prose and image");
+  await assertNoImageMeasurementRevision(readyCard, "embedded mixed prose and image");
   await assertImagePreview(embeddedPreview, "embedded ordinary preview", 140);
   await assertFullSizeTarget(
     embeddedPreview,
@@ -395,7 +396,7 @@ export async function assertPersistentMosaic(
     const card = [...document.querySelectorAll(".mosaic-message-card")]
       .find((candidate) => candidate.dataset.mosaicCardKey === key);
     return card?.dataset.layoutPhase === "committed"
-      && card.dataset.mosaicImageRevision === "1";
+      && card.querySelector("img")?.dataset.mosaicImageState === "loaded";
   }, await imageOnlyCard.getAttribute("data-mosaic-card-key"));
   assert.ok(
     await imageOnlyCard.evaluate((card) => card.classList.contains("mosaic-message-card--image-only")),
@@ -403,7 +404,7 @@ export async function assertPersistentMosaic(
   );
   await assertImagePreview(imageOnlyCard.locator(".message-image"), "image-only preview", 252);
   await assertImageLifecycle(imageOnlyCard.locator(".message-image"), "image-only preview", "loaded");
-  await assertOwningImageRevision(imageOnlyCard, "image-only preview");
+  await assertNoImageMeasurementRevision(imageOnlyCard, "image-only preview");
   const imageOnlyGeometry = await imageOnlyTierGeometry(imageOnlyCard);
 
   const multiImageCard = await submitAssistantActivity(
@@ -416,11 +417,10 @@ export async function assertPersistentMosaic(
     activityReplay,
   );
   await multiImageCard.waitFor({ state: "attached", timeout: 10_000 });
-  await waitForPage(page, "multi-image lifecycle resolves in one card revision", TRANSITION_MS, (key) => {
+  await waitForPage(page, "multi-image lifecycle resolves in place", TRANSITION_MS, (key) => {
     const card = [...document.querySelectorAll(".mosaic-message-card")]
       .find((candidate) => candidate.dataset.mosaicCardKey === key);
     return card?.dataset.layoutPhase === "committed"
-      && card.dataset.mosaicImageRevision === "1"
       && [...card.querySelectorAll("img")].every((image) => image.dataset.mosaicImageState === "loaded");
   }, await multiImageCard.getAttribute("data-mosaic-card-key"));
   const multiPreviews = multiImageCard.locator("p.message-image-stack > .message-image");
@@ -434,7 +434,7 @@ export async function assertPersistentMosaic(
     `multi-image previews share one row: ${JSON.stringify(multiGeometry)}`);
   await assertImagePreview(multiPreviews.first(), "multi-image preview", 252);
   await assertImageLifecycle(multiPreviews.first(), "multi-image preview", "loaded");
-  await assertOwningImageRevision(multiImageCard, "multi-image preview stack");
+  await assertNoImageMeasurementRevision(multiImageCard, "multi-image preview stack");
   assertOneImageOnlyTier(
     imageOnlyGeometry,
     await imageOnlyTierGeometry(multiImageCard),
@@ -481,11 +481,11 @@ export async function assertPersistentMosaic(
     const card = [...document.querySelectorAll(".mosaic-message-card")]
       .find((candidate) => candidate.dataset.mosaicCardKey === key);
     return card?.dataset.layoutPhase === "committed"
-      && card.dataset.mosaicImageRevision === "1";
+      && card.querySelector("img")?.dataset.mosaicImageState === "loaded";
   }, attachment.key);
   await assertImagePreview(attachmentPreview, "unlinked attachment preview", 252);
   await assertImageLifecycle(attachmentPreview, "unlinked attachment preview", "loaded");
-  await assertOwningImageRevision(attachmentCard, "unlinked attachment preview");
+  await assertNoImageMeasurementRevision(attachmentCard, "unlinked attachment preview");
   assert.equal(await attachmentCard.getAttribute("data-agent-activity"), "tool",
     "the hotlink belongs to the inspected-image tool result");
   assert.equal(await attachmentCard.locator(".message-body").innerText(), "",
@@ -503,6 +503,9 @@ export async function assertPersistentMosaic(
     "unlinked attachment preview",
     /^blob:/,
   );
+  await multiImageCard.screenshot({
+    path: join(artifacts, "chromium-image-previews-wide.png"),
+  });
 
   const originalViewport = page.viewportSize();
   await page.setViewportSize({ width: 390, height: 844 });
@@ -522,6 +525,9 @@ export async function assertPersistentMosaic(
     `the narrow image stack stays inside its card: ${JSON.stringify(narrowStack)}`);
   assert.ok(narrowStack.scrollWidth >= narrowStack.clientWidth,
     "the narrow multi-image arrangement retains bounded horizontal access");
+  await multiImageCard.screenshot({
+    path: join(artifacts, "chromium-image-previews-narrow.png"),
+  });
   await page.setViewportSize(originalViewport);
   await waitForMosaicReady(page);
   await assertMosaicLattice(page, true);

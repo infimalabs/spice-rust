@@ -103,8 +103,8 @@
 }
 
 .mosaic-message-card {
-  --mosaic-image-height: 8.75rem;
-  --mosaic-image-large-height: 15.75rem;
+  --mosaic-image-size: 8.75rem;
+  --mosaic-image-large-size: 15.75rem;
   display: inline-grid;
   width: 100%;
   gap: 12px;
@@ -171,19 +171,23 @@
 .mosaic-compaction-age { color: var(--muted); font-weight: 500; }
 
 .message-image {
-  display: inline-grid; flex: 0 1 min(9.75rem, 100%); max-width: min(9.75rem, 100%);
-  min-width: 0; place-items: center; text-decoration: none;
+  --message-image-size: var(--mosaic-image-size);
+  display: inline-grid; flex: 0 0 var(--message-image-size);
+  width: var(--message-image-size); height: var(--message-image-size);
+  min-width: var(--message-image-size); aspect-ratio: 1 / 1;
+  place-items: center; text-decoration: none;
 }
 .message-image img {
-  grid-area: 1 / 1; display: block; width: 100%; max-width: 100%;
-  height: var(--mosaic-image-height); max-height: var(--mosaic-image-height);
+  grid-area: 1 / 1; display: block; width: 100%; height: 100%;
+  max-width: var(--message-image-size); max-height: var(--message-image-size);
+  aspect-ratio: 1 / 1;
   border: 1px solid var(--line); border-radius: 5px;
   background: var(--control-surface-soft); object-fit: cover; object-position: center;
 }
 .message-image img[data-mosaic-image-state="pending"],
 .message-image img[data-mosaic-image-state="error"] { visibility: hidden; }
 .message-image-status {
-  grid-area: 1 / 1; display: grid; width: 100%; height: var(--mosaic-image-height);
+  grid-area: 1 / 1; display: grid; width: 100%; height: 100%;
   padding: 10px; place-items: center; border: 1px solid var(--line); border-radius: 5px;
   background: var(--control-surface-soft); color: var(--muted);
   font: 600 .68rem/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -212,12 +216,8 @@
 }
 .message-attachments { flex-flow: row nowrap; }
 .mosaic-message-card--image-only .message-image {
-  flex: 1 1 0; max-width: 100%;
+  --message-image-size: var(--mosaic-image-large-size);
 }
-.mosaic-message-card--image-only .message-image img {
-  height: var(--mosaic-image-large-height); max-height: var(--mosaic-image-large-height);
-}
-.mosaic-message-card--image-only .message-image-status { height: var(--mosaic-image-large-height); }
 
 .mosaic-message-empty {
   padding: 28px 12px;

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 
 import { chooseCanvasView, monitorPage } from "./canvas-fixture.mjs";
 import { installSocketControl } from "./canvas-speech.mjs";
+import { armSteadyStateProbe, finishSteadyStateProbe } from "./steady-state.mjs";
 
 /// The longest deadline for a seconds-old label, matching the one-second
 /// quantum selected by `elapsed_label_deadline_millis`. The assertion below
@@ -82,7 +83,9 @@ export async function assertAgesTickWhileTheResidentIsSilent(browser, endpoint, 
   await countInboundFrames(page);
   gate.open = false;
   await settleIntoSilence(page);
+  const steady = await armSteadyStateProbe(page, "a silent relative-age boundary");
   const advance = await observeOneBoundary(card, lane);
+  await finishSteadyStateProbe(page, steady, "a silent relative-age boundary");
   const transport = await page.evaluate(() => ({
     delivered: window.__ageTickInbound,
     sockets: window.__canvasSockets.length,
