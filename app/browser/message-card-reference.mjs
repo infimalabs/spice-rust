@@ -327,6 +327,11 @@ function assertReferenceGeometry(geometry, agentLabels) {
     geometry.actions.buttons.every((button) => button.width === 32 && button.height === 32),
     "each message action occupies the reference 32px circle",
   );
+  assert.deepEqual(
+    [geometry.actions.speechIcon.width, geometry.actions.speechIcon.height],
+    [15, 15],
+    "the message play icon matches the predecessor's 15px viewport",
+  );
   assert.ok(
     geometry.actions.buttons.every((button) => button.borderRadius === "50%"),
     "each message action keeps the reference circular hit target",
@@ -501,8 +506,13 @@ async function captureReferenceView(page, console, artifacts, viewport, mode, ag
         : null,
       actionGroup: actions ? bounds(actions) : null,
       actions: [...article.querySelectorAll(".message-actions button")].map((button) => {
+        const icon = button.querySelector("[data-card-action-icon]");
         return {
           ariaLabel: button.getAttribute("aria-label"),
+          icon: icon ? {
+            kind: icon.dataset.cardActionIcon,
+            ...bounds(icon),
+          } : null,
           ...bounds(button),
         };
       }),
@@ -600,6 +610,11 @@ async function captureReferenceView(page, console, artifacts, viewport, mode, ag
             action.ariaLabel === actionLabels[index]
               && action.width === 32
               && action.height === 32
+              && (index !== 0 || (
+                action.icon?.kind === "play"
+                  && action.icon.width === 15
+                  && action.icon.height === 15
+              ))
           )))
     )),
     `${viewport.label} keeps accessible 32px actions in keyboard order: ${JSON.stringify(fits)}`,
@@ -808,6 +823,7 @@ export async function assertReferenceMessageCard(
       actions: {
         ...measured(actions),
         buttons: [...actions.querySelectorAll("button")].map(measured),
+        speechIcon: measured(actions.querySelector("[data-card-action-icon]")),
       },
       inlineCode: measured(inlineCode),
       inlineCodeText: inlineCode?.textContent ?? "",

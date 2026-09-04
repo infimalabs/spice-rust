@@ -389,7 +389,16 @@ export async function assertSpeechVariants(browser, endpoint) {
   await card.getByLabel("Speak this message").click();
   await waitForCardState(true);
   await renderStarted;
-  assert.equal(await card.getByLabel("Stop playback").innerText(), "■");
+  const stopIcon = card.locator('[data-card-action-icon="stop"]');
+  assert.equal(await stopIcon.count(), 1);
+  assert.deepEqual(
+    await stopIcon.evaluate((icon) => {
+      const box = icon.getBoundingClientRect();
+      return [box.width, box.height];
+    }),
+    [15, 15],
+    "the stop icon retains the predecessor's 15px viewport",
+  );
   await card.getByLabel("Stop playback").click();
   await waitForCardState(false);
   const lateResponse = external.waitForResponse((response) =>
@@ -423,7 +432,16 @@ export async function assertSpeechVariants(browser, endpoint) {
   await external.evaluate(() => new Promise((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(resolve))));
   assert.equal(await card.getAttribute("data-speech-active"), "false");
-  assert.equal(await card.getByLabel("Speak this message").innerText(), "▶");
+  const playIcon = card.locator('[data-card-action-icon="play"]');
+  assert.equal(await playIcon.count(), 1);
+  assert.deepEqual(
+    await playIcon.evaluate((icon) => {
+      const box = icon.getBoundingClientRect();
+      return [box.width, box.height];
+    }),
+    [15, 15],
+    "the play icon retains the predecessor's 15px viewport",
+  );
   const externalActions = await external.evaluate(() => window.__speechLog.map((row) => row.action));
   assert.ok(externalActions.includes("play"));
   assert.ok(externalActions.includes("pause"));

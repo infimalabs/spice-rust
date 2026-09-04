@@ -455,9 +455,31 @@ pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Corres
                 type="button" title={speech_label}
                 aria-label={speech_label}
                 onclick={Callback::from(move |_| speak.emit(spoken.clone()))}
-            ><span class="card-action-icon" aria-hidden="true">{
-                if correspondent.speaking { "■" } else { "▶" }
-            }</span></button>
+            >{
+                if correspondent.speaking {
+                    html! {
+                        <svg
+                            class="card-action-icon"
+                            data-card-action-icon="stop"
+                            width="15" height="15" viewBox="0 0 24 24"
+                            aria-hidden="true" focusable="false"
+                        >
+                            <rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" />
+                        </svg>
+                    }
+                } else {
+                    html! {
+                        <svg
+                            class="card-action-icon"
+                            data-card-action-icon="play"
+                            width="15" height="15" viewBox="0 0 24 24"
+                            aria-hidden="true" focusable="false"
+                        >
+                            <path d="M8 5v14l11-7Z" fill="currentColor" />
+                        </svg>
+                    }
+                }
+            }</button>
             <button
                 class="card-action card-action--quote" type="button" title="Quote this message"
                 aria-label="Quote this message"
