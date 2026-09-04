@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 #[cfg(unix)]
-mod observer;
+pub(super) mod observer;
 
 #[cfg(unix)]
 use observer::{DirectObserver, Signal, wait_for_change, wait_for_exit};

@@ -10,8 +10,11 @@ use std::process::ExitStatus;
 #[cfg(not(test))]
 use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::Arc;
+#[cfg(not(test))]
 use std::thread;
-use std::time::{Duration, Instant as Monotonic, SystemTime, UNIX_EPOCH};
+#[cfg(not(test))]
+use std::time::Instant as Monotonic;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use lane::capture::{
     CaptureExit, CaptureFailure, CaptureRecord, CaptureReportError, CaptureReporter,
@@ -22,10 +25,17 @@ use sill::{WaitError, WaitOutcome};
 use spice::repository::Repository;
 use wire::CanonicalUuid;
 
+#[cfg(unix)]
+mod events;
+
 use super::lane_surface::{
     OccupantLaunchRequest, SessionProofError, await_session, occupant_launch,
 };
 use super::{CommandResult, RuntimePaths, environment_fault, store_fault};
+#[cfg(unix)]
+use events::StateEvents;
+#[cfg(all(unix, not(test)))]
+use events::StateSignal;
 
 #[cfg(all(unix, not(test)))]
 use std::os::unix::fs::OpenOptionsExt as _;
@@ -40,7 +50,6 @@ const REQUEST_BYTES: u64 = 64 * 1024;
 const STATE_BYTES: u64 = 64 * 1024;
 #[cfg(not(test))]
 const START_HORIZON: Duration = Duration::from_secs(15);
-const WAIT_QUANTUM: Duration = Duration::from_millis(25);
 
 /// Minimal best-effort notification projected from already-durable tape.
 #[derive(Debug, Deserialize, Serialize)]
@@ -295,6 +304,9 @@ fn launch_unix(paths: &RuntimePaths, request: OccupantLaunchRequest<'_>) -> Comm
     let stdout = log.try_clone().map_err(|error| {
         environment_fault("lane::supervisor-log-unavailable", &error.to_string())
     })?;
+    let events = StateEvents::watch(&state).map_err(|error| {
+        environment_fault("lane::supervisor-observer-unavailable", &error.to_string())
+    })?;
     let mut supervisor = ProcessCommand::new(executable)
         .arg(ENTRY)
         .arg(&request_path)
@@ -305,12 +317,13 @@ fn launch_unix(paths: &RuntimePaths, request: OccupantLaunchRequest<'_>) -> Comm
         .process_group(0)
         .spawn()
         .map_err(|error| environment_fault("lane::supervisor-launch-failed", &error.to_string()))?;
+    events.observe_exit(supervisor.id());
     let _reaper = thread::Builder::new()
         .name("spice-supervisor-reaper".to_owned())
         .spawn(move || {
             let _ = supervisor.wait();
         });
-    await_running(&state, request.lane, request.occupant)
+    await_running(&state, request.lane, request.occupant, events)
 }
 
 /// Adopt the exact live supervisor already naming a durable lane occupant.
@@ -357,13 +370,15 @@ pub(super) fn adopt(
     }
 }
 
-#[cfg(not(test))]
+#[cfg(all(unix, not(test)))]
 fn await_running(
     path: &Path,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
+    events: StateEvents,
 ) -> CommandResult<Launch> {
     let started = Monotonic::now();
+    let mut supervisor_exited = false;
     loop {
         match read_state(path) {
             Ok(state) if !matches_state(&state, lane, occupant) => {
@@ -378,7 +393,7 @@ fn await_running(
                 // the complete launch authority; returning its handle lets the
                 // resident commit the start and then observe the exact ending
                 // instead of turning a harmless race into resident failure.
-                return state_launch(path.to_path_buf(), state);
+                return state_launch_with_events(path.to_path_buf(), state, events);
             }
             Ok(state) if state.phase == Phase::Failed => {
                 return Err(store_fault(
@@ -398,17 +413,76 @@ fn await_running(
                 ));
             }
         }
-        if started.elapsed() >= START_HORIZON {
+        if supervisor_exited {
+            return Err(environment_fault(
+                "lane::supervisor-start-failed",
+                "detached supervisor exited before publishing a proven session",
+            ));
+        }
+        let remaining = START_HORIZON.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
             return Err(environment_fault(
                 "lane::supervisor-start-timeout",
                 "detached supervisor did not publish a proven session before its start horizon",
             ));
         }
-        thread::sleep(WAIT_QUANTUM);
+        match events.wait_for(remaining) {
+            Ok(Some(StateSignal::Changed)) => {}
+            Ok(Some(StateSignal::SupervisorExited)) => supervisor_exited = true,
+            Ok(Some(StateSignal::ObserverFailed(error))) => {
+                return Err(environment_fault(
+                    "lane::supervisor-observer-failed",
+                    &error,
+                ));
+            }
+            Err(error) => {
+                return Err(environment_fault(
+                    "lane::supervisor-observer-failed",
+                    &error.to_string(),
+                ));
+            }
+            Ok(None) => {
+                return Err(environment_fault(
+                    "lane::supervisor-start-timeout",
+                    "detached supervisor did not publish a proven session before its start horizon",
+                ));
+            }
+        }
     }
 }
 
 fn state_launch(path: PathBuf, state: State) -> CommandResult<Launch> {
+    #[cfg(unix)]
+    let events = if state.phase == Phase::Running {
+        Some(StateEvents::arm(&path, state.supervisor).map_err(|error| {
+            environment_fault("lane::supervisor-observer-unavailable", &error.to_string())
+        })?)
+    } else {
+        None
+    };
+    state_launch_inner(
+        path,
+        state,
+        #[cfg(unix)]
+        events,
+    )
+}
+
+#[cfg(all(unix, not(test)))]
+fn state_launch_with_events(
+    path: PathBuf,
+    state: State,
+    events: StateEvents,
+) -> CommandResult<Launch> {
+    let events = (state.phase == Phase::Running).then_some(events);
+    state_launch_inner(path, state, events)
+}
+
+fn state_launch_inner(
+    path: PathBuf,
+    state: State,
+    #[cfg(unix)] events: Option<StateEvents>,
+) -> CommandResult<Launch> {
     let group = state.group.ok_or_else(|| {
         store_fault(
             "lane::supervisor-state-invalid",
@@ -427,7 +501,12 @@ fn state_launch(path: PathBuf, state: State) -> CommandResult<Launch> {
             "running supervisor has no launch Git identity",
         )
     })?;
-    let handle = Handle::new(path, &state)?;
+    let handle = Handle::new(
+        path,
+        &state,
+        #[cfg(unix)]
+        events,
+    )?;
     Ok(Launch {
         occupant: state.occupant,
         group,
@@ -633,16 +712,21 @@ impl CaptureReporter for DurableReporter {
 struct Handle {
     path: PathBuf,
     owner: String,
-    supervisor: u32,
     group: u32,
     started_millis: u64,
     runtime: Duration,
     grace: Duration,
     reap: Duration,
+    #[cfg(unix)]
+    events: Option<StateEvents>,
 }
 
 impl Handle {
-    fn new(path: PathBuf, state: &State) -> CommandResult<Self> {
+    fn new(
+        path: PathBuf,
+        state: &State,
+        #[cfg(unix)] events: Option<StateEvents>,
+    ) -> CommandResult<Self> {
         let required = |value: Option<u64>, name: &str| {
             value.ok_or_else(|| {
                 store_fault(
@@ -654,7 +738,6 @@ impl Handle {
         Ok(Self {
             path,
             owner: format!("lane {} detached supervisor", state.lane),
-            supervisor: state.supervisor,
             group: state.group.ok_or_else(|| {
                 store_fault(
                     "lane::supervisor-state-invalid",
@@ -665,6 +748,8 @@ impl Handle {
             runtime: Duration::from_millis(required(state.runtime_millis, "runtime")?),
             grace: Duration::from_millis(required(state.grace_millis, "termination grace")?),
             reap: Duration::from_millis(required(state.reap_millis, "reap bound")?),
+            #[cfg(unix)]
+            events,
         })
     }
 
@@ -709,19 +794,7 @@ impl Handle {
                         .unwrap_or_else(|| "supervisor failed".to_owned()),
                 ),
             )),
-            Phase::Starting | Phase::Running => {
-                if process_exists_wait(self.supervisor, self)? {
-                    Ok(None)
-                } else {
-                    Err(self.wait_error(
-                        "observing supervisor",
-                        io::Error::new(
-                            io::ErrorKind::BrokenPipe,
-                            "supervisor disappeared before publishing an ending",
-                        ),
-                    ))
-                }
-            }
+            Phase::Starting | Phase::Running => Ok(None),
         }
     }
 
@@ -753,16 +826,21 @@ impl DetachedProcess for Handle {
     }
 
     fn wait_for(self: Box<Self>, duration: Duration) -> Result<DetachedWait, WaitError> {
-        let started = Monotonic::now();
-        loop {
-            if let Some(outcome) = self.terminal()? {
-                return Ok(DetachedWait::Exited(outcome));
-            }
-            let remaining = duration.saturating_sub(started.elapsed());
-            if remaining.is_zero() {
-                return Ok(DetachedWait::Running(self));
-            }
-            thread::sleep(remaining.min(WAIT_QUANTUM));
+        #[cfg(unix)]
+        match self.observe_until(Some(duration))? {
+            Some(outcome) => Ok(DetachedWait::Exited(outcome)),
+            None => Ok(DetachedWait::Running(self)),
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = duration;
+            Err(self.wait_error(
+                "waiting for supervisor state change",
+                io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "detached supervisor observation requires Unix",
+                ),
+            ))
         }
     }
 
@@ -775,11 +853,27 @@ impl DetachedProcess for Handle {
     }
 
     fn wait(self: Box<Self>) -> Result<WaitOutcome, WaitError> {
-        loop {
-            if let Some(outcome) = self.terminal()? {
-                return Ok(outcome);
-            }
-            thread::sleep(WAIT_QUANTUM);
+        #[cfg(unix)]
+        {
+            self.observe_until(None)?.ok_or_else(|| {
+                self.wait_error(
+                    "waiting for supervisor state change",
+                    io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "unbounded supervisor wait ended without a terminal state",
+                    ),
+                )
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            Err(self.wait_error(
+                "waiting for supervisor state change",
+                io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "detached supervisor observation requires Unix",
+                ),
+            ))
         }
     }
 }
@@ -984,10 +1078,6 @@ fn process_exists(pid: u32) -> CommandResult<bool> {
     process_exists_raw(pid).map_err(|error| {
         environment_fault("lane::supervisor-liveness-unavailable", &error.to_string())
     })
-}
-
-fn process_exists_wait(pid: u32, handle: &Handle) -> Result<bool, WaitError> {
-    process_exists_raw(pid).map_err(|error| handle.wait_error("probing supervisor", error))
 }
 
 #[cfg(unix)]

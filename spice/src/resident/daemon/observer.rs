@@ -21,7 +21,7 @@ pub(super) fn wait_for_change(observer: DirectObserver, sender: mpsc::Sender<Sig
     });
 }
 
-pub(super) fn wait_for_exit(pid: u32, sender: impl ExitSender) {
+pub(in crate::resident) fn wait_for_exit(pid: u32, sender: impl ExitSender) {
     thread::spawn(move || {
         match ProcessExitObserver::or_ended(pid).and_then(ProcessExitObserver::wait) {
             Ok(()) => sender.exited(),
@@ -30,7 +30,7 @@ pub(super) fn wait_for_exit(pid: u32, sender: impl ExitSender) {
     });
 }
 
-pub(super) trait ExitSender: Send + 'static {
+pub(in crate::resident) trait ExitSender: Send + 'static {
     fn exited(self);
     fn failed(self, error: String);
 }
