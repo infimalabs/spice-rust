@@ -135,6 +135,22 @@ enum Phase {
     Failed,
 }
 
+impl State {
+    fn validate(self) -> io::Result<Self> {
+        match self.phase {
+            Phase::Starting | Phase::Running if self.completion.is_some() => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "nonterminal supervisor state has a typed completion",
+            )),
+            Phase::Exited if self.completion.is_none() => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "exited supervisor state has no typed completion",
+            )),
+            Phase::Starting | Phase::Running | Phase::Exited | Phase::Failed => Ok(self),
+        }
+    }
+}
+
 /// Session and process evidence returned after a detached launch is proven.
 pub(super) struct Launch {
     pub(super) occupant: CanonicalUuid,
@@ -857,8 +873,9 @@ fn read_state(path: &Path) -> io::Result<State> {
             ),
         ));
     }
-    let state: State = serde_json::from_value(value).map_err(io::Error::other)?;
-    Ok(state)
+    let state: State = serde_json::from_value(value)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    state.validate()
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path, limit: u64) -> io::Result<T> {
@@ -1005,6 +1022,169 @@ mod tests {
             tape: root.join("tape"),
             stage: root.join("stage"),
         }
+    }
+
+    fn state(root: &Path, phase: Phase, completion: Option<PersistedCompletion>) -> State {
+        State {
+            version: CONTRACT_VERSION,
+            supervisor: std::process::id(),
+            worktree: root.to_string_lossy().into_owned(),
+            vendor: "codex".to_owned(),
+            lane: uuid(1),
+            occupant: uuid(2),
+            phase,
+            group: None,
+            session: None,
+            git: None,
+            started_millis: None,
+            runtime_millis: None,
+            grace_millis: None,
+            reap_millis: None,
+            completion,
+            failure: None,
+        }
+    }
+
+    #[test]
+    fn completion_variants_round_trip_without_collapsing_cause_or_status() {
+        let completions = [
+            sill::Completion::Exited(ExitStatus::from_raw(0)),
+            sill::Completion::TimedOut(ExitStatus::from_raw(0)),
+            sill::Completion::Cancelled(ExitStatus::from_raw(libc::SIGKILL)),
+        ];
+
+        for completion in completions {
+            let expected_status = status_raw(completion.status());
+            let encoded = serde_json::to_value(state(
+                Path::new("/fixture"),
+                Phase::Exited,
+                Some(PersistedCompletion::capture(&completion)),
+            ))
+            .expect("v2 state encodes");
+            assert!(encoded.get("status_raw").is_none());
+            let decoded_state: State = serde_json::from_value(encoded).expect("v2 state decodes");
+            let persisted = decoded_state
+                .validate()
+                .expect("v2 state is phase-valid")
+                .completion
+                .expect("exited state retains its completion");
+            let decoded = persisted.decode().expect("exit status reconstructs");
+            assert_eq!(status_raw(decoded.status()), expected_status);
+            assert!(matches!(
+                (&completion, &decoded),
+                (sill::Completion::Exited(_), sill::Completion::Exited(_))
+                    | (sill::Completion::TimedOut(_), sill::Completion::TimedOut(_))
+                    | (
+                        sill::Completion::Cancelled(_),
+                        sill::Completion::Cancelled(_)
+                    )
+            ));
+        }
+    }
+
+    #[test]
+    fn contract_v2_refuses_completion_while_starting_or_running() {
+        let root = std::env::temp_dir().join(format!(
+            "spice-nonterminal-completion-{}-{}",
+            std::process::id(),
+            now_millis().expect("fixture time")
+        ));
+        fs::create_dir_all(&root).expect("fixture directory creates");
+        let path = root.join("state.json");
+        for phase in [Phase::Starting, Phase::Running] {
+            publish_json(
+                &path,
+                &state(
+                    &root,
+                    phase,
+                    Some(PersistedCompletion::Exited { status_raw: 0 }),
+                ),
+            )
+            .expect("invalid state fixture publishes");
+            let error = read_state(&path)
+                .err()
+                .expect("nonterminal completion refuses");
+            assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+            assert!(
+                error
+                    .to_string()
+                    .contains("nonterminal supervisor state has a typed completion")
+            );
+        }
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn contract_v1_request_is_refused_before_state_publication() {
+        let root = std::env::temp_dir().join(format!(
+            "spice-v1-supervisor-request-{}-{}",
+            std::process::id(),
+            now_millis().expect("fixture time")
+        ));
+        fs::create_dir_all(&root).expect("fixture directory creates");
+        let request_path = root.join("request.json");
+        let state_path = root.join("state.json");
+        publish_json(
+            &request_path,
+            &Request {
+                version: 1,
+                worktree: root.to_string_lossy().into_owned(),
+                vendor: "codex".to_owned(),
+                epoch: uuid(3),
+                lane: uuid(1),
+                occupant: uuid(2),
+                resume: None,
+                state: state_path.clone(),
+            },
+        )
+        .expect("legacy request fixture publishes");
+
+        let error = run(&request_path).expect_err("v1 request refuses");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported supervisor request version 1")
+        );
+        assert!(!state_path.exists(), "refused request published state");
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn contract_v2_refuses_missing_or_malformed_terminal_completion() {
+        let root = std::env::temp_dir().join(format!(
+            "spice-invalid-terminal-completion-{}-{}",
+            std::process::id(),
+            now_millis().expect("fixture time")
+        ));
+        fs::create_dir_all(&root).expect("fixture directory creates");
+        let path = root.join("state.json");
+        publish_json(&path, &state(&root, Phase::Exited, None))
+            .expect("missing completion fixture publishes");
+        let missing = read_state(&path).err().expect("missing completion refuses");
+        assert_eq!(missing.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            missing
+                .to_string()
+                .contains("exited supervisor state has no typed completion")
+        );
+
+        let mut malformed = serde_json::to_value(state(
+            &root,
+            Phase::Exited,
+            Some(PersistedCompletion::Exited { status_raw: 0 }),
+        ))
+        .expect("terminal state encodes");
+        malformed["completion"] = serde_json::json!({
+            "kind": "unknown",
+            "status_raw": 0,
+        });
+        publish_json(&path, &malformed).expect("malformed completion fixture publishes");
+        let malformed = read_state(&path)
+            .err()
+            .expect("malformed completion refuses");
+        assert_eq!(malformed.kind(), io::ErrorKind::InvalidData);
+        fs::remove_dir_all(root).expect("fixture cleanup");
     }
 
     #[test]
