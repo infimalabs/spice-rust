@@ -149,8 +149,17 @@ impl WaitOutcome {
     /// and pipe evidence that belonged to the other process.
     #[must_use]
     pub fn externally_reaped(status: ExitStatus) -> Self {
+        Self::externally_reaped_completion(Completion::Exited(status))
+    }
+
+    /// Reconstruct one externally supervised typed completion.
+    ///
+    /// The detached supervisor owns the cause classification even though it
+    /// cannot preserve local capture or resource-accounting evidence.
+    #[must_use]
+    pub fn externally_reaped_completion(completion: Completion) -> Self {
         Self {
-            completion: Completion::Exited(status),
+            completion,
             usage: ProcessUsage::default(),
             observation_failure: None,
             stdout: None,

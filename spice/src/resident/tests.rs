@@ -328,6 +328,9 @@ fn resident_shutdown_releases_handles_without_ending_lane_work() {
         wire::FactKind::LaneDrained,
         wire::FactKind::LaneKilled,
         wire::FactKind::LaneExited,
+        wire::FactKind::LaneTimedOut,
+        wire::FactKind::LaneCancelled,
+        wire::FactKind::LaneSignalled,
     ] {
         assert!(!holds(kind), "resident detach fabricated {kind:?}");
     }

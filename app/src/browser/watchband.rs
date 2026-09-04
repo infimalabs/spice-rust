@@ -227,7 +227,7 @@ fn render_compose(
 /// persistent plane uses this complete order to distinguish edge additions
 /// from structural middle insertions during staged hydration.
 fn activity_cards(runtime: &CanvasRuntime, lineage: &crate::runtime::LaneRow) -> Vec<ActivityCard> {
-    runtime
+    let mut cards = runtime
         .messages()
         .iter()
         .filter_map(|message| {
@@ -243,7 +243,24 @@ fn activity_cards(runtime: &CanvasRuntime, lineage: &crate::runtime::LaneRow) ->
                 message: Rc::clone(message),
             })
         })
-        .collect()
+        .collect::<Vec<_>>();
+    cards.extend(
+        runtime
+            .lifecycle_boundaries()
+            .iter()
+            .filter_map(|boundary| {
+                let member = lineage
+                    .members
+                    .iter()
+                    .find(|member| member.lane == boundary.lane())?;
+                Some(ActivityCard::Lifecycle {
+                    member: member.clone(),
+                    boundary: boundary.clone(),
+                })
+            }),
+    );
+    cards.sort_by_key(ActivityCard::chronology_key);
+    cards
 }
 
 fn render_activity(
@@ -605,6 +622,7 @@ fn visible_agent_prose(
             watchband::first_nonquoted_prose(&message.text).map(|prose| (message.as_ref(), prose))
         }
         ActivityCard::Agent { .. } => None,
+        ActivityCard::Lifecycle { .. } => None,
     }
 }
 

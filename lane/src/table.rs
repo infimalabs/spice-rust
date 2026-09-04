@@ -19,8 +19,8 @@ use std::error::Error;
 use std::fmt;
 
 use journal::crossing::body::{
-    LaneDrained, LaneExited, LaneImported, LaneKilled, LaneRemoved, LaneRenewed, LaneSeated,
-    LaneSessionDeclared, LaneStarted,
+    LaneCancelled, LaneDrained, LaneExited, LaneImported, LaneKilled, LaneRemoved, LaneRenewed,
+    LaneSeated, LaneSessionDeclared, LaneSignalled, LaneStarted, LaneTimedOut,
 };
 use journal::crossing::{
     CanonicalUuid, LaneResidency, LaneSession, ResidencyHead, ResidentState, TapeLocus,
@@ -148,6 +148,12 @@ pub enum Seating<'a> {
     Removed(&'a LaneRemoved),
     /// The occupant ended.
     Exited(&'a LaneExited),
+    /// The occupant exceeded its runtime.
+    TimedOut(&'a LaneTimedOut),
+    /// Supervision cancellation ended the occupant.
+    Cancelled(&'a LaneCancelled),
+    /// A signal outside resident termination ended the occupant.
+    Signalled(&'a LaneSignalled),
     /// A successor occupant was seated with its ancestor named.
     Renewed(&'a LaneRenewed),
     /// A graceful occupant end completed.
@@ -398,6 +404,9 @@ impl Table {
             Seating::Removed(fact) => self.remove(fact),
             Seating::Renewed(fact) => self.renew(fact),
             Seating::Exited(fact) => self.end(fact.lane, fact.occupant),
+            Seating::TimedOut(fact) => self.end(fact.lane, fact.occupant),
+            Seating::Cancelled(fact) => self.end(fact.lane, fact.occupant),
+            Seating::Signalled(fact) => self.end(fact.lane, fact.occupant),
             Seating::Drained(fact) => self.end(fact.lane, fact.occupant),
             Seating::Killed(fact) => self.end(fact.lane, fact.occupant),
         }

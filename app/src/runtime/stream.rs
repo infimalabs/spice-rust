@@ -6,6 +6,7 @@ use super::*;
 use super::message_cards::trim_agent_message_lane;
 
 const OPERATOR_MESSAGE_LIMIT: usize = 256;
+const LIFECYCLE_BOUNDARY_LIMIT: usize = 256;
 
 /// One operator-authored direction projected from durable steering authority.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -447,6 +448,87 @@ impl CanvasRuntime {
                 &mut self.facts
             };
             state.observe_stream(admitted, row.seq(), row.origin().clone(), row.cause());
+            if !thread {
+                self.observe_lifecycle_boundary(row);
+            }
+        }
+    }
+
+    fn observe_lifecycle_boundary(&mut self, row: &wire::StreamFact) {
+        let boundary = match row.kind() {
+            FactKind::LaneExited => row.read::<wire::body::LaneExited>().map(|body| {
+                (
+                    body.lane,
+                    Some(body.occupant),
+                    format!("exited with code {}", body.code),
+                )
+            }),
+            FactKind::LaneTimedOut => row.read::<wire::body::LaneTimedOut>().map(|body| {
+                (
+                    body.lane,
+                    Some(body.occupant),
+                    format!("runtime timed out; code {}", body.code),
+                )
+            }),
+            FactKind::LaneCancelled => row.read::<wire::body::LaneCancelled>().map(|body| {
+                (
+                    body.lane,
+                    Some(body.occupant),
+                    format!("supervision cancelled; code {}", body.code),
+                )
+            }),
+            FactKind::LaneSignalled => row.read::<wire::body::LaneSignalled>().map(|body| {
+                (
+                    body.lane,
+                    Some(body.occupant),
+                    format!("ended by external signal {}", body.signal),
+                )
+            }),
+            FactKind::LaneDrained => row.read::<wire::body::LaneDrained>().map(|body| {
+                (
+                    body.lane,
+                    Some(body.occupant),
+                    "drained gracefully".to_owned(),
+                )
+            }),
+            FactKind::LaneKilled => row.read::<wire::body::LaneKilled>().map(|body| {
+                (
+                    body.lane,
+                    Some(body.occupant),
+                    "ended by resident signal".to_owned(),
+                )
+            }),
+            FactKind::LaneDegraded => row.read::<wire::body::LaneDegraded>().map(|body| {
+                (
+                    body.lane,
+                    None,
+                    format!("supervision failed: {}", body.marker),
+                )
+            }),
+            _ => None,
+        };
+        let Some((lane, occupant, cause)) = boundary else {
+            return;
+        };
+        if self
+            .lifecycle_boundaries
+            .iter()
+            .any(|boundary| boundary.seq == row.seq())
+        {
+            return;
+        }
+        self.lifecycle_boundaries.push(LaneLifecycleBoundary {
+            seq: row.seq(),
+            lane,
+            occupant,
+            observed: *row.at(),
+            cause,
+        });
+        self.lifecycle_boundaries
+            .sort_by_key(|boundary| (boundary.observed, boundary.seq));
+        if self.lifecycle_boundaries.len() > LIFECYCLE_BOUNDARY_LIMIT {
+            let discard = self.lifecycle_boundaries.len() - LIFECYCLE_BOUNDARY_LIMIT;
+            self.lifecycle_boundaries.drain(..discard);
         }
     }
 

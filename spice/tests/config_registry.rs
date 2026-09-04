@@ -574,6 +574,7 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "board.next.band",
     "lane.life",
     "lane.lease",
+    "lane.runtime",
     "lane.vendor",
     "lane.deaths",
     "lane.young",

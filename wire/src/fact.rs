@@ -244,6 +244,12 @@ vocabulary! {
     LaneRemoved = "lane::removed" by ResidentRecognition;
     /// The resident observed the occupant end.
     LaneExited = "lane::exited" by ResidentRecognition;
+    /// The occupant outlived its independently configured process runtime.
+    LaneTimedOut = "lane::timedout" by ResidentRecognition;
+    /// Supervision cancellation ended the occupant.
+    LaneCancelled = "lane::cancelled" by ResidentRecognition;
+    /// A signal outside resident-directed termination ended the occupant.
+    LaneSignalled = "lane::signalled" by ResidentRecognition;
     /// The occupant crossed a context compaction boundary.
     LaneCompacted = "lane::compacted" by ResidentRecognition;
     /// A successor occupant was seated with its ancestor named.

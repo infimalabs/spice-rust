@@ -35,7 +35,7 @@ use std::os::unix::process::CommandExt as _;
 use std::os::unix::process::ExitStatusExt as _;
 
 const ENTRY: &str = "__lane-supervisor";
-const CONTRACT_VERSION: u32 = 1;
+const CONTRACT_VERSION: u32 = 2;
 const REQUEST_BYTES: u64 = 64 * 1024;
 const STATE_BYTES: u64 = 64 * 1024;
 #[cfg(not(test))]
@@ -94,8 +94,36 @@ struct State {
     runtime_millis: Option<u64>,
     grace_millis: Option<u64>,
     reap_millis: Option<u64>,
-    status_raw: Option<i32>,
+    completion: Option<PersistedCompletion>,
     failure: Option<String>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum PersistedCompletion {
+    Exited { status_raw: i32 },
+    TimedOut { status_raw: i32 },
+    Cancelled { status_raw: i32 },
+}
+
+impl PersistedCompletion {
+    fn capture(completion: &sill::Completion) -> Self {
+        let status_raw = status_raw(completion.status());
+        match completion {
+            sill::Completion::Exited(_) => Self::Exited { status_raw },
+            sill::Completion::TimedOut(_) => Self::TimedOut { status_raw },
+            sill::Completion::Cancelled(_) => Self::Cancelled { status_raw },
+        }
+    }
+
+    fn decode(&self) -> io::Result<sill::Completion> {
+        let (status_raw, constructor): (i32, fn(ExitStatus) -> sill::Completion) = match self {
+            Self::Exited { status_raw } => (*status_raw, sill::Completion::Exited),
+            Self::TimedOut { status_raw } => (*status_raw, sill::Completion::TimedOut),
+            Self::Cancelled { status_raw } => (*status_raw, sill::Completion::Cancelled),
+        };
+        status_from_raw(status_raw).map(constructor)
+    }
 }
 
 #[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
@@ -396,7 +424,7 @@ fn run(request_path: &Path) -> io::Result<()> {
         runtime_millis: None,
         grace_millis: None,
         reap_millis: None,
-        status_raw: None,
+        completion: None,
         failure: None,
     };
     publish_json(&request.state, &starting)?;
@@ -475,7 +503,7 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
     if let Some(observation_failure) = outcome.observation_failure() {
         let failure = observation_failure.to_string();
         state.phase = Phase::Failed;
-        state.status_raw = Some(status_raw(outcome.completion().status()));
+        state.completion = Some(PersistedCompletion::capture(outcome.completion()));
         state.failure = Some(failure.clone());
         publish_json(&request.state, &state)?;
         reporter.send(&Notice::Failed {
@@ -486,7 +514,7 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
         return Ok(());
     }
     state.phase = Phase::Exited;
-    state.status_raw = Some(status_raw(outcome.completion().status()));
+    state.completion = Some(PersistedCompletion::capture(outcome.completion()));
     publish_json(&request.state, &state)?;
     reporter.send(&Notice::Exited {
         lane: request.lane,
@@ -619,15 +647,24 @@ impl Handle {
     fn terminal(&self) -> Result<Option<WaitOutcome>, WaitError> {
         let state = self.state()?;
         match state.phase {
-            Phase::Exited => state
-                .status_raw
-                .map(status_from_raw)
-                .map(|status| {
-                    status
-                        .map(WaitOutcome::externally_reaped)
+            Phase::Exited => state.completion.as_ref().map_or_else(
+                || {
+                    Err(self.wait_error(
+                        "decoding supervisor exit",
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "exited supervisor state has no typed completion",
+                        ),
+                    ))
+                },
+                |completion| {
+                    completion
+                        .decode()
+                        .map(WaitOutcome::externally_reaped_completion)
+                        .map(Some)
                         .map_err(|error| self.wait_error("decoding supervisor exit", error))
-                })
-                .transpose(),
+                },
+            ),
             Phase::Failed => Err(self.wait_error(
                 "observing supervisor",
                 io::Error::other(
@@ -798,13 +835,29 @@ fn publish_json(path: &Path, value: &impl Serialize) -> io::Result<()> {
 }
 
 fn read_state(path: &Path) -> io::Result<State> {
-    let state: State = read_json(path, STATE_BYTES)?;
-    if state.version != CONTRACT_VERSION {
+    let value: serde_json::Value = read_json(path, STATE_BYTES)?;
+    let version = value
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|version| u32::try_from(version).ok())
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "supervisor state has no valid contract version",
+            )
+        })?;
+    if version != CONTRACT_VERSION {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("unsupported supervisor state version {}", state.version),
+            format!(
+                "supervisor state contract v{} is not owned by current Spice {} contract v{}",
+                version,
+                env!("CARGO_PKG_VERSION"),
+                CONTRACT_VERSION
+            ),
         ));
     }
+    let state: State = serde_json::from_value(value).map_err(io::Error::other)?;
     Ok(state)
 }
 
@@ -998,7 +1051,7 @@ mod tests {
                 runtime_millis: Some(4 * 60 * 60 * 1_000),
                 grace_millis: Some(20_000),
                 reap_millis: Some(20_000),
-                status_raw: Some(0),
+                completion: Some(PersistedCompletion::TimedOut { status_raw: 0 }),
                 failure: None,
             },
         )
@@ -1025,14 +1078,47 @@ mod tests {
         };
         assert_eq!(adopted.occupant, occupant);
         assert_eq!(adopted.group, 412);
+        let outcome = adopted.process.wait().expect("terminal status reads");
+        assert!(matches!(
+            outcome.completion(),
+            sill::Completion::TimedOut(status) if status.success()
+        ));
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn contract_v1_state_is_refused_without_a_legacy_execution_path() {
+        let root = std::env::temp_dir().join(format!(
+            "spice-v1-supervisor-{}-{}",
+            std::process::id(),
+            now_millis().expect("fixture time")
+        ));
+        fs::create_dir_all(&root).expect("fixture directory creates");
+        let state = root.join("state.json");
+        fs::write(
+            &state,
+            serde_json::to_vec(&serde_json::json!({
+                "version": 1,
+                "phase": "exited",
+                "status_raw": 0,
+            }))
+            .expect("legacy fixture encodes"),
+        )
+        .expect("legacy fixture writes");
+
+        let error = match read_state(&state) {
+            Ok(_) => panic!("v1 state has no current execution path"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        let diagnostic = error.to_string();
+        assert!(diagnostic.contains("contract v1"), "{diagnostic}");
         assert!(
-            adopted
-                .process
-                .wait()
-                .expect("terminal status reads")
-                .completion()
-                .status()
-                .success()
+            diagnostic.contains(&format!(
+                "current Spice {} contract v2",
+                env!("CARGO_PKG_VERSION")
+            )),
+            "{diagnostic}"
         );
         fs::remove_dir_all(root).expect("fixture cleanup");
     }

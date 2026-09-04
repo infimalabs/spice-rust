@@ -133,6 +133,14 @@
   align-items: center;
   text-align: center;
 }
+.mosaic-lifecycle-card {
+  border-left-color: var(--warning);
+  background: color-mix(in srgb, var(--warning-soft) 38%, var(--mosaic-card));
+}
+.mosaic-lifecycle-card .mosaic-compaction-rule {
+  background: color-mix(in srgb, var(--warning) 58%, var(--line));
+}
+.mosaic-lifecycle-card .message-key { color: var(--warning); }
 .mosaic-compaction-rule {
   width: 100%;
   height: 1px;

@@ -604,6 +604,13 @@ configuration_registry! {
         class: Policy,
         flag: None,
     }
+    fixed "lane.runtime" {
+        kind: Duration,
+        builtin: Some(Builtin::String("24h")),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
     fixed "lane.vendor" {
         kind: String,
         builtin: Some(Builtin::String("codex")),

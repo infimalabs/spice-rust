@@ -22,6 +22,10 @@ pub(super) enum ActivityCard {
         quote_lane: CanonicalUuid,
         message: Rc<wire::AgentMessage>,
     },
+    Lifecycle {
+        member: crate::runtime::LaneMember,
+        boundary: crate::runtime::LaneLifecycleBoundary,
+    },
 }
 
 impl PartialEq for ActivityCard {
@@ -48,20 +52,49 @@ impl PartialEq for ActivityCard {
                     && left_quote_lane == right_quote_lane
                     && (Rc::ptr_eq(left_message, right_message) || left_message == right_message)
             }
+            (
+                Self::Lifecycle {
+                    member: left_member,
+                    boundary: left_boundary,
+                },
+                Self::Lifecycle {
+                    member: right_member,
+                    boundary: right_boundary,
+                },
+            ) => left_member == right_member && left_boundary == right_boundary,
+            _ => false,
         }
     }
 }
 
 #[derive(Clone, Debug)]
-struct ActivityFingerprint {
-    worktree: String,
-    message: Rc<wire::AgentMessage>,
+enum ActivityFingerprint {
+    Agent {
+        worktree: String,
+        message: Rc<wire::AgentMessage>,
+    },
+    Lifecycle(crate::runtime::LaneLifecycleBoundary),
 }
 
 impl PartialEq for ActivityFingerprint {
     fn eq(&self, other: &Self) -> bool {
-        self.worktree == other.worktree
-            && (Rc::ptr_eq(&self.message, &other.message) || self.message == other.message)
+        match (self, other) {
+            (
+                Self::Agent {
+                    worktree: left_worktree,
+                    message: left_message,
+                },
+                Self::Agent {
+                    worktree: right_worktree,
+                    message: right_message,
+                },
+            ) => {
+                left_worktree == right_worktree
+                    && (Rc::ptr_eq(left_message, right_message) || left_message == right_message)
+            }
+            (Self::Lifecycle(left), Self::Lifecycle(right)) => left == right,
+            _ => false,
+        }
     }
 }
 
@@ -69,6 +102,22 @@ impl ActivityCard {
     fn key(&self) -> String {
         match self {
             Self::Agent { message, .. } => agent_message_source_id(message),
+            Self::Lifecycle { boundary, .. } => {
+                format!("lane-lifecycle-{}", boundary.seq())
+            }
+        }
+    }
+
+    pub(super) fn chronology_key(&self) -> (i64, u8, String) {
+        match self {
+            Self::Agent { message, .. } => (
+                crate::runtime::agent_message_display_millis(message),
+                0,
+                self.key(),
+            ),
+            Self::Lifecycle { boundary, .. } => {
+                (boundary.observed().get().as_millisecond(), 1, self.key())
+            }
         }
     }
 
@@ -76,10 +125,11 @@ impl ActivityCard {
         match self {
             Self::Agent {
                 member, message, ..
-            } => ActivityFingerprint {
+            } => ActivityFingerprint::Agent {
                 worktree: member.worktree.clone(),
                 message: Rc::clone(message),
             },
+            Self::Lifecycle { boundary, .. } => ActivityFingerprint::Lifecycle(boundary.clone()),
         }
     }
 
@@ -91,15 +141,17 @@ impl ActivityCard {
                 crate::mosaic::TRACK_COUNT
             }
             Self::Agent { .. } => geometry.base_span,
+            Self::Lifecycle { .. } => crate::mosaic::TRACK_COUNT,
         }
     }
 
     fn is_boundary(&self) -> bool {
-        matches!(
-            self,
-            Self::Agent { message, .. }
-                if message.activity == wire::AgentActivityKind::Compaction
-        )
+        matches!(self, Self::Lifecycle { .. })
+            || matches!(
+                self,
+                Self::Agent { message, .. }
+                    if message.activity == wire::AgentActivityKind::Compaction
+            )
     }
 }
 
@@ -605,8 +657,8 @@ fn use_narration(
     let materialized = use_mut_ref(|| false);
     let messages = cards
         .iter()
-        .map(|card| match card {
-            ActivityCard::Agent { message, .. } => NarrationMessage {
+        .filter_map(|card| match card {
+            ActivityCard::Agent { message, .. } => Some(NarrationMessage {
                 lane: message.lane.to_string(),
                 key: agent_message_source_id(message),
                 text: message.text.clone(),
@@ -614,7 +666,8 @@ fn use_narration(
                     .automatic_speech
                     .as_ref()
                     .map(|speech| speech.text.clone()),
-            },
+            }),
+            ActivityCard::Lifecycle { .. } => None,
         })
         .collect::<Vec<_>>();
     use_effect_with((speech, messages), move |(speech, messages)| {
@@ -979,7 +1032,71 @@ fn render_activity_cards(
                         {layout}
                     />
                 },
+                ActivityCard::Lifecycle { member, boundary } => {
+                    render_lifecycle_boundary(member, boundary, &key, &layout)
+                }
             }
         })
         .collect()
+}
+
+fn render_lifecycle_boundary(
+    member: &crate::runtime::LaneMember,
+    boundary: &crate::runtime::LaneLifecycleBoundary,
+    key: &str,
+    layout: &CardLayout,
+) -> Html {
+    let attribution = watchband::agent_message_label(&member.worktree, member.name.as_deref())
+        .expect("admitted lifecycle member has a configured name or worktree basename")
+        .to_owned();
+    let label = format!("{attribution} lifecycle: {}", boundary.cause());
+    html! {
+        <article
+            key={key.to_owned()}
+            id={key.to_owned()}
+            class={classes!(
+                "mosaic-message-card",
+                "mosaic-compaction-card",
+                "mosaic-lifecycle-card",
+                layout.lifecycle.as_str(),
+            )}
+            aria-label={label}
+            data-card-kind="lifecycle"
+            data-message-role="system"
+            data-mosaic-card-key={key.to_owned()}
+            data-layout-phase={if layout.committed { "committed" } else { "measuring" }}
+            data-agent-lane={member.lane.to_string()}
+            data-agent-activity="lifecycle"
+            data-lifecycle-occupant={boundary.occupant().map(|occupant| occupant.to_string())}
+            data-lifecycle-cause={boundary.cause().to_owned()}
+            data-state={layout.lifecycle.as_str()}
+            data-track={layout.track.to_string()}
+            data-span={layout.span.to_string()}
+            data-base={layout.base.to_string()}
+            data-row={layout.row.to_string()}
+            data-rows={layout.rows.to_string()}
+            data-creation-index={layout.measurement_index.to_string()}
+            data-mosaic-measure-index={layout.measurement_index.to_string()}
+            data-measurement-reads={layout.measurement_reads.to_string()}
+            data-measured-spans={layout.measured_spans.clone()}
+            data-measured-widths={layout.measured_widths.clone()}
+            data-measured-heights={layout.measured_heights.clone()}
+            data-candidate-spans={layout.candidate_spans.clone()}
+            data-measure-span={layout.measure_span.to_string()}
+        >
+            <span class="mosaic-compaction-rule" aria-hidden="true"></span>
+            <span class="mosaic-compaction-label">
+                <Age
+                    authored={boundary.observed().get().as_millisecond()}
+                    class="mosaic-compaction-age"
+                />
+                <span aria-hidden="true">{"\u{b7}"}</span>
+                <span class="mosaic-compaction-context">
+                    <span class="mosaic-compaction-agent" title={attribution.clone()}>{attribution}</span>
+                    <span class="message-key">{boundary.cause().to_owned()}</span>
+                </span>
+            </span>
+            <span class="mosaic-compaction-rule" aria-hidden="true"></span>
+        </article>
+    }
 }

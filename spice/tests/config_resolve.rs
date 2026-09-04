@@ -133,7 +133,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert!(missing.root().policy().test_engines().is_empty());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 56);
+    assert_eq!(missing.provenance().len(), 57);
     assert!(
         missing
             .provenance()
@@ -773,6 +773,7 @@ band = 3
 [lane]
 life = "Steer"
 lease = "20m"
+runtime = "8h"
 vendor = "codex"
 deaths = 4
 young = "40s"
