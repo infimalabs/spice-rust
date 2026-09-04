@@ -386,24 +386,30 @@ pub(in crate::board_command) fn task_show(
         format!("claim_thread {}", claim_thread(task)),
     ];
     lines.extend(creation_context_lines(statement));
-    if statement.tags.is_empty() {
+    let tags = visible_tags(&statement.tags).collect::<Vec<_>>();
+    if tags.is_empty() {
         lines.push("tags -".to_owned());
     } else {
         lines.push(format!(
             "tags {}",
-            statement
-                .tags
-                .iter()
+            tags.iter()
                 .map(|tag| format!("+{tag}"))
                 .collect::<Vec<_>>()
                 .join(" ")
         ));
     }
+    if has_taste_review(&statement.tags) {
+        lines.push("taste_review required".to_owned());
+    }
     lines.push("acceptance:".to_owned());
-    if statement.acceptance.is_empty() {
+    if !substantive_acceptance(&statement.acceptance) {
         lines.push("  -".to_owned());
     } else {
-        for item in &statement.acceptance {
+        for item in statement
+            .acceptance
+            .iter()
+            .filter(|item| !item.trim().is_empty())
+        {
             push_bulleted(&mut lines, item);
         }
     }
@@ -494,6 +500,17 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
         return Vec::new();
     }
     let handle = &statement.handle;
+    if has_taste_review(&statement.tags) {
+        return vec![
+            "phase_guidance:".to_owned(),
+            "  phase:plan is holding this task for taste review.".to_owned(),
+            format!(
+                "  Update the task statement with spice task modify {handle} so the complete current taste policy rechecks it."
+            ),
+            "  Taste review clears only after that recheck finds no current matches; planning changes board state, not repository files."
+                .to_owned(),
+        ];
+    }
     if workflow.flow.len() == 1 && workflow.flow.first() == Some(&workflow.phase) {
         return vec![
             "phase_guidance:".to_owned(),
@@ -551,6 +568,12 @@ fn render_dependency(board: &BoardAnswer, dependency: &TaskStamp) -> String {
 }
 
 fn next_command_line(board: &BoardAnswer, task: &BoardTask) -> String {
+    if has_taste_review(&task.statement.body.tags) {
+        return format!(
+            "next: spice task modify {} --title \"...\"",
+            task.statement.body.handle,
+        );
+    }
     if task.workflow.body.phase.as_str() == "review" {
         if active_claimed_by_principal(board, task) {
             return format!(

@@ -239,12 +239,13 @@ fn taste_reporting_and_review_plans_survive_restart() {
 
     let causal: wire::Origin = CURATION_ORIGIN.parse().expect("curation origin");
     let current_board = board(&fixture);
-    assert_review_plan(&current_board, &added, ADD_TITLE, &causal);
+    assert_review_plan(&current_board, &added, ADD_TITLE, &causal, false);
     assert_review_plan(
         &current_board,
         &dropped.body,
         "Propose tracked taste retirement: alpha",
         &causal,
+        true,
     );
 
     resident.stop(&fixture);
@@ -254,12 +255,13 @@ fn taste_reporting_and_review_plans_survive_restart() {
         text
     );
     let restarted_board = board(&fixture);
-    assert_review_plan(&restarted_board, &added, ADD_TITLE, &causal);
+    assert_review_plan(&restarted_board, &added, ADD_TITLE, &causal, false);
     assert_review_plan(
         &restarted_board,
         &dropped.body,
         "Propose tracked taste retirement: alpha",
         &causal,
+        true,
     );
     restarted.stop(&fixture);
 
@@ -428,6 +430,7 @@ fn live_fires_count_each_stable_directive_once_and_keep_one_durable_vendor() {
         &dropped.body,
         "Propose tracked taste retirement: zeta",
         &causal,
+        true,
     );
     let retirement = task_add_requests(&fixture)
         .into_iter()
@@ -655,6 +658,7 @@ fn assert_review_plan(
     answer: &TaskAnswer,
     title: &str,
     origin: &wire::Origin,
+    taste_review: bool,
 ) {
     let task = board
         .tasks
@@ -665,6 +669,11 @@ fn assert_review_plan(
     assert_eq!(task.statement.body.project, "taste.policy");
     assert_eq!(&task.statement.body.provenance, origin);
     assert!(!task.visibility.is_hidden());
+    let expected_flow = if taste_review {
+        vec!["plan", "todo", "review"]
+    } else {
+        vec!["todo", "review"]
+    };
     assert_eq!(
         task.workflow
             .body
@@ -672,9 +681,20 @@ fn assert_review_plan(
             .iter()
             .map(wire::Phase::as_str)
             .collect::<Vec<_>>(),
-        ["todo", "review"]
+        expected_flow,
     );
-    assert_eq!(task.workflow.body.phase.as_str(), "todo");
+    assert_eq!(
+        task.workflow.body.phase.as_str(),
+        if taste_review { "plan" } else { "todo" },
+    );
+    assert_eq!(
+        task.statement
+            .body
+            .tags
+            .iter()
+            .any(|tag| tag == "taste-review:required"),
+        taste_review,
+    );
     assert_eq!(task.workflow.body.status, "pending");
 }
 

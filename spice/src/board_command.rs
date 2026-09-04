@@ -121,6 +121,8 @@ mod progress;
 use progress::*;
 mod read_guard;
 use read_guard::*;
+mod taste_review;
+use taste_review::*;
 
 pub(crate) fn parse_origin(
     matches: &ArgMatches,

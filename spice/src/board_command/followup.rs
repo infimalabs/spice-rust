@@ -147,6 +147,7 @@ pub(super) fn record_followups(
     reviewed: PendingFact,
     origin: &wire::Origin,
     creation: Option<&TaskCreationCapture>,
+    repository: Option<&Repository>,
     projects: &ProjectPolicy,
 ) -> Result<(), Outcome<CommandAnswer>> {
     let context = FollowupContext {
@@ -156,6 +157,7 @@ pub(super) fn record_followups(
         reviewed,
         origin,
         creation,
+        repository,
         projects,
     };
     for followup in &review.then {
@@ -174,7 +176,41 @@ struct FollowupContext<'a> {
     reviewed: PendingFact,
     origin: &'a wire::Origin,
     creation: Option<&'a TaskCreationCapture>,
+    repository: Option<&'a Repository>,
     projects: &'a ProjectPolicy,
+}
+
+type FollowupPolicy = (
+    Vec<wire::Phase>,
+    wire::Phase,
+    Vec<String>,
+    Option<TasteReview>,
+);
+
+fn prepare_followup_policy(
+    context: &FollowupContext<'_>,
+    add: &TaskAdd,
+) -> Result<FollowupPolicy, Outcome<CommandAnswer>> {
+    validate_acceptance(&add.acceptance)?;
+    let mut flow = task_flow(add.flow.as_deref(), &add.acceptance)?;
+    let taste_review = task_taste_review(
+        context.repository,
+        context.snapshot,
+        context.command.actor(),
+        &add.title,
+        add.description.as_deref(),
+        &add.acceptance,
+    )?;
+    let taste_review_required = taste_review.as_ref().is_some_and(TasteReview::required);
+    if taste_review_required {
+        prepend_plan(&mut flow);
+    }
+    let phase = flow[0].clone();
+    let mut tags = Vec::new();
+    if taste_review_required {
+        require_taste_review(&mut tags);
+    }
+    Ok((flow, phase, tags, taste_review))
 }
 
 /// Add one statement that must follow the reviewed task.
@@ -222,8 +258,7 @@ fn create_followup(
                 "reviewed task disappeared from the validated snapshot",
             )
         })?;
-    let flow = task_flow(followup.add.flow.as_deref(), &followup.add.acceptance)?;
-    let phase = flow[0].clone();
+    let (flow, phase, tags, taste_review) = prepare_followup_policy(context, &followup.add)?;
     let statement = TaskHead {
         born: followup.task.clone(),
         queue_origin: Seq::new(1).expect("placeholder queue origin is non-zero"),
@@ -231,7 +266,7 @@ fn create_followup(
         description: followup.add.description.clone(),
         acceptance: followup.add.acceptance.clone(),
         project: project.as_str().to_owned(),
-        tags: Vec::new(),
+        tags: tags.clone(),
         dependencies: vec![reviewed_entry.born().clone()],
         provenance: context.origin.clone(),
         creation: creation.context(),
@@ -267,7 +302,7 @@ fn create_followup(
                 description: statement.description.clone(),
                 acceptance: statement.acceptance.clone(),
                 project: statement.project.clone(),
-                tags: Vec::new(),
+                tags,
                 depends: statement.dependencies.clone(),
                 flow,
                 phase,
@@ -277,6 +312,9 @@ fn create_followup(
             FactCause::Pending(context.reviewed),
         )
         .map_err(|error| store_fault("review::followup-build", &error.to_string()))?;
+    if let Some(review) = taste_review.as_ref().filter(|review| review.required()) {
+        append_taste_review_audit(write, &followup.task, review, FactCause::Pending(added))?;
+    }
     write.task_head(added, move |position| TaskHead {
         queue_origin: position,
         revision: position,

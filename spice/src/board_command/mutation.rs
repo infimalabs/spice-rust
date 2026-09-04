@@ -40,6 +40,7 @@ pub(super) fn task_add(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     add: &TaskAdd,
+    repository: Option<&Repository>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
@@ -65,6 +66,7 @@ pub(super) fn task_add(
         add,
         project,
         add.clone(),
+        repository,
         projects,
         allocation,
     )
@@ -101,17 +103,23 @@ pub(super) fn task_oops_add(
         &normalized,
         project,
         add.clone(),
+        None,
         projects,
         allocation,
     )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "task creation keeps request identity, repository policy, and board authority explicit"
+)]
 fn create_task<B: serde::Serialize>(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     add: &TaskAdd,
     project: Project,
     request_body: B,
+    repository: Option<&Repository>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
@@ -132,10 +140,35 @@ fn create_task<B: serde::Serialize>(
         Ok(creation) => creation,
         Err(outcome) => return outcome,
     };
-    let prepared = match prepare_task(command, add, &project, projects, origin, creation) {
+    if let Err(outcome) = validate_acceptance(&add.acceptance) {
+        return outcome;
+    }
+    let mut prepared = match prepare_task(command, add, &project, projects, origin, creation) {
         Ok(prepared) => prepared,
         Err(outcome) => return outcome,
     };
+    let taste_review = match task_taste_review(
+        repository,
+        &snapshot,
+        command.actor(),
+        &prepared.statement.title,
+        prepared.statement.description.as_deref(),
+        &prepared.statement.acceptance,
+    ) {
+        Ok(review) => review,
+        Err(outcome) => return outcome,
+    };
+    let taste_review_required = taste_review.as_ref().is_some_and(TasteReview::required);
+    if taste_review_required {
+        prepend_plan(&mut prepared.flow);
+        prepared.phase = prepared.flow[0].clone();
+        prepared.workflow.flow.clone_from(&prepared.flow);
+        prepared.workflow.phase.clone_from(&prepared.phase);
+    }
+    let mut tags = Vec::new();
+    if taste_review_required {
+        require_taste_review(&mut tags);
+    }
     commit_prepared_task(
         bus,
         command,
@@ -145,7 +178,8 @@ fn create_task<B: serde::Serialize>(
         projects,
         &snapshot,
         prepared,
-        Vec::new(),
+        tags,
+        taste_review.as_ref().filter(|review| review.required()),
         |_| {},
     )
 }
@@ -161,6 +195,7 @@ fn commit_prepared_task<B, F>(
     snapshot: &ValidatedSnapshot,
     mut prepared: PreparedTask,
     tags: Vec<String>,
+    taste_review: Option<&TasteReview>,
     extra_guard: F,
 ) -> Outcome<CommandAnswer>
 where
@@ -205,6 +240,16 @@ where
         Ok(fact) => fact,
         Err(error) => return store_fault("task::add-build", &error.to_string()),
     };
+    if let Some(review) = taste_review
+        && let Err(outcome) = append_taste_review_audit(
+            &mut write,
+            &prepared.born,
+            review,
+            FactCause::Pending(added),
+        )
+    {
+        return outcome;
+    }
     let statement = prepared.statement;
     write.task_head(added, move |position| TaskHead {
         queue_origin: position,
@@ -1002,6 +1047,7 @@ pub(super) fn task_edit(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     edit: &TaskEdit,
+    repository: Option<&Repository>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
@@ -1030,10 +1076,48 @@ pub(super) fn task_edit(
             "correct a statement only while the task is pending",
         );
     }
-    let statement = match corrected_statement(entry, edit, projects) {
+    if let Err(outcome) = validate_acceptance(&edit.acceptance) {
+        return outcome;
+    }
+    let mut statement = match corrected_statement(entry, edit, projects) {
         Ok(statement) => statement,
         Err(outcome) => return outcome,
     };
+    let taste_review = match task_taste_review(
+        repository,
+        &snapshot,
+        command.actor(),
+        &statement.title,
+        statement.description.as_deref(),
+        &statement.acceptance,
+    ) {
+        Ok(review) => review,
+        Err(outcome) => return outcome,
+    };
+    let was_required = has_taste_review(&statement.tags);
+    if let Some(taste_review) = taste_review.as_ref() {
+        match (was_required, taste_review.required()) {
+            (_, false) => clear_taste_review(&mut statement.tags),
+            (true, true) => require_taste_review(&mut statement.tags),
+            (false, true) if entry.workflow().phase.as_str() == "plan" => {
+                require_taste_review(&mut statement.tags);
+            }
+            (false, true) => {
+                return refusal(
+                    "task::taste-review-required",
+                    Some(edit.task.to_string()),
+                    "revise the proposed task statement so it passes taste review before applying it",
+                );
+            }
+        }
+    } else {
+        if was_required {
+            return environment_fault(
+                "task::taste-policy-unavailable",
+                "an existing taste review cannot clear without repository policy authority",
+            );
+        }
+    }
     let post = match Entry::new(
         statement.clone(),
         entry.workflow().clone(),
@@ -1057,7 +1141,17 @@ pub(super) fn task_edit(
     let revision = u32::try_from(entry.statement().revision.get())
         .unwrap_or(u32::MAX)
         .saturating_add(1);
-    publish_correction(bus, command, edit, statement, revision, next)
+    publish_correction(
+        bus,
+        command,
+        edit,
+        statement,
+        revision,
+        next,
+        taste_review
+            .as_ref()
+            .filter(|review| was_required || review.required()),
+    )
 }
 
 /// Build the statement a correction publishes, or the refusal it earns.
@@ -1212,6 +1306,7 @@ fn publish_correction(
     statement: TaskHead,
     revision: u32,
     next: Option<Box<str>>,
+    taste_review: Option<&TasteReview>,
 ) -> Outcome<CommandAnswer> {
     let at = match current_instant() {
         Ok(at) => at,
@@ -1233,6 +1328,16 @@ fn publish_correction(
         Ok(fact) => fact,
         Err(error) => return store_fault("task::edit-build", &error.to_string()),
     };
+    if let Some(review) = taste_review
+        && let Err(outcome) = append_taste_review_audit(
+            &mut write,
+            &statement.born,
+            review,
+            FactCause::Pending(edited),
+        )
+    {
+        return outcome;
+    }
     let rendered = TaskHandle::for_project(&statement.project, &statement.born);
     write.task_head(edited, move |position| TaskHead {
         revision: position,

@@ -960,7 +960,9 @@ pub(crate) fn dispatch_with_repository(
         wire::intent::Intent::DocLedger(ledger) => {
             read_ledger(bus, ledger, command.actor().clone(), projects, allocation)
         }
-        wire::intent::Intent::TaskAdd(add) => task_add(bus, command, add, projects, allocation),
+        wire::intent::Intent::TaskAdd(add) => {
+            task_add(bus, command, add, repository, projects, allocation)
+        }
         wire::intent::Intent::TaskOopsAdd(add) => {
             task_oops_add(bus, command, add, projects, allocation)
         }
@@ -971,7 +973,9 @@ pub(crate) fn dispatch_with_repository(
             gate_findings(bus, command, findings, repository, projects, allocation)
         }
         wire::intent::Intent::TaskNote(note) => task_note(bus, command, note, projects, allocation),
-        wire::intent::Intent::TaskEdit(edit) => task_edit(bus, command, edit, projects, allocation),
+        wire::intent::Intent::TaskEdit(edit) => {
+            task_edit(bus, command, edit, repository, projects, allocation)
+        }
         wire::intent::Intent::TaskDelete(delete) => {
             task_delete(bus, command, delete, projects, allocation)
         }
@@ -998,7 +1002,7 @@ pub(crate) fn dispatch_with_repository(
             task_review(bus, command, review, repository, projects, allocation)
         }
         wire::intent::Intent::DocApply(apply) => {
-            doc_apply(bus, command, apply, projects, allocation)
+            doc_apply(bus, command, apply, repository, projects, allocation)
         }
         _ => return None,
     };

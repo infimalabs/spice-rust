@@ -116,6 +116,7 @@ pub(in crate::board_command) fn taste_proposal_add(
         &snapshot,
         prepared,
         tags,
+        None,
         move |write| guard_proposal_observation(write, observation),
     )
 }
