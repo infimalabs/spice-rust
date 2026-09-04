@@ -85,6 +85,7 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("board.next.band", TRACKED),
     ConfigKeyDeclaration::new("lane.life", TRACKED_FLAG),
     ConfigKeyDeclaration::new("lane.lease", TRACKED),
+    ConfigKeyDeclaration::new("lane.runtime", TRACKED),
     ConfigKeyDeclaration::new("lane.vendor", TRACKED_FLAG),
     ConfigKeyDeclaration::new("lane.deaths", TRACKED),
     ConfigKeyDeclaration::new("lane.young", TRACKED),

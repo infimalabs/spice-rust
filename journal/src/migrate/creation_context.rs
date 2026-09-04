@@ -9,9 +9,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use rusqlite::{Connection, params};
 use serde_json::{Map, Value};
 use wire::body::{
-    JournalIngested, LaneDrained, LaneExited, LaneKilled, LaneRemoved, LaneRenewed,
-    LaneSessionDeclared, LaneStarted, TaskAdded, TaskCreationContext, TaskCreationUnavailable,
-    TranscriptPosition,
+    JournalIngested, LaneCancelled, LaneDrained, LaneExited, LaneKilled, LaneRemoved, LaneRenewed,
+    LaneSessionDeclared, LaneSignalled, LaneStarted, LaneTimedOut, TaskAdded, TaskCreationContext,
+    TaskCreationUnavailable, TranscriptPosition,
 };
 use wire::{Actor, AnyFact, CanonicalUuid, Envelope, FactKind, TaskStamp, TranscriptSourceHead};
 
@@ -98,27 +98,12 @@ fn migrate_facts(
                     .expect("registered lane-renewed fact decodes");
                 history.start(renewed.lane, renewed.occupant);
             }
-            FactKind::LaneExited => {
-                let exited = envelope
-                    .fact
-                    .read::<LaneExited>()
-                    .expect("registered lane-exited fact decodes");
-                history.stop(exited.lane, exited.occupant);
-            }
-            FactKind::LaneDrained => {
-                let drained = envelope
-                    .fact
-                    .read::<LaneDrained>()
-                    .expect("registered lane-drained fact decodes");
-                history.stop(drained.lane, drained.occupant);
-            }
-            FactKind::LaneKilled => {
-                let killed = envelope
-                    .fact
-                    .read::<LaneKilled>()
-                    .expect("registered lane-killed fact decodes");
-                history.stop(killed.lane, killed.occupant);
-            }
+            FactKind::LaneExited
+            | FactKind::LaneTimedOut
+            | FactKind::LaneCancelled
+            | FactKind::LaneSignalled
+            | FactKind::LaneDrained
+            | FactKind::LaneKilled => history.stop_fact(&envelope.fact),
             FactKind::LaneRemoved => {
                 let removed = envelope
                     .fact
@@ -141,6 +126,49 @@ fn migrate_facts(
 }
 
 impl History {
+    fn stop_fact(&mut self, fact: &AnyFact) {
+        let (lane, occupant) = match fact.kind() {
+            FactKind::LaneExited => {
+                let body = fact
+                    .read::<LaneExited>()
+                    .expect("registered lane-exited fact decodes");
+                (body.lane, body.occupant)
+            }
+            FactKind::LaneTimedOut => {
+                let body = fact
+                    .read::<LaneTimedOut>()
+                    .expect("registered lane-timedout fact decodes");
+                (body.lane, body.occupant)
+            }
+            FactKind::LaneCancelled => {
+                let body = fact
+                    .read::<LaneCancelled>()
+                    .expect("registered lane-cancelled fact decodes");
+                (body.lane, body.occupant)
+            }
+            FactKind::LaneSignalled => {
+                let body = fact
+                    .read::<LaneSignalled>()
+                    .expect("registered lane-signalled fact decodes");
+                (body.lane, body.occupant)
+            }
+            FactKind::LaneDrained => {
+                let body = fact
+                    .read::<LaneDrained>()
+                    .expect("registered lane-drained fact decodes");
+                (body.lane, body.occupant)
+            }
+            FactKind::LaneKilled => {
+                let body = fact
+                    .read::<LaneKilled>()
+                    .expect("registered lane-killed fact decodes");
+                (body.lane, body.occupant)
+            }
+            _ => unreachable!("stop_fact is called only for lane terminal facts"),
+        };
+        self.stop(lane, occupant);
+    }
+
     fn start(&mut self, lane: CanonicalUuid, occupant: CanonicalUuid) {
         self.occupants.insert(lane, occupant);
         if self

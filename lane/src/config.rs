@@ -12,6 +12,7 @@ use crate::life::Life;
 pub struct Config {
     life: Life,
     lease: DurationWord,
+    runtime: DurationWord,
     vendor: Name,
     #[serde(deserialize_with = "nonzero_deaths")]
     deaths: u32,
@@ -30,6 +31,12 @@ impl Config {
     #[must_use]
     pub const fn lease(&self) -> &DurationWord {
         &self.lease
+    }
+
+    /// Maximum lifetime of one supervised occupant process.
+    #[must_use]
+    pub const fn runtime(&self) -> &DurationWord {
+        &self.runtime
     }
 
     /// Vendor launched for a new occupant.
@@ -62,6 +69,7 @@ impl Default for Config {
         Self {
             life: Life::Drive,
             lease: "15m".parse().expect("the compiled lane lease is valid"),
+            runtime: "24h".parse().expect("the compiled lane runtime is valid"),
             vendor: "codex"
                 .parse()
                 .expect("the compiled lane vendor is a valid name"),

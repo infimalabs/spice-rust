@@ -367,6 +367,40 @@ fn a_backlog_projects_transcript_receipts_out_of_the_visible_fact_page() {
     );
 }
 
+#[test]
+fn a_typed_lane_ending_projects_one_durable_lifecycle_boundary() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let timeout = envelope(
+        41,
+        "spice",
+        &format!("lane:{LANE}"),
+        &serde_json::json!({
+            "kind": "lane::timedout",
+            "lane": LANE,
+            "occupant": REQUEST,
+            "code": -1,
+        }),
+    );
+    let frame = admitted_stream(&session, &fact_frame(timeout));
+
+    assert!(runtime.apply_stream_frame(&frame).changed());
+    assert_eq!(runtime.lifecycle_boundaries().len(), 1);
+    let boundary = &runtime.lifecycle_boundaries()[0];
+    assert_eq!(boundary.seq(), seq(41));
+    assert_eq!(boundary.lane(), uuid(LANE));
+    assert_eq!(boundary.occupant(), Some(uuid(REQUEST)));
+    assert_eq!(boundary.cause(), "runtime timed out; code -1");
+
+    let _duplicate = runtime.apply_stream_frame(&frame);
+    assert_eq!(
+        runtime.lifecycle_boundaries().len(),
+        1,
+        "replayed durable facts do not duplicate lifecycle separators"
+    );
+}
+
 /// The tile ladder is the predecessor's, and every rung has its own cause.
 ///
 /// The five rungs are read from three independent inputs — queued direction,

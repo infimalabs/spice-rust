@@ -504,6 +504,39 @@ pub struct LaneExited {
     pub code: i32,
 }
 
+/// The occupant outlived its independently configured process runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaneTimedOut {
+    /// Vacated lane.
+    pub lane: CanonicalUuid,
+    /// Occupant whose runtime elapsed.
+    pub occupant: CanonicalUuid,
+    /// Status observed after bounded termination and reaping.
+    pub code: i32,
+}
+
+/// Supervision cancellation ended the occupant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaneCancelled {
+    /// Vacated lane.
+    pub lane: CanonicalUuid,
+    /// Occupant whose supervision was cancelled.
+    pub occupant: CanonicalUuid,
+    /// Status observed after bounded termination and reaping.
+    pub code: i32,
+}
+
+/// A signal outside resident-directed termination ended the occupant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaneSignalled {
+    /// Vacated lane.
+    pub lane: CanonicalUuid,
+    /// Occupant ended by the signal.
+    pub occupant: CanonicalUuid,
+    /// Platform signal number observed in the terminal status.
+    pub signal: i32,
+}
+
 /// The occupant crossed a context compaction boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaneCompacted {

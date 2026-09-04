@@ -94,12 +94,15 @@ pub(super) fn stop_lane(seats: &mut Seats, lane: CanonicalUuid) {
 
 /// How an occupant's residency ended, as the resident itself observed it.
 ///
-/// The three arms are three different endings, not three values of one.
+/// Each arm names a distinct ending rather than one flattened exit status.
 /// [`Self::Killed`] carries no code because a signal this resident sent left the
 /// occupant no status of its own to report.
 pub(super) enum StopEvidence {
     Drained,
     Exited(i32),
+    TimedOut(i32),
+    Cancelled(i32),
+    Signalled(i32),
     /// A signal this resident sent ended it, at either signalling stage.
     ///
     /// Not only the kill: an occupant that never trapped the termination signal
@@ -112,7 +115,12 @@ pub(super) enum StopEvidence {
 impl StopEvidence {
     pub(super) const fn disposition(&self) -> &'static str {
         match self {
-            Self::Drained | Self::Exited(_) | Self::Killed => VACANT,
+            Self::Drained
+            | Self::Exited(_)
+            | Self::TimedOut(_)
+            | Self::Cancelled(_)
+            | Self::Signalled(_)
+            | Self::Killed => VACANT,
             Self::Degraded(_) => DEGRADED,
         }
     }
@@ -164,6 +172,11 @@ fn stop_evidence(outcome: &WaitOutcome) -> StopEvidence {
         return StopEvidence::Degraded(format!("capture failed: {failure}"));
     }
     let status = outcome.completion().status();
+    match outcome.completion() {
+        sill::Completion::TimedOut(_) => return StopEvidence::TimedOut(exit_code(outcome)),
+        sill::Completion::Cancelled(_) => return StopEvidence::Cancelled(exit_code(outcome)),
+        sill::Completion::Exited(_) => {}
+    }
     if status.success() {
         return StopEvidence::Drained;
     }
@@ -174,10 +187,17 @@ fn stop_evidence(outcome: &WaitOutcome) -> StopEvidence {
 }
 
 pub(super) fn exit_evidence(outcome: &WaitOutcome) -> StopEvidence {
-    outcome.observation_failure().map_or_else(
-        || StopEvidence::Exited(exit_code(outcome)),
-        |failure| StopEvidence::Degraded(format!("capture failed: {failure}")),
-    )
+    if let Some(failure) = outcome.observation_failure() {
+        return StopEvidence::Degraded(format!("capture failed: {failure}"));
+    }
+    match outcome.completion() {
+        sill::Completion::Exited(status) => match status.code() {
+            Some(code) => StopEvidence::Exited(code),
+            None => StopEvidence::Signalled(signal_number(outcome)),
+        },
+        sill::Completion::TimedOut(_) => StopEvidence::TimedOut(exit_code(outcome)),
+        sill::Completion::Cancelled(_) => StopEvidence::Cancelled(exit_code(outcome)),
+    }
 }
 
 pub(super) fn ending_fact(
@@ -194,6 +214,30 @@ pub(super) fn ending_fact(
                 lane,
                 occupant,
                 code: *code,
+            },
+            cause,
+        ),
+        StopEvidence::TimedOut(code) => write.fact(
+            wire::body::LaneTimedOut {
+                lane,
+                occupant,
+                code: *code,
+            },
+            cause,
+        ),
+        StopEvidence::Cancelled(code) => write.fact(
+            wire::body::LaneCancelled {
+                lane,
+                occupant,
+                code: *code,
+            },
+            cause,
+        ),
+        StopEvidence::Signalled(signal) => write.fact(
+            wire::body::LaneSignalled {
+                lane,
+                occupant,
+                signal: *signal,
             },
             cause,
         ),
@@ -219,4 +263,50 @@ pub(super) fn ending_fact(
 /// status an occupant chose.
 fn exit_code(outcome: &WaitOutcome) -> i32 {
     outcome.completion().status().code().unwrap_or(-1)
+}
+
+#[cfg(unix)]
+fn signal_number(outcome: &WaitOutcome) -> i32 {
+    use std::os::unix::process::ExitStatusExt as _;
+
+    outcome.completion().status().signal().unwrap_or(-1)
+}
+
+#[cfg(not(unix))]
+fn signal_number(_outcome: &WaitOutcome) -> i32 {
+    -1
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::os::unix::process::ExitStatusExt as _;
+    use std::process::ExitStatus;
+
+    use super::*;
+
+    #[test]
+    fn detached_terminal_causes_remain_distinct_from_natural_exit() {
+        let timed_out = WaitOutcome::externally_reaped_completion(sill::Completion::TimedOut(
+            ExitStatus::from_raw(0),
+        ));
+        let cancelled = WaitOutcome::externally_reaped_completion(sill::Completion::Cancelled(
+            ExitStatus::from_raw(7 << 8),
+        ));
+        let signalled = WaitOutcome::externally_reaped_completion(sill::Completion::Exited(
+            ExitStatus::from_raw(libc::SIGTERM),
+        ));
+
+        assert!(matches!(
+            exit_evidence(&timed_out),
+            StopEvidence::TimedOut(0)
+        ));
+        assert!(matches!(
+            exit_evidence(&cancelled),
+            StopEvidence::Cancelled(7)
+        ));
+        assert!(matches!(
+            exit_evidence(&signalled),
+            StopEvidence::Signalled(libc::SIGTERM)
+        ));
+    }
 }

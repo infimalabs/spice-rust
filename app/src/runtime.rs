@@ -394,6 +394,43 @@ pub struct LaneActivity {
     source: ActivitySource,
 }
 
+/// One durable lane ending rendered between transcript epochs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LaneLifecycleBoundary {
+    seq: Seq,
+    lane: CanonicalUuid,
+    occupant: Option<CanonicalUuid>,
+    observed: wire::Instant,
+    cause: String,
+}
+
+impl LaneLifecycleBoundary {
+    #[must_use]
+    pub const fn seq(&self) -> Seq {
+        self.seq
+    }
+
+    #[must_use]
+    pub const fn lane(&self) -> CanonicalUuid {
+        self.lane
+    }
+
+    #[must_use]
+    pub const fn occupant(&self) -> Option<CanonicalUuid> {
+        self.occupant
+    }
+
+    #[must_use]
+    pub const fn observed(&self) -> &wire::Instant {
+        &self.observed
+    }
+
+    #[must_use]
+    pub fn cause(&self) -> &str {
+        &self.cause
+    }
+}
+
 impl LaneActivity {
     fn from_message(message: &AgentMessage) -> Self {
         let (class, title) = match message.activity {
@@ -501,6 +538,7 @@ pub struct CanvasRuntime {
     terminal: Option<StreamTerminal>,
     events: Vec<RuntimeEvent>,
     activities: Vec<LaneActivity>,
+    lifecycle_boundaries: Vec<LaneLifecycleBoundary>,
 }
 
 impl CanvasRuntime {
@@ -533,6 +571,7 @@ impl CanvasRuntime {
             terminal: None,
             events: Vec::new(),
             activities: Vec::new(),
+            lifecycle_boundaries: Vec::new(),
         }
     }
 
@@ -693,6 +732,12 @@ impl CanvasRuntime {
     #[must_use]
     pub fn activities(&self) -> &[LaneActivity] {
         &self.activities
+    }
+
+    /// Durable lane endings in journal chronology.
+    #[must_use]
+    pub fn lifecycle_boundaries(&self) -> &[LaneLifecycleBoundary] {
+        &self.lifecycle_boundaries
     }
 
     #[must_use]

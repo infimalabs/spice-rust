@@ -623,14 +623,14 @@ mod shell_path_tests {
     }
 }
 
-/// Bind the lease, wait policy, and capture bounds this lane launches under.
+/// Bind occupant lifetime, wait policy, and capture bounds for this launch.
 fn launch_process(
     repository: &Repository,
     resolved: &spice::config::Resolved,
     environment: Environment,
     lane: CanonicalUuid,
 ) -> CommandResult<vendor::Process> {
-    let deadlines = Deadlines::new(resolved.root().lane().lease().get(), OUTPUT_DRAIN, REAP)
+    let deadlines = Deadlines::new(resolved.root().lane().runtime().get(), OUTPUT_DRAIN, REAP)
         .map_err(|error| store_fault("lane::deadlines-invalid", &error.to_string()))?;
     let wait = WaitPolicy::new(
         format!("lane {lane}"),

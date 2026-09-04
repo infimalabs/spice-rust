@@ -1,10 +1,38 @@
 use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use super::test_support::{AdvisoryRtkFixture, assert_advisory_health};
 use super::*;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+
+#[test]
+fn occupant_deadline_uses_runtime_instead_of_the_claim_lease() {
+    let fixture = AdvisoryRtkFixture::new();
+    let vendor = fixture.root.join("fake-claude");
+    fs::write(
+        fixture.root.join("spice-rust.toml"),
+        format!(
+            concat!(
+                "[lane]\nlease = \"1s\"\nruntime = \"5s\"\n\n",
+                "[vendor.claude]\nbinary = {:?}\n\n",
+                "[rtk]\nexecutable = {:?}\n",
+            ),
+            vendor.display().to_string(),
+            fixture.root.join("advisory-rtk").display().to_string(),
+        ),
+    )
+    .expect("independent lease and runtime policy writes");
+
+    let launch = occupant_launch(
+        &fixture.paths,
+        fixture.request(vendor::Resume::Fresh),
+        fixture.reporter(),
+    )
+    .expect("occupant launch composes");
+    assert_eq!(launch.spec.deadlines.runtime(), Duration::from_secs(5));
+}
 
 #[test]
 fn present_configured_rtk_remains_hooked_after_version_observation_failure() {

@@ -35,6 +35,7 @@ band = 3
 [lane]
 life = "Steer"
 lease = "90s"
+runtime = "6h"
 vendor = "codex"
 deaths = 4
 young = "45s"
@@ -108,6 +109,7 @@ fn every_policy_shape_round_trips_without_losing_order_or_templates() {
     assert_eq!(decoded.board().next().band(), 3);
     assert_eq!(decoded.lane().life(), Life::Steer);
     assert_eq!(decoded.lane().lease().to_string(), "90s");
+    assert_eq!(decoded.lane().runtime().to_string(), "6h");
     assert_eq!(decoded.lane().vendor().as_str(), "codex");
     assert_eq!(decoded.lane().deaths(), 4);
     assert_eq!(decoded.lane().young().to_string(), "45s");
@@ -155,6 +157,7 @@ fn an_empty_tree_is_the_complete_compiled_policy() {
     assert_eq!(root.board().next().band(), 2);
     assert_eq!(root.lane().life(), Life::Drive);
     assert_eq!(root.lane().lease().to_string(), "15m");
+    assert_eq!(root.lane().runtime().to_string(), "24h");
     assert_eq!(root.lane().vendor().as_str(), "codex");
     assert_eq!(root.lane().deaths(), 3);
     assert_eq!(root.lane().young().to_string(), "30s");
@@ -225,6 +228,7 @@ fn malformed_policy_values_are_refused_under_their_domain_paths() {
             "consent.rule[0]",
         ),
         ("[lane]\nlease = \"15minutes\"\n", "lane.lease"),
+        ("[lane]\nruntime = \"eventually\"\n", "lane.runtime"),
         ("[lane]\nvendor = \"Claude\"\n", "lane.vendor"),
         ("[steer]\nresend = [\"15s\", \"60s\"]\n", "steer"),
         ("[steer]\nresend = [\"15s\", \"15s\", \"300s\"]\n", "steer"),

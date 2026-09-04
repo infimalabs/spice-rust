@@ -606,6 +606,69 @@ mod tests {
         bus.shutdown().expect("fixture bus stops");
     }
 
+    #[test]
+    fn automatic_wake_never_overlaps_an_authoritatively_occupied_lane() {
+        let fixture = AdvisoryRtkFixture::new();
+        let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
+            .expect("fixture bus starts");
+        seed_vacant_lane(&bus, &fixture, "drive");
+        let observed = current_residency(&bus, fixture.epoch).expect("vacant residency reads");
+        let mut occupied = observed.body().clone();
+        let row = occupied.lanes.first_mut().expect("fixture lane exists");
+        row.occupant = Some(fixture.occupant);
+        row.lineage.push(fixture.occupant);
+        row.disposition = OCCUPIED.to_owned();
+        let mut write = write(Actor::Spice, fixture.epoch, Producer::ResidentRecognition)
+            .expect("occupancy write starts");
+        guard_residency(&mut write, &observed);
+        let started = write
+            .fact(
+                wire::body::LaneStarted {
+                    lane: fixture.lane,
+                    occupant: fixture.occupant,
+                    epoch: fixture.epoch,
+                    group: 42,
+                },
+                FactCause::Existing(observed.position()),
+            )
+            .expect("fixture start fact is valid");
+        write.residency_head(started, move |_| occupied);
+        commit(&bus, write).expect("occupied residency commits");
+        let capabilities = canvas::axum::Capabilities::default();
+        let discovery = canvas::Discovery {
+            endpoint: "http://127.0.0.1:1".to_owned(),
+            capability: fixture.capability,
+            epoch: fixture.epoch,
+        };
+        let runtime = Runtime::new(&capabilities, &discovery, fixture.reporter());
+
+        let outcome = wake_automatic(
+            &bus,
+            &fixture.paths,
+            fixture.epoch,
+            &mut Seats::new(),
+            &runtime,
+            fixture.lane,
+            fixture.occupant,
+            None,
+            None,
+        );
+
+        match outcome {
+            Err(Outcome::Refusal(refusal)) => {
+                assert_eq!(refusal.reason(), "lifecycle::wake-capacity-moved");
+            }
+            Err(Outcome::Fault(fault)) => panic!("occupied wake faulted: {fault:?}"),
+            Err(Outcome::Reply(_)) | Ok(_) => panic!("occupied lane launched a successor"),
+        }
+        assert!(
+            !fixture.root.join("rtk-probes").exists(),
+            "successor launch reached the vendor preparation path"
+        );
+        bus.verify().expect("occupied wake refusal verifies");
+        bus.shutdown().expect("fixture bus stops");
+    }
+
     fn admitted_operator_wake(
         fixture: &AdvisoryRtkFixture,
         request: &LaneState,

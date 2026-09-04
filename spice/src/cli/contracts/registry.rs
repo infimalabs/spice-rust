@@ -710,7 +710,15 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "lane drain ID",
         Operator,
         Command,
-        [LaneExited, LaneDrained],
+        [
+            LaneExited,
+            LaneTimedOut,
+            LaneCancelled,
+            LaneSignalled,
+            LaneDrained,
+            LaneKilled,
+            LaneDegraded
+        ],
         [Resident, OperatorCapability],
         Reply,
         "lane::drain"

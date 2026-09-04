@@ -52,6 +52,7 @@ fn history_targets(
                     })
                 }
                 ActivityCard::Agent { .. } => None,
+                ActivityCard::Lifecycle { .. } => None,
             })
         })
         .collect()
