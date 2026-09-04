@@ -707,7 +707,8 @@ body:has(.shell--mosaic),
   min-width: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior-block: contain;
+  overscroll-behavior-inline: auto;
   scroll-behavior: smooth;
 }
 .composer-shard {
