@@ -651,6 +651,7 @@ export async function assertAgentConversation(
   for (const [position, member] of seated.entries()) {
     const expected = messageFooterLabel(member);
     const attribution = canonicalAgentAttribution(member);
+    const accent = (seated.length - position - 1) % 6;
     assert.ok(
       messageChrome.some((card) => card.lane === member.lane && card.producer === expected),
       `lane ${member.lane} renders its configured name or worktree basename`,
@@ -665,9 +666,9 @@ export async function assertAgentConversation(
     assert.ok(
       messageChrome.filter((card) => card.lane === member.lane)
         .every((card) => (
-          card.accent === String(position) && card.accentSlot === String(position)
+          card.accent === String(accent) && card.accentSlot === String(accent)
         )),
-      `lane ${member.lane} message cards use canonical accent slot ${position}`,
+      `lane ${member.lane} message cards use right-edge accent slot ${accent}`,
     );
   }
   const separated = [seated[0].lane, seated[3].lane].map(
@@ -972,10 +973,13 @@ export async function assertFourAgentDensity(console) {
 async function assertRosterPips(page, console, seated, artifacts) {
   const teamPips = console.locator(".team-light");
   await teamPips.nth(seated.length - 1).waitFor();
-  const teamRoster = await teamPips.evaluateAll((pips) => pips.map((pip) => ({
+  const teamPipGrid = await teamPips.evaluateAll((pips) => pips.map((pip) => ({
     lane: pip.dataset.laneLightTargetId,
     status: pip.dataset.laneStatus,
-  })).sort((left, right) => left.lane.localeCompare(right.lane)));
+    column: pip.dataset.pipColumn,
+    row: pip.dataset.pipRow,
+  })));
+  const teamRoster = [...teamPipGrid].sort((left, right) => left.lane.localeCompare(right.lane));
   assert.deepEqual(
     teamRoster.map((entry) => entry.lane),
     seated.map((member) => member.lane).sort(),
@@ -984,6 +988,15 @@ async function assertRosterPips(page, console, seated, artifacts) {
   assert.ok(
     teamRoster.every((entry) => ["running", "running-stale"].includes(entry.status)),
     "every supervised member has a lit liveness pip",
+  );
+  const teamPipsByLane = new Map(teamPipGrid.map((pip) => [pip.lane, pip]));
+  assert.deepEqual(
+    seated.map((member) => {
+      const pip = teamPipsByLane.get(member.lane);
+      return [pip.column, pip.row];
+    }),
+    [["1", "1"], ["1", "2"], ["2", "1"], ["2", "2"]],
+    "team pip identities follow composers from the right edge without moving the stack",
   );
   await assertLaneHeaderPipMatrix(page, console, artifacts, "chromium", "light");
 
@@ -996,7 +1009,7 @@ async function assertRosterPips(page, console, seated, artifacts) {
   })).sort((left, right) => left.lane.localeCompare(right.lane)));
   assert.deepEqual(
     chromeRoster,
-    teamRoster,
+    teamRoster.map(({ lane, status }) => ({ lane, status })),
     "the compact chrome roster preserves the live team identities and liveness states",
   );
   const chromePipGrid = await brandPips.evaluateAll((pips) => pips.map((pip) => {
@@ -1013,12 +1026,12 @@ async function assertRosterPips(page, console, seated, artifacts) {
   const orderedPips = seated.map((member) => chromePipsByLane.get(member.lane));
   assert.deepEqual(
     orderedPips.map(({ column, row }) => [column, row]),
-    [["2", "2"], ["1", "2"], ["2", "1"], ["1", "1"]],
-    "pip coordinates proceed across the lower row before the upper row, right to left",
+    [["1", "1"], ["2", "1"], ["1", "2"], ["2", "2"]],
+    "compact pip identities follow the same right-edge member order",
   );
   assert.equal(orderedPips[0].left, orderedPips[2].left);
-  assert.ok(orderedPips[0].top > orderedPips[2].top);
-  assert.ok(orderedPips[1].left < orderedPips[0].left);
+  assert.ok(orderedPips[0].top < orderedPips[2].top);
+  assert.ok(orderedPips[1].left > orderedPips[0].left);
   assert.equal(orderedPips[1].top, orderedPips[0].top);
   assert.equal(orderedPips[1].left, orderedPips[3].left);
   assert.equal(orderedPips[3].top, orderedPips[2].top);

@@ -237,7 +237,7 @@ fn activity_cards(runtime: &CanvasRuntime, lineage: &crate::runtime::LaneRow) ->
                 .enumerate()
                 .find(|(_, member)| member.lane == message.lane)?;
             Some(ActivityCard::Agent {
-                accent: watchband::accent(position),
+                accent: watchband::accent(lineage.members.len(), position),
                 member: member.clone(),
                 quote_lane: crate::composer_drafts::quote_lane(&lineage.members, message),
                 message: Rc::clone(message),
