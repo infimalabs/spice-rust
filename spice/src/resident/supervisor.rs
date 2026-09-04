@@ -94,11 +94,29 @@ struct State {
     runtime_millis: Option<u64>,
     grace_millis: Option<u64>,
     reap_millis: Option<u64>,
-    completion: Option<PersistedCompletion>,
+    completion: CompletionField,
     failure: Option<String>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
+#[serde(transparent)]
+struct CompletionField(Option<PersistedCompletion>);
+
+impl CompletionField {
+    const fn none() -> Self {
+        Self(None)
+    }
+
+    const fn some(completion: PersistedCompletion) -> Self {
+        Self(Some(completion))
+    }
+
+    const fn as_ref(&self) -> Option<&PersistedCompletion> {
+        self.0.as_ref()
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum PersistedCompletion {
     Exited { status_raw: i32 },
@@ -126,13 +144,31 @@ impl PersistedCompletion {
     }
 }
 
-#[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum Phase {
     Starting,
     Running,
     Exited,
     Failed,
+}
+
+impl State {
+    fn validate(self) -> io::Result<Self> {
+        match (self.phase, self.completion.as_ref()) {
+            (Phase::Exited, Some(_)) | (Phase::Starting | Phase::Running | Phase::Failed, None) => {
+                Ok(self)
+            }
+            (Phase::Exited, None) => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "exited supervisor state has no typed completion",
+            )),
+            (phase, Some(_)) => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{phase:?} supervisor state carries a terminal completion"),
+            )),
+        }
+    }
 }
 
 /// Session and process evidence returned after a detached launch is proven.
@@ -424,7 +460,7 @@ fn run(request_path: &Path) -> io::Result<()> {
         runtime_millis: None,
         grace_millis: None,
         reap_millis: None,
-        completion: None,
+        completion: CompletionField::none(),
         failure: None,
     };
     publish_json(&request.state, &starting)?;
@@ -503,7 +539,7 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
     if let Some(observation_failure) = outcome.observation_failure() {
         let failure = observation_failure.to_string();
         state.phase = Phase::Failed;
-        state.completion = Some(PersistedCompletion::capture(outcome.completion()));
+        state.completion = CompletionField::none();
         state.failure = Some(failure.clone());
         publish_json(&request.state, &state)?;
         reporter.send(&Notice::Failed {
@@ -514,7 +550,7 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
         return Ok(());
     }
     state.phase = Phase::Exited;
-    state.completion = Some(PersistedCompletion::capture(outcome.completion()));
+    state.completion = CompletionField::some(PersistedCompletion::capture(outcome.completion()));
     publish_json(&request.state, &state)?;
     reporter.send(&Notice::Exited {
         lane: request.lane,
@@ -858,7 +894,7 @@ fn read_state(path: &Path) -> io::Result<State> {
         ));
     }
     let state: State = serde_json::from_value(value).map_err(io::Error::other)?;
-    Ok(state)
+    state.validate()
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path, limit: u64) -> io::Result<T> {
@@ -1007,8 +1043,35 @@ mod tests {
         }
     }
 
+    fn terminal_state(
+        root: &Path,
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        session: wire::LaneSession,
+        completion: PersistedCompletion,
+    ) -> State {
+        State {
+            version: CONTRACT_VERSION,
+            supervisor: std::process::id(),
+            worktree: root.to_string_lossy().into_owned(),
+            vendor: "codex".to_owned(),
+            lane,
+            occupant,
+            phase: Phase::Exited,
+            group: Some(412),
+            session: Some(session),
+            git: Some("fixture-head".to_owned()),
+            started_millis: Some(now_millis().expect("fixture time")),
+            runtime_millis: Some(4 * 60 * 60 * 1_000),
+            grace_millis: Some(20_000),
+            reap_millis: Some(20_000),
+            completion: CompletionField::some(completion),
+            failure: None,
+        }
+    }
+
     #[test]
-    fn replacement_adopts_a_terminal_supervisor_without_relaunching() {
+    fn replacement_adopts_every_typed_terminal_cause_without_relaunching() {
         let root = std::env::temp_dir().join(format!(
             "spice-terminal-supervisor-{}-{}",
             std::process::id(),
@@ -1034,28 +1097,6 @@ mod tests {
                 length: 1,
             },
         };
-        publish_json(
-            &directory.join("state.json"),
-            &State {
-                version: CONTRACT_VERSION,
-                supervisor: std::process::id(),
-                worktree: root.to_string_lossy().into_owned(),
-                vendor: "codex".to_owned(),
-                lane,
-                occupant,
-                phase: Phase::Exited,
-                group: Some(412),
-                session: Some(session.clone()),
-                git: Some("fixture-head".to_owned()),
-                started_millis: Some(now_millis().expect("fixture time")),
-                runtime_millis: Some(4 * 60 * 60 * 1_000),
-                grace_millis: Some(20_000),
-                reap_millis: Some(20_000),
-                completion: Some(PersistedCompletion::TimedOut { status_raw: 0 }),
-                failure: None,
-            },
-        )
-        .expect("terminal state publishes");
         let row = wire::LaneResidency {
             lane,
             lineage_id: lane,
@@ -1070,19 +1111,170 @@ mod tests {
             disposition: "occupied".to_owned(),
         };
 
-        let adopted = adopt(&paths, &row)
-            .expect("terminal state reads")
-            .expect("terminal supervisor is adoptable");
-        let Adoption::Exited(adopted) = adopted else {
-            panic!("terminal supervisor was mistaken for a live launch");
+        for expected in [
+            PersistedCompletion::Exited { status_raw: 0 },
+            PersistedCompletion::TimedOut { status_raw: 0 },
+            PersistedCompletion::Cancelled { status_raw: 7 << 8 },
+        ] {
+            publish_json(
+                &directory.join("state.json"),
+                &terminal_state(
+                    &root,
+                    lane,
+                    occupant,
+                    row.session.clone().expect("fixture session"),
+                    expected.clone(),
+                ),
+            )
+            .expect("terminal state publishes");
+            let adopted = adopt(&paths, &row)
+                .expect("terminal state reads")
+                .expect("terminal supervisor is adoptable");
+            let Adoption::Exited(adopted) = adopted else {
+                panic!("terminal supervisor was mistaken for a live launch");
+            };
+            assert_eq!(adopted.occupant, occupant);
+            assert_eq!(adopted.group, 412);
+            let outcome = adopted.process.wait().expect("terminal status reads");
+            assert_eq!(PersistedCompletion::capture(outcome.completion()), expected);
+        }
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn every_typed_completion_round_trips_without_conflating_code_zero() {
+        let root = std::env::temp_dir();
+        let lane = uuid(5);
+        let occupant = uuid(6);
+        let session = wire::LaneSession {
+            lane,
+            occupant,
+            worktree: root.to_string_lossy().into_owned(),
+            vendor: "codex".parse().expect("fixture vendor"),
+            launch: None,
+            epoch: uuid(7),
+            stream: "stdout".to_owned(),
+            identity: "round-trip-session".to_owned(),
+            locus: wire::TapeLocus {
+                member: 0,
+                offset: 0,
+                length: 1,
+            },
         };
-        assert_eq!(adopted.occupant, occupant);
-        assert_eq!(adopted.group, 412);
-        let outcome = adopted.process.wait().expect("terminal status reads");
-        assert!(matches!(
-            outcome.completion(),
-            sill::Completion::TimedOut(status) if status.success()
+        let completions = [
+            PersistedCompletion::Exited { status_raw: 0 },
+            PersistedCompletion::TimedOut { status_raw: 0 },
+            PersistedCompletion::Cancelled { status_raw: 7 << 8 },
+        ];
+
+        for expected in completions {
+            let state = terminal_state(&root, lane, occupant, session.clone(), expected.clone());
+            let bytes = serde_json::to_vec(&state).expect("state encodes");
+            let decoded: State = serde_json::from_slice(&bytes).expect("state decodes");
+            let decoded = decoded.validate().expect("state validates");
+            assert_eq!(decoded.completion.as_ref(), Some(&expected));
+        }
+        for phase in [Phase::Starting, Phase::Running, Phase::Failed] {
+            let mut state = terminal_state(
+                &root,
+                lane,
+                occupant,
+                session.clone(),
+                PersistedCompletion::Exited { status_raw: 0 },
+            );
+            state.phase = phase;
+            state.completion = CompletionField::none();
+            let value = serde_json::to_value(&state).expect("nonterminal state encodes");
+            assert!(
+                value
+                    .get("completion")
+                    .is_some_and(serde_json::Value::is_null),
+                "{phase:?} state omitted its required null completion"
+            );
+            serde_json::from_value::<State>(value)
+                .expect("required null completion decodes")
+                .validate()
+                .expect("nonterminal null completion validates");
+        }
+    }
+
+    #[test]
+    fn current_state_refuses_missing_unknown_and_phase_mismatched_completion() {
+        let root = std::env::temp_dir().join(format!(
+            "spice-invalid-supervisor-{}-{}",
+            std::process::id(),
+            now_millis().expect("fixture time")
         ));
+        fs::create_dir_all(&root).expect("fixture directory creates");
+        let lane = uuid(8);
+        let occupant = uuid(9);
+        let session = wire::LaneSession {
+            lane,
+            occupant,
+            worktree: root.to_string_lossy().into_owned(),
+            vendor: "codex".parse().expect("fixture vendor"),
+            launch: None,
+            epoch: uuid(10),
+            stream: "stdout".to_owned(),
+            identity: "invalid-session".to_owned(),
+            locus: wire::TapeLocus {
+                member: 0,
+                offset: 0,
+                length: 1,
+            },
+        };
+        let valid = serde_json::to_value(terminal_state(
+            &root,
+            lane,
+            occupant,
+            session,
+            PersistedCompletion::Exited { status_raw: 0 },
+        ))
+        .expect("valid state encodes");
+        let cases = [
+            ("missing", {
+                let mut value = valid.clone();
+                value
+                    .as_object_mut()
+                    .expect("state is an object")
+                    .remove("completion");
+                value
+            }),
+            ("exited-null", {
+                let mut value = valid.clone();
+                value["completion"] = serde_json::Value::Null;
+                value
+            }),
+            ("running-terminal", {
+                let mut value = valid.clone();
+                value["phase"] = serde_json::Value::String("running".to_owned());
+                value
+            }),
+            ("unknown-kind", {
+                let mut value = valid.clone();
+                value["completion"]["kind"] = serde_json::Value::String("status_only".to_owned());
+                value
+            }),
+            ("status-only", {
+                let mut value = valid.clone();
+                value
+                    .as_object_mut()
+                    .expect("state is an object")
+                    .remove("completion");
+                value["status_raw"] = serde_json::Value::from(0);
+                value
+            }),
+        ];
+        let path = root.join("state.json");
+
+        for (label, value) in cases {
+            fs::write(
+                &path,
+                serde_json::to_vec(&value).expect("invalid fixture encodes"),
+            )
+            .expect("invalid fixture writes");
+            assert!(read_state(&path).is_err(), "{label} state reached adoption");
+        }
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 
