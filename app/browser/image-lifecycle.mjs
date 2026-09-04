@@ -25,20 +25,20 @@ export async function assertImageLifecycle(preview, label, expectedState) {
   }
 }
 
-export async function assertOwningImageRevision(card, label, expectedRevision = 1) {
+export async function assertNoImageMeasurementRevision(card, label) {
   const observed = await card.evaluate((element) => ({
-    card: Number(element.dataset.mosaicImageRevision),
+    cardRevision: element.getAttribute("data-mosaic-image-revision"),
     images: [...element.querySelectorAll("img")].map((image) => ({
-      revision: Number(image.dataset.mosaicImageRevision),
-      measuredWidth: Number(image.dataset.mosaicImageMeasuredWidth),
+      revision: image.getAttribute("data-mosaic-image-revision"),
+      measuredWidth: image.getAttribute("data-mosaic-image-measured-width"),
     })),
   }));
-  assert.equal(observed.card, expectedRevision, `${label} increments one owning card revision`);
+  assert.equal(observed.cardRevision, null, `${label} publishes no owning card revision`);
   assert.ok(observed.images.length, `${label} owns at least one image`);
-  assert.ok(observed.images.every((image) => image.revision === expectedRevision),
-    `${label} applies one shared revision to every owned image: ${JSON.stringify(observed)}`);
-  assert.ok(observed.images.every((image) => image.measuredWidth >= 24),
-    `${label} records one measurable whole-card width: ${JSON.stringify(observed)}`);
+  assert.ok(observed.images.every((image) => image.revision === null),
+    `${label} publishes no image revision: ${JSON.stringify(observed)}`);
+  assert.ok(observed.images.every((image) => image.measuredWidth === null),
+    `${label} records no decode-driven measurement width: ${JSON.stringify(observed)}`);
 }
 
 export async function imageCardInvariant(card) {

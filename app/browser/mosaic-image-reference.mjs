@@ -13,17 +13,23 @@ export async function assertImagePreview(preview, label, expectedHeight) {
     const cardBox = element.closest(".mosaic-message-card").getBoundingClientRect();
     const style = getComputedStyle(image);
     return {
-      box: { left: box.left, right: box.right, width: box.width },
+      box: { left: box.left, right: box.right, width: box.width, height: box.height },
       card: { left: cardBox.left, right: cardBox.right, width: cardBox.width },
       image: { width: imageBox.width, height: imageBox.height },
       objectFit: style.objectFit,
+      objectPosition: style.objectPosition,
+      aspectRatio: style.aspectRatio,
       maxHeight: style.maxHeight,
     };
   });
   assert.ok(
     Math.abs(observed.image.height - expectedHeight) <= 1,
-    `${label} uses the ${expectedHeight}px bounded slot: ${JSON.stringify(observed)}`,
+    `${label} uses the ${expectedHeight}px square slot: ${JSON.stringify(observed)}`,
   );
+  assert.ok(Math.abs(observed.image.width - expectedHeight) <= 1,
+    `${label} reserves its square width before decode: ${JSON.stringify(observed)}`);
+  assert.ok(Math.abs(observed.box.width - observed.box.height) <= 1,
+    `${label} wrapper is square: ${JSON.stringify(observed)}`);
   assert.ok(observed.box.width <= observed.card.width, `${label} stays within its card`);
   assert.ok(Math.abs(observed.image.width - observed.box.width) <= 1,
     `${label} fills its stable preview frame: ${JSON.stringify(observed)}`);
@@ -32,6 +38,8 @@ export async function assertImagePreview(preview, label, expectedHeight) {
     `${label} does not overflow its card: ${JSON.stringify(observed)}`,
   );
   assert.equal(observed.objectFit, "cover", `${label} fills its slot without distortion`);
+  assert.equal(observed.objectPosition, "50% 50%", `${label} centers its cover crop`);
+  assert.equal(observed.aspectRatio, "1 / 1", `${label} exposes explicit square geometry`);
   assert.equal(observed.maxHeight, `${expectedHeight}px`, `${label} exposes a stable computed cap`);
 }
 

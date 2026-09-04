@@ -212,10 +212,17 @@ async function assertFirefoxImageFixture(fixture, label) {
       };
     }),
   })));
-  assert.ok(Math.abs(observed[0].previews[0].height - 140) <= 1,
-    `${label} bounds an ordinary preview: ${JSON.stringify(observed)}`);
-  assert.ok(observed[1].previews.every((preview) => Math.abs(preview.height - 252) <= 1),
-    `${label} bounds image-only previews: ${JSON.stringify(observed)}`);
+    assert.ok(Math.abs(observed[0].previews[0].height - 140) <= 1,
+      `${label} bounds an ordinary preview: ${JSON.stringify(observed)}`);
+    assert.ok(Math.abs(observed[0].previews[0].width - 140) <= 1,
+      `${label} reserves an ordinary square: ${JSON.stringify(observed)}`);
+    assert.ok(observed[1].previews.every((preview) => Math.abs(preview.height - 252) <= 1),
+      `${label} bounds image-only previews: ${JSON.stringify(observed)}`);
+    assert.ok(observed[1].previews.every((preview) => Math.abs(preview.width - 252) <= 1),
+      `${label} reserves fixed image-only squares: ${JSON.stringify(observed)}`);
+    assert.ok(observed.flatMap(({ previews }) => previews).every(
+      (preview) => Math.abs(preview.width - preview.height) <= 1,
+    ), `${label} keeps every intrinsic aspect ratio inside square preview geometry`);
   assert.ok(observed.flatMap(({ previews }) => previews).every((preview) => (
     preview.width > 2 && preview.contentWidth > 0 && preview.contentHeight > 0
   )), `${label} gives every preview positive visible area: ${JSON.stringify(observed)}`);

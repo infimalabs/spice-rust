@@ -662,7 +662,7 @@ async function retainNoActionCard(page, console, activityReplay, lane) {
   await waitForPage(page, "attachment-only message commits", TRANSITION_MS, (key) => {
     const candidate = document.querySelector(`[data-mosaic-card-key="${key}"]`);
     return candidate?.dataset.layoutPhase === "committed"
-      && candidate.dataset.mosaicImageRevision === "1";
+      && candidate.querySelector("img")?.dataset.mosaicImageState === "loaded";
   }, message.key);
   return card;
 }

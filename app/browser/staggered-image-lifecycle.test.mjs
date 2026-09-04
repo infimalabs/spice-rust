@@ -7,7 +7,7 @@ import test from "node:test";
 import { installActivityReplay } from "./activity-replay.mjs";
 import {
   assertImageLifecycle,
-  assertOwningImageRevision,
+  assertNoImageMeasurementRevision,
   imageCardInvariant,
 } from "./image-lifecycle.mjs";
 import {
@@ -22,16 +22,16 @@ import {
 } from "./canvas-fixture.mjs";
 import { ownFixture } from "./canvas-lifecycle.mjs";
 import { launchBrowser } from "./headless-launch.mjs";
+import { armSteadyStateProbe, finishSteadyStateProbe } from "./steady-state.mjs";
 
 const PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
-async function armNeighborProbe(plane, owningKey) {
-  return plane.evaluate((element, excluded) => {
+async function armPlacementProbe(plane) {
+  return plane.evaluate((element) => {
     const token = crypto.randomUUID();
     const attributes = ["data-track", "data-span", "data-base", "data-row", "data-rows", "style"];
-    const cards = [...element.querySelectorAll('.mosaic-message-card[data-layout-phase="committed"]')]
-      .filter((card) => card.dataset.mosaicCardKey !== excluded);
-    if (cards.length === 0) throw new Error("the staggered image probe requires one neighbor");
+    const cards = [...element.querySelectorAll('.mosaic-message-card[data-layout-phase="committed"]')];
+    if (cards.length === 0) throw new Error("the staggered image probe requires one committed card");
     for (const card of cards) card.__staggeredImageProbe = token;
     const writes = [];
     const record = (mutations) => {
@@ -48,7 +48,7 @@ async function armNeighborProbe(plane, owningKey) {
       token,
       keys: cards.map((card) => card.dataset.mosaicCardKey),
     };
-  }, owningKey);
+  });
 }
 
 async function finishNeighborProbe(plane, armed) {
@@ -67,7 +67,25 @@ async function finishNeighborProbe(plane, armed) {
   }, armed);
 }
 
-test("staggered image outcomes publish one owning card revision", { timeout: 90_000 }, async () => {
+async function imageGeometry(card) {
+  return card.evaluate((element) => {
+    const box = (node) => {
+      const bounds = node.getBoundingClientRect();
+      return [bounds.x, bounds.y, bounds.width, bounds.height].map((value) => Math.round(value));
+    };
+    return {
+      card: box(element),
+      body: box(element.querySelector(".message-body")),
+      stack: box(element.querySelector(".message-image-stack")),
+      previews: [...element.querySelectorAll(".message-image")].map((preview) => ({
+        preview: box(preview),
+        image: box(preview.querySelector("img")),
+      })),
+    };
+  });
+}
+
+test("staggered image outcomes preserve the committed plane", { timeout: 90_000 }, async () => {
   if (process.env.SPICE_CANVAS_PREBUILT !== "1") await buildResident();
   const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-staggered-images-")));
   const linkedRoot = await realpath(await mkdtemp(join(tmpdir(), "spice-staggered-image-lanes-")));
@@ -126,8 +144,10 @@ test("staggered image outcomes publish one owning card revision", { timeout: 90_
     }, injected.key);
 
     const invariant = await imageCardInvariant(card);
+    const geometry = await imageGeometry(card);
     const plane = console.locator(".lane-mosaic-plane");
-    const probe = await armNeighborProbe(plane, injected.key);
+    const probe = await armPlacementProbe(plane);
+    const steady = await armSteadyStateProbe(page, "staggered image resolution");
     for (const [index, image] of images.entries()) {
       image.release();
       const state = image.outcome === "load" ? "loaded" : "error";
@@ -139,24 +159,30 @@ test("staggered image outcomes publish one owning card revision", { timeout: 90_
       if (index + 1 < images.length) {
         await assertImageLifecycle(card.locator(".message-image").nth(index + 1),
           "unresolved sibling image", "pending");
-        await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 50)));
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
+          () => requestAnimationFrame(resolve),
+        )));
         assert.equal(await card.getAttribute("data-mosaic-image-revision"), null);
         assert.equal(Number(await plane.getAttribute("data-plane-commits")), probe.commits);
       }
     }
-    await waitForPage(page, "staggered card corrects once", TRANSITION_MS, (expected) => {
+    await waitForPage(page, "staggered card resolves in place", TRANSITION_MS, (expected) => {
       const card = document.querySelector(`[data-mosaic-card-key="${expected.key}"]`);
-      const plane = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
-      return card?.dataset.mosaicImageRevision === "1"
-        && Number(plane?.dataset.planeCommits) === expected.commits + 1;
-    }, { key: injected.key, commits: probe.commits });
+      return Boolean(card) && [...card.querySelectorAll("img")].every((image) => (
+          image.dataset.mosaicImageState === "loaded" || image.dataset.mosaicImageState === "error"
+        ));
+    }, { key: injected.key });
     const resolved = await finishNeighborProbe(plane, probe);
-    assert.equal(resolved.commits, probe.commits + 1);
-    assert.ok(resolved.retained, "the correction retains every neighboring card node");
-    assert.deepEqual(resolved.writes, [], "the correction writes no neighboring placement");
-    await assertOwningImageRevision(card, "staggered image card");
+    await finishSteadyStateProbe(page, steady, "staggered image resolution");
+    assert.equal(resolved.commits, probe.commits,
+      "staggered outcomes add no decode-driven plane commit");
+    assert.ok(resolved.retained, "in-place resolution retains every committed card node");
+    assert.deepEqual(resolved.writes, [], "in-place resolution writes no placement attribute");
+    await assertNoImageMeasurementRevision(card, "staggered image card");
     assert.deepEqual(await imageCardInvariant(card), invariant,
-      "one correction preserves identity, text, attribution, span, and commands");
+      "in-place resolution preserves identity, text, attribution, span, and commands");
+    assert.deepEqual(await imageGeometry(card), geometry,
+      "staggered load and error outcomes preserve the card and every preview box");
     await context.close();
   } finally {
     if (browser) await browser.close();
