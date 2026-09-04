@@ -12,7 +12,7 @@ pub(super) fn task_flow(
     flow: Option<&str>,
     acceptance: &[String],
 ) -> Result<Vec<wire::Phase>, Outcome<CommandAnswer>> {
-    if flow.is_none() && acceptance.is_empty() {
+    if flow.is_none() && !substantive_acceptance(acceptance) {
         return phases(Some("plan,todo,review"));
     }
     phases(flow)
@@ -782,8 +782,15 @@ pub(super) fn read_ledger(
         "\nFlow: {}\n",
         join_phases(&task.workflow.body.flow)
     ));
-    if !statement.tags.is_empty() {
-        source.push_str(&format!("Tags: {}\n", statement.tags.join(", ")));
+    let tags = visible_tags(&statement.tags).collect::<Vec<_>>();
+    if !tags.is_empty() {
+        source.push_str(&format!(
+            "Tags: {}\n",
+            tags.into_iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
     }
     let Some(document) = dialect::classify(&source).document().cloned() else {
         return store_fault(

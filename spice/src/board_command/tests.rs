@@ -29,6 +29,7 @@ mod gate_findings;
 mod origin;
 mod task_list;
 mod task_listing;
+mod taste_review;
 
 // The order in which one claim's preconditions refuse is documented as a
 // contract on `ClaimGrant`, and a caller sees only the first refusal, so it

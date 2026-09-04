@@ -504,7 +504,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
          [--acceptance ACCEPTANCE...] [--origin ORIGIN]",
         OperatorOrLane,
         Command,
-        [TaskAdded],
+        [TaskAdded, TaskNoted],
         [Resident],
         Reply,
         "board::task_add"
@@ -537,7 +537,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
          [--then FOLLOWUP...] [--followup HANDLE...]",
         Lane,
         Command,
-        [TaskReviewed, TaskAdded, TaskEdited],
+        [TaskReviewed, TaskAdded, TaskEdited, TaskNoted],
         [Resident, LaneCapability, Toolful],
         TASK_GIT_TOOLS,
         Reply,
@@ -609,7 +609,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
          [--acceptance ACCEPTANCE...] [--priority PRIORITY] [--project PROJECT]",
         OperatorOrLane,
         Command,
-        [TaskEdited],
+        [TaskEdited, TaskNoted],
         [Resident],
         Reply,
         "board::task_modify"
@@ -669,7 +669,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "doc PATH|- [--apply=<digest>]",
         OperatorOrLane,
         Command,
-        [TaskAdded, TaskEdited, DocApplied],
+        [TaskAdded, TaskEdited, TaskNoted, DocApplied],
         [Resident, DigestOnMutation],
         Plan,
         "board::doc"

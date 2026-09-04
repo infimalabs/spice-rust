@@ -387,7 +387,17 @@ fn admit_plan_transition(
         transition.kind(),
         board::TransitionKind::Complete { phase } if phase.as_str() == "plan"
     );
-    if !completes_plan && !entry.statement().acceptance.is_empty() {
+    if has_taste_review(&entry.statement().tags) {
+        return Err(refusal(
+            "task::taste-review-required",
+            Some(entry.handle().to_string()),
+            &format!(
+                "update the task statement with spice task modify {} so the complete current taste policy can recheck it",
+                entry.handle(),
+            ),
+        ));
+    }
+    if !completes_plan && substantive_acceptance(&entry.statement().acceptance) {
         return Ok(());
     }
     if let Some(child) = accepted_pending_child(snapshot, entry)? {
@@ -413,7 +423,9 @@ fn accepted_pending_child<'a>(
 ) -> Result<Option<&'a BoardTask>, Outcome<CommandAnswer>> {
     for dependency in &entry.statement().dependencies {
         let child = visible_task(snapshot, dependency)?;
-        if child.workflow.body.status == "pending" && !child.statement.body.acceptance.is_empty() {
+        if child.workflow.body.status == "pending"
+            && substantive_acceptance(&child.statement.body.acceptance)
+        {
             return Ok(Some(child));
         }
     }
@@ -732,6 +744,7 @@ pub(super) fn task_review(
         reviewed,
         &origin,
         creation.as_ref(),
+        repository,
         projects,
     );
     if let Err(outcome) = tracking {
@@ -772,12 +785,14 @@ struct DocTaskSpec {
     dependencies: Vec<wire::TaskStamp>,
     flow: Vec<wire::Phase>,
     initial: wire::Phase,
+    taste_review: Option<TasteReview>,
 }
 
 pub(super) fn doc_apply(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     apply: &DocApply,
+    repository: Option<&Repository>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
@@ -788,7 +803,7 @@ pub(super) fn doc_apply(
     if let Some(outcome) = repeated_doc_apply(bus, apply, &plan.touched) {
         return outcome;
     }
-    commit_doc_plan(bus, command, apply, &plan)
+    commit_doc_plan(bus, command, apply, repository, &plan)
 }
 
 fn validate_doc_plan(
@@ -912,6 +927,7 @@ fn commit_doc_plan(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     apply: &DocApply,
+    repository: Option<&Repository>,
     plan: &DocPlan,
 ) -> Outcome<CommandAnswer> {
     let intrinsic = match format!("doc:{}", apply.preview).parse::<wire::Origin>() {
@@ -969,7 +985,7 @@ fn commit_doc_plan(
         .iter()
         .filter(|node| node.kind != dialect::NodeKind::SyntheticRoot)
     {
-        let spec = match doc_task_spec(plan, node) {
+        let spec = match doc_task_spec(plan, command, repository, node) {
             Ok(spec) => spec,
             Err(outcome) => return outcome,
         };
@@ -985,6 +1001,8 @@ fn commit_doc_plan(
 
 fn doc_task_spec(
     plan: &DocPlan,
+    command: &wire::AdmittedCommand,
+    repository: Option<&Repository>,
     node: &dialect::Node,
 ) -> Result<DocTaskSpec, Outcome<CommandAnswer>> {
     let task = plan
@@ -1011,7 +1029,15 @@ fn doc_task_spec(
         .project
         .clone()
         .unwrap_or_else(|| "task.document".to_owned());
-    let flow = if node.flow.is_empty() {
+    validate_acceptance(&node.acceptance)?;
+    if node.tags.iter().any(|tag| tag == TASTE_REVIEW_TAG) {
+        return Err(refusal(
+            "doc::tag-reserved",
+            Some(TASTE_REVIEW_TAG.to_owned()),
+            "remove the system-owned taste-review marker from the authored document",
+        ));
+    }
+    let mut flow = if node.flow.is_empty() {
         task_flow(None, &node.acceptance)?
     } else {
         node.flow
@@ -1019,11 +1045,49 @@ fn doc_task_spec(
             .map(|station| phase(station.as_str()))
             .collect()
     };
+    let existing = plan
+        .snapshot
+        .entries
+        .iter()
+        .find(|entry| entry.handle() == &task);
+    let taste_review = task_taste_review(
+        repository,
+        &plan.snapshot,
+        command.actor(),
+        &node.title,
+        None,
+        &node.acceptance,
+    )?;
+    let was_required = existing.is_some_and(|entry| has_taste_review(&entry.statement().tags));
+    let taste_review_required = taste_review.as_ref().is_some_and(TasteReview::required);
+    if taste_review.is_none() && was_required {
+        return Err(environment_fault(
+            "task::taste-policy-unavailable",
+            "an existing taste review cannot clear without repository policy authority",
+        ));
+    }
+    if taste_review_required && existing.is_none() {
+        prepend_plan(&mut flow);
+    }
+    if taste_review_required
+        && existing.is_some_and(|entry| {
+            !has_taste_review(&entry.statement().tags) && entry.workflow().phase.as_str() != "plan"
+        })
+    {
+        return Err(refusal(
+            "task::taste-review-required",
+            Some(task.to_string()),
+            "revise the authored task statement so it passes taste review before applying it",
+        ));
+    }
     let initial = flow[0].clone();
     let mut tags = node.tags.clone();
     tags.push(document_slug_tag(&node.slug));
     if let Some(priority) = node.priority {
         tags.push(format!("priority:{priority}"));
+    }
+    if taste_review_required {
+        require_taste_review(&mut tags);
     }
     Ok(DocTaskSpec {
         born: task
@@ -1037,6 +1101,8 @@ fn doc_task_spec(
         dependencies,
         flow,
         initial,
+        taste_review: (was_required || taste_review_required)
+            .then(|| taste_review.expect("repository-backed review has a verdict")),
     })
 }
 
@@ -1073,6 +1139,7 @@ fn edit_doc_task(
             "apply authored edits only to pending task statements",
         ));
     }
+    let taste_review = spec.taste_review.clone();
     let revision = u32::try_from(existing.statement().revision.get())
         .unwrap_or(u32::MAX)
         .saturating_add(1);
@@ -1095,6 +1162,14 @@ fn edit_doc_task(
         revision: position,
         ..statement
     });
+    if let Some(review) = taste_review.as_ref() {
+        return append_taste_review_audit(
+            write,
+            existing.born(),
+            review,
+            FactCause::Pending(edited),
+        );
+    }
     Ok(edited)
 }
 
@@ -1111,6 +1186,8 @@ fn add_doc_task(
             "a newly authored document task has no creation-time transcript capture",
         )
     })?;
+    let taste_review = spec.taste_review.clone();
+    let audit_task = spec.born.clone();
     let added = write
         .fact(
             body::TaskAdded {
@@ -1154,6 +1231,9 @@ fn add_doc_task(
         deferral: None,
         completion: None,
     });
+    if let Some(review) = taste_review.as_ref() {
+        return append_taste_review_audit(write, &audit_task, review, FactCause::Pending(added));
+    }
     Ok(added)
 }
 
