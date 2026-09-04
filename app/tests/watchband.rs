@@ -2,8 +2,9 @@ use app::runtime::{LaneMember, LaneRow};
 use app::watchband::{
     ACCENTS, AGE_LABEL_WIDTH, FIELD_BUDGET, LINEAGE_JOIN_GUTTER, LineageDrop, SHORT_LEN,
     TeamTaskSectionState, accent, arrangement, badge, elapsed_label, elapsed_label_deadline_millis,
-    first_nonquoted_prose, leaf, one_line, reported_tasks, short, split_lineage, standing_title,
-    standings, task_mentions, ticker_line, topology, truncate,
+    first_nonquoted_prose, leaf, one_line, remaining_label, remaining_label_deadline_millis,
+    reported_tasks, short, split_lineage, standing_title, standings, task_mentions, ticker_line,
+    topology, truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -242,6 +243,7 @@ fn a_standing_joins_the_lane_table_the_inbox_and_the_board() {
     assert_eq!(rows[1].task_title, None);
     assert_eq!(rows[1].phase, None);
     assert_eq!(rows[1].held_since, None);
+    assert_eq!(rows[1].expires_at, None);
 }
 
 #[test]
@@ -312,31 +314,29 @@ fn the_newest_active_claim_on_a_lane_is_the_one_showing() {
     assert_eq!(rows[0].phase.as_deref(), Some("review"));
 }
 
-/// A standing states *when* the lease moved, not how long ago, and the two
-/// instants stay told apart.
+/// A standing states *when* the lease began and expires, not precomputed spans.
 ///
 /// The second half is the part that matters to a quiet canvas. One row, built
 /// once, is read against two clocks a minute apart and spells two different
-/// ages — so a lane the resident has stopped mentioning still advances, because
-/// nothing about the age was decided when the row was made. A `standings` that
-/// baked an elapsed span would return the same number to both reads and pass
-/// only the first four assertions.
+/// values: claim age increases while remaining lease time decreases. A lane the
+/// resident has stopped mentioning therefore remains truthful without another
+/// frame, refresh, or replay.
 #[test]
-fn a_standing_carries_lease_instants_that_age_after_the_row_is_built() {
+fn a_standing_carries_an_expiry_that_counts_down_after_the_row_is_built() {
     let lanes = [lane(LANE_A, "main-c")];
     let tasks = [task("FIDELIT-1kKRSfyV", "review", LANE_A, 7, "active")];
 
     let rows = standings(&lanes, &[], &tasks);
 
     let held = rows[0].held_since.expect("the lease began");
-    let renewed = rows[0].renewed_at.expect("the lease renewed");
+    let expiry = rows[0].expires_at.expect("the lease expires");
     assert_eq!(held, at(-300_000));
-    assert_eq!(renewed, at(-4_000));
+    assert_eq!(expiry, at(600_000));
     assert_eq!(elapsed_label(at(0) - held), "5m");
-    assert_eq!(elapsed_label(at(0) - renewed), "4s");
+    assert_eq!(remaining_label(expiry - at(0)), "10m");
 
     assert_eq!(elapsed_label(at(60_000) - held), "6m");
-    assert_eq!(elapsed_label(at(60_000) - renewed), "1m");
+    assert_eq!(remaining_label(expiry - at(60_000)), "9m");
 }
 
 #[test]
@@ -575,6 +575,36 @@ fn elapsed_deadlines_wake_only_when_the_visible_unit_can_change() {
     assert_eq!(elapsed_label_deadline_millis(i64::MAX), None);
 }
 
+#[test]
+fn remaining_time_counts_down_across_the_existing_unit_boundaries() {
+    assert_eq!(remaining_label(-1), "now");
+    assert_eq!(remaining_label(999), "now");
+    assert_eq!(remaining_label(1_000), "1s");
+    assert_eq!(remaining_label(59_999), "59s");
+    assert_eq!(remaining_label(60_000), "1m");
+    assert_eq!(remaining_label(3_599_999), "59m");
+    assert_eq!(remaining_label(3_600_000), "1h");
+    assert_eq!(remaining_label(86_399_999), "23h");
+    assert_eq!(remaining_label(86_400_000), "1d");
+
+    assert_eq!(remaining_label_deadline_millis(-1), None);
+    assert_eq!(remaining_label_deadline_millis(999), None);
+    assert_eq!(remaining_label_deadline_millis(1_000), Some(1));
+    assert_eq!(remaining_label_deadline_millis(1_001), Some(2));
+    assert_eq!(remaining_label_deadline_millis(59_999), Some(1_000));
+    assert_eq!(remaining_label_deadline_millis(60_000), Some(1));
+    assert_eq!(remaining_label_deadline_millis(60_001), Some(2));
+    assert_eq!(remaining_label_deadline_millis(3_599_999), Some(60_000));
+    assert_eq!(remaining_label_deadline_millis(3_600_000), Some(1));
+    assert_eq!(remaining_label_deadline_millis(86_400_000), Some(1));
+    assert_eq!(remaining_label_deadline_millis(99 * 86_400_000), Some(1));
+    assert_eq!(remaining_label_deadline_millis(100 * 86_400_000), Some(1));
+    assert_eq!(
+        remaining_label_deadline_millis(100 * 86_400_000 + 5_000),
+        Some(5_001),
+    );
+}
+
 /// A ticking age may only change text, never the box the text sits in. The box
 /// is sized once from `AGE_LABEL_WIDTH`, so that promise is only as good as the
 /// label's inability to outgrow it — a single wider return reflows the slot and
@@ -600,6 +630,15 @@ fn age_labels_never_outgrow_the_slot() {
         assert!(
             !label.contains(char::is_whitespace),
             "elapsed_label({millis}) is {label:?}, which can wrap out of a single line"
+        );
+        let remaining = remaining_label(millis);
+        assert!(
+            remaining.chars().count() <= AGE_LABEL_WIDTH,
+            "remaining_label({millis}) is {remaining:?}, wider than the {AGE_LABEL_WIDTH}-character slot"
+        );
+        assert!(
+            !remaining.contains(char::is_whitespace),
+            "remaining_label({millis}) is {remaining:?}, which can wrap out of a single line"
         );
     }
 }
