@@ -20,6 +20,10 @@ async function snapshot(stack) {
     return {
       bounds: { height: bounds.height, left: bounds.left, right: bounds.right, width: bounds.width },
       clientWidth: node.clientWidth,
+      dragHandle: node.hasAttribute("data-lane-drag-handle"),
+      draggable: node.getAttribute("draggable"),
+      firstToolbarElement: node.closest(".team-toolbar")?.firstElementChild === node,
+      legacyHandles: node.closest(".team-toolbar")?.querySelectorAll(":scope > .team-drag-handle").length,
       scrollWidth: node.scrollWidth,
       toolbarHeight: toolbar?.height,
       railLeft: rail?.left,
@@ -47,6 +51,10 @@ function assertStack(actual, single, label) {
   close(actual.bounds.width, Math.max(18, columns * 9 + (columns - 1) * 5), `${label} width`);
   close(actual.bounds.height, rows * 9 + (rows - 1) * 4, `${label} height`);
   assert.ok(actual.scrollWidth <= actual.clientWidth, `${label}: stack does not clip`);
+  assert.equal(actual.dragHandle, true, `${label}: pip stack is the team drag handle`);
+  assert.equal(actual.draggable, "true", `${label}: pip stack enables native team dragging`);
+  assert.equal(actual.firstToolbarElement, true, `${label}: pips occupy the first toolbar column`);
+  assert.equal(actual.legacyHandles, 0, `${label}: standalone drag symbol is absent`);
   close(actual.toolbarHeight, single.toolbarHeight, `${label} stack does not inflate toolbar`);
   assert.ok(actual.bounds.right <= actual.railLeft, `${label}: stack does not overlap mode rail`);
   for (const [index, pip] of actual.pips.entries()) {
