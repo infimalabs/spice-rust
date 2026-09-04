@@ -208,34 +208,22 @@ pub(super) fn render_populated_fleet(
     }
 }
 
-/// Let a team be picked up, but only where an arrangement can be committed.
+/// Pick up a team from its pip stack, but only where it can be arranged.
 ///
-/// The handle is the predecessor's: a team is dragged by its own grip rather
-/// than by its whole surface, so selecting prose in a composer and lifting a
-/// message card out of the activity plane both keep working underneath it.
-fn lineage_drag_handle(lineage: CanonicalUuid, can_arrange: bool) -> Html {
-    if !can_arrange {
-        return Html::default();
-    }
+/// Keeping the gesture on the compact status pips leaves composer prose and
+/// activity cards free for their own selection and drag behavior.
+fn lineage_drag_start(lineage: CanonicalUuid, can_arrange: bool) -> Callback<DragEvent> {
     let carried = lineage.to_string();
-    html! {
-        <span
-            class="team-drag-handle"
-            data-lane-drag-handle=""
-            data-lineage-drag-id={carried.clone()}
-            draggable="true"
-            role="img"
-            aria-label={format!("Drag team {}", watchband::short(lineage))}
-            title="Drag onto a team to take its place, or onto a team's edge to join it"
-            ondragstart={Callback::from(move |event: DragEvent| {
-                let Some(transfer) = event.data_transfer() else {
-                    return;
-                };
-                let _ = transfer.set_data(LINEAGE_DRAG_MEDIA, &carried);
-                transfer.set_effect_allowed("move");
-            })}
-        ><span aria-hidden="true">{"⠿"}</span></span>
-    }
+    Callback::from(move |event: DragEvent| {
+        if !can_arrange {
+            return;
+        }
+        let Some(transfer) = event.data_transfer() else {
+            return;
+        };
+        let _ = transfer.set_data(LINEAGE_DRAG_MEDIA, &carried);
+        transfer.set_effect_allowed("move");
+    })
 }
 
 /// Accept a team in flight, and nothing else.
@@ -379,6 +367,13 @@ fn render_lineage_toolbar(
     render: &FleetRender<'_>,
 ) -> Html {
     let pip_stack = crate::pip_layout::PipStack::new(standings.len());
+    let can_arrange = render.can_arrange_lineages;
+    let drag_label = format!("Drag team {}", watchband::short(lineage.lane));
+    let lights_label = if can_arrange {
+        format!("{} admitted agents; {drag_label}", standings.len())
+    } else {
+        format!("{} admitted agents", standings.len())
+    };
     let control = render
         .lineage_controls
         .current(lineage.lane, lineage.subscription);
@@ -393,11 +388,15 @@ fn render_lineage_toolbar(
     html! {
         <>
         <header class="team-toolbar">
-            {lineage_drag_handle(lineage.lane, render.can_arrange_lineages)}
             <span
                 class="team-lights"
                 role="group"
-                aria-label={format!("{} admitted agents", standings.len())}
+                aria-label={lights_label}
+                title={can_arrange.then_some("Drag onto a team to take its place, or onto a team's edge to join it")}
+                draggable={can_arrange.to_string()}
+                data-lane-drag-handle={can_arrange.then_some("")}
+                data-lineage-drag-id={can_arrange.then(|| lineage.lane.to_string())}
+                ondragstart={lineage_drag_start(lineage.lane, can_arrange)}
             >
                 {for (0..standings.len()).filter_map(|index| {
                     let member_index = watchband::right_edge_ordinal(standings.len(), index);

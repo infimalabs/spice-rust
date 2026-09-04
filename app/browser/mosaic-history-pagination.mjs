@@ -89,13 +89,13 @@ async function readTeamWorktrees(team) {
 
 function dragTeam(page, dragged, target) {
   return page.evaluate(({ dragged, target }) => {
-    const grip = document.querySelector(
-      `.team-surface[data-lineage-id="${dragged}"] .team-drag-handle`,
+    const pips = document.querySelector(
+      `.team-surface[data-lineage-id="${dragged}"] .team-lights[data-lane-drag-handle]`,
     );
     const surface = document.querySelector(`.team-surface[data-lineage-id="${target}"]`);
-    if (!grip || !surface) throw new Error("joining teams requires both durable surfaces");
+    if (!pips || !surface) throw new Error("joining teams requires pips and both durable surfaces");
     const transfer = new DataTransfer();
-    grip.dispatchEvent(new DragEvent("dragstart", {
+    pips.dispatchEvent(new DragEvent("dragstart", {
       bubbles: true,
       cancelable: true,
       dataTransfer: transfer,

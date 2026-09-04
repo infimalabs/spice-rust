@@ -70,20 +70,20 @@ async function waitForTeamOrder(page, label, order) {
   }, order);
 }
 
-/// Drag one team by its own grip and drop it across the target at `fraction`.
+/// Drag one team by its pip stack and drop it across the target at `fraction`.
 ///
-/// The grip's real `dragstart` fills the transfer, so a handle that carried
+/// The pip stack's real `dragstart` fills the transfer, so a handle that carried
 /// nothing would fail here rather than be papered over by a transfer the
 /// fixture wrote itself.
 function dragTeam(page, gesture) {
   return page.evaluate(({ dragged, target, fraction }) => {
-    const grip = document.querySelector(
-      `.team-surface[data-lineage-id="${dragged}"] .team-drag-handle`,
+    const pips = document.querySelector(
+      `.team-surface[data-lineage-id="${dragged}"] .team-lights[data-lane-drag-handle]`,
     );
     const surface = document.querySelector(`.team-surface[data-lineage-id="${target}"]`);
-    if (!grip || !surface) throw new Error("arranging teams needs both teams rendered");
+    if (!pips || !surface) throw new Error("arranging teams needs pips and both teams rendered");
     const transfer = new DataTransfer();
-    grip.dispatchEvent(new DragEvent("dragstart", {
+    pips.dispatchEvent(new DragEvent("dragstart", {
       bubbles: true,
       cancelable: true,
       dataTransfer: transfer,
@@ -125,9 +125,14 @@ export async function assertTeamArrangement(page, fixture, worktrees, artifacts)
   const [primary, secondary] = seated;
   assert.deepEqual(await renderedTeams(agents), seated, "the canvas draws the durable order");
   assert.equal(
-    await agents.locator(".team-drag-handle").count(),
+    await agents.locator(".team-lights[data-lane-drag-handle]").count(),
     2,
-    "every arrangeable team is dragged by its own grip",
+    "every arrangeable team is dragged by its own pip stack",
+  );
+  assert.equal(
+    await agents.locator(".team-drag-handle").count(),
+    0,
+    "the pip stack replaces the standalone drag symbol",
   );
 
   const reorder = await dragTeam(page, {
@@ -136,7 +141,7 @@ export async function assertTeamArrangement(page, fixture, worktrees, artifacts)
     fraction: 0.5,
   });
   assert.deepEqual(reorder.types, [TEAM_MEDIA], "a dragged team carries only its own media");
-  assert.equal(reorder.carried, secondary.lineage, "the grip carries the team it belongs to");
+  assert.equal(reorder.carried, secondary.lineage, "the pips carry the team they belong to");
   assert.deepEqual(
     [reorder.offered, reorder.taken],
     [true, true],
