@@ -112,8 +112,11 @@ pub(super) fn render_populated_fleet(
     standings: &[watchband::Standing],
     render: &FleetRender<'_>,
 ) -> Html {
+    let dismiss = lineage_menu_dismissal(render.lineage_controls);
+    let escape = lineage_menu_escape(render.lineage_controls);
     html! {
-        <div class="lineage-fleet" data-pane="agent-console" data-view="mosaic">
+        <div class="lineage-fleet" data-pane="agent-console" data-view="mosaic"
+            onclick={dismiss} onkeydown={escape}>
             {for lanes.iter().map(|lineage| {
                 if render.lineage_controls.is_closed(lineage.lane) {
                     return Html::default();
@@ -206,6 +209,47 @@ pub(super) fn render_populated_fleet(
             })}
         </div>
     }
+}
+
+fn lineage_menu_dismissal(controls: &UseReducerHandle<LineageControls>) -> Callback<MouseEvent> {
+    let controls = controls.clone();
+    Callback::from(move |event: MouseEvent| {
+        let inside_control = event
+            .target()
+            .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+            .is_some_and(|target| {
+                target
+                    .closest(".team-action-menu, .team-menu, .team-lights[data-lane-drag-handle]")
+                    .ok()
+                    .flatten()
+                    .is_some()
+            });
+        if !inside_control {
+            controls.dispatch(LineageControlAction::CloseMenus);
+        }
+    })
+}
+
+fn lineage_menu_escape(controls: &UseReducerHandle<LineageControls>) -> Callback<KeyboardEvent> {
+    let controls = controls.clone();
+    Callback::from(move |event: KeyboardEvent| {
+        if event.key() != "Escape" {
+            return;
+        }
+        if let Some(trigger) = web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| {
+                document
+                    .query_selector(".team-lights[data-lane-drag-handle][aria-expanded=\"true\"]")
+                    .ok()
+                    .flatten()
+            })
+            .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
+        {
+            let _ = trigger.focus();
+        }
+        controls.dispatch(LineageControlAction::CloseMenus);
+    })
 }
 
 /// Pick up a team from its pip stack, but only where it can be arranged.
@@ -367,10 +411,15 @@ fn render_lineage_toolbar(
     render: &FleetRender<'_>,
 ) -> Html {
     let pip_stack = crate::pip_layout::PipStack::new(standings.len());
-    let can_arrange = render.can_arrange_lineages;
-    let drag_label = format!("Drag team {}", watchband::short(lineage.lane));
+    let can_arrange = render.can_arrange_lineages && render.topology.len() > 1;
+    let lineage_id = lineage.lane;
+    let arrangement_help_id = format!("team-arrangement-help-{lineage_id}");
     let lights_label = if can_arrange {
-        format!("{} admitted agents; {drag_label}", standings.len())
+        format!(
+            "{} admitted agents; arrange team {}",
+            standings.len(),
+            watchband::short(lineage.lane)
+        )
     } else {
         format!("{} admitted agents", standings.len())
     };
@@ -385,19 +434,34 @@ fn render_lineage_toolbar(
         can_configure: render.can_configure,
         can_arrange: render.can_arrange_lineages,
     };
+    let toggle_arrangement =
+        lineage_arrangement_click(lineage_id, can_arrange, render.lineage_controls);
+    let keyboard_arrangement =
+        lineage_arrangement_key(lineage_id, can_arrange, render.lineage_controls);
     html! {
         <>
         <header class="team-toolbar">
             <span
                 class="team-lights"
-                role="group"
+                role={if can_arrange { "button" } else { "group" }}
                 aria-label={lights_label}
-                title={can_arrange.then_some("Drag onto a team to take its place, or onto a team's edge to join it")}
+                aria-haspopup={can_arrange.then_some("menu")}
+                aria-expanded={can_arrange.then(|| control.arrangement_open.to_string())}
+                aria-describedby={can_arrange.then(|| arrangement_help_id.clone())}
+                tabindex={can_arrange.then_some("0")}
+                title={can_arrange.then_some("Drag, or press Enter or Space to arrange this team")}
                 draggable={can_arrange.to_string()}
                 data-lane-drag-handle={can_arrange.then_some("")}
                 data-lineage-drag-id={can_arrange.then(|| lineage.lane.to_string())}
                 ondragstart={lineage_drag_start(lineage.lane, can_arrange)}
+                onclick={toggle_arrangement}
+                onkeydown={keyboard_arrangement}
             >
+                if can_arrange {
+                    <span id={arrangement_help_id} class="visually-hidden">
+                        {"Press Enter or Space, or tap, to choose where to move or join this team."}
+                    </span>
+                }
                 {for (0..standings.len()).filter_map(|index| {
                     let member_index = watchband::right_edge_ordinal(standings.len(), index);
                     let standing = &standings[member_index];
@@ -455,6 +519,36 @@ fn render_lineage_toolbar(
         {lineage_menu::render(lineage, &control, &actions)}
         </>
     }
+}
+
+fn lineage_arrangement_click(
+    lineage: CanonicalUuid,
+    can_arrange: bool,
+    controls: &UseReducerHandle<LineageControls>,
+) -> Callback<MouseEvent> {
+    let controls = controls.clone();
+    Callback::from(move |event: MouseEvent| {
+        event.stop_propagation();
+        if can_arrange {
+            controls.dispatch(LineageControlAction::ToggleArrangement { lineage });
+        }
+    })
+}
+
+fn lineage_arrangement_key(
+    lineage: CanonicalUuid,
+    can_arrange: bool,
+    controls: &UseReducerHandle<LineageControls>,
+) -> Callback<KeyboardEvent> {
+    let controls = controls.clone();
+    Callback::from(move |event: KeyboardEvent| {
+        if !can_arrange || !matches!(event.key().as_str(), "Enter" | " ") {
+            return;
+        }
+        event.prevent_default();
+        event.stop_propagation();
+        controls.dispatch(LineageControlAction::ToggleArrangement { lineage });
+    })
 }
 
 fn mode_badge(mode: LineageMode, standings: &[Standing]) -> Option<String> {

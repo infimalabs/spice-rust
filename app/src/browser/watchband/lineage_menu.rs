@@ -38,6 +38,9 @@ pub(super) fn render(
     control: &LineageControl,
     context: &Context<'_>,
 ) -> Html {
+    if control.arrangement_open {
+        return render_arrangement(lineage.lane, context);
+    }
     if control.import_open {
         return render_import(lineage, context);
     }
@@ -140,6 +143,64 @@ pub(super) fn render(
                     if restore_enabled { members(restore_count) } else { "no saved subgroup".to_owned() }
                 }</span>
             </button>
+        </div>
+    }
+}
+
+fn render_arrangement(lineage: CanonicalUuid, context: &Context<'_>) -> Html {
+    let choices = context
+        .topology
+        .iter()
+        .filter(|(target, _)| *target != lineage)
+        .flat_map(|(target, _)| {
+            [
+                ("before", "Move before", watchband::LineageDrop::Reorder),
+                ("after", "Move after", watchband::LineageDrop::ReorderAfter),
+                ("join", "Join into", watchband::LineageDrop::Join),
+            ]
+            .into_iter()
+            .filter_map(|(kind, verb, drop)| {
+                watchband::arrangement(context.topology, lineage, *target, drop)
+                    .map(|rows| (kind, verb, *target, topology(&rows)))
+            })
+            .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    html! {
+        <div
+            class="team-action-menu team-arrangement-menu"
+            role="menu"
+            aria-label={format!("Arrange team {}", watchband::short(lineage))}
+        >
+            {for choices.into_iter().map(|(kind, verb, target, lineages)| {
+                let sender = context.sender.clone();
+                let controls = context.controls.clone();
+                let topology_revision = context.topology_revision;
+                html! {
+                    <button
+                        type="button"
+                        class="team-action team-arrangement-action"
+                        role="menuitem"
+                        data-lineage-arrangement={kind}
+                        data-lineage-arrangement-target={target.to_string()}
+                        onclick={Callback::from(move |_| {
+                            send_action(
+                                &sender,
+                                ClientAction::ArrangeLineages {
+                                    topology_revision,
+                                    lineages: lineages.clone(),
+                                },
+                            );
+                            controls.dispatch(LineageControlAction::CloseMenus);
+                        })}
+                    >
+                        <span class="team-action-label">{format!("{verb} team {}", watchband::short(target))}</span>
+                        <span class="team-action-detail">{
+                            if kind == "join" { "combine agents" } else { "reorder teams" }
+                        }</span>
+                    </button>
+                }
+            })}
         </div>
     }
 }

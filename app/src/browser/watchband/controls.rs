@@ -101,6 +101,7 @@ pub(super) struct LineageControl {
     pub(super) mode: LineageMode,
     pub(super) menu_open: bool,
     pub(super) import_open: bool,
+    pub(super) arrangement_open: bool,
     pub(super) previous_topology: Option<Vec<LineageArrangement>>,
     pub(super) speech: LineageSpeech,
     pub(super) life: LineageLife,
@@ -115,6 +116,7 @@ impl Default for LineageControl {
             mode: LineageMode::Compose,
             menu_open: false,
             import_open: false,
+            arrangement_open: false,
             previous_topology: None,
             speech: LineageSpeech::Speak,
             life: LineageLife::Steer,
@@ -144,6 +146,10 @@ pub(crate) enum LineageControlAction {
     ToggleImport {
         lineage: CanonicalUuid,
     },
+    ToggleArrangement {
+        lineage: CanonicalUuid,
+    },
+    CloseMenus,
     CloseLineage {
         lineage: CanonicalUuid,
     },
@@ -187,6 +193,10 @@ impl Reducible for LineageControls {
             LineageControlAction::SetMode { lineage, mode } => next.set_mode(lineage, mode),
             LineageControlAction::ToggleMenu { lineage } => next.toggle_menu(lineage),
             LineageControlAction::ToggleImport { lineage } => next.toggle_import(lineage),
+            LineageControlAction::ToggleArrangement { lineage } => {
+                next.toggle_arrangement(lineage);
+            }
+            LineageControlAction::CloseMenus => next.close_menus(),
             LineageControlAction::CloseLineage { lineage } => next.close_lineage(lineage),
             LineageControlAction::OpenLineage { lineage } => next.open_lineage(lineage),
             LineageControlAction::SaveSplit { lineage, topology } => {
@@ -277,6 +287,7 @@ impl LineageControls {
 
     fn toggle_menu(&mut self, lineage: CanonicalUuid) {
         let state = self.lineages.entry(lineage).or_default();
+        state.arrangement_open = false;
         if state.import_open {
             state.import_open = false;
             state.menu_open = false;
@@ -288,13 +299,38 @@ impl LineageControls {
     fn toggle_import(&mut self, lineage: CanonicalUuid) {
         let state = self.lineages.entry(lineage).or_default();
         state.menu_open = false;
+        state.arrangement_open = false;
         state.import_open = !state.import_open;
+    }
+
+    fn toggle_arrangement(&mut self, lineage: CanonicalUuid) {
+        let open = !self
+            .lineages
+            .get(&lineage)
+            .is_some_and(|state| state.arrangement_open);
+        self.close_menus();
+        self.lineages.entry(lineage).or_default().arrangement_open = open;
+    }
+
+    fn close_menus(&mut self) {
+        for state in self.lineages.values_mut() {
+            state.menu_open = false;
+            state.import_open = false;
+            state.arrangement_open = false;
+        }
+    }
+
+    fn close_arrangements(&mut self) {
+        for state in self.lineages.values_mut() {
+            state.arrangement_open = false;
+        }
     }
 
     fn close_lineage(&mut self, lineage: CanonicalUuid) {
         let state = self.lineages.entry(lineage).or_default();
         state.menu_open = false;
         state.import_open = false;
+        state.arrangement_open = false;
         self.closed.insert(lineage);
     }
 
@@ -306,6 +342,7 @@ impl LineageControls {
         let state = self.lineages.entry(lineage).or_default();
         state.menu_open = false;
         state.import_open = false;
+        state.arrangement_open = false;
         state.previous_topology = Some(topology);
     }
 
@@ -368,6 +405,7 @@ impl LineageControls {
         answer: &wire::intent::LaneAnswer,
         settle: Option<(CanonicalUuid, LineageLife)>,
     ) {
+        self.close_arrangements();
         // A lineage that left the authoritative subscription set is gone, not
         // hidden. Drop its browser-local controls before deciding whether a
         // newly seated first lineage should inherit the empty surface.
