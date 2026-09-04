@@ -12,6 +12,7 @@ import {
   resizeCompactionViewport,
   waitForCompactionReady,
 } from "./compaction-boundary-reference.mjs";
+import { assertHeaderRelatimeMatrix } from "./composer-parity.mjs";
 import { assertComposerPointerSelection } from "./composer-shards.mjs";
 import { launchBrowser } from "./headless-launch.mjs";
 import { assertLaneHeaderPipMatrix } from "./lane-header-pips.mjs";
@@ -342,6 +343,17 @@ export async function assertFirefoxRestoredMosaic(
     const console = page.locator('[data-pane="agent-console"]');
     await console.getByRole("tab", { name: /^Compose/ }).click();
     await assertLaneHeaderPipMatrix(page, console, artifacts, "firefox", "dark");
+    const linkedComposer = console.locator(".agent-composer-stack").filter({
+      has: page.locator(
+        '.composer-shard--primary .composer-shard-link[href^="#message-agent-"]',
+      ),
+    }).first();
+    await linkedComposer.locator(".composer-shard-age-label").waitFor({ timeout: CONNECT_MS });
+    await assertHeaderRelatimeMatrix(page, linkedComposer, artifacts, {
+      artifactPrefix: "firefox",
+      restoreScheme: "dark",
+      variants: ["primary"],
+    });
     const before = await settledMosaicCards(page, "before reload");
     assert.ok(before.length > 0, "Firefox receives restored Mosaic cards");
     const userQuoteFixture = await installFirefoxQuoteFixture(page);

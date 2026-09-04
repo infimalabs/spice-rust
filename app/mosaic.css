@@ -770,9 +770,12 @@ body:has(.shell--mosaic),
 .composer-shard-link {
   color: var(--accent);
   font-variant-numeric: tabular-nums;
+  white-space: pre;
+}
+/* Firefox does not paint an ancestor's decoration through this inline-block clock slot. */
+.composer-shard-link > .composer-shard-age-label {
   text-decoration: underline;
   text-underline-offset: 2px;
-  white-space: pre;
 }
 .composer-shard-age { color: var(--accent); }
 .composer-shard-age.queued { color: var(--warning); }

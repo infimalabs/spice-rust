@@ -66,10 +66,11 @@ function readComposerTreatment(composer) {
     const style = (element) => getComputedStyle(element);
     const heading = band.querySelector(".composer-shard-heading");
     const age = heading?.querySelector(".composer-shard-age");
+    const ageLabel = age?.querySelector(".composer-shard-age-label");
     const prose = heading?.querySelector(".composer-shard-prose");
     const textarea = band.querySelector("textarea");
     const control = heading?.querySelector(":scope > button, .agent-action-menu > summary");
-    if (!heading || !age || !prose || !textarea || !control) {
+    if (!heading || !age || !ageLabel || !prose || !textarea || !control) {
       throw new Error("composer reference chrome is incomplete");
     }
     return {
@@ -85,8 +86,8 @@ function readComposerTreatment(composer) {
       },
       age: {
         fontSize: style(age).fontSize,
-        decoration: style(age).textDecorationLine,
-        underlineOffset: style(age).textUnderlineOffset,
+        decoration: style(ageLabel).textDecorationLine,
+        underlineOffset: style(ageLabel).textUnderlineOffset,
       },
       prose: { fontSize: style(prose).fontSize, width: box(prose).width },
       textarea: {
@@ -146,8 +147,8 @@ async function readHeaderRelatimes(composerStack) {
         targetAuthored: target?.querySelector("[data-age-authored]")
           ?.getAttribute("data-age-authored"),
         targetExists: Boolean(target),
-        decoration: link ? style(link).textDecorationLine : "",
-        underlineOffset: link ? style(link).textUnderlineOffset : "",
+        decoration: style(age).textDecorationLine,
+        underlineOffset: style(age).textUnderlineOffset,
         contained: Boolean(
           box && headerBox && box.left >= headerBox.left && box.right <= headerBox.right,
         ),
@@ -165,13 +166,16 @@ async function readHeaderRelatimes(composerStack) {
   }, NON_LINKED_RELATIMES);
 }
 
-function assertHeaderRelatimes(actual, label) {
+function assertHeaderRelatimes(actual, label, expectedVariants) {
   assert.deepEqual(
     [...new Set(actual.linked.map(({ variant }) => variant))].sort(),
-    ["primary", "quote"],
+    [...expectedVariants].sort(),
     `${label}: every supported clickable header relatime variant is rendered`,
   );
-  assert.ok(actual.linked.length >= 2, `${label}: primary and quote header links are visible`);
+  assert.ok(
+    actual.linked.length >= expectedVariants.length,
+    `${label}: every expected header link is visible`,
+  );
   for (const linked of actual.linked) {
     assert.equal(linked.tag, "A", `${label}: ${linked.variant} relatime retains link semantics`);
     assert.ok(linked.aria, `${label}: ${linked.variant} relatime retains its accessible label`);
@@ -207,7 +211,16 @@ function assertHeaderRelatimes(actual, label) {
 
 /// Prove every linked header age and every non-link age treatment across the
 /// supported theme and compact-layout matrix without changing the live links.
-export async function assertHeaderRelatimeMatrix(page, composerStack, artifacts) {
+export async function assertHeaderRelatimeMatrix(
+  page,
+  composerStack,
+  artifacts,
+  {
+    artifactPrefix = "canvas",
+    restoreScheme = "light",
+    variants = ["primary", "quote"],
+  } = {},
+) {
   const originalViewport = page.viewportSize();
   assert.ok(originalViewport, "header relatime matrix requires a fixed viewport");
   try {
@@ -216,15 +229,15 @@ export async function assertHeaderRelatimeMatrix(page, composerStack, artifacts)
       for (const [viewport, dimensions] of HEADER_RELATIME_VIEWPORTS) {
         await page.setViewportSize(dimensions);
         await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
-        const label = `${scheme} ${viewport}`;
-        assertHeaderRelatimes(await readHeaderRelatimes(composerStack), label);
+        const label = `${artifactPrefix} ${scheme} ${viewport}`;
+        assertHeaderRelatimes(await readHeaderRelatimes(composerStack), label, variants);
         await composerStack.screenshot({
-          path: join(artifacts, `canvas-header-relatimes-${scheme}-${viewport}.png`),
+          path: join(artifacts, `${artifactPrefix}-header-relatimes-${scheme}-${viewport}.png`),
         });
       }
     }
   } finally {
-    await page.emulateMedia({ colorScheme: "light" });
+    await page.emulateMedia({ colorScheme: restoreScheme });
     await page.setViewportSize(originalViewport);
   }
 }
