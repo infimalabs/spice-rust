@@ -157,12 +157,12 @@ fn inherited_claude_compact_window_is_preserved_exactly_once() {
 }
 
 #[test]
-fn codex_plan_renders_admitted_personality_and_explicit_fast_mode() {
+fn codex_plan_renders_admitted_model_personality_and_explicit_fast_mode() {
     let root = root(
         r#"
 [vendor.codex]
 binary = "/opt/codex"
-model = "gpt-current"
+model = "gpt-6-astra"
 effort = "max"
 personality = "pragmatic"
 fast_mode = true
@@ -176,8 +176,16 @@ fast_mode = true
         plan.launch().hook.command,
         "'/opt/spice'\\''s bin' hook codex"
     );
+    assert_eq!(plan.launch().model, "gpt-6-astra");
     assert_eq!(plan.launch().personality.as_deref(), Some("pragmatic"));
     assert_eq!(plan.launch().fast_mode, Some(true));
+    assert_eq!(
+        rendered
+            .windows(2)
+            .filter(|pair| pair == &["--model", "gpt-6-astra"])
+            .count(),
+        1
+    );
     assert!(
         rendered
             .windows(2)
