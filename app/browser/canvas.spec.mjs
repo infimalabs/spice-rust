@@ -1060,10 +1060,11 @@ try {
           team.console,
           fixture,
           team.lanes,
-          async (deadline) => {
+          async (deadline, observeWhileStopped) => {
             lightMonitor.expectNetworkInterruption(true);
             await stopResident(fixture, resident);
-            const remaining = deadline - Date.now();
+            const observedDeadline = await observeWhileStopped();
+            const remaining = Math.max(deadline, observedDeadline) - Date.now();
             if (remaining > 0) {
               await new Promise((resolve) => setTimeout(resolve, remaining));
             }
