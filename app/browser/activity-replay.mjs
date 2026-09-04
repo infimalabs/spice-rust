@@ -110,7 +110,7 @@ export async function installActivityReplay(context) {
     page,
     lane,
     text,
-    { activity = undefined, finalAnswer = undefined, media = undefined, history = false } = {},
+    { activity = undefined, media = undefined, history = false } = {},
   ) => {
     const source = proseFrames.get(lane);
     assert.ok(source, `the route captured an agent prose frame for ${lane}`);
@@ -119,8 +119,7 @@ export async function installActivityReplay(context) {
     frame.message.text = text;
     if (activity === undefined) delete frame.message.activity;
     else frame.message.activity = activity;
-    if (finalAnswer === undefined) delete frame.message.final_answer;
-    else frame.message.final_answer = finalAnswer;
+    delete frame.message.final_answer;
     if (media === undefined) delete frame.message.media;
     else frame.message.media = media;
     frame.message.authored = new Date().toISOString();
@@ -213,8 +212,28 @@ export async function installActivityReplay(context) {
     injectAgentToolMedia(page, lane, media) {
       return injectAgentMessage(page, lane, "", { activity: "tool", media });
     },
-    injectAgentFinal(page, lane, text) {
-      return injectAgentMessage(page, lane, text, { finalAnswer: true });
+    async reviseAgentFinal(page, key) {
+      const current = knownMessages.get(key);
+      assert.ok(current, `the route retained message ${key}`);
+      const source = proseFrames.get(current.lane);
+      assert.ok(source, `the route captured an agent prose frame for ${current.lane}`);
+      assert.ok(activeSocket, "the route retains the current browser WebSocket");
+      const frame = JSON.parse(JSON.stringify(source));
+      frame.message = JSON.parse(JSON.stringify(current));
+      frame.message.final_answer = true;
+      remember([frame.message]);
+      activeSocket.send(Buffer.from(JSON.stringify(frame)));
+      await waitForPageFunction(
+        page,
+        "same-identity final revision reaches the browser",
+        TRANSITION_MS,
+        (expectedKey) => {
+          const card = document.querySelector(`[data-mosaic-card-key="${expectedKey}"]`);
+          return card?.dataset.messageFinal === "true" && card.classList.contains("final");
+        },
+        key,
+      );
+      return { key };
     },
     injectAgentHistory(page, lane, text) {
       return injectAgentMessage(page, lane, text, { history: true });

@@ -649,16 +649,21 @@ async function retainNoActionCard(page, console, activityReplay, lane) {
     return candidate?.dataset.layoutPhase === "committed"
       && candidate.dataset.mosaicImageRevision === "1";
   }, message.key);
+  return card;
 }
 
 async function retainFinalCard(page, console, activityReplay, lane) {
-  const message = await activityReplay.injectAgentFinal(
-    page,
-    lane,
-    "Final message color reference",
-  );
+  const text = "Final message color reference";
+  const message = await activityReplay.injectAgentProse(page, lane, text);
   const card = console.locator(`[data-mosaic-card-key="${message.key}"]`);
   await card.waitFor({ state: "attached", timeout: 10_000 });
+  await waitForPage(page, "ordinary precursor commits", TRANSITION_MS, (key) => {
+    const candidate = document.querySelector(`[data-mosaic-card-key="${key}"]`);
+    return candidate?.dataset.layoutPhase === "committed"
+      && candidate.dataset.messageFinal === "false"
+      && !candidate.classList.contains("final");
+  }, message.key);
+  await activityReplay.reviseAgentFinal(page, message.key);
   await waitForPage(page, "final message commits", TRANSITION_MS, (key) => {
     const candidate = document.querySelector(`[data-mosaic-card-key="${key}"]`);
     return candidate?.dataset.layoutPhase === "committed" && candidate.classList.contains("final");
@@ -668,6 +673,16 @@ async function retainFinalCard(page, console, activityReplay, lane) {
 
 async function messageStateColors(card) {
   return card.evaluate((article) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1;
+    canvas.height = 1;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    const rgba = (expression) => {
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = expression;
+      context.fillRect(0, 0, 1, 1);
+      return [...context.getImageData(0, 0, 1, 1).data];
+    };
     const probe = document.createElement("span");
     article.append(probe);
     const color = (expression) => {
@@ -684,12 +699,15 @@ async function messageStateColors(card) {
     };
     const style = getComputedStyle(article);
     const result = {
+      key: article.dataset.mosaicCardKey,
       classes: [...article.classList],
       background: style.backgroundColor,
+      backgroundRgba: rgba(style.backgroundColor),
       borderLeft: style.borderLeftColor,
       borderRight: style.borderRightColor,
       borderTop: style.borderTopColor,
       boxShadow: style.boxShadow,
+      panel: background("var(--panel)"),
       finalAccent: color("var(--accent-1)"),
       finalTint: background("color-mix(in srgb, var(--accent-1) 8%, var(--panel))"),
       producerAccent: color("var(--accent-slot, var(--accent))"),
@@ -701,11 +719,45 @@ async function messageStateColors(card) {
   });
 }
 
-async function captureFinalMessageStates(page, console, card, artifacts, mode, viewport) {
+function rgbDistance(left, right) {
+  return Math.hypot(...left.slice(0, 3).map((channel, index) => channel - right[index]));
+}
+
+async function captureFinalMessageStates(
+  page,
+  console,
+  ordinaryCard,
+  card,
+  artifacts,
+  mode,
+  viewport,
+) {
   await waitForCommittedResize(page, console, viewport);
+  const ordinary = await messageStateColors(ordinaryCard);
   const final = await messageStateColors(card);
+  const cardOrder = await console.locator(".mosaic-message-card").evaluateAll((cards) => (
+    cards.map((candidate) => candidate.dataset.mosaicCardKey)
+  ));
+  const backgroundDelta = rgbDistance(ordinary.backgroundRgba, final.backgroundRgba);
+  assert.equal(
+    cardOrder.indexOf(final.key),
+    cardOrder.indexOf(ordinary.key) + 1,
+    `${mode} ${viewport.label} compares adjacent ordinary and final cards`,
+  );
+  assert.ok(!ordinary.classes.includes("final"), `${mode} ${viewport.label} comparator is ordinary`);
+  assert.equal(ordinary.background, ordinary.panel, `${mode} ordinary preserves the panel background`);
+  assert.equal(
+    ordinary.borderRight,
+    ordinary.producerAccent,
+    `${mode} ordinary preserves producer identity`,
+  );
   assert.ok(final.classes.includes("final"), `${mode} ${viewport.label} retains final state`);
   assert.ok(!final.classes.includes("now-playing"), `${mode} ${viewport.label} starts silent`);
+  assert.ok(
+    backgroundDelta > 0,
+    `${mode} ${viewport.label} final background differs from adjacent ordinary background: `
+      + `${ordinary.backgroundRgba} versus ${final.backgroundRgba}`,
+  );
   assert.equal(final.background, final.finalTint, `${mode} final uses the reference tint role`);
   assert.equal(final.borderTop, final.finalAccent, `${mode} final uses the cool top rule`);
   assert.equal(final.borderRight, final.producerAccent, `${mode} final preserves producer identity`);
@@ -743,7 +795,7 @@ export async function assertReferenceMessageCard(
   activityReplay,
   lane,
 ) {
-  await retainNoActionCard(page, console, activityReplay, lane);
+  const ordinaryCard = await retainNoActionCard(page, console, activityReplay, lane);
   const finalCard = await retainFinalCard(page, console, activityReplay, lane);
   const geometry = await card.evaluate((article) => {
     const measured = (node) => {
@@ -825,10 +877,10 @@ export async function assertReferenceMessageCard(
     await captureReferenceView(page, console, artifacts, {
       label: "mobile", width: 390, height: 720,
     }, mode, agentLabels);
-    await captureFinalMessageStates(page, console, finalCard, artifacts, mode, {
+    await captureFinalMessageStates(page, console, ordinaryCard, finalCard, artifacts, mode, {
       label: "reference", width: 648, height: 726,
     });
-    await captureFinalMessageStates(page, console, finalCard, artifacts, mode, {
+    await captureFinalMessageStates(page, console, ordinaryCard, finalCard, artifacts, mode, {
       label: "mobile", width: 390, height: 720,
     });
   }
