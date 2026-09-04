@@ -139,6 +139,84 @@ async function assignTeamLaneIds(page) {
   }, teamLaneIds);
 }
 
+async function measurePips(locator, laneKey, statusKey) {
+  return locator.evaluateAll((nodes, keys) => nodes.map((pip) => {
+    const box = pip.getBoundingClientRect();
+    return {
+      lane: pip.dataset[keys.laneKey],
+      status: pip.dataset[keys.statusKey],
+      column: pip.dataset.pipColumn,
+      row: pip.dataset.pipRow,
+      left: box.left,
+      top: box.top,
+    };
+  }), { laneKey, statusKey });
+}
+
+async function assertThreeAgentPipArrow(page, console, artifacts) {
+  const lanes = teamLaneIds.slice(0, 3);
+  const menu = page.locator(".canvas-menu");
+  await menu.locator(":scope > summary").click();
+  const menuTeam = menu.locator(".canvas-team");
+  await menuTeam.locator(".canvas-team-member").nth(2).waitFor({ timeout: TRANSITION_MS });
+  assert.deepEqual(
+    await menuTeam.locator(":scope > .canvas-team-members > .canvas-team-member")
+      .evaluateAll((members) => members.map((member) => [
+        member.dataset.teamMember,
+        member.dataset.accent,
+      ])),
+    lanes.map((lane, index) => [lane, String(lanes.length - index - 1)]),
+    "the visible control order establishes the green right-edge agent",
+  );
+
+  const teamPips = await measurePips(
+    console.locator(".team-light"),
+    "laneLightTargetId",
+    "laneStatus",
+  );
+  const teamByLane = new Map(teamPips.map((pip) => [pip.lane, pip]));
+  assert.ok(teamPips.every((pip) => pip.status), "every three-agent team pip has a live status");
+  assert.deepEqual(
+    lanes.map((lane) => {
+      const pip = teamByLane.get(lane);
+      return [pip?.column, pip?.row];
+    }),
+    [["1", "2"], ["2", "1"], ["2", "2"]],
+    "three team pip identities keep the established stack fill order",
+  );
+
+  await chooseCanvasView(page, "Flow");
+  const brandPips = page.locator(".brand-dot");
+  await brandPips.nth(2).waitFor({ timeout: TRANSITION_MS });
+  assert.equal(await brandPips.count(), 3, "compact chrome renders the live three-agent roster");
+  const chromePips = await measurePips(brandPips, "agentLane", "agentStatus");
+  const chromeByLane = new Map(chromePips.map((pip) => [pip.lane, pip]));
+  const ordered = lanes.map((lane) => chromeByLane.get(lane));
+  assert.deepEqual(
+    ordered.map((pip) => [pip?.column, pip?.row]),
+    [["1", "1"], ["1", "2"], ["2", "2"]],
+    "the Canvas arrow puts the green right-edge agent at bottom right",
+  );
+  assert.deepEqual(
+    ordered.map((pip) => pip?.status),
+    lanes.map((lane) => teamByLane.get(lane)?.status),
+    "each arrow pip carries its lane's current team status",
+  );
+  const [upperLeft, lowerLeft, lowerRight] = ordered;
+  assert.equal(upperLeft.left, lowerLeft.left);
+  assert.ok(upperLeft.top < lowerLeft.top);
+  assert.ok(lowerLeft.left < lowerRight.left);
+  assert.equal(lowerLeft.top, lowerRight.top);
+  const viewport = page.viewportSize();
+  assert.ok(viewport, "the three-agent Canvas screenshot has a fixed viewport");
+  await page.screenshot({
+    path: join(artifacts, "canvas-pip-arrow-three.png"),
+    clip: { x: 0, y: 0, width: Math.min(viewport.width, 640), height: 180 },
+  });
+  await chooseCanvasView(page, "Agents");
+  await console.getByRole("tab", { name: /^Info/ }).click();
+}
+
 /// Seat the canonical four-member fixture team without running its scenarios.
 ///
 /// Other independently runnable browser shards need a real lineage but must
@@ -149,6 +227,7 @@ export async function seatAgentTeam(
   worktrees,
   assertInvalidVendor = false,
   beforeReload = null,
+  artifacts = null,
 ) {
   const teamWorktrees = worktrees.slice(0, 4);
   const console = page.locator('[data-pane="agent-console"]');
@@ -201,6 +280,7 @@ export async function seatAgentTeam(
     await console.getByRole("button", { name: "Seat agent" }).click();
     await waitForElement(page, "next external agent seat renders", AGENT_SEAT_MS,
       console.locator(".team-detail-card").nth(index + 1));
+    if (index === 1 && artifacts) await assertThreeAgentPipArrow(page, console, artifacts);
   }
   for (const lane of teamLaneIds) {
     const wake = await reply(fixture, ["lane", "wake", lane]);
@@ -491,6 +571,7 @@ export async function assertAgentConversation(
     worktrees,
     true,
     (console) => activityReplay.assertBootstrapLiveMessages(console),
+    artifacts,
   );
   const {
     console,
@@ -1037,7 +1118,6 @@ async function assertRosterPips(page, console, seated, artifacts) {
   assert.equal(orderedPips[1].top, orderedPips[0].top);
   assert.equal(orderedPips[1].left, orderedPips[3].left);
   assert.equal(orderedPips[3].top, orderedPips[2].top);
-  await assertPartialPipStack(page, artifacts);
   assert.equal(
     await page.locator("button.axis-button", { hasText: /^Mosaic/ }).count(),
     0,
@@ -1046,70 +1126,6 @@ async function assertRosterPips(page, console, seated, artifacts) {
   await chooseCanvasView(page, "Agents");
   await console.waitFor();
   await waitForMosaicReady(page);
-}
-
-async function assertPartialPipStack(page, artifacts) {
-  const originalViewport = page.viewportSize();
-  assert.ok(originalViewport, "pip screenshot coverage requires a fixed viewport");
-  await page.evaluate(() => {
-    const original = document.querySelector(".brand-dots");
-    const clone = original.cloneNode(true);
-    const upperRight = clone.querySelector('[data-pip-column="2"][data-pip-row="1"]');
-    if (!upperRight) throw new Error("four-pip roster is missing its upper-right pip");
-    upperRight.remove();
-    clone.setAttribute("aria-label", "3 admitted agents");
-    clone.dataset.pipLayoutWitness = "three";
-    window.__pipLayoutOriginal = original;
-    original.replaceWith(clone);
-  });
-  const witness = page.locator('[data-pip-layout-witness="three"]');
-  const geometry = async () => witness.locator(".brand-dot").evaluateAll((pips) => (
-    pips.map((pip) => {
-      const box = pip.getBoundingClientRect();
-      return {
-        column: pip.dataset.pipColumn,
-        left: box.left,
-        row: pip.dataset.pipRow,
-        top: box.top,
-      };
-    })
-  ));
-  const assertGeometry = (pips, viewport) => {
-    assert.equal(pips.length, 3, `${viewport} compact roster contains three physical pips`);
-    pips.sort((left, right) => (
-      Number(right.column) - Number(left.column) || Number(right.row) - Number(left.row)
-    ));
-    assert.deepEqual(
-      pips.map(({ column, row }) => [column, row]),
-      [["2", "2"], ["1", "2"], ["1", "1"]],
-      `${viewport} partial grid completes the left column and leaves the lower-right pip`,
-    );
-    assert.ok(pips[1].left < pips[0].left);
-    assert.equal(pips[1].top, pips[0].top);
-    assert.equal(pips[1].left, pips[2].left);
-    assert.ok(pips[1].top > pips[2].top);
-  };
-  const browser = page.context().browser().browserType().name();
-  try {
-    assertGeometry(await geometry(), "desktop");
-    await page.screenshot({
-      path: join(artifacts, `${browser}-pip-grid-three-desktop.png`),
-      clip: { x: 0, y: 0, width: Math.min(originalViewport.width, 640), height: 180 },
-    });
-    await page.setViewportSize({ width: 480, height: 720 });
-    assertGeometry(await geometry(), "narrow");
-    await page.screenshot({
-      path: join(artifacts, `${browser}-pip-grid-three-narrow.png`),
-      clip: { x: 0, y: 0, width: 480, height: 180 },
-    });
-  } finally {
-    await page.setViewportSize(originalViewport);
-    await page.evaluate(() => {
-      const witness = document.querySelector('[data-pip-layout-witness="three"]');
-      if (witness && window.__pipLayoutOriginal) witness.replaceWith(window.__pipLayoutOriginal);
-      delete window.__pipLayoutOriginal;
-    });
-  }
 }
 
 async function assertQueuedRosterPip(page, console, member) {
