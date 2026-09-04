@@ -296,6 +296,9 @@ fn rollout_web_search_companion(payload: &Object) -> Events {
         "completed" => {}
         other => return Err(drift(&format!("item:status:{other}"))),
     }
+    if payload.contains_key("action") {
+        object(payload, "action")?;
+    }
     // Codex persists this identity-free status projection alongside the
     // authoritative web_search_end. Some releases repeat the action and some
     // omit it; neither shape can identify a lifecycle record.
