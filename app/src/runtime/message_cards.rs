@@ -245,6 +245,27 @@ mod tests {
     }
 
     #[test]
+    fn live_terminal_revision_replaces_the_same_card_identity() {
+        let mut cards = MessageCards::default();
+        let ordinary = message(1, AgentActivityKind::Prose);
+        cards.snapshot(10, std::slice::from_ref(&ordinary));
+
+        let mut terminal = ordinary;
+        terminal.final_answer = true;
+        terminal.automatic_speech = Some(wire::AutomaticSpeech {
+            kind: wire::AutomaticSpeechKind::Final,
+            text: terminal.text.clone(),
+        });
+        assert!(cards.merge(std::iter::once(&terminal)));
+        assert_eq!(cards.entries().len(), 1);
+        assert!(cards.entries()[0].final_answer);
+        assert_eq!(
+            cards.entries()[0].automatic_speech,
+            terminal.automatic_speech
+        );
+    }
+
+    #[test]
     fn zero_capacity_live_replay_is_a_stable_noop() {
         let mut cards = MessageCards::default();
         cards.snapshot(0, &[]);

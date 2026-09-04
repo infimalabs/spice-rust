@@ -11,6 +11,13 @@ impl AgentMessagePublisher for UnavailableMessagePublisher {
     ) -> Result<bool, canvas::stream::MessagePublishError> {
         Err(canvas::stream::MessagePublishError::Unavailable)
     }
+
+    fn revise_final(
+        &self,
+        _message: wire::AgentMessage,
+    ) -> Result<bool, canvas::stream::MessagePublishError> {
+        Err(canvas::stream::MessagePublishError::Unavailable)
+    }
 }
 
 #[test]

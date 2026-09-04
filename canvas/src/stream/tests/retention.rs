@@ -54,6 +54,59 @@ fn complete_lane_history(
 }
 
 #[test]
+fn terminal_revision_replaces_one_retained_message_and_broadcasts_the_change() {
+    let bus = fixture(1);
+    let source = Source::new(bus.reader(), epoch(), 10);
+    let publisher = source.message_publisher();
+    let ordinary = message(0xe5, 7);
+    publisher
+        .publish(ordinary.clone())
+        .expect("ordinary prose publishes");
+    let mut updates = source.subscribe_messages();
+
+    let mut terminal = ordinary.clone();
+    terminal.final_answer = true;
+    terminal.automatic_speech = Some(wire::AutomaticSpeech {
+        kind: wire::AutomaticSpeechKind::Final,
+        text: terminal.text.clone(),
+    });
+    assert!(
+        publisher
+            .revise_final(terminal.clone())
+            .expect("terminal revision publishes")
+    );
+    assert_eq!(
+        updates.try_recv().expect("terminal revision broadcasts"),
+        terminal
+    );
+    assert!(
+        !publisher
+            .revise_final(terminal.clone())
+            .expect("identical terminal revision deduplicates")
+    );
+
+    let (_, frames) = source
+        .begin(
+            &accepted(Actor::Operator),
+            &request(0xc4, vec![ViewSubject::Messages], None),
+        )
+        .expect("message subscription begins");
+    let StreamFrame::Messages { messages, .. } = &frames[0] else {
+        panic!("expected retained message snapshot")
+    };
+    assert_eq!(messages, &[terminal.clone()]);
+
+    let mut conflicting = terminal;
+    conflicting.text = "different authored prose".to_owned();
+    assert_eq!(
+        publisher.revise_final(conflicting),
+        Err(MessagePublishError::IdentityConflict),
+    );
+    drop(source);
+    bus.shutdown().expect("bus shuts down");
+}
+
+#[test]
 fn retained_message_capacity_is_independent_for_each_lane() {
     let bus = fixture(1);
     let source = Source::new(bus.reader(), epoch(), 10);

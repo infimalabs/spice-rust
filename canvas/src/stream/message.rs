@@ -308,6 +308,27 @@ impl MessagePublisher {
         let _ = self.feed.updates.send(message);
         Ok(true)
     }
+
+    /// Replace one retained prose message with its terminal presentation.
+    ///
+    /// The durable locus remains immutable. The only admitted revision raises
+    /// `final_answer` from false to true and may replace the derived automatic
+    /// speech instruction; every authored field and payload byte must match.
+    pub fn revise_final(&self, message: AgentMessage) -> Result<bool, MessagePublishError> {
+        wire::media::admit_media(&message.media).map_err(MessagePublishError::InvalidMedia)?;
+        let mut retained = self
+            .feed
+            .retained
+            .lock()
+            .map_err(|_| MessagePublishError::Unavailable)?;
+        let revised = revise_final_message(&mut retained, &message)?;
+        if !revised {
+            return Ok(false);
+        }
+        drop(retained);
+        let _ = self.feed.updates.send(message);
+        Ok(true)
+    }
 }
 
 fn retain_message(
@@ -338,6 +359,34 @@ fn retain_message(
     if visible {
         trim_visible_lane(retained, lane, capacity);
     }
+    Ok(true)
+}
+
+fn revise_final_message(
+    retained: &mut VecDeque<AgentMessage>,
+    message: &AgentMessage,
+) -> Result<bool, MessagePublishError> {
+    let Some(index) = retained
+        .iter()
+        .position(|existing| existing.lane == message.lane && existing.locus == message.locus)
+    else {
+        return Err(MessagePublishError::IdentityConflict);
+    };
+    let existing = &retained[index];
+    if existing == message {
+        return Ok(false);
+    }
+    let mut expected = existing.clone();
+    expected.final_answer = true;
+    expected.automatic_speech = message.automatic_speech.clone();
+    if existing.activity != wire::AgentActivityKind::Prose
+        || existing.final_answer
+        || !message.final_answer
+        || expected != *message
+    {
+        return Err(MessagePublishError::IdentityConflict);
+    }
+    retained[index] = message.clone();
     Ok(true)
 }
 
