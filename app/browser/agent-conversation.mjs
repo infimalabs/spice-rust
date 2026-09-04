@@ -572,6 +572,7 @@ export async function assertAgentConversation(
     const column = console.locator(`.team-agent[data-agent-lane="${lane.lane}"]`);
     await column.getByRole("textbox").fill(messages[index]);
     await console.getByRole("button", { name: "Steer", exact: true }).click();
+    if (index === 0) await assertQueuedRosterPip(page, console, seated[0]);
   }
   const quoteLane = console.locator(`.team-agent[data-agent-lane="${seated[3].lane}"]`);
   await quoteLane.getByRole("textbox").fill(entirelyQuotedMessage);
@@ -856,7 +857,6 @@ export async function assertAgentConversation(
   const pendingDirective = inbox.body.lanes[0].pending[0];
   assert.equal(pendingDirective.text, messages[0]);
   assert.equal(await outgoing.getAttribute("data-card-kind"), "agent-message");
-  await assertQueuedRosterPip(page, console, seated[0]);
   const age = outgoing.locator(".message-age");
   assert.match((await age.innerText()).trim(), /^(?:now|\d+[smhd])$/);
   assert.match(await age.getAttribute("title"), /^tape \d+:\d+\+\d+#\d+$/);
@@ -1120,6 +1120,23 @@ async function assertQueuedRosterPip(page, console, member) {
     document.querySelector(`.team-light[data-lane-light-target-id="${lane}"]`)
       ?.getAttribute("data-lane-status") === "queued"
   ), member.lane);
+  const teamRoster = await console.locator(".team-light").evaluateAll((pips) => pips.map((pip) => ({
+    column: pip.dataset.pipColumn,
+    lane: pip.dataset.laneLightTargetId,
+    row: pip.dataset.pipRow,
+    status: pip.dataset.laneStatus,
+  })));
+  assert.deepEqual(
+    teamRoster.filter(({ status }) => status === "queued").map(({ lane }) => lane),
+    [member.lane],
+    "only the directed member lights its team pip as queued",
+  );
+  const queuedTeamPip = teamRoster.find(({ lane }) => lane === member.lane);
+  assert.deepEqual(
+    [queuedTeamPip.column, queuedTeamPip.row],
+    ["1", "1"],
+    "the queued member keeps its reversed right-edge team-pip assignment",
+  );
   const teamStyle = await teamPip.evaluate((pip) => {
     const style = getComputedStyle(pip);
     return {
@@ -1136,7 +1153,23 @@ async function assertQueuedRosterPip(page, console, member) {
     document.querySelector(`.brand-dot[data-agent-lane="${lane}"]`)
       ?.getAttribute("data-agent-status") === "queued"
   ), member.lane);
-  assert.equal(await brandPip.getAttribute("data-agent-status"), "queued");
+  const brandRoster = await page.locator(".brand-dot").evaluateAll((pips) => pips.map((pip) => ({
+    column: pip.dataset.pipColumn,
+    lane: pip.dataset.agentLane,
+    row: pip.dataset.pipRow,
+    status: pip.dataset.agentStatus,
+  })));
+  assert.deepEqual(
+    brandRoster.filter(({ status }) => status === "queued").map(({ lane }) => lane),
+    [member.lane],
+    "only the directed member lights its global pip as queued",
+  );
+  const queuedBrandPip = brandRoster.find(({ lane }) => lane === member.lane);
+  assert.deepEqual(
+    [queuedBrandPip.column, queuedBrandPip.row],
+    ["1", "1"],
+    "the queued member keeps its reversed right-edge global-pip assignment",
+  );
   const brandStyle = await brandPip.evaluate((pip) => {
     const style = getComputedStyle(pip);
     return {
