@@ -27,7 +27,6 @@ import {
 import {
   assertCompactionDivider,
   assertNoUnavailableToolTerminal,
-  assertUnavailableToolTerminal,
   waitForCompactionReady,
 } from "./compaction-boundary-reference.mjs";
 import { launchBrowser } from "./headless-launch.mjs";
@@ -463,9 +462,10 @@ export async function assertCompactionBoundary(
         `${witness.label} narrow compaction boundary`,
         seeded.agentName,
       );
-      await assertUnavailableToolTerminal(
+      await assertNoUnavailableToolTerminal(
         dividers[index],
         `${witness.label} narrow compaction boundary`,
+        seeded.agentName,
         COMPACTED_TOOL_PREVIEW,
       );
     }
@@ -539,9 +539,10 @@ export async function assertCompactionBoundary(
         `${witness.label} narrow unresolved compaction boundary after empty boundary`,
         seeded.agentName,
       );
-      await assertUnavailableToolTerminal(
+      await assertNoUnavailableToolTerminal(
         dividers[index],
         `${witness.label} narrow unresolved compaction boundary after empty boundary`,
+        seeded.agentName,
         COMPACTED_TOOL_PREVIEW,
       );
       await assertCompactionDivider(
@@ -562,9 +563,10 @@ export async function assertCompactionBoundary(
         `${witness.label} wide compaction boundary`,
         seeded.agentName,
       );
-      await assertUnavailableToolTerminal(
+      await assertNoUnavailableToolTerminal(
         dividers[index],
         `${witness.label} wide compaction boundary`,
+        seeded.agentName,
         COMPACTED_TOOL_PREVIEW,
       );
       await assertCompactionDivider(

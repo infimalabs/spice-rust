@@ -260,24 +260,6 @@ fn render_compaction_boundary(message: &wire::AgentMessage, attribution: &str) -
                 </span>
             </span>
             <span class="mosaic-compaction-rule" aria-hidden="true"></span>
-            if !message.unavailable_tool_terminals.is_empty() {
-                <ul
-                    class="mosaic-compaction-terminals"
-                    aria-label="Tool terminal results unavailable after context compaction"
-                >
-                    {for message.unavailable_tool_terminals.iter().map(|preview| html! {
-                        <li
-                            class="mosaic-compaction-terminal"
-                            data-terminal-status="unavailable-after-compaction"
-                        >
-                            <span class="mosaic-compaction-tool" title={preview.clone()}>{preview}</span>
-                            <span class="mosaic-compaction-status">
-                                {"terminal result unavailable after context compaction"}
-                            </span>
-                        </li>
-                    })}
-                </ul>
-            }
         </>
     }
 }
