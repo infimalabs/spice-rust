@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { reply, TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
 import {
   assertComposerReferenceTreatment,
+  assertHeaderRelatimeMatrix,
   assertQuotedComposerParity,
 } from "./composer-parity.mjs";
 
@@ -497,6 +498,7 @@ export async function assertComposerShards({
   entirelyQuotedMessage,
   latestPrimaryProse,
   activityReplay,
+  artifacts,
 }) {
   const nestedCard = quoteActivity
     .filter({ hasText: nestedQuotePreview })
@@ -820,6 +822,7 @@ export async function assertComposerShards({
   );
   await assertQuotedComposerParity(previewShard, headingChildren);
   await assertComposerReferenceTreatment(quotePrimary, previewShard);
+  await assertHeaderRelatimeMatrix(page, quoteStack, artifacts);
   const overflowingReply = Array.from(
     { length: 16 },
     (_, index) => `independently scrolling quote reply line ${index + 1}`,

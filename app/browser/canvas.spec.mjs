@@ -531,6 +531,7 @@ async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
     entirelyQuotedMessage,
     latestPrimaryProse: seeded.quoteProse,
     activityReplay,
+    artifacts,
   });
 
   const originalViewport = page.viewportSize();

@@ -1,4 +1,18 @@
 import assert from "node:assert/strict";
+import { join } from "node:path";
+
+const HEADER_RELATIME_VIEWPORTS = Object.freeze([
+  Object.freeze(["wide", { width: 1000, height: 568 }]),
+  Object.freeze(["narrow", { width: 480, height: 720 }]),
+]);
+const HEADER_RELATIME_SCHEMES = Object.freeze(["light", "dark"]);
+const NON_LINKED_RELATIMES = Object.freeze([
+  ".ticker-age",
+  ".message-age",
+  ".mosaic-compaction-age",
+  ".claim-age",
+  ".team-task-age",
+]);
 
 function withoutStatus(className) {
   return className.replace(/ (?:queued|running|running-stale|bound|unbound)$/, "");
@@ -110,6 +124,109 @@ function assertReferenceBand(kind, treatment) {
     [22, 22],
     `${kind} trailing header control keeps the reference circular hit box`,
   );
+}
+
+async function readHeaderRelatimes(composerStack) {
+  return composerStack.evaluate((stack, nonLinkedSelectors) => {
+    const style = (element) => getComputedStyle(element);
+    const linked = [...stack.querySelectorAll("header [data-age-clock]")].map((age) => {
+      const link = age.closest("a[href]");
+      const header = age.closest("header");
+      const shard = age.closest("[data-shard-kind]");
+      const href = link?.getAttribute("href");
+      const target = href?.startsWith("#") ? document.getElementById(href.slice(1)) : null;
+      const box = link?.getBoundingClientRect();
+      const headerBox = header?.getBoundingClientRect();
+      return {
+        variant: shard?.getAttribute("data-shard-kind"),
+        tag: link?.tagName,
+        href,
+        aria: link?.getAttribute("aria-label"),
+        authored: age.getAttribute("data-age-authored"),
+        targetAuthored: target?.querySelector("[data-age-authored]")
+          ?.getAttribute("data-age-authored"),
+        targetExists: Boolean(target),
+        decoration: link ? style(link).textDecorationLine : "",
+        underlineOffset: link ? style(link).textUnderlineOffset : "",
+        contained: Boolean(
+          box && headerBox && box.left >= headerBox.left && box.right <= headerBox.right,
+        ),
+        headerFits: Boolean(header && header.scrollWidth <= header.clientWidth),
+      };
+    });
+    const nonLinked = nonLinkedSelectors.map((selector) => ({
+      selector,
+      samples: [...document.querySelectorAll(selector)].map((age) => ({
+        linked: Boolean(age.closest("a[href]")),
+        decoration: style(age).textDecorationLine,
+      })),
+    }));
+    return { linked, nonLinked };
+  }, NON_LINKED_RELATIMES);
+}
+
+function assertHeaderRelatimes(actual, label) {
+  assert.deepEqual(
+    [...new Set(actual.linked.map(({ variant }) => variant))].sort(),
+    ["primary", "quote"],
+    `${label}: every supported clickable header relatime variant is rendered`,
+  );
+  assert.ok(actual.linked.length >= 2, `${label}: primary and quote header links are visible`);
+  for (const linked of actual.linked) {
+    assert.equal(linked.tag, "A", `${label}: ${linked.variant} relatime retains link semantics`);
+    assert.ok(linked.aria, `${label}: ${linked.variant} relatime retains its accessible label`);
+    assert.match(linked.decoration, /underline/, `${label}: ${linked.variant} relatime is underlined`);
+    assert.equal(
+      linked.underlineOffset,
+      "2px",
+      `${label}: ${linked.variant} relatime keeps the established underline offset`,
+    );
+    assert.ok(
+      linked.href?.startsWith("#") && linked.targetExists,
+      `${label}: ${linked.variant} relatime still targets a rendered message`,
+    );
+    assert.equal(
+      linked.authored,
+      linked.targetAuthored,
+      `${label}: ${linked.variant} relatime retains its source-message instant`,
+    );
+    assert.ok(linked.contained, `${label}: ${linked.variant} link remains inside its header`);
+    assert.ok(linked.headerFits, `${label}: ${linked.variant} header does not overflow`);
+  }
+  const sampled = actual.nonLinked.flatMap(({ samples }) => samples);
+  assert.ok(sampled.length > 0, `${label}: non-clickable relatime controls are rendered`);
+  assert.ok(
+    sampled.every(({ linked }) => !linked),
+    `${label}: non-clickable relatime variants do not gain link semantics`,
+  );
+  assert.ok(
+    sampled.every(({ decoration }) => !decoration.includes("underline")),
+    `${label}: non-clickable relatime variants do not look actionable`,
+  );
+}
+
+/// Prove every linked header age and every non-link age treatment across the
+/// supported theme and compact-layout matrix without changing the live links.
+export async function assertHeaderRelatimeMatrix(page, composerStack, artifacts) {
+  const originalViewport = page.viewportSize();
+  assert.ok(originalViewport, "header relatime matrix requires a fixed viewport");
+  try {
+    for (const scheme of HEADER_RELATIME_SCHEMES) {
+      await page.emulateMedia({ colorScheme: scheme });
+      for (const [viewport, dimensions] of HEADER_RELATIME_VIEWPORTS) {
+        await page.setViewportSize(dimensions);
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+        const label = `${scheme} ${viewport}`;
+        assertHeaderRelatimes(await readHeaderRelatimes(composerStack), label);
+        await composerStack.screenshot({
+          path: join(artifacts, `canvas-header-relatimes-${scheme}-${viewport}.png`),
+        });
+      }
+    }
+  } finally {
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.setViewportSize(originalViewport);
+  }
 }
 
 async function assertComposerTargets(primary, quoted, placeholder) {
