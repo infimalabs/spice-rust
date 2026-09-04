@@ -26,12 +26,12 @@ export async function assertImagePreview(preview, label, expectedHeight) {
   );
   assert.ok(observed.box.width <= observed.card.width, `${label} stays within its card`);
   assert.ok(Math.abs(observed.image.width - observed.box.width) <= 1,
-    `${label} fills its stable letterbox: ${JSON.stringify(observed)}`);
+    `${label} fills its stable preview frame: ${JSON.stringify(observed)}`);
   assert.ok(
     observed.box.left >= observed.card.left - 1 && observed.box.right <= observed.card.right + 1,
     `${label} does not overflow its card: ${JSON.stringify(observed)}`,
   );
-  assert.equal(observed.objectFit, "contain", `${label} preserves aspect ratio within its slot`);
+  assert.equal(observed.objectFit, "cover", `${label} fills its slot without distortion`);
   assert.equal(observed.maxHeight, `${expectedHeight}px`, `${label} exposes a stable computed cap`);
 }
 
