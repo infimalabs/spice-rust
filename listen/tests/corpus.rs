@@ -591,6 +591,18 @@ fn persisted_codex_web_search_pair_uses_the_end_events_source_identity() {
         duplicate.events().is_empty() && duplicate.residue().is_none(),
         "both persisted companion generations are duplicate accounting",
     );
+
+    let malformed_action = br#"{"type":"response_item","payload":{"type":"web_search_call","status":"completed","action":"search"}}"#;
+    let residue = decode(Dialect::Codex, malformed_action, locus(malformed_action))
+        .expect("a present malformed action remains accounted");
+    assert!(matches!(
+        residue,
+        Decoded::Residue(ref residue)
+            if residue.kind == ResidueKind::Malformed {
+                field: "action",
+                expected: "object",
+            }
+    ));
 }
 
 #[test]
