@@ -126,6 +126,44 @@ fn revised_message_snapshot_preserves_unchanged_allocation_identity() {
 }
 
 #[test]
+fn final_answer_revision_invalidates_the_ordinary_card() {
+    let session = Session::open(uuid(OPERATOR), uuid(EPOCH));
+    let accepted = session
+        .admit_accepted(format!(r#"{{"wire":1,"actor":"operator","epoch":"{EPOCH}"}}"#).as_bytes())
+        .expect("acceptance is admitted");
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let ordinary = serde_json::json!({
+        "lane": LANE,
+        "author": LANE_CAPABILITY,
+        "locus": {"member": 1, "offset": 10, "length": 20, "event": 0},
+        "authored": "2030-04-12T18:44:09.271Z",
+        "text": "same message",
+    });
+    runtime.apply_stream(&admitted(&session, &snapshot(vec![ordinary.clone()])));
+    let retained_ordinary = Rc::clone(&runtime.messages()[0]);
+
+    let mut final_answer = ordinary;
+    final_answer["final_answer"] = serde_json::json!(true);
+    assert!(
+        runtime
+            .apply_stream_frame(&admitted(&session, &live(final_answer.clone())))
+            .changed(),
+        "a final-answer revision invalidates the formerly ordinary card"
+    );
+    assert!(!Rc::ptr_eq(&retained_ordinary, &runtime.messages()[0]));
+    assert!(runtime.messages()[0].final_answer);
+    let retained_final = Rc::clone(&runtime.messages()[0]);
+
+    assert!(
+        !runtime
+            .apply_stream_frame(&admitted(&session, &live(final_answer)))
+            .changed(),
+        "replaying the final-answer revision is idempotent"
+    );
+    assert!(Rc::ptr_eq(&retained_final, &runtime.messages()[0]));
+}
+
+#[test]
 fn mixed_cards_reduce_identically_across_snapshot_history_and_replay() {
     let session = Session::open(uuid(OPERATOR), uuid(EPOCH));
     let accepted = session
