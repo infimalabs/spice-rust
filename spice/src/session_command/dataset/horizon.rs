@@ -12,6 +12,7 @@ use super::{
 };
 
 const BACKWARD_CHUNK_BYTES: u64 = 64 * 1024;
+const HORIZON_CONTEXT_LINES: usize = 20;
 
 pub(crate) fn recent_compaction_horizon(
     sources: &[ResolvedSource],
@@ -43,6 +44,7 @@ pub(super) fn read_records(
     let mut residues = Vec::new();
     let mut buffer = Vec::new();
     let mut line = 0_u64;
+    let mut within_horizon = start.is_none();
     loop {
         buffer.clear();
         let read = match reader.read_until(b'\n', &mut buffer) {
@@ -74,9 +76,14 @@ pub(super) fn read_records(
         let (observed, row) = decode_row(source, line, &buffer, dialect)?;
         dialect = Some(observed);
         match row {
-            DecodedRow::Typed(row) if start.is_some_and(|start| record_timestamp(&row) < start) => {
+            DecodedRow::Typed(row) => {
+                if !within_horizon && start.is_some_and(|start| record_timestamp(&row) >= start) {
+                    within_horizon = true;
+                }
+                if within_horizon {
+                    rows.push(row);
+                }
             }
-            DecodedRow::Typed(row) => rows.push(row),
             DecodedRow::Residue(residue) => residues.push(residue),
             DecodedRow::Ignored => {}
         }
@@ -240,12 +247,16 @@ fn start_offset_after_prior_timestamp(
     start: &str,
 ) -> Result<u64, Refusal> {
     let mut offset = 0_u64;
-    reverse_lines(&source.path, |line, _, next, _| {
-        if let Some(ts) = timestamp_from_line(source, line)
-            && ts.as_str() < start
-        {
-            offset = next;
-            return Ok(false);
+    let mut context = None;
+    reverse_lines(&source.path, |line, current, _, _| {
+        if let Some(remaining) = context.as_mut() {
+            offset = current;
+            *remaining -= 1;
+            return Ok(*remaining > 0);
+        }
+        if timestamp_from_line(source, line).is_some_and(|ts| ts.as_str() < start) {
+            offset = current;
+            context = Some(HORIZON_CONTEXT_LINES);
         }
         Ok(true)
     })?;
@@ -340,6 +351,7 @@ fn marker_from_record(record: &TypedRecord) -> Option<Marker> {
         if let Event::Compaction(compaction) = &sourced.event {
             Some(Marker {
                 source: record.source.clone(),
+                position: record.line,
                 ts: record_timestamp(record).to_owned(),
                 summary: compaction.summary.clone().unwrap_or_default(),
             })
@@ -387,6 +399,7 @@ fn marker_from_line(
         if let Event::Compaction(compaction) = event {
             Some(Marker {
                 source: source_name.to_owned(),
+                position: offset,
                 ts: timestamp.to_string(),
                 summary: compaction.summary.unwrap_or_default(),
             })

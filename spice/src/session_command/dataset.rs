@@ -39,6 +39,7 @@ struct TypedRecord {
 #[derive(Debug)]
 struct Marker {
     source: String,
+    position: u64,
     ts: String,
     summary: String,
 }
@@ -301,6 +302,7 @@ fn reduce(
                 Event::Usage(usage) => push_usage(dataset, record, usage),
                 Event::Compaction(compaction) => markers.push(Marker {
                     source: record.source.clone(),
+                    position: record.line,
                     ts: timestamp.to_owned(),
                     summary: compaction.summary.clone().unwrap_or_default(),
                 }),
@@ -434,6 +436,7 @@ fn push_message(
     let classified = classify(text);
     let message = MessageRecord {
         source: record.source.clone(),
+        position: record.line,
         ts: timestamp.to_owned(),
         turn_id: dataset.turns[index].turn_id.clone(),
         side: side.to_owned(),
@@ -770,27 +773,27 @@ fn push_usage(dataset: &mut Dataset, record: &TypedRecord, usage: &listen::Usage
 
 fn reconstruct_compactions(markers: &[Marker], dataset: &mut Dataset) {
     let mut ordered = markers.iter().collect::<Vec<_>>();
-    ordered.sort_by_key(|marker| (&marker.source, &marker.ts));
+    ordered.sort_by_key(|marker| (&marker.source, marker.position));
     for (index, marker) in ordered.iter().enumerate() {
         let next = ordered
             .iter()
             .skip(index + 1)
             .find(|candidate| candidate.source == marker.source)
-            .map(|candidate| candidate.ts.as_str());
+            .map(|candidate| candidate.position);
         let before = dataset
             .messages
             .iter()
             .filter(|message| {
                 message.source == marker.source
                     && message.side == "assistant"
-                    && message.ts < marker.ts
+                    && message.position < marker.position
             })
-            .max_by_key(|message| &message.ts)
+            .max_by_key(|message| message.position)
             .map_or_else(String::new, |message| message.text.clone());
         let after = |message: &&MessageRecord| {
             message.source == marker.source
-                && message.ts > marker.ts
-                && next.is_none_or(|end| message.ts.as_str() < end)
+                && message.position > marker.position
+                && next.is_none_or(|end| message.position < end)
         };
         let summary = if marker.summary.is_empty() {
             dataset

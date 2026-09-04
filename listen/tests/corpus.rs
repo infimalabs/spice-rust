@@ -585,13 +585,12 @@ fn persisted_codex_web_search_pair_uses_the_end_events_source_identity() {
 
     let status_only =
         br#"{"type":"response_item","payload":{"type":"web_search_call","status":"completed"}}"#;
-    let residue = decode(Dialect::Codex, status_only, locus(status_only))
-        .expect("the unsupported status-only shape remains accounted");
-    assert!(matches!(
-        residue,
-        Decoded::Residue(ref residue)
-            if residue.kind == ResidueKind::Absent { field: "action" }
-    ));
+    let duplicate = decode(Dialect::Codex, status_only, locus(status_only))
+        .expect("the status-only companion remains accounted");
+    assert!(
+        duplicate.events().is_empty() && duplicate.residue().is_none(),
+        "both persisted companion generations are duplicate accounting",
+    );
 }
 
 #[test]

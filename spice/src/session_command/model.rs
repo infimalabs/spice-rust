@@ -66,6 +66,7 @@ pub(crate) struct Residue {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MessageRecord {
     pub(crate) source: String,
+    pub(crate) position: u64,
     pub(crate) ts: String,
     pub(crate) turn_id: Option<String>,
     pub(crate) side: String,
