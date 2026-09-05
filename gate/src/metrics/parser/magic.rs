@@ -192,13 +192,11 @@ fn number_end_admitted(line: &str, end: usize) -> bool {
 fn comparison_before(line: &str, number_start: usize) -> Option<usize> {
     let prefix = line[..number_start].trim_end();
     for operator in ["===", "!==", "<=", ">=", "==", "!=", "<", ">"] {
-        let Some(start) = prefix.len().checked_sub(operator.len()) else {
+        let Some(before_operator) = prefix.strip_suffix(operator) else {
             continue;
         };
-        if &prefix[start..] != operator {
-            continue;
-        }
-        let before = prefix[..start].chars().next_back();
+        let start = before_operator.len();
+        let before = before_operator.chars().next_back();
         if before.is_none_or(|value| !matches!(value, '=' | '<' | '>' | '!')) {
             return Some(start);
         }
@@ -268,4 +266,24 @@ fn strip_comments(line: &str) -> String {
         }
     }
     kept
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_ascii_text_before_a_number_preserves_comparison_findings() {
+        let findings = scan_magic_regressions(
+            "fixture.rs",
+            "let label = \"0·1·0\";\nif count == 100 { return; }\n",
+            None,
+            10,
+        )
+        .expect("non-ASCII text cannot split comparison scanning");
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].line(), 2);
+        assert_eq!(findings[0].literal(), "100");
+    }
 }
