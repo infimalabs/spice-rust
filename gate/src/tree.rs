@@ -177,6 +177,12 @@ pub enum StagedAuthorityDifference {
 }
 
 impl StagedAuthority {
+    /// Exact commit used as the staged rename and ancestry baseline.
+    #[must_use]
+    pub fn baseline_identity(&self) -> Option<String> {
+        self.rename_base.map(|identity| identity.to_string())
+    }
+
     /// Name every semantic component that differs in another staged capture.
     #[must_use]
     pub fn differences(&self, observed: &Self) -> Vec<StagedAuthorityDifference> {

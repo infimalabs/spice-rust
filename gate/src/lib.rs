@@ -13,6 +13,8 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 mod action_input;
+#[cfg(not(target_arch = "wasm32"))]
+mod action_spec;
 pub mod battery;
 pub mod camp;
 mod change_selection;
@@ -71,7 +73,7 @@ pub use battery::{
     BatteryReport, BatteryScope, BatteryState, BatteryToolEvidence, BoundActorInputsEvidence,
     BoundEvidence, CANONICAL_BATTERY_MANIFEST, CompiledArm, ConfigurationEvidence,
     FocusedArmReport, GATE_BATTERY_VERSION, GateFinding, LatchEvidence, ResultProvenance,
-    run_battery, run_battery_arm, run_focused_arm,
+    canonical_gate_set_digest, run_battery, run_battery_arm, run_focused_arm,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use battery::{BatteryCapture, BatteryStateRun, RepositoryExecutionEvent, StateRunScope};
@@ -201,6 +203,11 @@ pub use action_input::{
     ActionInputInventory, ActionInputManifest, ActionInputManifestEntry, ActionNonCacheable,
     ActionNonFileInput, ActionNonFileKind, ActionReuseClass, GitFileMode, compile_action_input,
     gate_action_reuse_class,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use action_spec::{
+    ACTION_SPEC_VERSION, ActionKeyAuthority, ActionSpec, ActionSpecFields, ActionToolRequirement,
+    derive_authority_bound_action_key,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use structural::{

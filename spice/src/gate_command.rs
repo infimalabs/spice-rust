@@ -19,8 +19,11 @@ use spice::repository::Repository;
 
 mod commit_message;
 mod pre_commit;
+mod prove;
 mod reference_transaction;
 mod verify_claim;
+
+pub(crate) use prove::prove;
 
 /// Run the ordinary gate against the captured index or one selected commit.
 pub(crate) fn run(matches: &clap::ArgMatches) -> Outcome<BatteryReport> {

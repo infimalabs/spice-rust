@@ -159,6 +159,8 @@ pub enum Domain {
     GateRepositoryAuthority,
     /// One exact staged-index or committed-revision selection.
     GateSelection,
+    /// One canonical reusable gate action specification.
+    GateActionSpec,
     /// One canonical gate action specification and complete input closure.
     GateActionKey,
     /// The retained bytes of one published battery receipt, exactly as read.
@@ -231,6 +233,7 @@ impl Domain {
             | Self::GateTool
             | Self::GateInventory
             | Self::GateInputManifest
+            | Self::GateActionSpec
             | Self::GateActionKey => self.verification_input_tag(),
             Self::GateMeasurement
             | Self::GateReceipt
@@ -298,6 +301,7 @@ impl Domain {
             Self::GateTool => "spice.gate.tool.v1",
             Self::GateInventory => "spice.gate.inventory.v1",
             Self::GateInputManifest => "spice.gate.input-manifest.v1",
+            Self::GateActionSpec => "spice.gate.action-spec.v1",
             Self::GateActionKey => "spice.gate.action-key.v1",
             _ => panic!("digest-domain tag partition is closed"),
         }

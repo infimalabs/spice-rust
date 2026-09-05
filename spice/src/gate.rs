@@ -167,6 +167,24 @@ impl PreparedArm<'_> {
         self.capture.staged_authority()
     }
 
+    /// Compile one proof input closure from this preparation's retained tree.
+    pub fn compile_action_input(
+        &self,
+        selection: &ChangeSelectionReport,
+        gate_id: GateId,
+        inventory: ::gate::ActionInputInventory,
+    ) -> Result<::gate::ActionInputClosure, RunError> {
+        self.capture
+            .compile_action_input(selection, gate_id, inventory)
+            .map_err(|error| RunError::refusal("gate::action-input-refused", error))
+    }
+
+    /// Compiler environment captured by the command rim for this action.
+    #[must_use]
+    pub fn compiler_environment(&self) -> &[(OsString, OsString)] {
+        self.capture.compiler_environment()
+    }
+
     /// Materialize the exact committed base retained beside this staged source.
     ///
     /// # Errors

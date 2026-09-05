@@ -403,6 +403,44 @@ pub fn run_current_source(
     )
 }
 
+/// Immutable staged anchor and the exact packaged policy selection derived from it.
+pub struct StagedActionSelection {
+    anchor: crate::gate::PreparedArm<'static>,
+    selection: ChangeSelectionReport,
+}
+
+impl StagedActionSelection {
+    /// Retained staged capture from which selected actions can be derived.
+    #[must_use]
+    pub fn anchor(&self) -> &crate::gate::PreparedArm<'static> {
+        &self.anchor
+    }
+
+    /// Exact packaged selection compiled from the retained staged tree.
+    #[must_use]
+    pub const fn selection(&self) -> &ChangeSelectionReport {
+        &self.selection
+    }
+
+    /// Discard any focused state observations accumulated by derived actions.
+    pub fn reject_state(&self) -> Result<(), crate::gate::RunError> {
+        self.anchor.reject_state()
+    }
+}
+
+/// Capture staged content and apply the ordinary packaged change selector without executing it.
+///
+/// # Errors
+///
+/// Returns the same capture and packaged-selection failures as [`run`].
+pub fn prepare_staged_actions() -> Result<StagedActionSelection, ChangeGateError> {
+    let anchor = SelectionSurface::Packaged
+        .prepare_anchor(gate::ClaimCapture::Idle)
+        .map_err(ChangeGateError::gate)?;
+    let (selection, _) = select_changes(&anchor, SelectionSurface::Packaged)?;
+    Ok(StagedActionSelection { anchor, selection })
+}
+
 #[derive(Clone, Copy)]
 enum SelectionSurface {
     Packaged,

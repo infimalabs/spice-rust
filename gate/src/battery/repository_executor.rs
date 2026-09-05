@@ -347,6 +347,10 @@ impl<'trace> RepositoryExecutor<'trace> {
         self.tree.root()
     }
 
+    pub(super) fn tree(&self) -> &SelectedTree {
+        &self.tree
+    }
+
     /// Exact changed paths captured at the command rim for this selected source.
     #[must_use]
     pub(super) fn changes(&self) -> &[String] {
@@ -409,6 +413,10 @@ impl<'trace> RepositoryExecutor<'trace> {
         }
         self.compiler_environment = environment;
         Ok(())
+    }
+
+    pub(super) fn compiler_environment(&self) -> &[(OsString, OsString)] {
+        &self.compiler_environment
     }
 
     /// The tracked contract this capture loaded from the selected tree.

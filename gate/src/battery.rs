@@ -46,6 +46,11 @@ pub use repository_executor::RepositoryExecutionEvent;
 #[cfg(not(target_arch = "wasm32"))]
 pub use state_run::{BatteryStateRun, StateRunScope};
 
+/// Identity of the exact canonical battery rows and compiled declarations.
+pub fn canonical_gate_set_digest() -> Result<wire::Digest, BatteryError> {
+    BatteryManifest::canonical().map(|manifest| execution::gate_set_digest(&manifest))
+}
+
 /// One declaration family behind the common runner boundary.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]

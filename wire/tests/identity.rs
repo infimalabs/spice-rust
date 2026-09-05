@@ -95,6 +95,7 @@ const fn position(domain: Domain) -> usize {
         Domain::GateTool
         | Domain::GateInventory
         | Domain::GateInputManifest
+        | Domain::GateActionSpec
         | Domain::GateActionKey
         | Domain::GateMeasurement
         | Domain::GateReceipt
@@ -168,27 +169,28 @@ const fn late_position(domain: Domain) -> usize {
         Domain::GateTool => 32,
         Domain::GateInventory => 33,
         Domain::GateInputManifest => 34,
-        Domain::GateActionKey => 35,
-        Domain::GateMeasurement => 36,
-        Domain::GateReceipt => 37,
-        Domain::GateStateLedger => 38,
-        Domain::GateStateReceipt => 39,
-        Domain::ConfigExecutableSurface => 40,
-        Domain::TaskArtifactPayload => 41,
-        Domain::TaskArtifactStore => 42,
-        Domain::GateBatteryManifest => 43,
-        Domain::GateBatteryReport => 44,
-        Domain::GateFocusedReport => 45,
-        Domain::GateFinding => 46,
-        Domain::GateBatteryReceipt => 47,
-        Domain::GateConfiguration => 48,
-        Domain::GateRepositoryAuthority => 49,
-        Domain::GateSelection => 50,
-        Domain::GatePassReceipt => 51,
-        Domain::GateEvidenceLease => 52,
-        Domain::TasteProse => 53,
-        Domain::TasteBag => 54,
-        Domain::MediaContent => 55,
+        Domain::GateActionSpec => 35,
+        Domain::GateActionKey => 36,
+        Domain::GateMeasurement => 37,
+        Domain::GateReceipt => 38,
+        Domain::GateStateLedger => 39,
+        Domain::GateStateReceipt => 40,
+        Domain::ConfigExecutableSurface => 41,
+        Domain::TaskArtifactPayload => 42,
+        Domain::TaskArtifactStore => 43,
+        Domain::GateBatteryManifest => 44,
+        Domain::GateBatteryReport => 45,
+        Domain::GateFocusedReport => 46,
+        Domain::GateFinding => 47,
+        Domain::GateBatteryReceipt => 48,
+        Domain::GateConfiguration => 49,
+        Domain::GateRepositoryAuthority => 50,
+        Domain::GateSelection => 51,
+        Domain::GatePassReceipt => 52,
+        Domain::GateEvidenceLease => 53,
+        Domain::TasteProse => 54,
+        Domain::TasteBag => 55,
+        Domain::MediaContent => 56,
         _ => panic!("domain position partition is closed"),
     }
 }
@@ -205,7 +207,7 @@ fn the_sweep_names_every_domain_exactly_once() {
 }
 
 /// Every domain, so a new class cannot be added without being swept here.
-const DOMAINS: [Domain; 56] = [
+const DOMAINS: [Domain; 57] = [
     Domain::BoardDocument,
     Domain::BoardTaskIdentity,
     Domain::BoardBarrier,
@@ -241,6 +243,7 @@ const DOMAINS: [Domain; 56] = [
     Domain::GateTool,
     Domain::GateInventory,
     Domain::GateInputManifest,
+    Domain::GateActionSpec,
     Domain::GateActionKey,
     Domain::GateMeasurement,
     Domain::GateReceipt,
@@ -348,6 +351,7 @@ fn a_domain_tag_is_frozen_and_distinct_from_every_other() {
             "spice.gate.tool.v1",
             "spice.gate.inventory.v1",
             "spice.gate.input-manifest.v1",
+            "spice.gate.action-spec.v1",
             "spice.gate.action-key.v1",
             "spice.gate.measurement.v1",
             "spice.gate.receipt.v1",

@@ -275,6 +275,17 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "gate::findings"
     ),
     row!(
+        ["gate", "prove"],
+        "gate prove [ACTION] [--missing]",
+        Local,
+        None,
+        [],
+        [Daemonless, Toolful],
+        GATE_POLICY_TOOLS,
+        Reply,
+        "gate::prove"
+    ),
+    row!(
         ["gate", "camp"],
         "gate camp",
         Local,

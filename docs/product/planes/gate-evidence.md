@@ -109,8 +109,10 @@ Pre-commit captures one index authority, computes `candidate_tree`, resolves
 the owed action set, verifies all receipts in one read phase, runs live-only
 checks, revalidates the index authority, and atomically publishes one admission
 bundle. A miss performs no expensive action. It names each action and reason,
-then prints the exact `spice gate prove --staged --action ACTION` command plus
-one `spice gate prove --staged --missing` aggregate command.
+then prints the exact `spice gate prove ACTION` command plus one
+`spice gate prove --missing` aggregate command. Staged content is the
+unconditional source for both forms; `spice gate prove ACTION --missing`
+reuses an already-current receipt.
 
 A candidate-tree directory may contain more than one immutable admission. This
 is required when two branches or linked worktrees produce equal tree content

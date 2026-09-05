@@ -129,6 +129,28 @@ fn manifest_tracks_content_mode_deletion_and_non_files_but_not_unrelated_paths()
 }
 
 #[test]
+fn manifest_reads_staged_bytes_instead_of_later_checkout_edits() {
+    let fixture = action_fixture();
+    let staged = compile_magic(&fixture, b"staged-source", b"baseline");
+    let staged_digest = staged.digest().expect("digest staged input");
+
+    fs::write(
+        fixture.path().join("src/lib.rs"),
+        "pub const VALUE: u8 = 99;\n",
+    )
+    .expect("write unstaged checkout content");
+    let after_unstaged_edit = compile_magic(&fixture, b"same-source", b"baseline");
+
+    assert_eq!(
+        after_unstaged_edit
+            .digest()
+            .expect("digest input after unstaged edit"),
+        staged_digest,
+        "proof input closure must be read from the immutable staged tree"
+    );
+}
+
+#[test]
 fn repository_reach_uses_the_complete_candidate_without_caller_inventory() {
     let fixture = action_fixture();
     let tree = Selector::staged()

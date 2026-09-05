@@ -82,6 +82,7 @@ const CASES: &[Case] = &[
         &["gate", "commit-msg", "missing-message"],
     ),
     case("gate findings", &["gate", "findings", "file-shape"]),
+    case("gate prove", &["gate", "prove"]),
     case("gate kill", &["gate", "kill"]),
     case("gate pre-commit", &["gate", "pre-commit"]),
     case("gate selection", &["gate", "selection"]),

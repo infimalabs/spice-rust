@@ -131,6 +131,23 @@ impl BatteryCapture<'_> {
         self.executor.staged_authority()
     }
 
+    /// Compile one action closure from this capture's retained tree.
+    pub fn compile_action_input(
+        &self,
+        selection: &crate::ChangeSelectionReport,
+        gate_id: crate::GateId,
+        inventory: crate::ActionInputInventory,
+    ) -> Result<crate::ActionInputClosure, BatteryError> {
+        crate::compile_action_input(self.executor.tree(), selection, gate_id, inventory)
+            .map_err(|error| BatteryError::new(error.to_string()))
+    }
+
+    /// Command-rim compiler environment bound before focused execution.
+    #[must_use]
+    pub fn compiler_environment(&self) -> &[(OsString, OsString)] {
+        self.executor.compiler_environment()
+    }
+
     /// Materialize the exact committed base retained by this staged capture.
     ///
     /// # Errors

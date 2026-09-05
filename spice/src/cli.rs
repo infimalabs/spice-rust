@@ -284,6 +284,7 @@ fn observation_landed(path: &[&str]) -> bool {
             | ["rtk", "gain"]
             | ["gate"]
             | ["gate", "findings"]
+            | ["gate", "prove"]
             | ["gate", "camp"]
             | ["gate", "commit-msg"]
             | ["gate", "kill"]
