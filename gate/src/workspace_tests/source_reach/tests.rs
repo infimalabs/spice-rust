@@ -295,6 +295,61 @@ fn built_in_file_macros_are_discovered_in_every_rust_token_context() {
 }
 
 #[test]
+fn crate_inner_attributes_reach_literal_file_macro_inputs() {
+    let fixture = Fixture::new(
+        "crate-inner-attribute-file-macros",
+        &[
+            (
+                "lib.rs",
+                concat!(
+                    "#![doc = include_str!(\"crate-doc.md\")]\n",
+                    "#![cfg_attr(any(), doc = ::std::include_bytes!(\"crate-doc.bin\"))]\n",
+                    "#![doc = include_bytes!(\"renamed-doc.md\")]\n",
+                    "use ::std::include_str as include_bytes;\n",
+                    "pub const VALUE: u8 = 1;\n",
+                ),
+            ),
+            ("crate-doc.md", "crate documentation\n"),
+            ("crate-doc.bin", "binary attribute authority\n"),
+            ("renamed-doc.md", "renamed macro documentation\n"),
+        ],
+    );
+
+    assert_eq!(
+        fixture.reach(),
+        BTreeMap::from([
+            ("crate-doc.bin".to_owned(), (false, true)),
+            ("crate-doc.md".to_owned(), (false, true)),
+            ("renamed-doc.md".to_owned(), (false, true)),
+        ]),
+    );
+    fixture.assert_compiles("lib.rs");
+}
+
+#[test]
+fn recursive_include_preserves_inner_attribute_file_authority() {
+    let fixture = Fixture::new(
+        "included-inner-attribute-file-macro",
+        &[
+            ("lib.rs", "include!(\"body.rs\");\n"),
+            (
+                "body.rs",
+                "#![doc = include_str!(\"included-doc.md\")]\npub const VALUE: u8 = 1;\n",
+            ),
+            ("included-doc.md", "included documentation\n"),
+        ],
+    );
+
+    assert_eq!(
+        fixture.reach(),
+        BTreeMap::from([
+            ("body.rs".to_owned(), (false, true)),
+            ("included-doc.md".to_owned(), (false, true)),
+        ]),
+    );
+}
+
+#[test]
 fn extern_crate_self_bindings_are_not_builtin_file_authority() {
     let std_fixture = Fixture::new(
         "shadowed-std",

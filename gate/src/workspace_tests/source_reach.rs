@@ -5,6 +5,7 @@ use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::visit::Visit;
 
+mod file_attributes;
 mod macro_scope;
 mod namespace_scope;
 
@@ -707,11 +708,12 @@ impl SourceGraph {
             return Ok(());
         }
         walk.scope = Some(scope);
-        self.collect_declared_items(&syntax.items, &source, walk)
+        self.collect_declared_items(&syntax.attrs, &syntax.items, &source, walk)
     }
 
     fn collect_declared_items(
         &mut self,
+        attributes: &[syn::Attribute],
         items: &[Item],
         source: &Path,
         walk: SourceWalk,
@@ -722,6 +724,7 @@ impl SourceGraph {
             .expect("source walk scope is established before item traversal")
             .with_items(items, walk.crate_root, &self.exported_macros);
         let scope = explicit_scope.with_generated_items(items, walk.crate_root);
+        self.collect_file_attributes(attributes, source, scope.clone(), &walk)?;
         let (local_reexports, uncertain_reexport) = public_reexports(items, walk.module_depth);
         if walk.reach.dependent_tests && uncertain_reexport {
             self.conservative_downstream = true;
@@ -791,6 +794,7 @@ impl SourceGraph {
                 if let Some((_, inline)) = &module.content {
                     let child_dir = walk.module_dir.join(module_name);
                     self.collect_declared_items(
+                        &[],
                         inline,
                         source,
                         SourceWalk {
@@ -945,7 +949,9 @@ impl SourceGraph {
             ))
         })?;
         match syn::parse_file(&document) {
-            Ok(syntax) => self.collect_declared_items(&syntax.items, source, walk.clone()),
+            Ok(syntax) => {
+                self.collect_declared_items(&syntax.attrs, &syntax.items, source, walk.clone())
+            }
             Err(file_error) => {
                 let tokens = document.parse::<TokenStream>().map_err(|token_error| {
                     WorkspaceTestError::new(format!(
