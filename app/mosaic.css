@@ -425,6 +425,20 @@ body:has(.shell--mosaic),
 }
 .canvas-menu-setting--checked span { color: var(--warning); }
 .canvas-menu-setting--action:disabled { cursor: wait; opacity: .66; }
+.canvas-menu-global-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(10rem, auto);
+  align-items: center;
+  gap: 7px;
+}
+.canvas-menu-cursor {
+  min-width: 0;
+  padding-inline: 13px;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .canvas-menu-context-copy {
   margin: 0;
   color: var(--muted);

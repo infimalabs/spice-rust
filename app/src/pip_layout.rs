@@ -3,6 +3,7 @@
 const ROWS: usize = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) struct PipGrid {
     count: usize,
     columns: usize,
@@ -15,6 +16,7 @@ pub(crate) struct PipPosition {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) struct PipColumn {
     pub(crate) upper: Option<usize>,
     pub(crate) lower: usize,
@@ -27,6 +29,7 @@ pub(crate) struct PipStack {
     columns: usize,
 }
 
+#[cfg(test)]
 impl PipGrid {
     pub(crate) fn new(count: usize) -> Self {
         Self {
