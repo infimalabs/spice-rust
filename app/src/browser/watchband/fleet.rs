@@ -74,6 +74,7 @@ pub(super) struct FleetRender<'a> {
 pub(super) fn render_empty_fleet(
     runtime: &CanvasRuntime,
     epoch: CanonicalUuid,
+    fleet: &NodeRef,
     lineage_controls: &UseReducerHandle<LineageControls>,
     controls: &view::AgentControls,
 ) -> Html {
@@ -84,7 +85,8 @@ pub(super) fn render_empty_fleet(
     };
     let mode = lineage_controls.empty_mode();
     html! {
-        <div class="lineage-fleet" data-pane="agent-console" data-view="mosaic">
+        <div ref={fleet.clone()} class="lineage-fleet" data-pane="agent-console" data-view="mosaic"
+            tabindex="0" aria-label="Lineage lanes">
             <section class="team-surface" data-lineage-weight="1">
                 {render_empty_toolbar(
                     mode,
@@ -110,13 +112,14 @@ pub(super) fn render_empty_fleet(
 pub(super) fn render_populated_fleet(
     lanes: &[crate::runtime::LaneRow],
     standings: &[watchband::Standing],
+    fleet: &NodeRef,
     render: &FleetRender<'_>,
 ) -> Html {
     let dismiss = lineage_menu_dismissal(render.lineage_controls);
     let escape = lineage_menu_escape(render.lineage_controls);
     html! {
-        <div class="lineage-fleet" data-pane="agent-console" data-view="mosaic"
-            onclick={dismiss} onkeydown={escape}>
+        <div ref={fleet.clone()} class="lineage-fleet" data-pane="agent-console" data-view="mosaic"
+            tabindex="0" aria-label="Lineage lanes" onclick={dismiss} onkeydown={escape}>
             {for lanes.iter().map(|lineage| {
                 if render.lineage_controls.is_closed(lineage.lane) {
                     return Html::default();

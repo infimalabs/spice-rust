@@ -729,7 +729,6 @@ fn agent_surfaces_have_one_bounded_vertical_ownership_chain() {
     for selector in [
         ".mosaic-workspace .content {",
         ".lineage-fleet {",
-        ".team-surface {",
         ".team-pane {",
         ".team-compose {",
         ".team-activity-grid {",
@@ -749,6 +748,24 @@ fn agent_surfaces_have_one_bounded_vertical_ownership_chain() {
         );
     }
 
+    let fleet = STYLESHEET
+        .split_once(".lineage-fleet {")
+        .expect("mosaic.css should define the lineage fleet")
+        .1
+        .split_once('}')
+        .expect("the lineage fleet rule is closed")
+        .0;
+    assert!(fleet.contains("flex-flow: row nowrap"));
+    assert!(fleet.contains("overflow: auto hidden"));
+    let surface = STYLESHEET
+        .split_once(".team-surface {")
+        .expect("mosaic.css should define team surfaces")
+        .1
+        .split_once('}')
+        .expect("the team surface rule is closed")
+        .0;
+    assert!(surface.contains("flex:") && surface.contains("min-height: 100%"));
+
     let plane = STYLESHEET
         .split_once("\n.lane-mosaic-plane {")
         .expect("mosaic.css should define the lane Mosaic plane")
@@ -764,8 +781,8 @@ fn agent_surfaces_have_one_bounded_vertical_ownership_chain() {
     let responsive = include_str!("../responsive.css");
     assert!(
         responsive.contains("@media (max-height: 440px)")
-            && responsive.contains(".team-surface:nth-child(2)"),
-        "unsatisfiable heights and multi-team narrow stacks explicitly return to intrinsic flow"
+            && !responsive.contains(".team-surface:nth-child(2)"),
+        "only an unsatisfiable block size returns lanes to intrinsic document flow"
     );
 }
 

@@ -519,15 +519,15 @@ body:has(.shell--mosaic),
 .lineage-fleet {
   --lineage-surface-min-inline: 32rem;
   display: flex;
-  flex-wrap: wrap;
+  flex-flow: row nowrap;
   align-items: stretch;
-  align-content: flex-start;
   flex: 1 1 auto;
   gap: .5rem;
   width: 100%;
   min-height: 0;
   min-width: 0;
-  overflow: hidden auto;
+  overflow: auto hidden;
+  overscroll-behavior-inline: contain;
 }
 
 .team-surface {
