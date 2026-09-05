@@ -192,7 +192,7 @@ fn acknowledgment_key_parses_only_for_the_ack_contract() {
 }
 
 #[test]
-fn simultaneous_duplicate_content_publishes_one_text_and_every_key() {
+fn simultaneous_duplicate_content_preserves_each_directive_identity() {
     let scratch = HookScratch::new();
     let simultaneous = inbox_answer(
         OCCUPANT,
@@ -205,8 +205,9 @@ fn simultaneous_duplicate_content_publishes_one_text_and_every_key() {
 
     let document = deliver(&scratch, &simultaneous).expect("duplicate keys publish together");
     let context = additional_context(&document);
-    assert!(context.contains("keys=1kFirst1 1kSecond"));
-    assert_eq!(context.matches("hold the exact boundary").count(), 1);
+    assert!(context.contains("key=1kFirst1"));
+    assert!(context.contains("key=1kSecond"));
+    assert_eq!(context.matches("hold the exact boundary").count(), 2);
     assert!(context.contains("ack 1kFirst1"));
     assert!(context.contains("ack 1kSecond"));
     assert_eq!(deliver(&scratch, &simultaneous), None);

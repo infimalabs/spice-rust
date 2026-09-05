@@ -38,4 +38,4 @@ pub use ack::keys::{
 };
 pub use ack::scan::{Locus, Miss, Outcome, Recognition, Standing, has_acknowledgement, scan};
 pub use config::{Config, WrapperReference, Wrappers};
-pub use directives::{Directive, Ledger, Refusal, Steering};
+pub use directives::{Directive, Ledger, MediaResolutionError, Refusal, Steering};

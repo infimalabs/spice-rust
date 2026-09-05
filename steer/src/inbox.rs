@@ -52,21 +52,19 @@ pub fn render(seal: &Key, pending: &[&Directive]) -> String {
 }
 
 fn render_directive_body(directive: &Directive) -> String {
-    let mut rendered = directive.text().to_owned();
-    for attachment in directive.attachments() {
-        let embedded = attachment
-            .is_embedded_in(directive.text())
-            .expect("a directive ledger contains only admitted media");
-        if embedded {
-            continue;
-        }
+    let mut rendered =
+        wire::media::without_media_payloads(directive.text(), directive.attachments());
+    for reference in directive
+        .media_references()
+        .expect("a directive ledger contains only admitted media")
+    {
         if !rendered.is_empty() {
-            rendered.push_str("\n\n");
+            rendered.push('\n');
         }
+        rendered.push_str("media-reference=");
         rendered.push_str(
-            &attachment
-                .markdown()
-                .expect("a directive ledger contains only admitted media"),
+            &String::from_utf8(wire::encode(&reference).expect("media reference encodes"))
+                .expect("JSON media reference is UTF-8"),
         );
     }
     rendered

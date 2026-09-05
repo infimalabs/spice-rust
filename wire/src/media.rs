@@ -9,9 +9,9 @@ use std::fmt;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::{Digest, Domain};
+use crate::{CanonicalUuid, Digest, Domain};
 
 /// Maximum media blocks one message or tool result may carry.
 ///
@@ -26,8 +26,227 @@ pub const MAX_MEDIA_BYTES: usize = 8 * 1_024 * 1_024;
 /// Maximum UTF-8 bytes retained for an operator-facing media name.
 const MAX_MEDIA_NAME_BYTES: usize = 255;
 
+/// Maximum encoded bytes in one agent-facing media reference.
+///
+/// The bound covers the largest admitted name after JSON escaping plus every
+/// fixed-width identity and scalar field. It is independent of media bytes.
+pub const MAX_AGENT_MEDIA_REFERENCE_BYTES: usize = 1_024;
+
 /// Largest canonical base64 spelling that could decode within the byte bound.
 const MAX_MEDIA_BASE64_BYTES: usize = MAX_MEDIA_BYTES.div_ceil(3) * 4;
+
+/// One bounded agent-facing reference to journal-backed steering media.
+///
+/// This value deliberately cannot carry the data URL. The durable directive
+/// remains the sole byte authority and callers must resolve this reference
+/// against its live steering ledger before consuming the decoded bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentMediaReference {
+    /// Durable directive that owns the attachment.
+    directive: CanonicalUuid,
+    /// Decoded-byte content identity.
+    digest: Digest,
+    /// Admitted operator-facing name.
+    name: String,
+    /// Exact admitted media type.
+    content_type: String,
+    /// Decoded byte count.
+    bytes: u64,
+    /// Zero-based position in the directive's attachment list.
+    ordinal: u8,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AgentMediaReferenceFields {
+    directive: CanonicalUuid,
+    digest: Digest,
+    name: String,
+    content_type: String,
+    bytes: u64,
+    ordinal: u8,
+}
+
+impl<'de> Deserialize<'de> for AgentMediaReference {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let fields = AgentMediaReferenceFields::deserialize(deserializer)?;
+        let reference = Self {
+            directive: fields.directive,
+            digest: fields.digest,
+            name: fields.name,
+            content_type: fields.content_type,
+            bytes: fields.bytes,
+            ordinal: fields.ordinal,
+        };
+        reference.validate().map_err(serde::de::Error::custom)?;
+        Ok(reference)
+    }
+}
+
+impl AgentMediaReference {
+    /// Durable directive that owns the attachment.
+    #[must_use]
+    pub const fn directive(&self) -> CanonicalUuid {
+        self.directive
+    }
+
+    /// Decoded-byte content identity.
+    #[must_use]
+    pub const fn digest(&self) -> &Digest {
+        &self.digest
+    }
+
+    /// Admitted operator-facing name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Exact admitted media type.
+    #[must_use]
+    pub fn content_type(&self) -> &str {
+        &self.content_type
+    }
+
+    /// Decoded byte count.
+    #[must_use]
+    pub const fn bytes(&self) -> u64 {
+        self.bytes
+    }
+
+    /// Zero-based position in the directive's attachment list.
+    #[must_use]
+    pub const fn ordinal(&self) -> u8 {
+        self.ordinal
+    }
+
+    /// Derive one compact reference from admitted durable media.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error if the authority media or source ordinal is not
+    /// admitted, or if the resulting reference exceeds its fixed bound.
+    pub fn from_media(
+        directive: CanonicalUuid,
+        ordinal: usize,
+        media: &Media,
+    ) -> Result<Self, AgentMediaReferenceError> {
+        let ordinal = u8::try_from(ordinal).map_err(|_| AgentMediaReferenceError::Ordinal {
+            observed: ordinal,
+            maximum: MAX_MEDIA_ITEMS - 1,
+        })?;
+        let bytes = media
+            .decoded_bytes()
+            .map_err(AgentMediaReferenceError::Media)?;
+        let reference = Self {
+            directive,
+            digest: Digest::compute(Domain::MediaContent, &bytes),
+            name: media.name.clone(),
+            content_type: media.content_type.clone(),
+            bytes: u64::try_from(bytes.len()).expect("admitted media length fits u64"),
+            ordinal,
+        };
+        reference.validate()?;
+        Ok(reference)
+    }
+
+    /// Validate every independently bounded reference field and its encoding.
+    ///
+    /// # Errors
+    ///
+    /// Returns the exact malformed field or encoded-size violation.
+    pub fn validate(&self) -> Result<(), AgentMediaReferenceError> {
+        if self.name.is_empty()
+            || self.name.len() > MAX_MEDIA_NAME_BYTES
+            || self.name.chars().any(char::is_control)
+        {
+            return Err(AgentMediaReferenceError::Name);
+        }
+        if !supported_type(&self.content_type) {
+            return Err(AgentMediaReferenceError::ContentType(
+                self.content_type.clone(),
+            ));
+        }
+        if usize::from(self.ordinal) >= MAX_MEDIA_ITEMS {
+            return Err(AgentMediaReferenceError::Ordinal {
+                observed: usize::from(self.ordinal),
+                maximum: MAX_MEDIA_ITEMS - 1,
+            });
+        }
+        let maximum = u64::try_from(MAX_MEDIA_BYTES).expect("media byte bound fits u64");
+        if self.bytes == 0 || self.bytes > maximum {
+            return Err(AgentMediaReferenceError::ByteCount {
+                observed: self.bytes,
+                maximum,
+            });
+        }
+        let encoded = serde_json::to_vec(self)
+            .expect("an agent media reference contains only infallible JSON values");
+        if encoded.len() > MAX_AGENT_MEDIA_REFERENCE_BYTES {
+            return Err(AgentMediaReferenceError::EncodedSize {
+                observed: encoded.len(),
+                maximum: MAX_AGENT_MEDIA_REFERENCE_BYTES,
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Why an agent media reference could not be derived or admitted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentMediaReferenceError {
+    /// Durable media did not satisfy the shared media admission law.
+    Media(MediaError),
+    /// The retained media name was not admitted.
+    Name,
+    /// The retained media type was not admitted.
+    ContentType(String),
+    /// The source position exceeded the bounded attachment set.
+    Ordinal { observed: usize, maximum: usize },
+    /// The decoded byte count was empty or exceeded the media bound.
+    ByteCount { observed: u64, maximum: u64 },
+    /// The complete serialized reference exceeded its independent bound.
+    EncodedSize { observed: usize, maximum: usize },
+}
+
+impl fmt::Display for AgentMediaReferenceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Media(error) => write!(formatter, "media authority is invalid: {error}"),
+            Self::Name => formatter.write_str(
+                "media reference name must be non-empty, control-free, and at most 255 UTF-8 bytes",
+            ),
+            Self::ContentType(found) => {
+                write!(formatter, "media reference type {found:?} is unsupported")
+            }
+            Self::Ordinal { observed, maximum } => write!(
+                formatter,
+                "media reference ordinal {observed} exceeds maximum {maximum}",
+            ),
+            Self::ByteCount { observed, maximum } => write!(
+                formatter,
+                "media reference byte count {observed} is outside 1..={maximum}",
+            ),
+            Self::EncodedSize { observed, maximum } => write!(
+                formatter,
+                "media reference encoding is {observed} bytes, above maximum {maximum}",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for AgentMediaReferenceError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Media(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 /// One exact image retained in a durable steering or transcript record.
 ///
@@ -91,7 +310,7 @@ impl Media {
     ///
     /// Returns the exact violated admission law.
     pub fn validate(&self) -> Result<(), MediaError> {
-        self.decoded().map(|_| ())
+        self.decoded_bytes().map(|_| ())
     }
 
     /// Canonical content identity derived from decoded bytes.
@@ -101,7 +320,7 @@ impl Media {
     /// Returns an admission error rather than minting identity for invalid
     /// media.
     pub fn identity(&self) -> Result<Digest, MediaError> {
-        self.decoded()
+        self.decoded_bytes()
             .map(|bytes| Digest::compute(Domain::MediaContent, &bytes))
     }
 
@@ -133,7 +352,12 @@ impl Media {
         }))
     }
 
-    fn decoded(&self) -> Result<Vec<u8>, MediaError> {
+    /// Decode and revalidate the canonical byte authority.
+    ///
+    /// # Errors
+    ///
+    /// Returns the exact shared media admission error.
+    pub fn decoded_bytes(&self) -> Result<Vec<u8>, MediaError> {
         if self.name.is_empty()
             || self.name.len() > MAX_MEDIA_NAME_BYTES
             || self.name.chars().any(char::is_control)
@@ -199,6 +423,34 @@ pub fn admit_media(media: &[Media]) -> Result<(), MediaError> {
         item.validate()?;
     }
     Ok(())
+}
+
+/// Derive compact references for one directive's admitted media in source order.
+///
+/// # Errors
+///
+/// Returns count or member admission before producing a partial reference set.
+pub fn agent_media_references(
+    directive: CanonicalUuid,
+    media: &[Media],
+) -> Result<Vec<AgentMediaReference>, AgentMediaReferenceError> {
+    admit_media(media).map_err(AgentMediaReferenceError::Media)?;
+    media
+        .iter()
+        .enumerate()
+        .map(|(ordinal, media)| AgentMediaReference::from_media(directive, ordinal, media))
+        .collect()
+}
+
+/// Remove authoritative media payloads from one disposable text projection.
+///
+/// The compact references emitted beside the returned text retain attachment
+/// identity and order. Durable authored text is not changed.
+#[must_use]
+pub fn without_media_payloads(text: &str, media: &[Media]) -> String {
+    media.iter().fold(text.to_owned(), |projected, item| {
+        projected.replace(&item.data_url, "")
+    })
 }
 
 /// Extract every data-backed image block from Markdown in source order.

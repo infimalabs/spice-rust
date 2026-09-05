@@ -268,22 +268,29 @@ fn apply_observed(recall: &mut RecallAuthorities, thread: &str, observed: Observ
                 recall.asks = ledger
                     .pending(lane.lane)
                     .into_iter()
-                    .map(|directive| OutstandingAskView {
-                        lane: lane.lane.to_string(),
-                        directive: directive.directive().to_string(),
-                        key: directive.key().to_string(),
-                        stage: format!("{:?}", directive.stage()).to_ascii_lowercase(),
-                        text: directive.text().to_owned(),
-                        attachments: directive.attachments().to_vec(),
-                        authored: directive
-                            .published()
-                            .map_or_else(String::new, |at| at.to_string()),
-                        expires: directive.expires().to_string(),
-                        preview: directive
-                            .text()
-                            .lines()
-                            .find(|line| !line.trim().is_empty())
-                            .map(|line| line.trim().to_owned()),
+                    .map(|directive| {
+                        let text = wire::media::without_media_payloads(
+                            directive.text(),
+                            directive.attachments(),
+                        );
+                        OutstandingAskView {
+                            lane: lane.lane.to_string(),
+                            directive: directive.directive().to_string(),
+                            key: directive.key().to_string(),
+                            stage: format!("{:?}", directive.stage()).to_ascii_lowercase(),
+                            preview: text
+                                .lines()
+                                .find(|line| !line.trim().is_empty())
+                                .map(|line| line.trim().to_owned()),
+                            text,
+                            attachments: directive.media_references().expect(
+                                "the admitted steering ledger derives bounded media references",
+                            ),
+                            authored: directive
+                                .published()
+                                .map_or_else(String::new, |at| at.to_string()),
+                            expires: directive.expires().to_string(),
+                        }
                     })
                     .collect();
             }
