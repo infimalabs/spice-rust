@@ -98,7 +98,7 @@ pub(super) fn package_inventory(
                     selected_root.display(),
                 )));
             }
-            let declared_path_sources = declared_path_sources(&source)?;
+            let declared_path_sources = declared_path_sources(&selected_root, &source)?;
             let source_bytes = target_source_bytes(&source, &declared_path_sources)?;
             Ok((
                 test,

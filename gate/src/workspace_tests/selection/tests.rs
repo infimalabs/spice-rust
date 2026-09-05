@@ -523,7 +523,7 @@ fn target(root: &Path, package: &str, kind: &str, name: &str, source: &str) -> T
         kind: kind.to_owned(),
         name: name.to_owned(),
         required_features: Vec::new(),
-        declared_path_sources: declared_path_sources(&source)
+        declared_path_sources: declared_path_sources(root.parent().unwrap_or(root), &source)
             .expect("representative target source graph is valid"),
         source,
         source_bytes: 0,

@@ -218,11 +218,202 @@ fn an_unparseable_declared_source_refuses_the_graph() {
         &[("lib.rs", "mod broken;\n"), ("broken.rs", "not Rust {{")],
     );
 
-    let error = declared_path_sources(&fixture.root.join("lib.rs"))
+    let error = declared_path_sources(&fixture.root, &fixture.root.join("lib.rs"))
         .expect_err("an unparseable declared source must refuse");
     assert!(
         error.to_string().contains("parse Rust source"),
         "unexpected refusal: {error}",
+    );
+}
+
+#[test]
+fn built_in_file_macros_are_discovered_in_every_rust_token_context() {
+    let fixture = Fixture::new(
+        "file-macros",
+        &[
+            (
+                "crate/lib.rs",
+                concat!(
+                    "const CONFIG: &str = include_str!(\"../spice-rust.toml\");\n",
+                    "const CONFIG_AGAIN: &str = include_str!(\"../spice-rust.toml\");\n",
+                    "const TASTES: &[u8] = include_bytes!(\"../TASTES.md\",);\n",
+                    "const EXPRESSION: &str = include!(\"../expression.rs\");\n",
+                    "#[doc = include_str!(\"../release-authority/VERSION\")]\n",
+                    "pub fn documented() {}\n",
+                    "#[fixture(include_str!(\"../attribute.txt\"))]\n",
+                    "pub struct Attributed;\n",
+                    "outer!(nested(include_str!(\"../nested.txt\")));\n",
+                    "macro_rules! generated { () => { include_bytes!(\"../generated.bin\") } }\n",
+                    "#[cfg(test)] const TEST_ONLY: &str = include_str!(\"../test-only.txt\");\n",
+                    "include!(\"../declarations.rs\");\n",
+                    "const IGNORED: &str = r#\"include_str!(\\\"missing-string.txt\\\")\"#;\n",
+                    "// include_bytes!(\"missing-comment.bin\")\n",
+                ),
+            ),
+            ("spice-rust.toml", "[workspace]\n"),
+            ("TASTES.md", "tastes\n"),
+            ("expression.rs", "include_str!(\"expression.txt\")"),
+            ("expression.txt", "expression\n"),
+            ("release-authority/VERSION", "1.2.3\n"),
+            ("attribute.txt", "attribute\n"),
+            ("nested.txt", "nested\n"),
+            ("generated.bin", "generated\n"),
+            ("test-only.txt", "tests\n"),
+            (
+                "declarations.rs",
+                "const RELEASE: &str = include_str!(\"release/authority.txt\");\n",
+            ),
+            ("release/authority.txt", "release\n"),
+        ],
+    );
+
+    assert_eq!(
+        fixture.reach_from("crate/lib.rs"),
+        BTreeMap::from([
+            ("TASTES.md".to_owned(), (false, true)),
+            ("attribute.txt".to_owned(), (false, true)),
+            ("declarations.rs".to_owned(), (false, true)),
+            ("expression.rs".to_owned(), (false, true)),
+            ("expression.txt".to_owned(), (false, true)),
+            ("generated.bin".to_owned(), (false, true)),
+            ("nested.txt".to_owned(), (false, true)),
+            ("release-authority/VERSION".to_owned(), (false, true)),
+            ("release/authority.txt".to_owned(), (false, true)),
+            ("spice-rust.toml".to_owned(), (false, true)),
+            ("test-only.txt".to_owned(), (true, false)),
+        ]),
+    );
+}
+
+#[test]
+fn include_bytes_accepts_binary_while_textual_file_macros_require_utf8() {
+    let binary = [0xff, 0xfe, 0xfd];
+    let bytes_fixture = Fixture::new(
+        "binary-bytes",
+        &[(
+            "lib.rs",
+            "const DATA: &[u8] = include_bytes!(\"data.bin\");\n",
+        )],
+    );
+    fs::write(bytes_fixture.root.join("data.bin"), binary).expect("write binary authority");
+    assert_eq!(
+        bytes_fixture.reach(),
+        BTreeMap::from([("data.bin".to_owned(), (false, true))]),
+    );
+
+    let text_fixture = Fixture::new(
+        "binary-text",
+        &[("lib.rs", "const DATA: &str = include_str!(\"data.bin\");\n")],
+    );
+    fs::write(text_fixture.root.join("data.bin"), binary).expect("write binary authority");
+    let error = declared_path_sources(&text_fixture.root, &text_fixture.root.join("lib.rs"))
+        .expect_err("include_str must reject non-UTF-8 authority");
+    assert!(error.to_string().contains("is not UTF-8"), "{error}");
+}
+
+#[test]
+fn dynamic_missing_nonregular_and_escaping_file_macro_inputs_refuse() {
+    let dynamic = Fixture::new(
+        "dynamic-file-macro",
+        &[(
+            "lib.rs",
+            "const DATA: &str = include_str!(concat!(\"a\", \".txt\"));\n",
+        )],
+    );
+    assert_refusal(&dynamic, "non-literal include_str! path");
+
+    let missing = Fixture::new(
+        "missing-file-macro",
+        &[(
+            "lib.rs",
+            "const DATA: &str = include_str!(\"missing.txt\");\n",
+        )],
+    );
+    assert_refusal(&missing, "is not readable selected-tree authority");
+
+    let directory = Fixture::new(
+        "directory-file-macro",
+        &[("lib.rs", "const DATA: &[u8] = include_bytes!(\"input\");\n")],
+    );
+    fs::create_dir(directory.root.join("input")).expect("create nonregular authority");
+    assert_refusal(&directory, "is not a regular file");
+
+    let escape = Fixture::new("escaping-file-macro", &[("crate/lib.rs", "")]);
+    let outside_name = format!(
+        "{}-outside.txt",
+        escape
+            .root
+            .file_name()
+            .expect("fixture root has a name")
+            .to_string_lossy()
+    );
+    fs::write(
+        escape.root.join("crate/lib.rs"),
+        format!("const DATA: &str = include_str!(\"../../{outside_name}\");\n"),
+    )
+    .expect("write escaping file macro");
+    let outside = escape
+        .root
+        .parent()
+        .expect("fixture has parent")
+        .join(&outside_name);
+    fs::write(&outside, "outside\n").expect("write escaping authority");
+    let error = declared_path_sources(&escape.root, &escape.root.join("crate/lib.rs"))
+        .expect_err("selected-root escape must refuse");
+    assert!(
+        error.to_string().contains("escapes selected root"),
+        "{error}"
+    );
+    fs::remove_file(outside).expect("remove escaping authority");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn non_utf8_file_macro_authority_paths_refuse() {
+    use std::os::unix::ffi::OsStringExt as _;
+
+    let fixture = Fixture::new("non-utf8-file-macro", &[("lib.rs", "")]);
+    let source_dir = fixture
+        .root
+        .join(std::ffi::OsString::from_vec(b"non-utf8-\xff".to_vec()));
+    fs::create_dir(&source_dir).expect("create non-UTF-8 source directory");
+    fs::write(
+        source_dir.join("lib.rs"),
+        "const DATA: &str = include_str!(\"authority.txt\");\n",
+    )
+    .expect("write source beneath non-UTF-8 path");
+    fs::write(source_dir.join("authority.txt"), "authority\n")
+        .expect("write authority beneath non-UTF-8 path");
+
+    let error = declared_path_sources(&fixture.root, &source_dir.join("lib.rs"))
+        .expect_err("non-UTF-8 selected authority path must refuse");
+    assert!(error.to_string().contains("is not UTF-8"), "{error}");
+}
+
+#[cfg(unix)]
+#[test]
+fn symlink_file_macro_inputs_refuse_even_when_the_target_is_selected() {
+    let fixture = Fixture::new(
+        "symlink-file-macro",
+        &[
+            (
+                "lib.rs",
+                "const DATA: &str = include_str!(\"alias.txt\");\n",
+            ),
+            ("authority.txt", "authority\n"),
+        ],
+    );
+    std::os::unix::fs::symlink("authority.txt", fixture.root.join("alias.txt"))
+        .expect("create file-macro symlink");
+    assert_refusal(&fixture, "is not a regular file");
+}
+
+fn assert_refusal(fixture: &Fixture, expected: &str) {
+    let error = declared_path_sources(&fixture.root, &fixture.root.join("lib.rs"))
+        .expect_err("invalid file-macro authority must refuse");
+    assert!(
+        error.to_string().contains(expected),
+        "unexpected refusal: {error}"
     );
 }
 
@@ -250,7 +441,11 @@ impl Fixture {
     }
 
     fn reach(&self) -> BTreeMap<String, (bool, bool)> {
-        declared_path_sources(&self.root.join("lib.rs"))
+        self.reach_from("lib.rs")
+    }
+
+    fn reach_from(&self, target: &str) -> BTreeMap<String, (bool, bool)> {
+        declared_path_sources(&self.root, &self.root.join(target))
             .expect("fixture source graph resolves")
             .into_iter()
             .map(|source| {

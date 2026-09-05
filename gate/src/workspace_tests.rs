@@ -20,7 +20,7 @@ use sill::{
     ObserveError, ObservedRecord, Output, OutputStream, ProcessGroup, RecordObserver, Redaction,
     RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitOutcome, WaitPolicy, WaitStep,
 };
-use syn::{Expr, Item, Lit, LitStr, Meta};
+use syn::{Expr, Item, Lit, Meta};
 
 use crate::WORKSPACE_TEST_CONCURRENCY_CAP;
 

@@ -11,6 +11,7 @@ atomic = { path = "../atomic" }
 blake2 = "0.10.6"
 csv = "1.4.0"
 gix-glob = "0.27.0"
+proc-macro2 = "1.0.107"
 regex = "1.12.2"
 rustpython-ast = { version = "0.4.0", default-features = false, features = ["num-bigint", "visitor"] }
 rustpython-parser = { version = "0.4.0", default-features = false, features = ["num-bigint"] }

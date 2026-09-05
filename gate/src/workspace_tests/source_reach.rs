@@ -1,4 +1,7 @@
 use super::*;
+use proc_macro2::{TokenStream, TokenTree};
+use syn::parse::{Parse, ParseStream};
+use syn::visit::Visit;
 
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
 struct DeclaredReach {
@@ -19,24 +22,81 @@ struct PublicUse {
     exported_name: String,
 }
 
-#[derive(Default)]
 struct SourceGraph {
+    selected_root: PathBuf,
     declared: BTreeMap<PathBuf, DeclaredReach>,
     visited: BTreeSet<SourceVisit>,
     conservative_downstream: bool,
 }
 
-/// Acquire exact external module and `include!` sources with their Cargo target.
+#[derive(Clone, Copy)]
+enum FileMacroKind {
+    Include,
+    IncludeStr,
+    IncludeBytes,
+}
+
+impl FileMacroKind {
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "include" => Some(Self::Include),
+            "include_str" => Some(Self::IncludeStr),
+            "include_bytes" => Some(Self::IncludeBytes),
+            _ => None,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Include => "include!",
+            Self::IncludeStr => "include_str!",
+            Self::IncludeBytes => "include_bytes!",
+        }
+    }
+}
+
+struct FileMacroReference {
+    kind: FileMacroKind,
+    path: String,
+}
+
+struct FileMacroArgument {
+    path: syn::LitStr,
+}
+
+impl Parse for FileMacroArgument {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let path = input.parse()?;
+        let _trailing_comma = input.parse::<Option<syn::Token![,]>>()?;
+        Ok(Self { path })
+    }
+}
+
+struct FileMacroVisitor<'a> {
+    source: &'a Path,
+    references: Vec<FileMacroReference>,
+    error: Option<WorkspaceTestError>,
+}
+
+/// Acquire exact external module and built-in file-macro sources with their Cargo target.
 pub(super) fn declared_path_sources(
+    selected_root: &Path,
     target_source: &Path,
 ) -> Result<Vec<DeclaredPathSource>, WorkspaceTestError> {
+    let selected_root =
+        fs::canonicalize(selected_root).unwrap_or_else(|_| selected_root.to_path_buf());
     let module_dir = target_source.parent().ok_or_else(|| {
         WorkspaceTestError::new(format!(
             "Cargo target source {} has no parent",
             target_source.display()
         ))
     })?;
-    let mut graph = SourceGraph::default();
+    let mut graph = SourceGraph {
+        selected_root,
+        declared: BTreeMap::new(),
+        visited: BTreeSet::new(),
+        conservative_downstream: false,
+    };
     graph.collect_declared_sources(
         target_source,
         module_dir,
@@ -139,94 +199,358 @@ impl SourceGraph {
                 .map(|reexport| reexport.path),
         );
         for item in items {
-            match item {
-                Item::Mod(module) => {
-                    let test_only = reach.test_only || exact_cfg_test(&module.attrs);
-                    let module_name = module.ident.to_string();
-                    let child_reexports = reexport_paths
-                        .iter()
-                        .filter(|path| path.first().is_some_and(|segment| segment == &module_name))
-                        .filter(|path| path.len() > 1)
-                        .map(|path| path[1..].to_vec())
-                        .collect::<Vec<_>>();
-                    let reexported = reexport_paths
-                        .iter()
-                        .any(|path| path.first().is_some_and(|segment| segment == &module_name));
-                    let reexported_namespace = reexport_paths.iter().any(|path| {
-                        path.len() == 1
-                            && path.first().is_some_and(|segment| segment == &module_name)
-                    });
-                    let directly_public = reach.public_namespace && public_visibility(&module.vis);
-                    let child_reach = DeclaredReach {
-                        test_only,
-                        dependent_tests: !test_only && (directly_public || reexported),
-                        public_namespace: !test_only && (directly_public || reexported_namespace),
-                    };
-                    if let Some((_, inline)) = &module.content {
-                        let child_dir = module_dir.join(module_name);
-                        self.collect_declared_items(
-                            inline,
-                            source,
-                            &child_dir,
-                            child_reach,
-                            &child_reexports,
-                            module_depth.saturating_add(1),
-                        )?;
-                    } else if let Some(module_source) =
-                        external_module_source(module, source, module_dir)?
-                    {
-                        let module_source =
-                            fs::canonicalize(&module_source).unwrap_or(module_source);
-                        let child_dir = child_module_dir(&module_source)?;
-                        record_declared_source(
-                            &mut self.declared,
-                            module_source.clone(),
-                            child_reach,
-                        );
-                        self.collect_declared_sources(
-                            &module_source,
-                            &child_dir,
-                            child_reach,
-                            &child_reexports,
-                            module_depth.saturating_add(1),
-                        )?;
-                    }
-                }
-                Item::Macro(invocation) if invocation.mac.path.is_ident("include") => {
-                    let test_only = reach.test_only || exact_cfg_test(&invocation.attrs);
-                    let included_reach = DeclaredReach {
-                        test_only,
-                        dependent_tests: !test_only && reach.dependent_tests,
-                        public_namespace: !test_only && reach.public_namespace,
-                    };
-                    let path =
-                        syn::parse2::<LitStr>(invocation.mac.tokens.clone()).map_err(|error| {
-                            WorkspaceTestError::new(format!(
-                                "Rust source {} has a non-literal include path: {error}",
-                                source.display()
-                            ))
-                        })?;
-                    let parent = source.parent().ok_or_else(|| {
-                        WorkspaceTestError::new(format!(
-                            "included Rust source {} has no parent",
-                            source.display()
-                        ))
-                    })?;
-                    let included = parent.join(path.value());
-                    let included = fs::canonicalize(&included).unwrap_or(included);
-                    record_declared_source(&mut self.declared, included.clone(), included_reach);
+            let test_only = reach.test_only || exact_cfg_test(item_attributes(item));
+            let item_reach = DeclaredReach {
+                test_only,
+                dependent_tests: !test_only && reach.dependent_tests,
+                public_namespace: !test_only && reach.public_namespace,
+            };
+            for reference in file_macro_references(item, source)? {
+                self.collect_file_macro_source(
+                    reference,
+                    source,
+                    module_dir,
+                    item_reach,
+                    &reexport_paths,
+                    module_depth,
+                )?;
+            }
+            if let Item::Mod(module) = item {
+                let module_name = module.ident.to_string();
+                let child_reexports = reexport_paths
+                    .iter()
+                    .filter(|path| path.first().is_some_and(|segment| segment == &module_name))
+                    .filter(|path| path.len() > 1)
+                    .map(|path| path[1..].to_vec())
+                    .collect::<Vec<_>>();
+                let reexported = reexport_paths
+                    .iter()
+                    .any(|path| path.first().is_some_and(|segment| segment == &module_name));
+                let reexported_namespace = reexport_paths.iter().any(|path| {
+                    path.len() == 1 && path.first().is_some_and(|segment| segment == &module_name)
+                });
+                let directly_public = reach.public_namespace && public_visibility(&module.vis);
+                let child_reach = DeclaredReach {
+                    test_only: item_reach.test_only,
+                    dependent_tests: !item_reach.test_only && (directly_public || reexported),
+                    public_namespace: !item_reach.test_only
+                        && (directly_public || reexported_namespace),
+                };
+                if let Some((_, inline)) = &module.content {
+                    let child_dir = module_dir.join(module_name);
+                    self.collect_declared_items(
+                        inline,
+                        source,
+                        &child_dir,
+                        child_reach,
+                        &child_reexports,
+                        module_depth.saturating_add(1),
+                    )?;
+                } else if let Some(module_source) =
+                    external_module_source(module, source, module_dir)?
+                {
+                    let module_source = fs::canonicalize(&module_source).unwrap_or(module_source);
+                    let child_dir = child_module_dir(&module_source)?;
+                    record_declared_source(&mut self.declared, module_source.clone(), child_reach);
                     self.collect_declared_sources(
-                        &included,
-                        module_dir,
-                        included_reach,
-                        &reexport_paths,
-                        module_depth,
+                        &module_source,
+                        &child_dir,
+                        child_reach,
+                        &child_reexports,
+                        module_depth.saturating_add(1),
                     )?;
                 }
-                _ => {}
             }
         }
         Ok(())
+    }
+
+    fn collect_file_macro_source(
+        &mut self,
+        reference: FileMacroReference,
+        source: &Path,
+        module_dir: &Path,
+        reach: DeclaredReach,
+        inherited_reexports: &[Vec<String>],
+        module_depth: usize,
+    ) -> Result<(), WorkspaceTestError> {
+        let included = self.admit_file_macro_source(source, &reference)?;
+        record_declared_source(&mut self.declared, included.clone(), reach);
+        if matches!(reference.kind, FileMacroKind::Include) {
+            self.collect_included_rust_source(
+                &included,
+                module_dir,
+                reach,
+                inherited_reexports,
+                module_depth,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn admit_file_macro_source(
+        &self,
+        source: &Path,
+        reference: &FileMacroReference,
+    ) -> Result<PathBuf, WorkspaceTestError> {
+        let parent = source.parent().ok_or_else(|| {
+            WorkspaceTestError::new(format!("Rust source {} has no parent", source.display()))
+        })?;
+        let candidate = parent.join(&reference.path);
+        let metadata = fs::symlink_metadata(&candidate).map_err(|error| {
+            WorkspaceTestError::new(format!(
+                "Rust source {} {} input {} is not readable selected-tree authority: {error}",
+                source.display(),
+                reference.kind.name(),
+                candidate.display(),
+            ))
+        })?;
+        if !metadata.file_type().is_file() {
+            return Err(WorkspaceTestError::new(format!(
+                "Rust source {} {} input {} is not a regular file",
+                source.display(),
+                reference.kind.name(),
+                candidate.display(),
+            )));
+        }
+        let included = fs::canonicalize(&candidate).map_err(|error| {
+            WorkspaceTestError::new(format!(
+                "canonicalize Rust source {} {} input {}: {error}",
+                source.display(),
+                reference.kind.name(),
+                candidate.display(),
+            ))
+        })?;
+        if !included.starts_with(&self.selected_root) {
+            return Err(WorkspaceTestError::new(format!(
+                "Rust source {} {} input {} escapes selected root {}",
+                source.display(),
+                reference.kind.name(),
+                included.display(),
+                self.selected_root.display(),
+            )));
+        }
+        if included.to_str().is_none() {
+            return Err(WorkspaceTestError::new(format!(
+                "Rust source {} {} input path {} is not UTF-8",
+                source.display(),
+                reference.kind.name(),
+                included.display(),
+            )));
+        }
+        let bytes = fs::read(&included).map_err(|error| {
+            WorkspaceTestError::new(format!(
+                "read Rust source {} {} input {}: {error}",
+                source.display(),
+                reference.kind.name(),
+                included.display(),
+            ))
+        })?;
+        if matches!(
+            reference.kind,
+            FileMacroKind::Include | FileMacroKind::IncludeStr
+        ) && std::str::from_utf8(&bytes).is_err()
+        {
+            return Err(WorkspaceTestError::new(format!(
+                "Rust source {} {} input {} is not UTF-8",
+                source.display(),
+                reference.kind.name(),
+                included.display(),
+            )));
+        }
+        Ok(included)
+    }
+
+    fn collect_included_rust_source(
+        &mut self,
+        source: &Path,
+        module_dir: &Path,
+        reach: DeclaredReach,
+        inherited_reexports: &[Vec<String>],
+        module_depth: usize,
+    ) -> Result<(), WorkspaceTestError> {
+        let visit = SourceVisit {
+            source: source.to_path_buf(),
+            reach,
+            inherited_reexports: inherited_reexports.to_vec(),
+        };
+        if !self.visited.insert(visit) {
+            return Ok(());
+        }
+        let document = fs::read_to_string(source).map_err(|error| {
+            WorkspaceTestError::new(format!(
+                "read included Rust source {} while resolving staged test reach: {error}",
+                source.display()
+            ))
+        })?;
+        match syn::parse_file(&document) {
+            Ok(syntax) => self.collect_declared_items(
+                &syntax.items,
+                source,
+                module_dir,
+                reach,
+                inherited_reexports,
+                module_depth,
+            ),
+            Err(file_error) => {
+                let tokens = document.parse::<TokenStream>().map_err(|token_error| {
+                    WorkspaceTestError::new(format!(
+                        "parse included Rust source {} while resolving staged test reach: {file_error}; tokenization also failed: {token_error}",
+                        source.display()
+                    ))
+                })?;
+                for reference in file_macro_references_in_tokens(tokens, source)? {
+                    self.collect_file_macro_source(
+                        reference,
+                        source,
+                        module_dir,
+                        reach,
+                        inherited_reexports,
+                        module_depth,
+                    )?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for FileMacroVisitor<'_> {
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        for attribute in &item.attrs {
+            self.visit_attribute(attribute);
+        }
+    }
+
+    fn visit_macro(&mut self, invocation: &'ast syn::Macro) {
+        if let Some(kind) = invocation
+            .path
+            .get_ident()
+            .and_then(|ident| FileMacroKind::from_name(&ident.to_string()))
+        {
+            self.record(kind, invocation.tokens.clone());
+        } else {
+            self.scan(invocation.tokens.clone());
+        }
+    }
+
+    fn visit_token_stream(&mut self, tokens: &'ast TokenStream) {
+        self.scan(tokens.clone());
+    }
+}
+
+impl FileMacroVisitor<'_> {
+    fn record(&mut self, kind: FileMacroKind, tokens: TokenStream) {
+        if self.error.is_some() {
+            return;
+        }
+        match syn::parse2::<FileMacroArgument>(tokens) {
+            Ok(argument) => self.references.push(FileMacroReference {
+                kind,
+                path: argument.path.value(),
+            }),
+            Err(error) => {
+                self.error = Some(WorkspaceTestError::new(format!(
+                    "Rust source {} has a non-literal {} path: {error}",
+                    self.source.display(),
+                    kind.name(),
+                )));
+            }
+        }
+    }
+
+    fn scan(&mut self, tokens: TokenStream) {
+        if self.error.is_some() {
+            return;
+        }
+        match file_macro_references_in_tokens(tokens, self.source) {
+            Ok(references) => self.references.extend(references),
+            Err(error) => self.error = Some(error),
+        }
+    }
+}
+
+fn file_macro_references(
+    item: &Item,
+    source: &Path,
+) -> Result<Vec<FileMacroReference>, WorkspaceTestError> {
+    let mut visitor = FileMacroVisitor {
+        source,
+        references: Vec::new(),
+        error: None,
+    };
+    visitor.visit_item(item);
+    match visitor.error {
+        Some(error) => Err(error),
+        None => Ok(visitor.references),
+    }
+}
+
+fn file_macro_references_in_tokens(
+    tokens: TokenStream,
+    source: &Path,
+) -> Result<Vec<FileMacroReference>, WorkspaceTestError> {
+    let trees = tokens.into_iter().collect::<Vec<_>>();
+    let mut references = Vec::new();
+    let mut index = 0;
+    while index < trees.len() {
+        let TokenTree::Ident(ident) = &trees[index] else {
+            if let TokenTree::Group(group) = &trees[index] {
+                references.extend(file_macro_references_in_tokens(group.stream(), source)?);
+            }
+            index += 1;
+            continue;
+        };
+        let Some(kind) = FileMacroKind::from_name(&ident.to_string()) else {
+            index += 1;
+            continue;
+        };
+        let namespaced = index >= 2
+            && matches!(&trees[index - 1], TokenTree::Punct(punct) if punct.as_char() == ':')
+            && matches!(&trees[index - 2], TokenTree::Punct(punct) if punct.as_char() == ':');
+        let invocation = matches!(trees.get(index + 1), Some(TokenTree::Punct(punct)) if punct.as_char() == '!')
+            && matches!(trees.get(index + 2), Some(TokenTree::Group(_)));
+        if namespaced || !invocation {
+            index += 1;
+            continue;
+        }
+        let Some(TokenTree::Group(arguments)) = trees.get(index + 2) else {
+            unreachable!("macro invocation shape was checked")
+        };
+        let argument = syn::parse2::<FileMacroArgument>(arguments.stream()).map_err(|error| {
+            WorkspaceTestError::new(format!(
+                "Rust source {} has a non-literal {} path: {error}",
+                source.display(),
+                kind.name(),
+            ))
+        })?;
+        references.push(FileMacroReference {
+            kind,
+            path: argument.path.value(),
+        });
+        index += 3;
+    }
+    Ok(references)
+}
+
+fn item_attributes(item: &Item) -> &[syn::Attribute] {
+    match item {
+        Item::Const(item) => &item.attrs,
+        Item::Enum(item) => &item.attrs,
+        Item::ExternCrate(item) => &item.attrs,
+        Item::Fn(item) => &item.attrs,
+        Item::ForeignMod(item) => &item.attrs,
+        Item::Impl(item) => &item.attrs,
+        Item::Macro(item) => &item.attrs,
+        Item::Mod(item) => &item.attrs,
+        Item::Static(item) => &item.attrs,
+        Item::Struct(item) => &item.attrs,
+        Item::Trait(item) => &item.attrs,
+        Item::TraitAlias(item) => &item.attrs,
+        Item::Type(item) => &item.attrs,
+        Item::Union(item) => &item.attrs,
+        Item::Use(item) => &item.attrs,
+        _ => &[],
     }
 }
 

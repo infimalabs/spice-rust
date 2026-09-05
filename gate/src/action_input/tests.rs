@@ -138,7 +138,11 @@ fn explicit_shard_closure_reuses_across_roots_and_moves_only_for_named_inputs() 
     fs::remove_file(linked.join("src/removed.rs"))
         .expect("mirror selected deletion in linked worktree");
     test_repository::stage(&linked, &["src/lib.rs", "src/removed.rs"]);
-    let paths = vec!["src/lib.rs".to_owned(), "src/removed.rs".to_owned()];
+    let paths = vec![
+        "proof-authority.txt".to_owned(),
+        "src/lib.rs".to_owned(),
+        "src/removed.rs".to_owned(),
+    ];
     let compile = |root: &Path| {
         let tree = Selector::staged()
             .materialize(root)
@@ -157,10 +161,24 @@ fn explicit_shard_closure_reuses_across_roots_and_moves_only_for_named_inputs() 
     test_repository::stage(&linked, &["unrelated.rs"]);
     assert_eq!(compile(&linked), expected);
 
-    fs::write(linked.join("src/lib.rs"), "pub const VALUE: u8 = 9;\n")
-        .expect("change explicit shard input");
-    test_repository::stage(&linked, &["src/lib.rs"]);
-    assert_ne!(compile(&linked), expected);
+    fs::write(linked.join("proof-authority.txt"), "changed authority\n")
+        .expect("change root-level explicit shard input");
+    test_repository::stage(&linked, &["proof-authority.txt"]);
+    let changed_content = compile(&linked);
+    assert_ne!(changed_content, expected);
+
+    #[cfg(target_family = "unix")]
+    {
+        set_executable(&linked.join("proof-authority.txt"), true);
+        test_repository::stage(&linked, &["proof-authority.txt"]);
+        let changed_mode = compile(&linked);
+        assert_ne!(changed_mode, changed_content);
+    }
+
+    fs::remove_file(linked.join("proof-authority.txt"))
+        .expect("remove root-level explicit shard input");
+    test_repository::stage(&linked, &["proof-authority.txt"]);
+    assert_ne!(compile(&linked), changed_content);
     test_repository::remove_linked_worktree(fixture.path(), &linked);
 }
 
@@ -412,6 +430,11 @@ fn action_fixture() -> Fixture {
         "pub const OTHER: u8 = 1;\n",
     )
     .expect("write unrelated source");
+    fs::write(
+        fixture.path().join("proof-authority.txt"),
+        "root-level authority\n",
+    )
+    .expect("write root-level proof authority");
     set_executable(&fixture.path().join("src/tool.rs"), true);
     test_repository::stage_all(fixture.path());
     test_repository::commit(fixture.path(), "seed action inputs");
