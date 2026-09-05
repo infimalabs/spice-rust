@@ -35,6 +35,8 @@
 //! with, a head-direct answer is held as [`Answer::HeadDirect`] with nowhere
 //! to keep them, and that difference survives every floor above.
 
+#[cfg(any(target_arch = "wasm32", test))]
+mod command_demands;
 pub mod compose;
 #[cfg(any(target_arch = "wasm32", test))]
 mod composer_drafts;

@@ -182,6 +182,10 @@ pub(crate) enum LineageControlAction {
         life: Option<LineageLife>,
         issue: String,
     },
+    SettleStaleLife {
+        lineage: CanonicalUuid,
+        life: LineageLife,
+    },
 }
 
 impl Reducible for LineageControls {
@@ -224,6 +228,9 @@ impl Reducible for LineageControls {
                 issue,
             } => {
                 next.settle_issue(lineage, life, issue);
+            }
+            LineageControlAction::SettleStaleLife { lineage, life } => {
+                next.settle_stale_life(lineage, life);
             }
         }
         Rc::new(next)
@@ -459,6 +466,16 @@ impl LineageControls {
             state.pending_life = None;
         }
         state.issue = Some(issue);
+    }
+
+    fn settle_stale_life(&mut self, lineage: CanonicalUuid, life: LineageLife) {
+        let Some(state) = self.lineages.get_mut(&lineage) else {
+            return;
+        };
+        if state.pending_life == Some(life) {
+            state.life = state.authoritative_life;
+            state.pending_life = None;
+        }
     }
 }
 

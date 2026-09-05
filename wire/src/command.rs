@@ -917,6 +917,7 @@ pub struct AdmittedCommand {
     kind: CommandKind,
     expected: Vec<Witness>,
     body: Intent,
+    canonical_request: Vec<u8>,
 }
 
 impl AdmittedCommand {
@@ -954,6 +955,12 @@ impl AdmittedCommand {
     #[must_use]
     pub const fn body(&self) -> &Intent {
         &self.body
+    }
+
+    /// Canonical crossing bytes whose client identity this admission binds.
+    #[must_use]
+    pub fn canonical_request(&self) -> &[u8] {
+        &self.canonical_request
     }
 
     /// Bind one terminal command outcome to this request and generation.
@@ -1149,6 +1156,16 @@ impl Command<serde_json::Value> {
                 &self.expected,
             ));
         }
+        let canonical_request = self
+            .canonical_json()
+            .map(String::into_bytes)
+            .map_err(|error| {
+                CommandRejection::Fault(Fault {
+                    class: FaultClass::Protocol,
+                    reason: "command::canonicalization-failed".to_owned(),
+                    detail: error.to_string(),
+                })
+            })?;
         Ok(AdmittedCommand {
             id: self.id,
             epoch: self.epoch,
@@ -1156,6 +1173,7 @@ impl Command<serde_json::Value> {
             kind: self.kind,
             expected: self.expected,
             body,
+            canonical_request,
         })
     }
 }

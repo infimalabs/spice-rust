@@ -703,11 +703,17 @@ pub(in crate::resident) async fn dispatch_control(
     let request = request.ok_or_else(|| {
         environment_fault("canvas::control-closed", "canvas control receiver closed")
     })?;
-    let lifecycle_released =
-        command_surface.prepare_explicit_lifecycle(lifecycle, request.command())?;
+    let replayed = command_surface.replay(seats, request.command());
+    let is_replay = replayed.is_some();
+    let lifecycle_released = if is_replay {
+        false
+    } else {
+        command_surface.prepare_explicit_lifecycle(lifecycle, request.command())?
+    };
     let dark = is_dark_command(request.command());
-    let outcome = command_surface.dispatch(seats, request.command());
-    let reached_dark = dark && matches!(outcome, Outcome::Reply(_));
+    let outcome =
+        replayed.unwrap_or_else(|| command_surface.dispatch_fresh(seats, request.command()));
+    let reached_dark = !is_replay && dark && matches!(outcome, Outcome::Reply(_));
     let response = request.respond(outcome);
     if let Ok(response) = response {
         response.wait().await;

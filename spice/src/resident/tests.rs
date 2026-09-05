@@ -901,6 +901,7 @@ fn lineage_configuration_changes_only_the_typed_task_subscription() {
     else {
         panic!("lineage configuration replies");
     };
+    let committed_reply = reply.clone();
     assert!(matches!(reply.position, ReplyPosition::Committed(_)));
     let CommandAnswer::Lane(answer) = reply.body else {
         panic!("lineage configuration returns the authoritative lane table");
@@ -931,6 +932,7 @@ fn lineage_configuration_changes_only_the_typed_task_subscription() {
     assert!(durable.lanes.iter().all(|row| row.life == "drive"));
     assert_eq!(durable.subscriptions, answer.subscriptions);
     assert_lineage_configuration_fact(&bus, lineage);
+    assert_lineage_command_replay(&bus, &command, &request, epoch, &committed_reply);
     for lane in [first_lane, second_lane] {
         seats
             .vacate(lane)
@@ -940,7 +942,77 @@ fn lineage_configuration_changes_only_the_typed_task_subscription() {
     }
     bus.verify().expect("configured authority verifies");
     bus.shutdown().expect("fixture bus stops");
+    assert_lineage_command_replay_after_restart(&paths, &command, request, committed_reply);
     fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+fn assert_lineage_command_replay(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    request: &wire::intent::LineageConfigure,
+    epoch: CanonicalUuid,
+    committed_reply: &Reply<CommandAnswer>,
+) {
+    assert_eq!(
+        super::command_surface::replay_command(bus, command),
+        Some(Outcome::Reply(committed_reply.clone())),
+        "an exact retry resolves from its durable command receipt",
+    );
+    let mut conflicting_request = request.clone();
+    conflicting_request.life = Some(wire::intent::LineageLife::Steer);
+    let conflicting = Command {
+        v: wire::WireVersion::CURRENT,
+        id: command.id(),
+        epoch,
+        kind: CommandKind::LineageConfigure,
+        expected: Vec::new(),
+        body: serde_json::to_value(conflicting_request).expect("conflicting request encodes"),
+    }
+    .admit(&wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch,
+    })
+    .expect("conflicting request admits structurally");
+    let Some(Outcome::Refusal(conflict)) =
+        super::command_surface::replay_command(bus, &conflicting)
+    else {
+        panic!("reuse of a durable command identity is refused");
+    };
+    assert_eq!(conflict.reason(), "command::identity-reused");
+}
+
+fn assert_lineage_command_replay_after_restart(
+    paths: &RuntimePaths,
+    command: &wire::AdmittedCommand,
+    request: wire::intent::LineageConfigure,
+    committed_reply: Reply<CommandAnswer>,
+) {
+    let reopened = Bus::start(
+        journal::Journal::open(&paths.journal).expect("configured journal reopens after restart"),
+    )
+    .expect("reopened journal bus starts");
+    let next_epoch = test_uuid(8);
+    let retried = Command {
+        v: wire::WireVersion::CURRENT,
+        id: command.id(),
+        epoch: next_epoch,
+        kind: CommandKind::LineageConfigure,
+        expected: Vec::new(),
+        body: serde_json::to_value(request).expect("restart retry encodes"),
+    }
+    .admit(&wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch: next_epoch,
+    })
+    .expect("restart retry admits in the new epoch");
+    assert_eq!(
+        super::command_surface::replay_command(&reopened, &retried),
+        Some(Outcome::Reply(committed_reply)),
+        "restart rebinds the exact committed command response to the new session",
+    );
+    reopened.shutdown().expect("reopened bus stops");
 }
 
 /// Arrangement is the one command a drag commits, and it carries its own

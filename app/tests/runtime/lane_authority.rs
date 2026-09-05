@@ -1,0 +1,118 @@
+use super::*;
+
+fn lane_response_at(
+    rows: &[(&str, &str, Option<&str>, bool)],
+    position: ReplyPosition,
+    topology_revision: u64,
+    policy: wire::intent::LineageLife,
+) -> Vec<u8> {
+    let mut response: Response<wire::intent::LaneAnswer> =
+        wire::decode(&lane_response(rows)).expect("base lane response decodes");
+    let Outcome::Reply(reply) = &mut response.outcome else {
+        unreachable!("base lane response replies")
+    };
+    reply.position = position;
+    reply.body.topology_revision = topology_revision;
+    for subscription in &mut reply.body.subscriptions {
+        subscription.policy = policy;
+    }
+    wire::encode(&response).expect("positioned lane response encodes")
+}
+
+#[test]
+fn an_older_lane_snapshot_cannot_replace_a_newer_committed_policy() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let rows = [(LANE, LANE, Some(LANE_CAPABILITY), true)];
+    let committed = lane_response_at(
+        &rows,
+        ReplyPosition::Committed(wire::SeqRange {
+            first: seq(50),
+            last: seq(50),
+        }),
+        10,
+        wire::intent::LineageLife::Drain,
+    );
+    let stale = lane_response_at(
+        &rows,
+        ReplyPosition::Snapshot(seq(41)),
+        9,
+        wire::intent::LineageLife::Steer,
+    );
+    let committed = session
+        .admit_frame(&committed)
+        .expect("committed lane response admits");
+    let stale = session
+        .admit_frame(&stale)
+        .expect("older lane snapshot admits");
+
+    assert!(runtime.apply_lanes(&committed));
+    assert!(!runtime.apply_lanes(&stale));
+    let lanes = runtime.lanes().expect("committed lane table remains");
+    assert_eq!(lanes.topology_revision, 10);
+    assert_eq!(
+        lanes.lanes[0].subscription,
+        wire::intent::LineageLife::Drain
+    );
+}
+
+#[test]
+fn an_older_committed_lane_result_cannot_replace_a_later_commit() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let rows = [(LANE, LANE, Some(LANE_CAPABILITY), true)];
+    let later = lane_response_at(
+        &rows,
+        ReplyPosition::Committed(wire::SeqRange {
+            first: seq(51),
+            last: seq(51),
+        }),
+        11,
+        wire::intent::LineageLife::Steer,
+    );
+    let older = lane_response_at(
+        &rows,
+        ReplyPosition::Committed(wire::SeqRange {
+            first: seq(50),
+            last: seq(50),
+        }),
+        10,
+        wire::intent::LineageLife::Drain,
+    );
+    let later = session
+        .admit_frame(&later)
+        .expect("later lane result admits");
+    let older = session
+        .admit_frame(&older)
+        .expect("older lane result admits");
+
+    assert!(runtime.apply_lanes(&later));
+    assert!(!runtime.apply_lanes(&older));
+    let lanes = runtime.lanes().expect("later lane table remains");
+    assert_eq!(lanes.topology_revision, 11);
+    assert_eq!(
+        lanes.lanes[0].subscription,
+        wire::intent::LineageLife::Steer
+    );
+}
+
+#[test]
+fn a_positionless_lane_reply_is_not_authority() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let direct = lane_response_at(
+        &[(LANE, LANE, Some(LANE_CAPABILITY), true)],
+        ReplyPosition::Direct {},
+        10,
+        wire::intent::LineageLife::Drain,
+    );
+    let direct = session
+        .admit_frame(&direct)
+        .expect("positionless lane response admits structurally");
+
+    assert!(!runtime.apply_lanes(&direct));
+    assert!(runtime.lanes().is_none());
+}

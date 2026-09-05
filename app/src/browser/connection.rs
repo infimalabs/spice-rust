@@ -16,11 +16,12 @@ pub(super) async fn run_surface(
 ) {
     let data = SurfaceData::default();
     let mut backoff = crate::reconnect::Backoff::new();
+    let mut demands = DemandQueue::default();
     while active.get() {
         if matches!(&*handles.connection, Connection::Starting) {
             handles.connection.set(Connection::Connecting);
         }
-        let result = run_connection(&active, &handles, &data, &mut actions).await;
+        let result = run_connection(&active, &handles, &data, &mut actions, &mut demands).await;
         if !active.get() {
             break;
         }
@@ -32,6 +33,7 @@ pub(super) async fn run_surface(
             result.expect_err("run_connection returns Ok only once the surface is inactive");
         handles.submissions.queue.borrow_mut().reconnect();
         handles.submissions.publish();
+        demands.reconnect();
         let delay = backoff.settle(ended.admitted);
         handles.connection.set(Connection::Offline(ended.reason));
         TimeoutFuture::new(delay).await;
@@ -54,6 +56,7 @@ async fn run_connection(
     handles: &SurfaceHandles,
     data: &SurfaceData,
     actions: &mut UnboundedReceiver<ClientAction>,
+    demands: &mut DemandQueue<ClientAction>,
 ) -> Result<(), Ended> {
     let abort = web_sys::AbortController::new().map_err(|_| Ended {
         reason: "browser could not create a connection abort controller".to_owned(),
@@ -90,7 +93,7 @@ async fn run_connection(
     // the acceptance frame has been admitted and the runtime published. Deriving
     // the flag from control flow rather than from a separate variable keeps the
     // two from ever disagreeing about whether this connection counted.
-    pump_session(active, handles, data, actions, established)
+    pump_session(active, handles, data, actions, demands, established)
         .await
         .map_err(|reason| Ended {
             reason,
@@ -116,6 +119,7 @@ async fn pump_session(
     handles: &SurfaceHandles,
     data: &SurfaceData,
     actions: &mut UnboundedReceiver<ClientAction>,
+    demands: &mut DemandQueue<ClientAction>,
     established: EstablishedConnection,
 ) -> Result<(), String> {
     let EstablishedConnection {
@@ -128,6 +132,7 @@ async fn pump_session(
     send_subscription(&principal, data, &mut writer).await?;
     send_refresh(&principal, &mut writer, &mut pending, &handles.submissions).await?;
     drain_submissions(&principal, &mut writer, &mut pending, &handles.submissions).await?;
+    drain_demands(&principal, data, &mut writer, &mut pending, demands).await?;
     let mut silence = TimeoutFuture::new(LIVENESS_PROBE_MILLIS).fuse();
     let mut probed = false;
     let (thread_timer_sender, mut thread_timers) = mpsc::unbounded::<()>();
@@ -155,9 +160,8 @@ async fn pump_session(
                 }
             },
             frame = incoming => {
-                // Any frame proves the socket carries traffic, so the answer to
-                // a probe need not be the Pong specifically -- a refusal names
-                // a reachable resident just as well.
+                // Any frame proves socket traffic; a refusal names a reachable
+                // resident, so a probe response need not be Pong specifically.
                 rearm = true;
                 probed = false;
                 let frame = frame
@@ -170,6 +174,7 @@ async fn pump_session(
                         handles,
                         data,
                         &mut pending,
+                        demands,
                         &bytes,
                     )?;
                 if let Some(cursor) = refresh_thread
@@ -198,17 +203,19 @@ async fn pump_session(
                     &handles.submissions,
                 )
                 .await?;
+                drain_demands(&principal, data, &mut writer, &mut pending, demands).await?;
             },
             action = action => {
                 let action = action.ok_or_else(|| "canvas command channel closed".to_owned())?;
-                dispatch_action(
+                dispatch_client_action(
                     &principal,
+                    data,
                     &mut writer,
                     &mut pending,
                     &handles.submissions,
+                    demands,
                     action,
-                )
-                .await?;
+                ).await?;
             },
             () = silence => {
                 if probed {
@@ -227,6 +234,166 @@ async fn pump_session(
         }
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_client_action(
+    principal: &Principal,
+    data: &SurfaceData,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    submissions: &SubmissionHandle,
+    demands: &mut DemandQueue<ClientAction>,
+    action: ClientAction,
+) -> Result<(), String> {
+    if is_demand(&action) {
+        demands.submit(random_uuid()?, action)?;
+        drain_demands(principal, data, writer, pending, demands).await
+    } else {
+        dispatch_action(principal, writer, pending, submissions, action).await
+    }
+}
+
+const fn is_demand(action: &ClientAction) -> bool {
+    matches!(
+        action,
+        ClientAction::Seat { .. }
+            | ClientAction::ArrangeLane { .. }
+            | ClientAction::ConfigureLineage { .. }
+            | ClientAction::ArrangeLineages { .. }
+    )
+}
+
+async fn drain_demands(
+    principal: &Principal,
+    data: &SurfaceData,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    demands: &mut DemandQueue<ClientAction>,
+) -> Result<(), String> {
+    let Some(ready) = demands.ready() else {
+        return Ok(());
+    };
+    let demand = if ready.prepared {
+        ready.clone()
+    } else {
+        let topology_revision = data
+            .read()
+            .as_ref()
+            .and_then(CanvasRuntime::lanes)
+            .map(|lanes| lanes.topology_revision)
+            .ok_or_else(|| "command demand has no authoritative lane table".to_owned())?;
+        demands
+            .prepare_ready(|action, rebase| {
+                if rebase {
+                    action.set_topology_revision(topology_revision);
+                }
+            })
+            .expect("the observed ready command remains the queue front")
+            .clone()
+    };
+    send_demand_as(principal, writer, pending, demand.id, demand.body).await?;
+    demands.admit(demand.id)
+}
+
+impl ClientAction {
+    fn set_topology_revision(&mut self, revision: u64) {
+        match self {
+            Self::Seat {
+                topology_revision, ..
+            }
+            | Self::ArrangeLane {
+                topology_revision, ..
+            }
+            | Self::ConfigureLineage {
+                topology_revision, ..
+            }
+            | Self::ArrangeLineages {
+                topology_revision, ..
+            } => *topology_revision = revision,
+            _ => {}
+        }
+    }
+}
+
+async fn send_demand_as(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    id: CanonicalUuid,
+    action: ClientAction,
+) -> Result<(), String> {
+    match action {
+        ClientAction::Seat {
+            topology_revision,
+            lane,
+            name,
+            worktree,
+            life,
+            vendor,
+        } => {
+            send_lane_seat_as(
+                principal,
+                writer,
+                pending,
+                id,
+                topology_revision,
+                lane,
+                name,
+                worktree,
+                life,
+                vendor,
+            )
+            .await
+        }
+        ClientAction::ArrangeLane {
+            topology_revision,
+            lane,
+            before,
+        } => {
+            send_typed_as(
+                principal,
+                writer,
+                pending,
+                id,
+                PendingKind::LaneArrange,
+                CommandKind::LaneArrange,
+                vec![],
+                LaneArrange {
+                    topology_revision,
+                    lane,
+                    before,
+                },
+            )
+            .await
+        }
+        ClientAction::ArrangeLineages {
+            topology_revision,
+            lineages,
+        } => {
+            send_lineage_arrangement_as(principal, writer, pending, id, topology_revision, lineages)
+                .await
+        }
+        ClientAction::ConfigureLineage {
+            topology_revision,
+            lineage,
+            member,
+            life,
+        } => {
+            send_lineage_configuration_as(
+                principal,
+                writer,
+                pending,
+                id,
+                topology_revision,
+                lineage,
+                member,
+                life,
+            )
+            .await
+        }
+        _ => Err("non-demand action reached the command demand queue".to_owned()),
+    }
 }
 
 /// Ask the resident to prove it is still reading this socket.
@@ -402,6 +569,7 @@ async fn dispatch_action(
         }
         ClientAction::Seat {
             topology_revision,
+            lane,
             name,
             worktree,
             life,
@@ -412,6 +580,7 @@ async fn dispatch_action(
                 writer,
                 pending,
                 topology_revision,
+                lane,
                 name,
                 worktree,
                 life,
@@ -532,12 +701,41 @@ async fn send_lane_seat(
     writer: &mut SocketWriter,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     topology_revision: u64,
+    lane: CanonicalUuid,
     name: Option<String>,
     worktree: String,
     life: String,
     vendor: wire::Name,
 ) -> Result<(), String> {
-    let lane = random_uuid()?;
+    let id = random_uuid()?;
+    send_lane_seat_as(
+        principal,
+        writer,
+        pending,
+        id,
+        topology_revision,
+        lane,
+        name,
+        worktree,
+        life,
+        vendor,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn send_lane_seat_as(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    id: CanonicalUuid,
+    topology_revision: u64,
+    lane: CanonicalUuid,
+    name: Option<String>,
+    worktree: String,
+    life: String,
+    vendor: wire::Name,
+) -> Result<(), String> {
     let body = LaneSeat {
         topology_revision,
         lane,
@@ -548,10 +746,11 @@ async fn send_lane_seat(
         vendor,
         resume: None,
     };
-    send_typed(
+    send_typed_as(
         principal,
         writer,
         pending,
+        id,
         PendingKind::LaneSeat,
         CommandKind::LaneSeat,
         vec![],
@@ -567,10 +766,23 @@ async fn send_lineage_arrangement(
     topology_revision: u64,
     lineages: Vec<LineageArrangement>,
 ) -> Result<(), String> {
-    send_typed(
+    let id = random_uuid()?;
+    send_lineage_arrangement_as(principal, writer, pending, id, topology_revision, lineages).await
+}
+
+async fn send_lineage_arrangement_as(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    id: CanonicalUuid,
+    topology_revision: u64,
+    lineages: Vec<LineageArrangement>,
+) -> Result<(), String> {
+    send_typed_as(
         principal,
         writer,
         pending,
+        id,
         PendingKind::LineageArrange,
         CommandKind::LineageArrange,
         vec![],
@@ -657,10 +869,36 @@ async fn send_lineage_configuration(
     member: Option<CanonicalUuid>,
     life: Option<LineageLife>,
 ) -> Result<(), String> {
-    send_typed(
+    let id = random_uuid()?;
+    send_lineage_configuration_as(
         principal,
         writer,
         pending,
+        id,
+        topology_revision,
+        lineage,
+        member,
+        life,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn send_lineage_configuration_as(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    id: CanonicalUuid,
+    topology_revision: u64,
+    lineage: CanonicalUuid,
+    member: Option<CanonicalUuid>,
+    life: Option<LineageLife>,
+) -> Result<(), String> {
+    send_typed_as(
+        principal,
+        writer,
+        pending,
+        id,
         PendingKind::LineageConfigure { lineage, life },
         CommandKind::LineageConfigure,
         vec![],
