@@ -42,6 +42,7 @@ pub(super) struct CanvasRender<'a> {
     pub surface: &'a UseStateHandle<SurfaceData>,
     pub axis: &'a UseStateHandle<Axis>,
     pub mosaic: &'a UseStateHandle<bool>,
+    pub canvas_menu_open: &'a UseStateHandle<bool>,
     pub lineage_controls: &'a UseReducerHandle<LineageControls>,
     pub composer_drafts: &'a UseReducerHandle<ComposerDrafts>,
     pub submissions: &'a SubmissionHandle,
@@ -77,6 +78,7 @@ pub(super) fn render_canvas(render: CanvasRender<'_>) -> Html {
             {chrome::render_command_bar(chrome::CommandBarRender {
                 axis: render.axis,
                 mosaic: render.mosaic,
+                menu_open: render.canvas_menu_open,
                 active_axis,
                 surface: render.surface,
                 cursor: &cursor,
@@ -160,7 +162,7 @@ fn render_analytics(render: &CanvasRender<'_>, active_axis: Axis) -> Html {
         <>
             <div class="page-heading">
                 <div>
-                    <h1>{title(active_axis.as_str())}</h1>
+                    <h1>{axis_label(active_axis)}</h1>
                     <p>{active_axis.question()}</p>
                 </div>
             </div>
@@ -181,6 +183,15 @@ fn render_analytics(render: &CanvasRender<'_>, active_axis: Axis) -> Html {
             </div>
             {render_axis(active_axis, render)}
         </>
+    }
+}
+
+pub(super) const fn axis_label(axis: Axis) -> &'static str {
+    match axis {
+        Axis::Magnitude => "Metrics",
+        Axis::Flow => "Tasks",
+        Axis::Topology => "Teams",
+        Axis::Chronology => "History",
     }
 }
 

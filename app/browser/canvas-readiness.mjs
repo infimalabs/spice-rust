@@ -23,10 +23,10 @@ const agentGeometryOwners = Object.freeze({
   plane: ":scope > .lane-mosaic-plane",
 });
 const axisPanes = new Map([
-  ["Magnitude", ["Effort", "Pressure", "Residue", "Consent Volume"]],
-  ["Flow", ["Tasks", "Claims", "Deferrals", "Reviews"]],
-  ["Topology", ["Lanes", "Worktrees", "Lineage", "Occupancy", "Residents"]],
-  ["Chronology", [
+  ["Metrics", ["Effort", "Pressure", "Residue", "Consent Volume"]],
+  ["Tasks", ["Tasks", "Claims", "Deferrals", "Reviews"]],
+  ["Teams", ["Lanes", "Worktrees", "Lineage", "Occupancy", "Residents"]],
+  ["History", [
     "Compaction",
     "Queues",
     "Directives",
@@ -432,11 +432,14 @@ export async function assertCanvas(page, scheme) {
     0,
     "the internal packing name is not a user-facing view",
   );
+  assert.equal(await page.locator(".canvas-navigation").count(), 0, "navigation stays collapsed");
+  await page.getByLabel("Open Spice Canvas menu").click();
   assert.equal(
-    await page.locator("button.axis-button", { hasText: /^Agents/ }).count(),
+    await page.locator(".canvas-navigation button.axis-button", { hasText: /^Agents/ }).count(),
     1,
-    "one Agents entry reaches the one conversation surface",
+    "one disclosed Agents entry reaches the one conversation surface",
   );
+  await page.getByLabel("Open Spice Canvas menu").click();
   const pixels = await page.evaluate(() => {
     const root = document.querySelector("#app");
     const canvas = document.querySelector(".content");

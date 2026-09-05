@@ -649,7 +649,13 @@ export const CONNECT_MS = HANDSHAKE_TIMEOUT_MS + RENDER_SLACK_MS;
 export const RECONNECT_MS = RECONNECT_BASE_MS + HANDSHAKE_TIMEOUT_MS + RENDER_SLACK_MS;
 
 export async function chooseCanvasView(page, name) {
-  const button = page.getByRole("button", { name: new RegExp(`^${name}(?:\\s|$)`) });
+  const visibleName = {
+    Flow: "Tasks",
+    Magnitude: "Metrics",
+    Chronology: "History",
+    Topology: "Teams",
+  }[name] ?? name;
+  const button = page.getByRole("button", { name: new RegExp(`^${visibleName}(?:\\s|$)`) });
   if (!(await button.isVisible())) {
     await page.getByLabel("Open Spice Canvas menu").click();
   }
@@ -658,23 +664,11 @@ export async function chooseCanvasView(page, name) {
   if (await openMenu.count()) {
     await openMenu.locator("summary").click();
   }
-  // Returning here would return on dispatch, which is what made every later
-  // wait ambiguous: a selector wait that follows an unapplied switch is deaf
-  // rather than slow, and both spell the same bare TimeoutError. Every view
-  // confirms the same way, on the pill the switch selects: `render_pill` in
-  // app/src/browser/view/chrome.rs sets `aria-current` from the state the
-  // click just wrote, so the marker appears only once the switch is applied.
-  //
-  // Agents was special-cased onto `.mosaic-workspace` on the reasoning that
-  // its pill sits inside the menu this function has just closed and so can
-  // never be visible. That was wrong twice over: `render_canvas_menu` holds
-  // only Magnitude and Flow, and the mosaic bar renders its own Agents pill
-  // into `nav.canvas-shortcuts`, a sibling of the menu that team-menu.mjs
-  // already reads the text and bounding rect of. The branch is gone because
-  // the marker was measured, not argued: with it removed the suite passes,
-  // and at every Agents switch `.mosaic-workspace` was already present the
-  // moment the marker settled, so the marker never lands the earlier.
-  const applied = button.and(page.locator('[aria-current="page"]'));
+  // The destination button leaves the DOM when selection closes the disclosure,
+  // so observe the durable destination rather than an ephemeral selected pill.
+  const applied = visibleName === "Agents"
+    ? page.locator('.mosaic-workspace[data-active="true"]')
+    : page.locator(".page-heading h1", { hasText: visibleName });
   await applied.waitFor({ timeout: TRANSITION_MS });
 }
 

@@ -490,6 +490,7 @@ fn canvas_app() -> Html {
     let surface = use_state(SurfaceData::default);
     let axis = use_state(|| Axis::Topology);
     let mosaic = use_state(|| true);
+    let canvas_menu_open = use_state(|| false);
     let lineage_controls = use_reducer(LineageControls::restore);
     let composer_drafts = use_reducer(ComposerDrafts::default);
     let submission_status = use_state(SubmissionStatus::default);
@@ -560,6 +561,7 @@ fn canvas_app() -> Html {
     use_lineage_speech_abandonment(&surface, speech_runtime.clone());
     use_speech_reset(speech.clone(), speech_runtime.clone());
     use_mosaic_root_scroll(*mosaic);
+    use_canvas_menu_dismissal(canvas_menu_open.clone());
 
     let refresh = refresh_callback(sender.clone(), axis.clone());
     let submit_note = note_submit_callback(
@@ -573,6 +575,7 @@ fn canvas_app() -> Html {
         surface: &surface,
         axis: &axis,
         mosaic: &mosaic,
+        canvas_menu_open: &canvas_menu_open,
         lineage_controls: &lineage_controls,
         composer_drafts: &composer_drafts,
         submissions: &submissions,
@@ -585,6 +588,90 @@ fn canvas_app() -> Html {
         submit_note,
         refresh,
     })
+}
+
+#[hook]
+fn use_canvas_menu_dismissal(open: UseStateHandle<bool>) {
+    use_effect_with(*open, move |is_open| {
+        let registration = (*is_open)
+            .then(|| {
+                let document = web_sys::window()?.document()?;
+                if let Some(first_destination) = document
+                    .query_selector(".canvas-navigation .axis-button")
+                    .ok()
+                    .flatten()
+                    .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
+                {
+                    let _ = first_destination.focus();
+                }
+                let pointer_open = open.clone();
+                let pointer = Closure::<dyn FnMut(web_sys::Event)>::new(move |event| {
+                    if !canvas_disclosure_contains(&event) {
+                        pointer_open.set(false);
+                    }
+                });
+                let focus_open = open.clone();
+                let focus = Closure::<dyn FnMut(web_sys::Event)>::new(move |event| {
+                    if !canvas_disclosure_contains(&event) {
+                        focus_open.set(false);
+                    }
+                });
+                let key_open = open.clone();
+                let key_document = document.clone();
+                let key = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
+                    move |event: web_sys::KeyboardEvent| {
+                        if event.key() != "Escape" {
+                            return;
+                        }
+                        event.prevent_default();
+                        key_open.set(false);
+                        if let Some(trigger) = key_document
+                            .query_selector(".canvas-menu > summary")
+                            .ok()
+                            .flatten()
+                            .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
+                        {
+                            let _ = trigger.focus();
+                        }
+                    },
+                );
+                let _ = document.add_event_listener_with_callback(
+                    "pointerdown",
+                    pointer.as_ref().unchecked_ref(),
+                );
+                let _ = document
+                    .add_event_listener_with_callback("focusin", focus.as_ref().unchecked_ref());
+                let _ = document
+                    .add_event_listener_with_callback("keydown", key.as_ref().unchecked_ref());
+                Some((document, pointer, focus, key))
+            })
+            .flatten();
+        move || {
+            if let Some((document, pointer, focus, key)) = registration {
+                let _ = document.remove_event_listener_with_callback(
+                    "pointerdown",
+                    pointer.as_ref().unchecked_ref(),
+                );
+                let _ = document
+                    .remove_event_listener_with_callback("focusin", focus.as_ref().unchecked_ref());
+                let _ = document
+                    .remove_event_listener_with_callback("keydown", key.as_ref().unchecked_ref());
+            }
+        }
+    });
+}
+
+fn canvas_disclosure_contains(event: &web_sys::Event) -> bool {
+    event
+        .target()
+        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        .is_some_and(|target| {
+            target
+                .closest(".canvas-navigation, .canvas-menu")
+                .ok()
+                .flatten()
+                .is_some()
+        })
 }
 
 #[hook]

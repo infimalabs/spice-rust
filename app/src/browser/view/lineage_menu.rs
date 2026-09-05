@@ -25,19 +25,19 @@ fn render_axis(axis: Axis, count: usize) -> Html {
     let (noun, context) = match axis {
         Axis::Magnitude => (
             "rules",
-            "Magnitude summarizes current policy, consent budgets, and trust standing.",
+            "Metrics summarizes current policy, consent budgets, and trust standing.",
         ),
         Axis::Flow => (
             "active tasks",
-            "Flow follows ready, active, deferred, and completed work across projects.",
+            "Tasks follows ready, active, deferred, and completed work across projects.",
         ),
         Axis::Topology => (
             "lineages",
-            "Topology connects resident teams, seats, capabilities, and current ownership.",
+            "Teams connects resident teams, seats, capabilities, and current ownership.",
         ),
         Axis::Chronology => (
             "events",
-            "Chronology follows facts, command outcomes, and their causal thread.",
+            "History follows facts, command outcomes, and their causal thread.",
         ),
     };
     html! {
@@ -50,7 +50,7 @@ fn render_axis(axis: Axis, count: usize) -> Html {
                 </div>
             </section>
             <section class="canvas-menu-section canvas-menu-context">
-                <h2>{title(axis.as_str())}</h2>
+                <h2>{super::axis_label(axis)}</h2>
                 <div class="canvas-menu-setting">
                     <strong>{axis.question()}</strong>
                     <span>{format!("{count} {noun}")}</span>
