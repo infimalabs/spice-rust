@@ -532,7 +532,7 @@ mod tests {
 
     #[test]
     fn doctor_has_no_process_network_authority_or_filesystem_mutation_surface() {
-        let source = include_str!("doctor.rs");
+        let source = ::std::include_str!("doctor.rs");
         for forbidden in [
             concat!("std::", "process"),
             concat!("std::", "net"),
@@ -556,7 +556,7 @@ mod tests {
 
     #[test]
     fn subsystem_diagnosis_has_no_execution_or_mutation_surface() {
-        let source = include_str!("doctor/subsystems.rs");
+        let source = ::std::include_str!("doctor/subsystems.rs");
         for forbidden in [
             concat!("std::", "process"),
             concat!("std::", "net"),

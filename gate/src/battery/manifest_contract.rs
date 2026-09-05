@@ -10,7 +10,7 @@ use crate::toolchain::TOOLCHAIN_ARMS;
 /// The only battery-report and canonical-manifest schema.
 pub const GATE_BATTERY_VERSION: u64 = 1;
 /// The exact canonical disposition manifest compiled into this crate.
-pub const CANONICAL_BATTERY_MANIFEST: &str = include_str!("manifest.toml");
+pub const CANONICAL_BATTERY_MANIFEST: &str = std::include_str!("manifest.toml");
 
 /// Exactly one disposition for one predecessor arm.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

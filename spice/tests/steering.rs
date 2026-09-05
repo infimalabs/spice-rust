@@ -93,7 +93,7 @@ impl Fixture {
         let skill = root.join(".git/.spice-install/agents/skills/spice/SKILL.md");
         fs::create_dir_all(skill.parent().expect("fixture skill parent"))
             .expect("fixture skill parent creates");
-        fs::write(&skill, include_bytes!("../agent/SKILL.md"))
+        fs::write(&skill, std::include_bytes!("../agent/SKILL.md"))
             .expect("fixture installs the appliance skill");
         staged_app::seed(&root);
         let vendor = root.join("fake-claude");

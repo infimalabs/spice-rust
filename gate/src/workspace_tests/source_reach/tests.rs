@@ -244,7 +244,7 @@ fn built_in_file_macros_are_discovered_in_every_rust_token_context() {
                     "const EXPRESSION: &str = std::include!(\"../expression.rs\");\n",
                     "#[doc = ::std::include_str!(\"../release-authority/VERSION\")]\n",
                     "pub fn documented() {}\n",
-                    "#[fixture(core::include_str!(\"../attribute.txt\"))]\n",
+                    "#[cfg_attr(any(), doc = core::include_str!(\"../attribute.txt\"))]\n",
                     "pub struct Attributed;\n",
                     "const NESTED: &str = outer!(nested(std::include_str!(\"../nested.txt\")));\n",
                     "const GLOBAL: &str = outer!(nested(::r#std::r#include_str!(\"../global.txt\")));\n",
@@ -490,6 +490,162 @@ fn recursive_include_inherits_the_qualified_namespace_scope() {
         fixture.reach(),
         BTreeMap::from([("body.rs".to_owned(), (false, true))]),
     );
+}
+
+#[test]
+fn unqualified_macro_rules_bindings_follow_textual_scope_and_child_modules() {
+    let fixture = Fixture::new(
+        "textual-unqualified-shadow",
+        &[
+            (
+                "lib.rs",
+                concat!(
+                    "pub const BEFORE: &str = include_str!(\"before.txt\");\n",
+                    "macro_rules! r#include_str { ($path:literal) => { \"owned\" }; }\n",
+                    "pub const AFTER: &str = include_str!(\"missing-after.txt\");\n",
+                    "macro_rules! passthrough { ($value:expr) => { $value }; }\n",
+                    "pub const NESTED: &str = passthrough!(r#include_str!(\"missing-nested.txt\"));\n",
+                    "macro_rules! include { ($path:literal) => { pub const USER_INCLUDE: u8 = 1; }; }\n",
+                    "include!(\"missing-user-include.rs\");\n",
+                    "pub mod child {\n",
+                    "    pub const INHERITED: &str = include_str!(\"missing-child.txt\");\n",
+                    "}\n",
+                ),
+            ),
+            ("before.txt", "compiler owned\n"),
+        ],
+    );
+
+    assert_eq!(
+        fixture.reach(),
+        BTreeMap::from([("before.txt".to_owned(), (false, true))]),
+    );
+    fixture.assert_compiles("lib.rs");
+}
+
+#[test]
+fn block_macro_shadowing_restores_the_outer_builtin() {
+    let fixture = Fixture::new(
+        "block-unqualified-shadow",
+        &[
+            (
+                "lib.rs",
+                concat!(
+                    "pub fn local() {\n",
+                    "    macro_rules! include_bytes { ($path:literal) => { b\"owned\" }; }\n",
+                    "    let _ = include_bytes!(\"missing-local.bin\");\n",
+                    "}\n",
+                    "pub const OUTSIDE: &[u8] = include_bytes!(\"outside.bin\");\n",
+                ),
+            ),
+            ("outside.bin", "compiler owned\n"),
+        ],
+    );
+
+    assert_eq!(
+        fixture.reach(),
+        BTreeMap::from([("outside.bin".to_owned(), (false, true))]),
+    );
+    fixture.assert_compiles("lib.rs");
+}
+
+#[test]
+fn module_wide_user_imports_shadow_before_their_item() {
+    let fixture = Fixture::new(
+        "imported-unqualified-shadow",
+        &[
+            (
+                "lib.rs",
+                concat!(
+                    "#[macro_export] macro_rules! owned { ($path:literal) => { \"owned\" }; }\n",
+                    "mod parent {\n",
+                    "    pub const BEFORE_IMPORT_ITEM: &str = include_str!(\"missing.txt\");\n",
+                    "    use crate::owned as include_str;\n",
+                    "    pub mod child {\n",
+                    "        pub const BUILTIN: &str = include_str!(\"child.txt\");\n",
+                    "    }\n",
+                    "}\n",
+                ),
+            ),
+            ("child.txt", "compiler owned\n"),
+        ],
+    );
+
+    assert_eq!(
+        fixture.reach(),
+        BTreeMap::from([("child.txt".to_owned(), (false, false))]),
+    );
+    fixture.assert_compiles("lib.rs");
+}
+
+#[test]
+fn renamed_compiler_macro_retains_its_source_semantics() {
+    let fixture = Fixture::new(
+        "renamed-compiler-macro",
+        &[
+            (
+                "lib.rs",
+                concat!(
+                    "use std::include_str as include_bytes;\n",
+                    "pub const TEXT: &str = include_bytes!(\"input.txt\");\n",
+                ),
+            ),
+            ("input.txt", "compiler text\n"),
+        ],
+    );
+
+    assert_eq!(
+        fixture.reach(),
+        BTreeMap::from([("input.txt".to_owned(), (false, true))]),
+    );
+    fixture.assert_compiles("lib.rs");
+}
+
+#[test]
+fn unresolved_unqualified_bindings_refuse_before_literal_admission() {
+    for (name, source) in [
+        (
+            "glob",
+            concat!(
+                "mod user {}\n",
+                "use user::*;\n",
+                "const VALUE: &str = include_str!(\"missing.txt\");\n",
+            ),
+        ),
+        (
+            "conditional",
+            concat!(
+                "#[cfg(any())] macro_rules! include_str { ($path:literal) => { \"owned\" }; }\n",
+                "const VALUE: &str = include_str!(\"missing.txt\");\n",
+            ),
+        ),
+        (
+            "generated",
+            concat!(
+                "macro_rules! define { () => {} }\n",
+                "define!();\n",
+                "const VALUE: &str = include_str!(\"missing.txt\");\n",
+            ),
+        ),
+        (
+            "attribute-generated",
+            concat!(
+                "#[unknown_attribute] struct Generated;\n",
+                "const VALUE: &str = include_str!(\"missing.txt\");\n",
+            ),
+        ),
+    ] {
+        let fixture = Fixture::new(name, &[("lib.rs", source)]);
+        let error = fixture
+            .reach_result_from("lib.rs", FileMacroCrateContext::test_default())
+            .expect_err("unresolved unqualified macro ownership must refuse");
+        assert!(
+            error
+                .to_string()
+                .contains("cannot prove unqualified file-macro namespace for include_str!"),
+            "unexpected refusal for {name}: {error}",
+        );
+    }
 }
 
 #[test]

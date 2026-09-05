@@ -111,7 +111,7 @@ impl AdvisoryRtkFixture {
         let skill = spice::install::installed_skill(&repository);
         fs::create_dir_all(skill.parent().expect("installed skill parent"))
             .expect("installed skill parent creates");
-        fs::write(&skill, include_bytes!("../../../../agent/SKILL.md"))
+        fs::write(&skill, ::std::include_bytes!("../../../../agent/SKILL.md"))
             .expect("current installed skill writes");
         let paths = RuntimePaths::from_repository(&repository).expect("runtime paths resolve");
         Self {

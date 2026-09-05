@@ -108,10 +108,10 @@ impl Drop for Fixture {
 }
 
 const TRACKED_CARGO_GUIDANCE: [(&str, &str); 2] = [
-    ("AGENTS.md", include_str!("../../../AGENTS.md")),
+    ("AGENTS.md", ::std::include_str!("../../../AGENTS.md")),
     (
         "spice/CARGO_ISOLATION.md",
-        include_str!("../../CARGO_ISOLATION.md"),
+        ::std::include_str!("../../CARGO_ISOLATION.md"),
     ),
 ];
 
@@ -160,7 +160,7 @@ fn tracked_guidance_routes_rust_cargo_through_ambient_spice() {
 
 #[test]
 fn repository_configuration_has_no_pre_isolation_xtask_shortcut() {
-    let configuration = include_str!("../../../.cargo/config.toml");
+    let configuration = ::std::include_str!("../../../.cargo/config.toml");
     let configuration: toml::Value =
         toml::from_str(configuration).expect("tracked Cargo configuration parses");
     assert!(
