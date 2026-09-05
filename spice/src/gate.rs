@@ -30,6 +30,7 @@ enum InputMode {
     Strict,
 }
 
+mod candidate_tree;
 mod capture;
 mod environment;
 mod finding_source;
@@ -42,10 +43,31 @@ use environment::{
     compiler_environment_from_with_cargo_home,
 };
 
+pub use candidate_tree::CandidateTree;
 pub use finding_source::{
     GateFindingAnchor, capture_gate_finding_anchor, require_gate_finding_source_forward,
     validate_gate_finding_source,
 };
+
+/// Resolve the tree object represented by the exact staged-index authority.
+///
+/// The ambient `GIT_INDEX_FILE`, including its absence, is captured before Git
+/// is launched. This keeps pre-commit alternate indexes authoritative while
+/// `-C` preserves the selected ordinary or linked worktree.
+///
+/// # Errors
+///
+/// Returns a typed gate-rim failure when Git cannot write the staged tree or
+/// emits anything other than one canonical SHA-1 or SHA-256 object identity.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the canonical gate command rim owns staged-index authority acquisition"
+)]
+pub fn capture_candidate_tree(repository: &Repository) -> Result<CandidateTree, RunError> {
+    let index = env::var_os("GIT_INDEX_FILE");
+    candidate_tree::capture_candidate_tree(repository, index.as_deref())
+}
+
 /// One staged battery capture retained across explicit diagnostic actions.
 pub struct PreparedBattery<'trace> {
     capture: BatteryCapture<'trace>,
