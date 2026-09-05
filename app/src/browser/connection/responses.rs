@@ -113,31 +113,9 @@ impl CommandApplication {
     }
 }
 
-enum DemandResponse {
-    Committed(wire::SeqRange),
-    Refused(String),
-}
-
 fn classify_demand_response(session: &Session, bytes: &[u8]) -> Result<DemandResponse, String> {
     let admitted: crate::Admitted<Response<serde_json::Value>> = admit_response(session, bytes)?;
-    match &admitted.get().outcome {
-        wire::Outcome::Reply(reply) => match reply.position {
-            wire::ReplyPosition::Committed(range) => Ok(DemandResponse::Committed(range)),
-            wire::ReplyPosition::Snapshot(_) | wire::ReplyPosition::Direct {} => Err(format!(
-                "mutating command demand {} returned a non-committed position",
-                admitted.get().id
-            )),
-        },
-        wire::Outcome::Refusal(refusal) => Ok(DemandResponse::Refused(format!(
-            "{}: {}",
-            refusal.reason(),
-            refusal.explanation()
-        ))),
-        wire::Outcome::Fault(fault) => Ok(DemandResponse::Refused(format!(
-            "{}: {}",
-            fault.reason, fault.detail
-        ))),
-    }
+    classify_demand_outcome(admitted.get().id, &admitted.get().outcome)
 }
 
 fn settle_demand(
