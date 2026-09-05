@@ -179,6 +179,17 @@ impl PreparedArm<'_> {
             .map_err(|error| RunError::refusal("gate::action-input-refused", error))
     }
 
+    /// Compile one explicit proof sub-action closure from the retained tree.
+    pub fn compile_explicit_action_input(
+        &self,
+        paths: Vec<String>,
+        non_files: Vec<::gate::ActionNonFileInput>,
+    ) -> Result<::gate::ActionInputManifest, RunError> {
+        self.capture
+            .compile_explicit_action_input(paths, non_files)
+            .map_err(|error| RunError::refusal("gate::action-input-refused", error))
+    }
+
     /// Compiler environment captured by the command rim for this action.
     #[must_use]
     pub fn compiler_environment(&self) -> &[(OsString, OsString)] {

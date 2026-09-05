@@ -142,6 +142,16 @@ impl BatteryCapture<'_> {
             .map_err(|error| BatteryError::new(error.to_string()))
     }
 
+    /// Compile one explicit sub-action closure from this capture's retained tree.
+    pub fn compile_explicit_action_input(
+        &self,
+        paths: Vec<String>,
+        non_files: Vec<crate::ActionNonFileInput>,
+    ) -> Result<crate::ActionInputManifest, BatteryError> {
+        crate::compile_explicit_action_input(self.executor.tree(), paths, non_files)
+            .map_err(|error| BatteryError::new(error.to_string()))
+    }
+
     /// Command-rim compiler environment bound before focused execution.
     #[must_use]
     pub fn compiler_environment(&self) -> &[(OsString, OsString)] {

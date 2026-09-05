@@ -129,6 +129,42 @@ fn manifest_tracks_content_mode_deletion_and_non_files_but_not_unrelated_paths()
 }
 
 #[test]
+fn explicit_shard_closure_reuses_across_roots_and_moves_only_for_named_inputs() {
+    let fixture = action_fixture();
+    let linked = fixture.path().with_extension("linked");
+    test_repository::create_linked_worktree(fixture.path(), &linked, "proof-peer");
+    fs::write(linked.join("src/lib.rs"), "pub const VALUE: u8 = 2;\n")
+        .expect("mirror selected change in linked worktree");
+    fs::remove_file(linked.join("src/removed.rs"))
+        .expect("mirror selected deletion in linked worktree");
+    test_repository::stage(&linked, &["src/lib.rs", "src/removed.rs"]);
+    let paths = vec!["src/lib.rs".to_owned(), "src/removed.rs".to_owned()];
+    let compile = |root: &Path| {
+        let tree = Selector::staged()
+            .materialize(root)
+            .expect("materialize explicit shard candidate");
+        compile_explicit_action_input(&tree, paths.clone(), Vec::new())
+            .expect("compile explicit shard closure")
+            .digest()
+            .expect("digest explicit shard closure")
+    };
+
+    let expected = compile(fixture.path());
+    assert_eq!(compile(&linked), expected);
+
+    fs::write(linked.join("unrelated.rs"), "pub const OTHER: u8 = 9;\n")
+        .expect("change unrelated staged content");
+    test_repository::stage(&linked, &["unrelated.rs"]);
+    assert_eq!(compile(&linked), expected);
+
+    fs::write(linked.join("src/lib.rs"), "pub const VALUE: u8 = 9;\n")
+        .expect("change explicit shard input");
+    test_repository::stage(&linked, &["src/lib.rs"]);
+    assert_ne!(compile(&linked), expected);
+    test_repository::remove_linked_worktree(fixture.path(), &linked);
+}
+
+#[test]
 fn manifest_reads_staged_bytes_instead_of_later_checkout_edits() {
     let fixture = action_fixture();
     let staged = compile_magic(&fixture, b"staged-source", b"baseline");
