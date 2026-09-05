@@ -34,8 +34,8 @@ use coordinator::{
     Coordinator, RunPolicy, captured_excerpt, completion_name, output_error, process_spec,
     target_arguments,
 };
-pub(crate) use inventory::workspace_package_reach_at;
 use inventory::*;
+pub(crate) use inventory::{RustCheckUnit, workspace_package_reach_at};
 use prebuild::*;
 use selection::{package_inventory, selection_plan};
 use source_reach::declared_path_sources;
@@ -730,46 +730,8 @@ fn execute_selected_tests(
     output: &mut impl Write,
 ) -> Result<(), WorkspaceTestError> {
     let execution_started = Instant::now();
-    let setup_started = Instant::now();
-    let environment = inventory.execution_environment(
-        environment,
-        root,
-        roots.writable,
-        roots.reusable.is_some(),
-    )?;
-    writeln!(
-        output,
-        "[rust-test] stage=selected-environment-terminal elapsed_ms={} disposition=success",
-        setup_started.elapsed().as_millis(),
-    )
-    .map_err(output_error)?;
-    let inventory_started = Instant::now();
-    let selected = inventory.selected(tests)?;
-    writeln!(
-        output,
-        "[rust-test] stage=selected-inventory-terminal elapsed_ms={} disposition=success",
-        inventory_started.elapsed().as_millis(),
-    )
-    .map_err(output_error)?;
-    let units_started = Instant::now();
-    write_selected_test_units(&selected, output)?;
-    writeln!(
-        output,
-        "[rust-test] stage=selected-units-terminal elapsed_ms={} disposition=success",
-        units_started.elapsed().as_millis(),
-    )
-    .map_err(output_error)?;
-    let target_partition_started = Instant::now();
-    let shards = partition_with_target_limit(&selected, SELECTED_TARGETS_PER_SHARD);
-    validate_partition_with_target_limit(&selected, &shards, SELECTED_TARGETS_PER_SHARD)?;
-    writeln!(
-        output,
-        "[rust-test] stage=selected-target-partition-terminal elapsed_ms={} disposition=success shards={}",
-        target_partition_started.elapsed().as_millis(),
-        shards.len(),
-    )
-    .map_err(output_error)?;
-    output.flush().map_err(output_error)?;
+    let (environment, selected, shards) =
+        prepare_selected_execution(roots, root, environment, inventory, tests, output)?;
     let prebuilt = if let Some(reusable) = roots.reusable {
         let started = Instant::now();
         writeln!(
@@ -819,8 +781,27 @@ fn execute_selected_tests(
     } else {
         None
     };
+    run_selected_shards(prebuilt, shards, root, environment, *policy, output)?;
+    writeln!(
+        output,
+        "[rust-test] stage=selected-execution-terminal elapsed_ms={} disposition=success",
+        execution_started.elapsed().as_millis(),
+    )
+    .map_err(output_error)?;
+    output.flush().map_err(output_error)?;
+    Ok(())
+}
+
+fn run_selected_shards(
+    prebuilt: Option<Vec<PrebuiltTest>>,
+    shards: Vec<PackageInventory>,
+    root: &Path,
+    environment: Environment,
+    policy: RunPolicy,
+    output: &mut impl Write,
+) -> Result<(), WorkspaceTestError> {
     let execution_shards = prebuilt.as_ref().map_or(shards.len(), Vec::len);
-    let policy = (*policy).for_shards(execution_shards);
+    let policy = policy.for_shards(execution_shards);
     if let Some(prebuilt) = prebuilt {
         Coordinator::new_prebuilt(
             prebuilt,
@@ -842,14 +823,58 @@ fn execute_selected_tests(
         )
         .run()?;
     }
+    Ok(())
+}
+
+fn prepare_selected_execution(
+    roots: WorkspaceTestRoots<'_>,
+    root: &Path,
+    environment: Environment,
+    inventory: &Inventory,
+    tests: &[String],
+    output: &mut impl Write,
+) -> Result<(Environment, Inventory, Vec<PackageInventory>), WorkspaceTestError> {
+    let setup_started = Instant::now();
+    let environment = inventory.execution_environment(
+        environment,
+        root,
+        roots.writable,
+        roots.reusable.is_some(),
+    )?;
     writeln!(
         output,
-        "[rust-test] stage=selected-execution-terminal elapsed_ms={} disposition=success",
-        execution_started.elapsed().as_millis(),
+        "[rust-test] stage=selected-environment-terminal elapsed_ms={} disposition=success",
+        setup_started.elapsed().as_millis(),
+    )
+    .map_err(output_error)?;
+    let inventory_started = Instant::now();
+    let selected = inventory.selected(tests)?;
+    writeln!(
+        output,
+        "[rust-test] stage=selected-inventory-terminal elapsed_ms={} disposition=success",
+        inventory_started.elapsed().as_millis(),
+    )
+    .map_err(output_error)?;
+    let units_started = Instant::now();
+    write_selected_test_units(&selected, output)?;
+    writeln!(
+        output,
+        "[rust-test] stage=selected-units-terminal elapsed_ms={} disposition=success",
+        units_started.elapsed().as_millis(),
+    )
+    .map_err(output_error)?;
+    let target_partition_started = Instant::now();
+    let shards = partition_with_target_limit(&selected, SELECTED_TARGETS_PER_SHARD);
+    validate_partition_with_target_limit(&selected, &shards, SELECTED_TARGETS_PER_SHARD)?;
+    writeln!(
+        output,
+        "[rust-test] stage=selected-target-partition-terminal elapsed_ms={} disposition=success shards={}",
+        target_partition_started.elapsed().as_millis(),
+        shards.len(),
     )
     .map_err(output_error)?;
     output.flush().map_err(output_error)?;
-    Ok(())
+    Ok((environment, selected, shards))
 }
 
 fn selected_partitions_per_target(
