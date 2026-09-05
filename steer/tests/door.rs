@@ -70,6 +70,11 @@ fn typed_media_reaches_the_lane_once_with_its_directive_identity() {
         wire::Media::from_base64(r"operator](capture)\雪.png", "image/png", "iVBORw0KGgo=")
             .expect("fixture attachment admits");
     let canonical_markdown = attachment.markdown().expect("fixture Markdown renders");
+    let reference = wire::AgentMediaReference::from_media(directive("1kJK6M0V"), 0, &attachment)
+        .expect("fixture reference derives");
+    let encoded_reference =
+        String::from_utf8(wire::encode(&reference).expect("fixture reference encodes"))
+            .expect("reference JSON is UTF-8");
     let cases = [
         "inspect this capture".to_owned(),
         format!("inspect this capture\n\n{canonical_markdown}"),
@@ -98,10 +103,10 @@ fn typed_media_reaches_the_lane_once_with_its_directive_identity() {
         );
         assert_eq!(
             rendered.matches(&attachment.data_url).count(),
-            1,
-            "the same canonical bytes must reach the lane exactly once: {rendered}",
+            0,
+            "disposable lane prose must not carry authority bytes: {rendered}",
         );
-        assert!(rendered.contains(&canonical_markdown));
+        assert_eq!(rendered.matches(&encoded_reference).count(), 1);
     }
 }
 

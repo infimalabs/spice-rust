@@ -25,7 +25,7 @@ use wire::body::{
     SteeringTransition, TasteDecision, TasteJudged, TasteReminded,
 };
 use wire::steering::SteerDeadLettered;
-use wire::{CanonicalUuid, Disposition, Instant};
+use wire::{AgentMediaReference, CanonicalUuid, Digest, Disposition, Instant};
 
 use crate::ack::keys::Key;
 use crate::ack::scan::Standing;
@@ -88,6 +88,17 @@ impl Directive {
     #[must_use]
     pub fn attachments(&self) -> &[DirectiveAttachment] {
         &self.attachments
+    }
+
+    /// Compact agent-facing references to these attachments in source order.
+    ///
+    /// # Errors
+    ///
+    /// Returns the shared reference error if retained authority is malformed.
+    pub fn media_references(
+        &self,
+    ) -> Result<Vec<AgentMediaReference>, wire::media::AgentMediaReferenceError> {
+        wire::media::agent_media_references(self.directive, &self.attachments)
     }
 
     /// When this directive lapses if nothing retires it first.
@@ -384,6 +395,130 @@ impl fmt::Display for Refusal {
 }
 
 impl Error for Refusal {}
+
+/// Why a compact agent media reference could not resolve against steering authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MediaResolutionError {
+    /// The reference itself violates its bounded crossing contract.
+    Malformed {
+        /// Exact local reference admission failure.
+        error: wire::media::AgentMediaReferenceError,
+    },
+    /// No durable directive carries the referenced identity.
+    Unknown {
+        /// Identity no directive answers to.
+        directive: CanonicalUuid,
+    },
+    /// The authenticated lane does not own the referenced directive.
+    WrongLane {
+        /// Referenced directive.
+        directive: CanonicalUuid,
+        /// Lane retained by authority.
+        expected: CanonicalUuid,
+        /// Authenticated requesting lane.
+        observed: CanonicalUuid,
+    },
+    /// The directive exists but is no longer live.
+    Retired {
+        /// Referenced directive.
+        directive: CanonicalUuid,
+        /// Durable retirement state.
+        disposition: Disposition,
+    },
+    /// The live directive no longer matches the reference generation.
+    Stale {
+        /// Referenced directive.
+        directive: CanonicalUuid,
+        /// Referenced source ordinal.
+        ordinal: u8,
+    },
+    /// The live directive has no attachment at the referenced source ordinal.
+    Missing {
+        /// Referenced directive.
+        directive: CanonicalUuid,
+        /// Missing source ordinal.
+        ordinal: u8,
+    },
+    /// Reference metadata does not match the current authoritative attachment.
+    Mismatched {
+        /// Referenced directive.
+        directive: CanonicalUuid,
+        /// Referenced source ordinal.
+        ordinal: u8,
+        /// Metadata field that differed.
+        field: &'static str,
+    },
+    /// Current durable media could not be decoded under the shared media law.
+    Undecodable {
+        /// Referenced directive.
+        directive: CanonicalUuid,
+        /// Referenced source ordinal.
+        ordinal: u8,
+        /// Exact media admission failure, containing no media bytes.
+        error: wire::MediaError,
+    },
+}
+
+impl fmt::Display for MediaResolutionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Malformed { error } => write!(formatter, "media reference is malformed: {error}"),
+            Self::Unknown { directive } => {
+                write!(formatter, "media directive {directive} is unknown")
+            }
+            Self::WrongLane {
+                directive,
+                expected,
+                observed,
+            } => write!(
+                formatter,
+                "media directive {directive} belongs to lane {expected}, not authenticated lane {observed}",
+            ),
+            Self::Retired {
+                directive,
+                disposition,
+            } => write!(
+                formatter,
+                "media directive {directive} retired as {}",
+                disposition_word(*disposition),
+            ),
+            Self::Stale { directive, ordinal } => write!(
+                formatter,
+                "media reference {directive} attachment {ordinal} is stale",
+            ),
+            Self::Missing { directive, ordinal } => write!(
+                formatter,
+                "media directive {directive} has no attachment {ordinal}",
+            ),
+            Self::Mismatched {
+                directive,
+                ordinal,
+                field,
+            } => write!(
+                formatter,
+                "media reference {directive} attachment {ordinal} mismatches {field}",
+            ),
+            Self::Undecodable {
+                directive,
+                ordinal,
+                error,
+            } => write!(
+                formatter,
+                "media authority {directive} attachment {ordinal} is undecodable: {error}",
+            ),
+        }
+    }
+}
+
+impl Error for MediaResolutionError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Malformed { error } => Some(error),
+            Self::Undecodable { error, .. } => Some(error),
+            _ => None,
+        }
+    }
+}
 
 /// The word a disposition is reported under, spelled once for refusals.
 fn disposition_word(disposition: Disposition) -> &'static str {
@@ -812,6 +947,92 @@ impl Ledger {
         self.directives
             .values()
             .find(|directive| directive.directive == id)
+    }
+
+    /// Resolve one compact media reference against this live lane authority.
+    ///
+    /// The authenticated lane is checked before any attachment metadata is
+    /// exposed. Resolution then requires live pending standing, validates the
+    /// ordinal and authority bytes, and recomputes both digest and byte count.
+    ///
+    /// # Errors
+    ///
+    /// Returns one typed refusal for malformed, unknown, wrong-lane, retired,
+    /// stale, missing, mismatched, or undecodable authority.
+    pub fn resolve_media(
+        &self,
+        lane: CanonicalUuid,
+        reference: &AgentMediaReference,
+    ) -> Result<Vec<u8>, MediaResolutionError> {
+        reference
+            .validate()
+            .map_err(|error| MediaResolutionError::Malformed { error })?;
+        let directive =
+            self.directive(reference.directive())
+                .ok_or(MediaResolutionError::Unknown {
+                    directive: reference.directive(),
+                })?;
+        if directive.lane != lane {
+            return Err(MediaResolutionError::WrongLane {
+                directive: reference.directive(),
+                expected: directive.lane,
+                observed: lane,
+            });
+        }
+        if directive.disposition != Disposition::Live {
+            return Err(MediaResolutionError::Retired {
+                directive: reference.directive(),
+                disposition: directive.disposition,
+            });
+        }
+        if !self
+            .pending(lane)
+            .iter()
+            .any(|pending| pending.directive == reference.directive())
+        {
+            return Err(MediaResolutionError::Stale {
+                directive: reference.directive(),
+                ordinal: reference.ordinal(),
+            });
+        }
+        let attachment = directive
+            .attachments
+            .get(usize::from(reference.ordinal()))
+            .ok_or(MediaResolutionError::Missing {
+                directive: reference.directive(),
+                ordinal: reference.ordinal(),
+            })?;
+        let bytes =
+            attachment
+                .decoded_bytes()
+                .map_err(|error| MediaResolutionError::Undecodable {
+                    directive: reference.directive(),
+                    ordinal: reference.ordinal(),
+                    error,
+                })?;
+        if attachment.name != reference.name() {
+            return Err(MediaResolutionError::Mismatched {
+                directive: reference.directive(),
+                ordinal: reference.ordinal(),
+                field: "name",
+            });
+        }
+        if attachment.content_type != reference.content_type() {
+            return Err(MediaResolutionError::Mismatched {
+                directive: reference.directive(),
+                ordinal: reference.ordinal(),
+                field: "content_type",
+            });
+        }
+        let length = u64::try_from(bytes.len()).expect("admitted media length fits u64");
+        let digest = Digest::compute(wire::Domain::MediaContent, &bytes);
+        if length != reference.bytes() || &digest != reference.digest() {
+            return Err(MediaResolutionError::Stale {
+                directive: reference.directive(),
+                ordinal: reference.ordinal(),
+            });
+        }
+        Ok(bytes)
     }
 
     /// Open standing for one newly published directive.

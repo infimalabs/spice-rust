@@ -349,7 +349,7 @@ pub(crate) struct OutstandingAskView {
     pub(crate) stage: String,
     pub(crate) text: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) attachments: Vec<wire::Media>,
+    pub(crate) attachments: Vec<wire::AgentMediaReference>,
     pub(crate) authored: String,
     pub(crate) expires: String,
     pub(crate) preview: Option<String>,

@@ -140,6 +140,26 @@ fn cover_config_scalars(covered: &mut BTreeSet<String>) {
 /// Instant's samples include sub-millisecond, pre-epoch, and boundary readings,
 /// which is the narrowing path that broke this law before.
 fn cover_spellings(covered: &mut BTreeSet<String>) {
+    law(
+        covered,
+        "AgentMediaReference",
+        &[
+            AgentMediaReference::from_media(
+                uuid("018f82d4-6f59-7d06-92e3-bce9131163c2"),
+                0,
+                &wire::Media::from_base64("capture.png", "image/png", "iVBORw0KGgo=")
+                    .expect("media"),
+            )
+            .expect("agent media reference"),
+            AgentMediaReference::from_media(
+                uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
+                1,
+                &wire::Media::from_base64("detail.png", "image/png", "iVBORw0KGgo=")
+                    .expect("media"),
+            )
+            .expect("agent media reference"),
+        ],
+    );
     spelling_law(
         covered,
         "Instant",

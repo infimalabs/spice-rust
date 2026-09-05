@@ -50,19 +50,20 @@ use serde::{Deserialize, Serialize};
 use syn::{Attribute, Fields, Item, Meta, Token, UseTree, Visibility};
 use wire::manifest::{ProductVersion, ReleaseTarget};
 use wire::{
-    Accepted, Actor, AgentActivityKind, AgentMessage, Answer, AnyFact, CanonicalUuid,
-    ClaimDisposition, ClaimHead, Command, CommandKind, CursorHead, DemoAnswer, Derived, Digest,
-    Disposition, DoctorObservation, DoctorSubsystem, DoctorToolBounds, DoctorToolCancellation,
-    DoctorToolMode, DoctorToolNetwork, DoctorToolRequirement, DoctorToolSource, Domain,
-    DurationWord, Envelope, Fact, FactKind, Fault, FaultClass, FindingHead, FindingState, FoldName,
-    FoldState, Hello, Instant, JournalReport, JournalRestore, LaneResidency, LaneSession,
-    LeaseHead, LineageSubscription, MessageLocus, Name, OperatorDirection, Origin, Outcome,
-    Overflow, Packed, Phase, Producer, ProofEvidence, Provenance, Refusal, ReleaseNotes,
-    ReleaseNotesEntry, ReleasePlanObservations, ReleaseRegistryEvidence, Reply, ReplyPosition,
-    ResidencyHead, ResidentState, Response, RestoreVerification, Seq, SeqRange, SpiceVariable,
-    SteeringHead, StreamCursor, StreamFact, StreamFrame, StreamRequest, TapeLocus, TaskHandle,
-    TaskHead, TaskStamp, TrustHead, TrustState, TrustView, ViewSubject, WireVersion, Witness,
-    WitnessClass, WitnessHead, WitnessKind, WorkflowHead, body,
+    Accepted, Actor, AgentActivityKind, AgentMediaReference, AgentMessage, Answer, AnyFact,
+    CanonicalUuid, ClaimDisposition, ClaimHead, Command, CommandKind, CursorHead, DemoAnswer,
+    Derived, Digest, Disposition, DoctorObservation, DoctorSubsystem, DoctorToolBounds,
+    DoctorToolCancellation, DoctorToolMode, DoctorToolNetwork, DoctorToolRequirement,
+    DoctorToolSource, Domain, DurationWord, Envelope, Fact, FactKind, Fault, FaultClass,
+    FindingHead, FindingState, FoldName, FoldState, Hello, Instant, JournalReport, JournalRestore,
+    LaneResidency, LaneSession, LeaseHead, LineageSubscription, MessageLocus, Name,
+    OperatorDirection, Origin, Outcome, Overflow, Packed, Phase, Producer, ProofEvidence,
+    Provenance, Refusal, ReleaseNotes, ReleaseNotesEntry, ReleasePlanObservations,
+    ReleaseRegistryEvidence, Reply, ReplyPosition, ResidencyHead, ResidentState, Response,
+    RestoreVerification, Seq, SeqRange, SpiceVariable, SteeringHead, StreamCursor, StreamFact,
+    StreamFrame, StreamRequest, TapeLocus, TaskHandle, TaskHead, TaskStamp, TrustHead, TrustState,
+    TrustView, ViewSubject, WireVersion, Witness, WitnessClass, WitnessHead, WitnessKind,
+    WorkflowHead, body,
 };
 
 #[path = "identity_law/laws.rs"]

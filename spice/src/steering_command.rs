@@ -53,7 +53,19 @@ struct HookDirectiveGroup {
     identity: String,
     stage: String,
     text: Option<String>,
+    media: Vec<wire::AgentMediaReference>,
     keys: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+struct HookContentIdentity<'a> {
+    lane: CanonicalUuid,
+    directive: CanonicalUuid,
+    occupant: CanonicalUuid,
+    compaction: u64,
+    stage: wire::body::SteeringStage,
+    text: &'a str,
+    media: &'a [wire::AgentMediaReference],
 }
 
 const HOOK_DELIVERY_LOCK: &str = "steering-delivery";
@@ -195,6 +207,14 @@ fn render_hook_document(publication: &HookPublication) -> Result<Option<Vec<u8>>
                      Acknowledge every newly listed key without replaying the directive text.",
                 ),
             }
+            for reference in &group.media {
+                let reference = wire::encode(reference).map_err(|error| error.to_string())?;
+                context.push_str("\nmedia-reference=");
+                context.push_str(
+                    std::str::from_utf8(&reference)
+                        .expect("an encoded media reference is UTF-8 JSON"),
+                );
+            }
             for key in &group.keys {
                 context.push_str(&format!("\ncommand: `{executable} ack {key}`"));
             }
@@ -283,7 +303,18 @@ fn filter_hook_inbox(
             groups: Vec::new(),
         };
         for directive in &lane.pending {
-            let identity = rendered_content_identity(lane.lane, directive);
+            let media =
+                wire::media::agent_media_references(directive.directive, &directive.attachments)
+                    .map_err(|error| {
+                        format!(
+                            "inbox hook directive {} has invalid media authority: {error}",
+                            directive.directive,
+                        )
+                    })?;
+            let text = wire::media::without_media_payloads(&directive.text, &directive.attachments);
+            let identity = rendered_content_identity(
+                lane.lane, occupant, compaction, directive, &text, &media,
+            )?;
             if row
                 .delivered_keys
                 .iter()
@@ -301,7 +332,8 @@ fn filter_hook_inbox(
                 None => filtered.groups.push(HookDirectiveGroup {
                     identity: identity.clone(),
                     stage: directive.stage.to_string(),
-                    text: (!content_was_delivered).then(|| directive.text.clone()),
+                    text: (!content_was_delivered).then_some(text),
+                    media,
                     keys: vec![directive.key.clone()],
                 }),
             }
@@ -324,10 +356,23 @@ fn filter_hook_inbox(
 
 fn rendered_content_identity(
     lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    compaction: u64,
     directive: &wire::intent::PendingDirective,
-) -> String {
-    let rendered = format!("lane={lane} stage={}\n{}", directive.stage, directive.text);
-    blake3::hash(rendered.as_bytes()).to_hex().to_string()
+    text: &str,
+    media: &[wire::AgentMediaReference],
+) -> Result<String, String> {
+    let identity = HookContentIdentity {
+        lane,
+        directive: directive.directive,
+        occupant,
+        compaction,
+        stage: directive.stage,
+        text,
+        media,
+    };
+    let encoded = wire::encode(&identity).map_err(|error| error.to_string())?;
+    Ok(blake3::hash(&encoded).to_hex().to_string())
 }
 
 pub(crate) fn run(

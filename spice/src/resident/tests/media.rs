@@ -165,11 +165,16 @@ fn operator_media_replays_after_restart_into_the_browsable_pending_directive() {
         rendered.contains(&format!("directive={}", send_command.id())),
         "lane delivery lost directive causality: {rendered}",
     );
-    assert!(rendered.contains(&media.markdown().expect("fixture media renders")));
+    let reference = wire::AgentMediaReference::from_media(send_command.id(), 0, &media)
+        .expect("fixture media reference derives");
+    let encoded_reference =
+        String::from_utf8(wire::encode(&reference).expect("fixture reference encodes"))
+            .expect("reference JSON is UTF-8");
+    assert!(rendered.contains(&encoded_reference));
     assert_eq!(
         rendered.matches(&media.data_url).count(),
-        1,
-        "typed direct-send media reaches the lane exactly once",
+        0,
+        "typed direct-send authority bytes stay out of disposable lane prose",
     );
     bus.verify()
         .expect("published directive authority verifies");

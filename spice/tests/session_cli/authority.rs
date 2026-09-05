@@ -1180,9 +1180,14 @@ fn recall_authority_sources_asks_and_held_work_from_exact_state_authorities() {
         recall["authorities"]["asks"][0]["attachments"][0]["name"],
         "operator-capture.png",
     );
+    let expected_media =
+        wire::Media::from_base64("operator-capture.png", "image/png", "iVBORw0KGgo=")
+            .expect("fixture media admits");
+    let expected_reference = wire::AgentMediaReference::from_media(uuid(0xaf), 0, &expected_media)
+        .expect("fixture reference derives");
     assert_eq!(
-        recall["authorities"]["asks"][0]["attachments"][0]["data_url"],
-        "data:image/png;base64,iVBORw0KGgo=",
+        recall["authorities"]["asks"][0]["attachments"][0],
+        serde_json::to_value(expected_reference).expect("fixture reference encodes"),
     );
     assert_eq!(
         recall["authorities"]["held_work"]["own_claim"]["title"],
