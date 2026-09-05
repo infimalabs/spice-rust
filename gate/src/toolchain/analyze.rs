@@ -53,7 +53,9 @@ mod csharp;
 mod python;
 mod rust;
 
-pub(super) use compile::{CompileInvocation, run_compile_analysis, run_compile_analysis_with_wait};
+pub(super) use compile::{
+    CompileCapture, CompileInvocation, run_compile_analysis, run_compile_analysis_with_wait,
+};
 pub(super) use csharp::csharp_unused;
 pub(super) use python::python_typecheck;
 pub(super) use rust::{rust_analysis_workspace, rust_typecheck};
@@ -69,6 +71,7 @@ pub(super) struct Analysis {
     pub(super) findings: Vec<ArmFinding>,
     pub(super) exit_code: Option<i32>,
     pub(super) timing: Option<ArmTiming>,
+    pub(super) cargo_artifacts: Vec<u8>,
 }
 
 /// Resolved compiler programs and the admitted environment they must inherit.
@@ -124,6 +127,7 @@ impl Analysis {
             findings: Vec::new(),
             exit_code: None,
             timing: None,
+            cargo_artifacts: Vec::new(),
         }
     }
 
@@ -135,6 +139,7 @@ impl Analysis {
             findings: Vec::new(),
             exit_code: Some(code),
             timing: None,
+            cargo_artifacts: Vec::new(),
         }
     }
 
@@ -159,6 +164,7 @@ impl Analysis {
             findings,
             exit_code: None,
             timing: None,
+            cargo_artifacts: Vec::new(),
         }
     }
 
@@ -660,6 +666,14 @@ mod javascript;
 pub(in crate::toolchain) use javascript::*;
 
 fn complete_output(name: &str, outcome: &sill::WaitOutcome) -> Result<String, String> {
+    complete_compiler_output(name, outcome, false).map(|(printed, _)| printed)
+}
+
+fn complete_compiler_output(
+    name: &str,
+    outcome: &sill::WaitOutcome,
+    retain_tail: bool,
+) -> Result<(String, Vec<u8>), String> {
     if let Some(failure) = outcome.observation_failure() {
         return Err(format!("{name} output observation failed: {failure}"));
     }
@@ -669,18 +683,85 @@ fn complete_output(name: &str, outcome: &sill::WaitOutcome) -> Result<String, St
     let Some(stderr) = outcome.stderr() else {
         return Err(format!("{name} captured no stderr to read"));
     };
-    if stdout.truncated() || stderr.truncated() || !stdout.complete() || !stderr.complete() {
+    if (!retain_tail && stdout.truncated())
+        || stderr.truncated()
+        || !stdout.complete()
+        || !stderr.complete()
+    {
         return Err(format!(
             "{name} output was truncated or incomplete before it could be read"
         ));
     }
 
-    let mut printed = String::from_utf8_lossy(stdout.bytes()).into_owned();
+    let stdout = if retain_tail && stdout.truncated() {
+        stdout
+            .bytes()
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(&[][..], |end| &stdout.bytes()[end + 1..])
+    } else {
+        stdout.bytes()
+    };
+    let mut printed = rendered_compiler_output(stdout);
     if !printed.is_empty() && !printed.ends_with('\n') {
         printed.push('\n');
     }
     printed.push_str(&String::from_utf8_lossy(stderr.bytes()));
-    Ok(printed)
+    Ok((printed, stdout.to_vec()))
+}
+
+#[derive(serde::Deserialize)]
+struct CargoOutputLine {
+    reason: Option<String>,
+    message: Option<CargoDiagnosticMessage>,
+}
+
+#[derive(serde::Deserialize)]
+struct CargoDiagnosticMessage {
+    rendered: Option<String>,
+}
+
+fn rendered_compiler_output(stdout: &[u8]) -> String {
+    let decoded = String::from_utf8_lossy(stdout);
+    let mut rendered = String::new();
+    for line in decoded.lines() {
+        match serde_json::from_str::<CargoOutputLine>(line) {
+            Ok(message) if message.reason.as_deref() == Some("compiler-message") => {
+                if let Some(diagnostic) = message.message.and_then(|message| message.rendered) {
+                    rendered.push_str(&diagnostic);
+                    if !diagnostic.ends_with('\n') {
+                        rendered.push('\n');
+                    }
+                }
+            }
+            Ok(message) if message.reason.is_some() => {}
+            _ => {
+                rendered.push_str(line);
+                rendered.push('\n');
+            }
+        }
+    }
+    rendered
+}
+
+#[cfg(test)]
+mod cargo_output_tests {
+    use super::rendered_compiler_output;
+
+    #[test]
+    fn cargo_output_retains_rendered_diagnostics_without_artifact_records() {
+        let output = concat!(
+            "{\"reason\":\"compiler-artifact\",\"package_id\":\"fixture\"}\n",
+            "{\"reason\":\"compiler-message\",\"message\":{\"rendered\":\"error: fixture failed\\n\"}}\n",
+            "ordinary compiler output\n",
+            "{\"reason\":\"build-finished\",\"success\":false}\n",
+        );
+
+        assert_eq!(
+            rendered_compiler_output(output.as_bytes()),
+            "error: fixture failed\nordinary compiler output\n",
+        );
+    }
 }
 
 /// Every located `rustc` diagnostic in one program's output.

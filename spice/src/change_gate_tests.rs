@@ -112,17 +112,15 @@ fn budget_publication_warns_only_above_the_exact_advisory_share() {
     assert!(below.contains("advisory_share=3"));
     assert!(!below.contains("change-gate-budget-warning"));
 
-    let equal = published_budget(CargoBudget::from_allocations(12, 1, 1, 2));
+    let equal = published_budget(CargoBudget::from_allocations(12, 2, 3, 1));
     assert!(!equal.contains("change-gate-budget-warning"));
 
-    let above = published_budget(CargoBudget::from_allocations(12, 1, 1, 3));
+    let above = published_budget(CargoBudget::from_allocations(12, 3, 4, 1));
     assert_eq!(above.matches("[change-gate-budget-warning]").count(), 1);
     assert!(above.contains("[change-gate-budget-warning] reason=advisory-lane-share-exceeded"));
     assert!(above.contains("host_capacity=12 ordinary_lanes=4 advisory_share=3"));
     assert!(above.contains("requested_slots=4"));
-    assert!(above.contains(
-        "allocations=policy_jobs:1+test_prebuild_shards:1x3=3 action=continue-unchanged"
-    ));
+    assert!(above.contains("allocations=policy_peak:4 test_peak:4x1=4 action=continue-unchanged"));
 }
 
 #[test]
@@ -132,17 +130,19 @@ fn measured_twelve_cpu_budget_caps_one_gate_at_three_direct_workers() {
 
     assert_eq!(budget.worker_processes(), 3);
     assert_eq!(budget.policy_jobs(), 1);
-    assert_eq!(budget.test_concurrency(), 1);
+    assert_eq!(budget.native_policy_jobs(), 2);
+    assert_eq!(budget.policy_slots(), 3);
+    assert_eq!(budget.test_concurrency(), 3);
     assert_eq!(budget.shard_jobs(), 1);
     assert!(published.contains(
-        "cpus=12 ordinary_lanes=4 advisory_share=3 worker_process_cap=3 policy_jobs=1 test_concurrency=1 shard_jobs=1"
+        "cpus=12 ordinary_lanes=4 advisory_share=3 worker_process_cap=3 policy_jobs=1 native_policy_jobs=2 policy_peak=3 test_concurrency=3 shard_jobs=1"
     ));
-    assert!(published.contains("worker_scope=direct-roots nested_children=inherit-parent-slot"));
+    assert!(published.contains("worker_scope=phase-peaks policy_and_tests=nonoverlapping"));
     assert!(!published.contains("change-gate-budget-warning"));
 }
 
 fn published_budget(budget: CargoBudget) -> String {
     let mut output = Vec::new();
-    publish_budget(&mut output, budget, "overlapped-policy-tests").expect("publish gate budget");
+    publish_budget(&mut output, budget, "policy-then-tests").expect("publish gate budget");
     String::from_utf8(output).expect("budget publication is text")
 }

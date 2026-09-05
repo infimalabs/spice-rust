@@ -245,6 +245,47 @@ fn unpartitioned_artifact_is_preserved_without_discovery() {
 
 #[cfg(unix)]
 #[test]
+fn policy_artifacts_produce_the_exact_selected_executable() {
+    let fixture = DiscoveryFixture::new();
+    let executable = fixture.script("selected-test", "exit 0\n");
+    let inventory = Inventory {
+        packages: vec![PackageInventory {
+            id: "fixture-id".to_owned(),
+            name: "fixture".to_owned(),
+            root: fixture.root.clone(),
+            dependencies: Vec::new(),
+            declared_targets: Vec::new(),
+            removed_targets: Vec::new(),
+            targets: vec![fixture.test("selected-test", executable.clone()).target],
+        }],
+        binary_outputs: Vec::new(),
+        target_directory: fixture.root.clone(),
+        build_directory: fixture.root.clone(),
+    };
+    let artifacts = serde_json::to_vec(&serde_json::json!({
+        "reason": "compiler-artifact",
+        "package_id": "fixture-id",
+        "target": { "name": "selected-test", "kind": ["test"] },
+        "profile": { "test": true },
+        "executable": executable,
+    }))
+    .expect("serialize fixture Cargo artifact");
+
+    let plan = prebuilt_test_plan(&inventory, &artifacts)
+        .expect("policy artifact satisfies selected test inventory");
+
+    assert_eq!(plan.len(), 1);
+    assert_eq!(plan[0].package, "fixture");
+    assert_eq!(plan[0].target.name, "selected-test");
+    assert_eq!(plan[0].executable, executable);
+
+    let error = prebuilt_test_plan(&inventory, b"")
+        .expect_err("empty reusable policy artifacts must refuse");
+    assert!(error.to_string().contains("omitted test artifact"));
+}
+
+#[cfg(unix)]
+#[test]
 fn one_discovery_lane_can_produce_multiple_sequential_execution_shards() {
     let fixture = DiscoveryFixture::new();
     let executable = fixture.script(

@@ -4,9 +4,9 @@ use std::ffi::OsStr;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use sill::{Argv, Completion, Environment, WaitPolicy, spawn};
+use sill::{Argv, Completion, Environment, Output, StdinPolicy, StreamPolicy, WaitPolicy, spawn};
 
-use super::{Analysis, compile_findings, complete_output, plural};
+use super::{Analysis, compile_findings, complete_compiler_output, plural};
 use crate::GateId;
 use crate::measure::Bounds;
 use crate::toolchain::{ArmOutcome, FindingDetail};
@@ -17,11 +17,33 @@ pub(in crate::toolchain) struct CompileInvocation<'a> {
     pub(super) program: &'a str,
     pub(super) arguments: &'a [&'a str],
     pub(super) cwd: &'a Path,
+    pub(super) capture: CompileCapture,
+}
+
+#[derive(Clone, Copy)]
+pub(in crate::toolchain) enum CompileCapture {
+    Prefix,
+    CargoJsonTail,
 }
 
 pub(in crate::toolchain) struct CompileFailure {
     pub(super) analysis: Analysis,
     elapsed: Option<Duration>,
+}
+
+pub(in crate::toolchain) struct CompileSuccess {
+    elapsed: Duration,
+    stdout: Vec<u8>,
+}
+
+impl CompileSuccess {
+    pub(super) fn elapsed(&self) -> Duration {
+        self.elapsed
+    }
+
+    pub(super) fn into_stdout(self) -> Vec<u8> {
+        self.stdout
+    }
 }
 
 impl CompileFailure {
@@ -51,7 +73,7 @@ pub(in crate::toolchain) fn run_compile_analysis(
     bounds: &Bounds,
     environment: &Environment,
     detail: fn(String, String) -> FindingDetail,
-) -> Result<Duration, CompileFailure> {
+) -> Result<CompileSuccess, CompileFailure> {
     run_compile_analysis_with_wait(id, root, invocation, bounds, environment, detail, None)
 }
 
@@ -63,12 +85,13 @@ pub(in crate::toolchain) fn run_compile_analysis_with_wait(
     environment: &Environment,
     detail: fn(String, String) -> FindingDetail,
     wait: Option<WaitPolicy>,
-) -> Result<Duration, CompileFailure> {
+) -> Result<CompileSuccess, CompileFailure> {
     let CompileInvocation {
         name,
         program,
         arguments,
         cwd,
+        capture,
     } = invocation;
     let argv = Argv::new(program, arguments.iter().map(OsStr::new)).map_err(|error| {
         CompileFailure::before_start(Analysis::terminal(
@@ -78,6 +101,17 @@ pub(in crate::toolchain) fn run_compile_analysis_with_wait(
     })?;
     let mut spec = bounds.spec(argv, cwd);
     spec.environment = environment.clone();
+    if matches!(capture, CompileCapture::CargoJsonTail) {
+        spec.output = Output::new(
+            StdinPolicy::Null,
+            StreamPolicy::CaptureTail {
+                limit: bounds.capture(),
+            },
+            StreamPolicy::Capture {
+                limit: bounds.capture(),
+            },
+        );
+    }
     if let Some(wait) = wait {
         spec.wait = wait;
     }
@@ -115,7 +149,12 @@ pub(in crate::toolchain) fn run_compile_analysis_with_wait(
             return Err(CompileFailure::after_wait(analysis, elapsed));
         }
     };
-    let printed = complete_output(name, &outcome).map_err(|reason| {
+    let (printed, stdout) = complete_compiler_output(
+        name,
+        &outcome,
+        matches!(capture, CompileCapture::CargoJsonTail),
+    )
+    .map_err(|reason| {
         CompileFailure::after_wait(
             Analysis::terminal(ArmOutcome::ParseFailure, reason),
             elapsed,
@@ -134,12 +173,13 @@ pub(in crate::toolchain) fn run_compile_analysis_with_wait(
                 findings,
                 exit_code: None,
                 timing: None,
+                cargo_artifacts: Vec::new(),
             },
             elapsed,
         ));
     }
     if status.success() {
-        return Ok(elapsed);
+        return Ok(CompileSuccess { elapsed, stdout });
     }
     let Some(code) = status.code() else {
         return Err(CompileFailure::after_wait(

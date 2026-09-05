@@ -44,13 +44,14 @@ impl fmt::Display for AdvisoryLaneShare {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-/// Direct gate roots share at most `worker_processes` permits. Compiler and
-/// test descendants inherit that root permit and are narrowed to one execution
-/// lane each, so nested fanout cannot recreate the removed branch multipliers.
+/// Direct policy roots share at most `worker_processes` permits. Native and
+/// Canvas compiler children publish their combined policy peak explicitly;
+/// the later test phase does not overlap it, so policy and test peaks never add.
 pub(super) struct CargoBudget {
     cpus: usize,
     worker_processes: usize,
     slice_jobs: usize,
+    native_policy_jobs: usize,
     test_concurrency: usize,
     shard_jobs: usize,
     test_threads: usize,
@@ -62,16 +63,18 @@ impl CargoBudget {
         Self::from_capacity(cpus, test_concurrency_cap)
     }
 
-    pub(super) fn from_capacity(cpus: usize, _test_concurrency_cap: usize) -> Self {
+    pub(super) fn from_capacity(cpus: usize, test_concurrency_cap: usize) -> Self {
         let cpus = cpus.max(1);
         let worker_processes = cpus.min(MAX_GATE_WORKER_PROCESSES);
         let slice_jobs = 1;
-        let test_concurrency = 1;
+        let native_policy_jobs = worker_processes.saturating_sub(1).max(1);
+        let test_concurrency = worker_processes.min(test_concurrency_cap.max(1));
         let shard_jobs = 1;
         Self {
             cpus,
             worker_processes,
             slice_jobs,
+            native_policy_jobs,
             test_concurrency,
             shard_jobs,
             test_threads: TEST_HARNESS_THREADS_PER_SHARD,
@@ -80,6 +83,10 @@ impl CargoBudget {
 
     pub(super) const fn policy_jobs(self) -> usize {
         self.slice_jobs
+    }
+
+    pub(super) const fn native_policy_jobs(self) -> usize {
+        self.native_policy_jobs
     }
 
     pub(super) const fn worker_processes(self) -> usize {
@@ -118,7 +125,17 @@ impl CargoBudget {
     }
 
     pub(super) const fn requested_slots(self) -> usize {
-        self.slice_jobs.saturating_add(self.test_slots())
+        let policy = self.policy_slots();
+        let tests = self.test_slots();
+        if policy > tests { policy } else { tests }
+    }
+
+    pub(super) const fn policy_slots(self) -> usize {
+        if self.worker_processes == 1 {
+            self.native_policy_jobs
+        } else {
+            self.native_policy_jobs.saturating_add(1)
+        }
     }
 
     pub(super) fn exceeds_advisory_lane_share(self) -> bool {
@@ -137,6 +154,7 @@ impl CargoBudget {
             cpus,
             worker_processes: cpus.min(MAX_GATE_WORKER_PROCESSES),
             slice_jobs: policy_jobs,
+            native_policy_jobs: policy_jobs,
             test_concurrency,
             shard_jobs,
             test_threads: TEST_HARNESS_THREADS_PER_SHARD,
@@ -173,12 +191,14 @@ mod tests {
         let budget = CargoBudget::from_capacity(12, 4);
         assert_eq!(budget.worker_processes(), 3);
         assert_eq!(budget.policy_jobs(), 1);
-        assert_eq!(budget.test_concurrency(), 1);
+        assert_eq!(budget.native_policy_jobs(), 2);
+        assert_eq!(budget.test_concurrency(), 3);
         assert_eq!(budget.shard_jobs(), 1);
         assert_eq!(budget.test_threads(), 1);
 
         let minimum = CargoBudget::from_capacity(0, 4);
         assert_eq!(minimum.policy_jobs(), 1);
+        assert_eq!(minimum.native_policy_jobs(), 1);
         assert_eq!(minimum.worker_processes(), 1);
         assert_eq!(minimum.test_concurrency(), 1);
         assert_eq!(minimum.shard_jobs(), 1);
