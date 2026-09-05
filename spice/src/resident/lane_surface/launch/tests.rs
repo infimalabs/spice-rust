@@ -2,7 +2,7 @@ use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use super::test_support::{AdvisoryRtkFixture, assert_advisory_health};
+use super::test_support::AdvisoryRtkFixture;
 use super::*;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -32,37 +32,6 @@ fn occupant_deadline_uses_runtime_instead_of_the_claim_lease() {
     )
     .expect("occupant launch composes");
     assert_eq!(launch.spec.deadlines.runtime(), Duration::from_secs(5));
-}
-
-#[test]
-fn present_configured_rtk_remains_hooked_after_version_observation_failure() {
-    let fixture = AdvisoryRtkFixture::new();
-    let launch = occupant_launch(
-        &fixture.paths,
-        fixture.request(vendor::Resume::Fresh),
-        fixture.reporter(),
-    )
-    .expect("advisory RTK does not block occupant launch");
-    let proof = launch.session;
-    let running = sill::spawn_observed(launch.spec, launch.observation)
-        .expect("fixture occupant starts under the composed process contract");
-    let session = await_session(proof).expect("fixture occupant declares its session");
-    let outcome = running.wait().expect("fixture occupant is reaped");
-
-    assert!(
-        matches!(outcome.completion(), sill::Completion::Exited(status) if status.success()),
-        "fixture occupant ended as {:?}",
-        outcome.completion()
-    );
-    fixture.assert_occupant_started_with_rtk();
-    fixture.assert_one_configured_probe_from_launch_worktree();
-    fixture.assert_rust_native_history_path_prepared();
-    let health = session
-        .launch
-        .as_ref()
-        .and_then(|launch| launch.rtk.as_ref())
-        .expect("launch result publishes advisory RTK health");
-    assert_advisory_health(health);
 }
 
 #[test]

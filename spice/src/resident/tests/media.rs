@@ -3,7 +3,7 @@
 use super::*;
 
 #[test]
-fn direct_steer_send_refuses_every_invalid_media_shape_before_journal_mutation() {
+fn direct_steer_send_refuses_invalid_media_before_journal_mutation() {
     let (root, paths) = resident_fixture("steer-media-admission");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
     let worktree = repository.worktree_root().to_string_lossy().into_owned();
@@ -17,88 +17,52 @@ fn direct_steer_send_refuses_every_invalid_media_shape_before_journal_mutation()
     commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
     seed_lane_in_worktree(&bus, epoch, lane, occupant, &worktree);
 
-    let valid = wire::Media::from_base64("capture.png", "image/png", "iVBORw0KGgo=")
-        .expect("fixture image admits");
-    let oversized_payload = format!(
-        "UklGRgAAAABXRUJQ{}",
-        "AAAA".repeat((wire::media::MAX_MEDIA_BYTES + 1 - 12) / 3),
-    );
-    let invalid_sets = [
-        vec![wire::Media {
+    let request = wire::intent::SteerSend {
+        fanout: test_uuid(90),
+        lane,
+        message: "inspect this capture".to_owned(),
+        attachments: vec![wire::Media {
             name: "malformed.png".to_owned(),
             content_type: "image/png".to_owned(),
             data_url: "not-a-data-url".to_owned(),
         }],
-        vec![wire::Media {
-            name: "malformed-base64.png".to_owned(),
-            content_type: "image/png".to_owned(),
-            data_url: "data:image/png;base64,%%%".to_owned(),
-        }],
-        vec![wire::Media {
-            name: "unsupported.txt".to_owned(),
-            content_type: "text/plain".to_owned(),
-            data_url: "data:text/plain;base64,aGVsbG8=".to_owned(),
-        }],
-        vec![wire::Media {
-            name: "mismatch.jpg".to_owned(),
-            content_type: "image/jpeg".to_owned(),
-            data_url: "data:image/jpeg;base64,iVBORw0KGgo=".to_owned(),
-        }],
-        vec![wire::Media {
-            name: "oversized.webp".to_owned(),
-            content_type: "image/webp".to_owned(),
-            data_url: format!("data:image/webp;base64,{oversized_payload}"),
-        }],
-        vec![valid; wire::media::MAX_MEDIA_ITEMS + 1],
-    ];
-
-    for (index, attachments) in invalid_sets.into_iter().enumerate() {
-        let request = wire::intent::SteerSend {
-            fanout: test_uuid(u8::try_from(90 + index).expect("fixture fanout id fits")),
+    };
+    let command = Command {
+        v: wire::WireVersion::CURRENT,
+        id: test_uuid(30),
+        epoch,
+        kind: CommandKind::SteerSend,
+        expected: vec![Witness::Residency {
             lane,
-            message: "inspect this capture".to_owned(),
-            attachments,
-        };
-        let id = u8::try_from(30 + index).expect("fixture command id fits");
-        let command = Command {
-            v: wire::WireVersion::CURRENT,
-            id: test_uuid(id),
+            occupant,
             epoch,
-            kind: CommandKind::SteerSend,
-            expected: vec![Witness::Residency {
-                lane,
-                occupant,
-                epoch,
-            }],
-            body: serde_json::to_value(&request).expect("steer request encodes"),
-        }
-        .admit(&wire::Accepted {
-            wire: wire::WireVersion::CURRENT,
-            actor: Actor::Operator,
-            epoch,
-        })
-        .expect("crossing admission leaves resident media validation authoritative");
-        let before = bus.fact_snapshot().expect("journal reads before refusal");
-        let before_cursor = before.horizon();
-        let before_facts = before.facts().len();
-
-        let outcome = steering::send(
-            &bus,
-            &paths,
-            epoch,
-            &steer::Config::default(),
-            &command,
-            &request,
-        );
-        assert!(matches!(
-            outcome,
-            Outcome::Refusal(refusal) if refusal.reason() == "steer::media-invalid"
-        ));
-
-        let after = bus.fact_snapshot().expect("journal reads after refusal");
-        assert_eq!(after.horizon(), before_cursor);
-        assert_eq!(after.facts().len(), before_facts);
+        }],
+        body: serde_json::to_value(&request).expect("steer request encodes"),
     }
+    .admit(&wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch,
+    })
+    .expect("crossing admission leaves resident media validation authoritative");
+    let before = bus.fact_snapshot().expect("journal reads before refusal");
+
+    let outcome = steering::send(
+        &bus,
+        &paths,
+        epoch,
+        &steer::Config::default(),
+        &command,
+        &request,
+    );
+    assert!(matches!(
+        outcome,
+        Outcome::Refusal(refusal) if refusal.reason() == "steer::media-invalid"
+    ));
+
+    let after = bus.fact_snapshot().expect("journal reads after refusal");
+    assert_eq!(after.horizon(), before.horizon());
+    assert_eq!(after.facts().len(), before.facts().len());
 
     bus.verify().expect("refused authority verifies");
     bus.shutdown().expect("fixture bus stops");

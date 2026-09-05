@@ -745,26 +745,6 @@ fn rendered_compiler_output(stdout: &[u8]) -> String {
     rendered
 }
 
-#[cfg(test)]
-mod cargo_output_tests {
-    use super::rendered_compiler_output;
-
-    #[test]
-    fn cargo_output_retains_rendered_diagnostics_without_artifact_records() {
-        let output = concat!(
-            "{\"reason\":\"compiler-artifact\",\"package_id\":\"fixture\"}\n",
-            "{\"reason\":\"compiler-message\",\"message\":{\"rendered\":\"error: fixture failed\\n\"}}\n",
-            "ordinary compiler output\n",
-            "{\"reason\":\"build-finished\",\"success\":false}\n",
-        );
-
-        assert_eq!(
-            rendered_compiler_output(output.as_bytes()),
-            "error: fixture failed\nordinary compiler output\n",
-        );
-    }
-}
-
 /// Every located `rustc` diagnostic in one program's output.
 ///
 /// The parse is the compiler's own, so both compile arms share it; they differ
@@ -1013,4 +993,24 @@ fn is_word_character(character: char) -> bool {
 /// invented one, which is what [`numbered`] already does with its line numbers.
 fn word_at(text: &str, start: usize, end: usize) -> Option<(u32, String)> {
     column_of(text, start).map(|column| (column, text[start..end].to_owned()))
+}
+
+#[cfg(test)]
+mod cargo_output_tests {
+    use super::rendered_compiler_output;
+
+    #[test]
+    fn cargo_output_retains_rendered_diagnostics_without_artifact_records() {
+        let output = concat!(
+            "{\"reason\":\"compiler-artifact\",\"package_id\":\"fixture\"}\n",
+            "{\"reason\":\"compiler-message\",\"message\":{\"rendered\":\"error: fixture failed\\n\"}}\n",
+            "ordinary compiler output\n",
+            "{\"reason\":\"build-finished\",\"success\":false}\n",
+        );
+
+        assert_eq!(
+            rendered_compiler_output(output.as_bytes()),
+            "error: fixture failed\nordinary compiler output\n",
+        );
+    }
 }

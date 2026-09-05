@@ -486,6 +486,10 @@ impl SurfaceState {
     }
 
     async fn close(&self) {
+        self.close_with_grace(SESSION_DRAIN_GRACE).await;
+    }
+
+    async fn close_with_grace(&self, grace: Duration) {
         self.closed.send_replace(true);
         *self.admission.lock().await = Admission::Closed;
         self.admission_changed.send_replace(Admission::Closed);
@@ -498,7 +502,7 @@ impl SurfaceState {
                 notified.await;
             }
         };
-        let _ = tokio::time::timeout(SESSION_DRAIN_GRACE, drain).await;
+        let _ = tokio::time::timeout(grace, drain).await;
         self.connections.cancel();
     }
 }

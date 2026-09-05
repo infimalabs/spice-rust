@@ -506,6 +506,7 @@ mod tests {
         }
         fixture.assert_occupant_started_with_rtk();
         fixture.assert_one_configured_probe_from_launch_worktree();
+        fixture.assert_rust_native_history_path_prepared();
         let residency = current_residency(&bus, fixture.epoch).expect("committed residency reads");
         let answer = answer(residency.body(), None, &seats).expect("capability-free lane readback");
         let row = answer.lanes.first().expect("automatic lane projects");

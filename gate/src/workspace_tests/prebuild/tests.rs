@@ -503,14 +503,7 @@ fn reversed_real_failure_survives_lower_ordinal_sibling_cancellation() {
 #[test]
 fn real_discovery_timeout_reaps_child() {
     let fixture = DiscoveryFixture::new();
-    let pid = fixture.root.join("timeout-pid");
-    let sleeper = fixture.script(
-        "timeout",
-        &format!(
-            "printf '%s\\n' \"$$\" > '{}'\nexec /bin/sleep 30\n",
-            pid.display(),
-        ),
-    );
+    let sleeper = fixture.script("timeout", "exec /bin/sleep 30\n");
     let test = fixture.test("timeout", sleeper);
     let started = Instant::now();
 
@@ -523,8 +516,15 @@ fn real_discovery_timeout_reaps_child() {
     .expect_err("metadata deadline terminates the child");
 
     assert!(started.elapsed() < Duration::from_secs(6));
-    assert!(error.to_string().contains("timeout"));
-    assert!(!process_is_alive(fixture_pid(&pid)));
+    let message = error.to_string();
+    assert!(message.contains("timeout"));
+    let pid = message
+        .split("process-id=")
+        .nth(1)
+        .and_then(|suffix| suffix.split_once(' '))
+        .and_then(|(pid, _)| pid.parse().ok())
+        .expect("timeout identifies the spawned process");
+    assert!(!process_is_alive(pid));
 }
 
 #[cfg(unix)]

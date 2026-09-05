@@ -30,7 +30,7 @@ pub(in crate::toolchain) enum CompileCapture {
 }
 
 pub(in crate::toolchain) struct CompileFailure {
-    pub(super) analysis: Analysis,
+    pub(super) analysis: Box<Analysis>,
     elapsed: Option<Duration>,
 }
 
@@ -52,20 +52,20 @@ impl CompileSuccess {
 impl CompileFailure {
     fn before_start(analysis: Analysis) -> Self {
         Self {
-            analysis,
+            analysis: Box::new(analysis),
             elapsed: None,
         }
     }
 
     fn after_wait(analysis: Analysis, elapsed: Duration) -> Self {
         Self {
-            analysis,
+            analysis: Box::new(analysis),
             elapsed: Some(elapsed),
         }
     }
 
     pub(super) fn into_parts(self) -> (Analysis, Option<Duration>) {
-        (self.analysis, self.elapsed)
+        (*self.analysis, self.elapsed)
     }
 }
 
