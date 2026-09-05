@@ -194,7 +194,7 @@ impl PreparedArm<'_> {
     /// Compiler environment captured by the command rim for this action.
     #[must_use]
     pub fn compiler_environment(&self) -> &[(OsString, OsString)] {
-        self.capture.compiler_environment()
+        &self.compiler_environment
     }
 
     /// Materialize the exact committed base retained beside this staged source.

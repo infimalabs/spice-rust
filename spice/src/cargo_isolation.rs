@@ -193,6 +193,48 @@ impl Host {
         &self.rustdoc
     }
 
+    /// Compiler environment with this host's admitted native toolchain bound.
+    ///
+    /// The captured Cargo home remains authoritative when present. A caller
+    /// that supplied only a bootstrap home receives that same admitted path as
+    /// its Cargo home, while every compiler executable is replaced by the
+    /// validated absolute path retained by this host.
+    ///
+    /// # Errors
+    ///
+    /// Refuses if the completed environment cannot satisfy the environment
+    /// representation contract.
+    pub fn compiler_environment(&self) -> Result<Environment, IsolationError> {
+        let mut entries = self
+            .seed_environment
+            .entries()
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        entries
+            .entry(OsString::from(CARGO_HOME_VARIABLE))
+            .or_insert_with(|| self.bootstrap_home.as_os_str().to_owned());
+        entries.insert(
+            OsString::from(BOOTSTRAP_HOME_VARIABLE),
+            self.bootstrap_home.as_os_str().to_owned(),
+        );
+        for (name, path) in [
+            (NATIVE_CARGO_VARIABLE, &self.cargo),
+            (NATIVE_RUSTC_VARIABLE, &self.rustc),
+            (NATIVE_RUSTDOC_VARIABLE, &self.rustdoc),
+            (RUSTC_VARIABLE, &self.rustc),
+            (RUSTDOC_VARIABLE, &self.rustdoc),
+        ] {
+            entries.insert(OsString::from(name), path.as_os_str().to_owned());
+        }
+        Environment::new(entries).map_err(|error| {
+            IsolationError::new(
+                "cargo-isolation::compiler-environment-invalid",
+                error.to_string(),
+            )
+        })
+    }
+
     fn seed_environment(&self) -> &Environment {
         &self.seed_environment
     }

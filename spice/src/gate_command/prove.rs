@@ -19,6 +19,9 @@ use spice::change_gate::{ChangeGateError, StagedActionSelection};
 use spice::repository::Repository;
 
 mod canvas;
+#[cfg(test)]
+#[path = "prove/cargo_authority_tests.rs"]
+mod cargo_authority_tests;
 
 const RUNNER_VERSION: u64 = 1;
 
@@ -218,7 +221,13 @@ struct CargoExecution {
     root: PathBuf,
     writable_root: PathBuf,
     environment: Environment,
-    cargo: OsString,
+    cargo: PathBuf,
+}
+
+#[derive(Debug)]
+struct CargoAuthority {
+    cargo: PathBuf,
+    environment: Vec<(OsString, OsString)>,
 }
 
 struct PendingReceipt {
@@ -559,7 +568,8 @@ fn prepare_cargo_actions(
         .derive_reached_arm(staged.selection(), GateId::RustTypecheck)
         .map_err(ProveFailure::run)?;
     let context = arm.context().map_err(ProveFailure::run)?;
-    let cargo_environment = normalized_cargo_environment(arm.compiler_environment());
+    let authority = cargo_authority(arm.root(), arm.compiler_environment())?;
+    let cargo_environment = authority.environment;
     let environment = Environment::new(cargo_environment.iter().cloned())
         .map_err(|error| ProveFailure::refusal("gate::prove-cargo-environment-refused", error))?;
     let base = arm.materialize_staged_base().map_err(ProveFailure::run)?;
@@ -570,7 +580,7 @@ fn prepare_cargo_actions(
         changed_sources: staged.selection().changed_sources(),
         selected_paths: arm.paths(),
         environment: environment.clone(),
-        cargo: OsStr::new("cargo"),
+        cargo: authority.cargo.as_os_str(),
         include_tests: staged.cargo_tests(),
     })
     .map_err(ProveFailure::cargo)?;
@@ -592,6 +602,7 @@ fn prepare_cargo_actions(
                 writable_root,
                 &cargo_environment,
                 environment.clone(),
+                &authority.cargo,
                 shard.clone(),
             )
         })
@@ -630,6 +641,7 @@ fn prepare_cargo_action(
     writable_root: &Path,
     cargo_environment: &[(OsString, OsString)],
     execution_environment: Environment,
+    cargo: &Path,
     shard: CargoGateShard,
 ) -> Result<PreparedAction, ProveFailure> {
     require_reusable_cargo_shard(&shard)?;
@@ -720,8 +732,24 @@ fn prepare_cargo_action(
             root: arm.root().to_path_buf(),
             writable_root: writable_root.to_path_buf(),
             environment: execution_environment,
-            cargo: OsString::from("cargo"),
+            cargo: cargo.to_path_buf(),
         })),
+    })
+}
+
+fn cargo_authority(
+    root: &Path,
+    compiler_environment: &[(OsString, OsString)],
+) -> Result<CargoAuthority, ProveFailure> {
+    let host =
+        spice::cargo_isolation::Host::from_environment(root, compiler_environment.iter().cloned())
+            .map_err(ProveFailure::cargo_isolation)?;
+    let environment = host
+        .compiler_environment()
+        .map_err(ProveFailure::cargo_isolation)?;
+    Ok(CargoAuthority {
+        cargo: host.cargo().to_path_buf(),
+        environment: normalized_cargo_environment(environment.entries()),
     })
 }
 
@@ -874,7 +902,7 @@ fn execute(action: PreparedAction) -> Result<PendingReceipt, ProveFailure> {
                 &root,
                 &writable_root,
                 environment,
-                &cargo,
+                cargo.as_os_str(),
                 &shard,
                 &mut std::io::stderr(),
             )
@@ -1187,6 +1215,10 @@ impl ProveFailure {
 
     fn cargo(error: gate::WorkspaceTestError) -> Self {
         Self::refusal("gate::prove-cargo-shard-refused", error)
+    }
+
+    fn cargo_isolation(error: spice::cargo_isolation::IsolationError) -> Self {
+        Self::refusal(error.reason(), error.detail())
     }
 
     fn canvas(error: gate::CanvasActionError) -> Self {
