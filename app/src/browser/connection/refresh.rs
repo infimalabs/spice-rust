@@ -36,6 +36,7 @@ pub(super) async fn send_refresh(
     send_lanes(principal, writer, pending, submissions).await?;
     send_inbox(principal, writer, pending, submissions).await?;
     send_consent(principal, writer, pending).await?;
+    send_settings(principal, writer, pending).await?;
     send_policy(principal, writer, pending).await
 }
 
@@ -163,6 +164,22 @@ async fn send_policy(
         PendingKind::Policy,
         CommandKind::ConsentPolicy,
         ConsentPolicy {},
+    )
+    .await
+}
+
+async fn send_settings(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+) -> Result<(), String> {
+    send_if_offered(
+        principal,
+        writer,
+        pending,
+        PendingKind::Settings,
+        CommandKind::GlobalSettingsRead,
+        GlobalSettingsRead {},
     )
     .await
 }

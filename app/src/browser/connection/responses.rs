@@ -181,9 +181,8 @@ fn apply_command_response(
             runtime.apply_policy(&admit_response(session, bytes)?);
             CommandApplication::ordinary(false)
         }
-        PendingKind::Effort => {
-            runtime.apply_effort(&admit_response(session, bytes)?);
-            CommandApplication::ordinary(false)
+        kind @ (PendingKind::Effort | PendingKind::Settings) => {
+            apply_scalar_response(session, runtime, kind, bytes)?
         }
         PendingKind::LaneSeat => {
             let admitted: crate::Admitted<Response<wire::intent::LaneChangeAnswer>> =
@@ -229,6 +228,20 @@ fn apply_command_response(
             CommandApplication::ordinary(false)
         }
     })
+}
+
+fn apply_scalar_response(
+    session: &Session,
+    runtime: &mut CanvasRuntime,
+    kind: PendingKind,
+    bytes: &[u8],
+) -> Result<CommandApplication, String> {
+    match kind {
+        PendingKind::Effort => runtime.apply_effort(&admit_response(session, bytes)?),
+        PendingKind::Settings => runtime.apply_settings(&admit_response(session, bytes)?),
+        _ => unreachable!("scalar response partition is closed"),
+    }
+    Ok(CommandApplication::ordinary(false))
 }
 
 fn apply_lane_response(

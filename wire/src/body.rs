@@ -37,6 +37,14 @@ pub struct DocApplied {
     pub operations: u32,
 }
 
+/// The global fast-mode setting changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GlobalSettingsChanged {
+    /// Whether supported agent vendors launch in fast mode.
+    pub fast_mode: bool,
+}
+
 /// A directive was created.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SteerSent {

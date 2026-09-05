@@ -28,6 +28,8 @@ const BODIES: &[(CommandKind, &str)] = &[
     (CommandKind::BoardHandout, r#"{ "output": "-" }"#),
     (CommandKind::DocLedger, r#"{ "task": "SPICE-aBcD" }"#),
     (CommandKind::EffortRead, r#"{ "task": "SPICE-aBcD" }"#),
+    (CommandKind::GlobalSettingsRead, r#"{}"#),
+    (CommandKind::GlobalSettingsSet, r#"{ "fast_mode": true }"#),
     (
         CommandKind::TaskAdd,
         r#"{
@@ -736,6 +738,8 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::BoardHandout,
     BodyShape::DocLedger,
     BodyShape::EffortRead,
+    BodyShape::GlobalSettingsRead,
+    BodyShape::GlobalSettingsSet,
     BodyShape::TaskAdd,
     BodyShape::TaskOopsAdd,
     BodyShape::TasteProposalAdd,
@@ -791,6 +795,7 @@ const ALL_ANSWERS: &[AnswerShape] = &[
     AnswerShape::ConsentQueue,
     AnswerShape::ConsentPolicy,
     AnswerShape::Effort,
+    AnswerShape::GlobalSettings,
     AnswerShape::Trust,
     AnswerShape::Lane,
     AnswerShape::LaneChange,

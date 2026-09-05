@@ -118,6 +118,27 @@ pub struct ConsentRead {}
 #[serde(deny_unknown_fields)]
 pub struct ConsentPolicy {}
 
+/// Read the durable global Canvas settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GlobalSettingsRead {}
+
+/// Replace the durable global fast-mode setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GlobalSettingsSet {
+    /// Whether supported agent vendors launch in fast mode.
+    pub fast_mode: bool,
+}
+
+/// Authoritative global Canvas settings at one journal revision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GlobalSettingsAnswer {
+    /// Whether supported agent vendors launch in fast mode.
+    pub fast_mode: bool,
+}
+
 /// Name one executable digest and nothing else.
 ///
 /// Pending, granting, and revoking trust each name the exact digest; the

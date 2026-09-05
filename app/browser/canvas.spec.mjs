@@ -1116,6 +1116,21 @@ try {
       await run.scenario("resident-restart", async () => {
         const firstEpoch = resident.discovery.epoch;
         const firstCapability = resident.discovery.capability;
+        await chooseCanvasView(lightPage, "Agents");
+        const settingsMenu = lightPage.locator(".canvas-menu");
+        if ((await settingsMenu.getAttribute("open")) === null) {
+          await settingsMenu.locator(":scope > summary").click();
+        }
+        const fastMode = settingsMenu.getByRole("menuitemcheckbox", { name: /Fast mode/i });
+        await fastMode.click();
+        await waitForPage(
+          lightPage,
+          "fast mode commits before resident restart",
+          TRANSITION_MS,
+          () => document
+            .querySelector('[role="menuitemcheckbox"]')
+            ?.getAttribute("aria-checked") === "true",
+        );
         lightMonitor.expectNetworkInterruption(true);
         await chooseCanvasView(lightPage, "Chronology");
         await assertWaitReportDistinguishesLayout(lightPage, resident, hiddenStatusReport);
@@ -1125,6 +1140,17 @@ try {
         resident = owner.ownResident(await assertResidentRestart(fixture, lightPage, restart));
         lightMonitor.expectNetworkInterruption(false);
         await assertCanvas(lightPage, "light-restarted");
+        await chooseCanvasView(lightPage, "Agents");
+        if ((await settingsMenu.getAttribute("open")) === null) {
+          await settingsMenu.locator(":scope > summary").click();
+        }
+        assert.equal(
+          await settingsMenu
+            .getByRole("menuitemcheckbox", { name: /Fast mode/i })
+            .getAttribute("aria-checked"),
+          "true",
+          "resident restart restores fast mode from durable journal authority",
+        );
         await assertAgentSpacingRejectsFallbackOnlyMarkup(
           lightPage,
           "light-restarted Agents spacing",

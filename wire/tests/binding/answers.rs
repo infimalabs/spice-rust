@@ -320,6 +320,7 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
   }]
 }"#,
     ),
+    (AnswerShape::GlobalSettings, r#"{ "fast_mode": true }"#),
     (
         AnswerShape::Trust,
         r#"{

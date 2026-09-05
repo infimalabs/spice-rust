@@ -218,11 +218,15 @@ impl CanvasRuntime {
             StreamFrame::Thread { packed, .. } => self.apply_thread_page(admitted, packed, epoch),
             StreamFrame::Fact { fact, .. } => {
                 let operator_changed = self.observe_operator_rows(std::slice::from_ref(fact));
+                let settings_changed = self.observe_settings_rows(std::slice::from_ref(fact));
                 if self
                     .resume
                     .is_some_and(|resume| resume.epoch == epoch && resume.seq >= fact.seq())
                 {
-                    return StreamApplication::new(Vec::new(), operator_changed);
+                    return StreamApplication::new(
+                        Vec::new(),
+                        operator_changed || settings_changed,
+                    );
                 }
                 self.observe_fact_rows(admitted, std::slice::from_ref(fact), false);
                 self.resume = Some(StreamCursor {
@@ -322,6 +326,7 @@ impl CanvasRuntime {
         epoch: CanonicalUuid,
     ) -> StreamApplication {
         let operator_changed = self.observe_operator_rows(&packed.rows);
+        let settings_changed = self.observe_settings_rows(&packed.rows);
         let page_cursor = packed
             .overflow
             .and_then(|_| packed.rows.last().map(wire::StreamFact::seq))
@@ -334,7 +339,7 @@ impl CanvasRuntime {
         {
             return StreamApplication::new(
                 continuation(ViewSubject::Facts, epoch, packed),
-                operator_changed,
+                operator_changed || settings_changed,
             );
         }
         let page = project_page(packed);
@@ -452,6 +457,29 @@ impl CanvasRuntime {
                 self.observe_lifecycle_boundary(row);
             }
         }
+    }
+
+    fn observe_settings_rows(&mut self, rows: &[wire::StreamFact]) -> bool {
+        let mut changed = false;
+        for row in rows {
+            let Some(body) = row.read::<wire::body::GlobalSettingsChanged>() else {
+                continue;
+            };
+            if self
+                .settings_position
+                .is_some_and(|current| current >= row.seq())
+            {
+                continue;
+            }
+            self.settings_position = Some(row.seq());
+            changed |= self.settings.replace(
+                self.accepted.scope(),
+                GlobalSettingsAnswer {
+                    fast_mode: body.fast_mode,
+                },
+            );
+        }
+        changed
     }
 
     fn observe_lifecycle_boundary(&mut self, row: &wire::StreamFact) {

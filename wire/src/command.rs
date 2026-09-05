@@ -36,6 +36,10 @@ pub enum CommandKind {
     DocLedger,
     /// Read reduced claim-to-terminal phase effort.
     EffortRead,
+    /// Read durable global Canvas settings.
+    GlobalSettingsRead,
+    /// Replace the durable global fast-mode setting.
+    GlobalSettingsSet,
     /// Add one task as direct intent.
     TaskAdd,
     /// Add one task through the fixed server-owned `.oops` route.
@@ -215,6 +219,12 @@ impl Law {
     };
     /// Snapshot-only operator inspection carries no mutable predicate.
     pub const INSPECT: Self = Self {
+        required: &[],
+        optional: &[],
+        authority: Authority::Operator,
+    };
+    /// Operator-authored global settings need no caller-proposed predicate.
+    pub const SETTINGS: Self = Self {
         required: &[],
         optional: &[],
         authority: Authority::Operator,
@@ -539,6 +549,8 @@ impl CommandKind {
         Self::BoardHandout,
         Self::DocLedger,
         Self::EffortRead,
+        Self::GlobalSettingsRead,
+        Self::GlobalSettingsSet,
         Self::TaskAdd,
         Self::TaskOopsAdd,
         Self::TasteProposalAdd,
@@ -641,6 +653,8 @@ impl CommandKind {
             | Self::LineageConfigure
             | Self::LineageArrange
             | Self::LaneRecall
+            | Self::GlobalSettingsRead
+            | Self::GlobalSettingsSet
             | Self::TasteRecord
             | Self::CanaryRecognize
             | Self::VendorRecognize
@@ -710,6 +724,8 @@ impl CommandKind {
             Self::LineageConfigure => "lineage::configure",
             Self::LineageArrange => "lineage::arrange",
             Self::LaneRecall => "lane::recall",
+            Self::GlobalSettingsRead => "settings::read",
+            Self::GlobalSettingsSet => "settings::set",
             Self::TasteRecord => "taste::record",
             Self::CanaryRecognize => "canary::recognize",
             Self::VendorRecognize => "vendor::recognize",
@@ -732,6 +748,8 @@ impl CommandKind {
     pub const fn law(self) -> Law {
         match self {
             Self::BoardRead | Self::BoardGraph | Self::DocLedger | Self::EffortRead => Law::READ,
+            Self::GlobalSettingsRead => Law::OPERATOR_READ,
+            Self::GlobalSettingsSet => Law::SETTINGS,
             Self::BoardHandout => Law::OPERATOR_READ,
             Self::TaskAdd | Self::TaskOopsAdd | Self::TasteProposalAdd => Law::ADD,
             Self::GateFindings => Law::GATE_FINDINGS,
@@ -839,6 +857,7 @@ impl CommandKind {
                 | Self::BoardHandout
                 | Self::DocLedger
                 | Self::EffortRead
+                | Self::GlobalSettingsRead
                 | Self::SteerInbox
                 | Self::ConsentRead
                 | Self::ConsentPolicy

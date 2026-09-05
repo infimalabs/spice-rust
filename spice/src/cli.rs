@@ -159,6 +159,8 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::BoardHandout
         | CommandKind::DocLedger
         | CommandKind::EffortRead
+        | CommandKind::GlobalSettingsRead
+        | CommandKind::GlobalSettingsSet
         | CommandKind::TaskAdd
         | CommandKind::TaskOopsAdd
         | CommandKind::TasteProposalAdd

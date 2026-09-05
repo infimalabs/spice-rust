@@ -39,6 +39,10 @@ pub(super) fn wake(
         Ok(resume) => resume,
         Err(outcome) => return typed_outcome(outcome),
     };
+    let fast_mode = match super::super::settings_surface::fast_mode(bus) {
+        Ok(fast_mode) => fast_mode,
+        Err(outcome) => return typed_outcome(outcome),
+    };
     let occupant = new_uuid();
     let launch = match super::super::supervisor::launch(
         paths,
@@ -49,6 +53,7 @@ pub(super) fn wake(
             lane: row.lane,
             occupant,
             resume,
+            fast_mode,
         },
         Arc::clone(&runtime.capture),
     ) {
@@ -186,6 +191,7 @@ pub(in crate::resident) fn wake_automatic(
         ));
     }
     let resume = launch_resume(paths, &row)?;
+    let fast_mode = super::super::settings_surface::fast_mode(bus)?;
     let launch = match super::super::supervisor::launch(
         paths,
         OccupantLaunchRequest {
@@ -195,6 +201,7 @@ pub(in crate::resident) fn wake_automatic(
             lane,
             occupant,
             resume,
+            fast_mode,
         },
         Arc::clone(&runtime.capture),
     ) {

@@ -195,6 +195,9 @@ vocabulary! {
     /// The exact normalized plan digest landed at its witnessed board barrier.
     DocApplied = "doc::applied" by CommandDoor;
 
+    /// The operator changed the global fast-mode setting.
+    GlobalSettingsChanged = "settings::changed" by CommandDoor;
+
     /// A directive was created.
     SteerSent = "steer::sent" by CommandDoor;
     /// One stable directive crossed a named silence horizon.

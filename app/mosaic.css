@@ -299,6 +299,7 @@ body:has(.shell--mosaic),
   flex: 0 0 auto;
 }
 .canvas-menu > summary {
+  position: relative;
   display: inline-grid;
   width: 30px;
   height: 30px;
@@ -322,7 +323,26 @@ body:has(.shell--mosaic),
   background: color-mix(in srgb, var(--accent) 16%, var(--panel));
 }
 .canvas-menu > summary::-webkit-details-marker { display: none; }
-.canvas-menu-pepper { font-size: 15px; line-height: 1; }
+.canvas-menu-pepper { position: relative; z-index: 1; font-size: 15px; line-height: 1; }
+.canvas-menu-flame {
+  position: absolute;
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+}
+.canvas-menu-trigger--fast {
+  border-color: color-mix(in srgb, var(--warning) 72%, var(--line));
+  background: color-mix(in srgb, var(--warning) 13%, var(--panel));
+}
+.canvas-menu-trigger--fast .canvas-menu-flame { animation: canvas-fast-mode-pulse 5s ease-in-out infinite; opacity: .78; }
+@keyframes canvas-fast-mode-pulse {
+  0%, 100% { opacity: .18; transform: scale(.9); }
+  45% { opacity: .82; transform: scale(1.08); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .canvas-menu-trigger--fast .canvas-menu-flame { animation: none; opacity: .78; }
+}
 .canvas-navigation {
   display: flex;
   flex: 1 1 auto;
@@ -386,6 +406,25 @@ body:has(.shell--mosaic),
   font-size: .76rem;
 }
 .canvas-menu-setting span { color: var(--muted); font-family: ui-monospace, monospace; }
+.canvas-menu-setting--action {
+  width: 100%;
+  border: 1px solid transparent;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.canvas-menu-setting--action:hover,
+.canvas-menu-setting--action:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+.canvas-menu-setting--checked {
+  border-color: color-mix(in srgb, var(--warning) 54%, transparent);
+  background: color-mix(in srgb, var(--warning) 10%, var(--page));
+}
+.canvas-menu-setting--checked span { color: var(--warning); }
+.canvas-menu-setting--action:disabled { cursor: wait; opacity: .66; }
 .canvas-menu-context-copy {
   margin: 0;
   color: var(--muted);

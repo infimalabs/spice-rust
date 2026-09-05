@@ -554,18 +554,11 @@ async fn dispatch_action(
         }
         ClientAction::Refresh => send_refresh(principal, writer, pending, submissions).await,
         ClientAction::Effort => send_effort(principal, writer, pending).await,
+        ClientAction::FastMode(fast_mode) => {
+            send_fast_mode(principal, writer, pending, fast_mode).await
+        }
         ClientAction::MessageHistory { lane, before } => {
-            send_stream_request(
-                writer,
-                &StreamRequest::MessageHistory {
-                    v: WireVersion::CURRENT,
-                    id: random_uuid()?,
-                    epoch: principal.epoch(),
-                    lane,
-                    before,
-                },
-            )
-            .await
+            send_message_history(principal, writer, lane, before).await
         }
         ClientAction::Seat {
             topology_revision,
@@ -659,6 +652,43 @@ async fn dispatch_action(
             .await
         }
     }
+}
+
+async fn send_fast_mode(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    fast_mode: bool,
+) -> Result<(), String> {
+    send_typed(
+        principal,
+        writer,
+        pending,
+        PendingKind::Settings,
+        CommandKind::GlobalSettingsSet,
+        vec![],
+        GlobalSettingsSet { fast_mode },
+    )
+    .await
+}
+
+async fn send_message_history(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    lane: CanonicalUuid,
+    before: wire::MessageLocus,
+) -> Result<(), String> {
+    send_stream_request(
+        writer,
+        &StreamRequest::MessageHistory {
+            v: WireVersion::CURRENT,
+            id: random_uuid()?,
+            epoch: principal.epoch(),
+            lane,
+            before,
+        },
+    )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]

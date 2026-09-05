@@ -21,6 +21,8 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::LineageConfigure
         | CommandKind::LineageArrange => Class::Demand,
         CommandKind::BoardRead
+        | CommandKind::GlobalSettingsRead
+        | CommandKind::GlobalSettingsSet
         | CommandKind::BoardGraph
         | CommandKind::BoardHandout
         | CommandKind::DocLedger

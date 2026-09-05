@@ -24,6 +24,7 @@ pub(in crate::resident) struct OccupantLaunchRequest<'a> {
     pub(in crate::resident) lane: CanonicalUuid,
     pub(in crate::resident) occupant: CanonicalUuid,
     pub(in crate::resident) resume: vendor::Resume,
+    pub(in crate::resident) fast_mode: bool,
 }
 
 pub(in crate::resident) fn occupant_launch(
@@ -38,6 +39,7 @@ pub(in crate::resident) fn occupant_launch(
         lane,
         occupant,
         resume,
+        fast_mode,
     } = request;
     let repository = launch_repository(paths, worktree)?;
     // Run ahead of configuration load so the launch reads the advanced tree.
@@ -46,7 +48,7 @@ pub(in crate::resident) fn occupant_launch(
     let git = spice::task_git::advance_at_launch(&repository).to_string();
     let resolved = spice::config::load_repository(&repository, &[])
         .map_err(|error| configuration_refusal(&error))?;
-    let (plan, rtk) = launch_plan(paths, &repository, &resolved, name, lane, resume)?;
+    let (plan, rtk) = launch_plan(paths, &repository, &resolved, name, lane, resume, fast_mode)?;
     let model = plan.launch().model.clone();
     let effort = plan.launch().effort.as_str().to_owned();
     let record = plan
@@ -137,6 +139,7 @@ fn launch_plan(
     name: &wire::Name,
     lane: CanonicalUuid,
     resume: vendor::Resume,
+    fast_mode: bool,
 ) -> CommandResult<(spice::agent_launch::Plan, wire::body::RtkHealth)> {
     let skill = required_skill(repository)?;
     let wrapper = resolved
@@ -191,6 +194,7 @@ fn launch_plan(
             environment,
             lane,
             resume,
+            fast_mode,
         },
     )
     .map_err(|error| match error {

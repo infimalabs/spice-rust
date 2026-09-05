@@ -220,6 +220,7 @@ pub(super) fn restore_seats(
             continue;
         }
         let resume = resume_session(paths, &row)?;
+        let fast_mode = super::settings_surface::fast_mode(bus)?;
         let occupant = new_uuid();
         let launch = super::supervisor::launch(
             paths,
@@ -230,6 +231,7 @@ pub(super) fn restore_seats(
                 lane: row.lane,
                 occupant,
                 resume,
+                fast_mode,
             },
             Arc::clone(capture),
         )?;
