@@ -1,4 +1,6 @@
-use super::{Ledger, Refusal, Steering};
+use std::error::Error as _;
+
+use super::{Ledger, MediaResolutionError, Refusal, Steering, disposition_word};
 use crate::ack::keys::Key;
 use crate::ack::scan::Standing;
 use wire::body::{
@@ -7,13 +9,15 @@ use wire::body::{
     TasteReminded, TranscriptLocus,
 };
 use wire::steering::SteerDeadLettered;
-use wire::{CanonicalUuid, Disposition, Instant};
+use wire::{AgentMediaReference, CanonicalUuid, Digest, Disposition, Instant};
 
 const ROOT: &str = "1kJK6N3R";
 const SECOND: &str = "1kJK6M0V";
 const LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116302";
 const ELSEWHERE: &str = "018f82d4-6f59-7d06-92e3-bce913116303";
 const EXPIRES: &str = "2026-08-01T07:07:19.000Z";
+const PNG_DATA_URL: &str = "data:image/png;base64,iVBORw0KGgo=";
+const SECOND_PNG_DATA_URL: &str = "data:image/png;base64,iVBORw0KGgpB";
 
 #[test]
 fn a_sent_directive_stands_pending_until_something_retires_it() {
@@ -52,6 +56,184 @@ fn replay_refuses_invalid_media_before_it_can_enter_directive_standing() {
         ledger.directives().is_empty(),
         "invalid media cannot partially enter durable standing",
     );
+}
+
+#[test]
+fn media_resolution_returns_each_attachment_in_journal_order_without_mutation() {
+    let mut publication = sent(ROOT);
+    publication.attachments.push(DirectiveAttachment {
+        name: "second.png".to_owned(),
+        content_type: "image/png".to_owned(),
+        data_url: SECOND_PNG_DATA_URL.to_owned(),
+    });
+    let references =
+        wire::media::agent_media_references(publication.directive, &publication.attachments)
+            .expect("fixture references");
+    let mut ledger = Ledger::new();
+    ledger
+        .absorb(Steering::Sent(&publication))
+        .expect("media directive");
+
+    for (reference, attachment) in references.iter().zip(&publication.attachments) {
+        let before = ledger.clone();
+        assert_eq!(
+            ledger.resolve_media(lane(), reference).unwrap(),
+            attachment.decoded_bytes().unwrap(),
+        );
+        assert_eq!(ledger, before, "resolution cannot alter durable standing");
+    }
+}
+
+#[test]
+fn media_resolution_refuses_unknown_lane_missing_and_mismatched_references_inertly() {
+    let publication = sent(ROOT);
+    let reference = media_reference(&publication, 0);
+    let mut ledger = Ledger::new();
+    ledger
+        .absorb(Steering::Sent(&publication))
+        .expect("media directive");
+
+    let unknown = replace_reference(
+        &reference,
+        &format!(r#""directive":"{}""#, directive(ROOT)),
+        &format!(r#""directive":"{}""#, directive(SECOND)),
+    );
+    let error = resolve_error(&ledger, lane(), &unknown);
+    assert!(matches!(
+        error,
+        MediaResolutionError::Unknown { directive: found } if found == directive(SECOND)
+    ));
+
+    let error = resolve_error(&ledger, elsewhere(), &reference);
+    assert!(matches!(
+        error,
+        MediaResolutionError::WrongLane {
+            directive: found,
+            expected,
+            observed,
+        } if found == directive(ROOT) && expected == lane() && observed == elsewhere()
+    ));
+
+    let missing = replace_reference(&reference, r#""ordinal":0"#, r#""ordinal":1"#);
+    let error = resolve_error(&ledger, lane(), &missing);
+    assert!(matches!(
+        error,
+        MediaResolutionError::Missing { directive: found, ordinal: 1 }
+            if found == directive(ROOT)
+    ));
+
+    for (field, from, to) in [
+        (
+            "name",
+            r#""name":"operator-capture.png""#,
+            r#""name":"renamed.png""#,
+        ),
+        (
+            "content_type",
+            r#""content_type":"image/png""#,
+            r#""content_type":"image/jpeg""#,
+        ),
+    ] {
+        let mismatched = replace_reference(&reference, from, to);
+        let error = resolve_error(&ledger, lane(), &mismatched);
+        assert!(matches!(
+            error,
+            MediaResolutionError::Mismatched {
+                directive: found,
+                ordinal: 0,
+                field: observed,
+            } if found == directive(ROOT) && observed == field
+        ));
+    }
+}
+
+#[test]
+fn media_resolution_recomputes_digest_and_length_and_refuses_undecodable_authority() {
+    let publication = sent(ROOT);
+    let reference = media_reference(&publication, 0);
+    let mut ledger = Ledger::new();
+    ledger
+        .absorb(Steering::Sent(&publication))
+        .expect("media directive");
+
+    let old_digest = String::from_utf8(wire::encode(reference.digest()).unwrap()).unwrap();
+    let new_digest = String::from_utf8(
+        wire::encode(&Digest::compute(
+            wire::Domain::MediaContent,
+            b"different image",
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    let stale_digest = replace_reference(
+        &reference,
+        &format!(r#""digest":{old_digest}"#),
+        &format!(r#""digest":{new_digest}"#),
+    );
+    assert!(matches!(
+        resolve_error(&ledger, lane(), &stale_digest),
+        MediaResolutionError::Stale { directive: found, ordinal: 0 }
+            if found == directive(ROOT)
+    ));
+
+    let stale_length = replace_reference(
+        &reference,
+        &format!(r#""bytes":{}"#, reference.bytes()),
+        &format!(r#""bytes":{}"#, reference.bytes() + 1),
+    );
+    assert!(matches!(
+        resolve_error(&ledger, lane(), &stale_length),
+        MediaResolutionError::Stale { directive: found, ordinal: 0 }
+            if found == directive(ROOT)
+    ));
+
+    let authority = ledger
+        .directives
+        .get_mut(&key(ROOT))
+        .expect("fixture directive remains");
+    authority.attachments[0].data_url = "data:image/png;base64,%%%".to_owned();
+    let error = resolve_error(&ledger, lane(), &reference);
+    assert!(matches!(
+        error,
+        MediaResolutionError::Undecodable {
+            directive: found,
+            ordinal: 0,
+            error: wire::MediaError::Base64,
+        } if found == directive(ROOT)
+    ));
+}
+
+#[test]
+fn media_resolution_names_every_retired_disposition_without_exposing_payloads() {
+    let publication = sent(ROOT);
+    let reference = media_reference(&publication, 0);
+    let mut live = Ledger::new();
+    live.absorb(Steering::Sent(&publication))
+        .expect("media directive");
+
+    for disposition in [
+        Disposition::Acked,
+        Disposition::Declined,
+        Disposition::Canceled,
+        Disposition::Lapsed,
+        Disposition::DeadLettered,
+    ] {
+        let mut retired = live.clone();
+        retired
+            .directives
+            .get_mut(&key(ROOT))
+            .expect("fixture directive remains")
+            .disposition = disposition;
+        let error = resolve_error(&retired, lane(), &reference);
+        assert!(matches!(
+            error,
+            MediaResolutionError::Retired {
+                directive: found,
+                disposition: observed,
+            } if found == directive(ROOT) && observed == disposition
+        ));
+        assert!(error.to_string().contains(disposition_word(disposition)));
+    }
 }
 
 #[test]
@@ -922,10 +1104,112 @@ fn sent(key: &str) -> SteerSent {
         attachments: vec![DirectiveAttachment {
             name: "operator-capture.png".to_owned(),
             content_type: "image/png".to_owned(),
-            data_url: "data:image/png;base64,iVBORw0KGgo=".to_owned(),
+            data_url: PNG_DATA_URL.to_owned(),
         }],
         expires: expires(),
     }
+}
+
+fn media_reference(publication: &SteerSent, ordinal: usize) -> AgentMediaReference {
+    AgentMediaReference::from_media(
+        publication.directive,
+        ordinal,
+        &publication.attachments[ordinal],
+    )
+    .expect("fixture media reference")
+}
+
+fn replace_reference(reference: &AgentMediaReference, from: &str, to: &str) -> AgentMediaReference {
+    let encoded = String::from_utf8(wire::encode(reference).expect("reference encodes"))
+        .expect("wire JSON is UTF-8");
+    let replaced = encoded.replacen(from, to, 1);
+    assert_ne!(replaced, encoded, "fixture replacement must match {from:?}");
+    wire::decode(replaced.as_bytes()).expect("forged reference remains structurally valid")
+}
+
+fn resolve_error(
+    ledger: &Ledger,
+    authenticated_lane: CanonicalUuid,
+    reference: &AgentMediaReference,
+) -> MediaResolutionError {
+    let before = ledger.clone();
+    let error = ledger
+        .resolve_media(authenticated_lane, reference)
+        .expect_err("fixture reference must refuse");
+    assert_eq!(ledger, &before, "a refusal cannot alter durable standing");
+
+    let rendered = error.to_string();
+    match &error {
+        MediaResolutionError::Malformed { .. } => {
+            assert!(rendered.contains("media reference is malformed"));
+            assert!(error.source().is_some());
+        }
+        MediaResolutionError::Unknown { directive } => {
+            assert!(rendered.contains(&directive.to_string()));
+        }
+        MediaResolutionError::WrongLane {
+            directive,
+            expected,
+            observed,
+        } => {
+            for identity in [directive, expected, observed] {
+                assert!(rendered.contains(&identity.to_string()));
+            }
+        }
+        MediaResolutionError::Retired {
+            directive,
+            disposition,
+        } => {
+            assert!(rendered.contains(&directive.to_string()));
+            assert!(rendered.contains(disposition_word(*disposition)));
+        }
+        MediaResolutionError::Stale { directive, ordinal }
+        | MediaResolutionError::Missing { directive, ordinal }
+        | MediaResolutionError::Undecodable {
+            directive, ordinal, ..
+        } => {
+            assert!(rendered.contains(&directive.to_string()));
+            assert!(rendered.contains(&format!("attachment {ordinal}")));
+        }
+        MediaResolutionError::Mismatched {
+            directive,
+            ordinal,
+            field,
+        } => {
+            assert!(rendered.contains(&directive.to_string()));
+            assert!(rendered.contains(&format!("attachment {ordinal}")));
+            assert!(rendered.contains(field));
+        }
+    }
+    if matches!(&error, MediaResolutionError::Undecodable { .. }) {
+        assert!(
+            error.source().is_some(),
+            "undecodable authority retains its typed source"
+        );
+    }
+
+    let mut diagnostics = vec![rendered];
+    let mut source = error.source();
+    while let Some(error) = source {
+        diagnostics.push(error.to_string());
+        source = error.source();
+    }
+    for diagnostic in diagnostics {
+        for forbidden in [
+            "data_url",
+            "data:image",
+            "iVBORw0KGgo=",
+            "DirectiveAttachment",
+            "operator-capture.png",
+            "[137, 80, 78, 71",
+        ] {
+            assert!(
+                !diagnostic.contains(forbidden),
+                "media refusal exposed {forbidden:?}: {diagnostic}",
+            );
+        }
+    }
+    error
 }
 
 /// The same directive an operator would send, raised by a taste instead.

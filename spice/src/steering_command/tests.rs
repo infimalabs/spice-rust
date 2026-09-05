@@ -12,7 +12,7 @@ use std::sync::{Arc, Barrier};
 
 use clap::ArgMatches;
 use wire::intent::{CommandAnswer, InboxAnswer};
-use wire::{CanonicalUuid, Disposition, FaultClass, Outcome};
+use wire::{AgentMediaReference, CanonicalUuid, Disposition, FaultClass, Outcome};
 
 use super::{SelectedCommand, hook_document_at, select};
 
@@ -22,6 +22,8 @@ const KEY: &str = "1kL5y53c";
 const EPOCH: &str = "2c4f7d8e-3f50-4162-ac13-d4e5f6071829";
 const OCCUPANT: &str = "3d508e9f-4051-4273-bd24-e5f60718293a";
 const OTHER_OCCUPANT: &str = "4e619fa0-5162-4384-8e35-f60718293a4b";
+const PNG_DATA_URL: &str = "data:image/png;base64,iVBORw0KGgo=";
+const SECOND_PNG_DATA_URL: &str = "data:image/png;base64,iVBORw0KGgpB";
 static NEXT_HOOK_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 /// Parse one argv the way the binary does, keeping the leaf matches owned.
@@ -359,6 +361,87 @@ fn a_delayed_pre_compaction_snapshot_cannot_reopen_an_older_epoch() {
     assert_eq!(deliver(&scratch, &after), None);
 }
 
+#[test]
+fn hook_media_references_are_compact_and_preserve_attachment_order() {
+    let scratch = HookScratch::new();
+    let answer = media_inbox_answer(
+        OCCUPANT,
+        60,
+        "inspect both captures",
+        &[
+            ("first.png", PNG_DATA_URL),
+            ("second.png", SECOND_PNG_DATA_URL),
+        ],
+    );
+
+    let document = deliver(&scratch, &answer).expect("media directive publishes");
+    let context = additional_context(&document);
+    let references = media_references(&context);
+
+    assert_eq!(references.len(), 2);
+    assert_eq!(references[0].name(), "first.png");
+    assert_eq!(references[0].ordinal(), 0);
+    assert_eq!(references[1].name(), "second.png");
+    assert_eq!(references[1].ordinal(), 1);
+    assert!(!context.contains("data_url"));
+    assert!(!context.contains("data:image"));
+    assert!(!context.contains("iVBORw0KGgo="));
+    assert!(!context.contains("iVBORw0KGgpB"));
+    assert_eq!(
+        deliver(&scratch, &answer),
+        None,
+        "an exact repeat is suppressed"
+    );
+}
+
+#[test]
+fn hook_delivery_identity_observes_image_bytes_even_when_text_does_not_change() {
+    for text in ["", "inspect the capture"] {
+        let scratch = HookScratch::new();
+        let first = media_inbox_answer(OCCUPANT, 61, text, &[("capture.png", PNG_DATA_URL)]);
+        let changed =
+            media_inbox_answer(OCCUPANT, 61, text, &[("capture.png", SECOND_PNG_DATA_URL)]);
+
+        let first = deliver(&scratch, &first).expect("first image publishes");
+        let changed = deliver(&scratch, &changed).expect("changed image publishes");
+        assert_ne!(
+            media_references(&additional_context(&first)),
+            media_references(&additional_context(&changed)),
+            "image bytes must participate in delivery identity for {text:?}",
+        );
+    }
+}
+
+#[test]
+fn identical_hook_media_reopens_for_a_new_occupant_and_compaction() {
+    let scratch = HookScratch::new();
+    let original = media_inbox_answer(
+        OCCUPANT,
+        62,
+        "inspect the capture",
+        &[("capture.png", PNG_DATA_URL)],
+    );
+    let successor = media_inbox_answer(
+        OTHER_OCCUPANT,
+        62,
+        "inspect the capture",
+        &[("capture.png", PNG_DATA_URL)],
+    );
+    let compacted = media_inbox_answer(
+        OTHER_OCCUPANT,
+        63,
+        "inspect the capture",
+        &[("capture.png", PNG_DATA_URL)],
+    );
+
+    assert!(deliver(&scratch, &original).is_some());
+    assert_eq!(deliver(&scratch, &original), None);
+    assert!(deliver(&scratch, &successor).is_some());
+    assert_eq!(deliver(&scratch, &successor), None);
+    assert!(deliver(&scratch, &compacted).is_some());
+    assert_eq!(deliver(&scratch, &compacted), None);
+}
+
 fn inbox_answer(
     occupant: &str,
     compaction: u64,
@@ -395,6 +478,43 @@ fn inbox_answer(
     CommandAnswer::Inbox(inbox)
 }
 
+fn media_inbox_answer(
+    occupant: &str,
+    compaction: u64,
+    text: &str,
+    attachments: &[(&str, &str)],
+) -> CommandAnswer {
+    let attachments = attachments
+        .iter()
+        .map(|(name, data_url)| {
+            serde_json::json!({
+                "name": name,
+                "content_type": "image/png",
+                "data_url": data_url,
+            })
+        })
+        .collect::<Vec<_>>();
+    let inbox: InboxAnswer = serde_json::from_value(serde_json::json!({
+        "epoch": EPOCH,
+        "lanes": [{
+            "lane": LANE,
+            "occupant": occupant,
+            "compaction": compaction,
+            "pending": [{
+                "directive": DIRECTIVE,
+                "key": "1kMedia1",
+                "text": text,
+                "attachments": attachments,
+                "authored": "2026-08-30T09:00:00.000Z",
+                "stage": "published",
+                "expires": "2026-08-30T10:00:00.000Z",
+            }],
+        }],
+    }))
+    .expect("media hook inbox fixture admits");
+    CommandAnswer::Inbox(inbox)
+}
+
 fn deliver(scratch: &HookScratch, answer: &CommandAnswer) -> Option<Vec<u8>> {
     hook_document_at(answer, "claude", &scratch.state, &scratch.lock)
         .expect("hook delivery succeeds")
@@ -406,6 +526,14 @@ fn additional_context(document: &[u8]) -> String {
         .as_str()
         .expect("hook context is text")
         .to_owned()
+}
+
+fn media_references(context: &str) -> Vec<AgentMediaReference> {
+    context
+        .lines()
+        .filter_map(|line| line.strip_prefix("media-reference="))
+        .map(|encoded| wire::decode(encoded.as_bytes()).expect("hook media reference decodes"))
+        .collect()
 }
 
 struct HookScratch {
