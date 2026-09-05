@@ -2,8 +2,9 @@ use super::*;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const COMPILER_MACROS: [(&str, &str); 13] = [
+const COMPILER_MACROS: [(&str, &str); 14] = [
     ("println", "\"safe\""),
+    ("format", "\"safe {}\", 1"),
     ("env", "\"OUT_DIR\""),
     ("option_env", "\"OUT_DIR\""),
     ("concat", "\"safe\""),
@@ -226,6 +227,13 @@ fn no_prelude_and_explicit_standard_namespace_are_distinct() {
     assert!(
         bare.contains("cannot prove compiler macro origin for println!"),
         "bare no-prelude output macro unexpectedly admitted: {bare}",
+    );
+    let bare_format = fixture.non_cacheable_reason(
+        "#![no_implicit_prelude]\nfn main() { let _ = format!(\"safe\"); }\n",
+    );
+    assert!(
+        bare_format.contains("cannot prove compiler macro origin for format!"),
+        "bare no-prelude format macro unexpectedly admitted: {bare_format}",
     );
     let explicit = fixture.plan(concat!(
         "#![no_implicit_prelude]\nextern crate std;\n",

@@ -1143,6 +1143,35 @@ mod tests {
     }
 
     #[test]
+    fn declared_helper_still_refuses_a_dangerous_scanned_body() {
+        let fixture = Fixture::new("declared-dangerous-helper");
+        let manifest = fixture.root.join("fixture/Cargo.toml");
+        let current = fs::read_to_string(&manifest).expect("read fixture manifest");
+        fs::write(
+            &manifest,
+            current.replace(
+                "complete = true\n",
+                "complete = true\ncalls = [\"helper\"]\n",
+            ),
+        )
+        .expect("declare exact helper call");
+        fs::write(
+            fixture.root.join("fixture/build.rs"),
+            concat!(
+                "fn main() { helper(); }\n",
+                "fn helper() { let _ = std::process::Command::new(\"git\"); }\n",
+            ),
+        )
+        .expect("write declared process helper");
+
+        let reason = fixture.fixture_non_cacheable_reason();
+        assert!(
+            reason.contains("unbounded process or network dependency std::process::Command::new"),
+            "unexpected refusal: {reason}",
+        );
+    }
+
+    #[test]
     fn method_dispatch_is_non_cacheable() {
         let fixture = Fixture::new("method-dispatch");
         fs::write(

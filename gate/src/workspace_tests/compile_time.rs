@@ -7,8 +7,11 @@ use syn::parse::Parser;
 use syn::punctuated::Punctuated;
 use syn::visit::Visit;
 
+mod call_authority;
+
 use super::source_reach::macro_scope::{attribute_may_expand_items, exported_macro_rules};
 use super::source_reach::{CompilerMacroKind, FileMacroResolution, FileMacroScope};
+use call_authority::{builtin_derive, builtin_derives_unshadowed};
 
 const AUTHORITY_VERSION: u64 = 1;
 
@@ -21,6 +24,8 @@ struct RawAuthority {
     files: Vec<String>,
     #[serde(default)]
     environment: Vec<String>,
+    #[serde(default)]
+    calls: Vec<String>,
 }
 
 pub(super) fn authority_declaration(
@@ -58,7 +63,26 @@ pub(super) fn authority_declaration(
     }
     environment.sort();
     environment.dedup();
-    Ok(Some(CompileTimeAuthorityDeclaration { files, environment }))
+    let mut calls = raw.calls;
+    for call in &calls {
+        if call.is_empty()
+            || call.trim() != call
+            || call
+                .bytes()
+                .any(|byte| byte.is_ascii_whitespace() || byte == 0)
+        {
+            return Err(non_cacheable(format!(
+                "Cargo package {package:?} declares invalid compile-time call authority {call:?}",
+            )));
+        }
+    }
+    calls.sort();
+    calls.dedup();
+    Ok(Some(CompileTimeAuthorityDeclaration {
+        files,
+        environment,
+        calls,
+    }))
 }
 
 pub(super) fn compile_time_authorities(
@@ -190,13 +214,22 @@ fn scan_target(
     let root = parse_compile_time_source(package, &target.source)?;
     let exported_macros = exported_macro_rules(&root.items);
     let root_scope = package.namespace_context.root_scope(&root.attrs);
+    let calls = &package
+        .compile_time_authority
+        .as_ref()
+        .expect("executable targets require compile-time authority")
+        .calls;
+    let authority = ScanAuthority {
+        exported_macros: &exported_macros,
+        calls,
+    };
     scan_compile_time_source(
         package,
         &target.source,
         &root,
         root_scope,
         true,
-        &exported_macros,
+        authority,
         &mut scan,
     )?;
     let mut visited = BTreeSet::new();
@@ -214,7 +247,7 @@ fn scan_target(
                     &syntax,
                     inherited.scope.clone(),
                     inherited.crate_root,
-                    &exported_macros,
+                    authority,
                     &mut scan,
                 )?;
             }
@@ -243,22 +276,31 @@ fn parse_compile_time_source(
     })
 }
 
+#[derive(Clone, Copy)]
+struct ScanAuthority<'a> {
+    exported_macros: &'a BTreeSet<String>,
+    calls: &'a [String],
+}
+
 fn scan_compile_time_source(
     package: &PackageInventory,
     source: &Path,
     syntax: &syn::File,
     scope: FileMacroScope,
     crate_root: bool,
-    exported_macros: &BTreeSet<String>,
+    authority: ScanAuthority<'_>,
     scan: &mut CompileTimeScan,
 ) -> Result<(), WorkspaceTestError> {
+    let builtin_derives_unshadowed = builtin_derives_unshadowed(syntax);
     let mut visitor = CompileTimeVisitor {
         package: &package.name,
         source,
         scan,
         scope,
         crate_root,
-        exported_macros,
+        exported_macros: authority.exported_macros,
+        calls: authority.calls,
+        builtin_derives_unshadowed,
         error: None,
     };
     visitor.scan_file(syntax);
@@ -283,6 +325,8 @@ struct CompileTimeVisitor<'a> {
     scope: FileMacroScope,
     crate_root: bool,
     exported_macros: &'a BTreeSet<String>,
+    calls: &'a [String],
+    builtin_derives_unshadowed: bool,
     error: Option<WorkspaceTestError>,
 }
 
@@ -330,7 +374,12 @@ impl<'ast> Visit<'ast> for CompileTimeVisitor<'_> {
     fn visit_attribute(&mut self, attribute: &'ast syn::Attribute) {
         let prelude_control =
             attribute.path().is_ident("no_std") || attribute.path().is_ident("no_implicit_prelude");
-        if self.error.is_none() && !prelude_control && attribute_may_expand_items(attribute) {
+        let builtin_derive = self.builtin_derives_unshadowed && builtin_derive(attribute);
+        if self.error.is_none()
+            && !prelude_control
+            && !builtin_derive
+            && attribute_may_expand_items(attribute)
+        {
             self.refuse(format!(
                 "uses unresolved compile-time attribute {}",
                 display_macro_path(attribute.path()),
@@ -431,6 +480,10 @@ impl<'ast> Visit<'ast> for CompileTimeVisitor<'_> {
                 ));
                 return;
             }
+            if self.calls.binary_search(&path).is_ok() {
+                syn::visit::visit_expr_call(self, call);
+                return;
+            }
             self.refuse(format!("invokes unrecognized executable call {path}"));
             return;
         }
@@ -438,11 +491,14 @@ impl<'ast> Visit<'ast> for CompileTimeVisitor<'_> {
     }
 
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
-        if self.error.is_none() {
-            self.refuse(format!(
-                "invokes unbounded method dispatch .{}()",
-                call.method,
-            ));
+        if self.error.is_some() {
+            return;
+        }
+        let authority = format!(".{}", call.method);
+        if self.calls.binary_search(&authority).is_ok() {
+            syn::visit::visit_expr_method_call(self, call);
+        } else {
+            self.refuse(format!("invokes unbounded method dispatch {authority}()"));
         }
     }
 }
@@ -474,6 +530,7 @@ impl CompileTimeVisitor<'_> {
     fn scan_compiler_macro(&mut self, kind: CompilerMacroKind, invocation: &syn::Macro) {
         match kind {
             CompilerMacroKind::Println => self.scan_println(invocation),
+            CompilerMacroKind::Format => self.scan_expression_macro(invocation),
             CompilerMacroKind::Env | CompilerMacroKind::OptionEnv => {
                 self.scan_environment_macro(invocation);
             }
@@ -503,6 +560,20 @@ impl CompileTimeVisitor<'_> {
                     self.refuse("uses computed concat! input".to_owned());
                     return;
                 }
+            }
+        }
+    }
+
+    fn scan_expression_macro(&mut self, invocation: &syn::Macro) {
+        let parser = Punctuated::<Expr, syn::Token![,]>::parse_terminated;
+        let Ok(arguments) = parser.parse2(invocation.tokens.clone()) else {
+            self.refuse("uses malformed format! input".to_owned());
+            return;
+        };
+        for argument in arguments {
+            self.visit_expr(&argument);
+            if self.error.is_some() {
+                return;
             }
         }
     }
