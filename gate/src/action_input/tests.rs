@@ -280,6 +280,20 @@ fn canonical_manifest_round_trips_and_refuses_reordered_entries() {
         .reverse();
     let reordered = serde_json::to_vec(&value).expect("encode reordered fixture");
     assert!(ActionInputManifest::decode(&reordered).is_err());
+
+    let mut duplicate_names = vec![
+        non_file(ActionNonFileKind::Baseline, "committed-text", b"first"),
+        non_file(ActionNonFileKind::Baseline, "committed-text", b"second"),
+    ];
+    duplicate_names.sort();
+    let duplicate_names = ActionInputManifest {
+        version: manifest.version,
+        entries: manifest.entries.clone(),
+        non_files: duplicate_names,
+    }
+    .encode()
+    .expect("encode duplicate-name manifest");
+    assert!(ActionInputManifest::decode(&duplicate_names).is_err());
 }
 
 #[test]
