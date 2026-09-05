@@ -249,7 +249,8 @@ pub use verdict::{
 pub use workspace_tests::{
     CargoGateShard, CargoGateShardKind, CargoGateShardPlan, CargoGateShardPlanning,
     CargoGateShardResult, WorkspaceTestBudget, WorkspaceTestError, WorkspaceTestExecution,
-    WorkspaceTestRoots, cargo_workspace_base_inventory_required, cargo_workspace_tests_applicable,
+    WorkspaceTestRoots, cargo_declared_compile_time_sources_at,
+    cargo_workspace_base_inventory_required, cargo_workspace_tests_applicable,
     plan_cargo_gate_shards_at, prebuild_shared_at, run as run_workspace_tests,
     run_at as run_workspace_tests_at, run_cargo_gate_shard_at, run_prebuilt_shared_at,
     run_selected_at as run_selected_workspace_tests_at,

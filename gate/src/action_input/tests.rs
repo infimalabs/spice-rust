@@ -509,6 +509,7 @@ fn selection(_fixture: &Fixture, seed: &[u8]) -> ChangeSelectionReport {
         complexity_suffixes: Some(&suffixes),
         magic_suffixes: Some(&suffixes),
         package_roots: &[],
+        declared_rust_sources: &[],
         generated_paths: &[],
         test_paths: &["tests".to_owned()],
     })

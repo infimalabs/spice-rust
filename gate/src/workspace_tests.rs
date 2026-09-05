@@ -1,5 +1,4 @@
-//! Deterministic, bounded execution of every workspace Rust test target.
-//! Inventory and selection stay here; shard execution lives in `coordinator`.
+//! Deterministic bounded workspace tests; shard execution lives in `coordinator`.
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -37,6 +36,7 @@ use coordinator::{
     Coordinator, RunPolicy, captured_excerpt, completion_name, output_error, process_spec,
     target_arguments,
 };
+pub use inventory::cargo_declared_compile_time_sources_at;
 use inventory::*;
 pub(crate) use inventory::{RustCheckUnit, workspace_package_reach_at};
 use prebuild::*;

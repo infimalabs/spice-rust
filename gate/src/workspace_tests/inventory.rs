@@ -493,6 +493,90 @@ pub(super) fn acquire_inventory(
     acquire_inventory_with_resolution(root, environment, cargo, false)
 }
 
+/// Resolve regular Rust modules owned by Cargo compile-time targets.
+///
+/// # Errors
+///
+/// Returns metadata, declared-source, escaping-path, non-Unicode path, or
+/// ambiguous compile-time target ownership failures.
+pub fn cargo_declared_compile_time_sources_at(
+    root: &Path,
+    changed_sources: &[String],
+    environment: &Environment,
+) -> Result<Vec<String>, WorkspaceTestError> {
+    if !root.join("Cargo.toml").is_file()
+        || !changed_sources
+            .iter()
+            .any(|path| Path::new(path).extension() == Some(OsStr::new("rs")))
+    {
+        return Ok(Vec::new());
+    }
+    let environment = without_pre_commit_dispatch(environment.clone())?;
+    let inventory = acquire_inventory(root, &environment, OsStr::new("cargo"))?;
+    declared_compile_time_sources(&inventory, root)
+}
+
+pub(super) fn declared_compile_time_sources(
+    inventory: &Inventory,
+    root: &Path,
+) -> Result<Vec<String>, WorkspaceTestError> {
+    let root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let mut owners = BTreeMap::<String, BTreeSet<String>>::new();
+    for package in &inventory.packages {
+        for target in &package.declared_targets {
+            if !target
+                .kind
+                .split('+')
+                .any(|kind| matches!(kind, "custom-build" | "proc-macro"))
+            {
+                continue;
+            }
+            for declared in &target.declared_path_sources {
+                if !declared.origins.contains(&DeclaredPathSourceOrigin::Module)
+                    || declared.path.extension() != Some(OsStr::new("rs"))
+                {
+                    continue;
+                }
+                match fs::symlink_metadata(&declared.path) {
+                    Ok(metadata) if metadata.file_type().is_file() => {}
+                    Ok(_) => continue,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                    Err(error) => {
+                        return Err(WorkspaceTestError::new(format!(
+                            "inspect declared compile-time Rust source {}: {error}",
+                            declared.path.display(),
+                        )));
+                    }
+                }
+                let relative = declared.path.strip_prefix(&root).map_err(|_| {
+                    WorkspaceTestError::new(format!(
+                        "declared compile-time Rust source {} escapes selected root {}",
+                        declared.path.display(),
+                        root.display(),
+                    ))
+                })?;
+                let source = relative.to_str().ok_or_else(|| {
+                    WorkspaceTestError::new(format!(
+                        "declared compile-time Rust source {} is not Unicode",
+                        relative.display(),
+                    ))
+                })?;
+                owners
+                    .entry(source.replace(std::path::MAIN_SEPARATOR, "/"))
+                    .or_default()
+                    .insert(format!("{}::{}", package.name, target.display()));
+            }
+        }
+    }
+    if let Some((source, claims)) = owners.iter().find(|(_, claims)| claims.len() > 1) {
+        return Err(WorkspaceTestError::new(format!(
+            "declared compile-time Rust source {source:?} has ambiguous Cargo target ownership: {}",
+            claims.iter().cloned().collect::<Vec<_>>().join(", "),
+        )));
+    }
+    Ok(owners.into_keys().collect())
+}
+
 pub(super) fn acquire_resolved_inventory(
     root: &Path,
     environment: &Environment,
