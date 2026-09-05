@@ -98,20 +98,22 @@
 }
 
 @media (max-width: 560px) {
-  .brand-name { display: none; }
   .axis-button { min-height: 40px; padding: 0 9px; font-size: .74rem; }
-  .commandbar--mosaic { flex-wrap: wrap; }
   .commandbar--mosaic .canvas-menu-panel {
-    max-height: calc(100vh - 76px);
-    max-height: calc(100dvh - 76px);
+    max-height: calc(100vh - 46px);
+    max-height: calc(100dvh - 46px);
   }
-  .commandbar--mosaic .task-pill-strip { flex-basis: 100%; }
-  .commandbar--mosaic .canvas-shortcuts {
+  .commandbar--mosaic .canvas-navigation {
     flex: 1 1 0;
     min-width: 0;
     overflow-x: auto;
   }
-  .commandbar--mosaic .axis-button { min-height: 26px; }
+  .commandbar--mosaic .canvas-navigation .axis-button {
+    min-height: 26px;
+    padding-inline: 6px;
+    font-size: .58rem;
+  }
+  .commandbar--mosaic .canvas-navigation .pill-badge { display: none; }
   .topbar { min-height: 58px; padding: 0 14px; }
   .mobile-brand { display: block; }
   .workspace-tabs { margin-left: auto; }

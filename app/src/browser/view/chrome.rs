@@ -22,6 +22,7 @@ const TICKER_BUDGET: usize = 160;
 pub(super) struct CommandBarRender<'a> {
     pub(super) axis: &'a UseStateHandle<Axis>,
     pub(super) mosaic: &'a UseStateHandle<bool>,
+    pub(super) menu_open: &'a UseStateHandle<bool>,
     pub(super) active_axis: Axis,
     pub(super) surface: &'a SurfaceData,
     pub(super) cursor: &'a str,
@@ -33,125 +34,116 @@ pub(super) struct CommandBarRender<'a> {
 pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
     let surface = render.surface.read();
     let runtime = surface.as_ref();
-    if **render.mosaic {
-        return render_mosaic_command_bar(&render, runtime);
-    }
+    let task_pills = task_pills(runtime);
     html! {
-        <header class="commandbar">
-            <div class="brand">
-                {render_agent_roster(runtime, render.submissions)}
-                <span class="brand-name">{"Spice Canvas"}</span>
-            </div>
-            <nav class="pills" aria-label="Canvas views">
-                {render_pill(
-                    "Agents",
-                    "Converse with seated agents",
-                    **render.mosaic,
-                    watchband::badge(waiting_directives(runtime, render.submissions)),
-                    {
-                        let mosaic = render.mosaic.clone();
-                        Callback::from(move |_| mosaic.set(true))
-                    },
-                )}
-                {for Axis::ALL.iter().copied().map(|candidate| {
-                    let axis = render.axis.clone();
-                    let mosaic = render.mosaic.clone();
-                    render_pill(
-                        &title(candidate.as_str()),
-                        candidate.question(),
-                        !**render.mosaic && candidate == render.active_axis,
-                        watchband::badge(axis_count(candidate, runtime)),
-                        Callback::from(move |_| {
-                            axis.set(candidate);
-                            mosaic.set(false);
-                        }),
-                    )
-                })}
-            </nav>
+        <header class="commandbar commandbar--mosaic">
+            {render_agent_roster(runtime, render.submissions)}
             <span class="bar-meta">{format!("cursor {}", render.cursor)}</span>
+            if **render.menu_open {
+                {render_navigation(&render, runtime)}
+            } else {
+                <nav class="task-pill-strip" aria-label="Open task projects">
+                    if task_pills.is_empty() {
+                        <span class="task-pill-empty">{"No open tasks"}</span>
+                    } else {
+                        {for task_pills.into_iter().map(|pill| {
+                            let axis = render.axis.clone();
+                            let mosaic = render.mosaic.clone();
+                            html! {
+                                <button
+                                    class={classes!(
+                                        "task-pill",
+                                        pill.hidden.then_some("system"),
+                                        (pill.active > 0).then_some("active"),
+                                        (pill.ready == 0 && pill.active == 0).then_some("dormant"),
+                                    )}
+                                    type="button"
+                                    title={pill.title()}
+                                    data-task-stem={pill.stem.clone()}
+                                    data-ready={pill.ready.to_string()}
+                                    data-active={pill.active.to_string()}
+                                    data-unavailable={pill.unavailable.to_string()}
+                                    onclick={Callback::from(move |_| {
+                                        axis.set(Axis::Flow);
+                                        mosaic.set(false);
+                                    })}
+                                >
+                                    <span>{pill.stem.clone()}</span>
+                                    <span class="task-pill-count">{pill.count()}</span>
+                                </button>
+                            }
+                        })}
+                    }
+                </nav>
+            }
             {render_canvas_menu(&render, runtime)}
         </header>
     }
 }
 
-fn render_mosaic_command_bar(
-    render: &CommandBarRender<'_>,
-    runtime: Option<&CanvasRuntime>,
-) -> Html {
-    let task_pills = task_pills(runtime);
+fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRuntime>) -> Html {
+    let destinations = [
+        Axis::Flow,
+        Axis::Magnitude,
+        Axis::Chronology,
+        Axis::Topology,
+    ];
     html! {
-        <header class="commandbar commandbar--mosaic">
-            <nav class="task-pill-strip" aria-label="Open task projects">
-                if task_pills.is_empty() {
-                    <span class="task-pill-empty">{"No open tasks"}</span>
-                } else {
-                    {for task_pills.into_iter().map(|pill| {
-                        let axis = render.axis.clone();
-                        let mosaic = render.mosaic.clone();
-                        html! {
-                            <button
-                                class={classes!(
-                                    "task-pill",
-                                    pill.hidden.then_some("system"),
-                                    (pill.active > 0).then_some("active"),
-                                    (pill.ready == 0 && pill.active == 0).then_some("dormant"),
-                                )}
-                                type="button"
-                                title={pill.title()}
-                                data-task-stem={pill.stem.clone()}
-                                data-ready={pill.ready.to_string()}
-                                data-active={pill.active.to_string()}
-                                data-unavailable={pill.unavailable.to_string()}
-                                onclick={Callback::from(move |_| {
-                                    axis.set(Axis::Flow);
-                                    mosaic.set(false);
-                                })}
-                            >
-                                <span>{pill.stem.clone()}</span>
-                                <span class="task-pill-count">{pill.count()}</span>
-                            </button>
+        <nav class="canvas-navigation" aria-label="Canvas views">
+            {for destinations.map(|candidate| {
+                let axis = render.axis.clone();
+                let mosaic = render.mosaic.clone();
+                let menu_open = render.menu_open.clone();
+                let sender = render.sender.clone();
+                render_pill(
+                    super::axis_label(candidate),
+                    candidate.question(),
+                    !**render.mosaic && candidate == render.active_axis,
+                    watchband::badge(axis_count(candidate, runtime)),
+                    Callback::from(move |_| {
+                        if candidate == Axis::Magnitude {
+                            send_action(&sender, ClientAction::Effort);
                         }
-                    })}
-                }
-            </nav>
-            <span class="bar-meta">{format!("cursor {}", render.cursor)}</span>
-            <nav class="canvas-shortcuts" aria-label="Canvas context views">
-                {render_pill(
-                    "Agents",
-                    "Converse with seated agents",
-                    **render.mosaic,
-                    watchband::badge(waiting_directives(runtime, render.submissions)),
-                    {
-                        let mosaic = render.mosaic.clone();
-                        Callback::from(move |_| mosaic.set(true))
-                    },
-                )}
-                {for [Axis::Topology, Axis::Chronology].map(|candidate| {
-                    let axis = render.axis.clone();
+                        axis.set(candidate);
+                        mosaic.set(false);
+                        menu_open.set(false);
+                    }),
+                )
+            })}
+            {render_pill(
+                "Agents",
+                "Converse with seated agents",
+                **render.mosaic,
+                watchband::badge(waiting_directives(runtime, render.submissions)),
+                {
                     let mosaic = render.mosaic.clone();
-                    render_pill(
-                        &title(candidate.as_str()),
-                        candidate.question(),
-                        !**render.mosaic && candidate == render.active_axis,
-                        watchband::badge(axis_count(candidate, runtime)),
-                        Callback::from(move |_| {
-                            axis.set(candidate);
-                            mosaic.set(false);
-                        }),
-                    )
-                })}
-            </nav>
-            {render_canvas_menu(render, runtime)}
-        </header>
+                    let menu_open = render.menu_open.clone();
+                    Callback::from(move |_| {
+                        mosaic.set(true);
+                        menu_open.set(false);
+                    })
+                },
+            )}
+        </nav>
     }
 }
 
 fn render_canvas_menu(render: &CommandBarRender<'_>, runtime: Option<&CanvasRuntime>) -> Html {
+    let menu_open = render.menu_open.clone();
+    let toggle = Callback::from(move |event: MouseEvent| {
+        event.prevent_default();
+        menu_open.set(!*menu_open);
+    });
     html! {
-        <details class="canvas-menu">
-            <summary aria-label="Open Spice Canvas menu">
-                <span aria-hidden="true">{"🌶️"}</span>
-                <span>{"Spice"}</span>
+        <details class="canvas-menu" open={**render.menu_open}>
+            <summary
+                aria-label="Open Spice Canvas menu"
+                aria-haspopup="menu"
+                aria-expanded={(**render.menu_open).to_string()}
+                title="Open Spice Canvas menu"
+                onclick={toggle}
+            >
+                <span class="canvas-menu-pepper" aria-hidden="true">{"🌶️"}</span>
             </summary>
             <div class="canvas-menu-panel">
                 {super::lineage_menu::render(
@@ -162,26 +154,6 @@ fn render_canvas_menu(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunt
                     render.sender,
                     render.lineage_controls,
                 )}
-                <nav class="canvas-menu-views" aria-label="More Canvas views">
-                    {for [Axis::Magnitude, Axis::Flow].map(|candidate| {
-                        let axis = render.axis.clone();
-                        let mosaic = render.mosaic.clone();
-                        let sender = render.sender.clone();
-                        render_pill(
-                            &title(candidate.as_str()),
-                            candidate.question(),
-                            !**render.mosaic && candidate == render.active_axis,
-                            watchband::badge(axis_count(candidate, runtime)),
-                            Callback::from(move |_| {
-                                if candidate == Axis::Magnitude {
-                                    send_action(&sender, ClientAction::Effort);
-                                }
-                                axis.set(candidate);
-                                mosaic.set(false);
-                            }),
-                        )
-                    })}
-                </nav>
             </div>
         </details>
     }
