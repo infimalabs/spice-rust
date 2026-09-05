@@ -6,7 +6,7 @@ use lane::occupant::Seats;
 use spice::placeholder::PlaceholderReason;
 use spice::repository::Repository;
 use wire::intent::{CommandAnswer, Intent};
-use wire::{Actor, CanonicalUuid, CommandKind, Outcome, Refusal};
+use wire::{Actor, CanonicalUuid, CommandKind, Outcome, Refusal, Reply};
 
 use super::{
     RuntimePaths, SurfaceConfig, dispatch_release_publish, dispatch_up_change, effort_surface,
@@ -71,7 +71,34 @@ impl<'a> Surface<'a> {
             .map_err(|error| super::store_fault("resident::read-materialization-failed", &error))
     }
 
-    pub(super) fn dispatch(
+    pub(super) fn replay(
+        &self,
+        seats: &Seats,
+        command: &wire::AdmittedCommand,
+    ) -> Option<Outcome<CommandAnswer>> {
+        let outcome = replay_command(self.bus, command)?;
+        let Outcome::Reply(Reply {
+            position,
+            body: CommandAnswer::Lane(_),
+        }) = outcome
+        else {
+            return Some(outcome);
+        };
+        let current = lane_surface::read(self.bus, self.paths, self.epoch, seats, command);
+        let Outcome::Reply(Reply {
+            body: CommandAnswer::Lane(answer),
+            ..
+        }) = current
+        else {
+            return Some(current);
+        };
+        Some(Outcome::Reply(Reply {
+            position,
+            body: CommandAnswer::Lane(answer),
+        }))
+    }
+
+    pub(super) fn dispatch_fresh(
         &self,
         seats: &mut Seats,
         command: &wire::AdmittedCommand,
@@ -291,5 +318,28 @@ impl<'a> Surface<'a> {
             released = true;
         }
         Ok(released)
+    }
+}
+
+pub(in crate::resident) fn replay_command(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+) -> Option<Outcome<CommandAnswer>> {
+    let replayed = command.clone();
+    match bus.read(move |read| read.command_replay(&replayed)) {
+        Ok(Some(journal::CommandReplay::Exact(outcome))) => Some(outcome),
+        Ok(Some(journal::CommandReplay::Conflict)) => Some(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "command::identity-reused",
+                Some("id".to_owned()),
+                Some("an unused identity or the exact original request".to_owned()),
+                Some(command.id().to_string()),
+            ),
+        ))),
+        Ok(None) => None,
+        Err(error) => Some(super::typed_store_fault(
+            "command::receipt-unreadable",
+            &error.to_string(),
+        )),
     }
 }

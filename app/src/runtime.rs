@@ -514,6 +514,7 @@ pub struct CanvasRuntime {
     principal: Principal,
     board: ScopedValue<BoardView>,
     lanes: ScopedValue<LaneView>,
+    lane_position: Option<Seq>,
     inbox: ScopedValue<InboxAnswer>,
     consent: ScopedValue<ConsentQueueAnswer>,
     policy: ScopedValue<ConsentPolicyAnswer>,
@@ -550,6 +551,7 @@ impl CanvasRuntime {
             principal: Principal::admitted(accepted),
             board: ScopedValue::new(accepted),
             lanes: ScopedValue::new(accepted),
+            lane_position: None,
             inbox: ScopedValue::new(accepted),
             consent: ScopedValue::new(accepted),
             policy: ScopedValue::new(accepted),
@@ -793,7 +795,27 @@ impl CanvasRuntime {
         });
     }
 
-    pub fn apply_lanes(&mut self, admitted: &Admitted<Response<LaneAnswer>>) {
+    /// Apply a lane table only when its authority position does not move backwards.
+    pub fn apply_lanes(&mut self, admitted: &Admitted<Response<LaneAnswer>>) -> bool {
+        if admitted.scope() != self.accepted.scope() {
+            return false;
+        }
+        let position = match &admitted.get().outcome {
+            Outcome::Reply(reply) => match reply.position {
+                wire::ReplyPosition::Committed(range) => Some(range.last),
+                wire::ReplyPosition::Snapshot(cursor) => Some(cursor),
+                wire::ReplyPosition::Direct {} => return false,
+            },
+            Outcome::Refusal(_) | Outcome::Fault(_) => None,
+        };
+        if position
+            .is_some_and(|position| self.lane_position.is_some_and(|current| position < current))
+        {
+            return false;
+        }
+        if let Some(position) = position {
+            self.lane_position = Some(position);
+        }
         self.apply_response(admitted, |runtime, answer| {
             runtime
                 .lanes
@@ -803,6 +825,7 @@ impl CanvasRuntime {
                 format!("{} lanes", answer.lanes.len()),
             )
         });
+        matches!(&admitted.get().outcome, Outcome::Reply(_))
     }
 
     pub fn apply_inbox(&mut self, admitted: &Admitted<Response<InboxAnswer>>) {

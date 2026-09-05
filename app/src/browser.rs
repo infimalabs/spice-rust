@@ -23,6 +23,7 @@ use wire::{
 };
 use yew::prelude::*;
 
+use crate::command_demands::DemandQueue;
 use crate::compose::{self, Notice};
 use crate::composer_submissions::{Submission, SubmissionQueue, SubmissionStatus};
 use crate::runtime::{CanvasSurface, topology_mutation_requires_refresh};
@@ -338,6 +339,7 @@ enum ClientAction {
     },
     Seat {
         topology_revision: u64,
+        lane: CanonicalUuid,
         name: Option<String>,
         worktree: String,
         life: String,
@@ -464,6 +466,16 @@ impl PendingKind {
             | Self::Note(_)
             | Self::ConsentDecision => None,
         }
+    }
+
+    const fn is_demand(&self) -> bool {
+        matches!(
+            self,
+            Self::LaneSeat
+                | Self::LaneArrange
+                | Self::LineageConfigure { .. }
+                | Self::LineageArrange
+        )
     }
 }
 
@@ -823,11 +835,15 @@ fn seat_submit(
         };
         match compose::seat(&name, &worktree, &vendor, &life) {
             Ok(seat) => {
+                let Ok(lane) = random_uuid() else {
+                    return;
+                };
                 notice.set(Notice::none());
                 send_action(
                     &sender,
                     ClientAction::Seat {
                         topology_revision,
+                        lane,
                         name: seat.name,
                         worktree: seat.worktree,
                         life: seat.life,
@@ -894,16 +910,25 @@ fn apply_lineage_configuration(
     lineage: CanonicalUuid,
     life: Option<LineageLife>,
     bytes: &[u8],
-) -> Result<bool, String> {
+) -> Result<(bool, bool), String> {
     let admitted: crate::Admitted<Response<wire::intent::LaneAnswer>> =
         admit_response(session, bytes)?;
     let refresh = topology_mutation_requires_refresh(&admitted.get().outcome);
+    let applied = runtime.apply_lanes(&admitted);
     match &admitted.get().outcome {
-        wire::Outcome::Reply(reply) => {
+        wire::Outcome::Reply(reply) if applied => {
             lineage_controls.dispatch(LineageControlAction::SyncLanes {
                 answer: reply.body.clone(),
                 settle: life.map(|life| (lineage, life.into())),
             });
+        }
+        wire::Outcome::Reply(_) => {
+            if let Some(life) = life {
+                lineage_controls.dispatch(LineageControlAction::SettleStaleLife {
+                    lineage,
+                    life: life.into(),
+                });
+            }
         }
         wire::Outcome::Refusal(refusal) => {
             lineage_controls.dispatch(LineageControlAction::SettleIssue {
@@ -920,8 +945,7 @@ fn apply_lineage_configuration(
             });
         }
     }
-    runtime.apply_lanes(&admitted);
-    Ok(refresh)
+    Ok((refresh, applied))
 }
 
 fn admit_response<T: for<'de> Deserialize<'de>>(
