@@ -1,6 +1,5 @@
 use super::super::lane_surface::AdvisoryRtkFixture;
 use super::*;
-use std::process::Command;
 
 #[test]
 fn resident_startup_leaves_a_vacant_drain_team_idle_without_work() {
@@ -320,41 +319,15 @@ fn assert_automatic_claim(bus: &Bus, task: &wire::TaskStamp, lane: CanonicalUuid
 
 fn initialize_git(root: &std::path::Path) {
     std::fs::remove_dir_all(root.join(".git")).expect("placeholder Git directory removes");
-    git(root, &["init", "-b", "main"]);
+    crate::test_repository::initialize(root);
     let repository = Repository::discover(root).expect("initialized fixture repository resolves");
     let skill = spice::install::installed_skill(&repository);
     std::fs::create_dir_all(skill.parent().expect("installed skill parent"))
         .expect("installed skill parent creates");
     std::fs::write(&skill, include_bytes!("../../../agent/SKILL.md"))
         .expect("current installed skill writes");
-    git(root, &["add", "."]);
-    git(
-        root,
-        &[
-            "-c",
-            "user.name=Spice Test",
-            "-c",
-            "user.email=spice@example.invalid",
-            "commit",
-            "-m",
-            "fixture opening",
-        ],
-    );
-}
-
-fn git(root: &std::path::Path, arguments: &[&str]) {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(arguments)
-        .output()
-        .expect("fixture Git launches");
-    assert!(
-        output.status.success(),
-        "git {arguments:?} failed: stdout={} stderr={}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    );
+    crate::test_repository::stage_all(root);
+    crate::test_repository::commit(root, "fixture opening");
 }
 
 fn seed_vacant_team(bus: &Bus, fixture: &AdvisoryRtkFixture, policy: wire::intent::LineageLife) {
