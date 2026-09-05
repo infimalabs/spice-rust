@@ -262,7 +262,7 @@ async function assertPepperDisclosure(page) {
 
     await trigger.click();
     await waitForDisclosure(page, true, "the pepper disclosure exposes Canvas destinations");
-    await page.locator(".brand-dots").click({ position: { x: 2, y: 2 } });
+    await page.locator(".mosaic-workspace").click({ position: { x: 2, y: 2 } });
     await waitForDisclosure(page, false, "an outside pointer dismisses the pepper disclosure");
     assert.equal(await taskStrip.evaluate((node) => node.scrollLeft), 0, "the remounted task strip starts at its first pill");
     const firstPill = await taskStrip.locator(".task-pill").first().boundingBox();

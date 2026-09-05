@@ -106,42 +106,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   background: var(--panel);
 }
 
-.brand-dots {
-  align-items: flex-end;
-  display: flex;
-  flex: 0 0 auto;
-  gap: 5px;
-  justify-content: center;
-  min-width: 18px;
-}
-
-.brand-dot-column {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.brand-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 3px;
-  background: var(--muted);
-  opacity: .35;
-}
-
-.brand-dot.running,
-.brand-dot.running-stale {
-  background: var(--accent);
-  opacity: 1;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
-}
-
-.brand-dot.queued {
-  background: var(--warning);
-  opacity: 1;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
-}
-
 .axis-button {
   display: inline-flex;
   flex: 0 0 auto;

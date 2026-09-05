@@ -12,19 +12,21 @@ pub(super) fn render(
     active_axis: Axis,
     axis_count: usize,
     runtime: Option<&CanvasRuntime>,
+    cursor: &str,
     sender: &SenderHandle,
     lineage_controls: &UseReducerHandle<LineageControls>,
 ) -> Html {
     if !mosaic {
-        return render_axis(active_axis, axis_count, runtime, sender);
+        return render_axis(active_axis, axis_count, runtime, cursor, sender);
     }
-    render_agents(runtime, sender, lineage_controls)
+    render_agents(runtime, cursor, sender, lineage_controls)
 }
 
 fn render_axis(
     axis: Axis,
     count: usize,
     runtime: Option<&CanvasRuntime>,
+    cursor: &str,
     sender: &SenderHandle,
 ) -> Html {
     let (noun, context) = match axis {
@@ -47,7 +49,7 @@ fn render_axis(
     };
     html! {
         <div class="canvas-menu-page" data-menu-page={axis.as_str()}>
-            {render_global_settings(runtime, sender)}
+            {render_global_settings(runtime, cursor, sender)}
             <section class="canvas-menu-section canvas-menu-context">
                 <h2>{super::axis_label(axis)}</h2>
                 <div class="canvas-menu-setting">
@@ -62,12 +64,14 @@ fn render_axis(
 
 fn render_agents(
     runtime: Option<&CanvasRuntime>,
+    cursor: &str,
     sender: &SenderHandle,
     lineage_controls: &UseReducerHandle<LineageControls>,
 ) -> Html {
     let Some(runtime) = runtime else {
         return html! {
             <div class="canvas-menu-page" data-menu-page="agents">
+                {render_global_settings(None, cursor, sender)}
                 <p>{"Waiting for resident teams…"}</p>
             </div>
         };
@@ -75,6 +79,7 @@ fn render_agents(
     let Some(lanes) = runtime.lanes() else {
         return html! {
             <div class="canvas-menu-page" data-menu-page="agents">
+                {render_global_settings(Some(runtime), cursor, sender)}
                 <p>{"Waiting for lane state…"}</p>
             </div>
         };
@@ -110,7 +115,7 @@ fn render_agents(
     };
     html! {
         <div class="canvas-menu-page" data-menu-page="agents">
-            {render_global_settings(Some(runtime), sender)}
+            {render_global_settings(Some(runtime), cursor, sender)}
             <section class="canvas-menu-section canvas-open-teams">
                 <h2>{"Open Team"}</h2>
                 if grouped_lineages.is_empty() {
@@ -143,7 +148,11 @@ fn render_agents(
     }
 }
 
-fn render_global_settings(runtime: Option<&CanvasRuntime>, sender: &SenderHandle) -> Html {
+fn render_global_settings(
+    runtime: Option<&CanvasRuntime>,
+    cursor: &str,
+    sender: &SenderHandle,
+) -> Html {
     let settings = runtime.and_then(CanvasRuntime::settings);
     let fast_mode = settings.is_some_and(|settings| settings.fast_mode);
     let enabled = settings.is_some()
@@ -157,30 +166,35 @@ fn render_global_settings(runtime: Option<&CanvasRuntime>, sender: &SenderHandle
     html! {
         <section class="canvas-menu-section canvas-menu-global">
             <h2>{"Global"}</h2>
-            <button
-                class={classes!(
-                    "canvas-menu-setting",
-                    "canvas-menu-setting--action",
-                    fast_mode.then_some("canvas-menu-setting--checked"),
-                )}
-                type="button"
-                role="menuitemcheckbox"
-                aria-checked={fast_mode.to_string()}
-                disabled={!enabled}
-                title={if fast_mode {
-                    "Fast mode is on for supported agents"
-                } else {
-                    "Fast mode is off for supported agents"
-                }}
-                {onclick}
-            >
-                <strong>{"Fast mode"}</strong>
-                <span>{if settings.is_some() {
-                    if fast_mode { "on" } else { "off" }
-                } else {
-                    "loading"
-                }}</span>
-            </button>
+            <div class="canvas-menu-global-row">
+                <span class="bar-meta canvas-menu-cursor" aria-label="Global cursor">
+                    {format!("cursor {cursor}")}
+                </span>
+                <button
+                    class={classes!(
+                        "canvas-menu-setting",
+                        "canvas-menu-setting--action",
+                        fast_mode.then_some("canvas-menu-setting--checked"),
+                    )}
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={fast_mode.to_string()}
+                    disabled={!enabled}
+                    title={if fast_mode {
+                        "Fast mode is on for supported agents"
+                    } else {
+                        "Fast mode is off for supported agents"
+                    }}
+                    {onclick}
+                >
+                    <strong>{"Fast mode"}</strong>
+                    <span>{if settings.is_some() {
+                        if fast_mode { "on" } else { "off" }
+                    } else {
+                        "loading"
+                    }}</span>
+                </button>
+            </div>
         </section>
     }
 }

@@ -37,8 +37,6 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
     let task_pills = task_pills(runtime);
     html! {
         <header class="commandbar commandbar--mosaic">
-            {render_agent_roster(runtime, render.submissions)}
-            <span class="bar-meta">{format!("cursor {}", render.cursor)}</span>
             if **render.menu_open {
                 {render_navigation(&render, runtime)}
             } else {
@@ -160,80 +158,12 @@ fn render_canvas_menu(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunt
                     render.active_axis,
                     axis_count(render.active_axis, runtime),
                     runtime,
+                    render.cursor,
                     render.sender,
                     render.lineage_controls,
                 )}
             </div>
         </details>
-    }
-}
-
-fn render_agent_roster(runtime: Option<&CanvasRuntime>, submissions: &SubmissionStatus) -> Html {
-    let members = runtime
-        .and_then(|runtime| {
-            let lanes = runtime.lanes()?;
-            let waiting = runtime
-                .inbox()
-                .map(|inbox| inbox.lanes.as_slice())
-                .unwrap_or(&[]);
-            Some(
-                lanes
-                    .lanes
-                    .iter()
-                    .flat_map(|lineage| lineage.members.iter())
-                    .map(|member| {
-                        let backend = waiting
-                            .iter()
-                            .find(|row| row.lane == member.lane)
-                            .map(|row| row.pending.as_slice())
-                            .unwrap_or(&[]);
-                        let pending = submissions.pending(member.lane, backend);
-                        (member, pending)
-                    })
-                    .collect::<Vec<_>>(),
-            )
-        })
-        .unwrap_or_default();
-    let grid = crate::pip_layout::PipGrid::new(members.len());
-    html! {
-        <span
-            class="brand-dots"
-            role="group"
-            aria-label={format!("{} admitted agents", members.len())}
-        >
-            {for grid.columns_from_left().map(|column| html! {
-                <span key={column.lower.to_string()} class="brand-dot-column">
-                    {for [column.upper, Some(column.lower)].into_iter().flatten().map(|index| {
-                        let member_index = watchband::right_edge_ordinal(members.len(), index);
-                        let (member, pending) = members[member_index];
-                        let status = member.status(pending);
-                        let label = member.name.as_deref().unwrap_or_else(|| {
-                            member
-                                .worktree
-                                .rsplit('/')
-                                .find(|segment| !segment.is_empty())
-                                .unwrap_or(&member.worktree)
-                        });
-                        let position = grid
-                            .position(index)
-                            .expect("member index belongs to the pip grid");
-                        html! {
-                            <span
-                                key={member.lane.to_string()}
-                                class={classes!("brand-dot", status.key())}
-                                role="img"
-                                aria-label={format!("{label}: {}", status.label())}
-                                title={format!("{label}: {}", status.label())}
-                                data-agent-lane={member.lane.to_string()}
-                                data-agent-status={status.key()}
-                                data-pip-column={position.column.to_string()}
-                                data-pip-row={position.row.to_string()}
-                            ></span>
-                        }
-                    })}
-                </span>
-            })}
-        </span>
     }
 }
 
