@@ -254,6 +254,7 @@ fn policy_artifacts_produce_the_exact_selected_executable() {
             name: "fixture".to_owned(),
             root: fixture.root.clone(),
             dependencies: Vec::new(),
+            compile_time_authority: None,
             declared_targets: Vec::new(),
             removed_targets: Vec::new(),
             targets: vec![fixture.test("selected-test", executable.clone()).target],

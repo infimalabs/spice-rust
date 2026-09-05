@@ -46,6 +46,8 @@ pub(super) fn package_inventory(
             selected_root.display(),
         )));
     }
+    let compile_time_authority =
+        compile_time::authority_declaration(&package.name, &package.metadata)?;
     let mut dependencies = package
         .dependencies
         .into_iter()
@@ -129,6 +131,7 @@ pub(super) fn package_inventory(
         name: package.name,
         root: package_root.to_path_buf(),
         dependencies,
+        compile_time_authority,
         declared_targets,
         removed_targets: Vec::new(),
         targets,

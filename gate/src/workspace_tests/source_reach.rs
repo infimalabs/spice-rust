@@ -1,6 +1,8 @@
 use super::*;
 use proc_macro2::{TokenStream, TokenTree};
+use syn::parse::Parser;
 use syn::parse::{Parse, ParseStream};
+use syn::punctuated::Punctuated;
 use syn::visit::Visit;
 
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
@@ -61,15 +63,66 @@ struct FileMacroReference {
 }
 
 struct FileMacroArgument {
-    path: syn::LitStr,
+    path: Option<syn::LitStr>,
 }
 
 impl Parse for FileMacroArgument {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        let path = input.parse()?;
+        let expression = input.parse::<Expr>()?;
         let _trailing_comma = input.parse::<Option<syn::Token![,]>>()?;
-        Ok(Self { path })
+        if !input.is_empty() {
+            return Err(input.error("expected one file-macro path expression"));
+        }
+        match expression {
+            Expr::Lit(expression) => match expression.lit {
+                Lit::Str(path) => Ok(Self { path: Some(path) }),
+                _ => Err(syn::Error::new_spanned(
+                    expression,
+                    "expected a string-literal path",
+                )),
+            },
+            Expr::Macro(expression) if bounded_out_dir_concat(&expression.mac)? => {
+                Ok(Self { path: None })
+            }
+            expression => Err(syn::Error::new_spanned(
+                expression,
+                "expected a string literal or concat!(env!(\"OUT_DIR\"), \"/literal\")",
+            )),
+        }
     }
+}
+
+fn bounded_out_dir_concat(invocation: &syn::Macro) -> syn::Result<bool> {
+    if !invocation.path.is_ident("concat") {
+        return Ok(false);
+    }
+    let parser = Punctuated::<Expr, syn::Token![,]>::parse_terminated;
+    let arguments = parser.parse2(invocation.tokens.clone())?;
+    let [Expr::Macro(environment), Expr::Lit(suffix)] =
+        arguments.iter().collect::<Vec<_>>().as_slice()
+    else {
+        return Ok(false);
+    };
+    if !environment.mac.path.is_ident("env") {
+        return Ok(false);
+    }
+    let variable = syn::parse2::<syn::LitStr>(environment.mac.tokens.clone())?;
+    let Lit::Str(suffix) = &suffix.lit else {
+        return Ok(false);
+    };
+    if variable.value() != "OUT_DIR" {
+        return Ok(false);
+    }
+    let value = suffix.value();
+    let Some(relative) = value.strip_prefix('/') else {
+        return Ok(false);
+    };
+    let path = Path::new(relative);
+    Ok(!relative.is_empty()
+        && !path.is_absolute()
+        && path
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_))))
 }
 
 struct FileMacroVisitor<'a> {
@@ -445,10 +498,13 @@ impl FileMacroVisitor<'_> {
             return;
         }
         match syn::parse2::<FileMacroArgument>(tokens) {
-            Ok(argument) => self.references.push(FileMacroReference {
-                kind,
-                path: argument.path.value(),
-            }),
+            Ok(FileMacroArgument { path: Some(path) }) => {
+                self.references.push(FileMacroReference {
+                    kind,
+                    path: path.value(),
+                });
+            }
+            Ok(FileMacroArgument { path: None }) => {}
             Err(error) => {
                 self.error = Some(WorkspaceTestError::new(format!(
                     "Rust source {} has a non-literal {} path: {error}",
@@ -524,10 +580,12 @@ fn file_macro_references_in_tokens(
                 kind.name(),
             ))
         })?;
-        references.push(FileMacroReference {
-            kind,
-            path: argument.path.value(),
-        });
+        if let Some(path) = argument.path {
+            references.push(FileMacroReference {
+                kind,
+                path: path.value(),
+            });
+        }
         index += 3;
     }
     Ok(references)

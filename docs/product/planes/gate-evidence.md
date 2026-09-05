@@ -147,6 +147,18 @@ merge-parent, rename, or committed-baseline identities in the action key.
 `live-only` must run during pre-commit because its decision reads mutable state
 that a prior proof must not stand in for.
 
+Workspace packages that execute a build script or proc macro opt into reusable
+Cargo proof with `[package.metadata.spice.cargo-proof]`, `version = 1`, and
+`complete = true`. That flag is the package owner's closed-world assertion that
+the listed authority covers every ambient read made by its executable compile-time
+code; Cargo rerun output alone is not such an assertion. Optional `files` are
+package-relative selected-tree paths and optional `environment` entries are exact
+ambient names. Literal
+`cargo::rerun-if-changed` and `cargo::rerun-if-env-changed` output extends those
+sets. The planner refuses the shard as non-cacheable when the declaration is
+absent or incomplete, a path escapes the selected tree, an observable read is
+undeclared, or executable code names process, network, or dynamic authority.
+
 | Action | Class | Required authority |
 | --- | --- | --- |
 | `merge-integrity` | ancestry-sensitive | candidate tree, `HEAD`, `MERGE_HEAD`, merge-tree tool identity |
@@ -160,7 +172,7 @@ that a prior proof must not stand in for.
 | `formatters` | cacheable | reached source, formatter declarations and tool identities |
 | `local-paths` | cacheable | reached paths and local-path policy |
 | `taste` | cacheable | reached text, taste policy and parser declaration |
-| `rust-typecheck` | cacheable | Cargo closure, manifest and lockfile, Rust toolchain, exact command and environment |
+| `rust-typecheck` | cacheable | Cargo closure, manifest and lockfile, closed build-script/proc-macro file, environment, and generated-output derivations, Rust toolchain, exact command and environment |
 | `canvas-web-typecheck` | cacheable | Canvas TypeScript closure, package lock, Node tool identity, exact command and environment |
 | `javascript-unused` | cacheable | JavaScript dependency closure, parser and policy |
 | `csharp-unused-candidates` | cacheable | C# dependency closure, parser and policy |

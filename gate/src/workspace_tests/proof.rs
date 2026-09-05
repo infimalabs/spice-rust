@@ -23,6 +23,19 @@ pub struct CargoGateShard {
     targets: Vec<String>,
     argv: Vec<String>,
     input_paths: Vec<String>,
+    compile_time_authorities: Vec<CargoCompileTimeAuthority>,
+}
+
+/// Closed executable compile-time derivation reached by one Cargo shard.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CargoCompileTimeAuthority {
+    pub(super) package: String,
+    pub(super) target: String,
+    pub(super) kind: String,
+    pub(super) input_paths: Vec<String>,
+    pub(super) environment: Vec<String>,
+    pub(super) generated_outputs: Vec<String>,
 }
 
 impl CargoGateShard {
@@ -54,6 +67,11 @@ impl CargoGateShard {
     #[must_use]
     pub fn input_paths(&self) -> &[String] {
         &self.input_paths
+    }
+
+    #[cfg(test)]
+    fn compile_time_authorities(&self) -> &[CargoCompileTimeAuthority] {
+        &self.compile_time_authorities
     }
 }
 
@@ -155,21 +173,23 @@ pub fn plan_cargo_gate_shards_at(
             }
             argv.push("--message-format=json-render-diagnostics".to_owned());
             let targets = vec![target.identity.clone()];
+            let authority = package_input_authority(
+                &inventory,
+                root,
+                &check.name,
+                selected_paths,
+                typecheck_sources
+                    .get(&(check.name.clone(), target.identity.clone()))
+                    .map_or(&[], Vec::as_slice),
+            )?;
             typechecks.push(CargoGateShard {
                 kind: CargoGateShardKind::Typecheck,
                 action_id: format!("cargo:typecheck:{}::{}", check.name, target.identity),
                 package: check.name.clone(),
                 targets,
                 argv,
-                input_paths: package_input_paths(
-                    &inventory,
-                    root,
-                    &check.name,
-                    selected_paths,
-                    typecheck_sources
-                        .get(&(check.name.clone(), target.identity.clone()))
-                        .map_or(&[], Vec::as_slice),
-                )?,
+                input_paths: authority.input_paths,
+                compile_time_authorities: authority.compile_time,
             });
         }
     }
@@ -276,29 +296,31 @@ fn test_shard(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
+    let authority =
+        package_input_authority(inventory, root, &package.name, selected_paths, &provenance)?;
     Ok(CargoGateShard {
         kind: CargoGateShardKind::Test,
         action_id: format!("cargo:test:{}::{identity}", package.name),
         package: package.name.clone(),
         targets,
         argv,
-        input_paths: package_input_paths(
-            inventory,
-            root,
-            &package.name,
-            selected_paths,
-            &provenance,
-        )?,
+        input_paths: authority.input_paths,
+        compile_time_authorities: authority.compile_time,
     })
 }
 
-fn package_input_paths(
+struct CargoPackageInputAuthority {
+    input_paths: Vec<String>,
+    compile_time: Vec<CargoCompileTimeAuthority>,
+}
+
+fn package_input_authority(
     inventory: &Inventory,
     root: &Path,
     package_name: &str,
     selected_paths: &[String],
     changed_sources: &[String],
-) -> Result<Vec<String>, WorkspaceTestError> {
+) -> Result<CargoPackageInputAuthority, WorkspaceTestError> {
     let canonical_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let mut roots = BTreeSet::new();
     let mut pending = VecDeque::new();
@@ -383,7 +405,17 @@ fn package_input_paths(
             }
         }
     }
-    Ok(paths.into_iter().collect())
+    let compile_time = compile_time_authorities(
+        inventory,
+        &canonical_root,
+        &roots,
+        selected_paths,
+        &mut paths,
+    )?;
+    Ok(CargoPackageInputAuthority {
+        input_paths: paths.into_iter().collect(),
+        compile_time,
+    })
 }
 
 fn workspace_cargo_authority(path: &Path) -> bool {
@@ -393,7 +425,7 @@ fn workspace_cargo_authority(path: &Path) -> bool {
     ) || path.starts_with(".cargo")
 }
 
-fn path_text(path: &Path) -> Result<String, WorkspaceTestError> {
+pub(super) fn path_text(path: &Path) -> Result<String, WorkspaceTestError> {
     path.to_str()
         .map(|path| path.replace(std::path::MAIN_SEPARATOR, "/"))
         .ok_or_else(|| {
@@ -500,6 +532,23 @@ mod tests {
                     .contains(&"proof-authority.txt".to_owned()),
                 shard.package() == "fixture",
             );
+            assert_eq!(
+                shard.compile_time_authorities().len(),
+                usize::from(shard.package() == "fixture") * 2,
+            );
+            if let Some(authority) = shard.compile_time_authorities().first() {
+                assert_eq!(authority.package, "fixture");
+                assert_eq!(authority.kind, "custom-build");
+                assert_eq!(authority.input_paths, ["proof-authority.txt"]);
+                assert_eq!(authority.environment, ["FIXTURE_BUILD_INPUT"]);
+                assert_eq!(authority.generated_outputs, ["generated.rs"]);
+                let proc_macro = &shard.compile_time_authorities()[1];
+                assert_eq!(proc_macro.package, "fixture-macro");
+                assert_eq!(proc_macro.kind, "proc-macro");
+                assert!(proc_macro.input_paths.is_empty());
+                assert!(proc_macro.environment.is_empty());
+                assert!(proc_macro.generated_outputs.is_empty());
+            }
             let own_source = format!("{}/src/lib.rs", shard.package());
             let peer = if shard.package() == "fixture" {
                 "peer/src/lib.rs"
@@ -578,6 +627,180 @@ mod tests {
         );
     }
 
+    #[test]
+    fn executable_compile_time_code_requires_a_closed_declaration() {
+        let fixture = Fixture::new("missing-build-authority");
+        fs::write(
+            fixture.root.join("fixture/Cargo.toml"),
+            "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .expect("remove compile-time authority declaration");
+
+        let error = fixture
+            .try_plan(true)
+            .expect_err("an undeclared build-script boundary cannot be reused");
+        assert!(
+            error.to_string().contains("Cargo shard is non-cacheable")
+                && error
+                    .to_string()
+                    .contains("no complete package.metadata.spice.cargo-proof"),
+            "unexpected refusal: {error}",
+        );
+    }
+
+    #[test]
+    fn out_dir_input_without_a_build_script_refuses_before_planning() {
+        let fixture = Fixture::new("missing-out-dir-producer");
+        fs::write(
+            fixture.root.join("fixture/Cargo.toml"),
+            concat!(
+                "[package]\n",
+                "name = \"fixture\"\n",
+                "version = \"0.1.0\"\n",
+                "edition = \"2024\"\n\n",
+                "[dependencies]\n",
+                "fixture-macro = { path = \"../fixture-macro\" }\n",
+            ),
+        )
+        .expect("remove OUT_DIR producer");
+        fs::remove_file(fixture.root.join("fixture/build.rs"))
+            .expect("remove auto-discovered build script");
+
+        let error = fixture
+            .try_plan(true)
+            .expect_err("an OUT_DIR input without a producer cannot be reused");
+        assert!(
+            error
+                .to_string()
+                .contains("consumes OUT_DIR generated inputs without a custom-build producer"),
+            "unexpected refusal: {error}",
+        );
+    }
+
+    #[test]
+    fn dynamic_rerun_directive_refuses_before_a_shard_can_be_planned() {
+        let fixture = Fixture::new("dynamic-rerun");
+        fs::write(
+            fixture.root.join("fixture/build.rs"),
+            "fn main() { let path = \"../proof-authority.txt\"; println!(\"cargo::rerun-if-changed={path}\"); }\n",
+        )
+        .expect("write dynamic build-script directive");
+
+        let error = fixture
+            .try_plan(true)
+            .expect_err("dynamic rerun authority cannot be reused");
+        assert!(
+            error
+                .to_string()
+                .contains("dynamic or multiline Cargo rerun directive"),
+            "unexpected refusal: {error}",
+        );
+    }
+
+    #[test]
+    fn malformed_rerun_directive_refuses_before_a_shard_can_be_planned() {
+        let fixture = Fixture::new("malformed-rerun");
+        fs::write(
+            fixture.root.join("fixture/build.rs"),
+            "fn main() { println!(\"cargo::rerun-if-changed\"); }\n",
+        )
+        .expect("write malformed build-script directive");
+
+        let error = fixture
+            .try_plan(true)
+            .expect_err("malformed rerun authority cannot be reused");
+        assert!(
+            error
+                .to_string()
+                .contains("malformed Cargo rerun directive"),
+            "unexpected refusal: {error}",
+        );
+    }
+
+    #[test]
+    fn undeclared_ambient_environment_refuses_before_planning() {
+        let fixture = Fixture::new("ambient-environment");
+        fs::write(
+            fixture.root.join("fixture/build.rs"),
+            "fn main() { let _ = std::env::var(\"AMBIENT_BUILD_INPUT\"); }\n",
+        )
+        .expect("write ambient build-script read");
+
+        let error = fixture
+            .try_plan(true)
+            .expect_err("undeclared environment cannot be reused");
+        assert!(
+            error
+                .to_string()
+                .contains("reads undeclared ambient environment \"AMBIENT_BUILD_INPUT\""),
+            "unexpected refusal: {error}",
+        );
+    }
+
+    #[test]
+    fn undeclared_filesystem_read_refuses_before_planning() {
+        let fixture = Fixture::new("ambient-file");
+        fs::write(
+            fixture.root.join("fixture/build.rs"),
+            "fn main() { let _ = std::fs::read_to_string(\"../notes.txt\"); }\n",
+        )
+        .expect("write undeclared build-script file read");
+
+        let error = fixture
+            .try_plan(true)
+            .expect_err("undeclared filesystem authority cannot be reused");
+        assert!(
+            error
+                .to_string()
+                .contains("reads undeclared compile-time file \"../notes.txt\""),
+            "unexpected refusal: {error}",
+        );
+    }
+
+    #[test]
+    fn process_dependency_refuses_before_planning() {
+        let fixture = Fixture::new("process-dependency");
+        fs::write(
+            fixture.root.join("fixture/build.rs"),
+            "fn main() { let _ = std::process::Command::new(\"git\").status(); }\n",
+        )
+        .expect("write process-dependent build script");
+
+        let error = fixture
+            .try_plan(true)
+            .expect_err("process authority cannot be reused");
+        assert!(
+            error
+                .to_string()
+                .contains("unbounded process or network dependency"),
+            "unexpected refusal: {error}",
+        );
+    }
+
+    #[test]
+    fn escaping_rerun_path_refuses_before_planning() {
+        let fixture = Fixture::new("escaping-rerun");
+        let external = fixture.root.with_extension("external-authority");
+        fs::write(&external, "outside selected tree\n").expect("write external authority");
+        fs::write(
+            fixture.root.join("fixture/build.rs"),
+            format!(
+                "fn main() {{ println!(\"cargo::rerun-if-changed=../../{}\"); }}\n",
+                external.file_name().unwrap().to_string_lossy(),
+            ),
+        )
+        .expect("write escaping build-script directive");
+
+        let error = fixture
+            .try_plan(true)
+            .expect_err("escaping rerun authority cannot be reused");
+        assert!(
+            error.to_string().contains("escapes selected root"),
+            "unexpected refusal: {error}",
+        );
+        fs::remove_file(external).expect("remove external authority");
+    }
+
     struct Fixture {
         root: PathBuf,
         outputs: PathBuf,
@@ -594,30 +817,95 @@ mod tests {
             let outputs = root.with_extension("outputs");
             fs::create_dir_all(root.join("fixture/src")).expect("create fixture source");
             fs::create_dir_all(root.join("fixture/tests")).expect("create fixture tests");
+            fs::create_dir_all(root.join("fixture-macro/src")).expect("create macro source");
             fs::create_dir_all(root.join("peer/src")).expect("create peer source");
             fs::write(
                 root.join("Cargo.toml"),
-                "[workspace]\nresolver = \"2\"\nmembers = [\"fixture\", \"peer\"]\n",
+                "[workspace]\nresolver = \"2\"\nmembers = [\"fixture\", \"fixture-macro\", \"peer\"]\n",
             )
             .expect("write workspace manifest");
             fs::write(
                 root.join("Cargo.lock"),
-                "# This file is automatically @generated by Cargo.\nversion = 4\n\n[[package]]\nname = \"fixture\"\nversion = \"0.1.0\"\n\n[[package]]\nname = \"peer\"\nversion = \"0.1.0\"\n",
+                concat!(
+                    "# This file is automatically @generated by Cargo.\n",
+                    "version = 4\n\n",
+                    "[[package]]\n",
+                    "name = \"fixture\"\n",
+                    "version = \"0.1.0\"\n",
+                    "dependencies = [\"fixture-macro\"]\n\n",
+                    "[[package]]\n",
+                    "name = \"fixture-macro\"\n",
+                    "version = \"0.1.0\"\n\n",
+                    "[[package]]\n",
+                    "name = \"peer\"\n",
+                    "version = \"0.1.0\"\n",
+                ),
             )
             .expect("write lockfile");
             fs::write(
                 root.join("fixture/Cargo.toml"),
-                "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+                concat!(
+                    "[package]\n",
+                    "name = \"fixture\"\n",
+                    "version = \"0.1.0\"\n",
+                    "edition = \"2024\"\n",
+                    "build = \"build.rs\"\n\n",
+                    "[package.metadata.spice.cargo-proof]\n",
+                    "version = 1\n",
+                    "complete = true\n",
+                    "\n[dependencies]\n",
+                    "fixture-macro = { path = \"../fixture-macro\" }\n",
+                ),
             )
             .expect("write package manifest");
+            fs::write(
+                root.join("fixture/build.rs"),
+                concat!(
+                    "fn main() {\n",
+                    "    println!(\"cargo::rerun-if-changed=../proof-authority.txt\");\n",
+                    "    println!(\"cargo::rerun-if-env-changed=FIXTURE_BUILD_INPUT\");\n",
+                    "    let out = std::path::PathBuf::from(std::env::var_os(\"OUT_DIR\").unwrap());\n",
+                    "    std::fs::write(out.join(\"generated.rs\"), \"pub const GENERATED: u8 = 3;\\n\").unwrap();\n",
+                    "}\n",
+                ),
+            )
+            .expect("write package build script");
             fs::write(
                 root.join("fixture/src/lib.rs"),
                 concat!(
                     "pub const VALUE: u8 = 1;\n",
                     "pub const AUTHORITY: &str = include_str!(\"../../proof-authority.txt\");\n",
+                    "include!(concat!(env!(\"OUT_DIR\"), \"/generated.rs\"));\n",
+                    "#[fixture_macro::passthrough]\n",
+                    "pub fn expanded() {}\n",
                 ),
             )
             .expect("write library source");
+            fs::write(
+                root.join("fixture-macro/Cargo.toml"),
+                concat!(
+                    "[package]\n",
+                    "name = \"fixture-macro\"\n",
+                    "version = \"0.1.0\"\n",
+                    "edition = \"2024\"\n\n",
+                    "[lib]\n",
+                    "proc-macro = true\n\n",
+                    "[package.metadata.spice.cargo-proof]\n",
+                    "version = 1\n",
+                    "complete = true\n",
+                ),
+            )
+            .expect("write proc-macro package manifest");
+            fs::write(
+                root.join("fixture-macro/src/lib.rs"),
+                concat!(
+                    "extern crate proc_macro;\n",
+                    "use proc_macro::TokenStream;\n",
+                    "#[proc_macro_attribute]\n",
+                    "pub fn passthrough(_: TokenStream, item: TokenStream) -> TokenStream { item }\n",
+                ),
+            )
+            .expect("write proc-macro source");
             fs::write(
                 root.join("fixture/tests/integration.rs"),
                 "#[test]\nfn value_is_one() { assert_eq!(fixture::VALUE, 1); }\n",
@@ -659,8 +947,11 @@ mod tests {
                 "Cargo.lock".to_owned(),
                 "Cargo.toml".to_owned(),
                 "fixture/Cargo.toml".to_owned(),
+                "fixture/build.rs".to_owned(),
                 "fixture/src/lib.rs".to_owned(),
                 "fixture/tests/integration.rs".to_owned(),
+                "fixture-macro/Cargo.toml".to_owned(),
+                "fixture-macro/src/lib.rs".to_owned(),
                 "notes.txt".to_owned(),
                 "peer/Cargo.toml".to_owned(),
                 "peer/src/lib.rs".to_owned(),

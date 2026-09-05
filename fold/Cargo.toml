@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[package.metadata.spice.cargo-proof]
+version = 1
+complete = true
+
 [dependencies]
 journal = { path = "../journal" }
 serde_json = "1.0.151"
