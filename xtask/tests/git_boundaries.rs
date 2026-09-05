@@ -45,19 +45,9 @@ const SELF_PATH: &str = "xtask/tests/git_boundaries.rs";
 /// Counts make each exception closed: another spelling in one of these files
 /// still has to be reviewed and declared. The policy test below separately
 /// rejects executable constructors that name Git through `PATH`.
-const INERT_ABSOLUTE_GIT_TEST_SITES: [(&str, usize); 3] = [
+const INERT_ABSOLUTE_GIT_TEST_SITES: [(&str, usize); 2] = [
     ("proof/src/bin/spice-proof-darwin-runner/tests.rs", 1),
     ("spice/src/cargo_isolation/tests.rs", 1),
-    ("spice/src/gate/candidate_tree/tests.rs", 1),
-];
-
-/// Existing test-process violations tracked by `BOUNDAR-1kSJ0LJF`.
-///
-/// This closed inventory prevents unrelated work from admitting another Git
-/// child while the two fixtures are converted to in-process repository state.
-const KNOWN_GIT_PROCESS_TEST_SITES: [&str; 2] = [
-    "spice/src/gate/candidate_tree/tests.rs: executable constructor contains command::new(git)",
-    "spice/src/resident/lifecycle/startup_tests.rs: executable constructor contains command::new(\"git\")",
 ];
 
 /// Every git subcommand that can reach the network.
@@ -377,13 +367,9 @@ fn repository_test_sources_do_not_spawn_or_wrap_git() {
     let found_processes = git_process_violations(&sources)
         .into_iter()
         .collect::<BTreeSet<_>>();
-    let declared_processes = KNOWN_GIT_PROCESS_TEST_SITES
-        .into_iter()
-        .map(str::to_owned)
-        .collect::<BTreeSet<_>>();
-    assert_eq!(
-        found_processes, declared_processes,
-        "Git process constructors in tests changed; remove tracked violations by replacing them with in-process repository state, and admit no new ones"
+    assert!(
+        found_processes.is_empty(),
+        "tests must use in-process repository state instead of Git process constructors: {found_processes:?}"
     );
 }
 

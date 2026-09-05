@@ -1,20 +1,18 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::repository::Repository;
+use crate::test_repository;
 
 use super::{CandidateTree, capture_candidate_tree, parse_candidate_tree};
-
-const GIT: &str = "/usr/bin/git";
 
 #[test]
 fn ordinary_staged_content_resolves_its_candidate_tree() {
     let fixture = Fixture::new("ordinary");
     fixture.write("tracked.txt", b"candidate\n");
-    fixture.git(&["add", "tracked.txt"]);
+    test_repository::stage(&fixture.main, &["tracked.txt"]);
 
     let candidate = fixture.capture(None);
 
@@ -27,9 +25,9 @@ fn alternate_index_is_the_only_candidate_tree_authority() {
     fixture.write("tracked.txt", b"opening\n");
     fixture.commit_all("opening");
     let alternate = fixture.scratch.join("alternate.index");
-    fixture.git_with_index(&["read-tree", "HEAD"], Some(&alternate));
+    fs::copy(fixture.main.join(".git/index"), &alternate).expect("copy alternate fixture index");
     fixture.write("tracked.txt", b"alternate candidate\n");
-    fixture.git_with_index(&["add", "tracked.txt"], Some(&alternate));
+    test_repository::stage_at(&fixture.main, &alternate, &["tracked.txt"]);
 
     let candidate = fixture.capture(Some(&alternate));
 
@@ -45,7 +43,7 @@ fn staged_deletion_changes_the_candidate_tree() {
     fixture.commit_all("opening");
     let opening = fixture.tree(None);
     fs::remove_file(fixture.main.join("deleted.txt")).expect("remove tracked fixture file");
-    fixture.git(&["add", "--update"]);
+    test_repository::stage(&fixture.main, &["deleted.txt"]);
 
     let candidate = fixture.capture(None);
 
@@ -65,16 +63,15 @@ fn staged_mode_change_changes_the_candidate_tree() {
         .permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(&path, permissions).expect("change fixture mode");
-    fixture.git(&["add", "tool.sh"]);
+    test_repository::stage(&fixture.main, &["tool.sh"]);
 
     let candidate = fixture.capture(None);
 
     assert_eq!(candidate.as_str(), fixture.tree(None));
     assert_ne!(candidate.as_str(), opening);
-    assert!(
-        fixture
-            .git_text(&["ls-files", "--stage", "tool.sh"], None)
-            .starts_with("100755 "),
+    assert_eq!(
+        test_repository::index_mode(&fixture.main, "tool.sh"),
+        gix::index::entry::Mode::FILE_EXECUTABLE,
         "candidate index did not retain the executable mode"
     );
 }
@@ -84,16 +81,10 @@ fn linked_worktree_uses_its_own_staged_index() {
     let fixture = Fixture::new("linked-worktree");
     fixture.write("tracked.txt", b"opening\n");
     fixture.commit_all("opening");
-    fixture.git(&[
-        "worktree",
-        "add",
-        "-b",
-        "candidate-lane",
-        fixture.linked.to_str().expect("linked path is UTF-8"),
-    ]);
+    test_repository::create_linked_worktree(&fixture.main, &fixture.linked, "candidate-lane");
     fs::write(fixture.linked.join("tracked.txt"), b"linked candidate\n")
         .expect("write linked candidate");
-    git(&fixture.linked, &["add", "tracked.txt"], None);
+    test_repository::stage(&fixture.linked, &["tracked.txt"]);
     let repository = Repository::discover(&fixture.linked).expect("discover linked worktree");
 
     let candidate =
@@ -101,7 +92,7 @@ fn linked_worktree_uses_its_own_staged_index() {
 
     assert_eq!(
         candidate.as_str(),
-        git_text(&fixture.linked, &["write-tree"], None)
+        test_repository::write_tree(&fixture.linked, None)
     );
     assert_ne!(candidate.as_str(), fixture.tree(None));
 }
@@ -142,8 +133,7 @@ impl Fixture {
         let main = scratch.join("main");
         let linked = scratch.join("linked");
         fs::create_dir(&main).expect("create main worktree");
-        git(&main, &["init", "-b", "main"], None);
-        git(&main, &["config", "core.filemode", "true"], None);
+        test_repository::initialize(&main);
         Self {
             scratch,
             main,
@@ -155,29 +145,9 @@ impl Fixture {
         fs::write(self.main.join(path), contents).expect("write fixture path");
     }
 
-    fn git(&self, arguments: &[&str]) {
-        git(&self.main, arguments, None);
-    }
-
-    fn git_with_index(&self, arguments: &[&str], index: Option<&Path>) {
-        git(&self.main, arguments, index);
-    }
-
-    fn git_text(&self, arguments: &[&str], index: Option<&Path>) -> String {
-        git_text(&self.main, arguments, index)
-    }
-
     fn commit_all(&self, message: &str) {
-        self.git(&["add", "--all"]);
-        self.git(&[
-            "-c",
-            "user.name=Spice Test",
-            "-c",
-            "user.email=spice@example.invalid",
-            "commit",
-            "-m",
-            message,
-        ]);
+        test_repository::stage_all(&self.main);
+        test_repository::commit(&self.main, message);
     }
 
     fn capture(&self, index: Option<&Path>) -> CandidateTree {
@@ -187,7 +157,7 @@ impl Fixture {
     }
 
     fn tree(&self, index: Option<&Path>) -> String {
-        self.git_text(&["write-tree"], index)
+        test_repository::write_tree(&self.main, index)
     }
 }
 
@@ -195,36 +165,4 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         fs::remove_dir_all(&self.scratch).expect("remove candidate-tree fixture");
     }
-}
-
-fn git(repository: &Path, arguments: &[&str], index: Option<&Path>) {
-    let _ = git_output(repository, arguments, index);
-}
-
-fn git_text(repository: &Path, arguments: &[&str], index: Option<&Path>) -> String {
-    String::from_utf8(git_output(repository, arguments, index))
-        .expect("Git output is UTF-8")
-        .trim_end()
-        .to_owned()
-}
-
-fn git_output(repository: &Path, arguments: &[&str], index: Option<&Path>) -> Vec<u8> {
-    let mut command = Command::new(GIT);
-    command.arg("-C").arg(repository).args(arguments);
-    match index {
-        Some(index) => {
-            command.env("GIT_INDEX_FILE", index);
-        }
-        None => {
-            command.env_remove("GIT_INDEX_FILE");
-        }
-    }
-    let output = command.output().expect("launch Git fixture command");
-    assert!(
-        output.status.success(),
-        "Git {:?} failed: {}",
-        arguments,
-        String::from_utf8_lossy(&output.stderr)
-    );
-    output.stdout
 }

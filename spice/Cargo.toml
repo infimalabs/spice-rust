@@ -60,6 +60,7 @@ rustix = { version = "1.1.4", features = ["fs", "process"] }
 
 [dev-dependencies]
 flate2 = "1.1.8"
+gix = { version = "0.86.0", default-features = false, features = ["tree-editor"] }
 socket2 = "0.6.5"
 
 [[test]]

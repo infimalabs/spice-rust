@@ -33,3 +33,5 @@ pub mod rtk;
 pub mod session_meter;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod task_git;
+#[cfg(test)]
+mod test_repository;

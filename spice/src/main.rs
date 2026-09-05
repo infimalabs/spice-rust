@@ -79,6 +79,12 @@ mod task_migration_command;
 mod task_next_delivery;
 #[cfg(not(target_arch = "wasm32"))]
 mod taste_command;
+#[cfg(test)]
+#[expect(
+    dead_code,
+    reason = "the binary uses only the repository fixture operations needed by resident tests"
+)]
+mod test_repository;
 #[cfg(not(target_arch = "wasm32"))]
 mod trust_command;
 
