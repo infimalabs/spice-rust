@@ -23,6 +23,7 @@ pub(super) enum ActivityCard {
         message: Rc<wire::AgentMessage>,
     },
     Lifecycle {
+        accent: usize,
         member: crate::runtime::LaneMember,
         boundary: crate::runtime::LaneLifecycleBoundary,
     },
@@ -54,14 +55,20 @@ impl PartialEq for ActivityCard {
             }
             (
                 Self::Lifecycle {
+                    accent: left_accent,
                     member: left_member,
                     boundary: left_boundary,
                 },
                 Self::Lifecycle {
+                    accent: right_accent,
                     member: right_member,
                     boundary: right_boundary,
                 },
-            ) => left_member == right_member && left_boundary == right_boundary,
+            ) => {
+                left_accent == right_accent
+                    && left_member == right_member
+                    && left_boundary == right_boundary
+            }
             _ => false,
         }
     }
@@ -1032,15 +1039,18 @@ fn render_activity_cards(
                         {layout}
                     />
                 },
-                ActivityCard::Lifecycle { member, boundary } => {
-                    render_lifecycle_boundary(member, boundary, &key, &layout)
-                }
+                ActivityCard::Lifecycle {
+                    accent,
+                    member,
+                    boundary,
+                } => render_lifecycle_boundary(*accent, member, boundary, &key, &layout),
             }
         })
         .collect()
 }
 
 fn render_lifecycle_boundary(
+    accent: usize,
     member: &crate::runtime::LaneMember,
     boundary: &crate::runtime::LaneLifecycleBoundary,
     key: &str,
@@ -1067,6 +1077,8 @@ fn render_lifecycle_boundary(
             data-layout-phase={if layout.committed { "committed" } else { "measuring" }}
             data-agent-lane={member.lane.to_string()}
             data-agent-activity="lifecycle"
+            data-accent={accent.to_string()}
+            data-accent-slot={accent.to_string()}
             data-lifecycle-occupant={boundary.occupant().map(|occupant| occupant.to_string())}
             data-lifecycle-cause={boundary.cause().to_owned()}
             data-state={layout.lifecycle.as_str()}

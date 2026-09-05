@@ -115,6 +115,16 @@ export async function assertCompactionDivider(
     boundary.append(pageProbe);
     const pageBackground = getComputedStyle(pageProbe).backgroundColor;
     pageProbe.remove();
+    const accentProbe = document.createElement("span");
+    accentProbe.style.color = "var(--accent-slot, var(--accent))";
+    boundary.append(accentProbe);
+    const accentColor = getComputedStyle(accentProbe).color;
+    accentProbe.remove();
+    const inkProbe = document.createElement("span");
+    inkProbe.style.color = "var(--ink)";
+    boundary.append(inkProbe);
+    const inkColor = getComputedStyle(inkProbe).color;
+    inkProbe.remove();
     const cards = [...plane.querySelectorAll(
       '.mosaic-message-card[data-layout-phase="committed"]',
     )].map((card) => ({
@@ -133,6 +143,8 @@ export async function assertCompactionDivider(
       },
       plane: { ...rect(plane), clientWidth: plane.clientWidth },
       pageBackground,
+      accentColor,
+      inkColor,
       label: {
         ...measured(labelNode),
         text: labelNode.textContent.trim().replace(/\s+/g, " "),
@@ -190,7 +202,10 @@ export async function assertCompactionDivider(
     `${label} rules have visible continuous geometry: ${JSON.stringify(geometry.rules)}`,
   );
   assert.equal(new Set(geometry.rules.map((rule) => rule.background)).size, 1);
-  assert.ok(geometry.rules.every((rule) => rule.background !== "rgba(0, 0, 0, 0)"));
+  assert.ok(
+    geometry.rules.every((rule) => rule.background === geometry.accentColor),
+    `${label} rules use the exact agent accent`,
+  );
   assert.ok(geometry.rules[0].right <= geometry.label.left + 0.5);
   assert.ok(geometry.label.right <= geometry.rules[1].left + 0.5);
 
@@ -238,7 +253,7 @@ export async function assertCompactionDivider(
       `${label} visibly truncates attribution text: ${attributionEvidence}`,
     );
   }
-  assert.equal(geometry.context.text, "compacted context");
+  assert.equal(geometry.context.text, "context, compacted");
   assert.ok(Number.parseFloat(geometry.contextGroup.gap) > 0, `${label} separates agent and context`);
   assert.match(geometry.label.fontFamily, /system-ui/);
   assert.equal(geometry.label.fontSize, "12px");
@@ -262,7 +277,8 @@ export async function assertCompactionDivider(
       contrast: agentContrast,
     })}`,
   );
-  assert.equal(geometry.agent.color, geometry.context.color, `${label} accents the complete context label`);
+  assert.equal(geometry.agent.color, geometry.accentColor, `${label} accents only the agent name`);
+  assert.equal(geometry.context.color, geometry.inkColor, `${label} keeps status copy in normal ink`);
   assert.ok(
     contextContrast >= 4.5,
     `${label} context contrast is accessible: ${JSON.stringify({

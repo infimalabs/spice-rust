@@ -249,11 +249,13 @@ fn activity_cards(runtime: &CanvasRuntime, lineage: &crate::runtime::LaneRow) ->
             .lifecycle_boundaries()
             .iter()
             .filter_map(|boundary| {
-                let member = lineage
+                let (position, member) = lineage
                     .members
                     .iter()
-                    .find(|member| member.lane == boundary.lane())?;
+                    .enumerate()
+                    .find(|(_, member)| member.lane == boundary.lane())?;
                 Some(ActivityCard::Lifecycle {
+                    accent: watchband::accent(lineage.members.len(), position),
                     member: member.clone(),
                     boundary: boundary.clone(),
                 })

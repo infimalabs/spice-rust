@@ -256,7 +256,7 @@ fn render_compaction_boundary(message: &wire::AgentMessage, attribution: &str) -
                 <span aria-hidden="true">{"\u{b7}"}</span>
                 <span class="mosaic-compaction-context">
                     <span class="mosaic-compaction-agent" title={attribution.clone()}>{attribution}</span>
-                    <span class="message-key">{"compacted context"}</span>
+                    <span class="message-key">{"context, compacted"}</span>
                 </span>
             </span>
             <span class="mosaic-compaction-rule" aria-hidden="true"></span>

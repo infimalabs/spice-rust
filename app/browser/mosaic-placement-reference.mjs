@@ -215,7 +215,7 @@ export async function assertCompactionBoundaryPersistence(page, seeded, boundary
     assert.equal(await boundary.getAttribute("data-span"), "12");
     assert.equal(
       (await boundary.locator(".message-key").innerText()).trim(),
-      "compacted context",
+      "context, compacted",
     );
   }
   await assertNoUnavailableToolTerminal(
