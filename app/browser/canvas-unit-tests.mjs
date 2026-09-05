@@ -6,4 +6,5 @@ import "./canvas-lifecycle.test.mjs";
 import "./canvas-process-ownership.test.mjs";
 import "./lineage-responsive.test.mjs";
 import "./menu-trigger-reference.test.mjs";
+import "./team-menu.test.mjs";
 import "./mosaic-placement-stability.test.mjs";
