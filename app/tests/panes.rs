@@ -429,6 +429,8 @@ fn the_grant_pane_presents_exactly_the_commands_wire_gives_operator_authority() 
         classified,
         BTreeSet::from([
             CommandKind::BoardHandout,
+            CommandKind::GlobalSettingsRead,
+            CommandKind::GlobalSettingsSet,
             CommandKind::SteerSend,
             CommandKind::SteerResend,
             CommandKind::SteerRecover,
