@@ -456,13 +456,16 @@ impl CanvasRuntime {
 
     fn observe_lifecycle_boundary(&mut self, row: &wire::StreamFact) {
         let boundary = match row.kind() {
-            FactKind::LaneExited => row.read::<wire::body::LaneExited>().map(|body| {
-                (
-                    body.lane,
-                    Some(body.occupant),
-                    format!("exited with code {}", body.code),
-                )
-            }),
+            FactKind::LaneExited => row
+                .read::<wire::body::LaneExited>()
+                .filter(|body| body.code != 0)
+                .map(|body| {
+                    (
+                        body.lane,
+                        Some(body.occupant),
+                        format!("exited with code {}", body.code),
+                    )
+                }),
             FactKind::LaneTimedOut => row.read::<wire::body::LaneTimedOut>().map(|body| {
                 (
                     body.lane,
@@ -484,13 +487,7 @@ impl CanvasRuntime {
                     format!("ended by external signal {}", body.signal),
                 )
             }),
-            FactKind::LaneDrained => row.read::<wire::body::LaneDrained>().map(|body| {
-                (
-                    body.lane,
-                    Some(body.occupant),
-                    "drained gracefully".to_owned(),
-                )
-            }),
+            FactKind::LaneDrained => None,
             FactKind::LaneKilled => row.read::<wire::body::LaneKilled>().map(|body| {
                 (
                     body.lane,
@@ -498,13 +495,9 @@ impl CanvasRuntime {
                     "ended by resident signal".to_owned(),
                 )
             }),
-            FactKind::LaneDegraded => row.read::<wire::body::LaneDegraded>().map(|body| {
-                (
-                    body.lane,
-                    None,
-                    format!("supervision failed: {}", body.marker),
-                )
-            }),
+            FactKind::LaneDegraded => row
+                .read::<wire::body::LaneDegraded>()
+                .map(|body| (body.lane, None, "supervision degraded".to_owned())),
             _ => None,
         };
         let Some((lane, occupant, cause)) = boundary else {

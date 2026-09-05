@@ -368,35 +368,83 @@ fn a_backlog_projects_transcript_receipts_out_of_the_visible_fact_page() {
 }
 
 #[test]
-fn a_typed_lane_ending_projects_one_durable_lifecycle_boundary() {
+fn only_abnormal_typed_lane_endings_project_durable_lifecycle_boundaries() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
-    let timeout = envelope(
-        41,
+    let endings = [
+        serde_json::json!({
+            "kind": "lane::exited", "lane": LANE, "occupant": REQUEST, "code": 0,
+        }),
+        serde_json::json!({
+            "kind": "lane::drained", "lane": LANE, "occupant": REQUEST,
+        }),
+        serde_json::json!({
+            "kind": "lane::exited", "lane": LANE, "occupant": REQUEST, "code": 7,
+        }),
+        serde_json::json!({
+            "kind": "lane::timedout", "lane": LANE, "occupant": REQUEST, "code": -1,
+        }),
+        serde_json::json!({
+            "kind": "lane::cancelled", "lane": LANE, "occupant": REQUEST, "code": -1,
+        }),
+        serde_json::json!({
+            "kind": "lane::signalled", "lane": LANE, "occupant": REQUEST, "signal": 15,
+        }),
+        serde_json::json!({
+            "kind": "lane::killed", "lane": LANE, "occupant": REQUEST,
+        }),
+        serde_json::json!({
+            "kind": "lane::degraded", "lane": LANE,
+            "marker": format!("occupant {REQUEST} capture failed: fixture refusal"),
+        }),
+    ];
+    for (index, ending) in endings.into_iter().enumerate() {
+        let position = 41 + u64::try_from(index).expect("fixture index fits a sequence");
+        let fact = envelope(position, "spice", &format!("lane:{LANE}"), &ending);
+        runtime.apply_stream_frame(&admitted_stream(&session, &fact_frame(fact)));
+    }
+
+    assert_eq!(
+        runtime
+            .lifecycle_boundaries()
+            .iter()
+            .map(|boundary| (boundary.seq(), boundary.occupant(), boundary.cause()))
+            .collect::<Vec<_>>(),
+        vec![
+            (seq(43), Some(uuid(REQUEST)), "exited with code 7"),
+            (seq(44), Some(uuid(REQUEST)), "runtime timed out; code -1"),
+            (
+                seq(45),
+                Some(uuid(REQUEST)),
+                "supervision cancelled; code -1",
+            ),
+            (seq(46), Some(uuid(REQUEST)), "ended by external signal 15",),
+            (seq(47), Some(uuid(REQUEST)), "ended by resident signal"),
+            (seq(48), None, "supervision degraded"),
+        ],
+        "successful exit and graceful drain are omitted while each abnormal cause stays distinct",
+    );
+    assert!(
+        runtime
+            .lifecycle_boundaries()
+            .iter()
+            .all(|boundary| !boundary.cause().contains(REQUEST)),
+        "renderable lifecycle causes expose no occupant identity",
+    );
+
+    let duplicate = envelope(
+        44,
         "spice",
         &format!("lane:{LANE}"),
         &serde_json::json!({
-            "kind": "lane::timedout",
-            "lane": LANE,
-            "occupant": REQUEST,
-            "code": -1,
+            "kind": "lane::timedout", "lane": LANE, "occupant": REQUEST, "code": -1,
         }),
     );
-    let frame = admitted_stream(&session, &fact_frame(timeout));
-
-    assert!(runtime.apply_stream_frame(&frame).changed());
-    assert_eq!(runtime.lifecycle_boundaries().len(), 1);
-    let boundary = &runtime.lifecycle_boundaries()[0];
-    assert_eq!(boundary.seq(), seq(41));
-    assert_eq!(boundary.lane(), uuid(LANE));
-    assert_eq!(boundary.occupant(), Some(uuid(REQUEST)));
-    assert_eq!(boundary.cause(), "runtime timed out; code -1");
-
-    let _duplicate = runtime.apply_stream_frame(&frame);
+    runtime.apply_stream_frame(&admitted_stream(&session, &fact_frame(duplicate)));
     assert_eq!(
         runtime.lifecycle_boundaries().len(),
-        1,
+        6,
         "replayed durable facts do not duplicate lifecycle separators"
     );
 }

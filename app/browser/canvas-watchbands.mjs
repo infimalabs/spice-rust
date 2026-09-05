@@ -551,6 +551,13 @@ export async function assertPerTeamWatchbands(
   assert.ok(woken?.occupant, "watchband Drain leaves the member eligible for a normal wake");
   assert.equal(woken.disposition, "occupied");
   assert.equal(woken.life, primarySeatLives.get(woken.lane));
+  assert.equal(
+    await primarySurface.locator(
+      '[data-card-kind="lifecycle"][data-lifecycle-cause="drained gracefully"]',
+    ).count(),
+    0,
+    "a successful manual drain leaves no lifecycle divider in the activity plane",
+  );
   await primaryLife.fill("2");
   await waitForPage(
     page,

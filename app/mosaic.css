@@ -133,18 +133,10 @@
   align-items: center;
   text-align: center;
 }
-.mosaic-lifecycle-card {
-  border-left-color: var(--warning);
-  background: color-mix(in srgb, var(--warning-soft) 38%, var(--mosaic-card));
-}
-.mosaic-lifecycle-card .mosaic-compaction-rule {
-  background: color-mix(in srgb, var(--warning) 58%, var(--line));
-}
-.mosaic-lifecycle-card .message-key { color: var(--warning); }
 .mosaic-compaction-rule {
   width: 100%;
   height: 1px;
-  background: color-mix(in srgb, var(--accent-slot, var(--accent)) 58%, var(--line));
+  background: var(--accent-slot, var(--accent));
 }
 .mosaic-compaction-label {
   display: inline-flex;
@@ -165,13 +157,14 @@
   min-width: 0;
   gap: .35em;
   overflow: hidden;
-  color: color-mix(in srgb, var(--accent-slot, var(--ink)) 70%, var(--ink));
+  color: var(--ink);
 }
 .mosaic-compaction-label .message-key,
 .mosaic-compaction-agent {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.mosaic-compaction-agent { color: var(--accent-slot, var(--accent)); }
 .mosaic-compaction-label .message-key { flex: 0 1 auto; }
 .mosaic-compaction-agent {
   flex: 1 1 auto;
