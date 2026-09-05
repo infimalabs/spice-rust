@@ -417,7 +417,7 @@ fn reached_local_package_roots(
             continue;
         };
         for dependency in &package.dependencies {
-            if dependency.starts_with(&canonical_root) {
+            if dependency.starts_with(canonical_root) {
                 pending.push_back(dependency.clone());
             } else {
                 external.insert(dependency.clone());
@@ -437,7 +437,7 @@ fn selected_package_input_paths(
     let relative_roots = roots
         .iter()
         .map(|path| {
-            path.strip_prefix(&canonical_root)
+            path.strip_prefix(canonical_root)
                 .map(Path::to_path_buf)
                 .map_err(|_| {
                     WorkspaceTestError::new(format!(
@@ -471,7 +471,7 @@ fn selected_package_input_paths(
             .chain(&package.removed_targets)
         {
             for declared in &target.declared_path_sources {
-                let relative = declared.path.strip_prefix(&canonical_root).map_err(|_| {
+                let relative = declared.path.strip_prefix(canonical_root).map_err(|_| {
                     WorkspaceTestError::new(format!(
                         "declared Cargo input {} escapes selected root {}",
                         declared.path.display(),
@@ -1005,7 +1005,23 @@ mod tests {
 
         let reason = fixture.fixture_non_cacheable_reason();
         assert!(
-            reason.contains("dynamic or multiline Cargo rerun directive"),
+            reason.contains("dynamic or multiline compile-time output"),
+            "unexpected refusal: {reason}",
+        );
+    }
+
+    #[test]
+    fn positional_interpolation_cannot_hide_a_cargo_directive() {
+        let fixture = Fixture::new("positional-output");
+        fs::write(
+            fixture.root.join("fixture/build.rs"),
+            "fn main() { println!(\"{}\", \"cargo::rerun-if-changed=../proof-authority.txt\"); }\n",
+        )
+        .expect("write positionally interpolated build-script output");
+
+        let reason = fixture.fixture_non_cacheable_reason();
+        assert!(
+            reason.contains("computed or interpolated compile-time output"),
             "unexpected refusal: {reason}",
         );
     }
@@ -1021,7 +1037,23 @@ mod tests {
 
         let reason = fixture.fixture_non_cacheable_reason();
         assert!(
-            reason.contains("malformed Cargo rerun directive"),
+            reason.contains("malformed Cargo directive"),
+            "unexpected refusal: {reason}",
+        );
+    }
+
+    #[test]
+    fn linker_directive_is_non_cacheable_without_external_input_authority() {
+        let fixture = Fixture::new("linker-directive");
+        fs::write(
+            fixture.root.join("fixture/build.rs"),
+            "fn main() { println!(\"cargo::rustc-link-search=native=../native\"); }\n",
+        )
+        .expect("write native linker build-script directive");
+
+        let reason = fixture.fixture_non_cacheable_reason();
+        assert!(
+            reason.contains("unsupported Cargo directive \"rustc-link-search\""),
             "unexpected refusal: {reason}",
         );
     }
@@ -1136,7 +1168,7 @@ mod tests {
 
         let reason = fixture.fixture_non_cacheable_reason();
         assert!(
-            reason.contains("computed compile-time output"),
+            reason.contains("computed or interpolated compile-time output"),
             "unexpected refusal: {reason}",
         );
     }

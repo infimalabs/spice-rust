@@ -336,8 +336,8 @@ impl CompileTimeVisitor<'_> {
             self.refuse("emits computed compile-time output".to_owned());
             return;
         };
-        let Some(Expr::Lit(first)) = arguments.first() else {
-            self.refuse("emits computed compile-time output".to_owned());
+        let [Expr::Lit(first)] = arguments.iter().collect::<Vec<_>>().as_slice() else {
+            self.refuse("emits computed or interpolated compile-time output".to_owned());
             return;
         };
         let Lit::Str(value) = &first.lit else {
@@ -345,22 +345,22 @@ impl CompileTimeVisitor<'_> {
             return;
         };
         let value = value.value();
-        if !value.contains("rerun-if") {
+        if value.contains(['{', '}', '\n', '\r']) {
+            self.refuse("emits dynamic or multiline compile-time output".to_owned());
             return;
         }
-        if arguments.len() != 1 || value.contains(['{', '}', '\n', '\r']) {
-            self.refuse("emits a dynamic or multiline Cargo rerun directive".to_owned());
-            return;
-        }
-        let directive = value
+        let Some(directive) = value
             .strip_prefix("cargo::")
-            .or_else(|| value.strip_prefix("cargo:"));
-        let Some((name, value)) = directive.and_then(|directive| directive.split_once('=')) else {
-            self.refuse("emits a malformed Cargo rerun directive".to_owned());
+            .or_else(|| value.strip_prefix("cargo:"))
+        else {
+            return;
+        };
+        let Some((name, value)) = directive.split_once('=') else {
+            self.refuse("emits a malformed Cargo directive".to_owned());
             return;
         };
         if value.is_empty() {
-            self.refuse("emits an empty Cargo rerun directive".to_owned());
+            self.refuse("emits an empty Cargo directive".to_owned());
             return;
         }
         match name {
@@ -374,7 +374,7 @@ impl CompileTimeVisitor<'_> {
                     self.scan.rerun_environment.insert(value.to_owned());
                 }
             }
-            _ => self.refuse(format!("emits unsupported Cargo rerun directive {name:?}")),
+            _ => self.refuse(format!("emits unsupported Cargo directive {name:?}")),
         }
     }
 
