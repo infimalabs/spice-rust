@@ -48,6 +48,7 @@ async function fleetGeometry(fleet) {
       overflowY: element.scrollHeight - element.clientHeight,
       scrollLeft: element.scrollLeft,
       lastRight: surfaceGeometry.at(-1)?.right,
+      pageOverflowX: document.documentElement.scrollWidth - innerWidth,
       pageOverflowY: document.documentElement.scrollHeight - innerHeight,
       ids: surfaces.map((surface) => surface.dataset.lineageId),
       modes: surfaces.map((surface) => surface.querySelector(".team-pane")?.dataset.teamMode),
@@ -66,6 +67,7 @@ function assertTrack(geometry, label, overflow) {
   assert.equal(geometry.flexDirection, "row");
   assert.equal(geometry.overflowX > 1, overflow, `${label} horizontal overflow`);
   assert.ok(geometry.overflowY <= 1, `${label} has no vertical fleet overflow`);
+  assert.ok(geometry.pageOverflowX <= 1, `${label} has no page-level horizontal overflow`);
   assert.ok(geometry.pageOverflowY <= 1, `${label} has no page-level vertical overflow`);
   assert.ok(Math.abs(geometry.scrollLeft - geometry.overflowX) <= 1, `${label} is right anchored`);
   assert.ok(Math.abs(geometry.lastRight - geometry.right) <= 1, `${label} reveals the newest lane`);
@@ -106,6 +108,9 @@ export async function assertLineageResponsiveLayout(page, console_) {
     assert.ok(traversed.scrollLeft < traversed.overflowX, "keyboard traverses toward older lanes");
     await fleet.evaluate((element) => element.lastElementChild.remove());
     cloned = false;
+    await page.setViewportSize({ width: 600, height: 988 });
+    await settleLayout(page);
+    assertTrack(await fleetGeometry(fleet), "600px two-lane floor overflow", true);
 
     const restored = await fleetGeometry(fleet);
     assert.deepEqual(restored.ids, original.ids, "resize retains lineage identity and order");
