@@ -11,6 +11,8 @@
 //! each other, and the qualifier is what keeps a reader from believing
 //! otherwise.
 
+#[cfg(not(target_arch = "wasm32"))]
+mod action_input;
 pub mod battery;
 pub mod camp;
 mod change_selection;
@@ -194,6 +196,13 @@ pub const VERIFIER_APP_PUBLISH_FLAG: &str = "--spice-verifier-publish-root";
 /// before source validation and atomic app publication finish.
 pub const VERIFIER_APP_COMPILER_READY_RECORD: &str = "[app] compiler-ready";
 #[cfg(not(target_arch = "wasm32"))]
+pub use action_input::{
+    ACTION_INPUT_MANIFEST_VERSION, ActionInputClosure, ActionInputError, ActionInputExpansion,
+    ActionInputInventory, ActionInputManifest, ActionInputManifestEntry, ActionNonCacheable,
+    ActionNonFileInput, ActionNonFileKind, ActionReuseClass, GitFileMode, compile_action_input,
+    gate_action_reuse_class,
+};
+#[cfg(not(target_arch = "wasm32"))]
 pub use structural::{
     StructuralCapture, StructuralMatch, StructuralPattern, StructuralScanError, scan_structural,
 };
@@ -215,7 +224,7 @@ pub use toolchain::{
     formatter_edition, formatter_sources,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub use tree::{SelectedTree, Selector, TreeError};
+pub use tree::{SelectedFileMode, SelectedTree, Selector, TreeError};
 pub use verdict::{
     CurrentRun, GATE_RECEIPT_VERSION, PublishError, ReceiptDecodeError, ReceiptTool, Run, RunError,
     Standing, Verdict,
