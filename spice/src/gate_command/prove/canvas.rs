@@ -1,5 +1,6 @@
 //! Canvas build and browser-shard proof actions.
 
+use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -7,14 +8,14 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use gate::{CanvasActionPlan, CanvasShard};
+use gate::{CanvasActionPlan, CanvasActionPlanning, CanvasShard};
 use serde::{Deserialize, Serialize};
 
 use super::*;
 
-const BUILD_DECLARATION: &str = "gate::canvas::build-action-v1";
+const BUILD_DECLARATION: &str = "gate::canvas::build-action-v2";
 const SHARD_DECLARATION: &str = "gate::canvas::browser-shard-action-v1";
-const CANVAS_RUNNER_VERSION: u64 = 2;
+const CANVAS_RUNNER_VERSION: u64 = 3;
 const CANVAS_BINARY_VARIABLE: &str = "SPICE_CANVAS_BINARY"; // env-policy: allow
 const NODE_PROBE: &str = concat!(
     "const {createRequire}=await import('node:module');",
@@ -37,6 +38,7 @@ pub(super) struct CanvasExecution {
     repository: PathBuf,
     common: PathBuf,
     environment: Vec<(OsString, OsString)>,
+    build_inputs: Vec<String>,
     shard: Option<CanvasShard>,
     build: SharedCanvasBuild,
     playwright: Arc<PlaywrightSnapshot>,
@@ -140,9 +142,8 @@ pub(super) fn prepare(
         .derive_reached_arm(staged.selection(), GateId::CanvasWebTypecheck)
         .map_err(ProveFailure::run)?;
     let context = arm.context().map_err(ProveFailure::run)?;
-    let plan = CanvasActionPlan::load(arm.root(), arm.paths(), arm.changes())
-        .map_err(ProveFailure::canvas)?;
     let environment_values = normalized_environment(arm.compiler_environment().iter().cloned());
+    let plan = canvas_plan(&arm, &environment_values)?;
     let (environment_names, environment) = environment(&environment_values)?;
     let playwright = Arc::new(PlaywrightSnapshot::capture(arm.root(), repository)?);
     let runtime = runtime_authority(&environment_values, &playwright)?;
@@ -228,6 +229,24 @@ pub(super) fn prepare(
     Ok(actions)
 }
 
+fn canvas_plan(
+    arm: &spice::gate::PreparedArm<'_>,
+    environment_values: &[(OsString, OsString)],
+) -> Result<CanvasActionPlan, ProveFailure> {
+    let environment = Environment::new(environment_values.iter().cloned())
+        .map_err(|error| ProveFailure::refusal("gate::prove-canvas-environment-refused", error))?;
+    let plan = CanvasActionPlan::load(CanvasActionPlanning {
+        root: arm.root(),
+        paths: arm.paths(),
+        changed_paths: arm.changes(),
+        environment: &environment,
+        cargo: OsStr::new("cargo"),
+    })
+    .map_err(ProveFailure::canvas)?;
+    require_reusable_build(&plan)?;
+    Ok(plan)
+}
+
 fn selected_shards<'a>(plan: &'a CanvasActionPlan, request: Request<'_>) -> Vec<&'a CanvasShard> {
     match request.action {
         None | Some(gate::CANVAS_ACTION_GROUP) => plan.shards().iter().collect(),
@@ -285,6 +304,7 @@ fn prepare_build(
             repository: repository.to_path_buf(),
             common: common.to_path_buf(),
             environment: environment_values.to_vec(),
+            build_inputs: present_build_inputs(plan.build_inputs(), arm.paths()),
             shard: None,
             build,
             playwright,
@@ -354,11 +374,31 @@ fn prepare_shard(
             repository: repository.to_path_buf(),
             common: common.to_path_buf(),
             environment: environment_values.to_vec(),
+            build_inputs: present_build_inputs(plan.build_inputs(), arm.paths()),
             shard: Some(shard.clone()),
             build,
             playwright,
         },
     )
+}
+
+fn require_reusable_build(plan: &CanvasActionPlan) -> Result<(), ProveFailure> {
+    if let Some(reason) = plan.build_non_cacheable_reason() {
+        return Err(ProveFailure::refusal(
+            "gate::prove-canvas-build-not-reusable",
+            format!("Canvas build has no complete reusable source authority: {reason}"),
+        ));
+    }
+    Ok(())
+}
+
+fn present_build_inputs(build_inputs: &[String], selected_paths: &[String]) -> Vec<String> {
+    let selected = selected_paths.iter().collect::<BTreeSet<_>>();
+    build_inputs
+        .iter()
+        .filter(|path| selected.contains(path))
+        .cloned()
+        .collect()
 }
 
 fn shard_registry_authority(shard: &CanvasShard) -> Result<Digest, ProveFailure> {
@@ -391,7 +431,7 @@ fn prepared_canvas_action(
         cwd: ".".to_owned(),
         environment_names: environment_names.to_vec(),
         tools: tools.to_vec(),
-        input_strategy: "canvas-registry-closure-v1".to_owned(),
+        input_strategy: "canvas-registry-closure-v2".to_owned(),
         reuse: ActionReuseClass::Cacheable,
     })
     .map_err(ProveFailure::action_input)?;
@@ -626,7 +666,7 @@ fn run_build(execution: &CanvasExecution) -> Result<Arc<CanvasBuild>, ProveFailu
     fs::create_dir(&workspace.0)
         .map_err(|error| ProveFailure::fault("gate::prove-canvas-workspace-unavailable", error))?;
     let root = workspace.0.join("root");
-    copy_tree(&execution.root, &root)?;
+    copy_paths(&execution.root, &root, &execution.build_inputs)?;
     initialize_git_index(&root)?;
     execution.playwright.materialize(&root)?;
     let output = command("node", &execution.environment)
@@ -706,27 +746,14 @@ fn initialize_git_index(root: &Path) -> Result<(), ProveFailure> {
     Ok(())
 }
 
-fn copy_tree(source: &Path, destination: &Path) -> Result<(), ProveFailure> {
+fn copy_paths(source: &Path, destination: &Path, paths: &[String]) -> Result<(), ProveFailure> {
     fs::create_dir(destination)
         .map_err(|error| ProveFailure::fault("gate::prove-canvas-workspace-unavailable", error))?;
-    let mut entries = fs::read_dir(source)
-        .map_err(|error| ProveFailure::fault("gate::prove-canvas-source-unreadable", error))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| ProveFailure::fault("gate::prove-canvas-source-unreadable", error))?;
-    entries.sort_by_key(fs::DirEntry::file_name);
-    for entry in entries {
-        let source = entry.path();
-        let destination = destination.join(entry.file_name());
-        let kind = entry
-            .file_type()
+    for relative in paths {
+        let source = source.join(relative);
+        let metadata = fs::symlink_metadata(&source)
             .map_err(|error| ProveFailure::fault("gate::prove-canvas-source-unreadable", error))?;
-        if kind.is_dir() {
-            copy_tree(&source, &destination)?;
-        } else if kind.is_file() {
-            fs::copy(&source, &destination).map_err(|error| {
-                ProveFailure::fault("gate::prove-canvas-workspace-unavailable", error)
-            })?;
-        } else {
+        if !metadata.file_type().is_file() {
             return Err(ProveFailure::refusal(
                 "gate::prove-canvas-source-refused",
                 format!(
@@ -735,6 +762,19 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<(), ProveFailure> {
                 ),
             ));
         }
+        let destination = destination.join(relative);
+        let parent = destination.parent().ok_or_else(|| {
+            ProveFailure::refusal(
+                "gate::prove-canvas-source-refused",
+                format!("selected Canvas input {relative:?} has no parent"),
+            )
+        })?;
+        fs::create_dir_all(parent).map_err(|error| {
+            ProveFailure::fault("gate::prove-canvas-workspace-unavailable", error)
+        })?;
+        fs::copy(&source, &destination).map_err(|error| {
+            ProveFailure::fault("gate::prove-canvas-workspace-unavailable", error)
+        })?;
     }
     Ok(())
 }
@@ -796,7 +836,7 @@ mod tests {
             cwd: ".".to_owned(),
             environment_names: Vec::new(),
             tools: Vec::new(),
-            input_strategy: "canvas-registry-closure-v1".to_owned(),
+            input_strategy: "canvas-registry-closure-v2".to_owned(),
             reuse: ActionReuseClass::Cacheable,
         })
         .expect("valid Canvas action contract");
@@ -815,7 +855,7 @@ mod tests {
             .expect("derive Canvas action key")
         };
         assert_ne!(key(first), key(changed));
-        assert_eq!(CANVAS_RUNNER_VERSION, 2);
+        assert_eq!(CANVAS_RUNNER_VERSION, 3);
     }
 
     #[test]
@@ -844,5 +884,37 @@ mod tests {
         assert!(values.iter().any(|(name, _)| name == OsStr::new("PATH")));
         assert!(!values.iter().any(|(name, _)| name == OsStr::new("PWD")));
         assert!(values.contains(&(OsString::from("RUSTC_WORKSPACE_WRAPPER"), OsString::new(),)));
+    }
+
+    #[test]
+    fn canvas_workspace_materializes_only_admitted_build_inputs() {
+        let source = CanvasWorkspace(success(exclusive_workspace("canvas-copy-source")));
+        let destination = CanvasWorkspace(success(exclusive_workspace("canvas-copy-destination")));
+        fs::create_dir(&source.0).expect("create source workspace");
+        fs::write(source.0.join("kept.txt"), "kept\n").expect("write admitted source");
+        fs::write(source.0.join("browser-only.mjs"), "ignored\n").expect("write unadmitted source");
+
+        success(copy_paths(
+            &source.0,
+            &destination.0,
+            &["kept.txt".to_owned()],
+        ));
+
+        assert_eq!(
+            fs::read_to_string(destination.0.join("kept.txt")).expect("read admitted copy"),
+            "kept\n"
+        );
+        assert!(!destination.0.join("browser-only.mjs").exists());
+    }
+
+    #[test]
+    fn canvas_workspace_omits_deleted_manifest_inputs() {
+        assert_eq!(
+            present_build_inputs(
+                &["present.txt".to_owned(), "removed.txt".to_owned()],
+                &["present.txt".to_owned()],
+            ),
+            ["present.txt"]
+        );
     }
 }

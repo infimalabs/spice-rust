@@ -1,11 +1,15 @@
 //! Canonical proof actions derived from the Canvas browser shard registry.
 
 use std::error::Error;
+use std::ffi::OsStr;
 use std::fmt;
 use std::fs;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+use sill::Environment;
+
+mod build;
 
 pub const CANVAS_ACTION_REGISTRY: &str = "app/browser/canvas-shards.json";
 pub const CANVAS_BUILD_ACTION: &str = "canvas:build";
@@ -55,16 +59,28 @@ impl CanvasShard {
 pub struct CanvasActionPlan {
     registry: Vec<u8>,
     build_inputs: Vec<String>,
+    build_non_cacheable_reason: Option<String>,
     shard_inputs: Vec<String>,
     shards: Vec<CanvasShard>,
 }
 
+pub struct CanvasActionPlanning<'a> {
+    pub root: &'a Path,
+    pub paths: &'a [String],
+    pub changed_paths: &'a [String],
+    pub environment: &'a Environment,
+    pub cargo: &'a OsStr,
+}
+
 impl CanvasActionPlan {
-    pub fn load(
-        root: &Path,
-        paths: &[String],
-        changed_paths: &[String],
-    ) -> Result<Self, CanvasActionError> {
+    pub fn load(planning: CanvasActionPlanning<'_>) -> Result<Self, CanvasActionError> {
+        let CanvasActionPlanning {
+            root,
+            paths,
+            changed_paths,
+            environment,
+            cargo,
+        } = planning;
         let registry_path = root.join(CANVAS_ACTION_REGISTRY);
         let registry = fs::read(&registry_path).map_err(|error| {
             CanvasActionError::new(format!(
@@ -76,16 +92,17 @@ impl CanvasActionPlan {
             CanvasActionError::new(format!("Canvas action registry is invalid: {error}"))
         })?;
         validate_registry(&decoded)?;
-        let build_inputs = selected_inputs(paths, changed_paths, build_input);
+        let build = build::authority(root, paths, changed_paths, environment, cargo);
         let shard_inputs = selected_inputs(paths, changed_paths, shard_input);
-        if build_inputs.is_empty() || shard_inputs.is_empty() {
+        if build.input_paths.is_empty() || shard_inputs.is_empty() {
             return Err(CanvasActionError::new(
                 "Canvas proof actions require nonempty build and browser source closures",
             ));
         }
         Ok(Self {
             registry,
-            build_inputs,
+            build_inputs: build.input_paths,
+            build_non_cacheable_reason: build.non_cacheable_reason,
             shard_inputs,
             shards: decoded.shards,
         })
@@ -99,6 +116,11 @@ impl CanvasActionPlan {
     #[must_use]
     pub fn build_inputs(&self) -> &[String] {
         &self.build_inputs
+    }
+
+    #[must_use]
+    pub fn build_non_cacheable_reason(&self) -> Option<&str> {
+        self.build_non_cacheable_reason.as_deref()
     }
 
     #[must_use]
@@ -176,24 +198,6 @@ fn selected_inputs(
     selected
 }
 
-fn build_input(path: &str) -> bool {
-    matches!(
-        path,
-        ".cargo/config.toml"
-            | "Cargo.lock"
-            | "Cargo.toml"
-            | "rust-toolchain.toml"
-            | "app/Cargo.toml"
-            | "app/index.html"
-            | "wire/Cargo.toml"
-            | "xtask/Cargo.toml"
-            | "package.json"
-            | "package-lock.json"
-    ) || path.ends_with(".rs")
-        || path.ends_with("Cargo.toml")
-        || (path.starts_with("app/") && path.ends_with(".css"))
-}
-
 fn shard_input(path: &str) -> bool {
     matches!(path, "package.json" | "package-lock.json")
         || (path.starts_with("app/browser/") && path.ends_with(".mjs"))
@@ -221,20 +225,45 @@ mod tests {
     use super::*;
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the repository authority fixture captures its own compiler environment"
+    )]
     fn repository_registry_derives_build_and_every_shard_action() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("gate has a repository parent");
         let paths = [
+            ".cargo/config.toml",
             "Cargo.lock",
             "Cargo.toml",
             "app/Cargo.toml",
+            "app/browser/activity-replay.mjs",
+            "app/browser/canvas-build.mjs",
+            "app/browser/canvas-proof-build.mjs",
             "app/browser/canvas-shards.json",
             "app/browser/canvas.spec.mjs",
+            "app/composer.css",
+            "app/index.html",
+            "app/mosaic.css",
+            "app/responsive.css",
             "app/src/lib.rs",
+            "app/style.css",
+            "dist/VERSION",
+            "dist/release-authority.json",
             "package-lock.json",
             "package.json",
             "rust-toolchain.toml",
+            "spice/Cargo.toml",
+            "spice/agent/SKILL.md",
+            "spice/src/install.rs",
+            "steer/Cargo.toml",
+            "steer/hooks/entry.sh",
+            "steer/hooks/shell/.zshenv",
+            "steer/hooks/shell/bash_env",
+            "steer/hooks/static/stage.sh",
+            "steer/hooks/wrappers/spice",
+            "steer/src/hook.rs",
             "wire/Cargo.toml",
             "wire/src/lib.rs",
             "xtask/Cargo.toml",
@@ -244,8 +273,15 @@ mod tests {
         .map(str::to_owned)
         .collect::<Vec<_>>();
         let changed = vec!["app/browser/deleted.mjs".to_owned()];
-        let plan = CanvasActionPlan::load(root, &paths, &changed)
-            .expect("repository registry is canonical");
+        let environment = Environment::new(std::env::vars_os()).expect("test environment");
+        let plan = CanvasActionPlan::load(CanvasActionPlanning {
+            root,
+            paths: &paths,
+            changed_paths: &changed,
+            environment: &environment,
+            cargo: OsStr::new("cargo"),
+        })
+        .expect("repository registry is canonical");
         assert_eq!(
             plan.action_ids().first().map(String::as_str),
             Some(CANVAS_BUILD_ACTION)
@@ -255,6 +291,33 @@ mod tests {
                 .contains(&"canvas:shard:interaction".to_owned())
         );
         assert!(plan.build_inputs().contains(&"app/src/lib.rs".to_owned()));
+        for required in [
+            "app/browser/canvas-proof-build.mjs",
+            "app/browser/canvas-build.mjs",
+            "spice/agent/SKILL.md",
+            "steer/hooks/entry.sh",
+            "steer/hooks/static/stage.sh",
+            "steer/hooks/shell/.zshenv",
+            "steer/hooks/shell/bash_env",
+            "steer/hooks/wrappers/spice",
+            "app/index.html",
+            "app/style.css",
+            "app/mosaic.css",
+            "app/composer.css",
+            "app/responsive.css",
+            "dist/release-authority.json",
+            "dist/VERSION",
+        ] {
+            assert!(
+                plan.build_inputs().iter().any(|path| path == required),
+                "Canvas build closure omitted {required}"
+            );
+        }
+        assert!(
+            !plan
+                .build_inputs()
+                .contains(&"app/browser/activity-replay.mjs".to_owned())
+        );
         assert!(!plan.registry_bytes().is_empty());
         assert!(
             !plan

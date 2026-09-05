@@ -189,7 +189,7 @@ undeclared, or executable code names process, network, or dynamic authority.
 | `assertion-free-tests` | cacheable | reached test source, parser and policy |
 | `private-internals` | cacheable | complete Python dependency closure, parser and policy |
 | configured `Spice source gate` | decomposed | It mints no reusable wrapper receipt; its selected packaged actions use the rows above until the configured wrapper is removed. |
-| Canvas build | cacheable | app source closure, package lock, Node and compiler identities, exact build command and environment |
+| Canvas build | cacheable | admitted selected-tree source closure, parsed local build-launcher graph, Cargo build and file-macro authority, app source derivation, package lock, Node and compiler identities, exact build command and environment |
 | each Canvas browser shard | cacheable | build receipt, shard registry entry, scenario closure, browser and Node identities, exact command and environment |
 
 For ancestry-sensitive metric rows, actor and ledger state are decision inputs,

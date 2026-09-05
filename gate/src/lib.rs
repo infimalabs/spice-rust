@@ -86,7 +86,8 @@ pub use camp::{
 #[cfg(not(target_arch = "wasm32"))]
 pub use canvas_actions::{
     CANVAS_ACTION_GROUP, CANVAS_ACTION_PREFIX, CANVAS_ACTION_REGISTRY, CANVAS_BUILD_ACTION,
-    CANVAS_PREDECESSOR_RELEASE, CanvasActionError, CanvasActionPlan, CanvasShard,
+    CANVAS_PREDECESSOR_RELEASE, CanvasActionError, CanvasActionPlan, CanvasActionPlanning,
+    CanvasShard,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use change_selection::compile_language_reach;
