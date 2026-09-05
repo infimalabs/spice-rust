@@ -45,7 +45,12 @@ use std::os::unix::process::CommandExt as _;
 use std::os::unix::process::ExitStatusExt as _;
 
 const ENTRY: &str = "__lane-supervisor";
-const CONTRACT_VERSION: u32 = 3;
+// Launch requests are consumed by this executable generation. Durable state
+// is also consumed by replacement residents, so version its schema separately.
+const REQUEST_VERSION: u32 = 3;
+const STATE_VERSION: u32 = 2;
+// The fast-mode release bumped the shared version without changing State.
+const REQUEST_V3_STATE_VERSION: u32 = 3;
 const REQUEST_BYTES: u64 = 64 * 1024;
 const STATE_BYTES: u64 = 64 * 1024;
 #[cfg(not(test))]
@@ -281,7 +286,7 @@ fn launch_unix(paths: &RuntimePaths, request: OccupantLaunchRequest<'_>) -> Comm
     let state = directory.join("state.json");
     let request_path = directory.join("request.json");
     let encoded = Request {
-        version: CONTRACT_VERSION,
+        version: REQUEST_VERSION,
         worktree: request.worktree.to_owned(),
         vendor: request.vendor.as_str().to_owned(),
         epoch: request.epoch,
@@ -520,14 +525,14 @@ fn state_launch_inner(
 
 fn run(request_path: &Path) -> io::Result<()> {
     let request: Request = read_json(request_path, REQUEST_BYTES)?;
-    if request.version != CONTRACT_VERSION {
+    if request.version != REQUEST_VERSION {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("unsupported supervisor request version {}", request.version),
         ));
     }
     let starting = State {
-        version: CONTRACT_VERSION,
+        version: STATE_VERSION,
         supervisor: std::process::id(),
         worktree: request.worktree.clone(),
         vendor: request.vendor.clone(),
@@ -979,14 +984,14 @@ fn read_state(path: &Path) -> io::Result<State> {
                 "supervisor state has no valid contract version",
             )
         })?;
-    if version != CONTRACT_VERSION {
+    if !matches!(version, STATE_VERSION | REQUEST_V3_STATE_VERSION) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!(
                 "supervisor state contract v{} is not owned by current Spice {} contract v{}",
                 version,
                 env!("CARGO_PKG_VERSION"),
-                CONTRACT_VERSION
+                STATE_VERSION
             ),
         ));
     }
@@ -1145,7 +1150,7 @@ mod tests {
         completion: PersistedCompletion,
     ) -> State {
         State {
-            version: CONTRACT_VERSION,
+            version: STATE_VERSION,
             supervisor: std::process::id(),
             worktree: root.to_string_lossy().into_owned(),
             vendor: "codex".to_owned(),
@@ -1165,7 +1170,7 @@ mod tests {
     }
 
     #[test]
-    fn replacement_adopts_every_typed_terminal_cause_without_relaunching() {
+    fn replacement_adopts_running_and_terminal_supervisors_across_request_versions() {
         let root = std::env::temp_dir().join(format!(
             "spice-terminal-supervisor-{}-{}",
             std::process::id(),
@@ -1205,32 +1210,61 @@ mod tests {
             disposition: "occupied".to_owned(),
         };
 
-        for expected in [
-            PersistedCompletion::Exited { status_raw: 0 },
-            PersistedCompletion::TimedOut { status_raw: 0 },
-            PersistedCompletion::Cancelled { status_raw: 7 << 8 },
-        ] {
-            publish_json(
-                &directory.join("state.json"),
-                &terminal_state(
+        // State v2 and the request-v3 release's identical state must both
+        // survive resident replacement, including subsequent supervisor writes.
+        for version in [2, 3] {
+            for expected in [
+                PersistedCompletion::Exited { status_raw: 0 },
+                PersistedCompletion::TimedOut { status_raw: 0 },
+                PersistedCompletion::Cancelled { status_raw: 7 << 8 },
+            ] {
+                let mut terminal = terminal_state(
                     &root,
                     lane,
                     occupant,
                     row.session.clone().expect("fixture session"),
                     expected.clone(),
-                ),
-            )
-            .expect("terminal state publishes");
-            let adopted = adopt(&paths, &row)
-                .expect("terminal state reads")
-                .expect("terminal supervisor is adoptable");
-            let Adoption::Exited(adopted) = adopted else {
-                panic!("terminal supervisor was mistaken for a live launch");
-            };
-            assert_eq!(adopted.occupant, occupant);
-            assert_eq!(adopted.group, 412);
-            let outcome = adopted.process.wait().expect("terminal status reads");
-            assert_eq!(PersistedCompletion::capture(outcome.completion()), expected);
+                );
+                terminal.version = version;
+                let mut running = terminal.clone();
+                running.phase = Phase::Running;
+                running.completion = CompletionField::none();
+                let path = directory.join("state.json");
+                publish_json(&path, &running).expect("running state publishes");
+                let adopted = adopt(&paths, &row)
+                    .expect("running state reads")
+                    .expect("running supervisor is adoptable");
+                let Adoption::Running(adopted) = adopted else {
+                    panic!("live supervisor was not adopted");
+                };
+                assert_eq!(adopted.occupant, occupant);
+                assert_eq!(adopted.group, 412);
+                assert_eq!(
+                    adopted.session,
+                    row.session.clone().expect("fixture session")
+                );
+                let DetachedWait::Running(process) = adopted
+                    .process
+                    .wait_for(Duration::ZERO)
+                    .expect("adopted supervisor remains running")
+                else {
+                    panic!("live supervisor was mistaken for a terminal state");
+                };
+
+                publish_json(&path, &terminal).expect("terminal state publishes");
+                let outcome = process.wait().expect("adopted supervisor completion reads");
+                assert_eq!(PersistedCompletion::capture(outcome.completion()), expected);
+                let adopted = adopt(&paths, &row)
+                    .expect("terminal state reads")
+                    .expect("terminal supervisor is adoptable");
+                let Adoption::Exited(adopted) = adopted else {
+                    panic!("terminal supervisor was mistaken for a live launch");
+                };
+                assert_eq!(adopted.occupant, occupant);
+                assert_eq!(adopted.group, 412);
+                let outcome = adopted.process.wait().expect("terminal status reads");
+                assert_eq!(PersistedCompletion::capture(outcome.completion()), expected);
+            }
         }
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
@@ -1361,16 +1395,24 @@ mod tests {
         ];
         let path = root.join("state.json");
 
-        for (label, value) in cases {
-            fs::write(
-                &path,
-                serde_json::to_vec(&value).expect("invalid fixture encodes"),
-            )
-            .expect("invalid fixture writes");
-            let error = read_state(&path)
-                .err()
-                .unwrap_or_else(|| panic!("{label} state reached adoption"));
-            assert_eq!(error.kind(), io::ErrorKind::InvalidData, "{label}");
+        for version in [2, 3] {
+            for (label, value) in &cases {
+                let mut value = value.clone();
+                value["version"] = serde_json::Value::from(version);
+                fs::write(
+                    &path,
+                    serde_json::to_vec(&value).expect("invalid fixture encodes"),
+                )
+                .expect("invalid fixture writes");
+                let error = read_state(&path)
+                    .err()
+                    .unwrap_or_else(|| panic!("v{version} {label} state reached adoption"));
+                assert_eq!(
+                    error.kind(),
+                    io::ErrorKind::InvalidData,
+                    "v{version} {label}"
+                );
+            }
         }
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
@@ -1413,7 +1455,7 @@ mod tests {
     }
 
     #[test]
-    fn contract_v1_state_is_refused_without_a_legacy_execution_path() {
+    fn unsupported_state_versions_are_refused_without_a_legacy_execution_path() {
         let root = std::env::temp_dir().join(format!(
             "spice-v1-supervisor-{}-{}",
             std::process::id(),
@@ -1421,31 +1463,36 @@ mod tests {
         ));
         fs::create_dir_all(&root).expect("fixture directory creates");
         let state = root.join("state.json");
-        fs::write(
-            &state,
-            serde_json::to_vec(&serde_json::json!({
-                "version": 1,
-                "phase": "exited",
-                "status_raw": 0,
-            }))
-            .expect("legacy fixture encodes"),
-        )
-        .expect("legacy fixture writes");
+        for version in [1, 4] {
+            fs::write(
+                &state,
+                serde_json::to_vec(&serde_json::json!({
+                    "version": version,
+                    "phase": "exited",
+                    "status_raw": 0,
+                }))
+                .expect("unsupported fixture encodes"),
+            )
+            .expect("unsupported fixture writes");
 
-        let error = match read_state(&state) {
-            Ok(_) => panic!("v1 state has no current execution path"),
-            Err(error) => error,
-        };
-        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-        let diagnostic = error.to_string();
-        assert!(diagnostic.contains("contract v1"), "{diagnostic}");
-        assert!(
-            diagnostic.contains(&format!(
-                "current Spice {} contract v{CONTRACT_VERSION}",
-                env!("CARGO_PKG_VERSION"),
-            )),
-            "{diagnostic}"
-        );
+            let error = match read_state(&state) {
+                Ok(_) => panic!("v{version} state has no current execution path"),
+                Err(error) => error,
+            };
+            assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+            let diagnostic = error.to_string();
+            assert!(
+                diagnostic.contains(&format!("contract v{version}")),
+                "{diagnostic}"
+            );
+            assert!(
+                diagnostic.contains(&format!(
+                    "current Spice {} contract v{STATE_VERSION}",
+                    env!("CARGO_PKG_VERSION"),
+                )),
+                "{diagnostic}"
+            );
+        }
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 }
