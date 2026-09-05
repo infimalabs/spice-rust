@@ -260,7 +260,7 @@ fn read_identity(
     package_path: &Path,
 ) -> Result<InstalledPackage, ProveFailure> {
     let installed_path = installed_root.join(package_path);
-    require_directory(&installed_path, "installed package")?;
+    require_package_directory(installed_root, package_path, "installed package")?;
     let package_json = installed_path.join("package.json");
     require_regular_file(&package_json, "installed package identity")?;
     let bytes = fs::read(&package_json).map_err(|error| {
@@ -281,6 +281,11 @@ fn collect_closure_files(
         .collect::<BTreeSet<_>>();
     let mut files = Vec::new();
     for package in packages {
+        require_package_directory(
+            installed_root,
+            Path::new(&package.path),
+            "installed package",
+        )?;
         collect_snapshot_files(
             installed_root,
             &installed_root.join(&package.path),
@@ -305,23 +310,12 @@ fn resolve_dependency(
 ) -> Result<Option<PathBuf>, ProveFailure> {
     validate_package_name(name)?;
     for candidate in dependency_candidates(requiring, name)? {
-        let installed = installed_root.join(&candidate);
-        match fs::symlink_metadata(&installed) {
-            Ok(metadata) if metadata.file_type().is_dir() => return Ok(Some(candidate)),
-            Ok(_) => {
-                return Err(package_refusal(format!(
-                    "installed dependency {} is not a directory: {}",
-                    name,
-                    installed.display(),
-                )));
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(package_refusal(format!(
-                    "cannot inspect dependency {}: {error}",
-                    installed.display(),
-                )));
-            }
+        if package_directory_exists(
+            installed_root,
+            &candidate,
+            &format!("installed dependency {name}"),
+        )? {
+            return Ok(Some(candidate));
         }
     }
     if optional {
@@ -443,6 +437,61 @@ fn require_directory(path: &Path, description: &str) -> Result<(), ProveFailure>
         )));
     }
     Ok(())
+}
+
+fn require_package_directory(
+    installed_root: &Path,
+    relative: &Path,
+    description: &str,
+) -> Result<(), ProveFailure> {
+    if package_directory_exists(installed_root, relative, description)? {
+        return Ok(());
+    }
+    Err(package_refusal(format!(
+        "{description} is absent: {}",
+        installed_root.join(relative).display(),
+    )))
+}
+
+fn package_directory_exists(
+    installed_root: &Path,
+    relative: &Path,
+    description: &str,
+) -> Result<bool, ProveFailure> {
+    let mut current = installed_root.to_path_buf();
+    let mut components = relative.components();
+    if components.next() != Some(std::path::Component::Normal(OsStr::new("node_modules"))) {
+        return Err(package_refusal(format!(
+            "{description} is not below the installed package root: {}",
+            installed_root.join(relative).display(),
+        )));
+    }
+    for component in relative.components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err(package_refusal(format!(
+                "{description} has an unconfined component: {}",
+                installed_root.join(relative).display(),
+            )));
+        };
+        current.push(name);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_dir() => {}
+            Ok(_) => {
+                return Err(package_refusal(format!(
+                    "{description} path component is not a directory: {}",
+                    current.display(),
+                )));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => {
+                return Err(package_refusal(format!(
+                    "cannot inspect {description} path component {}: {error}",
+                    current.display(),
+                )));
+            }
+        }
+    }
+    Ok(true)
 }
 
 fn require_regular_file(path: &Path, description: &str) -> Result<(), ProveFailure> {
@@ -902,6 +951,128 @@ mod tests {
                 "{detail}"
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_snapshot_refuses_scoped_package_ancestor_links() {
+        let fixture = PackageFixture::empty();
+        fixture.write_lock(json!({
+            "": {},
+            "node_modules/playwright": {
+                "version": "1.0.0",
+                "optionalDependencies": {"@scope/bridge": "1.0.0"}
+            },
+            "node_modules/@scope/bridge": {"version": "1.0.0"}
+        }));
+        fixture.write_package(
+            "node_modules/playwright",
+            "playwright",
+            "1.0.0",
+            &[],
+            &[("@scope/bridge", "1.0.0")],
+        );
+        fixture.write_package("external-scope/bridge", "@scope/bridge", "1.0.0", &[], &[]);
+        let external = fixture.root.join("external-scope");
+        fs::rename(fixture.installed.join("external-scope"), &external)
+            .expect("move scoped package outside installed root");
+        let scope = fixture.installed.join("node_modules/@scope");
+        std::os::unix::fs::symlink(&external, &scope).expect("link package scope outside root");
+
+        let (reason, detail) = failure(PlaywrightSnapshot::capture(
+            &fixture.selected,
+            &fixture.installed,
+        ));
+        assert_eq!(reason, "gate::prove-canvas-package-refused");
+        assert!(
+            detail.contains(scope.to_string_lossy().as_ref()),
+            "{detail}"
+        );
+        assert!(
+            detail.contains("path component is not a directory"),
+            "{detail}"
+        );
+
+        fs::remove_file(&scope).expect("remove external scope link");
+        std::os::unix::fs::symlink(fixture.root.join("missing-scope"), &scope)
+            .expect("create broken package scope link");
+        let (_, detail) = failure(PlaywrightSnapshot::capture(
+            &fixture.selected,
+            &fixture.installed,
+        ));
+        assert!(
+            detail.contains(scope.to_string_lossy().as_ref()),
+            "{detail}"
+        );
+        assert!(
+            detail.contains("path component is not a directory"),
+            "{detail}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn package_snapshot_refuses_nested_scoped_package_ancestor_links() {
+        let fixture = PackageFixture::empty();
+        fixture.write_lock(json!({
+            "": {},
+            "node_modules/playwright": {
+                "version": "1.0.0",
+                "dependencies": {"parent": "1.0.0"}
+            },
+            "node_modules/playwright/node_modules/parent": {
+                "version": "1.0.0",
+                "dependencies": {"@scope/leaf": "1.0.0"}
+            },
+            "node_modules/playwright/node_modules/parent/node_modules/@scope/leaf": {
+                "version": "1.0.0"
+            }
+        }));
+        fixture.write_package(
+            "node_modules/playwright",
+            "playwright",
+            "1.0.0",
+            &[("parent", "1.0.0")],
+            &[],
+        );
+        fixture.write_package(
+            "node_modules/playwright/node_modules/parent",
+            "parent",
+            "1.0.0",
+            &[("@scope/leaf", "1.0.0")],
+            &[],
+        );
+        fixture.write_package(
+            "external-nested-scope/leaf",
+            "@scope/leaf",
+            "1.0.0",
+            &[],
+            &[],
+        );
+        let external = fixture.root.join("external-nested-scope");
+        fs::rename(fixture.installed.join("external-nested-scope"), &external)
+            .expect("move nested scope outside installed root");
+        let scope = fixture
+            .installed
+            .join("node_modules/playwright/node_modules/parent/node_modules/@scope");
+        fs::create_dir_all(scope.parent().expect("scope has a parent"))
+            .expect("create nested package modules");
+        std::os::unix::fs::symlink(&external, &scope)
+            .expect("link nested package scope outside root");
+
+        let (reason, detail) = failure(PlaywrightSnapshot::capture(
+            &fixture.selected,
+            &fixture.installed,
+        ));
+        assert_eq!(reason, "gate::prove-canvas-package-refused");
+        assert!(
+            detail.contains(scope.to_string_lossy().as_ref()),
+            "{detail}"
+        );
+        assert!(
+            detail.contains("path component is not a directory"),
+            "{detail}"
+        );
     }
 
     #[cfg(unix)]
