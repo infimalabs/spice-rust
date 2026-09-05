@@ -290,8 +290,8 @@ mod tests {
     use super::super::CanvasWorkspace;
     use super::*;
 
-    const DETACHED_FIXTURE_MODE: &str = "SPICE_CANVAS_DETACHED_FIXTURE"; // env-policy: allow
-    const DETACHED_FIXTURE_PID: &str = "SPICE_CANVAS_DETACHED_PID"; // env-policy: allow
+    const DETACHED_FIXTURE_MODE: &str = "SPICE_CANVAS_DETACHED_FIXTURE"; // env-policy: not-an-env SPICE_CANVAS_DETACHED_FIXTURE
+    const DETACHED_FIXTURE_PID: &str = "SPICE_CANVAS_DETACHED_PID"; // env-policy: not-an-env SPICE_CANVAS_DETACHED_PID
     const TEST_OUTPUT_DRAIN: Duration = Duration::from_secs(2);
     const TEST_REAP_DEADLINE: Duration = Duration::from_millis(500);
     const TEST_TERMINATION_GRACE: Duration = Duration::from_millis(20);
