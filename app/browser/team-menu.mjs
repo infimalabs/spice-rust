@@ -386,7 +386,10 @@ export async function assertTeamMenu(page, fixture, artifacts) {
   assert.equal(await fastMode.getAttribute("aria-checked"), "false");
   assert.match(await fastMode.innerText(), /Fast mode\s+off/);
 
-  const peer = await page.context().newPage();
+  const browser = page.context().browser();
+  assert.ok(browser, "the fast-mode peer has a browser to own its context");
+  const peerContext = await browser.newContext();
+  const peer = await peerContext.newPage();
   try {
     await peer.goto(page.url(), { waitUntil: "networkidle" });
     const peerPanel = await openSpiceMenu(peer);
@@ -451,7 +454,7 @@ export async function assertTeamMenu(page, fixture, artifacts) {
         ?.getAttribute("aria-checked") === "false",
     );
   } finally {
-    await peer.close();
+    await peerContext.close();
   }
   assert.equal(await panel.locator(".canvas-team").count(), 1, "the four agents begin together");
   assert.equal(await panel.locator(".canvas-team-member").count(), 4);
