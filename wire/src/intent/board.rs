@@ -78,6 +78,76 @@ pub enum ProjectVisibility {
     },
 }
 
+/// Whether one exact task transcript coordinate can be rehydrated.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum TaskTranscriptRecovery {
+    /// The registered vendor session and exact source boundary are available.
+    Transcript {
+        /// Vendor session identity owning the source.
+        session: String,
+    },
+    /// The journal preserves the boundary, but no executable transcript lookup exists.
+    Unavailable {
+        /// Evidence-specific reason the lookup cannot be rendered.
+        reason: String,
+    },
+}
+
+/// Compact provenance for the claim that opened the current task phase.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskClaimContext {
+    /// ClaimWon fact opening the current attempt.
+    pub claimed: crate::Seq,
+    /// Lane bound when the claim was won.
+    pub lane: crate::CanonicalUuid,
+    /// Occupant bound when the claim was won.
+    pub occupant: crate::CanonicalUuid,
+    /// Resident generation that minted the claim.
+    pub epoch: crate::CanonicalUuid,
+    /// Complete accounted source boundary recorded on the claim.
+    pub source: crate::body::SourceBoundary,
+    /// Executable recovery coordinate, or an explicit reason none exists.
+    pub recovery: TaskTranscriptRecovery,
+}
+
+/// Lifecycle boundary whose Git objects supply the current task's repository context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TaskGitContextKind {
+    /// Repository state observed when the claim opened.
+    Claim,
+    /// Repository state published when an implementation phase completed.
+    Completion,
+    /// Repository state published when a review completed.
+    Review,
+}
+
+impl TaskGitContextKind {
+    /// Stable text spelling used by task detail output.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Claim => "claim",
+            Self::Completion => "completion",
+            Self::Review => "review",
+        }
+    }
+}
+
+/// One compact, fact-attributed Git boundary selected for task recovery.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskGitContext {
+    /// Fact that recorded this boundary.
+    pub fact: crate::Seq,
+    /// Lifecycle role of that fact.
+    pub kind: TaskGitContextKind,
+    /// Exact repository object identities recorded by the lifecycle fact.
+    pub boundary: crate::body::GitBoundary,
+}
+
 impl ProjectVisibility {
     /// Whether this project is system-owned hidden evidence.
     #[must_use]
@@ -192,6 +262,20 @@ pub struct BoardTask {
         deserialize_with = "crate::optional::present"
     )]
     pub lease: Option<Positioned<crate::LeaseHead>>,
+    /// Claim-opening transcript coordinates, without embedded transcript content.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub claim_context: Option<TaskClaimContext>,
+    /// Latest repository lifecycle boundary, without embedded Git object content.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub git_context: Option<TaskGitContext>,
 }
 
 /// Server-resolved public task route metadata for one board snapshot.
@@ -242,8 +326,22 @@ impl BoardTask {
             workflow,
             claim,
             lease,
+            claim_context: None,
+            git_context: None,
         }
         .into_actor_facing()
+    }
+
+    /// Attach compact recovery references derived from the same authoritative snapshot.
+    #[must_use]
+    pub fn with_context(
+        mut self,
+        claim_context: Option<TaskClaimContext>,
+        git_context: Option<TaskGitContext>,
+    ) -> Self {
+        self.claim_context = claim_context;
+        self.git_context = git_context;
+        self
     }
 
     /// Normalize this row to the title its actor may retain.

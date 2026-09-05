@@ -386,6 +386,9 @@ pub(in crate::board_command) fn task_show(
         format!("claim_thread {}", claim_thread(task)),
     ];
     lines.extend(creation_context_lines(statement));
+    lines.extend(claim_context_lines(task));
+    lines.push(format!("spice doc ledger {}", statement.handle));
+    lines.extend(git_context_lines(task));
     let tags = visible_tags(&statement.tags).collect::<Vec<_>>();
     if tags.is_empty() {
         lines.push("tags -".to_owned());
@@ -475,9 +478,126 @@ fn claim_line(task: &BoardTask) -> String {
 }
 
 fn claim_thread(task: &BoardTask) -> String {
-    task.claim
-        .as_ref()
-        .map_or_else(|| "-".to_owned(), |claim| claim.body.occupant.to_string())
+    task.claim_context.as_ref().map_or_else(
+        || "-".to_owned(),
+        |context| match &context.recovery {
+            wire::intent::TaskTranscriptRecovery::Transcript { session } => session.clone(),
+            wire::intent::TaskTranscriptRecovery::Unavailable { .. } => "-".to_owned(),
+        },
+    )
+}
+
+fn claim_context_lines(task: &BoardTask) -> Vec<String> {
+    let Some(context) = &task.claim_context else {
+        return Vec::new();
+    };
+    let mut lines = vec![format!(
+        "claim_context fact={} lane={} occupant={} epoch={}",
+        context.claimed, context.lane, context.occupant, context.epoch
+    )];
+    match &context.source {
+        body::SourceBoundary::Proven { heads } if heads.is_empty() => {
+            lines.push("claim_source proven empty".to_owned());
+        }
+        body::SourceBoundary::Proven { heads } => {
+            for head in heads {
+                lines.push(format!(
+                    "claim_source lane={} vendor={} stream={} source={} member={} offset={}",
+                    head.lane,
+                    head.vendor,
+                    head.stream,
+                    head.source,
+                    head.next.member,
+                    head.next.offset,
+                ));
+            }
+        }
+        body::SourceBoundary::Incomplete { reason } => {
+            lines.push(format!("claim_source unavailable {reason}"));
+        }
+    }
+    match &context.recovery {
+        wire::intent::TaskTranscriptRecovery::Transcript { session } => {
+            let body::SourceBoundary::Proven { heads } = &context.source else {
+                lines.push("claim_context unavailable recovery-source-incomplete".to_owned());
+                return lines;
+            };
+            let mut registered = heads
+                .iter()
+                .filter(|head| head.stream == body::TASK_CREATION_CONTEXT_STREAM);
+            let Some(boundary) = registered.next() else {
+                lines.push("claim_context unavailable recovery-source-missing".to_owned());
+                return lines;
+            };
+            if registered.next().is_some() {
+                lines.push("claim_context unavailable recovery-source-ambiguous".to_owned());
+                return lines;
+            }
+            lines.push(shell_words::join([
+                "spice".to_owned(),
+                "session".to_owned(),
+                "context".to_owned(),
+                session.clone(),
+                "--lane".to_owned(),
+                boundary.lane.to_string(),
+                "--vendor".to_owned(),
+                boundary.vendor.to_string(),
+                "--stream".to_owned(),
+                boundary.stream.clone(),
+                "--source".to_owned(),
+                boundary.source.to_string(),
+                "--member".to_owned(),
+                boundary.next.member.to_string(),
+                "--offset".to_owned(),
+                boundary.next.offset.to_string(),
+            ]));
+        }
+        wire::intent::TaskTranscriptRecovery::Unavailable { reason } => {
+            lines.push(format!("claim_context unavailable {reason}"));
+        }
+    }
+    lines
+}
+
+fn git_context_lines(task: &BoardTask) -> Vec<String> {
+    let Some(context) = &task.git_context else {
+        return Vec::new();
+    };
+    let boundary = &context.boundary;
+    let mut lines = vec![format!(
+        "git_context kind={} fact={} head={} integrated={} local_commits={}",
+        context.kind.as_str(),
+        context.fact,
+        boundary.head,
+        boundary.integrated,
+        boundary.local_commits,
+    )];
+    if let Some(upstream) = &boundary.upstream {
+        lines.push(format!("git_upstream {upstream}"));
+    }
+    if let Some(upstream_head) = &boundary.upstream_head {
+        lines.push(format!("git_upstream_head {upstream_head}"));
+    }
+    let mut command = vec!["git".to_owned(), "show".to_owned()];
+    if context.kind == wire::intent::TaskGitContextKind::Claim {
+        command.extend([
+            "--no-patch".to_owned(),
+            "--format=fuller".to_owned(),
+            "--end-of-options".to_owned(),
+        ]);
+        command.push(boundary.head.clone());
+    } else {
+        command.extend([
+            "-m".to_owned(),
+            "--first-parent".to_owned(),
+            "--stat".to_owned(),
+            "--patch".to_owned(),
+            "--end-of-options".to_owned(),
+        ]);
+        command.push(boundary.integrated.clone());
+    }
+    lines.push(shell_words::join(command));
+    lines
 }
 
 fn push_bulleted(lines: &mut Vec<String>, text: &str) {

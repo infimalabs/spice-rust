@@ -333,6 +333,8 @@ fn board_task(label: &str, _id: &str, title: &str, project: &str) -> wire::inten
         },
         claim: None,
         lease: None,
+        claim_context: None,
+        git_context: None,
     }
 }
 

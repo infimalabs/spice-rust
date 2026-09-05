@@ -18,9 +18,10 @@ input) classifies ordinary Markdown, emits the one canonical dialect spelling,
 previews the tasks that spelling would touch, and applies only that exact digest
 against the board snapshot captured by the apply invocation.
 `spice doc ledger HANDLE` travels the other direction only as a narrow
-single-task display containing the title, current flow, and tags when those
-heads are representable in the dialect; it is not the inverse of document apply
-and does not export a family.
+single-task display containing the current title, description, acceptance,
+flow, authored tags, priority, and append-only task notes when those values are
+representable in the dialect. It is not the inverse of document apply and does
+not export a family or dependency graph.
 
 ```mermaid
 flowchart TD
@@ -36,7 +37,7 @@ flowchart TD
     B --> R["DocApplied receipt"]
   end
   M --> PL
-  B --> L["doc ledger HANDLE:<br/>representable title +<br/>current flow + tags"]
+  B --> L["doc ledger HANDLE:<br/>current task prose + flow<br/>+ append-only notes"]
 ```
 
 ### Behavioral properties
@@ -80,13 +81,17 @@ the row was created and does not namespace later document matching.
 | tags and priority | stored with the internal `document-slug:<slug>` tag; priority is a tag | replaced from the document while retaining the internal slug tag; absence removes prior authored values |
 | dependency graph | stored from the complete parsed graph | replaced from the complete parsed graph; an omitted explicit edge is removed |
 | flow | explicit flow, or the ordinary acceptance-sensitive default | unchanged by document edits |
-| description, due, annotations | normalized by the Markdown dialect but not projected into board heads | no board effect |
+| description | stored; absence is empty | replaced; absence clears it |
+| annotations | appended as task notes; exact duplicates are not appended again | new annotations are appended; omission does not erase prior notes |
+| due | normalized by the Markdown dialect but not projected into board heads | no board effect |
 
 These are replacement semantics, not patch semantics. In particular, an absent
-acceptance, tag, priority, or explicit dependency in an edited document does not
-mean “leave the old value alone.” The narrow `doc ledger` output is therefore a
-readable task sketch, not a safe lossless export-and-reapply format. A task
-whose current heads cannot be expressed by the closed dialect reports
+description, acceptance, tag, priority, or explicit dependency in an edited
+document does not mean “leave the old value alone.” Notes are deliberately the
+exception: they are append-only evidence, and omitted annotations leave them
+intact. The narrow `doc ledger` output is therefore a readable current-task
+recovery view, not a safe lossless export-and-reapply format. A task whose
+current heads cannot be expressed by the closed dialect reports
 `doc::ledger-unrepresentable` rather than fabricating a document.
 
 The dialect's `Flow:` field deliberately has its own closed input vocabulary:

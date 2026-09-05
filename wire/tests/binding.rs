@@ -579,6 +579,38 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
                 epoch,
             },
         }),
+        claim_context: Some(wire::intent::TaskClaimContext {
+            claimed: seq(4),
+            lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163c5"),
+            occupant: uuid("018f82d4-6f59-7d06-92e3-bce9131163c6"),
+            epoch,
+            source: wire::body::SourceBoundary::Proven {
+                heads: vec![wire::TranscriptSourceHead {
+                    lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163c5"),
+                    vendor: "claude".parse().expect("a vendor"),
+                    stream: "session".to_owned(),
+                    source: uuid("018f82d4-6f59-7d06-92e3-bce9131163c7"),
+                    next: wire::body::TranscriptPosition {
+                        member: 3,
+                        offset: 44,
+                    },
+                }],
+            },
+            recovery: wire::intent::TaskTranscriptRecovery::Transcript {
+                session: "thread-123".to_owned(),
+            },
+        }),
+        git_context: Some(wire::intent::TaskGitContext {
+            fact: seq(6),
+            kind: wire::intent::TaskGitContextKind::Completion,
+            boundary: wire::body::GitBoundary {
+                head: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+                integrated: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned(),
+                upstream: Some("origin/main".to_owned()),
+                upstream_head: Some("cccccccccccccccccccccccccccccccccccccccc".to_owned()),
+                local_commits: 2,
+            },
+        }),
     };
 
     let encoded = serde_json::to_value(&task).expect("the constructed board task encodes");

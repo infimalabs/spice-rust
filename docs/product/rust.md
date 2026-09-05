@@ -92,13 +92,16 @@ invocation; the public preview does not seal a board barrier across invocations.
 New rows receive the ordinary acceptance-sensitive flow default when flow is
 absent. Existing rows replace title, acceptance, authored tags, priority tag,
 and parsed dependencies, while their workflow flow and current phase remain
-unchanged. The dialect accepts only `design`, `plan`, `todo`, `verify`, and
-`review` in `Flow:`; that closed input grammar is separate from the board's open
-phase vocabulary. Dialect descriptions, due values, and annotations do not
-enter board heads. `doc ledger HANDLE` emits only a dialect-representable task's
-title, current flow, and tags and is not an inverse family export; an
-unrepresentable current head set reports `doc::ledger-unrepresentable` rather
-than widening the dialect.
+unchanged. Description follows the same replacement semantics. Dialect
+annotations append as exactly deduplicated `TaskNoted` evidence, so omission in
+a later document does not erase prior annotations or later notes. Due values do
+not enter board heads. The dialect accepts only `design`, `plan`, `todo`,
+`verify`, and `review` in `Flow:`; that closed input grammar is separate from
+the board's open phase vocabulary. `doc ledger HANDLE` emits a
+dialect-representable current-task recovery view containing task prose, flow,
+authored tags, priority, and append-only notes. It is not an inverse family
+export; an unrepresentable current head set reports
+`doc::ledger-unrepresentable` rather than widening the dialect.
 
 Authorities: [`board/src/apply.rs`](../../board/src/apply.rs),
 [`spice/src/board_command/client_document.rs`](../../spice/src/board_command/client_document.rs),

@@ -779,6 +779,8 @@ struct DocTaskSpec {
     task: TaskHandle,
     born: wire::TaskStamp,
     title: String,
+    description: Option<String>,
+    annotations: Vec<String>,
     project: String,
     acceptance: Vec<String>,
     tags: Vec<String>,
@@ -1095,6 +1097,8 @@ fn doc_task_spec(
             .expect("document handles carry canonical task stamps"),
         task,
         title: node.title.clone(),
+        description: (!node.description.is_empty()).then(|| node.description.clone()),
+        annotations: node.annotations.clone(),
         project,
         acceptance: node.acceptance.clone(),
         tags,
@@ -1114,16 +1118,51 @@ fn write_doc_task(
     creation: Option<&TaskCreationCapture>,
     previous: Option<PendingFact>,
 ) -> Result<PendingFact, Outcome<CommandAnswer>> {
+    let task = spec.born.clone();
+    let annotations = spec.annotations.clone();
     let cause = previous.map_or(FactCause::Root, FactCause::Pending);
     let existing = plan
         .snapshot
         .entries
         .iter()
         .find(|entry| entry.handle() == &spec.task);
-    match existing {
+    let written = match existing {
         Some(entry) => edit_doc_task(write, entry, spec, cause),
         None => add_doc_task(write, spec, origin, creation, cause),
+    }?;
+    append_doc_annotations(write, plan, &task, annotations, written)
+}
+
+fn append_doc_annotations(
+    write: &mut JournalWrite,
+    plan: &DocPlan,
+    task: &wire::TaskStamp,
+    annotations: Vec<String>,
+    mut cause: PendingFact,
+) -> Result<PendingFact, Outcome<CommandAnswer>> {
+    let mut retained = plan
+        .snapshot
+        .facts
+        .iter()
+        .filter_map(|envelope| envelope.fact.read::<body::TaskNoted>())
+        .filter(|noted| &noted.task == task)
+        .map(|noted| noted.note)
+        .collect::<std::collections::BTreeSet<_>>();
+    for note in annotations {
+        if !retained.insert(note.clone()) {
+            continue;
+        }
+        cause = write
+            .fact(
+                body::TaskNoted {
+                    task: task.clone(),
+                    note,
+                },
+                FactCause::Pending(cause),
+            )
+            .map_err(|error| store_fault("doc::annotation-build", &error.to_string()))?;
     }
+    Ok(cause)
 }
 
 fn edit_doc_task(
@@ -1154,6 +1193,7 @@ fn edit_doc_task(
         .map_err(|error| store_fault("doc::edit-build", &error.to_string()))?;
     let mut statement = existing.statement().clone();
     statement.title = spec.title;
+    statement.description = spec.description;
     statement.project = spec.project;
     statement.acceptance = spec.acceptance;
     statement.tags = spec.tags;
@@ -1193,7 +1233,7 @@ fn add_doc_task(
             body::TaskAdded {
                 task: spec.born.clone(),
                 title: spec.title.clone(),
-                description: None,
+                description: spec.description.clone(),
                 acceptance: spec.acceptance.clone(),
                 project: spec.project.clone(),
                 tags: spec.tags.clone(),
@@ -1213,7 +1253,7 @@ fn add_doc_task(
         born: statement_task,
         queue_origin: position,
         title: spec.title,
-        description: None,
+        description: spec.description,
         acceptance: spec.acceptance,
         project: spec.project,
         tags: spec.tags,

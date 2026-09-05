@@ -101,6 +101,23 @@ evidence. Operator and Spice actors receive explicit reasons; a legacy lane
 whose retained facts do not prove one boundary receives
 `legacy-evidence-missing`. Once migrated, no legacy execution arm remains.
 
+### Task lifecycle recovery links
+
+An active task also retains the exact `ClaimWon` fact that opened its current
+attempt. `task show` renders that fact's lane, occupant, epoch, accounted source
+boundary, and registered vendor session as a second shell-executable
+`spice session context` command. Claim carry and transcript continuation do not
+move this opening boundary. If the source is incomplete, the registered stream
+is absent or ambiguous, or no matching session declaration exists, the task
+renders the specific unavailability reason instead of inventing a lookup.
+
+The same compact view points to `spice doc ledger HANDLE` for current authored
+rationale and append-only notes. When a claim, completion, or review records a
+Git boundary, the task renders its fact identity and a shell-executable
+`git show` command for the recorded claim head or integrated object. Git and
+transcript content remain in their native authorities; task rows carry only
+provenance and recovery coordinates.
+
 ### The window
 
 ```mermaid
