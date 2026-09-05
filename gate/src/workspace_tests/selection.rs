@@ -711,16 +711,21 @@ fn target_reaches_dependents(target: &TargetIdentity) -> bool {
     target_is_library(target) || target_has_kind(target, "custom-build")
 }
 
-/// Run reverse-dependent harnesses only for a target contract source.
+/// Run reverse-dependent harnesses only for a source exposed by the target.
 ///
 /// Cargo checks retain package-wide reverse reach for every library source, so
 /// an internal module cannot silently break a downstream compile contract. Test
-/// harnesses add behavioral evidence only when the library root or a build
-/// script changes; treating every private module as a package contract reruns
-/// every transitive consumer without a source-to-test edge.
+/// harnesses add behavioral evidence for the library root, public modules and
+/// public re-exports. Missing source metadata stays conservative.
 fn target_reaches_dependent_tests(target: &TargetIdentity, source: &Path) -> bool {
     target_has_kind(target, "custom-build")
-        || (target_is_library(target) && source == target.source)
+        || (target_is_library(target)
+            && (source == target.source
+                || target
+                    .declared_path_sources
+                    .iter()
+                    .find(|declared| declared.path == source)
+                    .is_none_or(|declared| declared.dependent_tests)))
 }
 
 #[cfg(test)]

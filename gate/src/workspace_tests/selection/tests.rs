@@ -46,6 +46,8 @@ fn representative_steer_and_resident_change_has_exact_contract_edges() {
                 "spice/src/resident/tests/message_backlog.rs",
                 "spice::bin:spice",
             ),
+            ("steer/src/ack/scan.rs", "spice::bin:spice"),
+            ("steer/src/ack/scan.rs", "spice::lib:spice"),
             ("steer/src/ack/scan.rs", "steer::lib:steer"),
             ("steer/src/lib.rs", "spice::bin:spice"),
             ("steer/src/lib.rs", "spice::lib:spice"),
@@ -154,11 +156,10 @@ fn workspace_authority_retains_process_proofs() {
 }
 
 #[test]
-fn canvas_internal_scheduler_changes_stay_in_canvas_tests_but_retain_downstream_checks() {
+fn canvas_private_scheduler_changes_stay_in_canvas_tests_but_retain_downstream_checks() {
     let root = workspace_root();
     let inventory = canvas_scheduler_inventory(&root);
     let changes = [
-        "canvas/src/axum.rs".to_owned(),
         "canvas/src/axum/control.rs".to_owned(),
         "canvas/src/axum/tests/lifecycle.rs".to_owned(),
     ];
@@ -179,7 +180,6 @@ fn canvas_internal_scheduler_changes_stay_in_canvas_tests_but_retain_downstream_
             .map(|edge| (edge.source(), edge.test()))
             .collect::<Vec<_>>(),
         [
-            ("canvas/src/axum.rs", "canvas::lib:canvas"),
             ("canvas/src/axum/control.rs", "canvas::lib:canvas"),
             ("canvas/src/axum/tests/lifecycle.rs", "canvas::lib:canvas",),
         ],
@@ -208,17 +208,67 @@ fn canvas_internal_scheduler_changes_stay_in_canvas_tests_but_retain_downstream_
 }
 
 #[test]
+fn canvas_public_module_changes_retain_cross_package_contract_tests() {
+    let root = workspace_root();
+    let inventory = canvas_scheduler_inventory(&root);
+    assert_canvas_public_source_reaches_dependents(
+        &inventory,
+        &root,
+        "canvas/src/axum.rs",
+        b"canvas-public-module-change",
+    );
+}
+
+#[test]
+fn canvas_public_reexport_changes_retain_cross_package_contract_tests() {
+    let root = workspace_root();
+    let inventory = canvas_scheduler_inventory(&root);
+    assert_canvas_public_source_reaches_dependents(
+        &inventory,
+        &root,
+        "canvas/src/asset.rs",
+        b"canvas-public-reexport-change",
+    );
+}
+
+#[test]
+fn unclassified_library_sources_conservatively_retain_cross_package_tests() {
+    let root = workspace_root();
+    let inventory = canvas_scheduler_inventory(&root);
+    assert_canvas_public_source_reaches_dependents(
+        &inventory,
+        &root,
+        "canvas/src/unclassified.rs",
+        b"canvas-unclassified-source-change",
+    );
+}
+
+#[test]
 fn canvas_library_root_changes_retain_cross_package_contract_tests() {
     let root = workspace_root();
     let inventory = canvas_scheduler_inventory(&root);
-    let changes = ["canvas/src/lib.rs".to_owned()];
-    let report = selection_plan(
+    assert_canvas_public_source_reaches_dependents(
         &inventory,
         &root,
-        wire::Digest::compute(wire::Domain::GateSelection, b"canvas-contract-change"),
+        "canvas/src/lib.rs",
+        b"canvas-contract-change",
+    );
+}
+
+fn assert_canvas_public_source_reaches_dependents(
+    inventory: &Inventory,
+    root: &Path,
+    changed: &str,
+    digest: &[u8],
+) {
+    let changes = [changed.to_owned()];
+    let report = selection_plan(
+        inventory,
+        root,
+        wire::Digest::compute(wire::Domain::GateSelection, digest),
         &changes,
     )
-    .expect("Canvas contract selection is valid")
+    .expect("Canvas public source selection is valid")
     .into_report();
 
     assert_eq!(
@@ -232,12 +282,7 @@ fn canvas_library_root_changes_retain_cross_package_contract_tests() {
         ],
     );
     assert_eq!(report.edges().len(), 5);
-    assert!(
-        report
-            .edges()
-            .iter()
-            .all(|edge| edge.source() == "canvas/src/lib.rs"),
-    );
+    assert!(report.edges().iter().all(|edge| edge.source() == changed),);
 }
 
 #[test]
