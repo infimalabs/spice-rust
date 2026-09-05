@@ -1103,6 +1103,7 @@ fn partition_package(
             name: package.name.clone(),
             root: package.root.clone(),
             dependencies: package.dependencies.clone(),
+            compiler_std_extern: package.compiler_std_extern,
             compile_time_authority: package.compile_time_authority.clone(),
             declared_targets: package.declared_targets.clone(),
             removed_targets: package.removed_targets.clone(),

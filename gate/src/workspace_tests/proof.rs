@@ -708,6 +708,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     mod file_macro_authority;
+    mod output_macro_authority;
 
     #[test]
     fn equivalent_roots_plan_identical_path_independent_shards() {

@@ -131,6 +131,7 @@ pub(super) fn package_inventory(
         name: package.name,
         root: package_root.to_path_buf(),
         dependencies,
+        compiler_std_extern: namespace_context.compiler_std_extern(),
         compile_time_authority,
         declared_targets,
         removed_targets: Vec::new(),
