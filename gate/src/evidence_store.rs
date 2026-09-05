@@ -6,6 +6,7 @@
 //! renewal, publication, and garbage collection have one serial history across
 //! every linked worktree.
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -346,6 +347,171 @@ pub struct EvidenceStore {
     layout: Layout,
 }
 
+fn publish_batch(
+    layout: &Layout,
+    receipts: &[&PassReceipt],
+    boundary: &mut impl FnMut(PublicationBoundary) -> Result<(), EvidenceStoreError>,
+) -> Result<Vec<Publication>, EvidenceStoreError> {
+    if receipts.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut actions = BTreeSet::new();
+    let mut entries = Vec::with_capacity(receipts.len());
+    let mut prepared = Vec::with_capacity(receipts.len());
+    for receipt in receipts {
+        if !actions.insert(receipt.action().clone()) {
+            return Err(EvidenceStoreError::new(
+                "gate-evidence::publication-action-duplicate",
+                format!("batch names action {} more than once", receipt.action()),
+            ));
+        }
+        let bytes = receipt.encode()?;
+        let id = receipt.id()?;
+        let object_preexisting =
+            match read_optional_regular(&layout.object_path(&id), MAX_RECEIPT_BYTES as u64)? {
+                Some(existing) if existing == bytes => true,
+                Some(_) => {
+                    return Err(EvidenceStoreError::new(
+                        "gate-evidence::immutable-object-mismatch",
+                        format!(
+                            "existing object {} has different bytes",
+                            layout.object_path(&id).display()
+                        ),
+                    ));
+                }
+                None => false,
+            };
+        let current = read_index(layout, receipt.action())?;
+        let selected = current
+            .as_ref()
+            .map_or_else(|| id.clone(), |index| index.receipt.clone().min(id.clone()));
+        let index_updated = current
+            .as_ref()
+            .is_none_or(|index| index.receipt != selected);
+        entries.push(PublicationJournalEntry {
+            action: receipt.action().clone(),
+            receipt: id.clone(),
+            previous: current,
+            object_preexisting,
+        });
+        prepared.push(PreparedPublication {
+            bytes,
+            publication: Publication {
+                receipt: id,
+                selected,
+                object_created: !object_preexisting,
+                index_updated,
+            },
+        });
+    }
+
+    let journal = PublicationJournal {
+        version: EVIDENCE_STORE_VERSION,
+        entries,
+    };
+    publish_publication(layout, &journal)?;
+    let publication = (|| {
+        boundary(PublicationBoundary::Prepared)?;
+        for (index, (entry, prepared)) in journal.entries.iter().zip(&prepared).enumerate() {
+            publish_immutable(&layout.object_path(&entry.receipt), &prepared.bytes)?;
+            boundary(PublicationBoundary::Object(index))?;
+            if prepared.publication.index_updated {
+                publish_json(
+                    &layout.index_path(&entry.action),
+                    &ActionIndex::new(entry.action.clone(), prepared.publication.selected.clone()),
+                )?;
+            }
+            boundary(PublicationBoundary::Index(index))?;
+        }
+        publish_publication(layout, &PublicationJournal::idle())?;
+        Ok(prepared
+            .into_iter()
+            .map(|prepared| prepared.publication)
+            .collect())
+    })();
+    publication.map_err(|error| rollback_after_failure(layout, &journal, error))
+}
+
+fn recover_publication(layout: &Layout) -> Result<(), EvidenceStoreError> {
+    let Some(journal) = read_publication(layout)? else {
+        return Ok(());
+    };
+    validate_publication_journal(&journal)?;
+    if journal.entries.is_empty() {
+        return Ok(());
+    }
+    rollback_publication(layout, &journal)
+}
+
+fn rollback_after_failure(
+    layout: &Layout,
+    journal: &PublicationJournal,
+    error: EvidenceStoreError,
+) -> EvidenceStoreError {
+    match rollback_publication(layout, journal) {
+        Ok(()) => error,
+        Err(recovery) => EvidenceStoreError::new(
+            "gate-evidence::publication-recovery-failed",
+            format!("publication failed with {error}; rollback failed with {recovery}"),
+        ),
+    }
+}
+
+fn rollback_publication(
+    layout: &Layout,
+    journal: &PublicationJournal,
+) -> Result<(), EvidenceStoreError> {
+    validate_publication_journal(journal)?;
+    for entry in journal.entries.iter().rev() {
+        let path = layout.index_path(&entry.action);
+        if let Some(previous) = &entry.previous {
+            read_receipt(layout, &previous.receipt, Some(&entry.action))?;
+            publish_json(&path, previous)?;
+        } else {
+            remove_optional_file(&path)?;
+        }
+    }
+    for entry in journal.entries.iter().rev() {
+        if !entry.object_preexisting {
+            remove_optional_file(&layout.object_path(&entry.receipt))?;
+        }
+    }
+    publish_publication(layout, &PublicationJournal::idle())
+}
+
+fn validate_publication_journal(journal: &PublicationJournal) -> Result<(), EvidenceStoreError> {
+    if journal.version != EVIDENCE_STORE_VERSION {
+        return Err(EvidenceStoreError::new(
+            "gate-evidence::publication-journal-version-unsupported",
+            format!(
+                "publication journal version {} is not {EVIDENCE_STORE_VERSION}",
+                journal.version
+            ),
+        ));
+    }
+    let mut actions = BTreeSet::new();
+    for entry in &journal.entries {
+        if !actions.insert(&entry.action) {
+            return Err(EvidenceStoreError::new(
+                "gate-evidence::publication-journal-invalid",
+                format!("publication journal repeats action {}", entry.action),
+            ));
+        }
+        if entry
+            .previous
+            .as_ref()
+            .is_some_and(|previous| previous.action != entry.action)
+        {
+            return Err(EvidenceStoreError::new(
+                "gate-evidence::publication-journal-invalid",
+                format!("publication journal mismatches action {}", entry.action),
+            ));
+        }
+    }
+    Ok(())
+}
+
 impl EvidenceStore {
     /// Open or initialize the current store below an exact Git common directory.
     pub fn open(common_git: &Path) -> Result<Self, EvidenceStoreError> {
@@ -362,39 +528,25 @@ impl EvidenceStore {
 
     /// Publish one immutable object and atomically select it for its action.
     pub fn publish(&self, receipt: &PassReceipt) -> Result<Publication, EvidenceStoreError> {
-        self.publish_with(receipt, || Ok(()))
+        self.publish_batch(std::iter::once(receipt))
+            .map(|mut publications| publications.remove(0))
     }
 
-    fn publish_with(
+    /// Publish every receipt as one reader-visible transaction.
+    pub fn publish_batch<'a>(
         &self,
-        receipt: &PassReceipt,
-        before_index: impl FnOnce() -> Result<(), EvidenceStoreError>,
-    ) -> Result<Publication, EvidenceStoreError> {
-        self.with_lock(|layout| {
-            let bytes = receipt.encode()?;
-            let id = receipt.id()?;
-            let object_created = publish_immutable(&layout.object_path(&id), &bytes)?;
-            before_index()?;
-            let current = read_index(layout, receipt.action())?;
-            let selected = current
-                .as_ref()
-                .map_or_else(|| id.clone(), |index| index.receipt.clone().min(id.clone()));
-            let index_updated = current
-                .as_ref()
-                .is_none_or(|index| index.receipt != selected);
-            if index_updated {
-                publish_json(
-                    &layout.index_path(receipt.action()),
-                    &ActionIndex::new(receipt.action().clone(), selected.clone()),
-                )?;
-            }
-            Ok(Publication {
-                receipt: id,
-                selected,
-                object_created,
-                index_updated,
-            })
-        })
+        receipts: impl IntoIterator<Item = &'a PassReceipt>,
+    ) -> Result<Vec<Publication>, EvidenceStoreError> {
+        self.publish_batch_with(receipts, |_| Ok(()))
+    }
+
+    fn publish_batch_with<'a>(
+        &self,
+        receipts: impl IntoIterator<Item = &'a PassReceipt>,
+        mut boundary: impl FnMut(PublicationBoundary) -> Result<(), EvidenceStoreError>,
+    ) -> Result<Vec<Publication>, EvidenceStoreError> {
+        let receipts = receipts.into_iter().collect::<Vec<_>>();
+        self.with_lock(|layout| publish_batch(layout, &receipts, &mut boundary))
     }
 
     /// Read the currently selected receipt for an action.
@@ -530,6 +682,7 @@ impl EvidenceStore {
             .acquire()
             .map_err(|error| EvidenceStoreError::io("acquire store lock", lock.path(), error))?;
         self.layout.validate()?;
+        recover_publication(&self.layout)?;
         operation(&self.layout)
     }
 }
@@ -577,6 +730,43 @@ struct ActionIndex {
     version: u64,
     action: ActionKey,
     receipt: ReceiptId,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PublicationJournal {
+    version: u64,
+    entries: Vec<PublicationJournalEntry>,
+}
+
+impl PublicationJournal {
+    const fn idle() -> Self {
+        Self {
+            version: EVIDENCE_STORE_VERSION,
+            entries: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PublicationJournalEntry {
+    action: ActionKey,
+    receipt: ReceiptId,
+    previous: Option<ActionIndex>,
+    object_preexisting: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PublicationBoundary {
+    Prepared,
+    Object(usize),
+    Index(usize),
+}
+
+struct PreparedPublication {
+    bytes: Vec<u8>,
+    publication: Publication,
 }
 
 impl ActionIndex {

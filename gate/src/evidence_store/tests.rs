@@ -86,19 +86,119 @@ fn concurrent_linked_publishers_converge_on_one_deterministic_index() {
 }
 
 #[test]
-fn interruption_after_object_publication_never_exposes_a_partial_index() {
-    let fixture = Fixture::new("interrupted-publication");
+fn successful_batch_publishes_every_receipt_and_index() {
+    let fixture = Fixture::new("batch-success");
     let store = fixture.store();
-    let action = derive_action_key(b"interrupted action");
-    let receipt = pass_receipt(&action, b"complete object");
+    let actions = [
+        derive_action_key(b"first successful batch action"),
+        derive_action_key(b"second successful batch action"),
+    ];
+    let receipts = [
+        pass_receipt(&actions[0], b"first successful batch result"),
+        pass_receipt(&actions[1], b"second successful batch result"),
+    ];
+
+    let publications = store.publish_batch(&receipts).unwrap();
+
+    assert_eq!(publications.len(), receipts.len());
+    for ((action, receipt), publication) in actions.iter().zip(&receipts).zip(publications) {
+        assert!(publication.object_created());
+        assert!(publication.index_updated());
+        assert_eq!(publication.receipt(), &receipt.id().unwrap());
+        assert_eq!(store.lookup(action).unwrap(), Some(receipt.clone()));
+    }
+}
+
+#[test]
+fn later_batch_failure_restores_every_index_and_new_object() {
+    let fixture = Fixture::new("batch-failure");
+    let store = fixture.store();
+    let first_action = derive_action_key(b"first batch action");
+    let second_action = derive_action_key(b"second batch action");
+    let first_candidates = [
+        pass_receipt(&first_action, b"first prior result"),
+        pass_receipt(&first_action, b"first pending result"),
+    ];
+    let mut ordered = first_candidates
+        .into_iter()
+        .map(|receipt| (receipt.id().unwrap(), receipt))
+        .collect::<Vec<_>>();
+    ordered.sort_by(|left, right| left.0.cmp(&right.0));
+    let pending_first = ordered.remove(0).1;
+    let prior_first = ordered.remove(0).1;
+    store.publish(&prior_first).unwrap();
+    let prior_index = store_index(&store, &first_action);
+    let pending_second = pass_receipt(&second_action, b"second pending result");
+    let receipts = [pending_first.clone(), pending_second.clone()];
+
     let error = store
-        .publish_with(&receipt, || {
-            Err(EvidenceStoreError::new("injected", "stop before index"))
+        .publish_batch_with(&receipts, |boundary| {
+            if boundary == PublicationBoundary::Index(0) {
+                Err(EvidenceStoreError::new(
+                    "injected",
+                    "cancel after first receipt",
+                ))
+            } else {
+                Ok(())
+            }
         })
         .unwrap_err();
+
     assert_eq!(error.reason(), "injected");
-    assert!(store.lookup(&action).unwrap().is_none());
-    assert!(store.layout.object_path(&receipt.id().unwrap()).is_file());
+    assert_eq!(store_index(&store, &first_action), prior_index);
+    assert_eq!(store.lookup(&first_action).unwrap(), Some(prior_first));
+    assert!(store.lookup(&second_action).unwrap().is_none());
+    for receipt in receipts {
+        assert!(!store.layout.object_path(&receipt.id().unwrap()).exists());
+    }
+}
+
+#[test]
+fn abandoned_batch_recovers_at_every_precommit_publication_boundary() {
+    let boundaries = [
+        PublicationBoundary::Prepared,
+        PublicationBoundary::Object(0),
+        PublicationBoundary::Index(0),
+        PublicationBoundary::Object(1),
+        PublicationBoundary::Index(1),
+    ];
+    for target in boundaries {
+        let fixture = Fixture::new(&format!("batch-interruption-{target:?}"));
+        let store = fixture.store();
+        let actions = [
+            derive_action_key(b"interrupted first action"),
+            derive_action_key(b"interrupted second action"),
+        ];
+        let receipts = [
+            pass_receipt(&actions[0], b"interrupted first result"),
+            pass_receipt(&actions[1], b"interrupted second result"),
+        ];
+
+        let interrupted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            store
+                .publish_batch_with(&receipts, |observed| {
+                    assert_ne!(observed, target, "injected publication interruption");
+                    Ok(())
+                })
+                .unwrap();
+        }));
+        assert!(interrupted.is_err(), "boundary {target:?} was not reached");
+
+        let recovered = fixture.store();
+        for (action, receipt) in actions.iter().zip(&receipts) {
+            assert!(recovered.lookup(action).unwrap().is_none());
+            assert!(
+                !recovered
+                    .layout
+                    .object_path(&receipt.id().unwrap())
+                    .exists()
+            );
+        }
+        assert_eq!(
+            read_publication(&recovered.layout).unwrap(),
+            Some(PublicationJournal::idle())
+        );
+    }
 }
 
 #[test]
