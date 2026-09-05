@@ -14,22 +14,33 @@ use spice::repository::Repository;
 mod git_repository;
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
-const USAGE: &str = "usage: spice gate reference-transaction <prepared|committed|aborted>\n";
+const USAGE: &str =
+    "usage: spice gate reference-transaction <preparing|prepared|committed|aborted>\n";
 
 #[test]
-fn committed_and_aborted_are_inert_before_repository_access() {
+fn preparing_committed_and_aborted_are_inert_before_input_or_repository_access() {
     let scratch = Scratch::directory("inert-states");
     let marker = scratch.join("git-entered");
     let git_script = format!("#!/bin/sh\n: >'{}'\nexit 91\n", marker.display());
     let git = scratch.executable("bin/git", git_script.as_bytes());
     let path = git.parent().expect("sentinel Git has a parent");
-    for state in ["committed", "aborted"] {
-        let output = Command::new(spice())
+    for state in ["preparing", "committed", "aborted"] {
+        let mut child = Command::new(spice())
             .args(["gate", "reference-transaction", state])
             .current_dir(scratch.path())
             .env("PATH", path)
-            .output()
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .expect("run inert transaction state");
+        child
+            .stdin
+            .take()
+            .expect("inert stdin is piped")
+            .write_all(b"malformed input that prepared would reject\n")
+            .expect("write malformed inert input");
+        let output = child.wait_with_output().expect("collect inert output");
         assert_success(&output, state);
         assert!(output.stdout.is_empty());
         assert!(output.stderr.is_empty());

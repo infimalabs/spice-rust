@@ -716,7 +716,7 @@ fn reference_transaction_contract_names_early_conditional_git() {
         .expect("reference-transaction has one registered contract");
     assert_eq!(
         contract.syntax,
-        "gate reference-transaction prepared|committed|aborted"
+        "gate reference-transaction preparing|prepared|committed|aborted"
     );
     assert_eq!(contract.principal, Principal::Local);
     assert_eq!(contract.journal, JournalAccess::None);
@@ -739,7 +739,7 @@ fn reference_transaction_contract_names_early_conditional_git() {
     assert_eq!(git.cancellation, ToolCancellation::ChildOwned);
     assert_eq!(git.network, ToolNetwork::Permitted);
 
-    for state in ["prepared", "committed", "aborted"] {
+    for state in ["preparing", "prepared", "committed", "aborted"] {
         command()
             .try_get_matches_from(["spice", "gate", "reference-transaction", state])
             .unwrap_or_else(|error| panic!("registered state {state:?} refused: {error}"));
