@@ -76,11 +76,47 @@ fn media_resolution_returns_each_attachment_in_journal_order_without_mutation() 
 
     for (reference, attachment) in references.iter().zip(&publication.attachments) {
         let before = ledger.clone();
+        let encoded = wire::encode(reference).expect("reference encodes");
         assert_eq!(
-            ledger.resolve_media(lane(), reference).unwrap(),
+            ledger.resolve_media(lane(), &encoded).unwrap(),
             attachment.decoded_bytes().unwrap(),
         );
         assert_eq!(ledger, before, "resolution cannot alter durable standing");
+    }
+}
+
+#[test]
+fn malformed_encoded_media_refuses_before_authority_lookup_without_echoing_input() {
+    let publication = sent(ROOT);
+    let reference = media_reference(&publication, 0);
+    let valid = String::from_utf8(wire::encode(&reference).unwrap()).unwrap();
+    let unknown_field = valid.replacen('}', r#","unknown":true}"#, 1).into_bytes();
+    let payload_in_wrong_field = valid
+        .replacen(
+            &format!(r#""bytes":{}"#, reference.bytes()),
+            r#""bytes":"iVBORw0KGgo=""#,
+            1,
+        )
+        .into_bytes();
+    let oversized = vec![b' '; wire::media::MAX_AGENT_MEDIA_REFERENCE_BYTES + 1];
+    let ledger = Ledger::new();
+
+    for encoded in [
+        b"{}".to_vec(),
+        unknown_field,
+        payload_in_wrong_field,
+        oversized,
+    ] {
+        let before = ledger.clone();
+        let error = ledger.resolve_media(lane(), &encoded).unwrap_err();
+        assert_eq!(error, MediaResolutionError::Malformed);
+        assert_eq!(error.to_string(), "media reference is malformed");
+        assert!(error.source().is_none());
+        assert_eq!(
+            ledger, before,
+            "malformed input cannot inspect or alter authority"
+        );
+        assert!(!error.to_string().contains("iVBORw0KGgo="));
     }
 }
 
@@ -1134,15 +1170,18 @@ fn resolve_error(
 ) -> MediaResolutionError {
     let before = ledger.clone();
     let error = ledger
-        .resolve_media(authenticated_lane, reference)
+        .resolve_media(
+            authenticated_lane,
+            &wire::encode(reference).expect("reference encodes"),
+        )
         .expect_err("fixture reference must refuse");
     assert_eq!(ledger, &before, "a refusal cannot alter durable standing");
 
     let rendered = error.to_string();
     match &error {
-        MediaResolutionError::Malformed { .. } => {
+        MediaResolutionError::Malformed => {
             assert!(rendered.contains("media reference is malformed"));
-            assert!(error.source().is_some());
+            assert!(error.source().is_none());
         }
         MediaResolutionError::Unknown { directive } => {
             assert!(rendered.contains(&directive.to_string()));

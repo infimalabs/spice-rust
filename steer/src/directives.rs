@@ -400,10 +400,7 @@ impl Error for Refusal {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MediaResolutionError {
     /// The reference itself violates its bounded crossing contract.
-    Malformed {
-        /// Exact local reference admission failure.
-        error: wire::media::AgentMediaReferenceError,
-    },
+    Malformed,
     /// No durable directive carries the referenced identity.
     Unknown {
         /// Identity no directive answers to.
@@ -462,7 +459,7 @@ pub enum MediaResolutionError {
 impl fmt::Display for MediaResolutionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Malformed { error } => write!(formatter, "media reference is malformed: {error}"),
+            Self::Malformed => formatter.write_str("media reference is malformed"),
             Self::Unknown { directive } => {
                 write!(formatter, "media directive {directive} is unknown")
             }
@@ -513,7 +510,6 @@ impl fmt::Display for MediaResolutionError {
 impl Error for MediaResolutionError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Malformed { error } => Some(error),
             Self::Undecodable { error, .. } => Some(error),
             _ => None,
         }
@@ -949,11 +945,13 @@ impl Ledger {
             .find(|directive| directive.directive == id)
     }
 
-    /// Resolve one compact media reference against this live lane authority.
+    /// Resolve one bounded encoded media reference against this live lane authority.
     ///
-    /// The authenticated lane is checked before any attachment metadata is
-    /// exposed. Resolution then requires live pending standing, validates the
-    /// ordinal and authority bytes, and recomputes both digest and byte count.
+    /// This is the untrusted crossing boundary. It bounds encoded bytes before
+    /// decoding the private-field reference, then checks the authenticated lane
+    /// before any attachment metadata is exposed. Resolution requires live
+    /// pending standing, validates the ordinal and authority bytes, and
+    /// recomputes both digest and byte count.
     ///
     /// # Errors
     ///
@@ -962,11 +960,22 @@ impl Ledger {
     pub fn resolve_media(
         &self,
         lane: CanonicalUuid,
+        encoded_reference: &[u8],
+    ) -> Result<Vec<u8>, MediaResolutionError> {
+        if encoded_reference.len() > wire::media::MAX_AGENT_MEDIA_REFERENCE_BYTES {
+            return Err(MediaResolutionError::Malformed);
+        }
+        let reference: AgentMediaReference =
+            wire::decode(encoded_reference).map_err(|_| MediaResolutionError::Malformed)?;
+        self.resolve_media_reference(lane, &reference)
+    }
+
+    /// Resolve one already-admitted private-field reference.
+    fn resolve_media_reference(
+        &self,
+        lane: CanonicalUuid,
         reference: &AgentMediaReference,
     ) -> Result<Vec<u8>, MediaResolutionError> {
-        reference
-            .validate()
-            .map_err(|error| MediaResolutionError::Malformed { error })?;
         let directive =
             self.directive(reference.directive())
                 .ok_or(MediaResolutionError::Unknown {
