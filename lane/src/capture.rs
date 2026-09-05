@@ -575,11 +575,11 @@ mod tests {
                 command: "true".to_owned(),
             },
             steering_key: None,
-            mcp: McpServer {
+            mcp: Some(McpServer {
                 name: "fixture".to_owned(),
                 command: "true".to_owned(),
                 args: Vec::new(),
-            },
+            }),
             resume: Resume::Fresh,
         }
     }

@@ -67,7 +67,7 @@ pub enum Attribution {
     Withheld,
 }
 
-/// The MCP server both dialects register under one name.
+/// One optional MCP server a caller may register under one name.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct McpServer {
     /// Name the server answers to inside the agent.
@@ -118,9 +118,9 @@ impl SteeringKey {
 /// Everything a launch carries that is not one vendor's dialect.
 ///
 /// Each vendor module turns this into its own argument vector. Nothing here is
-/// read from disk: values a repository owns — the hook command, the MCP server,
-/// the steering token — arrive already resolved, so building a launch contract
-/// stays free of I/O exactly as [`crate::Record`] promises.
+/// read from disk: values a repository owns — the hook command, optional MCP
+/// server, and steering token — arrive already resolved, so building a launch
+/// contract stays free of I/O exactly as [`crate::Record`] promises.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Launch {
     /// Worktree the agent runs in and steers for.
@@ -153,8 +153,8 @@ pub struct Launch {
     /// from the prompt and this key. Codex is handed the prompt as written, so
     /// a Codex launch anchors its agent through whatever composed that prompt.
     pub steering_key: Option<SteeringKey>,
-    /// The MCP server both dialects expose.
-    pub mcp: McpServer,
+    /// An MCP server both dialects expose, when the caller explicitly has one.
+    pub mcp: Option<McpServer>,
     /// Fresh, or resuming one exact session.
     pub resume: Resume,
 }

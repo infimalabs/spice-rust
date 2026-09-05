@@ -81,9 +81,7 @@ auto_compact_window_tokens = 123456
         Some(gate::TrailerRejection::Disallowed)
     );
     assert_eq!(launch.hook.command, "'/opt/spice'\\''s bin' hook claude");
-    assert_eq!(launch.mcp.name, "spice");
-    assert_eq!(launch.mcp.command, "/opt/spice's bin");
-    assert_eq!(launch.mcp.args, ["mcp"]);
+    assert_eq!(launch.mcp, None);
     assert_eq!(
         launch
             .steering_key
@@ -110,6 +108,7 @@ auto_compact_window_tokens = 123456
     );
 
     let rendered = arguments(&plan.record().expect("Claude plan renders"));
+    assert!(!rendered.iter().any(|argument| argument == "--mcp-config"));
     assert_eq!(
         rendered
             .windows(2)
@@ -195,6 +194,11 @@ fast_mode = true
         rendered
             .windows(2)
             .any(|pair| { pair[0] == "--config" && pair[1] == r#"personality="pragmatic""# })
+    );
+    assert!(
+        rendered
+            .iter()
+            .all(|argument| !argument.starts_with("mcp_servers."))
     );
     assert_eq!(
         environment_value(plan.environment(), CLAUDE_AUTO_COMPACT_WINDOW),

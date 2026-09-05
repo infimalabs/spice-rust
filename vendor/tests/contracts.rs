@@ -454,11 +454,11 @@ fn fixture(model: &str, resume: Resume) -> Launch {
         steering_key: Some(SteeringKey {
             token: STEERING_TOKEN.to_owned(),
         }),
-        mcp: McpServer {
+        mcp: Some(McpServer {
             name: "playwright".to_owned(),
             command: MCP_COMMAND.to_owned(),
             args: MCP_ARGS.iter().map(|arg| (*arg).to_owned()).collect(),
-        },
+        }),
         resume,
     }
 }
