@@ -12,8 +12,7 @@ use sill::Deadlines;
 const USAGE_EXIT: u8 = 2;
 type CommandResult = Result<(), Box<dyn std::error::Error>>;
 const USAGE: &str = concat!(
-    "usage: \"$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir)",
-    "/.spice-install/bin/spice\" dev xtask -- <help|verify --package PACKAGE|",
+    "usage: spice dev xtask -- <help|verify --package PACKAGE|",
     "gate [--report] ARM|app|",
     "install [--host IP] [--port PORT] [--release] [--no-resident] ",
     "[-- UP-OPTION...]|",
@@ -157,9 +156,7 @@ fn run_gate(
         .into_iter()
         .find(|gate_id| gate_id.as_str() == arm)
     else {
-        eprintln!(
-            "unknown gate arm {arm:?}; run installed Spice `dev xtask -- help` for accepted gate arms"
-        );
+        eprintln!("unknown gate arm {arm:?}; run `spice dev xtask -- help` for accepted gate arms");
         return Err(usage_error().into());
     };
     if gate::GateId::TEST_EVIDENCE.contains(&gate_id) {
@@ -241,7 +238,7 @@ fn run_install(arguments: Vec<OsString>) -> ExitCode {
     }
 }
 
-/// Read one installed-Spice `dev xtask -- install` invocation, or refuse it.
+/// Read one `spice dev xtask -- install` invocation, or refuse it.
 fn install_request(arguments: &[OsString]) -> Option<xtask::RefreshRequest> {
     let mut request = xtask::RefreshRequest {
         restart: true,

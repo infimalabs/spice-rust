@@ -67,7 +67,10 @@ fn standalone_compiler_arms_run_their_declared_analyses_without_verifier_evidenc
     let cargo = fs::read_to_string(&cargo_log).expect("read standalone Cargo trace");
     assert!(
         cargo.lines().any(|line| {
-            line == "test --locked --package verify-process-fixture --lib --no-run"
+            line == concat!(
+                "test --locked --package verify-process-fixture --lib --no-run ",
+                "--message-format=json-render-diagnostics",
+            )
         }),
         "native standalone analysis did not run: {cargo}"
     );
@@ -231,10 +234,15 @@ fn command_help_enumerates_every_single_gate_arm_spelling() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains(concat!(
-            "\"$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir)",
-            "/.spice-install/bin/spice\" dev xtask -- <help|verify --package PACKAGE|",
+            "usage: spice dev xtask -- <help|verify --package PACKAGE|",
             "gate [--report] ARM|"
         )),
+        "{}",
+        streams(&output)
+    );
+    assert!(!stdout.contains("git rev-parse"), "{}", streams(&output));
+    assert!(
+        !stdout.contains(".spice-install/bin/spice"),
         "{}",
         streams(&output)
     );
@@ -261,7 +269,7 @@ fn unknown_gate_arm_points_to_the_canonical_inventory() {
     assert_eq!(output.status.code(), Some(2), "{}", streams(&output));
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("run installed Spice `dev xtask -- help` for accepted gate arms"),
+            .contains("run `spice dev xtask -- help` for accepted gate arms"),
         "{}",
         streams(&output)
     );

@@ -22,18 +22,13 @@ selections before writing. [INSTALL.md](INSTALL.md) owns the complete
 activation, upgrade, and reversal procedure;
 [INSTALL_RECOVERY.md](INSTALL_RECOVERY.md) owns exceptional recovery.
 
-Bind the exact installed appliance before repository development or operation.
-A missing, symbolic, non-file, or non-executable asset is a hard stop:
+Within a supervised repository shell, tracked wrapper policy resolves ambient
+`spice` to the exact Git-common appliance. A missing, symbolic, non-file, or
+non-executable asset is a hard stop before the command runs:
 
 ```sh
-git_common=$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir) || exit
-spice_rs="${git_common}/.spice-install/bin/spice"
-if [ ! -f "$spice_rs" ] || [ -L "$spice_rs" ] || [ ! -x "$spice_rs" ]; then
-  printf '%s\n' "Rust Spice appliance is unavailable: $spice_rs" >&2
-  exit 1
-fi
-"$spice_rs" dev xtask -- app
-"$spice_rs" up
+spice dev xtask -- app
+spice up
 ```
 
 `up` returns after owner-only discovery and authenticated bootstrap agree on the
@@ -54,7 +49,7 @@ A non-loopback listener requires `--allow-insecure-bind`. Add a bearer token of
 the surrounding network is the intended access boundary:
 
 ```sh
-"$spice_rs" up --host 0.0.0.0 --allow-insecure-bind \
+spice up --host 0.0.0.0 --allow-insecure-bind \
   --auth-token correct-horse-battery-staple --open
 ```
 
@@ -81,7 +76,7 @@ Activation requires all three installed hooks. Pre-commit runs the staged
 selector: recognized paths execute their affected Cargo targets and policy
 arms; authority, unclassified, and out-of-workspace Rust paths refuse before
 execution. There is no exhaustive fallback. Use staged selection or
-`"$spice_rs" dev xtask -- verify --package PACKAGE` for bounded feedback.
+`spice dev xtask -- verify --package PACKAGE` for bounded feedback.
 
 ## Develop
 
@@ -91,14 +86,14 @@ or landing path. Installation is a separate operator or supervisor action.
 Use package-scoped feedback while work is moving:
 
 ```sh
-"$spice_rs" dev cargo -- fmt --all -- --check
-"$spice_rs" dev xtask -- verify --package gate
+spice dev cargo -- fmt --all -- --check
+spice dev xtask -- verify --package gate
 ```
 
 At the commit boundary, stage the exact change and run the selected gate:
 
 ```sh
-"$spice_rs" dev cargo -- run --quiet --locked --package spice --bin spice -- \
+spice dev cargo -- run --quiet --locked --package spice --bin spice -- \
   gate selection
 ```
 

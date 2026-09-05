@@ -1,25 +1,17 @@
 # Sealed Linux proof image
 
-Installed Spice `dev xtask -- proof-image build` assembles the `linux/amd64` proof environment
+`spice dev xtask -- proof-image build` assembles the `linux/amd64` proof environment
 from the immutable Rust base, pinned tooling, required Rust targets, vendored
 registry sources, and the `wasm-opt` build used by release proof. The resulting
 image can run with networking disabled and fresh Cargo home and target mounts.
 
-Bind the exact Git-common appliance before using any command in this document:
-
-```sh
-git_common=$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir) || exit
-spice_rs="${git_common}/.spice-install/bin/spice"
-if [ ! -f "$spice_rs" ] || [ -L "$spice_rs" ] || [ ! -x "$spice_rs" ]; then
-  printf '%s\n' "Rust Spice appliance is unavailable: $spice_rs" >&2
-  exit 1
-fi
-```
+Run these commands from the repository's supervised shell. Tracked wrapper
+policy resolves ambient `spice` to the validated Git-common appliance.
 
 Build and export the image from the repository root:
 
 ```sh
-"$spice_rs" dev xtask -- proof-image build
+spice dev xtask -- proof-image build
 ```
 
 The command writes an image archive, checksum, and OCI identity under
@@ -30,7 +22,7 @@ repository root, copy the archive and its `.sha256` and `.identity` sidecars
 into `target/proof-image/`, then import them with:
 
 ```sh
-"$spice_rs" dev xtask -- proof-image load target/proof-image/spice-proof-image.tar
+spice dev xtask -- proof-image load target/proof-image/spice-proof-image.tar
 ```
 
 The loader verifies both the archive checksum and image identity. Linux proof
@@ -43,7 +35,7 @@ Exercise the complete build-and-restore path as one release verification
 action with:
 
 ```sh
-"$spice_rs" dev xtask -- proof-image verify
+spice dev xtask -- proof-image verify
 ```
 
 ## Container invocation inventory
@@ -51,14 +43,14 @@ action with:
 Container execution is a release-proof exception, not a development
 prerequisite. The release and proof owners expose three execution surfaces:
 
-- `"$spice_rs" dev xtask -- proof-image build` invokes Docker to `buildx build` the exact
+- `spice dev xtask -- proof-image build` invokes Docker to `buildx build` the exact
   `linux/amd64` image, inspect its immutable identity, run its pinned-tool
   self-check with networking disabled, and save the admitted image as a
   recovery archive. Native Darwin
   tools cannot replace this boundary: its product is the Linux appliance whose
   architecture, filesystem, tool closure, and OCI identity the proof contract
   records.
-- `"$spice_rs" dev xtask -- proof-image load ARCHIVE` invokes Docker only to
+- `spice dev xtask -- proof-image load ARCHIVE` invokes Docker only to
   load the named archive and inspect the restored identity. This is recovery
   for the same distribution artifact, not a build or validation path;
   rebuilding when the archive exists is slower and creates a second opportunity
@@ -78,7 +70,7 @@ name Docker or Podman without contacting a daemon. Any additional production
 invocation must declare its constraint or native replacement here.
 
 The native default is deliberately broader than the exceptions. The
-interactive app uses `"$spice_rs" dev xtask -- app`; `npm run test:canvas` exercises it in a
+interactive app uses `spice dev xtask -- app`; `npm run test:canvas` exercises it in a
 real browser; package-scoped verification and staged selection run local
 validation; and ordinary workspace tests use host tooling. None loads, builds,
 or runs the proof image.
@@ -106,10 +98,10 @@ than inferring a cause. If the admitted image is missing, restore it from the
 archive instead of rebuilding:
 
 ```sh
-"$spice_rs" dev xtask -- proof-image load target/proof-image/spice-proof-image.tar
+spice dev xtask -- proof-image load target/proof-image/spice-proof-image.tar
 ```
 
 This image does not build or own the interactive Canvas stage. Each worktree
-builds that stage natively with `"$spice_rs" dev xtask -- app` into ignored
+builds that stage natively with `spice dev xtask -- app` into ignored
 `dist/stage-app`; the command atomically publishes one complete immutable
 generation, and the resident serves only those worktree-local bytes.

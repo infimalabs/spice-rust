@@ -150,6 +150,30 @@ fn linked_worktrees_share_one_common_install_and_receipt() {
     assert!(installed_skill(&linked_repository).is_file());
     assert!(installed_spice_wrapper(&linked_repository).is_file());
     assert!(installed_git_hooks(&linked_repository).is_dir());
+    let wrapper = installed_spice_wrapper(&linked_repository);
+    let output = Command::new("/bin/sh")
+        .args(["-c", "spice --help"])
+        .current_dir(&linked)
+        .env(
+            "PATH",
+            wrapper.parent().expect("installed wrapper has a parent"),
+        )
+        .env(
+            steer::hook::EXECUTABLE,
+            installed_binary(&linked_repository),
+        )
+        .output()
+        .expect("ambient Spice resolves through the linked-worktree wrapper");
+    let diagnostic = format!(
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(output.status.success(), "{diagnostic}");
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("Repository-local coordination appliance"),
+        "{diagnostic}"
+    );
     assert!(common.join(".spice-rs/install.json").is_file());
     let record: serde_json::Value =
         serde_json::from_slice(&fs::read(common.join(".spice-rs/install.json")).unwrap()).unwrap();

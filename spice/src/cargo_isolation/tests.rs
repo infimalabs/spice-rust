@@ -116,20 +116,15 @@ const TRACKED_CARGO_GUIDANCE: [(&str, &str); 2] = [
 ];
 
 #[test]
-fn tracked_guidance_routes_only_rust_cargo_through_the_git_common_appliance() {
+fn tracked_guidance_routes_rust_cargo_through_ambient_spice() {
     for (path, guidance) in TRACKED_CARGO_GUIDANCE {
         let normalized = guidance.split_whitespace().collect::<Vec<_>>().join(" ");
         for required in [
-            "/usr/bin/git",
-            "--path-format=absolute --git-common-dir",
-            ".spice-install/bin/spice",
-            "[ ! -f \"$spice_rs\" ]",
-            "[ -L \"$spice_rs\" ]",
-            "[ ! -x \"$spice_rs\" ]",
-            "\"$spice_rs\" dev cargo --",
-            "\"$spice_rs\" dev xtask --",
+            "spice dev cargo --",
+            "spice dev xtask --",
+            "wrapper policy",
+            "Git-common",
             "hard stop",
-            "Do not search `PATH`",
             "shared mutable",
             "harness authority",
         ] {
@@ -138,10 +133,18 @@ fn tracked_guidance_routes_only_rust_cargo_through_the_git_common_appliance() {
                 "{path} must retain the Cargo and harness authority marker {required:?}",
             );
         }
-        assert!(
-            !normalized.contains("spice dev cargo"),
-            "{path} must not route Rust Cargo through an unqualified Spice command",
-        );
+        for forbidden in [
+            "/usr/bin/git",
+            "--git-common-dir",
+            ".spice-install/bin/spice",
+            "spice_rs=",
+            "$spice_rs",
+        ] {
+            assert!(
+                !normalized.contains(forbidden),
+                "{path} must keep binding machinery out of agent-facing commands: {forbidden:?}",
+            );
+        }
         assert!(
             !normalized.contains("CARGO_HOME="),
             "{path} must not prescribe a direct Cargo-home override",
@@ -149,8 +152,8 @@ fn tracked_guidance_routes_only_rust_cargo_through_the_git_common_appliance() {
         assert!(
             guidance
                 .lines()
-                .any(|line| line.contains("\"$spice_rs\" dev cargo --")),
-            "{path} must invoke the exact appliance's Cargo surface",
+                .any(|line| line.trim_start().starts_with("spice dev cargo --")),
+            "{path} must render an executable ambient Cargo command",
         );
     }
 }

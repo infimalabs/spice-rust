@@ -322,8 +322,8 @@ fn required_skill(repository: &Repository) -> CommandResult<PathBuf> {
 /// A configured shell-wrapper directory leads `PATH` so every bare `spice` in
 /// the installed skill reaches the route selected by tracked policy. The Rust
 /// appliance itself is carried separately as an exact typed environment path
-/// for the wrapper, hook, and MCP commands; its directory never enters `PATH`.
-/// Without tracked wrapper policy, the ambient search path is preserved.
+/// for the wrapper, hook, and MCP commands. Only an absent wrapper falls back
+/// to leading `PATH` with that already-validated executable's directory.
 fn launch_environment(
     paths: &RuntimePaths,
     repository: &Repository,
@@ -566,11 +566,14 @@ fn compose_shell_path(
             ));
         };
         entries.push(directory.to_path_buf());
+    } else if let Some(directory) = executable_directory {
+        entries.push(directory.to_path_buf());
     }
     if let Some(ambient) = ambient {
-        entries.extend(std::env::split_paths(ambient).filter(|entry| {
-            wrapper.is_none() || executable_directory.is_none_or(|directory| entry != directory)
-        }));
+        entries.extend(
+            std::env::split_paths(ambient)
+                .filter(|entry| executable_directory.is_none_or(|directory| entry != directory)),
+        );
     }
     if entries.is_empty() {
         return Ok(None);
@@ -612,18 +615,25 @@ mod shell_path_tests {
     }
 
     #[test]
-    fn absent_wrapper_preserves_the_ambient_search_path() {
+    fn absent_wrapper_leads_with_the_validated_appliance_directory() {
         let ambient = std::env::join_paths([Path::new("/fixture/bin"), Path::new("/usr/bin")])
             .expect("fixture search path");
 
         let composed = compose_shell_path(
             None,
-            Some(Path::new("/fixture/bin")),
+            Some(Path::new("/fixture/appliance")),
             Some(ambient.as_os_str()),
         )
         .expect("ambient search path composes")
         .expect("ambient search path remains present");
-        assert_eq!(composed, ambient);
+        assert_eq!(
+            std::env::split_paths(&composed).collect::<Vec<_>>(),
+            [
+                Path::new("/fixture/appliance").to_path_buf(),
+                Path::new("/fixture/bin").to_path_buf(),
+                Path::new("/usr/bin").to_path_buf(),
+            ]
+        );
     }
 }
 

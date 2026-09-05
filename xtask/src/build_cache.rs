@@ -336,7 +336,7 @@ pub fn collect_build_cache_at(
     Ok(report)
 }
 
-/// Parse a byte quantity accepted by installed Spice `dev xtask -- build-cache`.
+/// Parse a byte quantity accepted by `spice dev xtask -- build-cache`.
 ///
 /// Bare integers are bytes. `K`, `M`, `G`, `T` and their `iB`/`B` spellings use
 /// binary multiples, matching Cargo cache sizing in powers of two.

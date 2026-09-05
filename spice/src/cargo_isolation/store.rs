@@ -808,7 +808,7 @@ fn ensure_home(
     if current_digest != generation.lock_digest {
         return Err(IsolationError::new(
             "cargo-isolation::lockfile-changed",
-            "Cargo.lock changed while its generation was preparing; rerun through spice dev cargo",
+            "Cargo.lock changed while its generation was preparing; rerun the original command through `spice dev cargo -- ...`",
         ));
     }
     let home = layout.homes.join(home_id);

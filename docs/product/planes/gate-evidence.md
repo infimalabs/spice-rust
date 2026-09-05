@@ -191,9 +191,7 @@ measurement.
 The reproducible command is:
 
 ```sh
-git_common=$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir) || exit
-spice_rs="${git_common}/.spice-install/bin/spice"
-"$spice_rs" dev cargo -- test --locked -p spice gate_warm_admission_benchmark -- --ignored --nocapture
+spice dev cargo -- test --locked -p spice gate_warm_admission_benchmark -- --ignored --nocapture
 ```
 
 The fixture creates a temporary linked-worktree repository, seeds valid action

@@ -26,7 +26,7 @@ const GENERATED_REFERENCES: [(&str, usize); 6] = [
 ];
 static NEXT_BUILD: AtomicU64 = AtomicU64::new(0);
 
-/// Run installed Spice `dev xtask -- app` to compile the browser app into the one stage
+/// Run `spice dev xtask -- app` to compile the browser app into the one stage
 /// this worktree's resident serves.
 ///
 /// The stage is ignored by Git and rebuilt by each worktree. Compilation and
@@ -524,7 +524,7 @@ impl fmt::Display for AppBuildError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::VerifierPublicationRetired => formatter.write_str(
-                "verifier app publication is retired; use the exact Git-common Spice appliance's `dev xtask -- app` in the target worktree",
+                "verifier app publication is retired; run `spice dev xtask -- app` in the target worktree",
             ),
             Self::Output(error) => write!(formatter, "app build output failed: {error}"),
             Self::Launch(error) => write!(formatter, "trunk did not launch: {error}"),

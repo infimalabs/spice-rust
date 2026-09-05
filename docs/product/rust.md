@@ -298,10 +298,11 @@ authorizes an agent to use the corresponding commands. Native harness authority
 remains in force otherwise. Merely finding the binary establishes no task,
 lane, session, or claim.
 
-Repository development commands that may touch Cargo use the exact regular,
-non-symbolic executable at Git-common `.spice-install/bin/spice` and its `dev
-cargo` or `dev xtask` surface. A missing or invalid asset is a hard stop; never
-search `PATH` or select another Cargo home.
+Repository development commands that may touch Cargo use ambient `spice` and
+its `dev cargo` or `dev xtask` surface. In supervised shells, tracked wrapper
+policy resolves that word to the exact regular, non-symbolic Git-common
+appliance. A missing or invalid asset is a hard stop; never select another
+Cargo home.
 
 Authorities: [`spice/src/repository.rs`](../../spice/src/repository.rs),
 [`spice/src/install.rs`](../../spice/src/install.rs),

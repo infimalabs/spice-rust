@@ -229,7 +229,7 @@ mod tests {
     }
 
     #[test]
-    fn appliance_reference_refuses_missing_nonexecutable_and_redirected_commands() {
+    fn appliance_reference_refuses_missing_nonregular_nonexecutable_and_redirected_commands() {
         let scratch = Scratch::new("refused");
         let installed = scratch.installed();
         Scratch::publish_executable(&scratch.command());
@@ -250,6 +250,13 @@ mod tests {
         ));
 
         fs::remove_file(&installed).expect("remove inert command");
+        fs::create_dir(&installed).expect("create non-regular command");
+        assert!(matches!(
+            resolve(steer::WrapperReference::Appliance, &repository),
+            Err(ResolveError::Unavailable { .. })
+        ));
+
+        fs::remove_dir(&installed).expect("remove non-regular command");
         let target = scratch.root.join("redirected-spice");
         fs::write(&target, b"#!/bin/sh\nexit 0\n").expect("write redirect target");
         fs::set_permissions(&target, fs::Permissions::from_mode(0o755))
