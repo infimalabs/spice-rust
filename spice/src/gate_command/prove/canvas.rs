@@ -15,6 +15,7 @@ use super::*;
 
 const BUILD_DECLARATION: &str = "gate::canvas::build-action-v1";
 const SHARD_DECLARATION: &str = "gate::canvas::browser-shard-action-v1";
+const CANVAS_RUNNER_VERSION: u64 = 2;
 const CANVAS_BINARY_VARIABLE: &str = "SPICE_CANVAS_BINARY"; // env-policy: allow
 const PLAYWRIGHT_PACKAGE: &str = "playwright";
 const NODE_PROBE: &str = concat!(
@@ -26,6 +27,8 @@ const NODE_PROBE: &str = concat!(
 );
 
 type SharedCanvasBuild = Arc<Mutex<Option<Result<Arc<CanvasBuild>, String>>>>;
+
+mod process;
 
 #[derive(Clone)]
 pub(super) struct CanvasExecution {
@@ -672,7 +675,7 @@ fn prepare_shard(
         non_file(
             ActionNonFileKind::Inventory,
             "canvas-shard-registry-entry",
-            digest_encoded(Domain::GateInventory, shard)?,
+            shard_registry_authority(shard)?,
         )?,
         non_file(
             ActionNonFileKind::Declaration,
@@ -712,6 +715,10 @@ fn prepare_shard(
     )
 }
 
+fn shard_registry_authority(shard: &CanvasShard) -> Result<Digest, ProveFailure> {
+    digest_encoded(Domain::GateInventory, shard)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn prepared_canvas_action(
     action: String,
@@ -732,7 +739,7 @@ fn prepared_canvas_action(
     let spec = ActionSpec::new(ActionSpecFields {
         action_id: action.clone(),
         runner: "spice-canvas-proof-action".to_owned(),
-        runner_version: RUNNER_VERSION,
+        runner_version: CANVAS_RUNNER_VERSION,
         declaration: declaration.to_owned(),
         argv,
         cwd: ".".to_owned(),
@@ -918,20 +925,31 @@ fn runtime_authority(
 pub(super) fn execute(execution: CanvasExecution, action: &str) -> Result<Digest, ProveFailure> {
     let build = ensure_build(&execution)?;
     if let Some(shard) = execution.shard {
-        let mut process = command("node", &execution.environment);
-        process
-            .current_dir(&build.root)
-            .args(["app/browser/canvas.spec.mjs", "--spice-shard", shard.name()])
-            .env(CANVAS_BINARY_VARIABLE, &build.binary);
-        let output = process
-            .output()
-            .map_err(|error| ProveFailure::fault("gate::prove-canvas-shard-unavailable", error))?;
-        if !output.status.success() {
-            return Err(ProveFailure::refusal(
-                "gate::prove-canvas-shard-refused",
-                process_failure(&output),
-            ));
-        }
+        let mut environment = execution
+            .environment
+            .iter()
+            .filter(|(name, _)| name != OsStr::new(CANVAS_BINARY_VARIABLE))
+            .cloned()
+            .collect::<Vec<_>>();
+        environment.push((
+            OsString::from(CANVAS_BINARY_VARIABLE),
+            build.binary.as_os_str().to_owned(),
+        ));
+        let environment = sill::Environment::new(environment).map_err(|error| {
+            ProveFailure::fault("gate::prove-canvas-shard-environment-invalid", error)
+        })?;
+        process::run(
+            shard.name(),
+            OsString::from("node"),
+            [
+                OsString::from("app/browser/canvas.spec.mjs"),
+                OsString::from("--spice-shard"),
+                OsString::from(shard.name()),
+            ],
+            &build.root,
+            environment,
+            shard.timeout_millis(),
+        )?;
     }
     let result = CanvasResult {
         action,
@@ -1192,6 +1210,56 @@ mod tests {
                 panic!("unexpected failure {reason}: {detail}")
             }
         }
+    }
+
+    #[test]
+    fn registry_timeout_changes_the_shard_contract_authority() {
+        let first: CanvasShard = serde_json::from_value(serde_json::json!({
+            "name": "fixture",
+            "timeout_ms": 10,
+            "scenarios": ["one"]
+        }))
+        .expect("decode first shard");
+        let changed: CanvasShard = serde_json::from_value(serde_json::json!({
+            "name": "fixture",
+            "timeout_ms": 11,
+            "scenarios": ["one"]
+        }))
+        .expect("decode changed shard");
+
+        let first = success(shard_registry_authority(&first));
+        let changed = success(shard_registry_authority(&changed));
+        assert_ne!(first, changed);
+
+        let spec = ActionSpec::new(ActionSpecFields {
+            action_id: "canvas:shard:fixture".to_owned(),
+            runner: "spice-canvas-proof-action".to_owned(),
+            runner_version: CANVAS_RUNNER_VERSION,
+            declaration: SHARD_DECLARATION.to_owned(),
+            argv: vec!["node".to_owned(), "fixture.mjs".to_owned()],
+            cwd: ".".to_owned(),
+            environment_names: Vec::new(),
+            tools: Vec::new(),
+            input_strategy: "canvas-registry-closure-v1".to_owned(),
+            reuse: ActionReuseClass::Cacheable,
+        })
+        .expect("valid Canvas action contract");
+        let key = |input_manifest| {
+            gate::derive_authority_bound_action_key(
+                &spec,
+                &ActionKeyAuthority {
+                    input_manifest,
+                    policy: Digest::compute(Domain::GatePolicy, b"policy"),
+                    gate_set: Digest::compute(Domain::GateSet, b"gate-set"),
+                    tools: Digest::compute(Domain::GateTool, b"tools"),
+                    environment: Digest::compute(Domain::GateInventory, b"environment"),
+                    baseline: None,
+                },
+            )
+            .expect("derive Canvas action key")
+        };
+        assert_ne!(key(first), key(changed));
+        assert_eq!(CANVAS_RUNNER_VERSION, 2);
     }
 
     #[test]
