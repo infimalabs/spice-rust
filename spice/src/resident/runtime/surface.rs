@@ -200,6 +200,8 @@ pub(super) async fn run_surface(
     let mut session_compactions =
         message_surface::SessionCompactions::new(crate::session_environment());
     session_compactions.synchronize(
+        bus,
+        epoch,
         residency.body(),
         &message_publisher,
         message_reader.state_mut(),
@@ -394,10 +396,17 @@ pub(super) async fn drive_surface(
                     )?;
                 }
             }
-            record = records.recv() => accept_record(
-                bus, epoch, seats, command_surface, &message_publisher,
-                taste_submitter.as_deref_mut(), record, &mut message_state, diagnostic,
-            )?,
+            record = records.recv() => {
+                let residency = current_residency(bus, epoch)?;
+                session_compactions.synchronize(
+                    bus, epoch, residency.body(), &message_publisher,
+                    &mut message_state, diagnostic,
+                )?;
+                accept_record(
+                    bus, epoch, seats, command_surface, &message_publisher,
+                    taste_submitter.as_deref_mut(), record, &mut message_state, diagnostic,
+                )?;
+            }
             completed = receive_judgment(&mut taste_completions) => {
                 let completed = completed?;
                 taste_submitter
@@ -427,7 +436,8 @@ pub(super) async fn drive_surface(
             _ = session_compaction_poll.tick() => {
                 let residency = current_residency(bus, epoch)?;
                 session_compactions.synchronize(
-                    residency.body(), &message_publisher, &mut message_state, diagnostic,
+                    bus, epoch, residency.body(), &message_publisher, &mut message_state,
+                    diagnostic,
                 )?;
             }
             timer = timers.recv() => {

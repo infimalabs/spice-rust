@@ -544,7 +544,7 @@ pub struct LaneCompacted {
     pub lane: CanonicalUuid,
     /// Occupant that compacted.
     pub occupant: CanonicalUuid,
-    /// Selected child stream carrying the boundary record.
+    /// Selected child stream or preserved-session identity carrying the boundary.
     pub stream: String,
     /// Durable tape member holding the boundary record.
     pub member: u64,
@@ -698,6 +698,10 @@ pub struct TasteJudged {
     /// Occupant whose context contained the prose.
     pub occupant: CanonicalUuid,
     /// Journal position opening the occupant's current context epoch.
+    ///
+    /// For a confirmed decision, this position paired with `taste` records
+    /// warning issuance. Candidate judgment identity remains the separate
+    /// `content`, `bag`, and `compaction` tuple, including for clearances.
     pub compaction: u64,
     /// Taste selected from the active bag.
     pub taste: String,
@@ -747,9 +751,9 @@ pub struct TasteReminded {
     /// Journal position opening that occupant's current context epoch.
     ///
     /// This is the latest matching `lane::started`, `lane::renewed`, or
-    /// subsequent `lane::compacted` fact. Paired with `content` it makes one
-    /// reminder per compaction epoch decidable from the durable stream alone,
-    /// rather than from a separate memory of what has fired.
+    /// subsequent `lane::compacted` fact. Paired with `taste` it makes one
+    /// warning per context epoch decidable from the durable stream alone.
+    /// `content` remains the identity of the particular triggering evidence.
     pub compaction: u64,
     /// Exact transcript locus of the prose that fired the taste.
     pub locus: TranscriptLocus,

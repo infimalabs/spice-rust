@@ -123,6 +123,75 @@ fn real_codex_rollout_compaction_is_published_once_from_complete_jsonl() {
 }
 
 #[test]
+fn codex_recovery_precedes_display_and_display_only_replay_is_inert() {
+    const THREAD: &str = "018f7777-7777-7444-8888-999999999999";
+    let scratch = Scratch::new("codex-recovery");
+    let transcript = scratch
+        .0
+        .join("sessions")
+        .join(format!("rollout-{THREAD}.jsonl"));
+    fs::create_dir_all(transcript.parent().expect("transcript parent"))
+        .expect("Codex session directory exists");
+    fs::write(
+        &transcript,
+        b"{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"compacted\",\"payload\":{}}\n",
+    )
+    .expect("Codex boundary is written");
+    let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163e5");
+    let author = uuid("018f82d4-6f59-7d06-92e3-bce9131163ef");
+    let residency = session_residency_for(lane, author, THREAD, "codex");
+    let publisher = Messages::default();
+    let mut state = observed_state(lane);
+    let mut diagnostic = Vec::new();
+    let mut recovered = Vec::new();
+    let mut compactions = SessionCompactions::new(codex_environment(&scratch.0));
+
+    compactions
+        .synchronize_with(
+            &residency,
+            &publisher,
+            &mut state,
+            &mut diagnostic,
+            |recovered_lane, occupant, thread, locus| {
+                assert!(
+                    publisher.0.lock().expect("message lock").is_empty(),
+                    "durable recovery precedes the fallible Canvas projection",
+                );
+                recovered.push((recovered_lane, occupant, thread.to_owned(), locus));
+                Ok(())
+            },
+        )
+        .expect("Codex synchronization succeeds");
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].0, lane);
+    assert_eq!(recovered[0].1, author);
+    assert_eq!(recovered[0].2, THREAD);
+    assert_eq!(recovered[0].3.member, session_member(THREAD));
+    assert_eq!(publisher.0.lock().expect("message lock").len(), 1);
+
+    let mut display_only = SessionCompactions::new(codex_environment(&scratch.0));
+    display_only
+        .synchronize_display_only(&residency, &publisher, &mut state, &mut diagnostic)
+        .expect("display-only replay remains non-authoritative");
+    assert_eq!(
+        recovered.len(),
+        1,
+        "Canvas replay does not recover authority"
+    );
+    assert_eq!(
+        publisher.0.lock().expect("message lock").len(),
+        1,
+        "Canvas identity still deduplicates the replay",
+    );
+    assert!(
+        diagnostic.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&diagnostic)
+    );
+}
+
+#[test]
 fn incomplete_boundary_waits_for_its_jsonl_delimiter() {
     let scratch = Scratch::new("partial");
     let transcript = scratch.transcript();
@@ -961,7 +1030,7 @@ fn timestamped_claude_boundary_survives_live_poll_and_resident_reload_once() {
     let mut compactions = SessionCompactions::new(claude_environment(&scratch.0));
 
     compactions
-        .synchronize(&residency, &publisher, &mut state, &mut diagnostic)
+        .synchronize_display_only(&residency, &publisher, &mut state, &mut diagnostic)
         .expect("initial synchronization remains live before a boundary");
     append(
         &transcript,
@@ -972,10 +1041,10 @@ fn timestamped_claude_boundary_survives_live_poll_and_resident_reload_once() {
         .as_bytes(),
     );
     compactions
-        .synchronize(&residency, &publisher, &mut state, &mut diagnostic)
+        .synchronize_display_only(&residency, &publisher, &mut state, &mut diagnostic)
         .expect("live polling publishes the timestamped boundary");
     compactions
-        .synchronize(&residency, &publisher, &mut state, &mut diagnostic)
+        .synchronize_display_only(&residency, &publisher, &mut state, &mut diagnostic)
         .expect("an unchanged live poll remains quiet");
 
     let mut reloaded = SessionCompactions::new(claude_environment(&scratch.0));
@@ -996,7 +1065,7 @@ fn timestamped_claude_boundary_survives_live_poll_and_resident_reload_once() {
             .expect("later observation instant"),
     });
     reloaded
-        .synchronize(&residency, &publisher, &mut reloaded_state, &mut diagnostic)
+        .synchronize_display_only(&residency, &publisher, &mut reloaded_state, &mut diagnostic)
         .expect("resident reload replays the same durable identity without fault");
 
     let messages = publisher.0.lock().expect("message lock");
@@ -1047,7 +1116,7 @@ fn timestamp_less_claude_boundary_is_refused_without_a_chronology_fallback() {
     let mut compactions = SessionCompactions::new(claude_environment(&scratch.0));
 
     compactions
-        .synchronize(
+        .synchronize_display_only(
             &session_residency(lane, author, THREAD),
             &publisher,
             &mut state,
@@ -1068,7 +1137,7 @@ fn timestamp_less_claude_boundary_is_refused_without_a_chronology_fallback() {
         b"{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
     );
     compactions
-        .synchronize(
+        .synchronize_display_only(
             &session_residency(lane, author, THREAD),
             &publisher,
             &mut state,
@@ -1121,10 +1190,31 @@ fn claude_environment(home: &Path) -> crate::session_command::Environment {
     )
 }
 
+fn codex_environment(home: &Path) -> crate::session_command::Environment {
+    crate::session_command::Environment::new(
+        vec![crate::session_command::VendorEnvironment::new(
+            &spice::extension::CODEX,
+            None,
+            Some(home.as_os_str().to_owned()),
+        )],
+        None,
+        None,
+    )
+}
+
 fn session_residency(
     lane: CanonicalUuid,
     author: CanonicalUuid,
     thread: &str,
+) -> wire::ResidencyHead {
+    session_residency_for(lane, author, thread, "claude")
+}
+
+fn session_residency_for(
+    lane: CanonicalUuid,
+    author: CanonicalUuid,
+    thread: &str,
+    vendor: &str,
 ) -> wire::ResidencyHead {
     let epoch = uuid("018f82d4-6f59-7d06-92e3-bce9131163aa");
     wire::ResidencyHead {
@@ -1137,7 +1227,7 @@ fn session_residency(
             name: None,
             worktree: "/tmp/session-compaction".to_owned(),
             life: "drive".to_owned(),
-            vendor: "claude".parse().expect("fixture vendor"),
+            vendor: vendor.parse().expect("fixture vendor"),
             occupant: Some(author),
             lineage: vec![author],
             capabilities: Vec::new(),
@@ -1145,7 +1235,7 @@ fn session_residency(
                 lane,
                 occupant: author,
                 worktree: "/tmp/session-compaction".to_owned(),
-                vendor: "claude".parse().expect("fixture vendor"),
+                vendor: vendor.parse().expect("fixture vendor"),
                 launch: None,
                 epoch,
                 stream: "stdout".to_owned(),

@@ -516,7 +516,7 @@ where
                 record.lane,
                 record.occupant,
                 anchor,
-                unsuppressed,
+                one_candidate_per_warning(unsuppressed),
                 minted_millis,
                 at,
                 expires,
@@ -548,6 +548,14 @@ where
     unreachable!("the final commit attempt returns instead of retrying")
 }
 
+fn one_candidate_per_warning(candidates: Vec<Candidate>) -> Vec<Candidate> {
+    let mut warnings = BTreeSet::new();
+    candidates
+        .into_iter()
+        .filter(|candidate| warnings.insert(candidate.taste.clone()))
+        .collect()
+}
+
 fn unsuppressed_candidates(
     candidates: &[Candidate],
     snapshot: &journal::FactSnapshot,
@@ -557,7 +565,7 @@ fn unsuppressed_candidates(
         .iter()
         .filter(|candidate| {
             !was_judged(snapshot, &candidate.content, &candidate.bag, anchor)
-                && !was_reminded(snapshot, &candidate.content, anchor)
+                && !warning_issued(snapshot, &candidate.taste, anchor)
         })
         .cloned()
         .collect()
@@ -818,9 +826,9 @@ pub(super) fn complete_judgment(
                         &decided.candidate.bag,
                         completed.prepared.anchor,
                     )
-                    && !was_reminded(
+                    && !warning_issued(
                         &snapshot,
-                        &decided.candidate.content,
+                        &decided.candidate.taste,
                         completed.prepared.anchor,
                     )
             })
@@ -971,9 +979,13 @@ fn adjudicate_candidates(
     cache: &mut BTreeMap<(Digest, Digest, u64), Option<Judgment>>,
     judge: &mut dyn Adjudicator,
 ) -> Vec<JudgedCandidate> {
+    let mut confirmed = BTreeSet::new();
     candidates
         .into_iter()
         .filter_map(|candidate| {
+            if confirmed.contains(&candidate.taste) {
+                return None;
+            }
             let key = (
                 candidate.content.clone(),
                 candidate.bag.clone(),
@@ -986,6 +998,9 @@ fn adjudicate_candidates(
                 cache.insert(key, decided.clone());
                 decided
             }?;
+            if judgment.confirmed {
+                confirmed.insert(candidate.taste.clone());
+            }
             Some(JudgedCandidate {
                 candidate,
                 judgment,
@@ -1150,7 +1165,7 @@ fn reminder_guard(
             return Err(GuardError::refused("taste::epoch-moved"));
         }
         for opening in &openings {
-            if was_reminded(&snapshot, &opening.candidate.content, anchor)
+            if warning_issued(&snapshot, &opening.candidate.taste, anchor)
                 || was_judged(
                     &snapshot,
                     &opening.candidate.content,
@@ -1204,7 +1219,7 @@ fn judgment_guard(
                 &decided.candidate.content,
                 &decided.candidate.bag,
                 anchor,
-            ) || was_reminded(&snapshot, &decided.candidate.content, anchor)
+            ) || warning_issued(&snapshot, &decided.candidate.taste, anchor)
             {
                 return Err(GuardError::refused("taste::judgment-recorded"));
             }
@@ -1270,12 +1285,18 @@ fn context_anchor_origin(
         .map_err(|_| format!("context anchor {anchor} is absent from its fact snapshot"))
 }
 
-fn was_reminded(snapshot: &journal::FactSnapshot, content: &Digest, anchor: Seq) -> bool {
+fn warning_issued(snapshot: &journal::FactSnapshot, taste: &str, anchor: Seq) -> bool {
     snapshot.facts().iter().any(|envelope| {
-        envelope
+        let reminded = envelope
             .fact
             .read::<wire::body::TasteReminded>()
-            .is_some_and(|body| &body.content == content && body.compaction == anchor.get())
+            .is_some_and(|body| body.taste == taste && body.compaction == anchor.get());
+        let confirmed = envelope.fact.read::<TasteJudged>().is_some_and(|body| {
+            body.taste == taste
+                && body.compaction == anchor.get()
+                && matches!(body.decision, TasteDecision::Confirmed { .. })
+        });
+        reminded || confirmed
     })
 }
 

@@ -23,8 +23,9 @@ pub(in crate::resident) const POLL_INTERVAL: std::time::Duration =
 /// Codex's `exec --json` stream does not expose the `compacted` record stored
 /// in its rollout, so selected-stream capture cannot manufacture this view.
 /// The preserved transcript is already the durable source used by `session`;
-/// this reader projects typed compaction events into Canvas and folds adjacent
-/// tool evidence only to describe terminal records missing at each boundary.
+/// this reader records Codex boundaries into lane authority, projects typed
+/// compaction events into Canvas, and folds adjacent tool evidence only to
+/// describe terminal records missing at each boundary.
 pub(in crate::resident) struct SessionCompactions {
     environment: crate::session_command::Environment,
     cursors: BTreeMap<CanonicalUuid, Cursor>,
@@ -150,14 +151,39 @@ impl SessionCompactions {
         }
     }
 
-    /// Publish every newly completed structured boundary for current sessions.
+    /// Record and publish every newly completed structured boundary for current sessions.
     pub(in crate::resident) fn synchronize(
         &mut self,
+        bus: &Bus,
+        epoch: CanonicalUuid,
         residency: &wire::ResidencyHead,
         publisher: &impl AgentMessagePublisher,
         state: &mut MessageState,
         diagnostic: &mut dyn io::Write,
     ) -> CommandResult<()> {
+        self.synchronize_with(
+            residency,
+            publisher,
+            state,
+            diagnostic,
+            |lane, occupant, thread, locus| {
+                lane_surface::recover_session_compaction(bus, epoch, lane, occupant, thread, locus)
+                    .map(drop)
+            },
+        )
+    }
+
+    fn synchronize_with<F>(
+        &mut self,
+        residency: &wire::ResidencyHead,
+        publisher: &impl AgentMessagePublisher,
+        state: &mut MessageState,
+        diagnostic: &mut dyn io::Write,
+        mut recover: F,
+    ) -> CommandResult<()>
+    where
+        F: FnMut(CanonicalUuid, CanonicalUuid, &str, listen::Locus) -> CommandResult<()>,
+    {
         let current = residency
             .lanes
             .iter()
@@ -169,17 +195,24 @@ impl SessionCompactions {
 
         for (lane, session) in current {
             self.ensure_cursor(lane, session, diagnostic);
-            let Some((scanned, path, author)) = self.cursors.get_mut(&lane).map(|cursor| {
-                let path = cursor.path.clone();
-                let author = cursor.author;
-                (scan(cursor), path, author)
-            }) else {
+            let Some((scanned, path, author, dialect, thread)) =
+                self.cursors.get_mut(&lane).map(|cursor| {
+                    let path = cursor.path.clone();
+                    let author = cursor.author;
+                    let dialect = cursor.dialect;
+                    let thread = cursor.thread.clone();
+                    (scan(cursor), path, author, dialect, thread)
+                })
+            else {
                 continue;
             };
             match scanned {
                 Ok(records) => {
                     self.reported.remove(&lane);
                     for record in records {
+                        if dialect == listen::Dialect::Codex {
+                            recover(lane, author, &thread, record.locus())?;
+                        }
                         publish(record, lane, author, publisher, state)?;
                     }
                 }
@@ -189,6 +222,17 @@ impl SessionCompactions {
             }
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    fn synchronize_display_only(
+        &mut self,
+        residency: &wire::ResidencyHead,
+        publisher: &impl AgentMessagePublisher,
+        state: &mut MessageState,
+        diagnostic: &mut dyn io::Write,
+    ) -> CommandResult<()> {
+        self.synchronize_with(residency, publisher, state, diagnostic, |_, _, _, _| Ok(()))
     }
 
     fn ensure_cursor(
@@ -256,6 +300,15 @@ struct CompactionRecord {
     authored: String,
     ordinal: u32,
     unavailable_tool_terminals: Vec<String>,
+}
+
+impl CompactionRecord {
+    fn locus(&self) -> listen::Locus {
+        let listen::Event::Compaction(compaction) = &self.decoded else {
+            unreachable!("only compaction events become compaction records")
+        };
+        compaction.locus
+    }
 }
 
 fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {

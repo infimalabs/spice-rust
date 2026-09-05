@@ -13,6 +13,8 @@ use wire::{Disposition, ResidentState};
 
 #[path = "tests/fold.rs"]
 mod fold;
+#[path = "tests/recovered_compaction.rs"]
+mod recovered_compaction;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
@@ -441,7 +443,8 @@ fn duplicate_hits_records_and_restart_replay_create_one_reminder_in_the_epoch() 
         "Wait for the terminal event.",
     )]);
     let first = prose_record(fixture.lane, fixture.occupant, "  POLLING now ");
-    let duplicate = prose_record(fixture.lane, fixture.occupant, "polling   NOW");
+    let duplicate_text = "I will continue polling until the process finishes.";
+    let duplicate = prose_record(fixture.lane, fixture.occupant, duplicate_text);
 
     fixture.recognize(&bag, &first);
     fixture.recognize(&bag, &first);
@@ -449,6 +452,11 @@ fn duplicate_hits_records_and_restart_replay_create_one_reminder_in_the_epoch() 
     fixture.recognize(&bag.clone(), &duplicate);
 
     assert_eq!(fixture.reminders().len(), 1);
+    assert_ne!(
+        fixture.reminders()[0].content,
+        taste::reminder_identity(bag.tastes()[0].name(), duplicate_text),
+        "materially different evidence still selects the suppressed warning",
+    );
     let calls = Cell::new(0_u8);
     let mut judge = FunctionAdjudicator(|_: &Candidate| {
         calls.set(calls.get() + 1);
@@ -464,6 +472,22 @@ fn duplicate_hits_records_and_restart_replay_create_one_reminder_in_the_epoch() 
         "the direct evidence suppresses later judging"
     );
     assert!(fixture.judgments().is_empty());
+    assert_eq!(fixture.reminders().len(), 1);
+    fixture.finish();
+}
+
+#[test]
+fn one_record_with_distinct_prose_emits_one_warning_per_taste() {
+    let fixture = Fixture::new("record-warning-deduplicate");
+    let bag = bag(&[("polling", &["polling"], "Wait.")]);
+    fixture.recognize(
+        &bag,
+        &prose_events_record(
+            fixture.lane,
+            fixture.occupant,
+            &["polling once", "polling again with different prose"],
+        ),
+    );
     assert_eq!(fixture.reminders().len(), 1);
     fixture.finish();
 }
@@ -532,48 +556,77 @@ fn enabled_confirmation_records_complete_evidence_and_opens_one_restart_safe_dir
 }
 
 #[test]
-fn enabled_clearance_is_durable_evidence_and_never_opens_steering() {
+fn cleared_evidence_does_not_suppress_a_later_confirmed_warning() {
     let fixture = Fixture::new("judge-cleared");
     let bag = bag(&[("fallbacks", &["fallback"], "Keep one path.")]);
-    let record = prose_record(
+    let record = prose_events_record(
         fixture.lane,
         fixture.occupant,
-        "This paragraph merely mentions fallback terminology.",
+        &[
+            "This paragraph merely mentions fallback terminology.",
+            "I will keep a fallback implementation beside the current one.",
+        ],
     );
     let calls = Cell::new(0_u8);
-    let mut judge = FunctionAdjudicator(|_: &Candidate| {
+    let mut judge = FunctionAdjudicator(|candidate: &Candidate| {
         calls.set(calls.get() + 1);
+        let confirmed =
+            candidate.source == "I will keep a fallback implementation beside the current one.";
         Ok(judgment(
-            false,
-            vec![attempt(1, "NO", wire::body::TasteJudgeReply::No)],
+            confirmed,
+            vec![attempt(
+                1,
+                if confirmed { "YES" } else { "NO" },
+                if confirmed {
+                    wire::body::TasteJudgeReply::Yes
+                } else {
+                    wire::body::TasteJudgeReply::No
+                },
+            )],
         ))
     });
 
     fixture.adjudicate(&bag, &mut judge, &record);
     fixture.adjudicate(&bag, &mut judge, &record);
 
-    assert_eq!(calls.get(), 1, "durable clearance suppresses replay");
+    assert_eq!(
+        calls.get(),
+        2,
+        "only identical cleared evidence is suppressed"
+    );
     let judgments = fixture.judgments();
-    assert_eq!(judgments.len(), 1);
+    assert_eq!(judgments.len(), 2);
     assert!(matches!(
         judgments[0].decision,
         wire::body::TasteDecision::Cleared
     ));
+    assert!(matches!(
+        judgments[1].decision,
+        wire::body::TasteDecision::Confirmed { .. }
+    ));
     assert!(fixture.reminders().is_empty());
     let ledger = steer::Ledger::from_snapshot(&fixture.bus.fact_snapshot().expect("snapshot"))
-        .expect("clearance replays");
-    assert!(ledger.pending(fixture.lane).is_empty());
+        .expect("judgments replay");
+    assert_eq!(ledger.pending(fixture.lane).len(), 1);
     let fixture = fixture.restart();
-    fixture.recognize(&bag, &record);
-    assert!(
-        fixture.reminders().is_empty(),
-        "a disabled restart respects the durable clearance"
+    fixture.recognize(
+        &bag,
+        &prose_record(
+            fixture.lane,
+            fixture.occupant,
+            "A third fallback would still violate the same warning.",
+        ),
     );
     assert!(
+        fixture.reminders().is_empty(),
+        "the confirmed warning, not the earlier clearance, suppresses new evidence"
+    );
+    assert_eq!(
         steer::Ledger::from_snapshot(&fixture.bus.fact_snapshot().expect("snapshot"))
-            .expect("clearance still replays")
+            .expect("judgments still replay")
             .pending(fixture.lane)
-            .is_empty()
+            .len(),
+        1,
     );
     fixture.finish();
 }
@@ -815,7 +868,14 @@ fn compaction_and_occupant_renewal_each_open_one_later_suppression_epoch() {
     let content = fixture.reminders()[0].content.clone();
 
     let compacted = fixture.compact();
-    fixture.recognize(&bag, &original);
+    fixture.recognize(
+        &bag,
+        &prose_record(
+            fixture.lane,
+            fixture.occupant,
+            "polling again after compaction",
+        ),
+    );
     let successor = uuid(5);
     let renewed = fixture.renew(successor);
     let successor_record = prose_record(fixture.lane, successor, "POLLING   now");
@@ -823,7 +883,8 @@ fn compaction_and_occupant_renewal_each_open_one_later_suppression_epoch() {
 
     let reminders = fixture.reminders();
     assert_eq!(reminders.len(), 3);
-    assert!(reminders.iter().all(|body| body.content == content));
+    assert_eq!(reminders[0].content, content);
+    assert_ne!(reminders[1].content, content);
     assert_eq!(
         reminders
             .iter()
@@ -914,7 +975,7 @@ fn quoted_echo_and_every_non_prose_surface_are_inert() {
 }
 
 #[test]
-fn taste_acknowledgement_and_quoted_feedback_do_not_refire_but_new_prose_does() {
+fn taste_acknowledgement_does_not_reenable_its_warning_but_new_taste_does() {
     let fixture = Fixture::new("acknowledgement-provenance");
     let bag = bag(&[
         ("polling", &["polling"], "Wait for the terminal event."),
@@ -930,22 +991,25 @@ fn taste_acknowledgement_and_quoted_feedback_do_not_refire_but_new_prose_does() 
         .iter()
         .find(|reminder| reminder.taste == "polling")
         .expect("polling reminder exists");
-    let fallback = first
-        .iter()
-        .find(|reminder| reminder.taste == "fallbacks")
-        .expect("fallback reminder exists");
-
     let response = format!(
         concat!(
             "> {}\n",
             "A separate handoff is now explicit. ",
             "ACK {}: I will avoid polling and fallback churn."
         ),
-        polling.text, fallback.key,
+        polling.text, polling.key,
     );
     fixture.recognize(
         &bag,
         &prose_record(fixture.lane, fixture.occupant, &response),
+    );
+    fixture.recognize(
+        &bag,
+        &prose_record(
+            fixture.lane,
+            fixture.occupant,
+            "I resumed polling with entirely different prose.",
+        ),
     );
 
     let reminders = fixture.reminders();
@@ -1103,7 +1167,14 @@ fn prose_record(
     occupant: CanonicalUuid,
     text: &str,
 ) -> lane::capture::CaptureRecord {
-    let locus = listen::Locus::new(7, 120, text.len() as u64);
+    prose_events_record(lane, occupant, &[text])
+}
+
+fn prose_events_record(
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    texts: &[&str],
+) -> lane::capture::CaptureRecord {
     record(
         lane,
         occupant,
@@ -1112,13 +1183,23 @@ fn prose_record(
                 timestamp: Some("2030-04-12T18:44:09.271Z".to_owned()),
                 ..Default::default()
             },
-            events: vec![listen::Event::Prose(listen::Prose {
-                role: listen::ProseRole::Assistant,
-                text: text.to_owned(),
-                phase: Some("final".to_owned()),
-                media: Vec::new(),
-                locus,
-            })],
+            events: texts
+                .iter()
+                .enumerate()
+                .map(|(index, text)| {
+                    listen::Event::Prose(listen::Prose {
+                        role: listen::ProseRole::Assistant,
+                        text: (*text).to_owned(),
+                        phase: Some("final".to_owned()),
+                        media: Vec::new(),
+                        locus: listen::Locus::new(
+                            7,
+                            120 + u64::try_from(index).expect("fixture event index fits u64") * 64,
+                            text.len() as u64,
+                        ),
+                    })
+                })
+                .collect(),
         },
     )
 }
