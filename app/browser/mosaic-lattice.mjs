@@ -13,7 +13,8 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
       columnWidth: getComputedStyle(activity).columnWidth,
     })),
     planes: [...console.querySelectorAll(".lane-mosaic-plane")].map((plane) => {
-      const planeStyle = getComputedStyle(plane);
+      const track = plane.querySelector(":scope > .lane-mosaic-track");
+      const trackStyle = getComputedStyle(track);
       return {
         trackCount: Number(plane.dataset.trackCount),
         baseSpan: Number(plane.dataset.baseSpan),
@@ -21,9 +22,10 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
         minCardRows: Number(plane.dataset.minCardRows),
         maxRow: Number(plane.dataset.maxRow),
         module: Number(plane.dataset.module),
-        columnGap: Number.parseFloat(planeStyle.columnGap),
-        rowGap: Number.parseFloat(planeStyle.rowGap),
-        width: plane.clientWidth,
+        columnGap: Number.parseFloat(trackStyle.columnGap),
+        edgeGutter: Number.parseFloat(trackStyle.marginLeft),
+        rowGap: Number.parseFloat(trackStyle.rowGap),
+        width: track.clientWidth,
         tallThreshold: Number(plane.dataset.tallThreshold),
         cards: [...plane.querySelectorAll(".mosaic-message-card")].map((card) => {
           const box = card.getBoundingClientRect();
@@ -204,7 +206,9 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
       assert.equal(card.columnEnd, `span ${card.span}`);
       assert.equal(card.row, card.base, "the stable row instrument is the committed base");
       assert.ok(
-        Math.abs(card.top - (plane.maxRow - card.base - card.rows) * plane.module) <= 0.5,
+        Math.abs(card.top - (
+          plane.edgeGutter + (plane.maxRow - card.base - card.rows) * plane.module
+        )) <= 0.5,
         `the plane frontier positions the stable card: ${JSON.stringify({ plane, card })}`,
       );
       assert.ok(
@@ -246,7 +250,8 @@ export async function waitForMosaicReady(page) {
     return planes.length > 0 && planes.every(
       (plane) => plane.dataset.measurementPhase === "ready"
         && plane.dataset.measurementPending === "0"
-        && Math.abs(Number(plane.dataset.committedWidth) - plane.clientWidth) <= 1,
+        && Math.abs(Number(plane.dataset.committedWidth)
+          - plane.querySelector(":scope > .lane-mosaic-track").clientWidth) <= 1,
     );
   });
 }

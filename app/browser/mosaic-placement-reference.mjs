@@ -670,7 +670,8 @@ export async function waitForMosaicReady(page) {
     return planes.length > 0 && planes.every(
       (plane) => plane.dataset.measurementPhase === "ready"
         && plane.dataset.measurementPending === "0"
-        && Math.abs(Number(plane.dataset.committedWidth) - plane.clientWidth) <= 1,
+        && Math.abs(Number(plane.dataset.committedWidth)
+          - plane.querySelector(":scope > .lane-mosaic-track").clientWidth) <= 1,
     );
   });
 }

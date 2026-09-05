@@ -341,7 +341,8 @@ async function waitForCommittedResize(page, surface, viewport, label) {
     return planes.length === before.length && planes.every((plane, index) => (
       plane.dataset.measurementPhase === "ready"
       && Number(plane.dataset.committedWidth) !== before[index]
-      && Math.abs(Number(plane.dataset.committedWidth) - plane.clientWidth) <= 1
+      && Math.abs(Number(plane.dataset.committedWidth)
+        - plane.querySelector(":scope > .lane-mosaic-track").clientWidth) <= 1
     ));
   }, priorWidths);
 }

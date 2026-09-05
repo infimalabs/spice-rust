@@ -29,6 +29,7 @@ import {
 import { assertAgentWorkspaceGeometry } from "./canvas-readiness.mjs";
 import { assertCandidateMeasurementPaintAtomic } from "./mosaic-candidate-paint.mjs";
 import { assertLaneHeaderPipMatrix } from "./lane-header-pips.mjs";
+import { captureMessageStreamBoundaries } from "./message-stream-boundaries.mjs";
 import {
   assertQuoteBlockDensity,
   captureQuoteBlockDensity,
@@ -970,6 +971,7 @@ export async function assertAgentConversation(
   await assertFourAgentDensity(console);
   await assertAgentWorkspaceGeometry(page, "populated desktop Agents page");
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
+  await captureMessageStreamBoundaries(page, console, artifacts, "chromium");
   const hiddenContinuity = await assertModeSwitchPreservesDeferredMosaic(
     page,
     console,

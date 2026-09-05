@@ -402,7 +402,7 @@ struct MosaicPlaneView<'a> {
 }
 
 impl MosaicPlaneView<'_> {
-    fn render(self, host: NodeRef) -> Html {
+    fn render(self, host: NodeRef, track_host: NodeRef) -> Html {
         let rendered_cards = render_activity_cards(
             self.properties,
             self.measurements,
@@ -465,7 +465,9 @@ impl MosaicPlaneView<'_> {
                     if self.properties.members == 1 { "member" } else { "members" },
                 )}
             >
-                {rendered_cards}
+                <div ref={track_host} class="lane-mosaic-track">
+                    {rendered_cards}
+                </div>
             </section>
         }
     }
@@ -487,7 +489,8 @@ fn committed_spans(
 #[function_component(MosaicPlane)]
 pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     let host = use_node_ref();
-    let width = use_element_width(host.clone());
+    let track_host = use_node_ref();
+    let width = use_element_width(track_host.clone());
     let measurement_width = width.round() as i32;
     use_history_paging(
         host.clone(),
@@ -547,7 +550,7 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
         geometry,
         max_row,
     }
-    .render(host)
+    .render(host, track_host)
 }
 
 #[hook]

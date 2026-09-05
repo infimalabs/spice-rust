@@ -267,8 +267,8 @@ function assertReferenceGeometry(geometry, agentLabels) {
   assert.match(geometry.card.fontFamily, /system-ui/, "message prose uses the system sans stack");
   assert.equal(geometry.card.paddingLeft, "9px", "message card keeps reference inline padding");
   assert.equal(geometry.card.paddingTop, "9px", "message card keeps reference block padding");
-  assert.equal(geometry.grid.paddingLeft, "11px", "message plane keeps the reference origin gutter");
-  assert.equal(geometry.grid.paddingTop, "11px", "message plane keeps the reference origin gutter");
+  assert.equal(geometry.grid.paddingLeft, "0px", "message viewport has no inline clipping inset");
+  assert.equal(geometry.grid.paddingTop, "0px", "message viewport has no block clipping inset");
   assert.equal(geometry.card.borderRadius, "10px", "message card keeps the reference radius");
   assert.equal(geometry.card.background, geometry.panel, "message card uses the neutral panel surface");
   assert.equal(geometry.card.borderLeftWidth, "1px", "the card has no left accent rail");
@@ -411,7 +411,8 @@ async function waitForCommittedResize(page, console, viewport) {
       return planes.length === before.length && planes.every((plane, index) => (
         plane.dataset.measurementPhase === "ready"
         && Number(plane.dataset.committedWidth) !== before[index]
-        && Math.abs(Number(plane.dataset.committedWidth) - plane.clientWidth) <= 1
+        && Math.abs(Number(plane.dataset.committedWidth)
+          - plane.querySelector(":scope > .lane-mosaic-track").clientWidth) <= 1
       ));
     }, priorWidths);
 }
