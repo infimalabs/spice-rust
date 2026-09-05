@@ -7,6 +7,10 @@ use syn::parse::Parser;
 use syn::punctuated::Punctuated;
 use syn::visit::Visit;
 
+mod output_macro;
+
+use output_macro::{OutputMacroAuthority, OutputMacroResolution};
+
 const AUTHORITY_VERSION: u64 = 1;
 
 #[derive(Deserialize)]
@@ -192,6 +196,8 @@ fn scan_target(
             .map(|source| source.path.clone()),
     );
     let mut scan = CompileTimeScan::default();
+    let mut parsed_sources = Vec::new();
+    let mut output_macros = OutputMacroAuthority::compiler(package.compiler_std_extern);
     for source in sources {
         let document = fs::read_to_string(&source).map_err(|error| {
             non_cacheable(format!(
@@ -207,10 +213,18 @@ fn scan_target(
                 source.display(),
             ))
         })?;
+        output_macros.merge(OutputMacroAuthority::from_file(
+            &syntax,
+            package.compiler_std_extern,
+        ));
+        parsed_sources.push((source, syntax));
+    }
+    for (source, syntax) in parsed_sources {
         let mut visitor = CompileTimeVisitor {
             package: &package.name,
             source: &source,
             scan: &mut scan,
+            output_macros,
             error: None,
         };
         visitor.visit_file(&syntax);
@@ -233,6 +247,7 @@ struct CompileTimeVisitor<'a> {
     package: &'a str,
     source: &'a Path,
     scan: &'a mut CompileTimeScan,
+    output_macros: OutputMacroAuthority,
     error: Option<WorkspaceTestError>,
 }
 
@@ -247,7 +262,13 @@ impl<'ast> Visit<'ast> for CompileTimeVisitor<'_> {
             .last()
             .map(|segment| segment.ident.to_string());
         match name.as_deref() {
-            Some("println") => self.scan_println(invocation),
+            Some("println") => match self.output_macros.resolve(&invocation.path) {
+                OutputMacroResolution::Compiler => self.scan_println(invocation),
+                OutputMacroResolution::Unresolved => self.refuse(format!(
+                    "cannot prove standard output-macro origin for {}!",
+                    display_macro_path(&invocation.path),
+                )),
+            },
             Some("env" | "option_env") => self.scan_environment_macro(invocation),
             Some(
                 "concat" | "include" | "include_bytes" | "include_str" | "cfg" | "file" | "line"
@@ -419,6 +440,15 @@ fn rust_path(path: &syn::Path) -> String {
         .map(|segment| segment.ident.to_string())
         .collect::<Vec<_>>()
         .join("::")
+}
+
+fn display_macro_path(path: &syn::Path) -> String {
+    let root = if path.leading_colon.is_some() {
+        "::"
+    } else {
+        ""
+    };
+    format!("{root}{}", rust_path(path))
 }
 
 fn filesystem_read_call(path: &str) -> bool {

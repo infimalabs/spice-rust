@@ -6,7 +6,7 @@ use syn::punctuated::Punctuated;
 use syn::visit::Visit;
 
 mod file_attributes;
-mod macro_scope;
+pub(super) mod macro_scope;
 mod namespace_scope;
 
 use macro_scope::{
@@ -165,6 +165,10 @@ impl FileMacroCrateContext {
                 ("core".to_owned(), NamespaceResolution::Compiler),
             ]),
         }
+    }
+
+    pub(super) fn compiler_std_extern(&self) -> bool {
+        self.std_extern == NamespaceResolution::Compiler
     }
 
     fn root_scope(&self, attributes: &[syn::Attribute]) -> FileMacroScope {
@@ -1257,12 +1261,12 @@ fn qualified_namespace_has_parent(trees: &[TokenTree], index: usize) -> bool {
         )
 }
 
-fn ident_name(ident: &proc_macro2::Ident) -> String {
+pub(in crate::workspace_tests) fn ident_name(ident: &proc_macro2::Ident) -> String {
     let name = ident.to_string();
     name.strip_prefix("r#").unwrap_or(&name).to_owned()
 }
 
-fn item_attributes(item: &Item) -> &[syn::Attribute] {
+pub(in crate::workspace_tests) fn item_attributes(item: &Item) -> &[syn::Attribute] {
     match item {
         Item::Const(item) => &item.attrs,
         Item::Enum(item) => &item.attrs,

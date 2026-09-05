@@ -96,7 +96,7 @@ pub(super) fn generated_namespace_is_unresolved(item: &Item) -> bool {
     )
 }
 
-pub(super) fn attribute_may_expand_items(attribute: &syn::Attribute) -> bool {
+pub(in crate::workspace_tests) fn attribute_may_expand_items(attribute: &syn::Attribute) -> bool {
     let path = attribute.path();
     if path.segments.len() != 1 {
         return true;
