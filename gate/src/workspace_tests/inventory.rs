@@ -195,11 +195,18 @@ pub(super) enum DeclaredPathSourceOrigin {
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(super) struct SourceMacroScope {
+    pub(super) scope: super::source_reach::FileMacroScope,
+    pub(super) crate_root: bool,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct DeclaredPathSource {
     pub(super) path: PathBuf,
     pub(super) test_only: bool,
     pub(super) dependent_tests: bool,
     pub(super) origins: BTreeSet<DeclaredPathSourceOrigin>,
+    pub(super) scopes: BTreeSet<SourceMacroScope>,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -225,7 +232,7 @@ pub(super) struct PackageInventory {
     pub(super) name: String,
     pub(super) root: PathBuf,
     pub(super) dependencies: Vec<PathBuf>,
-    pub(super) compiler_std_extern: bool,
+    pub(super) namespace_context: super::source_reach::FileMacroCrateContext,
     pub(super) compile_time_authority: Option<CompileTimeAuthorityDeclaration>,
     pub(super) declared_targets: Vec<TargetIdentity>,
     pub(super) removed_targets: Vec<TargetIdentity>,
@@ -403,7 +410,7 @@ impl Inventory {
                     name: package.name.clone(),
                     root: package.root.clone(),
                     dependencies: package.dependencies.clone(),
-                    compiler_std_extern: package.compiler_std_extern,
+                    namespace_context: package.namespace_context.clone(),
                     compile_time_authority: package.compile_time_authority.clone(),
                     declared_targets: package.declared_targets.clone(),
                     removed_targets: package.removed_targets.clone(),

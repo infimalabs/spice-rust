@@ -5,15 +5,17 @@ use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::visit::Visit;
 
+mod compiler_macro;
 mod file_attributes;
 pub(super) mod macro_scope;
 mod namespace_scope;
 mod opaque_expansion;
 
+pub(super) use compiler_macro::CompilerMacroKind;
+pub(super) use macro_scope::FileMacroResolution;
 use macro_scope::{
-    FileMacroBindings, FileMacroResolution, UseBindingContext, attribute_may_expand_items,
-    conditional_binding, exported_macro_rules, generated_namespace_is_unresolved,
-    local_macro_rules, macro_rules_name,
+    FileMacroBindings, UseBindingContext, attribute_may_expand_items, conditional_binding,
+    exported_macro_rules, generated_namespace_is_unresolved, local_macro_rules, macro_rules_name,
 };
 use namespace_scope::NamespaceScopes;
 use opaque_expansion::{macro_rules_body_at, opaque_expansion_file_macro_error};
@@ -28,6 +30,7 @@ struct DeclaredReach {
 struct DeclaredSource {
     reach: DeclaredReach,
     origins: BTreeSet<DeclaredPathSourceOrigin>,
+    scopes: BTreeSet<SourceMacroScope>,
 }
 
 #[derive(Eq, Ord, PartialEq, PartialOrd)]
@@ -69,20 +72,20 @@ pub(super) enum FileMacroKind {
     IncludeBytes,
 }
 
-#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
-enum NamespaceResolution {
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(super) enum NamespaceResolution {
     Compiler,
     Shadowed,
     Unresolved,
 }
 
-#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
-enum RustEdition {
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(super) enum RustEdition {
     Edition2015,
     Modern,
 }
 
-#[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct FileMacroCrateContext {
     edition: RustEdition,
     std_extern: NamespaceResolution,
@@ -90,8 +93,8 @@ pub(super) struct FileMacroCrateContext {
     externs: BTreeMap<String, NamespaceResolution>,
 }
 
-#[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
-struct FileMacroScope {
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(super) struct FileMacroScope {
     edition: RustEdition,
     crate_std: NamespaceResolution,
     crate_core: NamespaceResolution,
@@ -99,8 +102,8 @@ struct FileMacroScope {
     macros: FileMacroBindings,
 }
 
-#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
-enum QualifiedNamespace {
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(super) enum QualifiedNamespace {
     Std,
     Core,
 }
@@ -174,11 +177,7 @@ impl FileMacroCrateContext {
         }
     }
 
-    pub(super) fn compiler_std_extern(&self) -> bool {
-        self.std_extern == NamespaceResolution::Compiler
-    }
-
-    fn root_scope(&self, attributes: &[syn::Attribute]) -> FileMacroScope {
+    pub(super) fn root_scope(&self, attributes: &[syn::Attribute]) -> FileMacroScope {
         let no_std = attributes
             .iter()
             .any(|attribute| attribute.path().is_ident("no_std"));
@@ -203,7 +202,7 @@ impl FileMacroCrateContext {
             crate_std: self.std_extern,
             crate_core: self.core_extern,
             namespaces: NamespaceScopes::new(global),
-            macros: FileMacroBindings::compiler(),
+            macros: FileMacroBindings::compiler(std_extern == NamespaceResolution::Compiler),
         }
     }
 }
@@ -213,22 +212,22 @@ impl FileMacroScope {
         self.namespaces.resolve(namespace.name(), leading_global)
     }
 
-    fn child_module(mut self) -> Self {
+    pub(super) fn child_module(mut self) -> Self {
         self.namespaces.enter_child_module();
         self.macros = self.macros.child_module();
         self
     }
 
-    fn child_block(mut self) -> Self {
+    pub(super) fn child_block(mut self) -> Self {
         self.macros = self.macros.child_block();
         self
     }
 
     fn resolve_macro(&self, name: FileMacroKind) -> FileMacroResolution {
-        self.macros.resolve(name)
+        self.macros.resolve(name.into())
     }
 
-    fn with_items(
+    pub(super) fn with_items(
         mut self,
         items: &[Item],
         crate_root: bool,
@@ -243,7 +242,11 @@ impl FileMacroScope {
         self
     }
 
-    fn with_block_items(mut self, block: &syn::Block, exported_macros: &BTreeSet<String>) -> Self {
+    pub(super) fn with_block_items(
+        mut self,
+        block: &syn::Block,
+        exported_macros: &BTreeSet<String>,
+    ) -> Self {
         let items = block
             .stmts
             .iter()
@@ -282,7 +285,7 @@ impl FileMacroScope {
         self
     }
 
-    fn with_generated_items(mut self, items: &[Item], _crate_root: bool) -> Self {
+    pub(super) fn with_generated_items(mut self, items: &[Item], _crate_root: bool) -> Self {
         if items.iter().any(generated_namespace_is_unresolved) {
             self.macros.mark_imports_unresolved();
         }
@@ -307,9 +310,9 @@ impl FileMacroScope {
         );
     }
 
-    fn with_textual_item(mut self, item: &Item) -> Self {
+    pub(super) fn with_textual_item(mut self, item: &Item) -> Self {
         if let Some(name) = macro_rules_name(item)
-            && let Some(kind) = FileMacroKind::from_name(&name)
+            && let Some(kind) = CompilerMacroKind::from_name(&name)
         {
             let resolution = if conditional_binding(item_attributes(item)) {
                 FileMacroResolution::Unresolved
@@ -392,7 +395,7 @@ impl FileMacroScope {
     }
 
     fn bind_use(&mut self, source: &[String], bound: &str, context: UseBindingContext<'_>) {
-        if let Some(name) = FileMacroKind::from_name(bound) {
+        if let Some(name) = CompilerMacroKind::from_name(bound) {
             let resolution = if context.conditional {
                 FileMacroResolution::Unresolved
             } else {
@@ -415,7 +418,7 @@ impl FileMacroScope {
         local_macros: &BTreeSet<String>,
     ) -> FileMacroResolution {
         if let Some((name, namespace_path)) = source.split_last()
-            && let Some(kind) = FileMacroKind::from_name(name)
+            && let Some(kind) = CompilerMacroKind::from_name(name)
             && !namespace_path.is_empty()
         {
             return match self.resolve_namespace_path(namespace_path, leading_global, false, false) {
@@ -475,71 +478,6 @@ fn qualified_namespace(name: &str) -> Option<QualifiedNamespace> {
         "std" => Some(QualifiedNamespace::Std),
         "core" => Some(QualifiedNamespace::Core),
         _ => None,
-    }
-}
-
-impl FileMacroKind {
-    const ALL: [Self; 3] = [Self::Include, Self::IncludeStr, Self::IncludeBytes];
-
-    const fn index(self) -> usize {
-        match self {
-            Self::Include => 0,
-            Self::IncludeStr => 1,
-            Self::IncludeBytes => 2,
-        }
-    }
-
-    fn from_name(name: &str) -> Option<Self> {
-        match name {
-            "include" => Some(Self::Include),
-            "include_str" => Some(Self::IncludeStr),
-            "include_bytes" => Some(Self::IncludeBytes),
-            _ => None,
-        }
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            Self::Include => "include!",
-            Self::IncludeStr => "include_str!",
-            Self::IncludeBytes => "include_bytes!",
-        }
-    }
-
-    fn classify_path(path: &syn::Path) -> Option<FileMacroPath> {
-        let segments = path.segments.iter().collect::<Vec<_>>();
-        if segments
-            .iter()
-            .any(|segment| !matches!(segment.arguments, syn::PathArguments::None))
-        {
-            return None;
-        }
-        match segments.as_slice() {
-            [name] if path.leading_colon.is_none() => {
-                Self::from_name(&ident_name(&name.ident)).map(FileMacroPath::Unqualified)
-            }
-            [namespace, name]
-                if matches!(ident_name(&namespace.ident).as_str(), "std" | "core") =>
-            {
-                let namespace = match ident_name(&namespace.ident).as_str() {
-                    "std" => QualifiedNamespace::Std,
-                    "core" => QualifiedNamespace::Core,
-                    _ => unreachable!("qualified namespace spelling was checked"),
-                };
-                Self::from_name(&ident_name(&name.ident)).map(|kind| FileMacroPath::Qualified {
-                    namespace,
-                    kind,
-                    leading_global: path.leading_colon.is_some(),
-                })
-            }
-            _ => None,
-        }
-    }
-
-    pub(super) fn from_path(path: &syn::Path) -> Option<Self> {
-        match Self::classify_path(path)? {
-            FileMacroPath::Unqualified(kind) | FileMacroPath::Qualified { kind, .. } => Some(kind),
-        }
     }
 }
 
@@ -675,6 +613,7 @@ pub(super) fn declared_path_sources(
             test_only: source.reach.test_only,
             dependent_tests: source.reach.dependent_tests,
             origins: source.origins,
+            scopes: source.scopes,
         })
         .collect())
 }
@@ -822,7 +761,8 @@ impl SourceGraph {
                 {
                     let module_source = fs::canonicalize(&module_source).unwrap_or(module_source);
                     let child_dir = child_module_dir(&module_source)?;
-                    self.record_module(module_source.clone(), child_reach);
+                    let child_scope = item_scope.clone().child_module();
+                    self.record_module(module_source.clone(), child_reach, child_scope.clone());
                     self.collect_declared_sources(
                         &module_source,
                         SourceWalk {
@@ -830,7 +770,7 @@ impl SourceGraph {
                             reach: child_reach,
                             inherited_reexports: child_reexports,
                             module_depth: walk.module_depth.saturating_add(1),
-                            scope: Some(item_scope.clone().child_module()),
+                            scope: Some(child_scope),
                             crate_root: false,
                         },
                     )?;
@@ -848,7 +788,12 @@ impl SourceGraph {
         walk: &SourceWalk,
     ) -> Result<(), WorkspaceTestError> {
         let included = self.admit_file_macro_source(source, &reference)?;
-        self.record_file_macro(included.clone(), walk.reach);
+        self.record_file_macro(
+            included.clone(),
+            walk.reach,
+            reference.scope.clone(),
+            reference.crate_root,
+        );
         if matches!(reference.kind, FileMacroKind::Include) {
             self.collect_included_rust_source(
                 &included,
@@ -862,21 +807,32 @@ impl SourceGraph {
         Ok(())
     }
 
-    fn record_module(&mut self, source: PathBuf, reach: DeclaredReach) {
+    fn record_module(&mut self, source: PathBuf, reach: DeclaredReach, scope: FileMacroScope) {
         record_declared_source(
             &mut self.declared,
             source,
             reach,
             DeclaredPathSourceOrigin::Module,
+            SourceMacroScope {
+                scope,
+                crate_root: false,
+            },
         );
     }
 
-    fn record_file_macro(&mut self, source: PathBuf, reach: DeclaredReach) {
+    fn record_file_macro(
+        &mut self,
+        source: PathBuf,
+        reach: DeclaredReach,
+        scope: FileMacroScope,
+        crate_root: bool,
+    ) {
         record_declared_source(
             &mut self.declared,
             source,
             reach,
             DeclaredPathSourceOrigin::FileMacro,
+            SourceMacroScope { scope, crate_root },
         );
     }
 
@@ -1052,7 +1008,11 @@ impl<'ast> Visit<'ast> for FileMacroVisitor<'_> {
 impl FileMacroVisitor<'_> {
     fn record_unqualified(&mut self, name: FileMacroKind, tokens: TokenStream) {
         match self.scope.resolve_macro(name) {
-            FileMacroResolution::Compiler(kind) => self.record(kind, tokens),
+            FileMacroResolution::Compiler(kind) => {
+                if let Some(kind) = kind.file_kind() {
+                    self.record(kind, tokens);
+                }
+            }
             FileMacroResolution::Shadowed => {}
             FileMacroResolution::Unresolved if self.error.is_none() => {
                 self.error = Some(WorkspaceTestError::new(format!(
@@ -1194,7 +1154,13 @@ fn file_macro_references_in_tokens(
         };
         let kind = match path {
             FileMacroPath::Unqualified(name) => match scope.resolve_macro(name) {
-                FileMacroResolution::Compiler(kind) => kind,
+                FileMacroResolution::Compiler(kind) => {
+                    let Some(kind) = kind.file_kind() else {
+                        index = next_index;
+                        continue;
+                    };
+                    kind
+                }
                 FileMacroResolution::Shadowed => {
                     index = next_index;
                     continue;
@@ -1423,6 +1389,7 @@ fn record_declared_source(
     source: PathBuf,
     reach: DeclaredReach,
     origin: DeclaredPathSourceOrigin,
+    scope: SourceMacroScope,
 ) {
     // One production edge is enough to make a multiply-declared source part
     // of ordinary library reach; test-only survives only when every edge is.
@@ -1433,10 +1400,12 @@ fn record_declared_source(
             existing.reach.dependent_tests |= reach.dependent_tests;
             existing.reach.public_namespace |= reach.public_namespace;
             existing.origins.insert(origin);
+            existing.scopes.insert(scope.clone());
         })
         .or_insert_with(|| DeclaredSource {
             reach,
             origins: BTreeSet::from([origin]),
+            scopes: BTreeSet::from([scope]),
         });
 }
 

@@ -1,6 +1,6 @@
 use super::*;
 
-#[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct NamespaceScopes {
     visible: BTreeMap<String, NamespaceResolution>,
     module: BTreeMap<String, NamespaceResolution>,
