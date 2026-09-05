@@ -312,6 +312,26 @@ fn include_bytes_accepts_binary_while_textual_file_macros_require_utf8() {
 }
 
 #[test]
+fn bounded_out_dir_file_macros_are_generated_authority_not_selected_tree_paths() {
+    let fixture = Fixture::new(
+        "out-dir-file-macro",
+        &[(
+            "lib.rs",
+            concat!(
+                "include!(concat!(env!(\"OUT_DIR\"), \"/generated.rs\"));\n",
+                "const TEXT: &str = include_str!(concat!(env!(\"OUT_DIR\"), \"/text.txt\"));\n",
+            ),
+        )],
+    );
+
+    assert!(
+        declared_path_sources(&fixture.root, &fixture.root.join("lib.rs"))
+            .expect("bounded OUT_DIR paths defer to executable authority")
+            .is_empty()
+    );
+}
+
+#[test]
 fn dynamic_missing_nonregular_and_escaping_file_macro_inputs_refuse() {
     let dynamic = Fixture::new(
         "dynamic-file-macro",

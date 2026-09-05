@@ -208,19 +208,33 @@ fn prepare_actions(
         .anchor()
         .staged_authority()
         .and_then(gate::tree::StagedAuthority::baseline_identity);
-    let mut present = Vec::new();
-    let mut pending = Vec::new();
-
+    let mut prepared_actions = Vec::new();
     for gate_id in requested {
-        let prepared = prepare_action(staged, &manifest, &gate_set, baseline.as_deref(), gate_id)?;
-        classify_prepared(store, request.missing, prepared, &mut present, &mut pending)?;
+        prepared_actions.push(prepare_action(
+            staged,
+            &manifest,
+            &gate_set,
+            baseline.as_deref(),
+            gate_id,
+        )?);
     }
 
     if cargo_request(request) {
-        let prepared = prepare_cargo_actions(staged, &manifest, &gate_set, request, writable_root)?;
-        for action in prepared {
-            classify_prepared(store, request.missing, action, &mut present, &mut pending)?;
-        }
+        prepared_actions.extend(prepare_cargo_actions(
+            staged,
+            &manifest,
+            &gate_set,
+            request,
+            writable_root,
+        )?);
+    }
+
+    // Complete every authority before consulting evidence. In particular, an
+    // incomplete Cargo executable boundary must never find an older under-keyed receipt.
+    let mut present = Vec::new();
+    let mut pending = Vec::new();
+    for prepared in prepared_actions {
+        classify_prepared(store, request.missing, prepared, &mut present, &mut pending)?;
     }
 
     if let Some(action) = request.action
@@ -449,7 +463,7 @@ fn prepare_cargo_action(
     let inventory = digest_encoded(Domain::GateInventory, &shard)?;
     let declaration = match shard.kind() {
         CargoGateShardKind::Typecheck => typecheck_declaration,
-        CargoGateShardKind::Test => "gate::cargo-workspace-tests::proof-shard-v1",
+        CargoGateShardKind::Test => "gate::cargo-workspace-tests::proof-shard-v2",
     };
     let non_files = vec![
         non_file(
@@ -502,7 +516,7 @@ fn prepare_cargo_action(
         cwd: ".".to_owned(),
         environment_names,
         tools,
-        input_strategy: "cargo-package-closure-v1".to_owned(),
+        input_strategy: "cargo-package-closure-v2".to_owned(),
         reuse: ActionReuseClass::Cacheable,
     })
     .map_err(ProveFailure::action_input)?;
@@ -1047,6 +1061,21 @@ mod tests {
                 (OsString::from("RUSTFLAGS"), OsString::from("--cfg=proof")),
             ]
         );
+
+        let Ok((_, first)) = environment(&normalized) else {
+            panic!("digest first Cargo environment");
+        };
+        let drifted = normalized_cargo_environment(&[
+            (
+                OsString::from("FIXTURE_BUILD_INPUT"),
+                OsString::from("changed"),
+            ),
+            (OsString::from("RUSTFLAGS"), OsString::from("--cfg=proof")),
+        ]);
+        let Ok((_, second)) = environment(&drifted) else {
+            panic!("digest drifted Cargo environment");
+        };
+        assert_ne!(first, second);
     }
 
     #[test]

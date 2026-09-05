@@ -137,6 +137,8 @@ pub(super) struct MetadataPackage {
     pub(super) targets: Vec<MetadataTarget>,
     #[serde(default)]
     pub(super) features: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    pub(super) metadata: serde_json::Value,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -196,9 +198,16 @@ pub(super) struct PackageInventory {
     pub(super) name: String,
     pub(super) root: PathBuf,
     pub(super) dependencies: Vec<PathBuf>,
+    pub(super) compile_time_authority: Option<CompileTimeAuthorityDeclaration>,
     pub(super) declared_targets: Vec<TargetIdentity>,
     pub(super) removed_targets: Vec<TargetIdentity>,
     pub(super) targets: Vec<TargetIdentity>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct CompileTimeAuthorityDeclaration {
+    pub(super) files: Vec<String>,
+    pub(super) environment: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -344,6 +353,7 @@ impl Inventory {
                     name: package.name.clone(),
                     root: package.root.clone(),
                     dependencies: package.dependencies.clone(),
+                    compile_time_authority: package.compile_time_authority.clone(),
                     declared_targets: package.declared_targets.clone(),
                     removed_targets: package.removed_targets.clone(),
                     targets,

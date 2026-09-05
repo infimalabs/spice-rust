@@ -24,6 +24,7 @@ use syn::{Expr, Item, Lit, Meta};
 
 use crate::WORKSPACE_TEST_CONCURRENCY_CAP;
 
+mod compile_time;
 mod coordinator;
 mod inventory;
 mod prebuild;
@@ -31,6 +32,7 @@ mod proof;
 mod selection;
 mod source_reach;
 
+use compile_time::compile_time_authorities;
 use coordinator::{
     Coordinator, RunPolicy, captured_excerpt, completion_name, output_error, process_spec,
     target_arguments,
@@ -1100,6 +1102,7 @@ fn partition_package(
             name: package.name.clone(),
             root: package.root.clone(),
             dependencies: package.dependencies.clone(),
+            compile_time_authority: package.compile_time_authority.clone(),
             declared_targets: package.declared_targets.clone(),
             removed_targets: package.removed_targets.clone(),
             targets,
