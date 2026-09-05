@@ -46,8 +46,7 @@ pub(super) fn package_inventory(
             selected_root.display(),
         )));
     }
-    let compile_time_authority =
-        compile_time::authority_declaration(&package.name, &package.metadata)?;
+    let (compile_time_authority, namespace_context) = package_authorities(&package)?;
     let mut dependencies = package
         .dependencies
         .into_iter()
@@ -100,7 +99,8 @@ pub(super) fn package_inventory(
                     selected_root.display(),
                 )));
             }
-            let declared_path_sources = declared_path_sources(&selected_root, &source)?;
+            let declared_path_sources =
+                declared_path_sources(&selected_root, &source, namespace_context)?;
             let source_bytes = target_source_bytes(&source, &declared_path_sources)?;
             Ok((
                 test,
@@ -136,6 +136,25 @@ pub(super) fn package_inventory(
         removed_targets: Vec::new(),
         targets,
     })
+}
+
+fn package_authorities(
+    package: &MetadataPackage,
+) -> Result<
+    (
+        Option<CompileTimeAuthorityDeclaration>,
+        FileMacroCrateContext,
+    ),
+    WorkspaceTestError,
+> {
+    Ok((
+        compile_time::authority_declaration(&package.name, &package.metadata)?,
+        FileMacroCrateContext::from_metadata(
+            &package.name,
+            &package.edition,
+            &package.dependencies,
+        )?,
+    ))
 }
 
 pub(super) fn selection_plan(

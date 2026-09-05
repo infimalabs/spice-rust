@@ -218,8 +218,12 @@ fn an_unparseable_declared_source_refuses_the_graph() {
         &[("lib.rs", "mod broken;\n"), ("broken.rs", "not Rust {{")],
     );
 
-    let error = declared_path_sources(&fixture.root, &fixture.root.join("lib.rs"))
-        .expect_err("an unparseable declared source must refuse");
+    let error = declared_path_sources(
+        &fixture.root,
+        &fixture.root.join("lib.rs"),
+        FileMacroCrateContext::test_default(),
+    )
+    .expect_err("an unparseable declared source must refuse");
     assert!(
         error.to_string().contains("parse Rust source"),
         "unexpected refusal: {error}",
@@ -242,10 +246,10 @@ fn built_in_file_macros_are_discovered_in_every_rust_token_context() {
                     "pub fn documented() {}\n",
                     "#[fixture(core::include_str!(\"../attribute.txt\"))]\n",
                     "pub struct Attributed;\n",
-                    "outer!(nested(std::include_str!(\"../nested.txt\")));\n",
-                    "outer!(nested(::r#std::r#include_str!(\"../global.txt\")));\n",
-                    "outer!(nested(custom::include_str!(\"../missing-custom.txt\")));\n",
-                    "crate::std::include_str!(\"../missing-nested-std.txt\");\n",
+                    "const NESTED: &str = outer!(nested(std::include_str!(\"../nested.txt\")));\n",
+                    "const GLOBAL: &str = outer!(nested(::r#std::r#include_str!(\"../global.txt\")));\n",
+                    "const CUSTOM: &str = outer!(nested(custom::include_str!(\"../missing-custom.txt\")));\n",
+                    "const CRATE_STD: &str = crate::std::include_str!(\"../missing-nested-std.txt\");\n",
                     "macro_rules! generated { () => { ::core::include_bytes!(\"../generated.bin\") } }\n",
                     "#[cfg(test)] const TEST_ONLY: &str = include_str!(\"../test-only.txt\");\n",
                     "::std::include!(\"../declarations.rs\");\n",
@@ -291,6 +295,204 @@ fn built_in_file_macros_are_discovered_in_every_rust_token_context() {
 }
 
 #[test]
+fn extern_crate_self_bindings_are_not_builtin_file_authority() {
+    let std_fixture = Fixture::new(
+        "shadowed-std",
+        &[(
+            "lib.rs",
+            concat!(
+                "#![no_std]\n",
+                "#[macro_export] macro_rules! include_str { ($path:literal) => { \"owned\" }; }\n",
+                "extern crate self as r#std;\n",
+                "const VALUE: &str = std::include_str!(\"missing-std.txt\");\n",
+            ),
+        )],
+    );
+    assert!(std_fixture.reach().is_empty());
+    std_fixture.assert_compiles("lib.rs");
+
+    let core_fixture = Fixture::new(
+        "shadowed-core",
+        &[(
+            "lib.rs",
+            concat!(
+                "#![no_std]\n",
+                "#[macro_export] macro_rules! include_bytes { ($path:literal) => { b\"owned\" }; }\n",
+                "macro_rules! outer { ($value:expr) => { pub const VALUE: &[u8] = $value; }; }\n",
+                "extern crate self as core;\n",
+                "outer!(::core::include_bytes!(\"missing-core.bin\"));\n",
+            ),
+        )],
+    );
+    assert!(core_fixture.reach().is_empty());
+    core_fixture.assert_compiles("lib.rs");
+}
+
+#[test]
+fn explicit_standard_crate_bindings_remain_builtin_file_authority() {
+    let std_fixture = Fixture::new(
+        "explicit-standard-std",
+        &[
+            (
+                "lib.rs",
+                "#![no_std]\nextern crate std;\npub const VALUE: &str = std::include_str!(\"input.txt\");\n",
+            ),
+            ("input.txt", "standard std\n"),
+        ],
+    );
+    assert_eq!(
+        std_fixture.reach(),
+        BTreeMap::from([("input.txt".to_owned(), (false, true))]),
+    );
+    std_fixture.assert_compiles("lib.rs");
+
+    let renamed_core = Fixture::new(
+        "renamed-standard-core",
+        &[
+            (
+                "lib.rs",
+                "#![no_std]\nextern crate core as std;\npub const VALUE: &str = std::include_str!(\"input.txt\");\n",
+            ),
+            ("input.txt", "standard core\n"),
+        ],
+    );
+    assert_eq!(
+        renamed_core.reach(),
+        BTreeMap::from([("input.txt".to_owned(), (false, true))]),
+    );
+    renamed_core.assert_compiles("lib.rs");
+}
+
+#[test]
+fn lexical_shadowing_does_not_suppress_builtin_authority_in_another_scope() {
+    let fixture = Fixture::new(
+        "lexical-qualified-shadow",
+        &[
+            (
+                "lib.rs",
+                concat!(
+                    "#[macro_export] macro_rules! owned { ($path:literal) => { \"owned\" }; }\n",
+                    "mod user { pub use crate::owned as include_str; }\n",
+                    "mod module_owned {\n",
+                    "    mod std { pub use crate::owned as include_str; }\n",
+                    "    const VALUE: &str = std::include_str!(\"missing-module.txt\");\n",
+                    "    use std as core;\n",
+                    "    const REBOUND: &str = core::include_str!(\"missing-rebound.txt\");\n",
+                    "}\n",
+                    "fn locally_owned() {\n",
+                    "    use crate::user as std;\n",
+                    "    let _ = std::include_str!(\"missing-local.txt\");\n",
+                    "}\n",
+                    "const BUILTIN: &str = std::include_str!(\"builtin.txt\");\n",
+                ),
+            ),
+            ("builtin.txt", "compiler owned\n"),
+        ],
+    );
+
+    assert_eq!(
+        fixture.reach(),
+        BTreeMap::from([("builtin.txt".to_owned(), (false, true))]),
+    );
+    fixture.assert_compiles("lib.rs");
+}
+
+#[test]
+fn unresolved_qualified_namespaces_refuse_before_literal_admission() {
+    let glob = Fixture::new(
+        "unresolved-qualified-glob",
+        &[(
+            "lib.rs",
+            "mod user {}\nuse user::*;\nconst VALUE: &str = std::include_str!(\"missing.txt\");\n",
+        )],
+    );
+    let error = glob
+        .reach_result_from("lib.rs", FileMacroCrateContext::test_default())
+        .expect_err("a glob can change the qualified namespace");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot prove qualified file-macro namespace for std::include_str!"),
+        "unexpected refusal: {error}",
+    );
+
+    let generated = Fixture::new(
+        "unresolved-generated-namespace",
+        &[(
+            "lib.rs",
+            concat!(
+                "#[macro_export] macro_rules! owned { ($path:literal) => { \"owned\" }; }\n",
+                "macro_rules! define_std { () => { mod std { pub use crate::owned as include_str; } }; }\n",
+                "define_std!();\n",
+                "const VALUE: &str = std::include_str!(\"missing.txt\");\n",
+            ),
+        )],
+    );
+    let error = generated
+        .reach_result_from("lib.rs", FileMacroCrateContext::test_default())
+        .expect_err("an item macro can generate the qualified namespace");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot prove qualified file-macro namespace for std::include_str!"),
+        "unexpected refusal: {error}",
+    );
+    let dependency = Fixture::new(
+        "unresolved-qualified-dependency",
+        &[(
+            "lib.rs",
+            "const VALUE: &str = std::include_str!(\"missing.txt\");\n",
+        )],
+    );
+    let context = FileMacroCrateContext::from_metadata(
+        "fixture",
+        "2024",
+        &[MetadataDependency {
+            name: "user-macros".to_owned(),
+            rename: Some("std".to_owned()),
+            path: None,
+        }],
+    )
+    .expect("fixture metadata is valid");
+    let error = dependency
+        .reach_result_from("lib.rs", context)
+        .expect_err("an extern name collision cannot be classified as compiler std");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot prove qualified file-macro namespace for std::include_str!"),
+        "unexpected refusal: {error}",
+    );
+}
+
+#[test]
+fn recursive_include_inherits_the_qualified_namespace_scope() {
+    let fixture = Fixture::new(
+        "recursive-qualified-shadow",
+        &[
+            (
+                "lib.rs",
+                concat!(
+                    "#![no_std]\n",
+                    "#[macro_export] macro_rules! include_str { ($path:literal) => { \"owned\" }; }\n",
+                    "extern crate self as std;\n",
+                    "include!(\"body.rs\");\n",
+                ),
+            ),
+            (
+                "body.rs",
+                "const VALUE: &str = std::include_str!(\"missing.txt\");\n",
+            ),
+        ],
+    );
+
+    assert_eq!(
+        fixture.reach(),
+        BTreeMap::from([("body.rs".to_owned(), (false, true))]),
+    );
+}
+
+#[test]
 fn include_bytes_accepts_binary_while_textual_file_macros_require_utf8() {
     let binary = [0xff, 0xfe, 0xfd];
     let bytes_fixture = Fixture::new(
@@ -311,8 +513,12 @@ fn include_bytes_accepts_binary_while_textual_file_macros_require_utf8() {
         &[("lib.rs", "const DATA: &str = include_str!(\"data.bin\");\n")],
     );
     fs::write(text_fixture.root.join("data.bin"), binary).expect("write binary authority");
-    let error = declared_path_sources(&text_fixture.root, &text_fixture.root.join("lib.rs"))
-        .expect_err("include_str must reject non-UTF-8 authority");
+    let error = declared_path_sources(
+        &text_fixture.root,
+        &text_fixture.root.join("lib.rs"),
+        FileMacroCrateContext::test_default(),
+    )
+    .expect_err("include_str must reject non-UTF-8 authority");
     assert!(error.to_string().contains("is not UTF-8"), "{error}");
 }
 
@@ -330,9 +536,13 @@ fn bounded_out_dir_file_macros_are_generated_authority_not_selected_tree_paths()
     );
 
     assert!(
-        declared_path_sources(&fixture.root, &fixture.root.join("lib.rs"))
-            .expect("bounded OUT_DIR paths defer to executable authority")
-            .is_empty()
+        declared_path_sources(
+            &fixture.root,
+            &fixture.root.join("lib.rs"),
+            FileMacroCrateContext::test_default(),
+        )
+        .expect("bounded OUT_DIR paths defer to executable authority")
+        .is_empty()
     );
 }
 
@@ -383,8 +593,12 @@ fn dynamic_missing_nonregular_and_escaping_file_macro_inputs_refuse() {
         .expect("fixture has parent")
         .join(&outside_name);
     fs::write(&outside, "outside\n").expect("write escaping authority");
-    let error = declared_path_sources(&escape.root, &escape.root.join("crate/lib.rs"))
-        .expect_err("selected-root escape must refuse");
+    let error = declared_path_sources(
+        &escape.root,
+        &escape.root.join("crate/lib.rs"),
+        FileMacroCrateContext::test_default(),
+    )
+    .expect_err("selected-root escape must refuse");
     assert!(
         error.to_string().contains("escapes selected root"),
         "{error}"
@@ -410,8 +624,12 @@ fn non_utf8_file_macro_authority_paths_refuse() {
     fs::write(source_dir.join("authority.txt"), "authority\n")
         .expect("write authority beneath non-UTF-8 path");
 
-    let error = declared_path_sources(&fixture.root, &source_dir.join("lib.rs"))
-        .expect_err("non-UTF-8 selected authority path must refuse");
+    let error = declared_path_sources(
+        &fixture.root,
+        &source_dir.join("lib.rs"),
+        FileMacroCrateContext::test_default(),
+    )
+    .expect_err("non-UTF-8 selected authority path must refuse");
     assert!(error.to_string().contains("is not UTF-8"), "{error}");
 }
 
@@ -434,8 +652,12 @@ fn symlink_file_macro_inputs_refuse_even_when_the_target_is_selected() {
 }
 
 fn assert_refusal(fixture: &Fixture, expected: &str) {
-    let error = declared_path_sources(&fixture.root, &fixture.root.join("lib.rs"))
-        .expect_err("invalid file-macro authority must refuse");
+    let error = declared_path_sources(
+        &fixture.root,
+        &fixture.root.join("lib.rs"),
+        FileMacroCrateContext::test_default(),
+    )
+    .expect_err("invalid file-macro authority must refuse");
     assert!(
         error.to_string().contains(expected),
         "unexpected refusal: {error}"
@@ -470,7 +692,7 @@ impl Fixture {
     }
 
     fn reach_from(&self, target: &str) -> BTreeMap<String, (bool, bool)> {
-        declared_path_sources(&self.root, &self.root.join(target))
+        self.reach_result_from(target, FileMacroCrateContext::test_default())
             .expect("fixture source graph resolves")
             .into_iter()
             .map(|source| {
@@ -483,6 +705,36 @@ impl Fixture {
                 (path, (source.test_only, source.dependent_tests))
             })
             .collect()
+    }
+
+    fn reach_result_from(
+        &self,
+        target: &str,
+        context: FileMacroCrateContext,
+    ) -> Result<Vec<DeclaredPathSource>, WorkspaceTestError> {
+        declared_path_sources(&self.root, &self.root.join(target), context)
+    }
+
+    fn assert_compiles(&self, target: &str) {
+        let output = self.root.join("fixture.rmeta");
+        let result = std::process::Command::new("rustc")
+            .current_dir(&self.root)
+            .args([
+                "--edition=2024",
+                "--crate-type=lib",
+                "--emit=metadata",
+                "-o",
+            ])
+            .arg(&output)
+            .arg(self.root.join(target))
+            .output()
+            .expect("rustc launches for source reach fixture");
+        assert!(
+            result.status.success(),
+            "fixture must compile:\n{}",
+            String::from_utf8_lossy(&result.stderr),
+        );
+        fs::remove_file(output).expect("remove compiled source reach fixture metadata");
     }
 }
 
