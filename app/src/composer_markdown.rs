@@ -29,7 +29,6 @@ pub(crate) fn render_received(markdown: &str) -> RenderedMarkdown {
         .map(sanitize_markdown_event)
         .collect::<Vec<_>>();
     let image_only = markdown_is_image_only(&events);
-    let mut rendered_tasks = Vec::new();
     let mut code_block = false;
     let events = decorate_markdown_images(events, image_only)
         .into_iter()
@@ -42,7 +41,7 @@ pub(crate) fn render_received(markdown: &str) -> RenderedMarkdown {
             if code_block {
                 vec![event]
             } else {
-                inline_task_chips(event, &mut rendered_tasks)
+                inline_task_chips(event)
             }
         });
     let mut html = String::new();
@@ -324,31 +323,20 @@ fn escape_html_attribute(value: &str) -> String {
     escaped
 }
 
-fn inline_task_chips<'a>(
-    event: MarkdownEvent<'a>,
-    rendered: &mut Vec<wire::TaskHandle>,
-) -> Vec<MarkdownEvent<'a>> {
+fn inline_task_chips(event: MarkdownEvent<'_>) -> Vec<MarkdownEvent<'_>> {
     match event {
-        MarkdownEvent::Text(text) => inline_task_text(text, rendered),
+        MarkdownEvent::Text(text) => inline_task_text(text),
         MarkdownEvent::Code(code) => {
             let Some(task) = watchband::canonical_task_handle(&code) else {
                 return vec![MarkdownEvent::Code(code)];
             };
-            if rendered.contains(&task) {
-                vec![MarkdownEvent::Code(code)]
-            } else {
-                rendered.push(task.clone());
-                vec![MarkdownEvent::InlineHtml(task_chip_html(&task).into())]
-            }
+            vec![MarkdownEvent::InlineHtml(task_chip_html(&task).into())]
         }
         other => vec![other],
     }
 }
 
-fn inline_task_text<'a>(
-    text: CowStr<'a>,
-    rendered: &mut Vec<wire::TaskHandle>,
-) -> Vec<MarkdownEvent<'a>> {
+fn inline_task_text(text: CowStr<'_>) -> Vec<MarkdownEvent<'_>> {
     let mentions = watchband::task_mentions(&text);
     if mentions.is_empty() {
         return vec![MarkdownEvent::Text(text)];
@@ -356,16 +344,12 @@ fn inline_task_text<'a>(
     let mut events = Vec::new();
     let mut cursor = 0;
     for (range, task) in mentions {
-        if rendered.contains(&task) {
-            continue;
-        }
         if cursor < range.start {
             events.push(MarkdownEvent::Text(
                 text[cursor..range.start].to_owned().into(),
             ));
         }
         events.push(MarkdownEvent::InlineHtml(task_chip_html(&task).into()));
-        rendered.push(task);
         cursor = range.end;
     }
     if cursor < text.len() {
@@ -603,6 +587,74 @@ mod tests {
     fn absent_preview_has_one_documented_label() {
         assert_eq!(quote_label(Some("author words")), "author words");
         assert_eq!(quote_label(None), "quoted message");
+    }
+
+    #[test]
+    fn every_task_handle_occurrence_renders_in_source_order() {
+        let control = "CONTROL-1kKbC3j4"
+            .parse::<wire::TaskHandle>()
+            .expect("fixture handle parses");
+        let mosaic = "MOSAIC-1kRYqQxy"
+            .parse::<wire::TaskHandle>()
+            .expect("fixture handle parses");
+        let control_chip = task_chip_html(&control);
+        let mosaic_chip = task_chip_html(&mosaic);
+
+        let rendered = render_received(
+            "Plain CONTROL-1kKbC3j4, CONTROL-1kKbC3j4, and `CONTROL-1kKbC3j4`.\n\n\
+             Then MOSAIC-1kRYqQxy and CONTROL-1kKbC3j4!",
+        );
+
+        assert_eq!(
+            rendered.html,
+            format!(
+                "<p>Plain {control_chip}, {control_chip}, and {control_chip}.</p>\n\
+                 <p>Then {mosaic_chip} and {control_chip}!</p>\n"
+            ),
+        );
+        assert_eq!(
+            rendered.html.matches("class=\"message-task-chip\"").count(),
+            5
+        );
+    }
+
+    #[test]
+    fn quoted_first_and_nested_mentions_do_not_consume_later_prose_occurrences() {
+        let rendered = render_received(
+            "> Quoted CONTROL-1kKbC3j4.\n\
+             > > Nested `CONTROL-1kKbC3j4`.\n\n\
+             Authored CONTROL-1kKbC3j4 and CONTROL-1kKbC3j4.",
+        );
+        let marker = "data-task-handle=\"CONTROL-1kKbC3j4\"";
+
+        assert_eq!(
+            rendered.html.matches(marker).count(),
+            4,
+            "{}",
+            rendered.html
+        );
+        assert_eq!(rendered.html.matches("<blockquote>").count(), 2);
+        assert!(rendered.html.contains("Quoted "));
+        assert!(rendered.html.contains("Nested "));
+        assert!(rendered.html.contains("Authored "));
+        assert!(
+            rendered.html.rfind(marker).expect("authored chip renders")
+                > rendered
+                    .html
+                    .rfind("</blockquote>")
+                    .expect("quoted context closes"),
+            "the authored occurrence follows the quoted context: {}",
+            rendered.html,
+        );
+    }
+
+    #[test]
+    fn noncanonical_and_block_code_handles_remain_ordinary_markdown() {
+        let rendered = render_received("`APP-a1` and APP-a1.\n\n```text\nCONTROL-1kKbC3j4\n```");
+
+        assert!(!rendered.html.contains("message-task-chip"));
+        assert!(rendered.html.contains("<code>APP-a1</code> and APP-a1."));
+        assert!(rendered.html.contains("CONTROL-1kKbC3j4"));
     }
 
     #[test]
