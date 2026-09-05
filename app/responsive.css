@@ -1,3 +1,34 @@
+/* One lineage needs 32rem. Stack without changing DOM order when the content
+   box cannot carry every minimum plus the fleet's 0.5rem gaps. Exact boundary
+   widths retain the member-weighted row. */
+@container lineage-layout (width < 97rem) {
+  .lineage-fleet:has(> .team-surface:nth-child(3)) {
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
+  .lineage-fleet:has(> .team-surface:nth-child(3)) > .team-surface {
+    flex: 0 0 100%;
+    width: 100%;
+    min-height: 100%;
+  }
+}
+
+@container lineage-layout (width < 64.5rem) {
+  .lineage-fleet:has(> .team-surface:nth-child(2)) {
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
+  .lineage-fleet:has(> .team-surface:nth-child(2)) > .team-surface {
+    flex: 0 0 100%;
+    width: 100%;
+    min-height: 100%;
+  }
+}
+
 /* Below the plane's minimum useful block size, the fixed controls and a
    readable history viewport cannot share one screen. Return that dimension to
    document flow instead of clipping either surface or inventing a second

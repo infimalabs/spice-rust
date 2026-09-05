@@ -511,16 +511,18 @@ body:has(.shell--mosaic),
   width: 100%;
   max-width: none;
   padding: 0 var(--canvas-frame-edge-inline) var(--canvas-frame-edge-block-end);
+  container: lineage-layout / inline-size;
 }
 
 .mosaic-workspace { display: flex; min-height: 0; }
 .mosaic-workspace[hidden] { display: none; }
 
 .lineage-fleet {
+  --lineage-surface-min-inline: 32rem;
   display: flex;
   align-items: stretch;
   flex: 1 1 auto;
-  gap: 8px;
+  gap: .5rem;
   width: 100%;
   min-height: 0;
   min-width: 0;
@@ -536,7 +538,7 @@ body:has(.shell--mosaic),
   flex-direction: column;
   width: auto;
   min-height: 0;
-  min-width: 0;
+  min-width: min(100%, var(--lineage-surface-min-inline));
   max-width: 100%;
   container-type: inline-size;
   overflow: hidden;
