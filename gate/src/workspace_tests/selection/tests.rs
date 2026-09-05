@@ -46,8 +46,6 @@ fn representative_steer_and_resident_change_has_exact_contract_edges() {
                 "spice/src/resident/tests/message_backlog.rs",
                 "spice::bin:spice",
             ),
-            ("steer/src/ack/scan.rs", "spice::bin:spice"),
-            ("steer/src/ack/scan.rs", "spice::lib:spice"),
             ("steer/src/ack/scan.rs", "steer::lib:steer"),
             ("steer/src/lib.rs", "spice::bin:spice"),
             ("steer/src/lib.rs", "spice::lib:spice"),
@@ -153,6 +151,93 @@ fn workspace_authority_retains_process_proofs() {
             "workspace authority omitted process suite {required:?}"
         );
     }
+}
+
+#[test]
+fn canvas_internal_scheduler_changes_stay_in_canvas_tests_but_retain_downstream_checks() {
+    let root = workspace_root();
+    let inventory = canvas_scheduler_inventory(&root);
+    let changes = [
+        "canvas/src/axum.rs".to_owned(),
+        "canvas/src/axum/control.rs".to_owned(),
+        "canvas/src/axum/tests/lifecycle.rs".to_owned(),
+    ];
+    let report = selection_plan(
+        &inventory,
+        &root,
+        wire::Digest::compute(wire::Domain::GateSelection, b"canvas-scheduler-change"),
+        &changes,
+    )
+    .expect("Canvas scheduler selection is valid")
+    .into_report();
+
+    assert_eq!(report.tests(), ["canvas::lib:canvas"]);
+    assert_eq!(
+        report
+            .edges()
+            .iter()
+            .map(|edge| (edge.source(), edge.test()))
+            .collect::<Vec<_>>(),
+        [
+            ("canvas/src/axum.rs", "canvas::lib:canvas"),
+            ("canvas/src/axum/control.rs", "canvas::lib:canvas"),
+            ("canvas/src/axum/tests/lifecycle.rs", "canvas::lib:canvas",),
+        ],
+    );
+
+    let checks = cargo_check_selections(&inventory, &root, &changes)
+        .expect("internal library changes retain reverse-dependent typechecks")
+        .into_iter()
+        .flat_map(|package| {
+            package
+                .targets
+                .into_iter()
+                .map(move |target| format!("{}::{}", package.name, target.identity))
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        checks,
+        BTreeSet::from([
+            "canvas::lib:canvas".to_owned(),
+            "spice::bin:spice".to_owned(),
+            "spice::lib:spice".to_owned(),
+            "xtask::bin:xtask".to_owned(),
+            "xtask::lib:xtask".to_owned(),
+        ]),
+    );
+}
+
+#[test]
+fn canvas_library_root_changes_retain_cross_package_contract_tests() {
+    let root = workspace_root();
+    let inventory = canvas_scheduler_inventory(&root);
+    let changes = ["canvas/src/lib.rs".to_owned()];
+    let report = selection_plan(
+        &inventory,
+        &root,
+        wire::Digest::compute(wire::Domain::GateSelection, b"canvas-contract-change"),
+        &changes,
+    )
+    .expect("Canvas contract selection is valid")
+    .into_report();
+
+    assert_eq!(
+        report.tests(),
+        [
+            "canvas::lib:canvas",
+            "spice::bin:spice",
+            "spice::lib:spice",
+            "xtask::bin:xtask",
+            "xtask::lib:xtask",
+        ],
+    );
+    assert_eq!(report.edges().len(), 5);
+    assert!(
+        report
+            .edges()
+            .iter()
+            .all(|edge| edge.source() == "canvas/src/lib.rs"),
+    );
 }
 
 #[test]
@@ -271,6 +356,61 @@ fn representative_inventory(root: &Path) -> Inventory {
                 declared_targets: spice_targets.clone(),
                 removed_targets: Vec::new(),
                 targets: spice_targets,
+            },
+        ],
+        binary_outputs: Vec::new(),
+        target_directory: root.join("target"),
+        build_directory: root.join("target/cargo-build"),
+    }
+}
+
+fn canvas_scheduler_inventory(root: &Path) -> Inventory {
+    let canvas_root = root.join("canvas");
+    let spice_root = root.join("spice");
+    let xtask_root = root.join("xtask");
+    let canvas_targets = vec![target(
+        &canvas_root,
+        "canvas",
+        "lib",
+        "canvas",
+        "src/lib.rs",
+    )];
+    let spice_targets = vec![
+        target(&spice_root, "spice", "lib", "spice", "src/lib.rs"),
+        target(&spice_root, "spice", "bin", "spice", "src/main.rs"),
+    ];
+    let xtask_targets = vec![
+        target(&xtask_root, "xtask", "lib", "xtask", "src/lib.rs"),
+        target(&xtask_root, "xtask", "bin", "xtask", "src/main.rs"),
+    ];
+    Inventory {
+        packages: vec![
+            PackageInventory {
+                id: "canvas".to_owned(),
+                name: "canvas".to_owned(),
+                root: canvas_root.clone(),
+                dependencies: Vec::new(),
+                declared_targets: canvas_targets.clone(),
+                removed_targets: Vec::new(),
+                targets: canvas_targets,
+            },
+            PackageInventory {
+                id: "spice".to_owned(),
+                name: "spice".to_owned(),
+                root: spice_root.clone(),
+                dependencies: vec![canvas_root],
+                declared_targets: spice_targets.clone(),
+                removed_targets: Vec::new(),
+                targets: spice_targets,
+            },
+            PackageInventory {
+                id: "xtask".to_owned(),
+                name: "xtask".to_owned(),
+                root: xtask_root,
+                dependencies: vec![spice_root],
+                declared_targets: xtask_targets.clone(),
+                removed_targets: Vec::new(),
+                targets: xtask_targets,
             },
         ],
         binary_outputs: Vec::new(),

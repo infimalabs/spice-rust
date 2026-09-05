@@ -185,7 +185,7 @@ pub(super) fn selection_plan(
                 && claim
                     .targets
                     .iter()
-                    .any(|target| target_reaches_dependents(target))
+                    .any(|target| target_reaches_dependent_tests(target, &absolute))
             {
                 select_direct_targets(&claim, changed, &mut tests, &mut edges)?;
                 for package in reverse_dependency_closure(inventory, claim.package)
@@ -709,6 +709,18 @@ fn target_has_kind(target: &TargetIdentity, expected: &str) -> bool {
 
 fn target_reaches_dependents(target: &TargetIdentity) -> bool {
     target_is_library(target) || target_has_kind(target, "custom-build")
+}
+
+/// Run reverse-dependent harnesses only for a target contract source.
+///
+/// Cargo checks retain package-wide reverse reach for every library source, so
+/// an internal module cannot silently break a downstream compile contract. Test
+/// harnesses add behavioral evidence only when the library root or a build
+/// script changes; treating every private module as a package contract reruns
+/// every transitive consumer without a source-to-test edge.
+fn target_reaches_dependent_tests(target: &TargetIdentity, source: &Path) -> bool {
+    target_has_kind(target, "custom-build")
+        || (target_is_library(target) && source == target.source)
 }
 
 #[cfg(test)]
