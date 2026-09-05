@@ -100,7 +100,7 @@ pub(super) fn package_inventory(
                 )));
             }
             let declared_path_sources =
-                declared_path_sources(&selected_root, &source, namespace_context)?;
+                declared_path_sources(&selected_root, &source, namespace_context.clone())?;
             let source_bytes = target_source_bytes(&source, &declared_path_sources)?;
             Ok((
                 test,

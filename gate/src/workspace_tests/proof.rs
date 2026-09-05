@@ -707,6 +707,8 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    mod file_macro_authority;
+
     #[test]
     fn equivalent_roots_plan_identical_path_independent_shards() {
         let first = Fixture::new("first");
@@ -1313,7 +1315,7 @@ mod tests {
                 root.join("fixture/src/lib.rs"),
                 concat!(
                     "pub const VALUE: u8 = 1;\n",
-                    "pub const AUTHORITY: &str = std::r#include_str!(\"../../proof-authority.txt\");\n",
+                    "pub const AUTHORITY: &str = ::std::r#include_str!(\"../../proof-authority.txt\");\n",
                     "#[fixture_macro::passthrough]\n",
                     "pub fn expanded() {}\n",
                 ),
@@ -1360,6 +1362,8 @@ mod tests {
                 .expect("write unrelated source");
             fs::write(root.join("proof-authority.txt"), "root Cargo input\n")
                 .expect("write root Cargo authority");
+            fs::write(root.join("file-macro-authority.txt"), "file authority\n")
+                .expect("write file-macro authority");
             Self { root, outputs }
         }
 
@@ -1388,6 +1392,7 @@ mod tests {
                 "fixture/build.rs".to_owned(),
                 "fixture/src/lib.rs".to_owned(),
                 "fixture/tests/integration.rs".to_owned(),
+                "file-macro-authority.txt".to_owned(),
                 "fixture-macro/Cargo.toml".to_owned(),
                 "fixture-macro/src/lib.rs".to_owned(),
                 "notes.txt".to_owned(),

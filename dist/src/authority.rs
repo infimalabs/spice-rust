@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use wire::manifest::{ProductVersion, ProductVersionError};
 
-const AUTHORITY_BYTES: &[u8] = std::include_bytes!("../release-authority.json");
-const VERSION_TEXT: &str = std::include_str!("../VERSION");
+const AUTHORITY_BYTES: &[u8] = ::std::include_bytes!("../release-authority.json");
+const VERSION_TEXT: &str = ::std::include_str!("../VERSION");
 const AUTHORITY_SCHEMA: u16 = 1;
 const PACKAGE_NAME: &str = "spice";
 const REMOTE: &str = "origin";

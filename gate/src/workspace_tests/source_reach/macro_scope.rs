@@ -2,7 +2,6 @@ use super::*;
 
 #[derive(Clone, Copy)]
 pub(super) struct UseBindingContext<'a> {
-    pub(super) crate_root: bool,
     pub(super) leading_global: bool,
     pub(super) exported_macros: &'a BTreeSet<String>,
     pub(super) local_macros: &'a BTreeSet<String>,
@@ -102,12 +101,30 @@ pub(super) fn attribute_may_expand_items(attribute: &syn::Attribute) -> bool {
     if path.segments.len() != 1 {
         return true;
     }
-    !matches!(
-        ident_name(&path.segments[0].ident).as_str(),
+    let name = ident_name(&path.segments[0].ident);
+    if name == "cfg_attr" {
+        let parser = Punctuated::<Meta, syn::Token![,]>::parse_terminated;
+        let Ok(arguments) = attribute.parse_args_with(parser) else {
+            return true;
+        };
+        return arguments
+            .iter()
+            .skip(1)
+            .any(|meta| !safe_attribute_path(meta.path(), true));
+    }
+    !safe_attribute_path(path, false)
+}
+
+fn safe_attribute_path(path: &syn::Path, nested_cfg: bool) -> bool {
+    if path.segments.len() != 1 {
+        return false;
+    }
+    let name = ident_name(&path.segments[0].ident);
+    matches!(
+        name.as_str(),
         "allow"
             | "bench"
             | "cfg"
-            | "cfg_attr"
             | "cold"
             | "deprecated"
             | "deny"
@@ -140,7 +157,7 @@ pub(super) fn attribute_may_expand_items(attribute: &syn::Attribute) -> bool {
             | "track_caller"
             | "used"
             | "warn"
-    )
+    ) && !(nested_cfg && name == "macro_use")
 }
 
 pub(super) fn macro_rules_name(item: &Item) -> Option<String> {
