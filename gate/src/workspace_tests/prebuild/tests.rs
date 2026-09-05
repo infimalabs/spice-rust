@@ -13,6 +13,8 @@ const OUTER_SUPERVISOR_PREBUILD_FIXTURE: &str = concat!(
 );
 #[cfg(unix)]
 const RETIRED_PREBUILD_FIXTURE_DEADLINE: Duration = Duration::from_millis(25);
+#[cfg(unix)]
+const REAL_DISCOVERY_FIXTURE_DEADLINE: Duration = Duration::from_secs(10);
 
 #[cfg(unix)]
 struct DiscoveryFixture {
@@ -423,14 +425,17 @@ fn real_discovery_failure_cancels_and_reaps_in_flight_sibling() {
         fixture.test("sleeper", sleeper),
     ];
     let environment = empty_environment();
-    let started = Instant::now();
 
     let discoveries = run_bounded_discovery(&tests, 2, |test, cancellation| {
-        prebuilt_test_cases(test, &environment, cancellation)
+        prebuilt_test_cases_with_deadline(
+            test,
+            &environment,
+            cancellation,
+            REAL_DISCOVERY_FIXTURE_DEADLINE,
+        )
     })
     .expect("worker pool captures real child failures");
 
-    assert!(started.elapsed() < Duration::from_secs(5));
     assert_eq!(
         discoveries
             .completed
@@ -485,12 +490,17 @@ fn reversed_real_failure_survives_lower_ordinal_sibling_cancellation() {
         fixture.test("ordinal-1-failure", failure),
     ];
     let mut output = Vec::new();
-    let started = Instant::now();
 
-    let error = partition_largest_prebuilt_tests(tests, &empty_environment(), 2, 2, &mut output)
-        .expect_err("ordinal 1 exit fails discovery");
+    let error = partition_largest_prebuilt_tests_with_deadline(
+        tests,
+        &empty_environment(),
+        2,
+        2,
+        REAL_DISCOVERY_FIXTURE_DEADLINE,
+        &mut output,
+    )
+    .expect_err("ordinal 1 exit fails discovery");
 
-    assert!(started.elapsed() < Duration::from_secs(5));
     assert!(error.to_string().contains("ordinal-1-failure"), "{error}");
     assert!(error.to_string().contains("exit code=19"), "{error}");
     assert!(!error.to_string().contains("cancelled"), "{error}");

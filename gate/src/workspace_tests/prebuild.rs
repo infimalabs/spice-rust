@@ -370,10 +370,28 @@ pub(super) fn prebuilt_test_plan(
 /// scheduling priority so a split long-running harness cannot fall behind smaller
 /// unsplit targets.
 pub(super) fn partition_largest_prebuilt_tests(
+    tests: Vec<PrebuiltTest>,
+    environment: &Environment,
+    partitions_per_target: usize,
+    discovery_concurrency: usize,
+    output: &mut impl Write,
+) -> Result<Vec<PrebuiltTest>, WorkspaceTestError> {
+    partition_largest_prebuilt_tests_with_deadline(
+        tests,
+        environment,
+        partitions_per_target,
+        discovery_concurrency,
+        METADATA_DEADLINE,
+        output,
+    )
+}
+
+fn partition_largest_prebuilt_tests_with_deadline(
     mut tests: Vec<PrebuiltTest>,
     environment: &Environment,
     partitions_per_target: usize,
     discovery_concurrency: usize,
+    discovery_deadline: Duration,
     output: &mut impl Write,
 ) -> Result<Vec<PrebuiltTest>, WorkspaceTestError> {
     const CANDIDATES_PER_LANE: usize = 5;
@@ -406,7 +424,7 @@ pub(super) fn partition_largest_prebuilt_tests(
     let discovery_started = Instant::now();
     let discoveries =
         run_bounded_discovery(&tests, discovery_concurrency, |test, cancellation| {
-            prebuilt_test_cases(test, environment, cancellation)
+            prebuilt_test_cases_with_deadline(test, environment, cancellation, discovery_deadline)
         })?;
     let discovery_elapsed = discovery_started.elapsed();
     report_prebuilt_discoveries(
@@ -645,6 +663,7 @@ where
     })
 }
 
+#[cfg(test)]
 fn prebuilt_test_cases(
     test: &PrebuiltTest,
     environment: &Environment,
