@@ -821,6 +821,25 @@ fn renamed_compiler_macro_retains_its_source_semantics() {
 }
 
 #[test]
+fn macro_imported_from_a_proven_user_namespace_remains_shadowed() {
+    let fixture = Fixture::new(
+        "renamed-user-macro",
+        &[(
+            "lib.rs",
+            concat!(
+                "#[macro_export] macro_rules! owned { ($path:literal) => { \"owned\" }; }\n",
+                "mod user { pub use crate::owned as include_str; }\n",
+                "use user::include_str;\n",
+                "pub const VALUE: &str = include_str!(\"missing.txt\");\n",
+            ),
+        )],
+    );
+
+    assert!(fixture.reach().is_empty());
+    fixture.assert_compiles("lib.rs");
+}
+
+#[test]
 fn unresolved_unqualified_bindings_refuse_before_literal_admission() {
     for (name, source) in [
         (
