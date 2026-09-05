@@ -126,6 +126,123 @@ fn team_policy_drives_every_member_while_terminal_seat_life_remains_an_override(
 }
 
 #[test]
+fn synthesized_guidance_stays_pending_without_resurrecting_a_vacant_lane() {
+    let (bus, projects, mut projection) = policy_fixture(wire::intent::LineageLife::Steer, false);
+    committed(
+        bus.commit(reminder_write())
+            .expect("taste reminder commits"),
+    );
+    let snapshot = bus.task_snapshot().expect("reminder snapshot reads");
+    projection
+        .advance(&snapshot, &projects)
+        .expect("reminder projection advances");
+    assert_eq!(projection.ledger().pending(lane()).len(), 1);
+    assert_eq!(
+        projected_resolution(&snapshot, &projection),
+        Resolution::Idle,
+        "resident-authored guidance remains answerable without becoming wake authority"
+    );
+
+    committed(
+        bus.commit(operator_direction_write())
+            .expect("operator direction commits"),
+    );
+    let snapshot = bus
+        .task_snapshot()
+        .expect("operator direction snapshot reads");
+    projection
+        .advance(&snapshot, &projects)
+        .expect("operator direction projection advances");
+    assert_eq!(
+        projected_resolution(&snapshot, &projection),
+        Resolution::Attempt {
+            trigger: Trigger::PendingInbox,
+            lane: lane(),
+        },
+        "genuine operator steering resurrects the vacant lane"
+    );
+    bus.shutdown().expect("guidance fixture bus stops");
+}
+
+fn projected_resolution(snapshot: &bus::TaskSnapshot, projection: &Projection) -> Resolution {
+    let now = instant(50);
+    let targets = project_targets(
+        snapshot,
+        projection,
+        now,
+        &Holds::new(3),
+        &board::NextConfig::default(),
+    )
+    .expect("guidance lifecycle targets project");
+    resolve(&targets, &Backoff::default(), now)
+}
+
+fn reminder_write() -> JournalWrite {
+    let at = instant(10);
+    let origin = format!("resident:{}", epoch())
+        .parse::<Origin>()
+        .expect("fixture resident origin");
+    let reminder = body::TasteReminded {
+        directive: uuid(10),
+        key: "1kKRRsDR".to_owned(),
+        lane: lane(),
+        taste: "polling".to_owned(),
+        content: wire::Digest::compute(wire::Domain::TasteProse, b"poll until complete"),
+        occupant: uuid(9),
+        compaction: 1,
+        locus: body::TranscriptLocus {
+            source: Some(uuid(8)),
+            member: 1,
+            offset: 2,
+            length: 3,
+            event: 0,
+            line: 1,
+            column: 1,
+        },
+        text: "[taste:polling] Wait for the completion signal.".to_owned(),
+        expires: instant(59),
+    };
+    let mut write = JournalWrite::new(
+        Actor::Spice,
+        origin.clone(),
+        at,
+        Producer::ResidentRecognition,
+    );
+    let reminded = write
+        .fact(reminder.clone(), FactCause::Root)
+        .expect("taste reminder fact builds");
+    write.steering_head(reminded, move |position| {
+        Ledger::reminded_head(&reminder, origin, at, position).expect("taste reminder head builds")
+    });
+    write
+}
+
+fn operator_direction_write() -> JournalWrite {
+    let at = instant(11);
+    let origin = format!("resident:{}", epoch())
+        .parse::<Origin>()
+        .expect("fixture resident origin");
+    let direction = body::SteerSent {
+        directive: uuid(11),
+        fanout: Some(uuid(12)),
+        key: "1kKRRsDS".to_owned(),
+        lane: lane(),
+        text: "Resume for this operator request.".to_owned(),
+        control: None,
+        attachments: Vec::new(),
+        expires: instant(59),
+    };
+    let mut write = JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
+    let sent = write
+        .fact(direction.clone(), FactCause::Root)
+        .expect("operator direction fact builds");
+    write.steering_head(sent, move |position| {
+        Ledger::sent_head(&direction, origin, at, position).expect("operator direction head builds")
+    });
+    write
+}
+
+#[test]
 fn drain_team_startup_projects_every_current_member() {
     let (bus, projects, mut projection) = policy_fixture(wire::intent::LineageLife::Drain, false);
     add_vacant_team_members(&bus, &[lane_at(2), lane_at(3)]);

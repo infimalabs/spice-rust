@@ -25,7 +25,8 @@ When steering keys are pending, lead the next working message with
 `ACK <key> [<key> ...]: <accepted result>` or
 `NACK <key>: <reason for refusal>`. Do not defer acknowledgements to the final
 response. Handle operator direction before allocator work; capture durable new
-work before returning to the allocator.
+work before returning to the allocator only when its substance warrants a
+separate deliverable.
 
 If continuity is clipped, recover only the detail needed to proceed with
 `spice session sweep --count N` or
@@ -38,11 +39,17 @@ If continuity is clipped, recover only the detail needed to proceed with
 - Run shell commands normally. The worktree shell and wrapper own steering and
   appliance selection; use `spice run -- CMD` only as an explicit recovery
   surface.
-- Handle the operator's current direction first. Capture pending steering as
+- Handle the operator's current direction first. Consider and answer every
+  pending key. Acknowledgment or adjustment of current work may satisfy
+  guidance; create a task only when the operator explicitly requests one or its
+  substance warrants a separately valuable deliverable. Capture that work as
   `spice task add TITLE --project PROJECT --origin ack:KEY`, using the exact
   acknowledged steering key. Bare `task add` is only for work causally nested
   under the lane's sole active claim. Capture does not claim or switch tasks.
-  Finish the immediate direction, then return to the allocator.
+  Resident-authored taste reminders, command-generated task hints, automatic
+  task amendments, review follow-up notices, and other synthesized guidance do
+  not themselves require or authorize another task. Finish the immediate
+  direction, then return to the allocator.
 - Drain allocator-selected work with `spice task next` until it reports no work
   or a real blocker exists. An `allocator-empty` result ends only that drain
   pass; it does not discharge uncaptured operator direction or other
