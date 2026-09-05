@@ -26,7 +26,7 @@ pub struct Inputs {
     pub vendor: Name,
     /// Neutral skill prompt with no operator prose.
     pub prompt: String,
-    /// Current Spice executable spelling used by the hook and MCP server.
+    /// Current Spice executable spelling used by the hook.
     pub executable: String,
     /// Explicit child environment admitted by the resident rim.
     pub environment: Environment,
@@ -147,11 +147,6 @@ fn compose_with_registry(
             declared.name()
         ),
     };
-    let mcp = vendor::McpServer {
-        name: "spice".to_owned(),
-        command: inputs.executable,
-        args: vec!["mcp".to_owned()],
-    };
     let environment = Environment::new(environment).map_err(ComposeError::Environment)?;
 
     Ok(Plan {
@@ -167,7 +162,7 @@ fn compose_with_registry(
             attribution,
             hook,
             steering_key,
-            mcp,
+            mcp: None,
             resume: inputs.resume,
         },
         environment,

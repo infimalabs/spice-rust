@@ -79,15 +79,21 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
         OsString::from(launch.model.as_str()),
         OsString::from("--permission-mode"),
         OsString::from("bypassPermissions"),
-        OsString::from("--mcp-config"),
-        OsString::from(mcp_config_json(&launch.mcp)),
+    ];
+    if let Some(server) = &launch.mcp {
+        arguments.extend([
+            OsString::from("--mcp-config"),
+            OsString::from(mcp_config_json(server)),
+        ]);
+    }
+    arguments.extend([
         OsString::from("--settings"),
         OsString::from(settings_json(&launch.hook, launch.attribution)),
         OsString::from("--append-system-prompt"),
         OsString::from(system_prompt.as_str()),
         OsString::from("--effort"),
         OsString::from(launch.effort.as_str()),
-    ];
+    ]);
     if let Some(session) = launch.resume.session_id() {
         arguments.push(OsString::from("--resume"));
         arguments.push(OsString::from(dashed_uuid(session)));

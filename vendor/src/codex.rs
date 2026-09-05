@@ -171,7 +171,9 @@ pub fn config_overrides(launch: &Launch) -> Vec<String> {
         post_tool_hook_override(&launch.hook),
         format!("model_reasoning_effort=\"{}\"", launch.effort.as_str()),
     ];
-    overrides.extend(mcp_overrides(&launch.mcp));
+    if let Some(server) = &launch.mcp {
+        overrides.extend(mcp_overrides(server));
+    }
     if let Some(personality) = &launch.personality {
         overrides.push(format!("personality={}", toml_string(personality)));
     }
