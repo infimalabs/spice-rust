@@ -874,8 +874,8 @@ mod tests {
                 root.join("fixture/src/lib.rs"),
                 concat!(
                     "pub const VALUE: u8 = 1;\n",
-                    "pub const AUTHORITY: &str = include_str!(\"../../proof-authority.txt\");\n",
-                    "include!(concat!(env!(\"OUT_DIR\"), \"/generated.rs\"));\n",
+                    "pub const AUTHORITY: &str = std::r#include_str!(\"../../proof-authority.txt\");\n",
+                    "std::include!(concat!(env!(\"OUT_DIR\"), \"/generated.rs\"));\n",
                     "#[fixture_macro::passthrough]\n",
                     "pub fn expanded() {}\n",
                 ),
