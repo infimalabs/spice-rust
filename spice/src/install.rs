@@ -434,6 +434,23 @@ pub fn inspect(repository: &Repository) -> Result<Option<InstallReceipt>, Instal
     Ok(Some(loaded.record.receipt()))
 }
 
+/// Capture the canonical installation generation without validating owned assets.
+///
+/// This is only a process-boundary fence. A consumer must still audit the
+/// generation's installed assets before trusting it.
+pub fn capture_generation(repository: &Repository) -> Result<Option<Digest>, InstallError> {
+    let Some(refresh) = read_record_for_refresh(repository)? else {
+        return Ok(None);
+    };
+    let generation = match refresh {
+        RefreshRecord::Current(loaded) => loaded.record.plan_digest,
+        RefreshRecord::Repairable {
+            original_digest, ..
+        } => original_digest,
+    };
+    Ok(Some(generation))
+}
+
 /// Inspect one repository and derive the exact Spice installation plan.
 pub fn plan(
     repository: &Repository,

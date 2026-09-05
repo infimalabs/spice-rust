@@ -7,8 +7,9 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use spice::install::{
-    InstallError, InstallStatus, apply, installed_bash_env, installed_binary, installed_git_hooks,
-    installed_skill, installed_spice_wrapper, installed_zdotdir, plan, unapply,
+    ApplianceState, InstallError, InstallStatus, apply, audit_appliance, capture_generation,
+    installed_bash_env, installed_binary, installed_git_hooks, installed_skill,
+    installed_spice_wrapper, installed_zdotdir, plan, unapply,
 };
 use spice::repository::Repository;
 
@@ -29,6 +30,14 @@ fn installed_spice_is_the_one_repository_local_executable() {
     let installed = installed_binary(&repository);
 
     assert_eq!(receipt.status(), InstallStatus::Complete);
+    assert_eq!(
+        capture_generation(&repository).unwrap().as_ref(),
+        Some(receipt.digest())
+    );
+    assert_eq!(
+        audit_appliance(&repository, &installed).unwrap().state(),
+        ApplianceState::Current,
+    );
     let help = run(&installed, &["--help"]);
     assert!(
         String::from_utf8(help)

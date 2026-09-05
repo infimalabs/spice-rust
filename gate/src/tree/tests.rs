@@ -113,6 +113,73 @@ fn staged_selection_carries_renames_from_its_captured_index() {
 }
 
 #[test]
+fn staged_authority_candidate_matches_git_write_tree() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let repository = Repository::new("candidate-tree");
+    repository.write("nested/plain.txt", b"plain\n");
+    repository.write("script.sh", b"#!/bin/sh\nexit 0\n");
+    let script = repository.root.join("script.sh");
+    let mut permissions = fs::metadata(&script).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script, permissions).unwrap();
+    repository.git(&["add", "--all"]);
+
+    let selected = Selector::staged()
+        .materialize(&repository.root)
+        .expect("materialize candidate index");
+    let expected = std::process::Command::new("/usr/bin/git")
+        .arg("-C")
+        .arg(&repository.root)
+        .arg("write-tree")
+        .output()
+        .expect("run Git write-tree");
+    assert!(expected.status.success());
+    let expected = String::from_utf8(expected.stdout).unwrap();
+
+    assert_eq!(
+        selected
+            .staged_authority()
+            .unwrap()
+            .candidate_tree_identity(),
+        expected.trim_end()
+    );
+}
+
+#[test]
+fn staged_authority_derives_every_changed_path_from_its_captured_index() {
+    let repository = Repository::new("candidate-changed-paths");
+    repository.write("deleted.txt", b"deleted\n");
+    repository.write("modified.txt", b"before\n");
+    repository.write("old.txt", b"renamed\n");
+    repository.commit("changed path baseline");
+
+    fs::remove_file(repository.root.join("deleted.txt")).expect("delete tracked fixture");
+    repository.write("modified.txt", b"after\n");
+    repository.write("added.txt", b"added\n");
+    repository.git(&["mv", "old.txt", "new.txt"]);
+    repository.git(&["add", "--all"]);
+
+    let selected = Selector::staged()
+        .materialize(&repository.root)
+        .expect("materialize changed path inventory");
+
+    assert_eq!(
+        selected
+            .staged_authority()
+            .expect("selection is staged")
+            .changed_paths(),
+        [
+            "added.txt",
+            "deleted.txt",
+            "modified.txt",
+            "new.txt",
+            "old.txt",
+        ],
+    );
+}
+
+#[test]
 fn staged_authority_distinguishes_exact_rename_base_and_lineage() {
     let repository = Repository::new("staged-authority-lineage");
     repository.write("old.txt", b"selected\n");
@@ -782,12 +849,12 @@ fn a_parentless_gate_tree_lock_a_live_run_holds_is_never_unlinked() {
     drop(held);
 }
 
-/// Materializing a tree is what runs the reclaim.
+/// Materializing a tree is what runs the private workspace reclaim.
 ///
 /// The tests above drive [`super::reclaim_abandoned`] directly, which pins what
 /// it decides and says nothing about whether production ever calls it. This one
-/// plants into the real temporary directory -- the one a selection sweeps --
-/// and lets an ordinary selection be the only thing that touches it.
+/// plants into the real private workspace parent -- the one a selection sweeps
+/// -- and lets an ordinary selection be the only thing that touches it.
 ///
 /// The planted name carries a word no minted name contains, so it can never be
 /// a workspace a concurrent selection in this process is using, and a peer
@@ -798,7 +865,7 @@ fn materializing_a_tree_reclaims_an_abandoned_workspace() {
     let repository = Repository::new("reclaim-on-materialize");
     repository.write("selected.txt", b"selected\n");
     repository.git(&["add", "selected.txt"]);
-    let abandoned = std::env::temp_dir().join(format!(
+    let abandoned = super::workspace_parent().unwrap().join(format!(
         "spice-gate-tree-{}-abandoned-{}",
         std::process::id(),
         NEXT_ABANDONED.fetch_add(1, Ordering::Relaxed)

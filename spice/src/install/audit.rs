@@ -167,6 +167,16 @@ pub fn audit_appliance(
             current_binary,
         ));
     };
+    if current_binary == installed {
+        return Ok(report(
+            ApplianceState::Current,
+            format!("installed appliance matches receipt {receipt} and the current build"),
+            None,
+            Some(receipt),
+            installed,
+            current_binary,
+        ));
+    }
     let current = GeneratedImage::new(EXECUTABLE_MODE, &read_binary(current_binary)?);
     if current != binary.generated {
         return Ok(report(

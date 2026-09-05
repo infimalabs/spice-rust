@@ -55,6 +55,32 @@ pub(super) fn capture_at_inner<'trace>(
     state_run: Option<::gate::BatteryStateRun>,
     selection: Option<&ChangeSelectionReport>,
 ) -> Result<BatteryCapture<'trace>, RunError> {
+    capture_at_inner_with_claim(
+        directory,
+        selector,
+        input_mode,
+        selected,
+        trace,
+        state_run,
+        selection,
+        ClaimCapture::Idle,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the explicit directory and claim accompany the existing capture authorities"
+)]
+pub(super) fn capture_at_inner_with_claim<'trace>(
+    directory: &Path,
+    selector: Selector,
+    input_mode: InputMode,
+    selected: Option<GateId>,
+    trace: Option<&'trace mut (dyn FnMut(RepositoryExecutionEvent) + Send)>,
+    state_run: Option<::gate::BatteryStateRun>,
+    selection: Option<&ChangeSelectionReport>,
+    claim: ClaimCapture,
+) -> Result<BatteryCapture<'trace>, RunError> {
     capture_at_inner_with_options(
         directory,
         CaptureOptions {
@@ -64,7 +90,7 @@ pub(super) fn capture_at_inner<'trace>(
             trace,
             state_run,
             selection,
-            claim: ClaimCapture::Idle,
+            claim,
         },
     )
 }
@@ -99,9 +125,15 @@ fn capture_at_inner_with_options<'trace>(
         _ => RunError::refusal("gate::state-refused", error),
     })?;
     let actor = acting_actor(repository.worktree_root())?;
-    let changes = selected_changes(repository.worktree_root(), &selector)?;
-    let rim = RimCapture::new(directory, search_path(), changes)
-        .map_err(|error| RunError::refusal("gate::rim-refused", error))?;
+    let rim = match &selector {
+        Selector::Staged => RimCapture::staged(directory, search_path()),
+        Selector::Revision(_) => RimCapture::new(
+            directory,
+            search_path(),
+            selected_changes(repository.worktree_root(), &selector)?,
+        ),
+    }
+    .map_err(|error| RunError::refusal("gate::rim-refused", error))?;
     let request = CaptureRequest {
         root: repository.worktree_root(),
         selector: &selector,

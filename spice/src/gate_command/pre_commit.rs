@@ -6,6 +6,7 @@ use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::{self, BufRead as _, BufReader, Write as _};
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use gate::{ArmFamily, ClaimCapture, GateId};
@@ -21,12 +22,13 @@ use wire::{
     ReplyPosition, TaskHandle,
 };
 
+mod admission;
 mod configured;
 mod dispatch;
 mod parent;
 mod terminal;
 
-use dispatch::dispatch;
+use dispatch::{dispatch, dispatch_captured};
 use parent::ParentCancellation;
 use terminal::classify;
 #[cfg(test)]
@@ -94,7 +96,7 @@ impl WorkerPhase {
     }
 }
 
-const PRE_COMMIT_REPORT_VERSION: u64 = 4;
+const PRE_COMMIT_REPORT_VERSION: u64 = 5;
 
 /// One complete packaged-plus-configured pre-commit battery result.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -105,6 +107,8 @@ pub(crate) struct Report {
     #[serde(skip_serializing_if = "Option::is_none")]
     packaged: Option<spice::change_gate::ChangeGateReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    admission: Option<admission::AdmissionReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     configured: Option<configured::ConfiguredReport>,
 }
 
@@ -112,12 +116,14 @@ impl Report {
     fn new(
         source: Digest,
         packaged: Option<spice::change_gate::ChangeGateReport>,
+        admission: Option<admission::AdmissionReport>,
         configured: Option<configured::ConfiguredReport>,
     ) -> Result<Self, String> {
         let report = Self {
             version: PRE_COMMIT_REPORT_VERSION,
             source,
             packaged,
+            admission,
             configured,
         };
         report.validate()?;
@@ -149,7 +155,7 @@ impl Report {
                 self.version,
             ));
         }
-        if self.packaged.is_none() && self.configured.is_none() {
+        if self.packaged.is_none() && self.admission.is_none() && self.configured.is_none() {
             return Err("pre-commit report carries an empty effective battery".to_owned());
         }
         if self
@@ -158,6 +164,13 @@ impl Report {
             .is_some_and(|report| report.selection().source() != &self.source)
         {
             return Err("packaged pre-commit report names a different staged source".to_owned());
+        }
+        if self
+            .admission
+            .as_ref()
+            .is_some_and(|report| report.source() != &self.source)
+        {
+            return Err("admission report names a different staged source".to_owned());
         }
         if self
             .configured
@@ -345,6 +358,10 @@ pub(super) fn run() -> Outcome<Report> {
         Ok(repository) => repository,
         Err(error) => return fault("gate::pre-commit-repository-unresolved", error),
     };
+    let audit = match start_appliance_generation_audit(&repository, &generation) {
+        Ok(audit) => audit,
+        Err(failure) => return worker_failure(failure),
+    };
     let claim = match capture_gate_claim(&repository) {
         Ok(claim) => claim,
         Err(failure) => return worker_failure(failure),
@@ -353,7 +370,33 @@ pub(super) fn run() -> Outcome<Report> {
         Ok(dispatch) => dispatch,
         Err(outcome) => return outcome,
     };
+    let prepared = configured::Dispatch::capture_with_claim(claim.clone());
+    if let Err(failure) = finish_appliance_generation_audit(audit) {
+        return worker_failure(failure);
+    }
+    let prepared = match prepared {
+        Ok(prepared) => prepared,
+        Err(error) => return worker_failure(configured_failure(error)),
+    };
+    if prepared.admission_enabled() && !prepared.has_configured() {
+        return run_admission_inline(claim, prepared);
+    }
     run_with(|files| supervise(files, &generation, &claim))
+}
+
+fn run_admission_inline(claim: ClaimCapture, dispatch: configured::Dispatch) -> Outcome<Report> {
+    let started = Instant::now();
+    match dispatch_captured(None, started, claim, dispatch) {
+        Ok(report) if report.admits() => Outcome::Reply(Reply {
+            position: ReplyPosition::Direct {},
+            body: report,
+        }),
+        Ok(_) => fault(
+            "gate::pre-commit-inline-report-invalid",
+            "an admission-only battery returned a non-admitting report",
+        ),
+        Err(failure) => worker_failure(failure),
+    }
 }
 
 fn capture_gate_claim(repository: &Repository) -> Result<ClaimCapture, WorkerFailure> {
@@ -601,7 +644,15 @@ fn capture_appliance_generation_fence() -> Result<ApplianceGenerationFence, Work
         detail: error.to_string(),
         fault: true,
     })?;
-    current_appliance(&repository, None).map(ApplianceGenerationFence::bound)
+    let generation =
+        spice::install::capture_generation(&repository).map_err(|error| WorkerFailure {
+            reason: "gate::pre-commit-appliance-audit-failed".to_owned(),
+            detail: error.to_string(),
+            fault: true,
+        })?;
+    generation
+        .map(ApplianceGenerationFence::bound)
+        .ok_or_else(|| appliance_generation_moved(None, "installation receipt is absent"))
 }
 
 fn verify_appliance_generation_fence(
@@ -625,7 +676,67 @@ fn verify_appliance_generation_fence(
         detail: error.to_string(),
         fault: true,
     })?;
-    current_appliance(&repository, generation.expected()).map(|_| ())
+    verify_appliance_generation_fence_at(&repository, generation)
+}
+
+fn verify_appliance_generation_fence_at(
+    repository: &Repository,
+    generation: &ApplianceGenerationFence,
+) -> Result<(), WorkerFailure> {
+    generation.validate().map_err(|detail| WorkerFailure {
+        reason: "gate::pre-commit-generation-fence-invalid".to_owned(),
+        detail,
+        fault: true,
+    })?;
+    let Some(_) = generation.expected() else {
+        return Ok(());
+    };
+    current_appliance(repository, generation.expected()).map(|_| ())
+}
+
+fn start_appliance_generation_audit(
+    repository: &Repository,
+    generation: &ApplianceGenerationFence,
+) -> Result<ApplianceGenerationAudit, WorkerFailure> {
+    generation.validate().map_err(|detail| WorkerFailure {
+        reason: "gate::pre-commit-generation-fence-invalid".to_owned(),
+        detail,
+        fault: true,
+    })?;
+    if generation.expected().is_none() {
+        return Ok(ApplianceGenerationAudit { handle: None });
+    }
+    let repository = repository.clone();
+    let generation = generation.clone();
+    Ok(ApplianceGenerationAudit {
+        handle: Some(thread::spawn(move || {
+            verify_appliance_generation_fence_at(&repository, &generation)
+        })),
+    })
+}
+
+fn finish_appliance_generation_audit(
+    mut audit: ApplianceGenerationAudit,
+) -> Result<(), WorkerFailure> {
+    audit.handle.take().map_or(Ok(()), |audit| {
+        audit.join().map_err(|_| WorkerFailure {
+            reason: "gate::pre-commit-appliance-audit-failed".to_owned(),
+            detail: "appliance audit thread panicked".to_owned(),
+            fault: true,
+        })?
+    })
+}
+
+struct ApplianceGenerationAudit {
+    handle: Option<JoinHandle<Result<(), WorkerFailure>>>,
+}
+
+impl Drop for ApplianceGenerationAudit {
+    fn drop(&mut self) {
+        if let Some(audit) = self.handle.take() {
+            let _ = audit.join();
+        }
+    }
 }
 
 fn current_appliance(
@@ -647,7 +758,23 @@ fn current_appliance(
     if let Some(observed) = audit.receipt().filter(|observed| {
         audit.is_current() && expected.is_none_or(|expected| *observed == expected)
     }) {
-        return Ok(observed.clone());
+        let observed = observed.clone();
+        let recaptured =
+            spice::install::capture_generation(repository).map_err(|error| WorkerFailure {
+                reason: "gate::pre-commit-appliance-audit-failed".to_owned(),
+                detail: error.to_string(),
+                fault: true,
+            })?;
+        if recaptured.as_ref() == Some(&observed) {
+            return Ok(observed);
+        }
+        return Err(appliance_generation_moved(
+            expected,
+            format!(
+                "receipt moved after asset audit to {}",
+                recaptured.as_ref().map_or("absent", Digest::as_str),
+            ),
+        ));
     }
     let observed = audit.receipt();
     Err(appliance_generation_moved(

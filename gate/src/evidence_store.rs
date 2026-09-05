@@ -16,8 +16,14 @@ use serde::{Deserialize, Serialize};
 use sill::{LockFile, LockName};
 use wire::{Actor, CanonicalUuid, Digest, Domain, Instant, TaskHandle};
 
+mod admission;
 mod layout;
 use layout::*;
+
+pub use admission::{
+    AdmissionAction, AdmissionBundle, AdmissionBundleFields, AdmissionId, AdmissionLiveCheck,
+    ReceiptExpectation,
+};
 
 /// Current on-disk evidence-store schema.
 pub const EVIDENCE_STORE_VERSION: u64 = 1;
@@ -165,6 +171,18 @@ impl PassReceipt {
     #[must_use]
     pub const fn action(&self) -> &ActionKey {
         &self.action_key
+    }
+
+    /// Canonical action specification proven by this receipt.
+    #[must_use]
+    pub const fn action_spec(&self) -> &Digest {
+        &self.action_spec
+    }
+
+    /// Complete input-manifest identity proven by this receipt.
+    #[must_use]
+    pub const fn input_manifest(&self) -> &Digest {
+        &self.input_manifest
     }
 
     /// Canonical identity of the typed successful result.
@@ -557,6 +575,50 @@ impl EvidenceStore {
             };
             read_receipt(layout, &index.receipt, Some(action)).map(Some)
         })
+    }
+
+    /// Resolve every expected receipt under one store lock and verify its bound authorities.
+    pub fn lookup_batch_exact(
+        &self,
+        expected: &[ReceiptExpectation],
+    ) -> Result<Vec<Option<AdmissionAction>>, EvidenceStoreError> {
+        admission::validate_receipt_expectations(expected)?;
+        self.with_lock(|layout| {
+            expected
+                .iter()
+                .map(|expected| {
+                    let Some(index) = read_index(layout, expected.action_key())? else {
+                        return Ok(None);
+                    };
+                    let receipt = read_receipt(layout, &index.receipt, Some(expected.action_key()))?;
+                    if receipt.action_spec() != expected.action_spec()
+                        || receipt.input_manifest() != expected.input_manifest()
+                    {
+                        return Err(EvidenceStoreError::new(
+                            "gate-evidence::receipt-authority-mismatch",
+                            format!(
+                                "action {} expected spec={} manifest={} but receipt {} binds spec={} manifest={}",
+                                expected.action(),
+                                expected.action_spec(),
+                                expected.input_manifest(),
+                                index.receipt,
+                                receipt.action_spec(),
+                                receipt.input_manifest(),
+                            ),
+                        ));
+                    }
+                    Ok(Some(AdmissionAction::resolved(expected, index.receipt)))
+                })
+                .collect()
+        })
+    }
+
+    /// Publish one immutable candidate admission after validating its complete schema.
+    pub fn publish_admission(
+        &self,
+        bundle: &AdmissionBundle,
+    ) -> Result<AdmissionId, EvidenceStoreError> {
+        self.with_lock(|layout| admission::publish(layout, bundle))
     }
 
     /// Acquire a durable single-flight lease, replacing it only at expiry.

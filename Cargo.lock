@@ -819,6 +819,7 @@ dependencies = [
  "gix-diff",
  "gix-glob",
  "inotify",
+ "libc",
  "proc-macro2",
  "regex",
  "rustpython-ast",

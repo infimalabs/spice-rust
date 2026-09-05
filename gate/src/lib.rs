@@ -114,10 +114,11 @@ pub use core::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use evidence_store::{
-    ActionKey, CollectionReport as EvidenceCollectionReport, EvidenceLease, EvidenceStore,
+    ActionKey, AdmissionAction, AdmissionBundle, AdmissionBundleFields, AdmissionId,
+    AdmissionLiveCheck, CollectionReport as EvidenceCollectionReport, EvidenceLease, EvidenceStore,
     EvidenceStoreError, LeaseAcquisition, PassReceipt, PassReceiptFields,
-    ProducerRecord as EvidenceProducerRecord, Publication as EvidencePublication, ReceiptId,
-    derive_action_key,
+    ProducerRecord as EvidenceProducerRecord, Publication as EvidencePublication,
+    ReceiptExpectation, ReceiptId, derive_action_key,
 };
 pub use hygiene::{
     AnalysisEvidence, AnalyzerEvidence, EvidenceState, ExclusionEvidence, HYGIENE_ARMS,
