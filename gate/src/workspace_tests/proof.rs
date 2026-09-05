@@ -23,7 +23,28 @@ pub struct CargoGateShard {
     targets: Vec<String>,
     argv: Vec<String>,
     input_paths: Vec<String>,
+    compile_time_producers: Vec<CargoCompileTimeProducer>,
     compile_time_authorities: Vec<CargoCompileTimeAuthority>,
+    reuse: CargoShardReuse,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum CargoShardReuse {
+    Reusable,
+    NonCacheable { reason: String },
+}
+
+/// One executable compile-time target in the shard's resolved Cargo graph.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CargoCompileTimeProducer {
+    package_id: String,
+    package: String,
+    target: String,
+    kind: String,
+    external: bool,
+    selected_tree_authority: bool,
 }
 
 /// Closed executable compile-time derivation reached by one Cargo shard.
@@ -69,9 +90,23 @@ impl CargoGateShard {
         &self.input_paths
     }
 
+    /// Why this shard must not derive or consult reusable proof identity.
+    #[must_use]
+    pub fn non_cacheable_reason(&self) -> Option<&str> {
+        match &self.reuse {
+            CargoShardReuse::Reusable => None,
+            CargoShardReuse::NonCacheable { reason } => Some(reason),
+        }
+    }
+
     #[cfg(test)]
     fn compile_time_authorities(&self) -> &[CargoCompileTimeAuthority] {
         &self.compile_time_authorities
+    }
+
+    #[cfg(test)]
+    fn compile_time_producers(&self) -> &[CargoCompileTimeProducer] {
+        &self.compile_time_producers
     }
 }
 
@@ -133,14 +168,14 @@ pub fn plan_cargo_gate_shards_at(
         cargo,
         include_tests,
     } = planning;
-    let mut inventory = acquire_inventory(root, &environment, cargo)?;
+    let mut inventory = acquire_resolved_inventory(root, &environment, cargo)?;
     if cargo_workspace_base_inventory_required(root, changed_sources)? {
         let base = base.ok_or_else(|| {
             WorkspaceTestError::new(
                 "removed Rust source requires exact base-tree Cargo ownership inventory",
             )
         })?;
-        let base_inventory = acquire_inventory(base, &environment, cargo)?;
+        let base_inventory = acquire_resolved_inventory(base, &environment, cargo)?;
         inventory.retain_removed_target_ownership(root, &base_inventory, base, changed_sources)?;
     }
 
@@ -189,7 +224,9 @@ pub fn plan_cargo_gate_shards_at(
                 targets,
                 argv,
                 input_paths: authority.input_paths,
+                compile_time_producers: authority.producers,
                 compile_time_authorities: authority.compile_time,
+                reuse: authority.reuse,
             });
         }
     }
@@ -305,13 +342,17 @@ fn test_shard(
         targets,
         argv,
         input_paths: authority.input_paths,
+        compile_time_producers: authority.producers,
         compile_time_authorities: authority.compile_time,
+        reuse: authority.reuse,
     })
 }
 
 struct CargoPackageInputAuthority {
     input_paths: Vec<String>,
+    producers: Vec<CargoCompileTimeProducer>,
     compile_time: Vec<CargoCompileTimeAuthority>,
+    reuse: CargoShardReuse,
 }
 
 fn package_input_authority(
@@ -322,8 +363,6 @@ fn package_input_authority(
     changed_sources: &[String],
 ) -> Result<CargoPackageInputAuthority, WorkspaceTestError> {
     let canonical_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let mut roots = BTreeSet::new();
-    let mut pending = VecDeque::new();
     let package = inventory
         .packages
         .iter()
@@ -331,7 +370,41 @@ fn package_input_authority(
         .ok_or_else(|| {
             WorkspaceTestError::new(format!("Cargo package {package_name:?} vanished"))
         })?;
-    pending.push_back(package.root.clone());
+    let (roots, external_local_dependencies) =
+        reached_local_package_roots(inventory, &canonical_root, package);
+    let mut paths = selected_package_input_paths(
+        inventory,
+        &canonical_root,
+        &roots,
+        selected_paths,
+        changed_sources,
+    )?;
+    let producers = resolved_compile_time_producers(inventory, &package.id)?;
+    let (compile_time, reuse) = compile_time_reuse(
+        inventory,
+        &canonical_root,
+        &roots,
+        selected_paths,
+        &mut paths,
+        &producers,
+        &external_local_dependencies,
+    );
+    Ok(CargoPackageInputAuthority {
+        input_paths: paths.into_iter().collect(),
+        producers,
+        compile_time,
+        reuse,
+    })
+}
+
+fn reached_local_package_roots(
+    inventory: &Inventory,
+    canonical_root: &Path,
+    package: &PackageInventory,
+) -> (BTreeSet<PathBuf>, BTreeSet<PathBuf>) {
+    let mut roots = BTreeSet::new();
+    let mut pending = VecDeque::from([package.root.clone()]);
+    let mut external = BTreeSet::new();
     while let Some(package_root) = pending.pop_front() {
         if !roots.insert(package_root.clone()) {
             continue;
@@ -343,20 +416,24 @@ fn package_input_authority(
         else {
             continue;
         };
-        if let Some(external) = package
-            .dependencies
-            .iter()
-            .find(|path| !path.starts_with(&canonical_root))
-        {
-            return Err(WorkspaceTestError::new(format!(
-                "Cargo package {:?} has external local dependency {}; reusable proof requires a selected-tree closure",
-                package.name,
-                external.display(),
-            )));
+        for dependency in &package.dependencies {
+            if dependency.starts_with(&canonical_root) {
+                pending.push_back(dependency.clone());
+            } else {
+                external.insert(dependency.clone());
+            }
         }
-        pending.extend(package.dependencies.iter().cloned());
     }
+    (roots, external)
+}
 
+fn selected_package_input_paths(
+    inventory: &Inventory,
+    canonical_root: &Path,
+    roots: &BTreeSet<PathBuf>,
+    selected_paths: &[String],
+    changed_sources: &[String],
+) -> Result<BTreeSet<String>, WorkspaceTestError> {
     let relative_roots = roots
         .iter()
         .map(|path| {
@@ -405,17 +482,106 @@ fn package_input_authority(
             }
         }
     }
-    let compile_time = compile_time_authorities(
-        inventory,
-        &canonical_root,
-        &roots,
-        selected_paths,
-        &mut paths,
-    )?;
-    Ok(CargoPackageInputAuthority {
-        input_paths: paths.into_iter().collect(),
-        compile_time,
-    })
+    Ok(paths)
+}
+
+fn compile_time_reuse(
+    inventory: &Inventory,
+    canonical_root: &Path,
+    roots: &BTreeSet<PathBuf>,
+    selected_paths: &[String],
+    paths: &mut BTreeSet<String>,
+    producers: &[CargoCompileTimeProducer],
+    external_local_dependencies: &BTreeSet<PathBuf>,
+) -> (Vec<CargoCompileTimeAuthority>, CargoShardReuse) {
+    let mut unsafe_authorities = producers
+        .iter()
+        .filter(|producer| producer.external || !producer.selected_tree_authority)
+        .map(|producer| {
+            format!(
+                "{} {}::{} ({})",
+                if producer.external {
+                    "external"
+                } else {
+                    "non-workspace"
+                },
+                producer.package,
+                producer.target,
+                producer.kind,
+            )
+        })
+        .collect::<Vec<_>>();
+    unsafe_authorities.extend(external_local_dependencies.iter().map(|dependency| {
+        format!(
+            "external local dependency {}",
+            dependency
+                .file_name()
+                .unwrap_or(dependency.as_os_str())
+                .to_string_lossy(),
+        )
+    }));
+    if unsafe_authorities.is_empty() {
+        match compile_time_authorities(inventory, canonical_root, roots, selected_paths, paths) {
+            Ok(authorities) => (authorities, CargoShardReuse::Reusable),
+            Err(error) => (
+                Vec::new(),
+                CargoShardReuse::NonCacheable {
+                    reason: error.to_string(),
+                },
+            ),
+        }
+    } else {
+        (
+            Vec::new(),
+            CargoShardReuse::NonCacheable {
+                reason: format!(
+                    "resolved Cargo graph reaches dependencies or executable compile-time producers without bounded selected-tree authority: {}",
+                    unsafe_authorities.join(", "),
+                ),
+            },
+        )
+    }
+}
+
+fn resolved_compile_time_producers(
+    inventory: &Inventory,
+    package_id: &str,
+) -> Result<Vec<CargoCompileTimeProducer>, WorkspaceTestError> {
+    let mut pending = VecDeque::from([package_id.to_owned()]);
+    let mut visited = BTreeSet::new();
+    let mut producers = Vec::new();
+    while let Some(id) = pending.pop_front() {
+        if !visited.insert(id.clone()) {
+            continue;
+        }
+        let package = inventory.resolution.packages.get(&id).ok_or_else(|| {
+            WorkspaceTestError::new(format!(
+                "Cargo shard root or dependency {id:?} is absent from resolved package inventory",
+            ))
+        })?;
+        for target in &package.compile_time_targets {
+            producers.push(CargoCompileTimeProducer {
+                package_id: package.authority_id.clone(),
+                package: package.name.clone(),
+                target: target.name.clone(),
+                kind: target.kind.clone(),
+                external: package.external,
+                selected_tree_authority: inventory
+                    .packages
+                    .iter()
+                    .any(|workspace| workspace.id == package.id),
+            });
+        }
+        let dependencies = inventory.resolution.edges.get(&id).ok_or_else(|| {
+            WorkspaceTestError::new(format!(
+                "Cargo shard package {id:?} is absent from the resolved dependency graph",
+            ))
+        })?;
+        pending.extend(dependencies.iter().cloned());
+    }
+    producers.sort();
+    producers.dedup();
+    Ok(producers)
 }
 
 fn workspace_cargo_authority(path: &Path) -> bool {
@@ -536,12 +702,22 @@ mod tests {
                 shard.compile_time_authorities().len(),
                 usize::from(shard.package() == "fixture") * 2,
             );
+            assert_eq!(
+                shard.compile_time_producers().len(),
+                usize::from(shard.package() == "fixture") * 2,
+            );
+            assert!(
+                shard
+                    .compile_time_producers()
+                    .iter()
+                    .all(|producer| !producer.external)
+            );
             if let Some(authority) = shard.compile_time_authorities().first() {
                 assert_eq!(authority.package, "fixture");
                 assert_eq!(authority.kind, "custom-build");
                 assert_eq!(authority.input_paths, ["proof-authority.txt"]);
                 assert_eq!(authority.environment, ["FIXTURE_BUILD_INPUT"]);
-                assert_eq!(authority.generated_outputs, ["generated.rs"]);
+                assert!(authority.generated_outputs.is_empty());
                 let proc_macro = &shard.compile_time_authorities()[1];
                 assert_eq!(proc_macro.package, "fixture-macro");
                 assert_eq!(proc_macro.kind, "proc-macro");
@@ -573,6 +749,137 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the repository graph regression uses the active test environment"
+    )]
+    fn repository_fold_graph_reaches_external_libsqlite3_sys_build_script() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("gate crate has a workspace parent");
+        let environment =
+            Environment::new(std::env::vars_os()).expect("ambient test environment is valid");
+        let inventory = acquire_resolved_inventory(root, &environment, OsStr::new("cargo"))
+            .expect("acquire repository Cargo graph");
+        let fold = inventory
+            .packages
+            .iter()
+            .find(|package| package.name == "fold")
+            .expect("repository contains fold");
+        let producers = resolved_compile_time_producers(&inventory, &fold.id)
+            .expect("classify fold compile-time producers");
+        let sqlite = producers
+            .iter()
+            .find(|producer| {
+                producer.package == "libsqlite3-sys"
+                    && producer.kind == "custom-build"
+                    && producer.target == "build-script-build"
+            })
+            .expect("fold reaches libsqlite3-sys build script through rusqlite");
+        assert!(sqlite.external);
+        assert!(!sqlite.selected_tree_authority);
+        assert!(sqlite.package_id.starts_with("registry+"));
+        let serde_derive = producers
+            .iter()
+            .find(|producer| producer.package == "serde_derive" && producer.kind == "proc-macro")
+            .expect("fold reaches the external serde_derive proc macro");
+        assert!(serde_derive.external);
+        assert!(!serde_derive.selected_tree_authority);
+        assert!(serde_derive.package_id.starts_with("registry+"));
+    }
+
+    #[test]
+    fn external_path_build_script_makes_only_the_dependent_shard_non_cacheable() {
+        let fixture = Fixture::new("external-path-producer");
+        let external = fixture.root.with_extension("external-build");
+        fs::create_dir_all(external.join("src")).expect("create external package source");
+        fs::write(
+            external.join("Cargo.toml"),
+            concat!(
+                "[package]\n",
+                "name = \"external-build\"\n",
+                "version = \"0.1.0\"\n",
+                "edition = \"2024\"\n",
+                "build = \"build.rs\"\n",
+            ),
+        )
+        .expect("write external package manifest");
+        fs::write(external.join("build.rs"), "fn main() {}\n")
+            .expect("write external build script");
+        fs::write(external.join("src/lib.rs"), "pub const EXTERNAL: u8 = 1;\n")
+            .expect("write external package source");
+        fs::write(
+            fixture.root.join("fixture/Cargo.toml"),
+            format!(
+                concat!(
+                    "[package]\n",
+                    "name = \"fixture\"\n",
+                    "version = \"0.1.0\"\n",
+                    "edition = \"2024\"\n",
+                    "build = \"build.rs\"\n\n",
+                    "[package.metadata.spice.cargo-proof]\n",
+                    "version = 1\n",
+                    "complete = true\n\n",
+                    "[dependencies]\n",
+                    "fixture-macro = {{ path = \"../fixture-macro\" }}\n",
+                    "external-build = {{ path = {:?} }}\n",
+                ),
+                external,
+            ),
+        )
+        .expect("add external build dependency");
+        fs::write(
+            fixture.root.join("Cargo.lock"),
+            concat!(
+                "# This file is automatically @generated by Cargo.\n",
+                "version = 4\n\n",
+                "[[package]]\n",
+                "name = \"external-build\"\n",
+                "version = \"0.1.0\"\n\n",
+                "[[package]]\n",
+                "name = \"fixture\"\n",
+                "version = \"0.1.0\"\n",
+                "dependencies = [\"external-build\", \"fixture-macro\"]\n\n",
+                "[[package]]\n",
+                "name = \"fixture-macro\"\n",
+                "version = \"0.1.0\"\n\n",
+                "[[package]]\n",
+                "name = \"peer\"\n",
+                "version = \"0.1.0\"\n",
+            ),
+        )
+        .expect("add external build dependency to lockfile");
+
+        let plan = fixture.plan(true);
+        let shard = plan
+            .typechecks()
+            .iter()
+            .find(|shard| shard.package() == "fixture")
+            .expect("fixture typecheck shard is planned");
+        let external_producer = shard
+            .compile_time_producers()
+            .iter()
+            .find(|producer| producer.package == "external-build")
+            .expect("external build script is classified");
+        assert!(external_producer.external);
+        assert!(!external_producer.selected_tree_authority);
+        assert!(
+            shard
+                .non_cacheable_reason()
+                .is_some_and(|reason| reason.contains("external external-build"))
+        );
+        assert!(
+            plan.typechecks()
+                .iter()
+                .find(|shard| shard.package() == "peer")
+                .expect("peer typecheck shard is planned")
+                .non_cacheable_reason()
+                .is_none()
+        );
+        fs::remove_dir_all(external).expect("remove external package");
+    }
+
+    #[test]
     fn shard_execution_returns_success_only_for_a_passing_command() {
         let fixture = Fixture::new("execute");
         let plan = fixture.plan(false);
@@ -589,7 +896,12 @@ mod tests {
             shard,
             &mut output,
         )
-        .expect("valid source passes its planned shard");
+        .unwrap_or_else(|error| {
+            panic!(
+                "valid source passes its planned shard: {error}\n{}",
+                String::from_utf8_lossy(&output),
+            )
+        });
         assert_eq!(result.action_id, shard.action_id());
         assert_eq!(result.completion, "passed");
 
@@ -632,19 +944,23 @@ mod tests {
         let fixture = Fixture::new("missing-build-authority");
         fs::write(
             fixture.root.join("fixture/Cargo.toml"),
-            "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            concat!(
+                "[package]\n",
+                "name = \"fixture\"\n",
+                "version = \"0.1.0\"\n",
+                "edition = \"2024\"\n",
+                "build = \"build.rs\"\n\n",
+                "[dependencies]\n",
+                "fixture-macro = { path = \"../fixture-macro\" }\n",
+            ),
         )
         .expect("remove compile-time authority declaration");
 
-        let error = fixture
-            .try_plan(true)
-            .expect_err("an undeclared build-script boundary cannot be reused");
+        let reason = fixture.fixture_non_cacheable_reason();
         assert!(
-            error.to_string().contains("Cargo shard is non-cacheable")
-                && error
-                    .to_string()
-                    .contains("no complete package.metadata.spice.cargo-proof"),
-            "unexpected refusal: {error}",
+            reason.contains("Cargo shard is non-cacheable")
+                && reason.contains("no complete package.metadata.spice.cargo-proof"),
+            "unexpected refusal: {reason}",
         );
     }
 
@@ -665,15 +981,16 @@ mod tests {
         .expect("remove OUT_DIR producer");
         fs::remove_file(fixture.root.join("fixture/build.rs"))
             .expect("remove auto-discovered build script");
+        fs::write(
+            fixture.root.join("fixture/src/lib.rs"),
+            "std::include!(concat!(env!(\"OUT_DIR\"), \"/generated.rs\"));\n",
+        )
+        .expect("write OUT_DIR consumer");
 
-        let error = fixture
-            .try_plan(true)
-            .expect_err("an OUT_DIR input without a producer cannot be reused");
+        let reason = fixture.fixture_non_cacheable_reason();
         assert!(
-            error
-                .to_string()
-                .contains("consumes OUT_DIR generated inputs without a custom-build producer"),
-            "unexpected refusal: {error}",
+            reason.contains("consumes OUT_DIR generated inputs without a custom-build producer"),
+            "unexpected refusal: {reason}",
         );
     }
 
@@ -686,14 +1003,10 @@ mod tests {
         )
         .expect("write dynamic build-script directive");
 
-        let error = fixture
-            .try_plan(true)
-            .expect_err("dynamic rerun authority cannot be reused");
+        let reason = fixture.fixture_non_cacheable_reason();
         assert!(
-            error
-                .to_string()
-                .contains("dynamic or multiline Cargo rerun directive"),
-            "unexpected refusal: {error}",
+            reason.contains("dynamic or multiline Cargo rerun directive"),
+            "unexpected refusal: {reason}",
         );
     }
 
@@ -706,14 +1019,10 @@ mod tests {
         )
         .expect("write malformed build-script directive");
 
-        let error = fixture
-            .try_plan(true)
-            .expect_err("malformed rerun authority cannot be reused");
+        let reason = fixture.fixture_non_cacheable_reason();
         assert!(
-            error
-                .to_string()
-                .contains("malformed Cargo rerun directive"),
-            "unexpected refusal: {error}",
+            reason.contains("malformed Cargo rerun directive"),
+            "unexpected refusal: {reason}",
         );
     }
 
@@ -726,14 +1035,10 @@ mod tests {
         )
         .expect("write ambient build-script read");
 
-        let error = fixture
-            .try_plan(true)
-            .expect_err("undeclared environment cannot be reused");
+        let reason = fixture.fixture_non_cacheable_reason();
         assert!(
-            error
-                .to_string()
-                .contains("reads undeclared ambient environment \"AMBIENT_BUILD_INPUT\""),
-            "unexpected refusal: {error}",
+            reason.contains("reads undeclared ambient environment \"AMBIENT_BUILD_INPUT\""),
+            "unexpected refusal: {reason}",
         );
     }
 
@@ -746,14 +1051,10 @@ mod tests {
         )
         .expect("write undeclared build-script file read");
 
-        let error = fixture
-            .try_plan(true)
-            .expect_err("undeclared filesystem authority cannot be reused");
+        let reason = fixture.fixture_non_cacheable_reason();
         assert!(
-            error
-                .to_string()
-                .contains("reads undeclared compile-time file \"../notes.txt\""),
-            "unexpected refusal: {error}",
+            reason.contains("reads undeclared compile-time file \"../notes.txt\""),
+            "unexpected refusal: {reason}",
         );
     }
 
@@ -766,14 +1067,93 @@ mod tests {
         )
         .expect("write process-dependent build script");
 
-        let error = fixture
-            .try_plan(true)
-            .expect_err("process authority cannot be reused");
+        let reason = fixture.fixture_non_cacheable_reason();
         assert!(
-            error
-                .to_string()
-                .contains("unbounded process or network dependency"),
-            "unexpected refusal: {error}",
+            reason.contains("unbounded method dispatch .status()"),
+            "unexpected refusal: {reason}",
+        );
+    }
+
+    #[test]
+    fn renamed_process_constructor_is_non_cacheable() {
+        let fixture = Fixture::new("renamed-process-constructor");
+        fs::write(
+            fixture.root.join("fixture/build.rs"),
+            "use std::process::Command as C;\nfn main() { let _ = C::new(\"git\"); }\n",
+        )
+        .expect("write renamed process constructor");
+
+        let reason = fixture.fixture_non_cacheable_reason();
+        assert!(
+            reason.contains("unrecognized executable call C::new"),
+            "unexpected refusal: {reason}",
+        );
+    }
+
+    #[test]
+    fn helper_wrapper_call_is_non_cacheable() {
+        let fixture = Fixture::new("helper-wrapper");
+        fs::write(
+            fixture.root.join("fixture/build.rs"),
+            concat!(
+                "fn main() { helper(); }\n",
+                "fn helper() { let _ = std::process::Command::new(\"git\"); }\n",
+            ),
+        )
+        .expect("write process helper wrapper");
+
+        let reason = fixture.fixture_non_cacheable_reason();
+        assert!(
+            reason.contains("unrecognized executable call helper"),
+            "unexpected refusal: {reason}",
+        );
+    }
+
+    #[test]
+    fn method_dispatch_is_non_cacheable() {
+        let fixture = Fixture::new("method-dispatch");
+        fs::write(
+            fixture.root.join("fixture/build.rs"),
+            "fn main() { let _ = std::env::var(\"HOME\").unwrap(); }\n",
+        )
+        .expect("write method-based environment access");
+
+        let reason = fixture.fixture_non_cacheable_reason();
+        assert!(
+            reason.contains("unbounded method dispatch .unwrap()"),
+            "unexpected refusal: {reason}",
+        );
+    }
+
+    #[test]
+    fn computed_compile_time_output_is_non_cacheable() {
+        let fixture = Fixture::new("computed-output");
+        fs::write(
+            fixture.root.join("fixture/build.rs"),
+            "fn main() { let message = \"cargo::rerun-if-changed=../proof-authority.txt\"; println!(message); }\n",
+        )
+        .expect("write computed build-script output");
+
+        let reason = fixture.fixture_non_cacheable_reason();
+        assert!(
+            reason.contains("computed compile-time output"),
+            "unexpected refusal: {reason}",
+        );
+    }
+
+    #[test]
+    fn filesystem_output_is_non_cacheable() {
+        let fixture = Fixture::new("filesystem-output");
+        fs::write(
+            fixture.root.join("fixture/build.rs"),
+            "fn main() { let _ = std::fs::write(\"generated.rs\", \"generated\"); }\n",
+        )
+        .expect("write filesystem output");
+
+        let reason = fixture.fixture_non_cacheable_reason();
+        assert!(
+            reason.contains("unbounded compile-time filesystem output"),
+            "unexpected refusal: {reason}",
         );
     }
 
@@ -791,12 +1171,10 @@ mod tests {
         )
         .expect("write escaping build-script directive");
 
-        let error = fixture
-            .try_plan(true)
-            .expect_err("escaping rerun authority cannot be reused");
+        let reason = fixture.fixture_non_cacheable_reason();
         assert!(
-            error.to_string().contains("escapes selected root"),
-            "unexpected refusal: {error}",
+            reason.contains("escapes selected root"),
+            "unexpected refusal: {reason}",
         );
         fs::remove_file(external).expect("remove external authority");
     }
@@ -864,8 +1242,6 @@ mod tests {
                     "fn main() {\n",
                     "    println!(\"cargo::rerun-if-changed=../proof-authority.txt\");\n",
                     "    println!(\"cargo::rerun-if-env-changed=FIXTURE_BUILD_INPUT\");\n",
-                    "    let out = std::path::PathBuf::from(std::env::var_os(\"OUT_DIR\").unwrap());\n",
-                    "    std::fs::write(out.join(\"generated.rs\"), \"pub const GENERATED: u8 = 3;\\n\").unwrap();\n",
                     "}\n",
                 ),
             )
@@ -875,7 +1251,6 @@ mod tests {
                 concat!(
                     "pub const VALUE: u8 = 1;\n",
                     "pub const AUTHORITY: &str = std::r#include_str!(\"../../proof-authority.txt\");\n",
-                    "std::include!(concat!(env!(\"OUT_DIR\"), \"/generated.rs\"));\n",
                     "#[fixture_macro::passthrough]\n",
                     "pub fn expanded() {}\n",
                 ),
@@ -967,6 +1342,28 @@ mod tests {
                 cargo: OsStr::new("cargo"),
                 include_tests,
             })
+        }
+
+        fn fixture_non_cacheable_reason(&self) -> String {
+            let plan = self.plan(true);
+            let fixture = plan
+                .typechecks()
+                .iter()
+                .find(|shard| shard.package() == "fixture")
+                .expect("fixture typecheck shard is planned");
+            let peer = plan
+                .typechecks()
+                .iter()
+                .find(|shard| shard.package() == "peer")
+                .expect("peer typecheck shard is planned");
+            assert!(
+                peer.non_cacheable_reason().is_none(),
+                "unrelated peer must remain reusable"
+            );
+            fixture
+                .non_cacheable_reason()
+                .expect("fixture shard must be non-cacheable")
+                .to_owned()
         }
     }
 

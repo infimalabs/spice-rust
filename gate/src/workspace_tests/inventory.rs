@@ -121,6 +121,7 @@ pub(super) fn qualified_required_features<'a>(
 pub(super) struct Metadata {
     pub(super) packages: Vec<MetadataPackage>,
     pub(super) workspace_members: Vec<String>,
+    pub(super) resolve: Option<MetadataResolve>,
     #[serde(default)]
     pub(super) target_directory: PathBuf,
     #[serde(default)]
@@ -131,7 +132,11 @@ pub(super) struct Metadata {
 pub(super) struct MetadataPackage {
     pub(super) id: String,
     pub(super) name: String,
+    #[serde(default)]
+    pub(super) version: String,
     pub(super) manifest_path: PathBuf,
+    #[serde(default)]
+    pub(super) source: Option<String>,
     #[serde(default)]
     pub(super) dependencies: Vec<MetadataDependency>,
     pub(super) targets: Vec<MetadataTarget>,
@@ -139,6 +144,18 @@ pub(super) struct MetadataPackage {
     pub(super) features: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub(super) metadata: serde_json::Value,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(super) struct MetadataResolve {
+    pub(super) nodes: Vec<MetadataResolveNode>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(super) struct MetadataResolveNode {
+    pub(super) id: String,
+    #[serde(default)]
+    pub(super) dependencies: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -210,9 +227,31 @@ pub(super) struct CompileTimeAuthorityDeclaration {
     pub(super) environment: Vec<String>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub(super) struct CargoResolution {
+    pub(super) packages: BTreeMap<String, ResolvedPackage>,
+    pub(super) edges: BTreeMap<String, Vec<String>>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct ResolvedPackage {
+    pub(super) id: String,
+    pub(super) authority_id: String,
+    pub(super) name: String,
+    pub(super) external: bool,
+    pub(super) compile_time_targets: Vec<ResolvedCompileTimeTarget>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(super) struct ResolvedCompileTimeTarget {
+    pub(super) kind: String,
+    pub(super) name: String,
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct Inventory {
     pub(super) packages: Vec<PackageInventory>,
+    pub(super) resolution: CargoResolution,
     pub(super) binary_outputs: Vec<BinaryOutput>,
     pub(super) target_directory: PathBuf,
     pub(super) build_directory: PathBuf,
@@ -387,6 +426,7 @@ impl Inventory {
             .collect();
         Ok(Self {
             packages,
+            resolution: self.resolution.clone(),
             binary_outputs,
             target_directory: self.target_directory.clone(),
             build_directory: self.build_directory.clone(),
@@ -431,9 +471,30 @@ pub(super) fn acquire_inventory(
     environment: &Environment,
     cargo: &OsStr,
 ) -> Result<Inventory, WorkspaceTestError> {
+    acquire_inventory_with_resolution(root, environment, cargo, false)
+}
+
+pub(super) fn acquire_resolved_inventory(
+    root: &Path,
+    environment: &Environment,
+    cargo: &OsStr,
+) -> Result<Inventory, WorkspaceTestError> {
+    acquire_inventory_with_resolution(root, environment, cargo, true)
+}
+
+fn acquire_inventory_with_resolution(
+    root: &Path,
+    environment: &Environment,
+    cargo: &OsStr,
+    require_resolution: bool,
+) -> Result<Inventory, WorkspaceTestError> {
+    let mut arguments = vec!["metadata", "--locked", "--format-version", "1"];
+    if !require_resolution {
+        arguments.push("--no-deps");
+    }
     let spec = process_spec(
         cargo,
-        ["metadata", "--locked", "--format-version", "1", "--no-deps"],
+        arguments,
         root,
         environment.clone(),
         METADATA_DEADLINE,
@@ -444,12 +505,13 @@ pub(super) fn acquire_inventory(
         .map_err(|error| WorkspaceTestError::new(format!("metadata launch failed: {error}")))?
         .wait()
         .map_err(|error| WorkspaceTestError::new(format!("metadata wait failed: {error}")))?;
-    metadata_from_outcome(outcome, root)
+    metadata_from_outcome(outcome, root, require_resolution)
 }
 
 fn metadata_from_outcome(
     outcome: WaitOutcome,
     root: &Path,
+    require_resolution: bool,
 ) -> Result<Inventory, WorkspaceTestError> {
     match outcome.completion() {
         Completion::Exited(status) if status.success() => {}
@@ -471,15 +533,21 @@ fn metadata_from_outcome(
     }
     let metadata: Metadata = serde_json::from_slice(stdout.bytes())
         .map_err(|error| WorkspaceTestError::new(format!("cargo metadata was invalid: {error}")))?;
-    inventory_from_metadata(metadata, root)
+    inventory_from_metadata(metadata, root, require_resolution)
 }
 
-pub(super) fn inventory_from_metadata(
+fn inventory_from_metadata(
     metadata: Metadata,
     root: &Path,
+    require_resolution: bool,
 ) -> Result<Inventory, WorkspaceTestError> {
     let target_directory = metadata.target_directory.clone();
     let build_directory = metadata.build_directory.clone();
+    let resolution = if require_resolution {
+        resolved_inventory(&metadata, root)?
+    } else {
+        CargoResolution::default()
+    };
     let members = metadata
         .workspace_members
         .into_iter()
@@ -507,10 +575,124 @@ pub(super) fn inventory_from_metadata(
     validate_workspace_dependencies(&packages, root)?;
     Ok(Inventory {
         packages,
+        resolution,
         binary_outputs,
         target_directory,
         build_directory,
     })
+}
+
+fn resolved_inventory(
+    metadata: &Metadata,
+    root: &Path,
+) -> Result<CargoResolution, WorkspaceTestError> {
+    let selected_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let resolve = metadata.resolve.as_ref().ok_or_else(|| {
+        WorkspaceTestError::new("cargo metadata omitted the resolved dependency graph")
+    })?;
+    let mut packages = BTreeMap::new();
+    for package in &metadata.packages {
+        if package.version.is_empty() {
+            return Err(WorkspaceTestError::new(format!(
+                "Cargo package {:?} metadata omitted its version",
+                package.name,
+            )));
+        }
+        if !package.manifest_path.is_absolute() {
+            return Err(WorkspaceTestError::new(format!(
+                "Cargo package {:?} metadata named relative manifest {}",
+                package.name,
+                package.manifest_path.display(),
+            )));
+        }
+        let manifest = fs::canonicalize(&package.manifest_path)
+            .unwrap_or_else(|_| package.manifest_path.clone());
+        let package_root = manifest.parent().ok_or_else(|| {
+            WorkspaceTestError::new(format!(
+                "Cargo package {:?} has no manifest parent",
+                package.name,
+            ))
+        })?;
+        let authority_id = if package_root.starts_with(&selected_root) {
+            let relative = manifest.strip_prefix(&selected_root).map_err(|_| {
+                WorkspaceTestError::new(format!(
+                    "Cargo package {:?} manifest {} escapes selected root {}",
+                    package.name,
+                    manifest.display(),
+                    selected_root.display(),
+                ))
+            })?;
+            format!(
+                "path:{}#{}@{}",
+                relative
+                    .to_string_lossy()
+                    .replace(std::path::MAIN_SEPARATOR, "/"),
+                package.name,
+                package.version,
+            )
+        } else if let Some(source) = &package.source {
+            format!("{source}#{}@{}", package.name, package.version)
+        } else {
+            format!("external-path#{}@{}", package.name, package.version)
+        };
+        let mut compile_time_targets = package
+            .targets
+            .iter()
+            .flat_map(|target| {
+                target
+                    .kind
+                    .iter()
+                    .filter(|kind| matches!(kind.as_str(), "custom-build" | "proc-macro"))
+                    .map(|kind| ResolvedCompileTimeTarget {
+                        kind: kind.clone(),
+                        name: target.name.clone(),
+                    })
+            })
+            .collect::<Vec<_>>();
+        compile_time_targets.sort();
+        compile_time_targets.dedup();
+        let resolved = ResolvedPackage {
+            id: package.id.clone(),
+            authority_id,
+            name: package.name.clone(),
+            external: package.source.is_some() || !package_root.starts_with(&selected_root),
+            compile_time_targets,
+        };
+        if packages.insert(package.id.clone(), resolved).is_some() {
+            return Err(WorkspaceTestError::new(format!(
+                "cargo metadata repeats resolved package id {:?}",
+                package.id,
+            )));
+        }
+    }
+    let mut edges = BTreeMap::new();
+    for node in &resolve.nodes {
+        let mut dependencies = node.dependencies.clone();
+        dependencies.sort();
+        dependencies.dedup();
+        if edges.insert(node.id.clone(), dependencies).is_some() {
+            return Err(WorkspaceTestError::new(format!(
+                "cargo metadata repeats resolve node {:?}",
+                node.id,
+            )));
+        }
+    }
+    for (id, dependencies) in &edges {
+        if !packages.contains_key(id) {
+            return Err(WorkspaceTestError::new(format!(
+                "cargo resolve node {id:?} has no package identity",
+            )));
+        }
+        if let Some(missing) = dependencies
+            .iter()
+            .find(|dependency| !packages.contains_key(*dependency))
+        {
+            return Err(WorkspaceTestError::new(format!(
+                "cargo resolve node {id:?} names missing dependency {missing:?}",
+            )));
+        }
+    }
+    Ok(CargoResolution { packages, edges })
 }
 
 fn package_binary_outputs(package: &MetadataPackage) -> Vec<BinaryOutput> {

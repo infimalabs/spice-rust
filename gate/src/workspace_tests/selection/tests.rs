@@ -383,6 +383,7 @@ fn representative_inventory(root: &Path) -> Inventory {
         ),
     ];
     Inventory {
+        resolution: CargoResolution::default(),
         packages: vec![
             PackageInventory {
                 id: "steer".to_owned(),
@@ -431,6 +432,7 @@ fn canvas_scheduler_inventory(root: &Path) -> Inventory {
         target(&xtask_root, "xtask", "bin", "xtask", "src/main.rs"),
     ];
     Inventory {
+        resolution: CargoResolution::default(),
         packages: vec![
             PackageInventory {
                 id: "canvas".to_owned(),
@@ -498,6 +500,7 @@ fn deletion_inventory(root: &Path, with_removed: bool) -> Inventory {
     }
     targets.sort();
     Inventory {
+        resolution: CargoResolution::default(),
         packages: vec![PackageInventory {
             id: if with_removed {
                 "base-sample-id".to_owned()
