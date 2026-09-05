@@ -80,6 +80,14 @@ async function assertTopChromeSpacing(page, artifacts) {
     for (const [label, viewport] of viewports) {
       await page.setViewportSize(viewport);
       const bar = page.locator(".commandbar--mosaic");
+      const cursor = page.locator(".canvas-menu-cursor");
+      assert.equal(await cursor.count(), 1, `${label} renders one global cursor while closed`);
+      const cursorIdentity = await cursor.evaluate((node) => {
+        node.dataset.relocationIdentity = crypto.randomUUID();
+        return node.dataset.relocationIdentity;
+      });
+      assert.equal(await cursor.isVisible(), false, `${label} hides the global cursor with the closed menu`);
+      assert.equal(await page.locator(".brand-dots").count(), 0, `${label} omits the agent-light roster`);
       const geometry = await bar.evaluate((node) => {
         const box = (element) => {
           const rect = element.getBoundingClientRect();
@@ -151,6 +159,18 @@ async function assertTopChromeSpacing(page, artifacts) {
       await strip.evaluate((node) => { node.scrollLeft = 0; });
 
       const panel = await openSpiceMenu(page);
+      await page.screenshot({
+        path: join(artifacts, `canvas-menu-cursor-${viewport.width}x${viewport.height}.png`),
+        fullPage: false,
+      });
+      assert.equal(await cursor.count(), 1, `${label} keeps one global cursor while open`);
+      assert.equal(await cursor.isVisible(), true, `${label} reveals the global cursor with the open menu`);
+      assert.equal(
+        await cursor.getAttribute("data-relocation-identity"),
+        cursorIdentity,
+        `${label} preserves the global cursor node while opening`,
+      );
+      assert.equal(await page.locator(".brand-dots").count(), 0, `${label} keeps the agent-light roster removed`);
       const navigation = page.locator(".canvas-navigation");
       assert.deepEqual(
         await navigation.locator(".pill-label").allTextContents(),
@@ -195,6 +215,9 @@ async function assertTopChromeSpacing(page, artifacts) {
       const panelGeometry = await panel.evaluate((node) => {
         const rect = node.getBoundingClientRect();
         const summary = node.parentElement.querySelector(":scope > summary").getBoundingClientRect();
+        const row = node.querySelector(".canvas-menu-global-row").getBoundingClientRect();
+        const cursor = node.querySelector(".canvas-menu-cursor").getBoundingClientRect();
+        const fastMode = node.querySelector('[role="menuitemcheckbox"]').getBoundingClientRect();
         return {
           left: rect.left,
           right: rect.right,
@@ -203,6 +226,15 @@ async function assertTopChromeSpacing(page, artifacts) {
           summaryBottom: summary.bottom,
           viewportWidth: innerWidth,
           viewportHeight: innerHeight,
+          documentWidth: document.documentElement.scrollWidth,
+          rowLeft: row.left,
+          rowRight: row.right,
+          cursorLeft: cursor.left,
+          cursorRight: cursor.right,
+          fastModeLeft: fastMode.left,
+          fastModeRight: fastMode.right,
+          cursorPrecedesFastMode: node.querySelector(".canvas-menu-cursor").nextElementSibling
+            === node.querySelector('[role="menuitemcheckbox"]'),
         };
       });
       assert.ok(
@@ -213,6 +245,26 @@ async function assertTopChromeSpacing(page, artifacts) {
         panelGeometry.top >= panelGeometry.summaryBottom + 3.5
           && panelGeometry.bottom <= panelGeometry.viewportHeight + 0.5,
         `${label} anchors and bounds the Spice menu below its summary`,
+      );
+      assert.equal(
+        panelGeometry.cursorPrecedesFastMode,
+        true,
+        `${label} places the global cursor immediately before Fast mode`,
+      );
+      assert.ok(
+        panelGeometry.cursorLeft >= panelGeometry.rowLeft - 0.5
+          && panelGeometry.cursorRight <= panelGeometry.fastModeLeft + 0.5
+          && panelGeometry.fastModeRight <= panelGeometry.rowRight + 0.5,
+        `${label} keeps the cursor and Fast mode ordered without overlap inside the Global row`,
+      );
+      assert.ok(
+        panelGeometry.rowLeft >= panelGeometry.left - 0.5
+          && panelGeometry.rowRight <= panelGeometry.right + 0.5,
+        `${label} keeps the Global row inside the Spice menu`,
+      );
+      assert.ok(
+        panelGeometry.documentWidth <= panelGeometry.viewportWidth,
+        `${label} keeps the relocated cursor from causing page overflow`,
       );
       if (viewport.width <= 560) {
         await assertOverflowReachability(panel, label);
@@ -230,6 +282,15 @@ async function assertTopChromeSpacing(page, artifacts) {
         for (const fixture of fixtures) fixture.remove();
       });
       await page.locator(".canvas-menu > summary").click();
+      await waitForDisclosure(page, false, `${label} closes after cursor geometry checks`);
+      assert.equal(await cursor.count(), 1, `${label} keeps one global cursor after closing`);
+      assert.equal(await cursor.isVisible(), false, `${label} hides the global cursor after closing`);
+      assert.equal(
+        await cursor.getAttribute("data-relocation-identity"),
+        cursorIdentity,
+        `${label} preserves the global cursor node while closing`,
+      );
+      assert.equal(await page.locator(".brand-dots").count(), 0, `${label} does not restore the agent-light roster`);
     }
   } finally {
     await page.setViewportSize(previous);
@@ -244,10 +305,14 @@ async function waitForDisclosure(page, expanded, reason) {
     (expected) => {
       const menu = document.querySelector(".canvas-menu");
       const trigger = menu?.querySelector(":scope > summary");
+      const cursors = document.querySelectorAll(".canvas-menu-cursor");
+      const cursorVisible = cursors.length === 1 && cursors[0].checkVisibility();
       return trigger?.getAttribute("aria-expanded") === String(expected)
         && menu.hasAttribute("open") === expected
         && Boolean(document.querySelector(".canvas-navigation")) === expected
-        && Boolean(document.querySelector(".task-pill-strip"));
+        && Boolean(document.querySelector(".task-pill-strip"))
+        && cursorVisible === expected
+        && !document.querySelector(".brand-dots");
     },
     expanded,
   );
@@ -277,11 +342,17 @@ async function assertPepperDisclosure(page) {
       return node.dataset.menuIdentity;
     });
 
-    await trigger.evaluate((node) => node.click());
+    await trigger.evaluate((node) => node.dispatchEvent(new MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+    })));
     await waitForDisclosure(page, true, "programmatic open retains the task strip");
     assert.equal(await retainedPill.getAttribute("data-menu-identity"), identity);
     assert.equal(await retainedPill.evaluate((node) => document.activeElement === node), true);
-    await trigger.evaluate((node) => node.click());
+    await trigger.evaluate((node) => node.dispatchEvent(new MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+    })));
     await waitForDisclosure(page, false, "programmatic close retains the task strip");
     assert.equal(await retainedPill.evaluate((node) => document.activeElement === node), true);
 

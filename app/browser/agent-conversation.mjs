@@ -154,7 +154,7 @@ async function measurePips(locator, laneKey, statusKey) {
   }), { laneKey, statusKey });
 }
 
-async function assertThreeAgentPipArrow(page, console, artifacts) {
+async function assertThreeAgentTeamPips(page, console) {
   const lanes = teamLaneIds.slice(0, 3);
   const menu = page.locator(".canvas-menu");
   await menu.locator(":scope > summary").click();
@@ -186,34 +186,6 @@ async function assertThreeAgentPipArrow(page, console, artifacts) {
     "three team pip identities keep the established stack fill order",
   );
 
-  await chooseCanvasView(page, "Flow");
-  const brandPips = page.locator(".brand-dot");
-  await brandPips.nth(2).waitFor({ timeout: TRANSITION_MS });
-  assert.equal(await brandPips.count(), 3, "compact chrome renders the live three-agent roster");
-  const chromePips = await measurePips(brandPips, "agentLane", "agentStatus");
-  const chromeByLane = new Map(chromePips.map((pip) => [pip.lane, pip]));
-  const ordered = lanes.map((lane) => chromeByLane.get(lane));
-  assert.deepEqual(
-    ordered.map((pip) => [pip?.column, pip?.row]),
-    [["1", "1"], ["1", "2"], ["2", "2"]],
-    "the Canvas arrow puts the green right-edge agent at bottom right",
-  );
-  assert.deepEqual(
-    ordered.map((pip) => pip?.status),
-    lanes.map((lane) => teamByLane.get(lane)?.status),
-    "each arrow pip carries its lane's current team status",
-  );
-  const [upperLeft, lowerLeft, lowerRight] = ordered;
-  assert.equal(upperLeft.left, lowerLeft.left);
-  assert.ok(upperLeft.top < lowerLeft.top);
-  assert.ok(lowerLeft.left < lowerRight.left);
-  assert.equal(lowerLeft.top, lowerRight.top);
-  const viewport = page.viewportSize();
-  assert.ok(viewport, "the three-agent Canvas screenshot has a fixed viewport");
-  await page.screenshot({
-    path: join(artifacts, "canvas-pip-arrow-three.png"),
-    clip: { x: 0, y: 0, width: Math.min(viewport.width, 640), height: 180 },
-  });
   await chooseCanvasView(page, "Agents");
   await console.getByRole("tab", { name: /^Info/ }).click();
 }
@@ -281,7 +253,7 @@ export async function seatAgentTeam(
     await console.getByRole("button", { name: "Seat agent" }).click();
     await waitForElement(page, "next external agent seat renders", AGENT_SEAT_MS,
       console.locator(".team-detail-card").nth(index + 1));
-    if (index === 1 && artifacts) await assertThreeAgentPipArrow(page, console, artifacts);
+    if (index === 1) await assertThreeAgentTeamPips(page, console);
   }
   for (const lane of teamLaneIds) {
     const wake = await reply(fixture, ["lane", "wake", lane]);
@@ -1093,49 +1065,6 @@ async function assertRosterPips(page, console, seated, artifacts) {
   );
   await assertLaneHeaderPipMatrix(page, console, artifacts, "chromium", "light");
 
-  await chooseCanvasView(page, "Flow");
-  const brandPips = page.locator(".brand-dot");
-  await brandPips.nth(seated.length - 1).waitFor();
-  const chromeRoster = await brandPips.evaluateAll((pips) => pips.map((pip) => ({
-    lane: pip.dataset.agentLane,
-    status: pip.dataset.agentStatus,
-  })).sort((left, right) => left.lane.localeCompare(right.lane)));
-  assert.deepEqual(
-    chromeRoster,
-    teamRoster.map(({ lane, status }) => ({ lane, status })),
-    "the compact chrome roster preserves the live team identities and liveness states",
-  );
-  const chromePipGrid = await brandPips.evaluateAll((pips) => pips.map((pip) => {
-    const box = pip.getBoundingClientRect();
-    return {
-      column: pip.dataset.pipColumn,
-      lane: pip.dataset.agentLane,
-      left: box.left,
-      row: pip.dataset.pipRow,
-      top: box.top,
-    };
-  }));
-  const chromePipsByLane = new Map(chromePipGrid.map((pip) => [pip.lane, pip]));
-  const orderedPips = seated.map((member) => chromePipsByLane.get(member.lane));
-  assert.deepEqual(
-    orderedPips.map(({ column, row }) => [column, row]),
-    [["1", "1"], ["2", "1"], ["1", "2"], ["2", "2"]],
-    "compact pip identities follow the same right-edge member order",
-  );
-  assert.equal(orderedPips[0].left, orderedPips[2].left);
-  assert.ok(orderedPips[0].top < orderedPips[2].top);
-  assert.ok(orderedPips[1].left > orderedPips[0].left);
-  assert.equal(orderedPips[1].top, orderedPips[0].top);
-  assert.equal(orderedPips[1].left, orderedPips[3].left);
-  assert.equal(orderedPips[3].top, orderedPips[2].top);
-  assert.equal(
-    await page.locator("button.axis-button", { hasText: /^Mosaic/ }).count(),
-    0,
-    "analytic chrome keeps the layout implementation name private",
-  );
-  await chooseCanvasView(page, "Agents");
-  await console.waitFor();
-  await waitForMosaicReady(page);
 }
 
 async function assertQueuedRosterPip(page, console, member) {
@@ -1172,46 +1101,6 @@ async function assertQueuedRosterPip(page, console, member) {
     };
   });
 
-  await chooseCanvasView(page, "Flow");
-  const brandPip = page.locator(`.brand-dot[data-agent-lane="${member.lane}"]`);
-  assert.equal(await brandPip.count(), 1, "the queued member retains exactly one brand pip");
-  await waitForPage(page, "brand roster shows queued", TRANSITION_MS, (lane) => (
-    document.querySelector(`.brand-dot[data-agent-lane="${lane}"]`)
-      ?.getAttribute("data-agent-status") === "queued"
-  ), member.lane);
-  const brandRoster = await page.locator(".brand-dot").evaluateAll((pips) => pips.map((pip) => ({
-    column: pip.dataset.pipColumn,
-    lane: pip.dataset.agentLane,
-    row: pip.dataset.pipRow,
-    status: pip.dataset.agentStatus,
-  })));
-  assert.deepEqual(
-    brandRoster.filter(({ status }) => status === "queued").map(({ lane }) => lane),
-    [member.lane],
-    "only the directed member lights its global pip as queued",
-  );
-  const queuedBrandPip = brandRoster.find(({ lane }) => lane === member.lane);
-  assert.deepEqual(
-    [queuedBrandPip.column, queuedBrandPip.row],
-    ["1", "1"],
-    "the queued member keeps its reversed right-edge global-pip assignment",
-  );
-  const brandStyle = await brandPip.evaluate((pip) => {
-    const style = getComputedStyle(pip);
-    return {
-      backgroundColor: style.backgroundColor,
-      boxShadow: style.boxShadow,
-      opacity: style.opacity,
-    };
-  });
-  assert.deepEqual(
-    brandStyle,
-    teamStyle,
-    "a queued live member keeps the team roster's visible warning state in the brand roster",
-  );
-  assert.equal(brandStyle.opacity, "1", "queued direction never mutes an occupied agent");
-  assert.notEqual(brandStyle.boxShadow, "none", "the queued agent remains visibly lit");
-  await chooseCanvasView(page, "Agents");
-  await console.waitFor();
-  await waitForMosaicReady(page);
+  assert.equal(teamStyle.opacity, "1", "queued direction never mutes an occupied agent");
+  assert.notEqual(teamStyle.boxShadow, "none", "the queued agent remains visibly lit");
 }
