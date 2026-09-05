@@ -282,6 +282,79 @@ fn codex_startup_recovers_latest_boundary_beyond_the_canvas_tail_once() {
 }
 
 #[test]
+fn codex_startup_read_volume_depends_on_the_tail_not_older_epochs() {
+    const BOUNDARY: &str =
+        "{\"timestamp\":\"2030-04-12T19:44:09.271Z\",\"type\":\"compacted\",\"payload\":{}}\n";
+    let scratch = Scratch::new("codex-bounded-startup");
+    let transcript = scratch.transcript();
+    let filler = "x".repeat(1_800);
+    let mut older = String::new();
+    let mut expected_decoded = None;
+    for epochs in [1, 40] {
+        for _ in 0..epochs * 100 {
+            older.push_str(&codex_assistant_record(0, &filler));
+        }
+        let latest_offset = older.len() as u64;
+        let mut contents = older.clone();
+        contents.push_str(BOUNDARY);
+        for index in 0..40 {
+            contents.push_str(&codex_assistant_record(index, &filler));
+        }
+        fs::write(&transcript, &contents).expect("growing session is written");
+        let mut cursor = cursor(&transcript, listen::Dialect::Codex);
+        cursor.initialized = false;
+        BOOTSTRAP_BYTES_DECODED.with(|count| count.set(0));
+
+        let records = scan(&mut cursor).expect("bounded startup scans");
+
+        assert_eq!(
+            cursor.startup_recovery.expect("latest boundary").offset,
+            latest_offset
+        );
+        assert!(
+            records.is_empty(),
+            "the older boundary is outside the initial 25 cards"
+        );
+        let decoded = BOOTSTRAP_BYTES_DECODED.with(Cell::get);
+        assert_eq!(*expected_decoded.get_or_insert(decoded), decoded);
+        assert!(
+            decoded < 8 * INITIAL_WINDOW_BYTES,
+            "startup decoded {decoded} bytes"
+        );
+        assert_eq!(cursor.next, contents.len() as u64);
+    }
+}
+
+#[test]
+fn reverse_compaction_pages_cross_one_oversized_record_and_a_partial_tail() {
+    const BOUNDARY: &str =
+        "{\"timestamp\":\"2030-04-12T19:44:09.271Z\",\"type\":\"compacted\",\"payload\":{}}\n";
+    let scratch = Scratch::new("codex-oversized-reverse-page");
+    let transcript = scratch.transcript();
+    let mut contents = BOUNDARY.to_owned();
+    contents.push_str(&codex_assistant_record(0, &"x".repeat(100_000)));
+    let complete = contents.len() as u64;
+    contents.push_str("{\"timestamp\":\"2030-04-12T20:44:09.271Z\",\"type\":\"compacted\"");
+    fs::write(&transcript, &contents).expect("partial session is written");
+    let mut cursor = cursor(&transcript, listen::Dialect::Codex);
+    cursor.initialized = false;
+
+    let records = scan(&mut cursor).expect("large record makes backward progress");
+
+    assert_eq!(
+        cursor.startup_recovery.expect("completed boundary").offset,
+        0
+    );
+    assert_eq!(records.len(), 1);
+    assert_eq!(cursor.next, complete);
+    append(&transcript, b",\"payload\":{}}\n");
+    assert_eq!(
+        scan(&mut cursor).expect("partial record completes").len(),
+        1
+    );
+}
+
+#[test]
 fn incomplete_boundary_waits_for_its_jsonl_delimiter() {
     let scratch = Scratch::new("partial");
     let transcript = scratch.transcript();

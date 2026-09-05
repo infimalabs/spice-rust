@@ -92,6 +92,7 @@ struct PrefixAuthentication {
 #[cfg(test)]
 thread_local! {
     static VALIDATION_BYTES_READ: Cell<u64> = const { Cell::new(0) };
+    static BOOTSTRAP_BYTES_DECODED: Cell<u64> = const { Cell::new(0) };
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -371,8 +372,8 @@ fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
     advance_validation(cursor)
 }
 
-/// Recover durable Codex authority from the complete source while retaining
-/// only the bounded tail used for Canvas display.
+/// Find the latest durable Codex boundary by paging backward, independently
+/// of the visible Canvas tail. Older context epochs cannot change that boundary.
 fn bootstrap_codex(cursor: &mut Cursor, visible_limit: usize) -> io::Result<Vec<CompactionRecord>> {
     let checkpoint = history_checkpoint(&cursor.path)?;
     let mut recovery = Cursor::new(
@@ -381,13 +382,20 @@ fn bootstrap_codex(cursor: &mut Cursor, visible_limit: usize) -> io::Result<Vec<
         cursor.dialect,
         cursor.author,
     );
-    let (boundaries, _) = bootstrap_before(
-        &mut recovery,
-        usize::MAX,
-        Some(checkpoint.next),
-        Some(checkpoint.source),
-    )?;
-    let latest = boundaries.last().map(CompactionRecord::locus);
+    let mut end = checkpoint.next;
+    let latest = loop {
+        // A zero visible-card limit selects exactly one record-aligned byte
+        // window. Continue before that window, never replaying its suffix.
+        let (boundaries, start) =
+            bootstrap_before(&mut recovery, 0, Some(end), Some(checkpoint.source))?;
+        if let Some(boundary) = boundaries.last() {
+            break Some(boundary.locus());
+        }
+        if start == 0 {
+            break None;
+        }
+        end = start;
+    };
     let (display, _) = bootstrap_before(
         cursor,
         visible_limit,
@@ -460,6 +468,10 @@ fn bootstrap_before(
             if read == 0 || bytes.last() != Some(&b'\n') {
                 break;
             }
+            #[cfg(test)]
+            BOOTSTRAP_BYTES_DECODED.with(|count| {
+                count.set(count.get().saturating_add(read as u64));
+            });
             match decode_record(cursor, &bytes, &mut records) {
                 Ok(count) => visible = visible.saturating_add(count),
                 Err(error) => {
@@ -642,15 +654,23 @@ impl AgentMessagePublisher for HistoryMessages {
 }
 
 fn tail_start(file: &mut File, length: u64, bytes: u64) -> io::Result<u64> {
-    let candidate = length.saturating_sub(bytes);
-    if candidate == 0 {
-        return Ok(0);
+    let mut end = length.saturating_sub(bytes);
+    // Include the record crossing the requested boundary. Advancing to its
+    // next newline can produce an empty page forever when one record exceeds
+    // the byte window. Retreat in fixed reads, allowing one complete record
+    // to exceed the soft window bound.
+    let mut block = vec![0; INITIAL_WINDOW_BYTES as usize];
+    while end > 0 {
+        let start = end.saturating_sub(INITIAL_WINDOW_BYTES);
+        let count = usize::try_from(end - start).expect("one window fits usize");
+        file.seek(SeekFrom::Start(start))?;
+        file.read_exact(&mut block[..count])?;
+        if let Some(newline) = block[..count].iter().rposition(|byte| *byte == b'\n') {
+            return Ok(start + newline as u64 + 1);
+        }
+        end = start;
     }
-    file.seek(SeekFrom::Start(candidate))?;
-    let mut reader = BufReader::new(file);
-    let mut discarded = Vec::new();
-    let read = reader.read_until(b'\n', &mut discarded)?;
-    Ok(candidate.saturating_add(u64::try_from(read).expect("a record buffer length fits u64")))
+    Ok(0)
 }
 
 fn decode_record(
