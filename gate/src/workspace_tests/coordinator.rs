@@ -352,13 +352,9 @@ impl<'a, W: Write> Coordinator<'a, W> {
         if first.requires_exclusive_lane() {
             return None;
         }
-        self.pending.iter().position(|(_, shard)| {
-            !shard.requires_exclusive_lane()
-                && self
-                    .active
-                    .values()
-                    .all(|active| active.package != shard.label())
-        })
+        self.pending
+            .iter()
+            .position(|(_, shard)| !shard.requires_exclusive_lane())
     }
 
     fn launch(&mut self, index: usize, shard: ExecutionShard, targets: String, output_lane: usize) {
@@ -1136,37 +1132,6 @@ mod tests {
     );
 
     #[test]
-    fn active_package_defers_its_next_shard_but_not_an_independent_package() {
-        let environment = Environment::new(std::iter::empty::<(OsString, OsString)>())
-            .expect("empty fixture environment is valid");
-        let mut output = Vec::new();
-        let mut policy = fixture_policy();
-        policy.concurrency = 3;
-        let mut coordinator = Coordinator::from_execution_shards(
-            vec![package_shard("spice"), package_shard("canvas")],
-            PathBuf::from("."),
-            environment,
-            OsString::from("cargo"),
-            policy,
-            &mut output,
-        );
-        coordinator.active.insert(
-            2,
-            ActiveShard {
-                package: "spice".to_owned(),
-                targets: "lib:spice".to_owned(),
-                output_lane: 2,
-                started: Instant::now(),
-                observer: Arc::new(LastTest::default()),
-                exclusive: false,
-                thread: thread::spawn(|| {}),
-            },
-        );
-
-        assert_eq!(coordinator.startable_position(), Some(1));
-    }
-
-    #[test]
     fn healthy_shard_completes_after_the_retired_aggregate_deadline() {
         let environment = Environment::new(std::iter::empty::<(OsString, OsString)>())
             .expect("empty fixture environment is valid");
@@ -1328,18 +1293,6 @@ mod tests {
             reap: Duration::from_secs(2),
             grace: Duration::from_secs(1),
         }
-    }
-
-    fn package_shard(name: &str) -> ExecutionShard {
-        ExecutionShard::Cargo(PackageInventory {
-            id: format!("{name}-id"),
-            name: name.to_owned(),
-            root: PathBuf::from("."),
-            dependencies: Vec::new(),
-            declared_targets: Vec::new(),
-            removed_targets: Vec::new(),
-            targets: Vec::new(),
-        })
     }
 
     fn wait_for_group(path: &Path) -> u32 {

@@ -54,7 +54,8 @@ mod python;
 mod rust;
 
 pub(super) use compile::{
-    CompileCapture, CompileInvocation, run_compile_analysis, run_compile_analysis_with_wait,
+    CompileCapture, CompileFailure, CompileInvocation, CompileSuccess, run_compile_analysis,
+    run_compile_analysis_with_wait,
 };
 pub(super) use csharp::csharp_unused;
 pub(super) use python::python_typecheck;

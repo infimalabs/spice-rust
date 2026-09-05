@@ -17,8 +17,9 @@ use std::os::unix::fs::PermissionsExt as _;
 
 use super::{
     Analysis, CARGO, CARGO_BUILD_DIRECTORY, CARGO_TARGET_DIRECTORY, COMPILED_HOME_DIRECTORY,
-    CargoSelection, CompileCapture, CompileInvocation, CompilerResources, HOME_DIRECTORY,
-    RUSTC_WORKSPACE_WRAPPER, RUSTC_WRAPPER, run_compile_analysis_with_wait, tool_search_path,
+    CargoSelection, CompileCapture, CompileFailure, CompileInvocation, CompileSuccess,
+    CompilerResources, HOME_DIRECTORY, RUSTC_WORKSPACE_WRAPPER, RUSTC_WRAPPER,
+    run_compile_analysis_with_wait, tool_search_path,
 };
 use crate::measure::Bounds;
 use crate::toolchain::{
@@ -83,7 +84,7 @@ fn rust_typecheck_with_workspace(
     let analysis = match rust_environment(cargo, &workspace, resources.environment()) {
         Err(reason) => Analysis::terminal(ArmOutcome::ParseFailure, reason),
         Ok(environment) => {
-            let compiler_bounds = bounds.without_runtime_deadline_under_outer_supervisor();
+            let compiler_bounds = compiler_bounds(bounds);
             let reach = crate::workspace_tests::workspace_package_reach_at(
                 &workspace.source,
                 base,
@@ -92,79 +93,15 @@ fn rust_typecheck_with_workspace(
                 OsStr::new(cargo),
             );
             match reach.map(|reach| reach.cargo_check_units()) {
-                Ok(units) if !units.is_empty() => {
-                    let mut elapsed = Duration::ZERO;
-                    let mut observed_units = 0_u64;
-                    let mut refusal = None;
-                    let mut cargo_artifacts = Vec::new();
-                    let unit_count = units.len();
-                    let unit_identities = units
-                        .iter()
-                        .map(|unit| unit.identity())
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    for unit in units {
-                        let arguments = unit
-                            .arguments()
-                            .iter()
-                            .map(String::as_str)
-                            .collect::<Vec<_>>();
-                        let invocation = CompileInvocation {
-                            name: "package-and-target-addressed cargo native unit",
-                            program: cargo,
-                            arguments: &arguments,
-                            cwd: &workspace.source,
-                            capture: CompileCapture::CargoJsonTail,
-                        };
-                        match run_compile_analysis_with_wait(
-                            declaration.id,
-                            &workspace.source,
-                            invocation,
-                            &compiler_bounds,
-                            &environment,
-                            |code, message| FindingDetail::RustTypeOutput { code, message },
-                            wait.clone(),
-                        ) {
-                            Ok(success) => {
-                                observed_units = observed_units.saturating_add(1);
-                                elapsed = elapsed.saturating_add(success.elapsed());
-                                cargo_artifacts.extend(success.into_stdout());
-                                if cargo_artifacts.last().is_some_and(|byte| *byte != b'\n') {
-                                    cargo_artifacts.push(b'\n');
-                                }
-                            }
-                            Err(failure) => {
-                                let (analysis, duration) = failure.into_parts();
-                                if duration.is_some() {
-                                    observed_units = observed_units.saturating_add(1);
-                                }
-                                elapsed = duration
-                                    .map_or(elapsed, |duration| elapsed.saturating_add(duration));
-                                refusal = Some(analysis);
-                                break;
-                            }
-                        }
-                    }
-                    let analysis = refusal.unwrap_or_else(|| {
-                        Analysis::terminal(
-                            ArmOutcome::Passed,
-                            format!(
-                                "{} completed {unit_count} package-and-target-addressed native unit(s): [{unit_identities}]",
-                                declaration.id.as_str(),
-                            ),
-                        )
-                    });
-                    if observed_units > 0 {
-                        let mut analysis =
-                            analysis.timed(timing(elapsed, &compiler_bounds, observed_units));
-                        if analysis.outcome == ArmOutcome::Passed {
-                            analysis.cargo_artifacts = cargo_artifacts;
-                        }
-                        analysis
-                    } else {
-                        analysis
-                    }
-                }
+                Ok(units) if !units.is_empty() => analyze_units(
+                    declaration,
+                    &workspace,
+                    &environment,
+                    &compiler_bounds,
+                    cargo,
+                    units,
+                    wait,
+                ),
                 Ok(_) => Analysis::not_applicable(declaration),
                 Err(error) => Analysis::terminal(ArmOutcome::ParseFailure, error.to_string()),
             }
@@ -174,6 +111,107 @@ fn rust_typecheck_with_workspace(
         None => analysis,
         Some(reason) => Analysis::terminal(ArmOutcome::ParseFailure, reason),
     }
+}
+
+fn analyze_units(
+    declaration: ToolchainDeclaration,
+    workspace: &RustWorkspace,
+    environment: &Environment,
+    bounds: &Bounds,
+    cargo: &str,
+    units: Vec<crate::workspace_tests::RustCheckUnit>,
+    wait: Option<WaitPolicy>,
+) -> Analysis {
+    let unit_count = units.len();
+    let unit_identities = units
+        .iter()
+        .map(|unit| unit.identity())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut elapsed = Duration::ZERO;
+    let mut observed_units = 0_u64;
+    let mut refusal = None;
+    let mut cargo_artifacts = Vec::new();
+    for unit in units {
+        match analyze_unit(
+            declaration,
+            workspace,
+            environment,
+            bounds,
+            cargo,
+            &unit,
+            wait.clone(),
+        ) {
+            Ok(success) => {
+                observed_units = observed_units.saturating_add(1);
+                elapsed = elapsed.saturating_add(success.elapsed());
+                cargo_artifacts.extend(success.into_stdout());
+                if cargo_artifacts.last().is_some_and(|byte| *byte != b'\n') {
+                    cargo_artifacts.push(b'\n');
+                }
+            }
+            Err(failure) => {
+                let (analysis, duration) = failure.into_parts();
+                observed_units = observed_units.saturating_add(u64::from(duration.is_some()));
+                elapsed = duration.map_or(elapsed, |duration| elapsed.saturating_add(duration));
+                refusal = Some(analysis);
+                break;
+            }
+        }
+    }
+    let analysis = refusal.unwrap_or_else(|| {
+        Analysis::terminal(
+            ArmOutcome::Passed,
+            format!(
+                "{} completed {unit_count} package-and-target-addressed native unit(s): [{unit_identities}]",
+                declaration.id.as_str(),
+            ),
+        )
+    });
+    if observed_units == 0 {
+        return analysis;
+    }
+    let mut analysis = analysis.timed(timing(elapsed, bounds, observed_units));
+    if analysis.outcome == ArmOutcome::Passed {
+        analysis.cargo_artifacts = cargo_artifacts;
+    }
+    analysis
+}
+
+fn analyze_unit(
+    declaration: ToolchainDeclaration,
+    workspace: &RustWorkspace,
+    environment: &Environment,
+    bounds: &Bounds,
+    cargo: &str,
+    unit: &crate::workspace_tests::RustCheckUnit,
+    wait: Option<WaitPolicy>,
+) -> Result<CompileSuccess, CompileFailure> {
+    let arguments = unit
+        .arguments()
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let invocation = CompileInvocation {
+        name: "package-and-target-addressed cargo native unit",
+        program: cargo,
+        arguments: &arguments,
+        cwd: &workspace.source,
+        capture: CompileCapture::CargoJsonTail,
+    };
+    run_compile_analysis_with_wait(
+        declaration.id,
+        &workspace.source,
+        invocation,
+        bounds,
+        environment,
+        |code, message| FindingDetail::RustTypeOutput { code, message },
+        wait,
+    )
+}
+
+fn compiler_bounds(bounds: &Bounds) -> Bounds {
+    bounds.without_runtime_deadline_under_outer_supervisor()
 }
 
 fn timing(elapsed: Duration, bounds: &Bounds, observed_units: u64) -> ArmTiming {
