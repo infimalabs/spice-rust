@@ -31,34 +31,23 @@ async function installedSpice(resolvedGitCommonDirectory) {
   return path;
 }
 
-export async function buildResident({ app = true, gitCommonDirectory, commandRoot = root } = {}) {
+export async function buildResident({ app = true, gitCommonDirectory } = {}) {
   try {
     const installed = !prebuiltBinary || app
       ? await installedSpice(gitCommonDirectory)
       : undefined;
     if (!prebuiltBinary) {
-      const cargo = ["dev", "cargo", "--", "build", "--locked"];
-      if (commandRoot !== root) {
-        cargo.push("--manifest-path", join(root, "Cargo.toml"), "--target-dir", join(root, "target"));
-      } else {
-        cargo.push("--target-dir", "target");
-      }
-      cargo.push("-p", "spice", "--bin", "spice");
-      await execute(installed, cargo, {
-        cwd: commandRoot,
+      await execute(installed, [
+        "dev", "cargo", "--", "build", "--locked", "--target-dir", "target",
+        "-p", "spice", "--bin", "spice",
+      ], {
+        cwd: root,
         maxBuffer: 16 * 1024 * 1024,
       });
     }
     if (app) {
-      const xtask = commandRoot === root
-        ? ["dev", "xtask", "--", "app"]
-        : [
-            "dev", "cargo", "--", "run", "--quiet", "--locked",
-            "--manifest-path", join(root, "xtask/Cargo.toml"), "--bin", "xtask", "--",
-            "__canvas-proof-app", root, root,
-          ];
-      await execute(installed, xtask, {
-        cwd: commandRoot,
+      await execute(installed, ["dev", "xtask", "--", "app"], {
+        cwd: root,
         maxBuffer: 32 * 1024 * 1024,
       });
     }
