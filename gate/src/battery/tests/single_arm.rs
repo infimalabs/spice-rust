@@ -38,10 +38,12 @@ fn focused_reports_distinguish_clean_findings_and_executor_failure() {
     assert_eq!(fold, findings.refusal_fold());
     assert!(fold.as_bytes().len() <= BATTERY_REFUSAL_FOLD_MAX_BYTES);
     assert!(fold.as_str().contains("gate=file-shape state=unmeasured"));
-    assert!(fold.as_str().contains(concat!(
-        "full-evidence: \"$(/usr/bin/git rev-parse --path-format=absolute ",
-        "--git-common-dir)/.spice-install/bin/spice\" dev xtask -- gate --report file-shape"
-    )));
+    assert!(
+        fold.as_str()
+            .contains("full-evidence: spice dev xtask -- gate --report file-shape")
+    );
+    assert!(!fold.as_str().contains("git rev-parse"));
+    assert!(!fold.as_str().contains(".spice-install/bin/spice"));
     assert!(fold.as_str().contains(concat!(
         "battery refusal summary: total_arms=1 admitted_arms=0 ",
         "finding_arms=0 cannot_run_arms=1"

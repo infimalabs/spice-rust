@@ -426,9 +426,9 @@ fn a_pruned_image_names_the_loader_and_the_archive_it_takes() {
 
     let refusal = error.to_string();
     for named in [
-        "dev xtask -- proof-image load",
+        "spice dev xtask -- proof-image load",
         "target/proof-image/spice-proof-image.tar",
-        "dev xtask -- proof-image build",
+        "spice dev xtask -- proof-image build",
         "prune",
     ] {
         assert!(

@@ -4,16 +4,12 @@ This guide extends [INSTALL.md](INSTALL.md) with exceptional recovery workflows.
 Recovery repairs the exact selected appliance; installed hooks never search
 `PATH` or substitute Cargo, `xtask`, or a sidecar.
 
-For trust and resident recovery, resolve and validate the exact installed
-appliance:
+For trust and resident recovery, use the repository's supervised shell.
+Tracked wrapper policy resolves ambient `spice` to the validated Git-common
+appliance and refuses a missing, redirected, non-file, or non-executable asset:
 
 ```sh
-git_common=$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir) || exit
-spice_rs="${git_common}/.spice-install/bin/spice"
-if [ ! -f "$spice_rs" ] || [ -L "$spice_rs" ] || [ ! -x "$spice_rs" ]; then
-  printf '%s\n' "Rust Spice appliance is unavailable: $spice_rs" >&2
-  exit 1
-fi
+spice doctor
 ```
 
 ## Executable-policy refusal
@@ -23,7 +19,7 @@ diagnostic. The resident binds executable policy to the digest of those bytes.
 Inspect the active surface and durable ruling with:
 
 ```sh
-"$spice_rs" --json trust
+spice --json trust
 ```
 
 If the digest is unknown, restart the resident so it pends the exact policy
@@ -31,11 +27,11 @@ surface. Review the reported locations, inspect their exact bytes and command
 words, then grant only that digest:
 
 ```sh
-"$spice_rs" trust grant DIGEST
+spice trust grant DIGEST
 ```
 
 Any byte change has a different identity and requires its own review. Revoke an
-admitted identity explicitly with `"$spice_rs" trust revoke DIGEST`. Never
+admitted identity explicitly with `spice trust revoke DIGEST`. Never
 fabricate journal state, guess a digest, or treat a failed command as approval.
 
 ## Damaged appliance

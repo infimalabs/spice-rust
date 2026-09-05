@@ -20,26 +20,21 @@ Task, session, and steering authority belongs to the active harness. Native
 harness authority remains in force unless the invocation explicitly entered
 through an installed Spice bootstrap. Development surfaces such as `dev cargo`
 and `dev xtask` use only the exact Git-common Rust appliance; they do not
-establish or imply harness authority. Bind that appliance before the first
-isolated Cargo command:
+establish or imply harness authority. In a supervised repository shell,
+tracked wrapper policy resolves ambient `spice` to that appliance:
 
 ```sh
-git_common=$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir) || exit
-spice_rs="${git_common}/.spice-install/bin/spice"
-if [ ! -f "$spice_rs" ] || [ -L "$spice_rs" ] || [ ! -x "$spice_rs" ]; then
-  printf '%s\n' "Rust Spice appliance is unavailable: $spice_rs" >&2
-  exit 1
-fi
-"$spice_rs" dev cargo -- test --locked -p spice
-"$spice_rs" dev xtask -- verify --package spice
+spice dev cargo -- test --locked -p spice
+spice dev xtask -- verify --package spice
 ```
 
 Replace the trailing example argument vector with the exact Cargo or xtask
-operation required; retain the bound appliance and `dev ... --` boundary.
+operation required; retain the ambient appliance command and `dev ... --`
+boundary.
 
-A missing, symbolic, non-regular, or non-executable appliance is a hard stop.
-Do not search `PATH`, select another Cargo route, or point `CARGO_HOME` at a
-shared mutable cache to bypass that refusal.
+A missing, symbolic, non-regular, or non-executable appliance is a hard stop at
+wrapper resolution. Do not select another Cargo route or point `CARGO_HOME` at
+a shared mutable cache to bypass that refusal.
 
 Package directory entries are sealed after their atomic publication. Regular
 source files retain owner-write permission because supported Cargo build
@@ -49,13 +44,13 @@ Cargo's directory-source checksums reject changed package bytes during builds,
 and Spice inspection independently verifies every package tree digest and
 reports any permission or content drift without repairing it.
 
-Use `"$spice_rs" dev cargo -- CARGO_ARGS...` whenever a command may create
+Use `spice dev cargo -- CARGO_ARGS...` whenever a command may create
 or refresh `Cargo.lock`, or when a non-resident command needs the supported
-isolated boundary. Use `"$spice_rs" dev xtask -- XTASK_ARGS...` for the
+isolated boundary. Use `spice dev xtask -- XTASK_ARGS...` for the
 repository's build, verification, staging, cache, and refresh orchestrator; it
 prepares the same private home before expanding to the locked `xtask` package.
-Use `"$spice_rs" dev cargo-store` to inspect the owned schema
-and `"$spice_rs" dev cargo-store --cleanup` to remove only recognized expired
+Use `spice dev cargo-store` to inspect the owned schema
+and `spice dev cargo-store --cleanup` to remove only recognized expired
 temporary state and valid unreferenced generations/packages. Cleanup has a
 seven-day grace, retains all generations if any home has uncertain liveness,
 and reports malformed links, records, modes, file types, or digests rather than

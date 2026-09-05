@@ -71,7 +71,7 @@ impl fmt::Display for VerifyError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::RepositoryWideDisabled => formatter.write_str(
-                "[verify] repository-wide verification is disabled; use installed Spice `dev xtask -- verify --package PACKAGE` or the staged `spice gate selection` surface",
+                "[verify] repository-wide verification is disabled; use `spice dev xtask -- verify --package PACKAGE` or the staged `spice gate selection` surface",
             ),
             Self::Output(source) => write!(formatter, "[verify] output failed: {source}"),
             Self::Package(package) => write!(

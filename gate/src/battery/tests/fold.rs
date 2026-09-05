@@ -80,7 +80,7 @@ fn refusal_fold_lists_only_non_admitting_arms_in_canonical_order() {
         );
         assert!(
             text.contains(&format!(
-                "  full-evidence: \"$(/usr/bin/git rev-parse --path-format=absolute --git-common-dir)/.spice-install/bin/spice\" dev xtask -- gate --report {}",
+                "  full-evidence: spice dev xtask -- gate --report {}",
                 result.gate_id()
             )),
             "fold dropped the exact selected-arm command for {}",
@@ -307,10 +307,13 @@ fn fold_limit_is_deterministic_and_reports_omissions() {
             .as_str()
             .contains("reason=<omitted from bounded fold>")
     );
-    assert!(first.as_str().contains(concat!(
-        "full-evidence: \"$(/usr/bin/git rev-parse --path-format=absolute ",
-        "--git-common-dir)/.spice-install/bin/spice\" dev xtask -- gate --report file-shape"
-    )));
+    assert!(
+        first
+            .as_str()
+            .contains("full-evidence: spice dev xtask -- gate --report file-shape")
+    );
+    assert!(!first.as_str().contains("git rev-parse"));
+    assert!(!first.as_str().contains(".spice-install/bin/spice"));
     assert!(first.as_str().contains("omitted_arms=1 omitted_findings=1"));
 }
 
