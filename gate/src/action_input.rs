@@ -15,7 +15,8 @@ use crate::{ChangeReachObject, ChangeSelectionReport, GateId, SelectedFileMode, 
 pub const ACTION_INPUT_MANIFEST_VERSION: u64 = 1;
 
 /// Whether one current packaged arm can reuse prior proof.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ActionReuseClass {
     /// Staged content and declared non-file inputs determine the result.
     Cacheable,
@@ -476,7 +477,7 @@ pub struct ActionInputError {
 }
 
 impl ActionInputError {
-    fn new(detail: impl Into<String>) -> Self {
+    pub(crate) fn new(detail: impl Into<String>) -> Self {
         Self {
             detail: detail.into(),
         }

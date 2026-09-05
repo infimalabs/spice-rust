@@ -257,6 +257,7 @@ fn dispatch_native_gate_queries(contract: &cli::Contract, leaf: &clap::ArgMatche
         ["demo"] => deliver(&demo_command::run(leaf), form),
         ["gate"] => deliver(&gate_command::run(leaf), form),
         ["gate", "findings"] => deliver(&gate_command::findings(leaf, contract), form),
+        ["gate", "prove"] => deliver(&gate_command::prove(leaf), form),
         ["gate", "camp"] => deliver(&gate_command::camp(), form),
         ["gate", "commit-msg"] => deliver_commit_message(gate_command::commit_message(leaf), form),
         ["gate", "kill"] => deliver(&gate_command::kill(), form),
