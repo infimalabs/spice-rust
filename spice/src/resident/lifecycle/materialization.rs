@@ -12,6 +12,7 @@ use super::{CommandResult, store_fault};
 pub(super) struct Projection {
     cursor: Option<Seq>,
     ledger: steer::Ledger,
+    operator_directives: BTreeSet<CanonicalUuid>,
     entries: Vec<Entry>,
     heads: BTreeMap<TaskStamp, TaskHeads>,
     fact_instants: BTreeMap<Seq, Instant>,
@@ -36,6 +37,7 @@ struct EntryUpdate {
 
 struct AdvancePlan {
     cursor: Seq,
+    operator_directives: Vec<CanonicalUuid>,
     fact_instants: BTreeMap<Seq, Instant>,
     entries: BTreeMap<TaskStamp, EntryUpdate>,
     subscriptions: Vec<(TaskStamp, CanonicalUuid)>,
@@ -49,6 +51,7 @@ impl Projection {
         Self {
             cursor: None,
             ledger: steer::Ledger::new(),
+            operator_directives: BTreeSet::new(),
             entries: Vec::new(),
             heads: BTreeMap::new(),
             fact_instants: BTreeMap::new(),
@@ -66,8 +69,16 @@ impl Projection {
         &self.entries
     }
 
+    #[cfg(test)]
     pub(super) const fn ledger(&self) -> &steer::Ledger {
         &self.ledger
+    }
+
+    pub(super) fn has_operator_steering(&self, lane: CanonicalUuid) -> bool {
+        self.ledger
+            .pending(lane)
+            .iter()
+            .any(|directive| self.operator_directives.contains(&directive.directive()))
     }
 
     pub(super) const fn ready_at(&self) -> &BTreeMap<TaskStamp, Instant> {
@@ -146,6 +157,15 @@ impl Projection {
             .iter()
             .map(|fact| (fact.seq, fact.at))
             .collect::<BTreeMap<_, _>>();
+        let operator_directives = delta
+            .iter()
+            .filter_map(|envelope| {
+                envelope
+                    .fact
+                    .read::<wire::body::SteerSent>()
+                    .map(|body| body.directive)
+            })
+            .collect();
         let ready_at = affected
             .into_iter()
             .map(|task| {
@@ -155,6 +175,7 @@ impl Projection {
             .collect::<CommandResult<BTreeMap<_, _>>>()?;
         Ok(AdvancePlan {
             cursor,
+            operator_directives,
             fact_instants,
             entries,
             subscriptions,
@@ -289,6 +310,7 @@ impl Projection {
     }
 
     fn apply(&mut self, plan: AdvancePlan) {
+        self.operator_directives.extend(plan.operator_directives);
         self.fact_instants.extend(plan.fact_instants);
         for (task, update) in plan.entries {
             self.apply_entry(task, update);

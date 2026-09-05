@@ -606,7 +606,6 @@ fn project_targets(
     let projected_residency = projection
         .project_residency(residency.body())
         .map_err(|error| store_fault("lifecycle::subscription-history-invalid", &error))?;
-    let ledger = projection.ledger();
     let ready_at = projection.ready_at();
     let mut rows = projected_residency.lanes.iter().collect::<Vec<_>>();
     rows.sort_by_key(|row| row.lane);
@@ -619,7 +618,7 @@ fn project_targets(
         {
             continue;
         }
-        let pending_inbox = !ledger.pending(row.lane).is_empty();
+        let pending_inbox = projection.has_operator_steering(row.lane);
         let mut held = entries.iter().filter(|entry| {
             entry.claim().is_some_and(|claim| {
                 claim.disposition == ClaimDisposition::Active && claim.lane == row.lane

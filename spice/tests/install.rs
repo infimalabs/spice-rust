@@ -92,6 +92,30 @@ fn installed_skill_bounds_discretionary_review_corrections() {
 }
 
 #[test]
+fn installed_skill_makes_task_capture_conditional_without_weakening_guidance() {
+    let scratch = applied("conditional-guidance-capture");
+    let repository = scratch.repository();
+    let skill = fs::read_to_string(installed_skill(&repository)).unwrap();
+    let guidance = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    for required in [
+        "Consider and answer every pending key",
+        "Acknowledgment or adjustment of current work may satisfy guidance",
+        "create a task only when the operator explicitly requests one or its substance warrants a separately valuable deliverable",
+        "Resident-authored taste reminders, command-generated task hints, automatic task amendments, review follow-up notices, and other synthesized guidance do not themselves require or authorize another task",
+    ] {
+        assert!(
+            guidance.contains(required),
+            "installed skill omitted conditional guidance {required:?}"
+        );
+    }
+    assert!(
+        !guidance.contains("Capture pending steering as"),
+        "installed skill still makes every steering key create work"
+    );
+}
+
+#[test]
 fn linked_worktrees_share_one_common_install_and_receipt() {
     let scratch = Scratch::new("linked");
     let common = scratch.join(".git");
