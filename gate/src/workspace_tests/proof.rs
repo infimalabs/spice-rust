@@ -2,6 +2,10 @@
 
 use super::*;
 
+mod input_provenance;
+
+use input_provenance::selected_package_input_paths;
+
 const PROOF_CARGO_JOBS: usize = 1;
 const PROOF_TEST_THREADS: usize = 1;
 
@@ -131,6 +135,10 @@ pub struct CargoGateShardPlanning<'a> {
 
 pub(crate) struct CargoPackageInputClosure {
     pub(crate) input_paths: Vec<String>,
+    pub(crate) target_source_paths: Vec<String>,
+    pub(crate) file_macro_paths: Vec<String>,
+    pub(crate) compile_time_paths: Vec<String>,
+    pub(crate) workspace_configuration_paths: Vec<String>,
     pub(crate) non_cacheable_reason: Option<String>,
 }
 
@@ -144,17 +152,29 @@ pub(crate) fn cargo_package_input_closure_at(
 ) -> Result<CargoPackageInputClosure, WorkspaceTestError> {
     let inventory = acquire_resolved_inventory(root, environment, cargo)?;
     let mut input_paths = BTreeSet::new();
+    let mut target_source_paths = BTreeSet::new();
+    let mut file_macro_paths = BTreeSet::new();
+    let mut compile_time_paths = BTreeSet::new();
+    let mut workspace_configuration_paths = BTreeSet::new();
     let mut reasons = BTreeSet::new();
     for package in package_names {
         let authority =
             package_input_authority(&inventory, root, package, selected_paths, changed_sources)?;
         input_paths.extend(authority.input_paths);
+        target_source_paths.extend(authority.target_source_paths);
+        file_macro_paths.extend(authority.file_macro_paths);
+        compile_time_paths.extend(authority.compile_time_paths);
+        workspace_configuration_paths.extend(authority.workspace_configuration_paths);
         if let CargoShardReuse::NonCacheable { reason } = authority.reuse {
             reasons.insert(reason);
         }
     }
     Ok(CargoPackageInputClosure {
         input_paths: input_paths.into_iter().collect(),
+        target_source_paths: target_source_paths.into_iter().collect(),
+        file_macro_paths: file_macro_paths.into_iter().collect(),
+        compile_time_paths: compile_time_paths.into_iter().collect(),
+        workspace_configuration_paths: workspace_configuration_paths.into_iter().collect(),
         non_cacheable_reason: (!reasons.is_empty())
             .then(|| reasons.into_iter().collect::<Vec<_>>().join("; ")),
     })
@@ -381,6 +401,10 @@ fn test_shard(
 
 struct CargoPackageInputAuthority {
     input_paths: Vec<String>,
+    target_source_paths: Vec<String>,
+    file_macro_paths: Vec<String>,
+    compile_time_paths: Vec<String>,
+    workspace_configuration_paths: Vec<String>,
     producers: Vec<CargoCompileTimeProducer>,
     compile_time: Vec<CargoCompileTimeAuthority>,
     reuse: CargoShardReuse,
@@ -403,7 +427,7 @@ fn package_input_authority(
         })?;
     let (roots, external_local_dependencies) =
         reached_local_package_roots(inventory, &canonical_root, package);
-    let mut paths = selected_package_input_paths(
+    let mut inputs = selected_package_input_paths(
         inventory,
         &canonical_root,
         &roots,
@@ -416,12 +440,20 @@ fn package_input_authority(
         &canonical_root,
         &roots,
         selected_paths,
-        &mut paths,
+        &mut inputs.paths,
         &producers,
         &external_local_dependencies,
     );
+    let compile_time_paths = compile_time
+        .iter()
+        .flat_map(|authority| authority.input_paths.iter().cloned())
+        .collect::<BTreeSet<_>>();
     Ok(CargoPackageInputAuthority {
-        input_paths: paths.into_iter().collect(),
+        input_paths: inputs.paths.into_iter().collect(),
+        target_source_paths: inputs.target_sources.into_iter().collect(),
+        file_macro_paths: inputs.file_macros.into_iter().collect(),
+        compile_time_paths: compile_time_paths.into_iter().collect(),
+        workspace_configuration_paths: inputs.workspace_configuration.into_iter().collect(),
         producers,
         compile_time,
         reuse,
@@ -456,64 +488,6 @@ fn reached_local_package_roots(
         }
     }
     (roots, external)
-}
-
-fn selected_package_input_paths(
-    inventory: &Inventory,
-    canonical_root: &Path,
-    roots: &BTreeSet<PathBuf>,
-    selected_paths: &[String],
-    changed_sources: &[String],
-) -> Result<BTreeSet<String>, WorkspaceTestError> {
-    let relative_roots = roots
-        .iter()
-        .map(|path| {
-            path.strip_prefix(canonical_root)
-                .map(Path::to_path_buf)
-                .map_err(|_| {
-                    WorkspaceTestError::new(format!(
-                        "Cargo package root {} escapes selected root {}",
-                        path.display(),
-                        canonical_root.display(),
-                    ))
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut paths = selected_paths
-        .iter()
-        .filter(|path| {
-            let candidate = Path::new(path.as_str());
-            relative_roots
-                .iter()
-                .any(|root| candidate.starts_with(root))
-                || workspace_cargo_authority(candidate)
-        })
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    paths.extend(changed_sources.iter().cloned());
-    for package in inventory
-        .packages
-        .iter()
-        .filter(|package| roots.contains(&package.root))
-    {
-        for target in package
-            .declared_targets
-            .iter()
-            .chain(&package.removed_targets)
-        {
-            for declared in &target.declared_path_sources {
-                let relative = declared.path.strip_prefix(canonical_root).map_err(|_| {
-                    WorkspaceTestError::new(format!(
-                        "declared Cargo input {} escapes selected root {}",
-                        declared.path.display(),
-                        canonical_root.display(),
-                    ))
-                })?;
-                paths.insert(path_text(relative)?);
-            }
-        }
-    }
-    Ok(paths)
 }
 
 fn compile_time_reuse(
@@ -613,13 +587,6 @@ fn resolved_compile_time_producers(
     producers.sort();
     producers.dedup();
     Ok(producers)
-}
-
-fn workspace_cargo_authority(path: &Path) -> bool {
-    matches!(
-        path.to_str(),
-        Some("Cargo.toml" | "Cargo.lock" | "rust-toolchain" | "rust-toolchain.toml")
-    ) || path.starts_with(".cargo")
 }
 
 pub(super) fn path_text(path: &Path) -> Result<String, WorkspaceTestError> {

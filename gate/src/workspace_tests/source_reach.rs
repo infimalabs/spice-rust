@@ -23,6 +23,11 @@ struct DeclaredReach {
     public_namespace: bool,
 }
 
+struct DeclaredSource {
+    reach: DeclaredReach,
+    origins: BTreeSet<DeclaredPathSourceOrigin>,
+}
+
 #[derive(Eq, Ord, PartialEq, PartialOrd)]
 struct SourceVisit {
     source: PathBuf,
@@ -39,7 +44,7 @@ struct PublicUse {
 struct SourceGraph {
     selected_root: PathBuf,
     namespace_context: FileMacroCrateContext,
-    declared: BTreeMap<PathBuf, DeclaredReach>,
+    declared: BTreeMap<PathBuf, DeclaredSource>,
     visited: BTreeSet<SourceVisit>,
     exported_macros: BTreeSet<String>,
     conservative_downstream: bool,
@@ -653,9 +658,9 @@ pub(super) fn declared_path_sources(
         },
     )?;
     if graph.conservative_downstream {
-        for reach in graph.declared.values_mut() {
-            if !reach.test_only {
-                reach.dependent_tests = true;
+        for source in graph.declared.values_mut() {
+            if !source.reach.test_only {
+                source.reach.dependent_tests = true;
             }
         }
     }
@@ -663,10 +668,11 @@ pub(super) fn declared_path_sources(
     Ok(graph
         .declared
         .into_iter()
-        .map(|(path, reach)| DeclaredPathSource {
+        .map(|(path, source)| DeclaredPathSource {
             path,
-            test_only: reach.test_only,
-            dependent_tests: reach.dependent_tests,
+            test_only: source.reach.test_only,
+            dependent_tests: source.reach.dependent_tests,
+            origins: source.origins,
         })
         .collect())
 }
@@ -814,7 +820,7 @@ impl SourceGraph {
                 {
                     let module_source = fs::canonicalize(&module_source).unwrap_or(module_source);
                     let child_dir = child_module_dir(&module_source)?;
-                    record_declared_source(&mut self.declared, module_source.clone(), child_reach);
+                    self.record_module(module_source.clone(), child_reach);
                     self.collect_declared_sources(
                         &module_source,
                         SourceWalk {
@@ -840,7 +846,7 @@ impl SourceGraph {
         walk: &SourceWalk,
     ) -> Result<(), WorkspaceTestError> {
         let included = self.admit_file_macro_source(source, &reference)?;
-        record_declared_source(&mut self.declared, included.clone(), walk.reach);
+        self.record_file_macro(included.clone(), walk.reach);
         if matches!(reference.kind, FileMacroKind::Include) {
             self.collect_included_rust_source(
                 &included,
@@ -852,6 +858,24 @@ impl SourceGraph {
             )?;
         }
         Ok(())
+    }
+
+    fn record_module(&mut self, source: PathBuf, reach: DeclaredReach) {
+        record_declared_source(
+            &mut self.declared,
+            source,
+            reach,
+            DeclaredPathSourceOrigin::Module,
+        );
+    }
+
+    fn record_file_macro(&mut self, source: PathBuf, reach: DeclaredReach) {
+        record_declared_source(
+            &mut self.declared,
+            source,
+            reach,
+            DeclaredPathSourceOrigin::FileMacro,
+        );
     }
 
     fn admit_file_macro_source(
@@ -1373,20 +1397,25 @@ fn exact_cfg_test(attributes: &[syn::Attribute]) -> bool {
 }
 
 fn record_declared_source(
-    declared: &mut BTreeMap<PathBuf, DeclaredReach>,
+    declared: &mut BTreeMap<PathBuf, DeclaredSource>,
     source: PathBuf,
     reach: DeclaredReach,
+    origin: DeclaredPathSourceOrigin,
 ) {
     // One production edge is enough to make a multiply-declared source part
     // of ordinary library reach; test-only survives only when every edge is.
     declared
         .entry(source)
         .and_modify(|existing| {
-            existing.test_only &= reach.test_only;
-            existing.dependent_tests |= reach.dependent_tests;
-            existing.public_namespace |= reach.public_namespace;
+            existing.reach.test_only &= reach.test_only;
+            existing.reach.dependent_tests |= reach.dependent_tests;
+            existing.reach.public_namespace |= reach.public_namespace;
+            existing.origins.insert(origin);
         })
-        .or_insert(reach);
+        .or_insert_with(|| DeclaredSource {
+            reach,
+            origins: BTreeSet::from([origin]),
+        });
 }
 
 fn child_module_dir(source: &Path) -> Result<PathBuf, WorkspaceTestError> {

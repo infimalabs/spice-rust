@@ -188,11 +188,18 @@ pub(super) struct MissingBinaryOutput<'a> {
     pub(super) path: PathBuf,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(super) enum DeclaredPathSourceOrigin {
+    FileMacro,
+    Module,
+}
+
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct DeclaredPathSource {
     pub(super) path: PathBuf,
     pub(super) test_only: bool,
     pub(super) dependent_tests: bool,
+    pub(super) origins: BTreeSet<DeclaredPathSourceOrigin>,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]

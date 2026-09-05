@@ -57,6 +57,10 @@ pub(super) fn authority(
                     .into_iter()
                     .filter(|path| canvas_cargo_path(path)),
             );
+            authority.extend(cargo.target_source_paths);
+            authority.extend(cargo.file_macro_paths);
+            authority.extend(cargo.compile_time_paths);
+            authority.extend(cargo.workspace_configuration_paths);
             if let Some(reason) = cargo.non_cacheable_reason {
                 authority.reasons.insert(reason);
             }
@@ -354,6 +358,12 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
+    use crate::{
+        ActionKey, ActionKeyAuthority, ActionNonFileInput, ActionNonFileKind, ActionReuseClass,
+        ActionSpec, ActionSpecFields, Selector, compile_explicit_action_input,
+        derive_authority_bound_action_key, test_repository,
+    };
+    use wire::{Digest, Domain};
 
     struct Fixture(PathBuf);
 
@@ -538,5 +548,323 @@ mod tests {
                 .iter()
                 .any(|reason| reason.contains("external or generated inputs"))
         );
+    }
+
+    #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the Cargo closure fixture captures its own compiler environment"
+    )]
+    fn cargo_reached_browser_inputs_survive_without_admitting_browser_peers() {
+        let fixture = cargo_browser_fixture("cargo-browser-reach");
+        let selected = fixture.selected().into_iter().collect::<Vec<_>>();
+        let environment = Environment::new(std::env::vars_os()).expect("test environment");
+        let cargo = cargo_package_input_closure_at(
+            &fixture.0,
+            &selected,
+            &[],
+            &environment,
+            OsStr::new("cargo"),
+            &["xtask", "app"],
+        )
+        .expect("resolve fixture Cargo closure");
+
+        assert!(
+            cargo
+                .target_source_paths
+                .contains(&"app/browser/reached-module.rs".to_owned())
+        );
+        for path in [
+            "app/browser/reached-include.rs",
+            "app/browser/reached.txt",
+            "app/browser/reached.bin",
+        ] {
+            assert!(cargo.file_macro_paths.contains(&path.to_owned()));
+        }
+        assert!(
+            cargo
+                .compile_time_paths
+                .contains(&"app/browser/build-input.txt".to_owned())
+        );
+        assert!(
+            cargo
+                .workspace_configuration_paths
+                .contains(&"Cargo.lock".to_owned())
+        );
+        assert!(
+            cargo
+                .input_paths
+                .contains(&"app/browser/unreached.rs".to_owned())
+        );
+
+        let build = authority(
+            &fixture.0,
+            &selected,
+            &["app/browser/scenario.mjs".to_owned()],
+            &environment,
+            OsStr::new("cargo"),
+        );
+        assert!(
+            build.non_cacheable_reason.is_none(),
+            "unexpected refusal: {:?}",
+            build.non_cacheable_reason
+        );
+        for path in [
+            "app/browser/reached-module.rs",
+            "app/browser/reached-include.rs",
+            "app/browser/reached.txt",
+            "app/browser/reached.bin",
+            "app/browser/build-input.txt",
+        ] {
+            assert!(
+                build.input_paths.contains(&path.to_owned()),
+                "Canvas build closure omitted {path}"
+            );
+        }
+        for path in ["app/browser/scenario.mjs", "app/browser/unreached.rs"] {
+            assert!(
+                !build.input_paths.contains(&path.to_owned()),
+                "Canvas build closure admitted browser-only {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn cargo_reached_browser_input_moves_build_and_bound_shard_identity() {
+        let fixture = cargo_browser_fixture("cargo-browser-identity");
+        test_repository::initialize(&fixture.0);
+        test_repository::stage_all(&fixture.0);
+        test_repository::commit(&fixture.0, "seed Canvas browser authority");
+        let original = canvas_identities(&fixture.0, Selector::revision("HEAD"))
+            .expect("derive original Canvas identities");
+
+        let linked = fixture.0.with_extension("linked");
+        test_repository::create_linked_worktree(&fixture.0, &linked, "canvas-browser-peer");
+        assert_eq!(
+            canvas_identities(&linked, Selector::revision("HEAD"))
+                .expect("derive equivalent-root Canvas identities"),
+            original,
+            "equivalent roots must preserve every Canvas identity",
+        );
+        test_repository::remove_linked_worktree(&fixture.0, &linked);
+
+        fs::write(
+            fixture.0.join("app/browser/scenario.mjs"),
+            "export const SCENARIO = false;\n",
+        )
+        .expect("change browser-only source");
+        test_repository::stage(&fixture.0, &["app/browser/scenario.mjs"]);
+        let browser_only = canvas_identities(&fixture.0, Selector::staged())
+            .expect("derive browser-only Canvas identities");
+        assert_eq!(browser_only.0, original.0);
+        assert_eq!(browser_only.1, original.1);
+        assert_ne!(
+            browser_only.2, original.2,
+            "a browser-only source must move its shard without moving canvas:build",
+        );
+
+        fs::write(
+            fixture.0.join("app/browser/scenario.mjs"),
+            "export const SCENARIO = true;\n",
+        )
+        .expect("restore browser-only source");
+        fs::write(fixture.0.join("app/browser/reached.txt"), "changed text\n")
+            .expect("change Cargo-reached browser input");
+        test_repository::stage(
+            &fixture.0,
+            &["app/browser/scenario.mjs", "app/browser/reached.txt"],
+        );
+        let changed = canvas_identities(&fixture.0, Selector::staged())
+            .expect("derive changed Canvas identities");
+        assert_ne!(changed.0, original.0, "content must move the manifest");
+        assert_ne!(changed.1, original.1, "content must move canvas:build");
+        assert_ne!(
+            changed.2, original.2,
+            "content must move every build-bound shard",
+        );
+
+        #[cfg(target_family = "unix")]
+        {
+            set_executable(&fixture.0.join("app/browser/reached.txt"), true);
+            test_repository::stage(&fixture.0, &["app/browser/reached.txt"]);
+            let changed_mode = canvas_identities(&fixture.0, Selector::staged())
+                .expect("derive mode-changed Canvas identities");
+            assert_ne!(changed_mode.0, changed.0, "mode must move the manifest");
+            assert_ne!(changed_mode.1, changed.1, "mode must move canvas:build");
+            assert_ne!(
+                changed_mode.2, changed.2,
+                "mode must move every build-bound shard",
+            );
+        }
+
+        fs::remove_file(fixture.0.join("app/browser/reached.txt"))
+            .expect("remove Cargo-reached browser input");
+        test_repository::stage(&fixture.0, &["app/browser/reached.txt"]);
+        let refusal = canvas_identities(&fixture.0, Selector::staged())
+            .expect_err("a missing Cargo-reached input must refuse before identity");
+        assert!(
+            refusal.contains("is not readable selected-tree authority"),
+            "unexpected refusal: {refusal}",
+        );
+    }
+
+    fn cargo_browser_fixture(name: &str) -> Fixture {
+        Fixture::new(
+            name,
+            &[
+                (
+                    "Cargo.toml",
+                    "[workspace]\nmembers = [\"app\", \"xtask\"]\nresolver = \"3\"\n",
+                ),
+                (
+                    "Cargo.lock",
+                    concat!(
+                        "# This file is automatically @generated by Cargo.\n",
+                        "version = 4\n\n",
+                        "[[package]]\nname = \"app\"\nversion = \"0.0.0\"\n\n",
+                        "[[package]]\nname = \"xtask\"\nversion = \"0.0.0\"\n",
+                    ),
+                ),
+                (
+                    "app/Cargo.toml",
+                    concat!(
+                        "[package]\nname = \"app\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+                        "build = \"build.rs\"\n\n",
+                        "[package.metadata.spice.cargo-proof]\nversion = 1\ncomplete = true\n",
+                    ),
+                ),
+                (
+                    "app/build.rs",
+                    "fn main() { println!(\"cargo::rerun-if-changed=browser/build-input.txt\"); }\n",
+                ),
+                (
+                    "app/src/lib.rs",
+                    concat!(
+                        "#[path = \"../browser/reached-module.rs\"]\nmod reached_module;\n",
+                        "include!(\"../browser/reached-include.rs\");\n",
+                        "const TEXT: &str = include_str!(\"../browser/reached.txt\");\n",
+                        "const BYTES: &[u8] = include_bytes!(\"../browser/reached.bin\");\n",
+                    ),
+                ),
+                (
+                    "app/browser/canvas-proof-build.mjs",
+                    "import './canvas-build.mjs';\n",
+                ),
+                (
+                    "app/browser/canvas-build.mjs",
+                    "export const BUILD = true;\n",
+                ),
+                (
+                    "app/browser/reached-module.rs",
+                    "pub const MODULE: u8 = 1;\n",
+                ),
+                (
+                    "app/browser/reached-include.rs",
+                    "const INCLUDED: u8 = 1;\n",
+                ),
+                ("app/browser/reached.txt", "text\n"),
+                ("app/browser/reached.bin", "bytes\n"),
+                ("app/browser/build-input.txt", "build input\n"),
+                (
+                    "app/browser/scenario.mjs",
+                    "export const SCENARIO = true;\n",
+                ),
+                ("app/browser/unreached.rs", "pub const UNREACHED: u8 = 1;\n"),
+                (APP_INDEX, "<link data-trunk rel=\"rust\">\n"),
+                (
+                    "xtask/Cargo.toml",
+                    "[package]\nname = \"xtask\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+                ),
+                ("xtask/src/main.rs", "fn main() {}\n"),
+            ],
+        )
+    }
+
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the Canvas identity fixture captures its own compiler environment"
+    )]
+    fn canvas_identities(
+        repository: &Path,
+        selector: Selector,
+    ) -> Result<(Digest, ActionKey, ActionKey), String> {
+        let tree = selector
+            .materialize(repository)
+            .map_err(|error| error.to_string())?;
+        let environment =
+            Environment::new(std::env::vars_os()).map_err(|error| error.to_string())?;
+        let build = authority(
+            tree.root(),
+            tree.paths(),
+            &[],
+            &environment,
+            OsStr::new("cargo"),
+        );
+        if let Some(reason) = build.non_cacheable_reason {
+            return Err(reason);
+        }
+        let build_manifest = compile_explicit_action_input(&tree, build.input_paths, Vec::new())
+            .map_err(|error| error.to_string())?
+            .digest()
+            .map_err(|error| error.to_string())?;
+        let build_key = canvas_action_key("canvas:build", build_manifest.clone());
+        let build_binding = ActionNonFileInput::new(
+            ActionNonFileKind::Declaration,
+            "canvas-build-proof",
+            Digest::compute(Domain::GateActionKey, build_key.as_str().as_bytes()),
+        )
+        .map_err(|error| error.to_string())?;
+        let shard_manifest = compile_explicit_action_input(
+            &tree,
+            vec!["app/browser/scenario.mjs".to_owned()],
+            vec![build_binding],
+        )
+        .map_err(|error| error.to_string())?
+        .digest()
+        .map_err(|error| error.to_string())?;
+        let shard_key = canvas_action_key("canvas:shard:fixture", shard_manifest);
+        Ok((build_manifest, build_key, shard_key))
+    }
+
+    fn canvas_action_key(action: &str, input_manifest: Digest) -> ActionKey {
+        let spec = ActionSpec::new(ActionSpecFields {
+            action_id: action.to_owned(),
+            runner: "canvas-proof-fixture".to_owned(),
+            runner_version: 1,
+            declaration: "canvas-proof-fixture-v1".to_owned(),
+            argv: vec!["node".to_owned(), "fixture.mjs".to_owned()],
+            cwd: ".".to_owned(),
+            environment_names: Vec::new(),
+            tools: Vec::new(),
+            input_strategy: "canvas-fixture-v1".to_owned(),
+            reuse: ActionReuseClass::Cacheable,
+        })
+        .expect("construct Canvas fixture action specification");
+        derive_authority_bound_action_key(
+            &spec,
+            &ActionKeyAuthority {
+                input_manifest,
+                policy: canvas_authority_digest(b"policy"),
+                gate_set: canvas_authority_digest(b"gate-set"),
+                tools: canvas_authority_digest(b"tools"),
+                environment: canvas_authority_digest(b"environment"),
+                baseline: None,
+            },
+        )
+        .expect("derive Canvas fixture action key")
+    }
+
+    fn canvas_authority_digest(bytes: &[u8]) -> Digest {
+        Digest::compute(Domain::GateActionKey, bytes)
+    }
+
+    #[cfg(target_family = "unix")]
+    fn set_executable(path: &Path, executable: bool) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = fs::metadata(path).expect("read fixture mode").permissions();
+        let mode = if executable { 0o755 } else { 0o644 };
+        permissions.set_mode(mode);
+        fs::set_permissions(path, permissions).expect("set fixture mode");
     }
 }
