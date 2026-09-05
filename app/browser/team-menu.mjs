@@ -69,7 +69,12 @@ async function assertOverflowReachability(panel, label) {
   await panel.evaluate((node) => { node.scrollTop = 0; });
 }
 
-async function assertTopChromeSpacing(page, artifacts) {
+export async function captureCursorFailureArtifact(page, path, error) {
+  await page.screenshot({ path, fullPage: false });
+  throw error;
+}
+
+export async function assertCursorRelocation(page, artifacts, engine) {
   const previous = page.viewportSize();
   assert.ok(previous, "top chrome has a viewport to restore");
   const viewports = [
@@ -77,7 +82,8 @@ async function assertTopChromeSpacing(page, artifacts) {
     ["332px narrow", { width: 332, height: 720 }],
   ];
   try {
-    for (const [label, viewport] of viewports) {
+    for (const [viewportLabel, viewport] of viewports) {
+      const label = `${engine} ${viewportLabel}`;
       await page.setViewportSize(viewport);
       const bar = page.locator(".commandbar--mosaic");
       const cursor = page.locator(".canvas-menu-cursor");
@@ -169,7 +175,7 @@ async function assertTopChromeSpacing(page, artifacts) {
       await page.evaluate(() => { document.documentElement.style.fontSize = ""; });
       await page.mouse.move(0, 0);
       await trigger.evaluate((node) => node.blur());
-      if (label === "desktop") {
+      if (viewportLabel === "desktop" && engine === "chromium") {
         await trigger.screenshot({ path: join(artifacts, "canvas-fast-mode-inactive.png") });
       }
       assert.ok(
@@ -199,7 +205,7 @@ async function assertTopChromeSpacing(page, artifacts) {
 
       const panel = await openSpiceMenu(page);
       await page.screenshot({
-        path: join(artifacts, `canvas-menu-cursor-${viewport.width}x${viewport.height}.png`),
+        path: join(artifacts, `canvas-menu-cursor-${engine}-${viewport.width}x${viewport.height}.png`),
         fullPage: false,
       });
       assert.equal(await cursor.count(), 1, `${label} keeps one global cursor while open`);
@@ -312,8 +318,8 @@ async function assertTopChromeSpacing(page, artifacts) {
         path: join(
           artifacts,
           viewport.width <= 560
-            ? `canvas-menu-overflow-${viewport.width}x${viewport.height}.png`
-            : `canvas-menu-desktop-${viewport.width}x${viewport.height}.png`,
+            ? `canvas-menu-overflow-${engine}-${viewport.width}x${viewport.height}.png`
+            : `canvas-menu-desktop-${engine}-${viewport.width}x${viewport.height}.png`,
         ),
         fullPage: false,
       });
@@ -331,6 +337,13 @@ async function assertTopChromeSpacing(page, artifacts) {
       );
       assert.equal(await page.locator(".brand-dots").count(), 0, `${label} does not restore the agent-light roster`);
     }
+  } catch (error) {
+    const viewport = page.viewportSize() ?? previous;
+    await captureCursorFailureArtifact(
+      page,
+      join(artifacts, `canvas-menu-cursor-failure-${engine}-${viewport.width}x${viewport.height}.png`),
+      error,
+    );
   } finally {
     await page.setViewportSize(previous);
   }
@@ -508,7 +521,7 @@ async function assertResidentLineage(fixture, lane, lineage, policyLineage, reas
 /** Exercise the Agents-page Spice panel, shared navigation, and durable team moves. */
 export async function assertTeamMenu(page, fixture, artifacts) {
   await chooseCanvasView(page, "Agents");
-  await assertTopChromeSpacing(page, artifacts);
+  await assertCursorRelocation(page, artifacts, "chromium");
   await assertPepperDisclosure(page);
   await chooseCanvasView(page, "Topology");
   await page.getByRole("heading", { name: "Teams", exact: true }).waitFor();

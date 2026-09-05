@@ -19,6 +19,7 @@ import { assertLaneHeaderPipMatrix } from "./lane-header-pips.mjs";
 import { assertNaturalMessageFooterInsets } from "./message-card-reference.mjs";
 import { captureMessageStreamBoundaries } from "./message-stream-boundaries.mjs";
 import { assertCandidateMeasurementPaintAtomic } from "./mosaic-candidate-paint.mjs";
+import { assertCursorRelocation } from "./team-menu.mjs";
 import {
   assertQuoteBlockDensity,
   captureQuoteBlockDensity,
@@ -348,6 +349,7 @@ export async function assertFirefoxRestoredMosaic(
   try {
     await page.goto(endpoint, { waitUntil: "networkidle" });
     await chooseCanvasView(page, "Agents");
+    await assertCursorRelocation(page, artifacts, "firefox");
     const console = page.locator('[data-pane="agent-console"]');
     await console.getByRole("tab", { name: /^Compose/ }).click();
     await assertLaneHeaderPipMatrix(page, console, artifacts, "firefox", "dark");
