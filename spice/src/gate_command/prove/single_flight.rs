@@ -12,9 +12,18 @@ use super::{PreparedAction, ProveActionReport, ProveDisposition, ProveFailure, e
 #[path = "single_flight/tests.rs"]
 mod tests;
 
-const LEASE_LIFETIME: Duration = Duration::from_secs(30);
-const RENEW_INTERVAL: Duration = Duration::from_secs(10);
-const WAIT_LIMIT: Duration = Duration::from_secs(600);
+#[derive(Clone, Copy)]
+struct Timing {
+    lease_lifetime: Duration,
+    renew_interval: Duration,
+    wait_limit: Duration,
+}
+
+const PRODUCTION_TIMING: Timing = Timing {
+    lease_lifetime: Duration::from_secs(30),
+    renew_interval: Duration::from_secs(10),
+    wait_limit: Duration::from_secs(600),
+};
 
 pub(super) fn run(
     store: &EvidenceStore,
@@ -118,15 +127,25 @@ fn claim(
     action: &str,
     action_key: &gate::ActionKey,
 ) -> Result<Claim, ProveFailure> {
+    claim_with_timing(store, owner, action, action_key, PRODUCTION_TIMING)
+}
+
+fn claim_with_timing(
+    store: &EvidenceStore,
+    owner: &str,
+    action: &str,
+    action_key: &gate::ActionKey,
+    timing: Timing,
+) -> Result<Claim, ProveFailure> {
     if let Some(receipt) = store.lookup(action_key).map_err(ProveFailure::store)? {
         return present(action, action_key, receipt);
     }
     match store
-        .acquire_lease(action_key, owner, SystemTime::now(), LEASE_LIFETIME)
+        .acquire_lease(action_key, owner, SystemTime::now(), timing.lease_lifetime)
         .map_err(ProveFailure::store)?
     {
         LeaseAcquisition::Acquired { lease, .. } => {
-            return acquired(store, action, action_key, lease, false);
+            return acquired(store, action, action_key, lease, false, timing);
         }
         LeaseAcquisition::Failed {
             reason,
@@ -150,16 +169,16 @@ fn claim(
             return present(action, action_key, receipt);
         }
         match store
-            .acquire_lease(action_key, owner, SystemTime::now(), LEASE_LIFETIME)
+            .acquire_lease(action_key, owner, SystemTime::now(), timing.lease_lifetime)
             .map_err(ProveFailure::store)?
         {
             LeaseAcquisition::Acquired { lease, recovered } => {
-                return acquired(store, action, action_key, lease, !recovered);
+                return acquired(store, action, action_key, lease, !recovered, timing);
             }
             LeaseAcquisition::Busy {
                 expires_at_millis, ..
             } => {
-                let remaining = WAIT_LIMIT.saturating_sub(started.elapsed());
+                let remaining = timing.wait_limit.saturating_sub(started.elapsed());
                 if remaining.is_zero() {
                     return Err(ProveFailure::refusal(
                         "gate::prove-peer-action-timeout",
@@ -213,6 +232,7 @@ fn acquired(
     action_key: &gate::ActionKey,
     lease: EvidenceLease,
     released_by_peer: bool,
+    timing: Timing,
 ) -> Result<Claim, ProveFailure> {
     if let Some(receipt) = store.lookup(action_key).map_err(ProveFailure::store)? {
         store.release_lease(&lease).map_err(ProveFailure::store)?;
@@ -225,7 +245,7 @@ fn acquired(
             format!("action {action} was released without a receipt"),
         ));
     }
-    Ok(Claim::Lease(LeaseGuard::new(store.clone(), lease)))
+    Ok(Claim::Lease(LeaseGuard::new(store.clone(), lease, timing)))
 }
 
 fn shared_failure(reason: String, detail: String, fault: bool) -> ProveFailure {
@@ -247,19 +267,11 @@ struct LeaseGuard {
     stop: mpsc::Sender<()>,
     worker: Option<thread::JoinHandle<()>>,
     terminal: AtomicBool,
+    lease_lifetime: Duration,
 }
 
 impl LeaseGuard {
-    fn new(store: EvidenceStore, lease: EvidenceLease) -> Self {
-        Self::new_with_timing(store, lease, LEASE_LIFETIME, RENEW_INTERVAL)
-    }
-
-    fn new_with_timing(
-        store: EvidenceStore,
-        lease: EvidenceLease,
-        lifetime: Duration,
-        renew_interval: Duration,
-    ) -> Self {
+    fn new(store: EvidenceStore, lease: EvidenceLease, timing: Timing) -> Self {
         let lease = Arc::new(Mutex::new(lease));
         let failure = Arc::new(Mutex::new(None));
         let (stop, stopped) = mpsc::channel();
@@ -267,9 +279,9 @@ impl LeaseGuard {
         let worker_lease = Arc::clone(&lease);
         let worker_failure = Arc::clone(&failure);
         let worker = thread::spawn(move || {
-            while stopped.recv_timeout(renew_interval).is_err() {
+            while stopped.recv_timeout(timing.renew_interval).is_err() {
                 let mut lease = worker_lease.lock().expect("lease mutex is not poisoned");
-                match worker_store.renew_lease(&lease, SystemTime::now(), lifetime) {
+                match worker_store.renew_lease(&lease, SystemTime::now(), timing.lease_lifetime) {
                     Ok(renewed) => *lease = renewed,
                     Err(error) => {
                         *worker_failure
@@ -288,6 +300,7 @@ impl LeaseGuard {
             stop,
             worker: Some(worker),
             terminal: AtomicBool::new(false),
+            lease_lifetime: timing.lease_lifetime,
         }
     }
 
@@ -303,7 +316,7 @@ impl LeaseGuard {
         let mut lease = self.lease.lock().expect("lease mutex is not poisoned");
         *lease = self
             .store
-            .renew_lease(&lease, SystemTime::now(), LEASE_LIFETIME)
+            .renew_lease(&lease, SystemTime::now(), self.lease_lifetime)
             .map_err(ProveFailure::store)?;
         Ok(())
     }
