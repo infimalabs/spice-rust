@@ -94,6 +94,7 @@ Evidence lives under the canonical Git common directory:
   objects/<receipt-digest>
   actions/<action-key>
   leases/<action-key>
+  publication.json
   admissions/<candidate-tree>/<admission-digest>
   pending/<transaction-id>
   credit/<commit-oid>
@@ -101,6 +102,11 @@ Evidence lives under the canonical Git common directory:
 
 Objects are immutable and published by write, file sync, atomic rename, and
 directory sync. An action entry is a replaceable pointer to a validated object.
+Aggregate proof publication records every prior action pointer and newly created
+object in `publication.json` before exposing any of them. Every store reader
+holds the common store lock and rolls back a prepared journal before resolving
+an action, so a failed or interrupted aggregate publishes either every receipt
+and action pointer or none of them.
 Leases coordinate duplicate producers but grant no proof and expire by an
 explicit recorded deadline. Readers preserve corrupt or unsupported bytes for
 inspection and refuse them.

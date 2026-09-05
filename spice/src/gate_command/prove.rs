@@ -141,17 +141,21 @@ fn run(request: Request<'_>) -> Result<ProveReport, ProveFailure> {
 
 fn publish(
     store: &EvidenceStore,
-    pending: PendingReceipt,
-) -> Result<ProveActionReport, ProveFailure> {
-    let publication = store
-        .publish(&pending.receipt)
+    pending: Vec<PendingReceipt>,
+) -> Result<Vec<ProveActionReport>, ProveFailure> {
+    let publications = store
+        .publish_batch(pending.iter().map(|pending| &pending.receipt))
         .map_err(ProveFailure::store)?;
-    Ok(ProveActionReport {
-        action: pending.action,
-        action_key: pending.action_key,
-        disposition: ProveDisposition::Published,
-        receipt: publication.receipt().clone(),
-    })
+    Ok(pending
+        .into_iter()
+        .zip(publications)
+        .map(|(pending, publication)| ProveActionReport {
+            action: pending.action,
+            action_key: pending.action_key,
+            disposition: ProveDisposition::Published,
+            receipt: publication.receipt().clone(),
+        })
+        .collect())
 }
 
 fn complete_transaction<A, R, O, E>(
@@ -159,7 +163,7 @@ fn complete_transaction<A, R, O, E>(
     mut execute: impl FnMut(A) -> Result<R, E>,
     validate: impl FnOnce() -> Result<(), E>,
     cleanup: impl FnOnce() -> Result<(), E>,
-    mut publish: impl FnMut(R) -> Result<O, E>,
+    publish: impl FnOnce(Vec<R>) -> Result<Vec<O>, E>,
 ) -> Result<Vec<O>, E> {
     let executed = actions
         .into_iter()
@@ -170,7 +174,7 @@ fn complete_transaction<A, R, O, E>(
     let receipts = executed?;
     validated?;
     cleaned?;
-    receipts.into_iter().map(&mut publish).collect()
+    publish(receipts)
 }
 
 fn validate_source(
@@ -1048,7 +1052,7 @@ mod tests {
     #[test]
     fn interrupted_execution_cleans_up_without_reaching_publication() {
         let events = RefCell::new(Vec::new());
-        let result = complete_transaction(
+        let result: Result<Vec<u8>, &str> = complete_transaction(
             vec![1_u8, 2, 3],
             |action| {
                 events.borrow_mut().push(format!("execute-{action}"));
@@ -1066,9 +1070,9 @@ mod tests {
                 events.borrow_mut().push("cleanup".to_owned());
                 Ok(())
             },
-            |receipt| {
-                events.borrow_mut().push(format!("publish-{receipt}"));
-                Ok(receipt)
+            |receipts| {
+                events.borrow_mut().push("publish".to_owned());
+                Ok(receipts)
             },
         );
 
@@ -1093,9 +1097,9 @@ mod tests {
                 events.borrow_mut().push("cleanup".to_owned());
                 Ok(())
             },
-            |receipt| {
-                events.borrow_mut().push(format!("publish-{receipt}"));
-                Ok(receipt)
+            |receipts| {
+                events.borrow_mut().push(format!("publish-{receipts:?}"));
+                Ok(receipts)
             },
         );
 
@@ -1107,9 +1111,24 @@ mod tests {
                 "execute-2",
                 "validate",
                 "cleanup",
-                "publish-1",
-                "publish-2",
+                "publish-[1, 2]",
             ]
         );
+    }
+
+    #[test]
+    fn aggregate_publication_failure_returns_no_partial_reports() {
+        let result: Result<Vec<u8>, &str> = complete_transaction(
+            vec![1_u8, 2],
+            Ok::<_, &str>,
+            || Ok(()),
+            || Ok(()),
+            |receipts| {
+                assert_eq!(receipts, [1, 2]);
+                Err("later publication failed")
+            },
+        );
+
+        assert_eq!(result, Err("later publication failed"));
     }
 }

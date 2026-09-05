@@ -12,8 +12,10 @@ const STATE_DIRECTORY: &str = ".spice-rs";
 const STORE_DIRECTORY: &str = "gate-evidence";
 const VERSION_DIRECTORY: &str = "v1";
 const MARKER_FILE: &str = "store.json";
+const PUBLICATION_FILE: &str = "publication.json";
 const RECORD_LIMIT: u64 = MAX_RECEIPT_BYTES as u64;
 const METADATA_LIMIT: u64 = 64 * 1024;
+const PUBLICATION_LIMIT: u64 = 4 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub(super) struct Layout {
@@ -92,6 +94,9 @@ impl Layout {
     }
     pub(super) fn lease_path(&self, action: &ActionKey) -> PathBuf {
         self.leases.join(action.as_str())
+    }
+    pub(super) fn publication_path(&self) -> PathBuf {
+        self.root.join(PUBLICATION_FILE)
     }
 }
 
@@ -267,6 +272,49 @@ pub(super) fn publish_json(path: &Path, value: &impl Serialize) -> Result<(), Ev
         })
 }
 
+pub(super) fn read_publication(
+    layout: &Layout,
+) -> Result<Option<PublicationJournal>, EvidenceStoreError> {
+    let Some(bytes) = read_optional_regular(&layout.publication_path(), PUBLICATION_LIMIT)? else {
+        return Ok(None);
+    };
+    decode_canonical(&bytes, "gate-evidence::publication-journal-invalid").map(Some)
+}
+
+pub(super) fn publish_publication(
+    layout: &Layout,
+    journal: &PublicationJournal,
+) -> Result<(), EvidenceStoreError> {
+    let bytes = wire::encode(journal).map_err(|error| {
+        EvidenceStoreError::new(
+            "gate-evidence::publication-journal-invalid",
+            error.to_string(),
+        )
+    })?;
+    if bytes.len() as u64 > PUBLICATION_LIMIT {
+        return Err(EvidenceStoreError::new(
+            "gate-evidence::publication-journal-size-invalid",
+            format!(
+                "publication journal length {} is over {PUBLICATION_LIMIT}",
+                bytes.len()
+            ),
+        ));
+    }
+    publish_json(&layout.publication_path(), journal)
+}
+
+pub(super) fn remove_optional_file(path: &Path) -> Result<(), EvidenceStoreError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() => remove_file(path),
+        Ok(_) => Err(EvidenceStoreError::new(
+            "gate-evidence::record-type-invalid",
+            format!("{} is not a regular file", path.display()),
+        )),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(EvidenceStoreError::io("inspect record", path, error)),
+    }
+}
+
 pub(super) fn remove_file(path: &Path) -> Result<(), EvidenceStoreError> {
     fs::remove_file(path).map_err(|error| EvidenceStoreError::io("remove record", path, error))?;
     sync_directory(path.parent().expect("record has a parent"))
@@ -403,7 +451,10 @@ where
     Ok(value)
 }
 
-fn read_optional_regular(path: &Path, limit: u64) -> Result<Option<Vec<u8>>, EvidenceStoreError> {
+pub(super) fn read_optional_regular(
+    path: &Path,
+    limit: u64,
+) -> Result<Option<Vec<u8>>, EvidenceStoreError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
             if !metadata.file_type().is_file() {
