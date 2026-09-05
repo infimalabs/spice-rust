@@ -378,9 +378,6 @@ fn render_agent_message_footer(
                 aria-label={format!("Copy agent id for {attribution}")}
                 onclick={copy_author}
             ><span class="message-agent-label">{producer_label}</span></button>
-            if has_actions {
-                <span class="message-footer-separator" aria-hidden="true">{"\u{b7}"}</span>
-            }
         </span>
     };
     html! {

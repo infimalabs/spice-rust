@@ -103,7 +103,6 @@ async function assertMessageCardLayout(console, label) {
         ".message-attachments img",
         ".message-footer button",
         ".message-footer time",
-        ".message-footer-separator",
       ].join(", "))];
       const paintedBoxes = painted
         .map((child) => child.getBoundingClientRect())
@@ -156,7 +155,6 @@ export async function assertNaturalMessageFooterInsets(console, label) {
     const labelStyle = getComputedStyle(agentLabel);
     const agentBox = agent.getBoundingClientRect();
     const labelBox = agentLabel.getBoundingClientRect();
-    const separator = footer.querySelector(".message-footer-separator");
     const actions = [...footer.querySelectorAll(".card-action")]
       .map((action) => action.getBoundingClientRect());
     return {
@@ -195,7 +193,8 @@ export async function assertNaturalMessageFooterInsets(console, label) {
         labelScrollWidth: agentLabel.scrollWidth,
         labelTextOverflow: labelStyle.textOverflow,
         labelWhiteSpace: labelStyle.whiteSpace,
-        separatorLeft: separator?.getBoundingClientRect().left ?? null,
+        actionLeft: actions[0]?.left ?? null,
+        separatorCount: footer.querySelectorAll(".message-footer-separator").length,
       },
       insets: {
         bottom: card.bottom - Number.parseFloat(cardStyle.borderBottomWidth) - footerBox.bottom,
@@ -251,12 +250,12 @@ export async function assertNaturalMessageFooterInsets(console, label) {
       `${label} card ${card.key} renders its complete identity: ${JSON.stringify(card)}`,
     );
     assert.ok(
-      card.actionHeights.length === 0
-        ? card.identity.separatorLeft === null
-        : card.identity.separatorLeft !== null
-          && Math.abs(card.identity.separatorLeft - card.identity.agentRight - 6) <= 1
-          && Math.abs(card.identity.separatorLeft - card.identity.labelRight - 6) <= 1,
-      `${label} card ${card.key} aligns identity immediately before its separator: ${JSON.stringify(card)}`,
+      card.identity.separatorCount === 0
+        && (card.actionHeights.length === 0
+          ? card.identity.actionLeft === null
+          : Math.abs(card.identity.actionLeft - card.identity.agentRight - 6) <= 1
+            && Math.abs(card.identity.actionLeft - card.identity.labelRight - 6) <= 1),
+      `${label} card ${card.key} separates identity and actions without a visible dot: ${JSON.stringify(card)}`,
     );
   }
 }
@@ -499,12 +498,7 @@ async function captureReferenceView(page, console, artifacts, viewport, mode, ag
         whiteSpace: getComputedStyle(agent).whiteSpace,
       },
       age: { ...bounds(age), baseline: baseline(age) },
-      separator: article.querySelector(".message-footer-separator")
-        ? {
-          ...bounds(article.querySelector(".message-footer-separator")),
-          baseline: baseline(article.querySelector(".message-footer-separator")),
-        }
-        : null,
+      separatorCount: article.querySelectorAll(".message-footer-separator").length,
       actionGroup: actions ? bounds(actions) : null,
       actions: [...article.querySelectorAll(".message-actions button")].map((button) => {
         const icon = button.querySelector("[data-card-action-icon]");
@@ -578,9 +572,8 @@ async function captureReferenceView(page, console, artifacts, viewport, mode, ag
         fit.actionGroup.top >= fit.footer.top
         && fit.actionGroup.bottom <= fit.footer.bottom
         && fit.agent.right <= fit.actionGroup.left
-        && fit.separator !== null
-        && Math.abs(fit.separator.left - fit.agent.right - 6) <= 1
-        && Math.abs(fit.separator.left - fit.agent.labelRight - 6) <= 1
+        && Math.abs(fit.actionGroup.left - fit.agent.right - 6) <= 1
+        && Math.abs(fit.actionGroup.left - fit.agent.labelRight - 6) <= 1
       )
     )),
     `${viewport.label} footer actions stay coherent and separated: ${JSON.stringify(fits)}`,
@@ -588,14 +581,11 @@ async function captureReferenceView(page, console, artifacts, viewport, mode, ag
   const baselineFailures = fits.filter((fit) => (
     (fit.agent.height <= 16
       && Math.abs(fit.age.baseline - fit.agent.baseline) > BASELINE_TOLERANCE)
-      || (fit.separator !== null
-        && Math.abs(fit.separator.baseline - fit.agent.baseline) > BASELINE_TOLERANCE)
   )).map((fit) => ({
     actions: fit.actions.length,
     age: fit.age.baseline,
     agent: fit.agent.baseline,
     key: fit.key,
-    separator: fit.separator?.baseline ?? null,
   }));
   assert.deepEqual(
     baselineFailures,
@@ -621,8 +611,12 @@ async function captureReferenceView(page, console, artifacts, viewport, mode, ag
     `${viewport.label} keeps accessible 32px actions in keyboard order: ${JSON.stringify(fits)}`,
   );
   assert.ok(
-    fits.some((fit) => fit.actions.length === 0 && fit.separator === null),
-    `${viewport.label} includes a real no-action footer without an orphan separator: ${JSON.stringify(fits)}`,
+    fits.every((fit) => fit.separatorCount === 0),
+    `${viewport.label} renders no message-footer separator nodes: ${JSON.stringify(fits)}`,
+  );
+  assert.ok(
+    fits.some((fit) => fit.actions.length === 0),
+    `${viewport.label} includes a real no-action footer: ${JSON.stringify(fits)}`,
   );
   assert.ok(
     fits.some((fit) => fit.actions.length === actionLabels.length),
