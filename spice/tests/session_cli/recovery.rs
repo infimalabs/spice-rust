@@ -244,6 +244,171 @@ fn briefing_retains_an_end_only_mcp_outcome_as_unattributed_residue() {
     scratch.remove();
 }
 
+fn command_execution_companion() -> Value {
+    codex_event(
+        "2026-09-05T07:11:14.001Z",
+        "event_msg",
+        json!({"type": "item_completed", "item": {
+            "type": "CommandExecution",
+            "id": "exec-live",
+            "command": ["/bin/zsh", "-lc", "cargo test"],
+            "cwd": "file:///repo",
+            "process_id": 123,
+            "status": "completed",
+            "parsed_cmd": [],
+            "source": "unified_exec_startup",
+            "stdout": "Process exited with code 0",
+            "stderr": "",
+            "aggregated_output": "Process exited with code 0",
+            "formatted_output": "Process exited with code 0",
+            "exit_code": 0,
+            "duration": {"secs": 1, "nanos": 2},
+        }}),
+    )
+}
+
+fn item_completed_rows() -> Vec<Value> {
+    vec![
+        codex_event(
+            "2026-09-05T07:11:10Z",
+            "event_msg",
+            json!({"type": "task_started", "turn_id": "turn-live"}),
+        ),
+        codex_message(
+            "2026-09-05T07:11:11Z",
+            "user",
+            None,
+            "History before the companion records.",
+        ),
+        codex_event(
+            "2026-09-05T07:11:11.001Z",
+            "event_msg",
+            json!({"type": "item_completed", "item": {
+                "type": "UserMessage",
+                "id": "user-live",
+                "content": [{"type": "text", "text": "History before the companion records.", "text_elements": []}],
+            }}),
+        ),
+        codex_event(
+            "2026-09-05T07:11:12Z",
+            "event_msg",
+            json!({"type": "item_completed", "item": {
+                "type": "Reasoning",
+                "id": "reason-live",
+                "summary_text": [],
+                "raw_content": [],
+            }}),
+        ),
+        codex_event(
+            "2026-09-05T07:11:12.001Z",
+            "response_item",
+            json!({"type": "reasoning", "id": "reason-live", "summary": []}),
+        ),
+        codex_event(
+            "2026-09-05T07:11:13Z",
+            "event_msg",
+            json!({"type": "item_completed", "item": {
+                "type": "AgentMessage",
+                "id": "message-live",
+                "content": [{"type": "Text", "text": "One commentary line."}],
+                "phase": "commentary",
+            }}),
+        ),
+        codex_message(
+            "2026-09-05T07:11:13.001Z",
+            "assistant",
+            Some("commentary"),
+            "One commentary line.",
+        ),
+        codex_event(
+            "2026-09-05T07:11:14Z",
+            "response_item",
+            json!({
+                "type": "function_call",
+                "name": "exec_command",
+                "call_id": "call-live",
+                "arguments": r#"{"cmd":"cargo test"}"#,
+            }),
+        ),
+        command_execution_companion(),
+        codex_event(
+            "2026-09-05T07:11:14.002Z",
+            "response_item",
+            json!({
+                "type": "function_call_output",
+                "call_id": "call-live",
+                "output": "Process exited with code 0",
+            }),
+        ),
+        codex_event(
+            "2026-09-05T07:11:15Z",
+            "event_msg",
+            json!({"type": "item_completed", "item": {
+                "type": "FutureItem",
+                "id": "future-live",
+            }}),
+        ),
+        codex_message(
+            "2026-09-05T07:11:16Z",
+            "assistant",
+            Some("final_answer"),
+            "History after the unknown companion remains typed.",
+        ),
+        codex_event(
+            "2026-09-05T07:11:16.001Z",
+            "event_msg",
+            json!({"type": "item_completed", "item": {
+                "type": "AgentMessage",
+                "id": "final-live",
+                "content": [{"type": "Text", "text": "History after the unknown companion remains typed."}],
+                "phase": "final_answer",
+            }}),
+        ),
+        codex_event(
+            "2026-09-05T07:11:17Z",
+            "event_msg",
+            json!({"type": "task_complete", "turn_id": "turn-live"}),
+        ),
+    ]
+}
+
+#[test]
+fn briefing_reads_item_completed_companions_without_duplicate_history() {
+    let scratch = Scratch::new("item-completed");
+    let transcript = scratch.path().join("codex-session.jsonl");
+    write_jsonl(&transcript, &item_completed_rows());
+    let file = transcript.to_string_lossy().into_owned();
+
+    let recall = reply_forms(&strings(&["session", "briefing", &file]), &[], "recall");
+    assert_eq!(recall["window"]["turns"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        recall["window"]["turns"][0]["dialogue"],
+        json!([
+            {"side": "user", "text": "History before the companion records."},
+            {"side": "assistant", "text": "One commentary line."},
+            {"side": "assistant", "text": "History after the unknown companion remains typed."},
+        ])
+    );
+    assert_eq!(recall["window"]["turns"][0]["commands"], 1);
+    assert_eq!(recall["residues"].as_array().map(Vec::len), Some(1));
+    assert_eq!(recall["residues"][0]["line"], 11);
+    assert_eq!(recall["residues"][0]["kind"], "record-version-drift");
+    assert!(
+        recall["residues"][0]["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("event_msg:item_completed:FutureItem"))
+    );
+
+    let commands = reply_forms(
+        &strings(&["session", "commands", &file, "--limit", "5"]),
+        &[],
+        "commands",
+    );
+    assert_eq!(commands["rows"].as_array().map(Vec::len), Some(1));
+    assert_eq!(commands["rows"][0]["command"], "cargo test");
+    scratch.remove();
+}
+
 #[test]
 fn live_thread_briefing_accounts_final_truncated_record_without_blocking() {
     let scratch = Scratch::new("live-tail");

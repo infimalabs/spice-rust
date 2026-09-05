@@ -268,6 +268,7 @@ fn rollout_event(record: &Object, locus: Locus) -> Events {
         "mcp_tool_call_end" => rollout_mcp_result(payload, locus),
         "web_search_end" => rollout_web_search_end(payload, locus),
         "token_count" => rollout_usage(payload, locus),
+        "item_completed" => rollout_completed_item_companion(payload),
         "agent_message"
         | "user_message"
         | "thread_settings_applied"
@@ -275,6 +276,17 @@ fn rollout_event(record: &Object, locus: Locus) -> Events {
         | "context_compacted"
         | "turn_aborted" => Ok(Vec::new()),
         other => Err(drift(&format!("event_msg:{other}"))),
+    }
+}
+
+fn rollout_completed_item_companion(payload: &Object) -> Events {
+    let item = object(payload, "item")?;
+    match string(item, "type")? {
+        "UserMessage" | "AgentMessage" | "Reasoning" | "CommandExecution" => {
+            string(item, "id")?;
+            Ok(Vec::new())
+        }
+        other => Err(drift(&format!("event_msg:item_completed:{other}"))),
     }
 }
 

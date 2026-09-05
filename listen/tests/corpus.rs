@@ -547,6 +547,50 @@ fn persisted_records_publish_vendor_neutral_context_and_facts() {
 }
 
 #[test]
+fn codex_item_completed_variants_are_typed_non_emitting_companions() {
+    let companions: &[(&str, &[u8])] = &[
+        (
+            "UserMessage",
+            br#"{"timestamp":"2026-09-05T07:11:13.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","id":"user-1","content":[{"type":"text","text":"inspect","text_elements":[]}]}}}"#,
+        ),
+        (
+            "AgentMessage",
+            br#"{"timestamp":"2026-09-05T07:11:14.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","id":"message-1","content":[{"type":"Text","text":"working"}],"phase":"commentary"}}}"#,
+        ),
+        (
+            "Reasoning",
+            br#"{"timestamp":"2026-09-05T07:11:15.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"Reasoning","id":"reasoning-1","summary_text":[],"raw_content":[]}}}"#,
+        ),
+        (
+            "CommandExecution",
+            br#"{"timestamp":"2026-09-05T07:11:16.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"CommandExecution","id":"exec-1","command":["/bin/zsh","-lc","cargo test"],"cwd":"file:///repo","process_id":123,"status":"completed","parsed_cmd":[],"source":"unified_exec_startup","stdout":"ok","stderr":"","aggregated_output":"ok","formatted_output":"ok","exit_code":0,"duration":{"secs":1,"nanos":2}}}}"#,
+        ),
+    ];
+
+    for (kind, bytes) in companions {
+        let detected = decode_record(None, bytes, locus(bytes))
+            .unwrap_or_else(|error| panic!("{kind} companion must decode: {error}"));
+        assert_eq!(detected.dialect, Dialect::Codex);
+        assert!(matches!(
+            detected.decoded,
+            Decoded::Events { context, events }
+                if context.timestamp.is_some() && events.is_empty()
+        ));
+    }
+
+    let unknown = br#"{"timestamp":"2026-09-05T07:11:17.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"FutureItem"}}}"#;
+    let detected = decode_record(None, unknown, locus(unknown))
+        .expect("an unknown nested item remains bounded Codex residue");
+    assert!(matches!(
+        detected.decoded,
+        Decoded::Residue(ref residue)
+            if residue.kind == ResidueKind::VersionDrift {
+                discriminator: "event_msg:item_completed:FutureItem".to_owned(),
+            } && residue.accounted_bytes() == unknown.len() as u64
+    ));
+}
+
+#[test]
 fn persisted_codex_web_search_pair_uses_the_end_events_source_identity() {
     let search_end = br#"{"timestamp":"2026-06-12T18:59:47.314Z","type":"event_msg","payload":{"type":"web_search_end","call_id":"ws_09bd33a115eacab3016a2c571aa61c8195b63bcd7cc43b6883","query":"site:pypi.org/project/spice spice PyPI","action":{"type":"search","query":"site:pypi.org/project/spice spice PyPI","queries":["site:pypi.org/project/spice spice PyPI","PEP 541 Package Index Name Retention abandoned project no releases","PyPI support PEP 541 name request issue template","site:github.com/pypi/support spice PEP 541"]}}}"#;
     let companion = br#"{"timestamp":"2026-06-12T18:59:47.323Z","type":"response_item","payload":{"type":"web_search_call","status":"completed","action":{"type":"search","query":"site:pypi.org/project/spice spice PyPI","queries":["site:pypi.org/project/spice spice PyPI","PEP 541 Package Index Name Retention abandoned project no releases","PyPI support PEP 541 name request issue template","site:github.com/pypi/support spice PEP 541"]}}}"#;
