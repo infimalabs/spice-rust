@@ -34,6 +34,8 @@ pub struct Inputs {
     pub lane: CanonicalUuid,
     /// Fresh or exact-session continuation.
     pub resume: vendor::Resume,
+    /// Authoritative global fast-mode value for vendors that support it.
+    pub fast_mode: bool,
 }
 
 /// Complete deterministic inputs to vendor rendering and the process door.
@@ -163,7 +165,7 @@ fn compose_with_registry(
             model: configured.model.to_owned(),
             effort: configured.effort,
             personality: configured.personality.map(str::to_owned),
-            fast_mode: configured.fast_mode,
+            fast_mode: configured.fast_mode.map(|_| inputs.fast_mode),
             attribution,
             hook,
             steering_key,
@@ -269,6 +271,7 @@ mod tests {
                 environment: Environment::empty(),
                 lane: LANE.parse().expect("fixture lane"),
                 resume: vendor::Resume::Fresh,
+                fast_mode: false,
             },
             &registry,
         )

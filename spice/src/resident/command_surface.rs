@@ -11,7 +11,7 @@ use wire::{Actor, CanonicalUuid, CommandKind, Outcome, Refusal, Reply};
 use super::{
     RuntimePaths, SurfaceConfig, dispatch_release_publish, dispatch_up_change, effort_surface,
     lane_recovery, lane_surface, lifecycle, policy_surface, read_materializations::CurrentReads,
-    steering,
+    settings_surface, steering,
 };
 
 pub(super) struct Surface<'a> {
@@ -222,6 +222,12 @@ impl<'a> Surface<'a> {
             (CommandKind::EffortRead, Intent::EffortRead(read)) => {
                 Some(effort_surface::read(self.reads, read))
             }
+            (CommandKind::GlobalSettingsRead, Intent::GlobalSettingsRead(_)) => {
+                Some(settings_surface::read(self.bus))
+            }
+            (CommandKind::GlobalSettingsSet, Intent::GlobalSettingsSet(settings)) => Some(
+                settings_surface::set(self.bus, self.epoch, command, settings),
+            ),
             (CommandKind::ConsentRead, Intent::ConsentRead(_)) => {
                 Some(policy_surface::read(self.reads, &self.config.consent))
             }

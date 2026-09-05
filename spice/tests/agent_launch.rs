@@ -26,6 +26,7 @@ fn inputs(vendor: &str, environment: Environment, resume: Resume) -> Inputs {
         environment,
         lane: LANE.parse::<CanonicalUuid>().expect("fixture lane"),
         resume,
+        fast_mode: true,
     }
 }
 
@@ -74,6 +75,10 @@ auto_compact_window_tokens = 123456
     assert_eq!(launch.model, "opus");
     assert_eq!(launch.effort, Effort::Max);
     assert_eq!(launch.attribution, Attribution::Withheld);
+    assert_eq!(
+        launch.fast_mode, None,
+        "unsupported Claude launches receive no invalid fast-mode option"
+    );
     assert_eq!(
         root.policy()
             .commit_message()
@@ -234,6 +239,11 @@ fast_mode = false
     assert_eq!(resumed.launch().effort, fresh.launch().effort);
     assert_eq!(resumed.launch().personality, fresh.launch().personality);
     assert_eq!(resumed.launch().fast_mode, fresh.launch().fast_mode);
+    assert_eq!(
+        resumed.launch().fast_mode,
+        Some(true),
+        "fresh and resumed Codex launches use the authoritative global value"
+    );
     assert_eq!(resumed.launch().hook, fresh.launch().hook);
     assert_eq!(resumed.launch().mcp, fresh.launch().mcp);
     assert_eq!(resumed.launch().steering_key, fresh.launch().steering_key);

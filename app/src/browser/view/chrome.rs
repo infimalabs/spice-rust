@@ -129,6 +129,9 @@ fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunti
 }
 
 fn render_canvas_menu(render: &CommandBarRender<'_>, runtime: Option<&CanvasRuntime>) -> Html {
+    let fast_mode = runtime
+        .and_then(CanvasRuntime::settings)
+        .is_some_and(|settings| settings.fast_mode);
     let menu_open = render.menu_open.clone();
     let toggle = Callback::from(move |event: MouseEvent| {
         event.prevent_default();
@@ -137,12 +140,18 @@ fn render_canvas_menu(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunt
     html! {
         <details class="canvas-menu" open={**render.menu_open}>
             <summary
+                class={fast_mode.then_some("canvas-menu-trigger--fast")}
                 aria-label="Open Spice Canvas menu"
                 aria-haspopup="menu"
                 aria-expanded={(**render.menu_open).to_string()}
-                title="Open Spice Canvas menu"
+                title={if fast_mode {
+                    "Open Spice Canvas menu - fast mode on"
+                } else {
+                    "Open Spice Canvas menu"
+                }}
                 onclick={toggle}
             >
+                <span class="canvas-menu-flame" aria-hidden="true">{"🔥"}</span>
                 <span class="canvas-menu-pepper" aria-hidden="true">{"🌶️"}</span>
             </summary>
             <div class="canvas-menu-panel">

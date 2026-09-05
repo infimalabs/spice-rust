@@ -10,7 +10,8 @@ use std::rc::Rc;
 
 use wire::intent::{
     BoardAnswer, BoardTask, ConsentPolicyAnswer, ConsentQueueAnswer, DirectiveAnswer, EffortAnswer,
-    EffortIdentity, EffortUsage, InboxAnswer, LaneAnswer, LaneChangeAnswer, LaneLiveness,
+    EffortIdentity, EffortUsage, GlobalSettingsAnswer, InboxAnswer, LaneAnswer, LaneChangeAnswer,
+    LaneLiveness,
 };
 use wire::{
     Accepted, Actor, AgentActivityKind, AgentMessage, CanonicalUuid, CommandKind, FactKind,
@@ -519,6 +520,8 @@ pub struct CanvasRuntime {
     consent: ScopedValue<ConsentQueueAnswer>,
     policy: ScopedValue<ConsentPolicyAnswer>,
     effort: ScopedValue<EffortState>,
+    settings: ScopedValue<GlobalSettingsAnswer>,
+    settings_position: Option<Seq>,
     fact_pages: Vec<BrowserState<FactRow>>,
     trust_pages: Vec<BrowserState<TrustView>>,
     trust_resume: Option<StreamCursor>,
@@ -556,6 +559,8 @@ impl CanvasRuntime {
             consent: ScopedValue::new(accepted),
             policy: ScopedValue::new(accepted),
             effort: ScopedValue::new(accepted),
+            settings: ScopedValue::new(accepted),
+            settings_position: None,
             fact_pages: Vec::new(),
             trust_pages: Vec::new(),
             trust_resume: None,
@@ -697,6 +702,12 @@ impl CanvasRuntime {
     #[must_use]
     pub fn effort(&self) -> Option<&EffortState> {
         self.effort.get(&self.principal)
+    }
+
+    /// Authoritative global settings, absent until the initial read lands.
+    #[must_use]
+    pub fn settings(&self) -> Option<&GlobalSettingsAnswer> {
+        self.settings.get(&self.principal)
     }
 
     #[must_use]
@@ -890,6 +901,32 @@ impl CanvasRuntime {
                 }),
             );
         }
+    }
+
+    /// Apply a global settings read or mutation without allowing older authority backwards.
+    pub fn apply_settings(&mut self, admitted: &Admitted<Response<GlobalSettingsAnswer>>) {
+        let position = match &admitted.get().outcome {
+            Outcome::Reply(reply) => match reply.position {
+                wire::ReplyPosition::Committed(range) => Some(range.last),
+                wire::ReplyPosition::Snapshot(cursor) => Some(cursor),
+                wire::ReplyPosition::Direct {} => None,
+            },
+            Outcome::Refusal(_) | Outcome::Fault(_) => None,
+        };
+        self.apply_response(admitted, |runtime, answer| {
+            if position.is_some_and(|next| {
+                runtime
+                    .settings_position
+                    .is_none_or(|current| next >= current)
+            }) {
+                runtime.settings_position = position;
+                runtime.settings.replace(admitted.scope(), *answer);
+            }
+            (
+                "Global settings".to_owned(),
+                format!("fast mode {}", if answer.fast_mode { "on" } else { "off" }),
+            )
+        });
     }
 
     /// Record the resident's authoritative result for one lane seating request.

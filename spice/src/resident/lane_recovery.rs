@@ -81,7 +81,7 @@ pub(super) fn import(
         Ok(context) => context,
         Err(outcome) => return typed_outcome(outcome),
     };
-    let proven = match launch_import(paths, epoch, seats, runtime, &context) {
+    let proven = match launch_import(bus, paths, epoch, seats, runtime, &context) {
         Ok(proven) => proven,
         Err(outcome) => return typed_outcome(outcome),
     };
@@ -205,6 +205,7 @@ fn admit_row(
 }
 
 fn launch_import(
+    bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &mut Seats,
@@ -221,6 +222,7 @@ fn launch_import(
             lane: context.row.lane,
             occupant,
             resume: context.resume.clone(),
+            fast_mode: super::settings_surface::fast_mode(bus)?,
         },
         Arc::clone(&runtime.capture),
     )?;

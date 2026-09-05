@@ -68,6 +68,7 @@ fn every_command_names_the_witnesses_it_requires() {
         let scanner_disposition = matches!(kind, CommandKind::SteerDispose);
         let output_repair = matches!(kind, CommandKind::SteerRepair);
         let server_projected_gate_work = matches!(kind, CommandKind::GateFindings);
+        let global_settings = matches!(kind, CommandKind::GlobalSettingsSet);
         let lane_lifecycle = matches!(
             kind,
             CommandKind::LaneSeat
@@ -82,6 +83,7 @@ fn every_command_names_the_witnesses_it_requires() {
                 || output_repair
                 || scanner_disposition
                 || lane_lifecycle
+                || global_settings
                 || server_projected_gate_work,
             concat!(
                 "only reads, output repair, lane lifecycle, scanner dispositions, and ",

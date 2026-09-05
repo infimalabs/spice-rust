@@ -36,6 +36,7 @@ mod lifecycle;
 mod message_surface;
 mod policy_surface;
 mod read_materializations;
+mod settings_surface;
 mod shutdown;
 mod steering;
 pub(crate) mod supervisor;

@@ -281,6 +281,7 @@ export async function assertTeamMenu(page, fixture, artifacts) {
   await assertTopChromeSpacing(page, artifacts);
   await chooseCanvasView(page, "Topology");
   await page.getByRole("heading", { name: "Teams", exact: true }).waitFor();
+  await openSpiceMenu(page);
   assert.equal(
     await page.getByRole("navigation", { name: "Canvas views" })
       .getByRole("button", { name: /^Agents/ }).count(),
@@ -294,7 +295,77 @@ export async function assertTeamMenu(page, fixture, artifacts) {
   let panel = await openSpiceMenu(page);
   assert.equal(await panel.locator(".canvas-menu-page").getAttribute("data-menu-page"), "agents");
   await panel.getByRole("heading", { name: "Global", exact: true }).waitFor();
-  assert.match(await panel.locator(".canvas-menu-global").innerText(), /Fast mode\s+off/);
+  const fastMode = panel.getByRole("menuitemcheckbox", { name: /Fast mode/i });
+  assert.equal(await fastMode.getAttribute("aria-checked"), "false");
+  assert.match(await fastMode.innerText(), /Fast mode\s+off/);
+
+  const peer = await page.context().newPage();
+  try {
+    await peer.goto(page.url(), { waitUntil: "networkidle" });
+    const peerPanel = await openSpiceMenu(peer);
+    let peerFastMode = peerPanel.getByRole("menuitemcheckbox", { name: /Fast mode/i });
+    await peerFastMode.waitFor({ timeout: TRANSITION_MS });
+    assert.equal(await peerFastMode.getAttribute("aria-checked"), "false");
+
+    await fastMode.click();
+    await waitForPageFunction(
+      page,
+      "initiating Canvas applies acknowledged fast mode",
+      TRANSITION_MS,
+      () => document
+        .querySelector('[role="menuitemcheckbox"]')
+        ?.getAttribute("aria-checked") === "true",
+    );
+    await waitForPageFunction(
+      peer,
+      "peer Canvas receives the committed settings fact",
+      TRANSITION_MS,
+      () => document
+        .querySelector('[role="menuitemcheckbox"]')
+        ?.getAttribute("aria-checked") === "true",
+    );
+    const trigger = page.locator(".canvas-menu > summary");
+    assert.match(await trigger.getAttribute("title"), /fast mode on/i);
+    assert.ok(await trigger.evaluate((node) => node.classList.contains("canvas-menu-trigger--fast")));
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    assert.equal(
+      await page.locator(".canvas-menu-flame").evaluate((node) => getComputedStyle(node).animationName),
+      "none",
+      "reduced motion leaves the flame visible without animation",
+    );
+    assert.notEqual(
+      await page.locator(".canvas-menu-flame").evaluate((node) => getComputedStyle(node).opacity),
+      "0",
+      "reduced motion preserves the fast-mode status treatment",
+    );
+    await page.screenshot({
+      path: join(artifacts, "canvas-fast-mode-active.png"),
+      fullPage: false,
+    });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+
+    await peer.reload({ waitUntil: "networkidle" });
+    peerFastMode = (await openSpiceMenu(peer))
+      .getByRole("menuitemcheckbox", { name: /Fast mode/i });
+    await peerFastMode.waitFor({ timeout: TRANSITION_MS });
+    assert.equal(
+      await peerFastMode.getAttribute("aria-checked"),
+      "true",
+      "reload reads the durable setting rather than browser storage",
+    );
+    await peerFastMode.focus();
+    await peerFastMode.press("Space");
+    await waitForPageFunction(
+      page,
+      "keyboard-authored setting converges back to the first Canvas",
+      TRANSITION_MS,
+      () => document
+        .querySelector('[role="menuitemcheckbox"]')
+        ?.getAttribute("aria-checked") === "false",
+    );
+  } finally {
+    await peer.close();
+  }
   assert.equal(await panel.locator(".canvas-team").count(), 1, "the four agents begin together");
   assert.equal(await panel.locator(".canvas-team-member").count(), 4);
   assert.equal(
@@ -351,6 +422,7 @@ export async function assertTeamMenu(page, fixture, artifacts) {
       send(data);
     };
   });
+  panel = await openSpiceMenu(page);
   let originalTeam = panel.locator(`.canvas-team[data-team-lineage="${host}"]`);
   await assertMemberAccents(
     originalTeam,

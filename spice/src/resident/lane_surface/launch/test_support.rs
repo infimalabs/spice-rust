@@ -135,6 +135,7 @@ impl AdvisoryRtkFixture {
             lane: self.lane,
             occupant: self.occupant,
             resume,
+            fast_mode: false,
         }
     }
 

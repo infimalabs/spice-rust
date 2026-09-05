@@ -8,8 +8,9 @@ use super::{
     BoardAnswer, BoardGraph, BoardHandout, BoardRead, ClaimAnswer, ClaimCarry, ClaimRenew,
     ClaimWin, ConsentAnswer, ConsentDecide, ConsentPolicy, ConsentPolicyAnswer, ConsentQueueAnswer,
     ConsentRead, DeliveryAnswer, DirectiveAnswer, DirectiveRef, DocAnswer, DocApply, DocLedger,
-    EffortAnswer, EffortRead, GateFindings, InboxAnswer, LaneAnswer, LaneArrange, LaneChangeAnswer,
-    LaneRead, LaneRecall, LaneSeat, LaneState, LineageArrange, LineageConfigure, RecallAnswer,
+    EffortAnswer, EffortRead, GateFindings, GlobalSettingsAnswer, GlobalSettingsRead,
+    GlobalSettingsSet, InboxAnswer, LaneAnswer, LaneArrange, LaneChangeAnswer, LaneRead,
+    LaneRecall, LaneSeat, LaneState, LineageArrange, LineageConfigure, RecallAnswer,
     RecognitionAnswer, Recognize, ReleasePublish, StateAnswer, SteerDispose, SteerInbox,
     SteerRepair, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskDefer, TaskDelete, TaskDepends,
     TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskReview, TaskWake,
@@ -29,6 +30,10 @@ pub enum BodyShape {
     DocLedger,
     /// [`EffortRead`]
     EffortRead,
+    /// [`GlobalSettingsRead`]
+    GlobalSettingsRead,
+    /// [`GlobalSettingsSet`]
+    GlobalSettingsSet,
     /// [`TaskAdd`]
     TaskAdd,
     /// [`TaskOopsAdd`], the strict body for the server-owned `.oops` route.
@@ -136,6 +141,8 @@ pub enum AnswerShape {
     ConsentPolicy,
     /// [`EffortAnswer`]
     Effort,
+    /// [`GlobalSettingsAnswer`]
+    GlobalSettings,
     /// [`TrustAnswer`]
     Trust,
     /// [`LaneAnswer`]
@@ -180,6 +187,8 @@ pub enum CommandAnswer {
     ConsentPolicy(ConsentPolicyAnswer),
     /// [`AnswerShape::Effort`]
     Effort(Box<EffortAnswer>),
+    /// [`AnswerShape::GlobalSettings`]
+    GlobalSettings(GlobalSettingsAnswer),
     /// [`AnswerShape::Trust`]
     Trust(TrustAnswer),
     /// [`AnswerShape::Lane`]
@@ -213,6 +222,7 @@ impl CommandAnswer {
             Self::ConsentQueue(_) => AnswerShape::ConsentQueue,
             Self::ConsentPolicy(_) => AnswerShape::ConsentPolicy,
             Self::Effort(_) => AnswerShape::Effort,
+            Self::GlobalSettings(_) => AnswerShape::GlobalSettings,
             Self::Trust(_) => AnswerShape::Trust,
             Self::Lane(_) => AnswerShape::Lane,
             Self::LaneChange(_) => AnswerShape::LaneChange,
@@ -246,6 +256,7 @@ impl AnswerShape {
             | Self::ConsentQueue => self.decode_primary(bytes),
             Self::ConsentPolicy
             | Self::Effort
+            | Self::GlobalSettings
             | Self::Trust
             | Self::Lane
             | Self::LaneChange
@@ -276,6 +287,7 @@ impl AnswerShape {
         Ok(match self {
             Self::ConsentPolicy => CommandAnswer::ConsentPolicy(crate::decode(bytes)?),
             Self::Effort => CommandAnswer::Effort(Box::new(crate::decode(bytes)?)),
+            Self::GlobalSettings => CommandAnswer::GlobalSettings(crate::decode(bytes)?),
             Self::Trust => CommandAnswer::Trust(crate::decode(bytes)?),
             Self::Lane => CommandAnswer::Lane(Box::new(crate::decode(bytes)?)),
             Self::LaneChange => CommandAnswer::LaneChange(Box::new(crate::decode(bytes)?)),
@@ -360,6 +372,8 @@ impl CommandKind {
             | Self::LineageConfigure
             | Self::LineageArrange
             | Self::LaneRecall
+            | Self::GlobalSettingsRead
+            | Self::GlobalSettingsSet
             | Self::TasteRecord
             | Self::CanaryRecognize
             | Self::VendorRecognize
@@ -428,6 +442,14 @@ impl CommandKind {
             Self::LineageConfigure => Binding::of(B::LineageConfigure, A::Lane),
             Self::LineageArrange => Binding::of(B::LineageArrange, A::Lane),
             Self::LaneRecall => Binding::of(B::LaneRecall, A::Recall),
+            Self::GlobalSettingsRead | Self::GlobalSettingsSet => Binding::of(
+                if matches!(self, Self::GlobalSettingsRead) {
+                    B::GlobalSettingsRead
+                } else {
+                    B::GlobalSettingsSet
+                },
+                A::GlobalSettings,
+            ),
             Self::TasteRecord => Binding::of(B::TasteRecord, A::Taste),
             Self::CanaryRecognize
             | Self::VendorRecognize
@@ -457,6 +479,10 @@ pub enum Intent {
     DocLedger(DocLedger),
     /// [`BodyShape::EffortRead`]
     EffortRead(EffortRead),
+    /// [`BodyShape::GlobalSettingsRead`]
+    GlobalSettingsRead(GlobalSettingsRead),
+    /// [`BodyShape::GlobalSettingsSet`]
+    GlobalSettingsSet(GlobalSettingsSet),
     /// [`BodyShape::TaskAdd`]
     TaskAdd(TaskAdd),
     /// [`BodyShape::TaskOopsAdd`]
@@ -582,6 +608,8 @@ impl Intent {
             | Self::LineageConfigure(_)
             | Self::LineageArrange(_)
             | Self::LaneRecall(_)
+            | Self::GlobalSettingsRead(_)
+            | Self::GlobalSettingsSet(_)
             | Self::TasteRecord(_)
             | Self::Recognize(_)
             | Self::ReleasePublish(_)
@@ -637,6 +665,8 @@ impl Intent {
             Self::LineageConfigure(_) => BodyShape::LineageConfigure,
             Self::LineageArrange(_) => BodyShape::LineageArrange,
             Self::LaneRecall(_) => BodyShape::LaneRecall,
+            Self::GlobalSettingsRead(_) => BodyShape::GlobalSettingsRead,
+            Self::GlobalSettingsSet(_) => BodyShape::GlobalSettingsSet,
             Self::TasteRecord(_) => BodyShape::TasteRecord,
             Self::Recognize(_) => BodyShape::Recognize,
             Self::ReleasePublish(_) => BodyShape::ReleasePublish,
@@ -762,6 +792,8 @@ impl BodyShape {
                 | Self::ConsentDecide
                 | Self::ConsentRead
                 | Self::ConsentPolicy
+                | Self::GlobalSettingsRead
+                | Self::GlobalSettingsSet
                 | Self::TrustRef
         ) {
             self.decode_coordination_body(bytes)
@@ -780,6 +812,8 @@ impl BodyShape {
             Self::ConsentDecide => Intent::ConsentDecide(crate::decode(bytes)?),
             Self::ConsentRead => Intent::ConsentRead(crate::decode(bytes)?),
             Self::ConsentPolicy => Intent::ConsentPolicy(crate::decode(bytes)?),
+            Self::GlobalSettingsRead => Intent::GlobalSettingsRead(crate::decode(bytes)?),
+            Self::GlobalSettingsSet => Intent::GlobalSettingsSet(crate::decode(bytes)?),
             Self::TrustRef => Intent::TrustRef(crate::decode(bytes)?),
             _ => unreachable!("runtime body partition is closed"),
         })

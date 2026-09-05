@@ -14,9 +14,9 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use wire::body::DirectiveAttachment;
 use wire::intent::{
-    BoardRead, ConsentPolicy, ConsentRead, EffortRead, LaneAction, LaneArrange, LaneRead, LaneSeat,
-    LaneState, LineageArrange, LineageArrangement, LineageConfigure, LineageLife, SteerInbox,
-    SteerSend, TaskAnswer, TaskNote,
+    BoardRead, ConsentPolicy, ConsentRead, EffortRead, GlobalSettingsRead, GlobalSettingsSet,
+    LaneAction, LaneArrange, LaneRead, LaneSeat, LaneState, LineageArrange, LineageArrangement,
+    LineageConfigure, LineageLife, SteerInbox, SteerSend, TaskAnswer, TaskNote,
 };
 use wire::{
     Answer, CanonicalUuid, CommandKind, Response, StreamRequest, TaskHandle, WireVersion, Witness,
@@ -332,6 +332,7 @@ enum ClientAction {
     Refresh,
     /// Derive the expensive task-effort answer on explicit Magnitude demand.
     Effort,
+    FastMode(bool),
     /// Fetch the next retained page behind one member's oldest visible card.
     MessageHistory {
         lane: CanonicalUuid,
@@ -403,6 +404,7 @@ enum PendingKind {
     Consent,
     Policy,
     Effort,
+    Settings,
     LaneSeat,
     /// One member arrangement whose stale refusal must refresh the roster.
     LaneArrange,
@@ -445,6 +447,7 @@ enum CurrentRead {
     Consent,
     Policy,
     Effort,
+    Settings,
 }
 
 impl PendingKind {
@@ -456,6 +459,7 @@ impl PendingKind {
             Self::Consent => Some(CurrentRead::Consent),
             Self::Policy => Some(CurrentRead::Policy),
             Self::Effort => Some(CurrentRead::Effort),
+            Self::Settings => Some(CurrentRead::Settings),
             Self::LaneSeat
             | Self::LaneArrange
             | Self::WakeSubmission { .. }

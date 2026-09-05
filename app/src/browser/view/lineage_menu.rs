@@ -16,12 +16,17 @@ pub(super) fn render(
     lineage_controls: &UseReducerHandle<LineageControls>,
 ) -> Html {
     if !mosaic {
-        return render_axis(active_axis, axis_count);
+        return render_axis(active_axis, axis_count, runtime, sender);
     }
     render_agents(runtime, sender, lineage_controls)
 }
 
-fn render_axis(axis: Axis, count: usize) -> Html {
+fn render_axis(
+    axis: Axis,
+    count: usize,
+    runtime: Option<&CanvasRuntime>,
+    sender: &SenderHandle,
+) -> Html {
     let (noun, context) = match axis {
         Axis::Magnitude => (
             "rules",
@@ -42,13 +47,7 @@ fn render_axis(axis: Axis, count: usize) -> Html {
     };
     html! {
         <div class="canvas-menu-page" data-menu-page={axis.as_str()}>
-            <section class="canvas-menu-section canvas-menu-global">
-                <h2>{"Global"}</h2>
-                <div class="canvas-menu-setting">
-                    <strong>{"Fast mode"}</strong>
-                    <span>{"off"}</span>
-                </div>
-            </section>
+            {render_global_settings(runtime, sender)}
             <section class="canvas-menu-section canvas-menu-context">
                 <h2>{super::axis_label(axis)}</h2>
                 <div class="canvas-menu-setting">
@@ -111,13 +110,7 @@ fn render_agents(
     };
     html! {
         <div class="canvas-menu-page" data-menu-page="agents">
-            <section class="canvas-menu-section canvas-menu-global">
-                <h2>{"Global"}</h2>
-                <div class="canvas-menu-setting">
-                    <strong>{"Fast mode"}</strong>
-                    <span>{"off"}</span>
-                </div>
-            </section>
+            {render_global_settings(Some(runtime), sender)}
             <section class="canvas-menu-section canvas-open-teams">
                 <h2>{"Open Team"}</h2>
                 if grouped_lineages.is_empty() {
@@ -147,6 +140,48 @@ fn render_agents(
                 &solo_render,
             )}
         </div>
+    }
+}
+
+fn render_global_settings(runtime: Option<&CanvasRuntime>, sender: &SenderHandle) -> Html {
+    let settings = runtime.and_then(CanvasRuntime::settings);
+    let fast_mode = settings.is_some_and(|settings| settings.fast_mode);
+    let enabled = settings.is_some()
+        && runtime.is_some_and(|runtime| runtime.offers(CommandKind::GlobalSettingsSet));
+    let sender = sender.clone();
+    let onclick = Callback::from(move |_| {
+        if enabled {
+            send_action(&sender, ClientAction::FastMode(!fast_mode));
+        }
+    });
+    html! {
+        <section class="canvas-menu-section canvas-menu-global">
+            <h2>{"Global"}</h2>
+            <button
+                class={classes!(
+                    "canvas-menu-setting",
+                    "canvas-menu-setting--action",
+                    fast_mode.then_some("canvas-menu-setting--checked"),
+                )}
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={fast_mode.to_string()}
+                disabled={!enabled}
+                title={if fast_mode {
+                    "Fast mode is on for supported agents"
+                } else {
+                    "Fast mode is off for supported agents"
+                }}
+                {onclick}
+            >
+                <strong>{"Fast mode"}</strong>
+                <span>{if settings.is_some() {
+                    if fast_mode { "on" } else { "off" }
+                } else {
+                    "loading"
+                }}</span>
+            </button>
+        </section>
     }
 }
 

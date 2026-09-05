@@ -45,7 +45,7 @@ use std::os::unix::process::CommandExt as _;
 use std::os::unix::process::ExitStatusExt as _;
 
 const ENTRY: &str = "__lane-supervisor";
-const CONTRACT_VERSION: u32 = 2;
+const CONTRACT_VERSION: u32 = 3;
 const REQUEST_BYTES: u64 = 64 * 1024;
 const STATE_BYTES: u64 = 64 * 1024;
 #[cfg(not(test))]
@@ -83,6 +83,7 @@ struct Request {
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     resume: Option<String>,
+    fast_mode: bool,
     state: PathBuf,
 }
 
@@ -287,6 +288,7 @@ fn launch_unix(paths: &RuntimePaths, request: OccupantLaunchRequest<'_>) -> Comm
         lane: request.lane,
         occupant: request.occupant,
         resume: request.resume.session_id().map(str::to_owned),
+        fast_mode: request.fast_mode,
         state: state.clone(),
     };
     publish_json(&request_path, &encoded).map_err(|error| {
@@ -578,6 +580,7 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
             lane: request.lane,
             occupant: request.occupant,
             resume,
+            fast_mode: request.fast_mode,
         },
         capture_reporter,
     )
@@ -1392,6 +1395,7 @@ mod tests {
                 lane: uuid(1),
                 occupant: uuid(2),
                 resume: None,
+                fast_mode: false,
                 state: state_path.clone(),
             },
         )
@@ -1437,8 +1441,8 @@ mod tests {
         assert!(diagnostic.contains("contract v1"), "{diagnostic}");
         assert!(
             diagnostic.contains(&format!(
-                "current Spice {} contract v2",
-                env!("CARGO_PKG_VERSION")
+                "current Spice {} contract v{CONTRACT_VERSION}",
+                env!("CARGO_PKG_VERSION"),
             )),
             "{diagnostic}"
         );

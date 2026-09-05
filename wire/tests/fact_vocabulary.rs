@@ -73,6 +73,7 @@ const PINNED: &[(&str, &str)] = &[
     ("ClaimRenewed", "claim::renewed"),
     ("ClaimLeaseWarned", "claim::warned"),
     ("DocApplied", "doc::applied"),
+    ("GlobalSettingsChanged", "settings::changed"),
     ("SteerSent", "steer::sent"),
     ("SteerEscalated", "steer::escalated"),
     ("SteerRecovered", "steer::recovered"),
@@ -161,6 +162,7 @@ fn plane(kind: FactKind) -> &'static str {
         | FactKind::ClaimRenewed
         | FactKind::ClaimLeaseWarned => "claim",
         FactKind::DocApplied => "doc",
+        FactKind::GlobalSettingsChanged => "settings",
         FactKind::SteerSent
         | FactKind::SteerEscalated
         | FactKind::SteerRecovered
