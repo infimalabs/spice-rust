@@ -413,9 +413,8 @@ impl FileMacroScope {
         {
             return match self.resolve_namespace_path(namespace_path, leading_global, false, false) {
                 NamespaceResolution::Compiler => FileMacroResolution::Compiler(kind),
-                NamespaceResolution::Shadowed | NamespaceResolution::Unresolved => {
-                    FileMacroResolution::Unresolved
-                }
+                NamespaceResolution::Shadowed => FileMacroResolution::Shadowed,
+                NamespaceResolution::Unresolved => FileMacroResolution::Unresolved,
             };
         }
         let known_user_macro = match source {
