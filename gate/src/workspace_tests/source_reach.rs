@@ -8,6 +8,7 @@ use syn::visit::Visit;
 mod file_attributes;
 pub(super) mod macro_scope;
 mod namespace_scope;
+mod opaque_expansion;
 
 use macro_scope::{
     FileMacroBindings, FileMacroResolution, UseBindingContext, attribute_may_expand_items,
@@ -15,6 +16,7 @@ use macro_scope::{
     local_macro_rules, macro_rules_name,
 };
 use namespace_scope::NamespaceScopes;
+use opaque_expansion::{macro_rules_body_at, opaque_expansion_file_macro_error};
 
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
 struct DeclaredReach {
@@ -1005,6 +1007,10 @@ impl<'ast> Visit<'ast> for FileMacroVisitor<'_> {
     }
 
     fn visit_macro(&mut self, invocation: &'ast syn::Macro) {
+        if invocation.path.is_ident("macro_rules") {
+            self.scan_opaque_expansion(invocation.tokens.clone());
+            return;
+        }
         match FileMacroKind::classify_path(&invocation.path) {
             Some(FileMacroPath::Unqualified(kind)) => {
                 self.record_unqualified(kind, invocation.tokens.clone());
@@ -1120,6 +1126,12 @@ impl FileMacroVisitor<'_> {
             Err(error) => self.error = Some(error),
         }
     }
+
+    fn scan_opaque_expansion(&mut self, tokens: TokenStream) {
+        if self.error.is_none() {
+            self.error = opaque_expansion_file_macro_error(tokens, self.source);
+        }
+    }
 }
 
 fn file_macro_references(
@@ -1154,6 +1166,16 @@ fn file_macro_references_in_tokens(
     let mut references = Vec::new();
     let mut index = 0;
     while index < trees.len() {
+        if let Some((body_index, next_index)) = macro_rules_body_at(&trees, index) {
+            let Some(TokenTree::Group(body)) = trees.get(body_index) else {
+                unreachable!("macro_rules body shape was checked")
+            };
+            if let Some(error) = opaque_expansion_file_macro_error(body.stream(), source) {
+                return Err(error);
+            }
+            index = next_index;
+            continue;
+        }
         let Some((path, arguments_index, next_index)) = file_macro_invocation_at(&trees, index)
         else {
             if let TokenTree::Group(group) = &trees[index] {

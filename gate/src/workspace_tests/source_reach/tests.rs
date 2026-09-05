@@ -250,7 +250,7 @@ fn built_in_file_macros_are_discovered_in_every_rust_token_context() {
                     "const GLOBAL: &str = outer!(nested(::r#std::r#include_str!(\"../global.txt\")));\n",
                     "const CUSTOM: &str = outer!(nested(custom::include_str!(\"../missing-custom.txt\")));\n",
                     "const CRATE_STD: &str = crate::std::include_str!(\"../missing-nested-std.txt\");\n",
-                    "macro_rules! generated { () => { ::core::include_bytes!(\"../generated.bin\") } }\n",
+                    "const GENERATED: &[u8] = generated!(::core::include_bytes!(\"../generated.bin\"));\n",
                     "#[cfg(test)] const TEST_ONLY: &str = include_str!(\"../test-only.txt\");\n",
                     "::std::include!(\"../declarations.rs\");\n",
                     "const IGNORED: &str = r#\"include_str!(\\\"missing-string.txt\\\")\"#;\n",
@@ -766,6 +766,104 @@ fn block_macro_shadowing_restores_the_outer_builtin() {
         BTreeMap::from([("outside.bin".to_owned(), (false, true))]),
     );
     fixture.assert_compiles("lib.rs");
+}
+
+#[test]
+fn opaque_macro_bodies_refuse_definition_site_file_macro_scope() {
+    for (label, source, expected) in [
+        (
+            "exported-unqualified-wrapper",
+            concat!(
+                "mod definitions {\n",
+                "    macro_rules! include_str { ($path:literal) => { \"owned\" }; }\n",
+                "    #[macro_export]\n",
+                "    macro_rules! outer {\n",
+                "        () => { pub const VALUE: &str = r#include_str!(\"authority.txt\"); };\n",
+                "    }\n",
+                "}\n",
+                "outer!();\n",
+            ),
+            "include_str!",
+        ),
+        (
+            "exported-qualified-wrapper",
+            concat!(
+                "mod definitions {\n",
+                "    mod std {}\n",
+                "    #[macro_export]\n",
+                "    macro_rules! outer {\n",
+                "        () => { pub const VALUE: &str = std::include_str!(\"authority.txt\"); };\n",
+                "    }\n",
+                "}\n",
+                "outer!();\n",
+            ),
+            "std::include_str!",
+        ),
+        (
+            "exported-wrapper-under-call-site-shadow",
+            concat!(
+                "#[macro_export]\n",
+                "macro_rules! outer {\n",
+                "    () => { pub const VALUE: &str = include_str!(\"missing.txt\"); };\n",
+                "}\n",
+                "mod consumer {\n",
+                "    macro_rules! include_str { ($path:literal) => { \"owned\" }; }\n",
+                "    outer!();\n",
+                "}\n",
+            ),
+            "include_str!",
+        ),
+    ] {
+        let fixture = Fixture::new(
+            label,
+            &[("lib.rs", source), ("authority.txt", "authority\n")],
+        );
+        fixture.assert_compiles("lib.rs");
+        let error = fixture
+            .reach_result_from("lib.rs", FileMacroCrateContext::test_default())
+            .expect_err("opaque macro expansion scope must refuse");
+        let detail = error.to_string();
+        assert!(
+            detail.contains("cannot prove expansion-site file-macro namespace"),
+            "unexpected refusal for {label}: {error}",
+        );
+        assert!(
+            detail.contains(expected),
+            "unexpected refusal for {label}: {error}",
+        );
+    }
+}
+
+#[test]
+fn tokenized_included_expressions_keep_macro_bodies_opaque() {
+    let fixture = Fixture::new(
+        "included-expression-macro-body",
+        &[
+            ("lib.rs", "pub const VALUE: &str = include!(\"body.rs\");\n"),
+            (
+                "body.rs",
+                concat!(
+                    "{\n",
+                    "    macro_rules! outer {\n",
+                    "        () => { include_str!(\"authority.txt\") };\n",
+                    "    }\n",
+                    "    outer!()\n",
+                    "}\n",
+                ),
+            ),
+            ("authority.txt", "authority\n"),
+        ],
+    );
+    fixture.assert_compiles("lib.rs");
+    let error = fixture
+        .reach_result_from("lib.rs", FileMacroCrateContext::test_default())
+        .expect_err("tokenized macro body expansion scope must refuse");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot prove expansion-site file-macro namespace for include_str!"),
+        "unexpected refusal: {error}",
+    );
 }
 
 #[test]

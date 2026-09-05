@@ -6,6 +6,35 @@ use crate::{
 use wire::{Digest, Domain};
 
 #[test]
+fn opaque_expansion_file_macro_authority_refuses_before_a_shard_can_be_planned() {
+    let fixture = Fixture::new("opaque-expansion-file-macro");
+    fs::write(
+        fixture.root.join("fixture/src/lib.rs"),
+        concat!(
+            "mod definitions {\n",
+            "    macro_rules! include_str { ($path:literal) => { \"owned\" }; }\n",
+            "    #[macro_export]\n",
+            "    macro_rules! outer {\n",
+            "        () => { pub const VALUE: &str = include_str!(\"../../file-macro-authority.txt\"); };\n",
+            "    }\n",
+            "}\n",
+            "outer!();\n",
+        ),
+    )
+    .expect("write opaque expansion file-macro source");
+
+    let error = fixture
+        .try_plan(true)
+        .expect_err("opaque file-macro expansion authority cannot produce Cargo shards");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot prove expansion-site file-macro namespace for include_str!"),
+        "unexpected refusal: {error}",
+    );
+}
+
+#[test]
 fn transitive_compiler_namespace_input_reaches_the_cargo_shard() {
     let fixture = Fixture::new("transitive-file-macro-authority");
     fs::write(
