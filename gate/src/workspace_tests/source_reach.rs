@@ -1,15 +1,28 @@
 use super::*;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
 struct DeclaredReach {
     test_only: bool,
     dependent_tests: bool,
+    public_namespace: bool,
+}
+
+#[derive(Eq, Ord, PartialEq, PartialOrd)]
+struct SourceVisit {
+    source: PathBuf,
+    reach: DeclaredReach,
+    inherited_reexports: Vec<Vec<String>>,
+}
+
+struct PublicUse {
+    path: Vec<String>,
+    exported_name: String,
 }
 
 #[derive(Default)]
 struct SourceGraph {
     declared: BTreeMap<PathBuf, DeclaredReach>,
-    visited: BTreeSet<(PathBuf, bool, bool, Vec<Vec<String>>)>,
+    visited: BTreeSet<SourceVisit>,
     conservative_downstream: bool,
 }
 
@@ -30,6 +43,7 @@ pub(super) fn declared_path_sources(
         DeclaredReach {
             test_only: false,
             dependent_tests: true,
+            public_namespace: true,
         },
         &[],
         0,
@@ -63,12 +77,11 @@ impl SourceGraph {
         module_depth: usize,
     ) -> Result<(), WorkspaceTestError> {
         let source = fs::canonicalize(source).unwrap_or_else(|_| source.to_path_buf());
-        if !self.visited.insert((
-            source.clone(),
-            reach.test_only,
-            reach.dependent_tests,
-            inherited_reexports.to_vec(),
-        )) {
+        if !self.visited.insert(SourceVisit {
+            source: source.clone(),
+            reach,
+            inherited_reexports: inherited_reexports.to_vec(),
+        }) {
             return Ok(());
         }
         let document = match fs::read_to_string(&source) {
@@ -106,11 +119,25 @@ impl SourceGraph {
         inherited_reexports: &[Vec<String>],
         module_depth: usize,
     ) -> Result<(), WorkspaceTestError> {
-        let (mut reexport_paths, uncertain_reexport) = public_reexport_paths(items, module_depth);
-        reexport_paths.extend(inherited_reexports.iter().cloned());
+        let (local_reexports, uncertain_reexport) = public_reexports(items, module_depth);
         if reach.dependent_tests && uncertain_reexport {
             self.conservative_downstream = true;
         }
+        let requested_names = inherited_reexports
+            .iter()
+            .filter_map(|path| path.first())
+            .collect::<BTreeSet<_>>();
+        let mut reexport_paths = inherited_reexports.to_vec();
+        reexport_paths.extend(
+            local_reexports
+                .into_iter()
+                .filter(|reexport| {
+                    reach.public_namespace
+                        || (reach.dependent_tests
+                            && requested_names.contains(&reexport.exported_name))
+                })
+                .map(|reexport| reexport.path),
+        );
         for item in items {
             match item {
                 Item::Mod(module) => {
@@ -125,11 +152,15 @@ impl SourceGraph {
                     let reexported = reexport_paths
                         .iter()
                         .any(|path| path.first().is_some_and(|segment| segment == &module_name));
+                    let reexported_namespace = reexport_paths.iter().any(|path| {
+                        path.len() == 1
+                            && path.first().is_some_and(|segment| segment == &module_name)
+                    });
+                    let directly_public = reach.public_namespace && public_visibility(&module.vis);
                     let child_reach = DeclaredReach {
                         test_only,
-                        dependent_tests: !test_only
-                            && reach.dependent_tests
-                            && (public_visibility(&module.vis) || reexported || uncertain_reexport),
+                        dependent_tests: !test_only && (directly_public || reexported),
+                        public_namespace: !test_only && (directly_public || reexported_namespace),
                     };
                     if let Some((_, inline)) = &module.content {
                         let child_dir = module_dir.join(module_name);
@@ -150,8 +181,7 @@ impl SourceGraph {
                         record_declared_source(
                             &mut self.declared,
                             module_source.clone(),
-                            child_reach.test_only,
-                            child_reach.dependent_tests,
+                            child_reach,
                         );
                         self.collect_declared_sources(
                             &module_source,
@@ -167,6 +197,7 @@ impl SourceGraph {
                     let included_reach = DeclaredReach {
                         test_only,
                         dependent_tests: !test_only && reach.dependent_tests,
+                        public_namespace: !test_only && reach.public_namespace,
                     };
                     let path =
                         syn::parse2::<LitStr>(invocation.mac.tokens.clone()).map_err(|error| {
@@ -183,12 +214,7 @@ impl SourceGraph {
                     })?;
                     let included = parent.join(path.value());
                     let included = fs::canonicalize(&included).unwrap_or(included);
-                    record_declared_source(
-                        &mut self.declared,
-                        included.clone(),
-                        included_reach.test_only,
-                        included_reach.dependent_tests,
-                    );
+                    record_declared_source(&mut self.declared, included.clone(), included_reach);
                     self.collect_declared_sources(
                         &included,
                         module_dir,
@@ -208,8 +234,8 @@ fn public_visibility(visibility: &syn::Visibility) -> bool {
     matches!(visibility, syn::Visibility::Public(_))
 }
 
-fn public_reexport_paths(items: &[Item], module_depth: usize) -> (Vec<Vec<String>>, bool) {
-    let mut paths = Vec::new();
+fn public_reexports(items: &[Item], module_depth: usize) -> (Vec<PublicUse>, bool) {
+    let mut reexports = Vec::new();
     let mut uncertain = false;
     for item in items {
         let Item::Use(item) = item else {
@@ -218,30 +244,30 @@ fn public_reexport_paths(items: &[Item], module_depth: usize) -> (Vec<Vec<String
         if !public_visibility(&item.vis) || exact_cfg_test(&item.attrs) {
             continue;
         }
-        collect_public_use_paths(
+        collect_public_uses(
             &item.tree,
             module_depth,
             Vec::new(),
-            &mut paths,
+            &mut reexports,
             &mut uncertain,
         );
     }
-    (paths, uncertain)
+    (reexports, uncertain)
 }
 
-fn collect_public_use_paths(
+fn collect_public_uses(
     tree: &syn::UseTree,
     module_depth: usize,
     prefix: Vec<String>,
-    paths: &mut Vec<Vec<String>>,
+    reexports: &mut Vec<PublicUse>,
     uncertain: &mut bool,
 ) {
     match tree {
         syn::UseTree::Path(path) if path.ident == "self" => {
-            collect_public_use_paths(&path.tree, module_depth, prefix, paths, uncertain);
+            collect_public_uses(&path.tree, module_depth, prefix, reexports, uncertain);
         }
         syn::UseTree::Path(path) if path.ident == "crate" && module_depth == 0 => {
-            collect_public_use_paths(&path.tree, module_depth, prefix, paths, uncertain);
+            collect_public_uses(&path.tree, module_depth, prefix, reexports, uncertain);
         }
         syn::UseTree::Path(path) if path.ident == "crate" || path.ident == "super" => {
             *uncertain = true;
@@ -249,21 +275,27 @@ fn collect_public_use_paths(
         syn::UseTree::Path(path) => {
             let mut prefix = prefix;
             prefix.push(path.ident.to_string());
-            collect_public_use_paths(&path.tree, module_depth, prefix, paths, uncertain);
+            collect_public_uses(&path.tree, module_depth, prefix, reexports, uncertain);
         }
         syn::UseTree::Name(name) => {
             let mut path = prefix;
             path.push(name.ident.to_string());
-            paths.push(path);
+            reexports.push(PublicUse {
+                path,
+                exported_name: name.ident.to_string(),
+            });
         }
         syn::UseTree::Rename(rename) => {
             let mut path = prefix;
             path.push(rename.ident.to_string());
-            paths.push(path);
+            reexports.push(PublicUse {
+                path,
+                exported_name: rename.rename.to_string(),
+            });
         }
         syn::UseTree::Group(group) => {
             for tree in &group.items {
-                collect_public_use_paths(tree, module_depth, prefix.clone(), paths, uncertain);
+                collect_public_uses(tree, module_depth, prefix.clone(), reexports, uncertain);
             }
         }
         syn::UseTree::Glob(_) => *uncertain = true,
@@ -287,21 +319,18 @@ fn exact_cfg_test(attributes: &[syn::Attribute]) -> bool {
 fn record_declared_source(
     declared: &mut BTreeMap<PathBuf, DeclaredReach>,
     source: PathBuf,
-    test_only: bool,
-    dependent_tests: bool,
+    reach: DeclaredReach,
 ) {
     // One production edge is enough to make a multiply-declared source part
     // of ordinary library reach; test-only survives only when every edge is.
     declared
         .entry(source)
         .and_modify(|existing| {
-            existing.test_only &= test_only;
-            existing.dependent_tests |= dependent_tests;
+            existing.test_only &= reach.test_only;
+            existing.dependent_tests |= reach.dependent_tests;
+            existing.public_namespace |= reach.public_namespace;
         })
-        .or_insert(DeclaredReach {
-            test_only,
-            dependent_tests,
-        });
+        .or_insert(reach);
 }
 
 fn child_module_dir(source: &Path) -> Result<PathBuf, WorkspaceTestError> {
