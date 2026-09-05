@@ -98,7 +98,7 @@ fn decode_row(
     line: u64,
     buffer: &[u8],
     dialect: Option<Dialect>,
-) -> Result<(Dialect, DecodedRow), Refusal> {
+) -> Result<(Option<Dialect>, DecodedRow), Refusal> {
     if buffer.len() > MAX_LINE_BYTES {
         return Err(refusal(
             "session::transcript-record-oversized",
@@ -110,39 +110,73 @@ fn decode_row(
         ));
     }
     let locus = listen::Locus::new(line, 0, buffer.len() as u64);
-    let detected = listen::decode_record(dialect, buffer, locus)
-        .map_err(|error| record_refusal(&source.path, line, &error))?;
-    let observed = detected.dialect;
-    let row = match detected.decoded {
-        Decoded::Residue(residue) => decode_residue(source, line, residue.kind)?,
-        Decoded::Events { context, events } => {
-            typed_row(source, line, buffer, observed, context, events)?
+    let detected = match listen::decode_record(dialect, buffer, locus) {
+        Ok(detected) => detected,
+        Err(RecordDecodeError::Locus(error)) => {
+            return Err(record_refusal(
+                &source.path,
+                line,
+                &RecordDecodeError::Locus(error),
+            ));
+        }
+        Err(RecordDecodeError::Invalid { kind }) => {
+            return Ok((dialect, decode_residue(source, line, kind)));
+        }
+        Err(error @ (RecordDecodeError::Unowned | RecordDecodeError::Disagreement { .. })) => {
+            let kind = match &error {
+                RecordDecodeError::Unowned => "dialect-unowned",
+                RecordDecodeError::Disagreement { .. } => "dialect-disagreement",
+                _ => unreachable!("the matched decoder error variants are exhaustive"),
+            };
+            return Ok((
+                dialect,
+                DecodedRow::Residue(transcript_residue(
+                    source,
+                    line,
+                    kind,
+                    error.to_string(),
+                    "select the owning vendor decoder to interpret this record; surrounding typed history remains available",
+                )),
+            ));
         }
     };
-    Ok((observed, row))
+    let observed = detected.dialect;
+    let row = match detected.decoded {
+        Decoded::Residue(residue) => decode_residue(source, line, residue.kind),
+        Decoded::Events { context, events } => {
+            typed_row(source, line, buffer, observed, context, events)
+        }
+    };
+    Ok((Some(observed), row))
 }
 
-fn decode_residue(
-    source: &ResolvedSource,
-    line: u64,
-    kind: ResidueKind,
-) -> Result<DecodedRow, Refusal> {
-    match kind {
-        ResidueKind::Unknown { discriminator } => Ok(DecodedRow::Residue(Residue {
-            source: source.path.display().to_string(),
-            line,
-            kind: "unrecognized-record".to_owned(),
-            detail: discriminator,
-            recovery:
-                "upgrade the owning transcript decoder or select records from its current release"
-                    .to_owned(),
-        })),
-        kind => Err(refusal(
-            "session::transcript-evidence-invalid",
-            Some(format!("{}:{line}: {kind:?}", source.path.display())),
-            "restore the current vendor record or use the decoder from its owning release",
-        )),
-    }
+fn decode_residue(source: &ResolvedSource, line: u64, kind: ResidueKind) -> DecodedRow {
+    let (kind, detail) = match kind {
+        ResidueKind::Absent { field } => (
+            "record-field-absent",
+            format!("required field {field:?} is absent"),
+        ),
+        ResidueKind::Unknown { discriminator } => ("unrecognized-record", discriminator),
+        ResidueKind::Malformed { field, expected } => (
+            "record-field-malformed",
+            format!("field {field:?} must be {expected}"),
+        ),
+        ResidueKind::Truncated => (
+            "record-truncated",
+            "JSON ended before one complete record was available".to_owned(),
+        ),
+        ResidueKind::VersionDrift { discriminator } => (
+            "record-version-drift",
+            format!("unsupported discriminator {discriminator:?}"),
+        ),
+    };
+    DecodedRow::Residue(transcript_residue(
+        source,
+        line,
+        kind,
+        detail,
+        "upgrade the owning transcript decoder or recover this record from its original source; surrounding typed history remains available",
+    ))
 }
 
 fn typed_row(
@@ -152,24 +186,28 @@ fn typed_row(
     dialect: Dialect,
     mut context: RecordContext,
     events: Vec<Event>,
-) -> Result<DecodedRow, Refusal> {
+) -> DecodedRow {
     if events.is_empty() && context.turn.is_none() && context.timestamp.is_none() {
-        return Ok(DecodedRow::Ignored);
+        return DecodedRow::Ignored;
     }
-    let raw_timestamp = context.timestamp.as_deref().ok_or_else(|| {
-        refusal(
-            "session::transcript-timestamp-missing",
-            Some(format!("{}:{line}", source.path.display())),
-            "recover the original timestamped transcript record",
-        )
-    })?;
-    let timestamp = spice::session_meter::normalize_timestamp(raw_timestamp).ok_or_else(|| {
-        refusal(
-            "session::transcript-timestamp-invalid",
-            Some(format!("{}:{line}: {raw_timestamp}", source.path.display())),
-            "recover the original timestamp; no substitute ordering key is used",
-        )
-    })?;
+    let Some(raw_timestamp) = context.timestamp.as_deref() else {
+        return DecodedRow::Residue(transcript_residue(
+            source,
+            line,
+            "timestamp-missing",
+            "recognized record has no timestamp and cannot be ordered safely".to_owned(),
+            "recover the original timestamped record; surrounding typed history remains available",
+        ));
+    };
+    let Some(timestamp) = spice::session_meter::normalize_timestamp(raw_timestamp) else {
+        return DecodedRow::Residue(transcript_residue(
+            source,
+            line,
+            "timestamp-invalid",
+            format!("timestamp {raw_timestamp:?} cannot be normalized or ordered safely"),
+            "recover the original timestamp; no substitute ordering key is used and surrounding typed history remains available",
+        ));
+    };
     context.timestamp = Some(timestamp.to_string());
     let span = Span {
         member: line,
@@ -186,7 +224,7 @@ fn typed_row(
             event,
         })
         .collect();
-    Ok(DecodedRow::Typed(TypedRecord {
+    DecodedRow::Typed(TypedRecord {
         source: source.path.display().to_string(),
         line,
         vendor: if source.vendor.is_unknown() {
@@ -196,7 +234,23 @@ fn typed_row(
         },
         context,
         events: sourced,
-    }))
+    })
+}
+
+fn transcript_residue(
+    source: &ResolvedSource,
+    line: u64,
+    kind: &str,
+    detail: String,
+    recovery: &str,
+) -> Residue {
+    Residue {
+        source: source.path.display().to_string(),
+        line,
+        kind: kind.to_owned(),
+        detail,
+        recovery: recovery.to_owned(),
+    }
 }
 
 fn record_refusal(path: &Path, line: u64, error: &RecordDecodeError) -> Refusal {

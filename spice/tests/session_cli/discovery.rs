@@ -145,6 +145,124 @@ fn root_thread_discovery_gzip_and_deduplication_preserve_identity() {
     scratch.remove();
 }
 
+#[test]
+fn thread_identity_enumerates_continuations_and_retains_earlier_history() {
+    let scratch = Scratch::new("continuations");
+    let codex_home = scratch.path().join("codex-home");
+    let sessions = codex_home.join("sessions");
+    fs::create_dir_all(&sessions).expect("Codex session root exists");
+    let older = sessions.join(format!("a-rollout-{CODEX_THREAD}.jsonl"));
+    let newer = sessions.join(format!("z-rollout-{CODEX_THREAD}.jsonl"));
+    write_jsonl(
+        &older,
+        &[
+            codex_event(
+                "2026-01-01T00:00:00Z",
+                "event_msg",
+                json!({"type":"task_started","turn_id":"earlier-turn"}),
+            ),
+            codex_event(
+                "2026-01-01T00:00:01Z",
+                "event_msg",
+                json!({
+                    "type":"task_complete",
+                    "turn_id":"earlier-turn",
+                    "last_agent_message":"earlier history"
+                }),
+            ),
+        ],
+    );
+    write_jsonl(
+        &newer,
+        &[
+            codex_event(
+                "2026-01-01T00:00:02Z",
+                "event_msg",
+                json!({"type":"task_started","turn_id":"newer-turn"}),
+            ),
+            codex_event(
+                "2026-01-01T00:00:03Z",
+                "event_msg",
+                json!({
+                    "type":"task_complete",
+                    "turn_id":"newer-turn",
+                    "last_agent_message":"newer history"
+                }),
+            ),
+        ],
+    );
+    let state =
+        Connection::open(codex_home.join("state_5.sqlite")).expect("Codex state fixture opens");
+    state
+        .execute("CREATE TABLE threads (id TEXT, rollout_path TEXT)", [])
+        .expect("Codex thread table exists");
+    state
+        .execute(
+            "INSERT INTO threads (id, rollout_path) VALUES (?1, ?2)",
+            params![CODEX_THREAD_DASHED, newer.to_string_lossy()],
+        )
+        .expect("newest continuation is indexed");
+    drop(state);
+    let environment = &[("CODEX_HOME", codex_home.to_string_lossy().into_owned())];
+
+    let first = reply_forms(
+        &strings(&["session", "thread", CODEX_THREAD_DASHED]),
+        environment,
+        "thread",
+    );
+    let second = reply_forms(
+        &strings(&["session", "thread", CODEX_THREAD_DASHED]),
+        environment,
+        "thread",
+    );
+    assert_eq!(
+        first, second,
+        "continuation resolution and replay are deterministic"
+    );
+    assert_eq!(first["sources"].as_array().map(Vec::len), Some(2));
+    assert_eq!(
+        first["thread"]["transcripts"].as_array().map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(first["thread"]["turns"], 2);
+    assert_eq!(first["thread"]["start"], "2026-01-01T00:00:00.000Z");
+    assert_eq!(first["thread"]["latest_turn"]["turn_id"], "newer-turn");
+    assert_eq!(
+        first["source"]["path"],
+        newer
+            .canonicalize()
+            .expect("current path")
+            .to_string_lossy()
+            .as_ref()
+    );
+    assert_eq!(first["thread"]["transcript"], first["source"]["path"]);
+    assert_eq!(
+        first["sources"][0]["path"],
+        older
+            .canonicalize()
+            .expect("older path")
+            .to_string_lossy()
+            .as_ref()
+    );
+    assert_eq!(
+        first["sources"][1]["path"],
+        newer
+            .canonicalize()
+            .expect("newer path")
+            .to_string_lossy()
+            .as_ref()
+    );
+
+    let summary = reply_forms(
+        &strings(&["session", "summary", CODEX_THREAD_DASHED]),
+        environment,
+        "summary",
+    );
+    assert_eq!(summary["sources"].as_array().map(Vec::len), Some(2));
+    assert_eq!(summary["turns"], 2);
+    scratch.remove();
+}
+
 #[cfg(unix)]
 #[test]
 fn public_thread_refusal_preserves_an_incomplete_claude_search_before_codex() {

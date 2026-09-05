@@ -38,7 +38,10 @@ pub(crate) fn vendor_thread_transcript(
         .ok_or_else(|| format!("vendor {} is not registered", vendor_name.as_str()))?;
     let canonical = source::canonical_thread(thread)
         .ok_or_else(|| format!("thread {thread:?} is not a canonical UUID"))?;
-    let path = source::find_thread(&canonical, vendor, environment)?;
+    let path = source::find_thread(&canonical, vendor, environment)?
+        .into_iter()
+        .next_back()
+        .ok_or_else(|| format!("vendor {} resolved no transcript paths", vendor.name()))?;
     let metadata =
         std::fs::symlink_metadata(&path).map_err(|error| format!("{}: {error}", path.display()))?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
@@ -326,13 +329,8 @@ fn build(
             )
         })?;
         let resolved = source::resolve_thread(&id, environment)?;
-        let data = dataset::load(std::slice::from_ref(&resolved))?;
-        let source = data
-            .sources
-            .first()
-            .cloned()
-            .expect("one resolved thread yields one source");
-        return Ok(project::thread(source, &data, id));
+        let data = dataset::load(&resolved)?;
+        return Ok(project::thread(&data, id));
     }
 
     let files = project::values(matches, "FILES");

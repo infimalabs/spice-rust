@@ -5,34 +5,67 @@ use std::fs;
 
 fn damaged_fixture(scratch: &Scratch) -> String {
     let damaged_path = scratch.path().join("damaged.jsonl");
-    let valid = serde_json::to_vec(&json!({
+    let before = serde_json::to_vec(&json!({
         "timestamp":"2026-01-03T00:00:00Z",
         "type":"event_msg",
         "payload":{"type":"task_started","turn_id":"readable-prefix"}
     }))
     .expect("valid prefix serializes");
-    let mut damaged = valid;
-    damaged.extend_from_slice(b"\n{malformed}\n{\"timestamp\":");
+    let after = serde_json::to_vec(&json!({
+        "timestamp":"2026-01-03T00:00:02Z",
+        "type":"event_msg",
+        "payload":{
+            "type":"task_complete",
+            "turn_id":"readable-prefix",
+            "last_agent_message":"history after unsupported evidence remains available"
+        }
+    }))
+    .expect("valid suffix serializes");
+    let mut damaged = before;
+    damaged.extend_from_slice(
+        b"\n{\"timestamp\":\"2026-01-03T00:00:01Z\",\"type\":\"future_authority_mutation\",\"payload\":{}}\n{malformed}\n",
+    );
+    damaged.extend_from_slice(&after);
+    damaged.push(b'\n');
     fs::write(&damaged_path, damaged).expect("damaged transcript is written");
     damaged_path.to_string_lossy().into_owned()
 }
 
 fn assert_damaged_recovery(damaged: &str) {
-    let first = refusal(
-        &strings(&["session", "summary", damaged]),
-        &[],
-        "session::transcript-evidence-invalid",
+    let first = reply_forms(&strings(&["session", "summary", damaged]), &[], "summary");
+    let second = reply_forms(&strings(&["session", "summary", damaged]), &[], "summary");
+    assert_eq!(first, second, "mixed-record recovery is deterministic");
+    assert_eq!(first["turns"], 1);
+    assert_eq!(first["completed"], 1);
+    assert_eq!(
+        first["recent_finals"][0]["text"],
+        "history after unsupported evidence remains available"
     );
-    let second = refusal(
-        &strings(&["session", "summary", damaged]),
-        &[],
-        "session::transcript-evidence-invalid",
+    assert_eq!(first["residues"].as_array().map(Vec::len), Some(2));
+    let canonical = Path::new(damaged)
+        .canonicalize()
+        .expect("damaged fixture canonicalizes");
+    assert_eq!(
+        first["residues"][0]["source"],
+        canonical.to_string_lossy().as_ref()
     );
-    assert_eq!(first, second, "malformed-evidence refusal is deterministic");
+    assert_eq!(first["residues"][0]["line"], 2);
+    assert_eq!(first["residues"][0]["kind"], "unrecognized-record");
+    assert_eq!(first["residues"][0]["detail"], "future_authority_mutation");
+    assert_eq!(
+        first["residues"][1]["source"],
+        canonical.to_string_lossy().as_ref()
+    );
+    assert_eq!(first["residues"][1]["line"], 3);
+    assert_eq!(first["residues"][1]["kind"], "record-field-malformed");
+    assert_eq!(
+        first["residues"][1]["detail"],
+        "field \"$\" must be JSON record"
+    );
     assert!(
-        refusal_diagnostic(&first)["observed"]
-            .as_str()
-            .is_some_and(|observed| observed.contains(":2: Malformed"))
+        first["residues"][1]["recovery"].as_str().is_some_and(
+            |recovery| recovery.contains("surrounding typed history remains available")
+        )
     );
 }
 
@@ -258,11 +291,16 @@ fn live_thread_briefing_accounts_final_truncated_record_without_blocking() {
         "live tail truncation is retained as residue: {recall}"
     );
 
-    refusal(
+    let summary = reply_forms(
         &strings(&["session", "summary", &transcript.to_string_lossy()]),
         &[],
-        "session::transcript-evidence-invalid",
+        "summary",
     );
+    assert!(summary["residues"].as_array().is_some_and(|residues| {
+        residues
+            .iter()
+            .any(|residue| residue["kind"] == "record-truncated")
+    }));
     scratch.remove();
 }
 

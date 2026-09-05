@@ -74,7 +74,7 @@ pub(super) fn read_records(
             continue;
         }
         let (observed, row) = decode_row(source, line, &buffer, dialect)?;
-        dialect = Some(observed);
+        dialect = observed.or(dialect);
         match row {
             DecodedRow::Typed(row) => {
                 if !within_horizon && start.is_some_and(|start| record_timestamp(&row) >= start) {
@@ -230,7 +230,7 @@ fn read_recent_compaction_markers_forward(
             continue;
         }
         let (observed, row) = decode_row(source, line, &buffer, dialect)?;
-        dialect = Some(observed);
+        dialect = observed.or(dialect);
         if let DecodedRow::Typed(row) = row
             && let Some(marker) = marker_from_record(&row)
             && end.is_none_or(|end| marker.ts.as_str() <= end)
