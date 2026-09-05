@@ -56,7 +56,7 @@
 | Situation | Expected | Ref |
 | --- | --- | --- |
 | Canonical document text is classified and emitted again | byte-identical fixed point | [The task-document properties](../interfaces.md#behavioral-properties) |
-| `doc ledger HANDLE` renders a dialect-representable task | emits only its title, current flow, and tags; it is not a family export | [The task-document Rust surface](../interfaces.md#the-rust-surface) |
+| `doc ledger HANDLE` renders a dialect-representable task | emits its current task prose, flow, authored tags, priority, and append-only notes without exporting a family or dependency graph | [The task-document Rust surface](../interfaces.md#the-rust-surface) |
 | `doc ledger HANDLE` sees a task whose flow is outside the dialect vocabulary | reports `doc::ledger-unrepresentable` rather than inventing a document | [The task-document Rust surface](../interfaces.md#the-rust-surface) |
 | Apply twice | idempotent | [The task-document properties](../interfaces.md#behavioral-properties) |
 | Apply is interrupted before or after commit | no partial family exists; retry commits once or returns the existing receipt | [The task-document properties](../interfaces.md#behavioral-properties) |
@@ -66,6 +66,7 @@
 | Hostile input: BOM, CRLF, deep nesting | parses or refuses; never crashes | [The task-document properties](../interfaces.md#behavioral-properties) |
 | Acceptance, authored tags, priority, or an explicit dependency is absent from an edited document | prior authored value is removed; apply is replacement, not patch | [The board projection is intentionally narrower than the dialect](../interfaces.md#the-board-projection-is-intentionally-narrower-than-the-dialect) |
 | Flow changes in a document that matches an existing task | existing workflow flow and phase remain unchanged | [The board projection is intentionally narrower than the dialect](../interfaces.md#the-board-projection-is-intentionally-narrower-than-the-dialect) |
+| Description or annotations are imported from a document | description follows replacement semantics; annotations append as deduplicated task notes and remain recoverable with later notes through `doc ledger` | [The board projection is intentionally narrower than the dialect](../interfaces.md#the-board-projection-is-intentionally-narrower-than-the-dialect) |
 | A task document names a flow phase outside `design`, `plan`, `todo`, `verify`, and `review` | classification refuses it; this closed dialect grammar does not constrain ordinary board flows | [The board projection is intentionally narrower than the dialect](../interfaces.md#the-board-projection-is-intentionally-narrower-than-the-dialect) |
 | A refusal fires | nothing was written; when a repair exists, its exact action leads the diagnostic | [A refusal that can name a way out leads with the exact repair action](../invariants/distribution.md#conduct-a-refusal-that-can-name-a-way-out-leads-with-the-exact-repair-action) |
 

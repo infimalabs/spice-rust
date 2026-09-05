@@ -70,6 +70,7 @@ fn validated_snapshot_from_with_occupant(
     })?;
     let mut residency = positioned(residency);
     let origin_threads = task_origin_threads(observed.facts().iter(), &residency.body)?;
+    let (claim_contexts, git_contexts) = task_contexts(observed.facts());
     let mut tasks = Vec::with_capacity(observed.tasks().len());
     let mut entries = Vec::with_capacity(observed.tasks().len());
     for heads in observed.tasks() {
@@ -77,6 +78,12 @@ fn validated_snapshot_from_with_occupant(
         let workflow = positioned(heads.workflow());
         let claim = heads.claim().map(positioned);
         let lease = heads.lease().map(positioned);
+        let claim_context = current_claim_context(
+            &statement.body.born,
+            claim.as_ref().map(|head| &head.body),
+            &claim_contexts,
+        )?;
+        let git_context = git_contexts.get(&statement.body.born).cloned();
         let handle = TaskHandle::for_project(&statement.body.project, &statement.body.born);
         let entry = Entry::new(
             statement.body.clone(),
@@ -102,14 +109,17 @@ fn validated_snapshot_from_with_occupant(
                 )
             })?;
         entries.push(entry);
-        tasks.push(BoardTask::from_authoritative(
-            visibility,
-            origin_thread,
-            statement,
-            workflow,
-            claim,
-            lease,
-        ));
+        tasks.push(
+            BoardTask::from_authoritative(
+                visibility,
+                origin_thread,
+                statement,
+                workflow,
+                claim,
+                lease,
+            )
+            .with_context(claim_context, git_context),
+        );
     }
     board::project_subscription_history(&mut residency.body, &entries, observed.facts().iter())
         .map_err(|error| store_fault("lineage::subscription-history-invalid", &error))?;
@@ -144,6 +154,35 @@ fn validated_snapshot_from_with_occupant(
         entries,
         review_history,
     })
+}
+
+type ClaimContexts =
+    std::collections::BTreeMap<Seq, (wire::TaskStamp, wire::intent::TaskClaimContext)>;
+
+fn current_claim_context(
+    task: &wire::TaskStamp,
+    claim: Option<&wire::ClaimHead>,
+    contexts: &ClaimContexts,
+) -> Result<Option<wire::intent::TaskClaimContext>, Outcome<CommandAnswer>> {
+    let Some(claim) = claim else {
+        return Ok(None);
+    };
+    let (context_task, context) = contexts.get(&claim.claimed).ok_or_else(|| {
+        protocol_fault(
+            "board::claim-context-fact-missing",
+            &format!("task {task} claim names absent fact {}", claim.claimed),
+        )
+    })?;
+    if context_task != task {
+        return Err(protocol_fault(
+            "board::claim-context-fact-invalid",
+            &format!(
+                "task {task} claim position {} belongs to task {context_task}",
+                claim.claimed
+            ),
+        ));
+    }
+    Ok(Some(context.clone()))
 }
 
 #[derive(Clone)]
@@ -475,6 +514,138 @@ fn task_origin_threads<'a>(
     Ok(origins)
 }
 
+pub(super) fn claim_transcript_recovery(
+    won: &body::ClaimWon,
+    sessions: &std::collections::BTreeMap<
+        (
+            wire::CanonicalUuid,
+            wire::CanonicalUuid,
+            wire::Name,
+            wire::CanonicalUuid,
+        ),
+        String,
+    >,
+) -> wire::intent::TaskTranscriptRecovery {
+    let body::SourceBoundary::Proven { heads } = &won.source else {
+        let body::SourceBoundary::Incomplete { reason } = &won.source else {
+            unreachable!("source boundary has a closed wire vocabulary")
+        };
+        return wire::intent::TaskTranscriptRecovery::Unavailable {
+            reason: format!("source-incomplete: {reason}"),
+        };
+    };
+    let mut registered = heads
+        .iter()
+        .filter(|head| head.stream == body::TASK_CREATION_CONTEXT_STREAM);
+    let Some(boundary) = registered.next() else {
+        return wire::intent::TaskTranscriptRecovery::Unavailable {
+            reason: "registered-session-stream-missing".to_owned(),
+        };
+    };
+    if registered.next().is_some() {
+        return wire::intent::TaskTranscriptRecovery::Unavailable {
+            reason: "registered-session-stream-ambiguous".to_owned(),
+        };
+    }
+    if boundary.lane != won.lane {
+        return wire::intent::TaskTranscriptRecovery::Unavailable {
+            reason: "registered-session-lane-mismatch".to_owned(),
+        };
+    }
+    let key = (won.lane, won.occupant, boundary.vendor.clone(), won.epoch);
+    match sessions.get(&key) {
+        Some(session) if !session.is_empty() => wire::intent::TaskTranscriptRecovery::Transcript {
+            session: session.clone(),
+        },
+        Some(_) => wire::intent::TaskTranscriptRecovery::Unavailable {
+            reason: "session-identity-empty".to_owned(),
+        },
+        None => wire::intent::TaskTranscriptRecovery::Unavailable {
+            reason: "session-declaration-missing".to_owned(),
+        },
+    }
+}
+
+fn task_contexts(
+    facts: &bus::TaskFacts,
+) -> (
+    ClaimContexts,
+    std::collections::BTreeMap<wire::TaskStamp, wire::intent::TaskGitContext>,
+) {
+    let mut sessions = std::collections::BTreeMap::new();
+    let mut claims = std::collections::BTreeMap::new();
+    let mut git = std::collections::BTreeMap::new();
+    for envelope in facts.iter() {
+        if let Some(declaration) = envelope.fact.read::<body::LaneSessionDeclared>() {
+            sessions.insert(
+                (
+                    declaration.lane,
+                    declaration.occupant,
+                    declaration.vendor,
+                    declaration.epoch,
+                ),
+                declaration.identity,
+            );
+            continue;
+        }
+        if let Some(won) = envelope.fact.read::<body::ClaimWon>() {
+            let task = won.task.clone();
+            if let Some(boundary) = won.git.clone() {
+                git.insert(
+                    task.clone(),
+                    wire::intent::TaskGitContext {
+                        fact: envelope.seq,
+                        kind: wire::intent::TaskGitContextKind::Claim,
+                        boundary,
+                    },
+                );
+            }
+            let recovery = claim_transcript_recovery(&won, &sessions);
+            claims.insert(
+                envelope.seq,
+                (
+                    task,
+                    wire::intent::TaskClaimContext {
+                        claimed: envelope.seq,
+                        lane: won.lane,
+                        occupant: won.occupant,
+                        epoch: won.epoch,
+                        source: won.source,
+                        recovery,
+                    },
+                ),
+            );
+            continue;
+        }
+        if let Some(done) = envelope.fact.read::<body::TaskDone>()
+            && let Some(boundary) = done.git
+        {
+            git.insert(
+                done.task,
+                wire::intent::TaskGitContext {
+                    fact: envelope.seq,
+                    kind: wire::intent::TaskGitContextKind::Completion,
+                    boundary,
+                },
+            );
+            continue;
+        }
+        if let Some(reviewed) = envelope.fact.read::<body::TaskReviewed>()
+            && let Some(boundary) = reviewed.git
+        {
+            git.insert(
+                reviewed.task,
+                wire::intent::TaskGitContext {
+                    fact: envelope.seq,
+                    kind: wire::intent::TaskGitContextKind::Review,
+                    boundary,
+                },
+            );
+        }
+    }
+    (claims, git)
+}
+
 fn required_fact_uuid(
     fact: &wire::Envelope<wire::AnyFact>,
     field: &str,
@@ -782,28 +953,54 @@ pub(super) fn read_ledger(
         "\nFlow: {}\n",
         join_phases(&task.workflow.body.flow)
     ));
-    let tags = visible_tags(&statement.tags).collect::<Vec<_>>();
-    if !tags.is_empty() {
-        source.push_str(&format!(
-            "Tags: {}\n",
-            tags.into_iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
-    }
-    let Some(document) = dialect::classify(&source).document().cloned() else {
+    let Some(mut document) = dialect::classify(&source).document().cloned() else {
         return store_fault(
             "doc::ledger-unrepresentable",
             "current task heads did not classify as a canonical task document",
         );
     };
+    let root = document.root;
+    let node = &mut document.nodes[root];
+    node.acceptance = statement.acceptance.clone();
+    node.priority = statement
+        .tags
+        .iter()
+        .find_map(|tag| tag.strip_prefix(board::PRIORITY_TAG_PREFIX))
+        .and_then(dialect::Priority::parse);
+    node.tags = visible_tags(&statement.tags)
+        .filter(|tag| {
+            !tag.starts_with(board::PRIORITY_TAG_PREFIX) && !tag.starts_with("document-slug:")
+        })
+        .cloned()
+        .collect();
+    node.description = statement.description.clone().unwrap_or_default();
+    if !task.visibility.is_hidden() {
+        node.annotations = snapshot
+            .facts
+            .iter()
+            .filter_map(|envelope| envelope.fact.read::<body::TaskNoted>())
+            .filter(|noted| noted.task == statement.born)
+            .map(|noted| note_annotation(&noted.note))
+            .collect();
+    }
     snapshot_reply(
         snapshot.cursor,
         CommandAnswer::Text(TextAnswer {
             text: dialect::emit(&document),
         }),
     )
+}
+
+fn note_annotation(note: &str) -> String {
+    let longest = note
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.chars().all(|character| character == '~'))
+        .map(str::len)
+        .max()
+        .unwrap_or(0);
+    let fence = "~".repeat(longest.saturating_add(1).max(3));
+    format!("{fence}\n{note}\n{fence}")
 }
 
 fn join_phases(phases: &[wire::Phase]) -> String {

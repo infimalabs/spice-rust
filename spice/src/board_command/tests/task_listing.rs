@@ -188,6 +188,8 @@ fn active_todo_task_show_prints_the_parser_owned_done_command() {
     let claimed = board(&bus, epoch, Actor::Lane(seats[0].lane));
     let shown = task_show(&claimed, at(&claimed, &task), &[]);
     assert!(shown.contains("creation_context unavailable operator-actor"));
+    assert!(shown.contains("claim_context unavailable registered-session-stream-missing"));
+    assert!(shown.contains(&format!("spice doc ledger {task}")));
     assert!(
         shown.contains("next: spice task done --validation \"...\""),
         "the detail packet exposes the parser-owned task done form: {shown}"
@@ -257,6 +259,77 @@ fn task_show_prints_creation_context_as_one_shell_executable_current_command() {
 }
 
 #[test]
+fn claim_context_recovery_requires_one_exact_session_authority() {
+    let lane = uuid(9_410);
+    let other_lane = uuid(9_411);
+    let occupant = uuid(9_412);
+    let epoch = uuid(9_413);
+    let vendor: Name = "codex".parse().expect("fixture vendor");
+    let stream = body::TASK_CREATION_CONTEXT_STREAM.to_owned();
+    let mut won = body::ClaimWon {
+        task: stamp("claim-context-authority"),
+        actor: Actor::Lane(lane),
+        lane,
+        occupant,
+        epoch,
+        cell: None,
+        until: Instant::new(jiff::Timestamp::now()).expect("fixture instant"),
+        git: None,
+        recovery: None,
+        source: body::SourceBoundary::Proven {
+            heads: vec![wire::TranscriptSourceHead {
+                lane: other_lane,
+                vendor: vendor.clone(),
+                stream: stream.clone(),
+                source: uuid(9_414),
+                next: body::TranscriptPosition {
+                    member: 7,
+                    offset: 1_024,
+                },
+            }],
+        },
+    };
+    let mut sessions = std::collections::BTreeMap::new();
+    assert_eq!(
+        claim_transcript_recovery(&won, &sessions),
+        wire::intent::TaskTranscriptRecovery::Unavailable {
+            reason: "registered-session-lane-mismatch".to_owned(),
+        }
+    );
+
+    let body::SourceBoundary::Proven { heads } = &mut won.source else {
+        unreachable!("fixture source is proven")
+    };
+    heads[0].lane = lane;
+    sessions.insert(
+        (lane, occupant, vendor.clone(), uuid(9_415)),
+        "wrong-epoch".to_owned(),
+    );
+    assert_eq!(
+        claim_transcript_recovery(&won, &sessions),
+        wire::intent::TaskTranscriptRecovery::Unavailable {
+            reason: "session-declaration-missing".to_owned(),
+        }
+    );
+
+    let key = (lane, occupant, vendor, epoch);
+    sessions.insert(key.clone(), String::new());
+    assert_eq!(
+        claim_transcript_recovery(&won, &sessions),
+        wire::intent::TaskTranscriptRecovery::Unavailable {
+            reason: "session-identity-empty".to_owned(),
+        }
+    );
+    sessions.insert(key, "exact-session".to_owned());
+    assert_eq!(
+        claim_transcript_recovery(&won, &sessions),
+        wire::intent::TaskTranscriptRecovery::Transcript {
+            session: "exact-session".to_owned(),
+        }
+    );
+}
+
+#[test]
 fn allocator_assignment_prints_the_lane_tasks_exact_creation_command() {
     let (root, bus, epoch, seats) = fixture("task-next-creation-command", 1);
     let expected = authorize_lane_creation(&bus, epoch, &seats[0]);
@@ -295,6 +368,269 @@ fn allocator_assignment_prints_the_lane_tasks_exact_creation_command() {
             .first()
             .map(String::as_str),
         Some("spice")
+    );
+    let claimed = board(&bus, epoch, Actor::Lane(seats[0].lane));
+    let row = at(&claimed, &task);
+    let (context, boundary) = assert_claim_context(row, &expected);
+    let shown = task_show(&claimed, row, &[]);
+    assert!(shown.contains(&format!(
+        "claim_context fact={} lane={} occupant={} epoch={}",
+        context.claimed, context.lane, context.occupant, context.epoch
+    )));
+    assert_eq!(
+        shown
+            .lines()
+            .filter(|line| *line == task_creation_context_output(&expected).as_ref())
+            .count(),
+        2,
+        "creation and claim coordinates independently recover the same unchanged source"
+    );
+    continue_claim_transcript(&bus, &context, &boundary);
+    carry_claim_and_assert_context(&bus, epoch, &task, &context);
+    clean(&root, bus);
+}
+
+fn assert_claim_context(
+    row: &BoardTask,
+    expected: &body::TaskCreationContext,
+) -> (wire::intent::TaskClaimContext, wire::TranscriptSourceHead) {
+    let context = row
+        .claim_context
+        .as_ref()
+        .expect("claimed task carries compact claim provenance");
+    let wire::intent::TaskTranscriptRecovery::Transcript { session } = &context.recovery else {
+        panic!("accounted claim context must be executable: {context:?}");
+    };
+    let body::TaskCreationContext::Transcript {
+        session: expected_session,
+        boundary: expected_boundary,
+    } = expected
+    else {
+        unreachable!("authorized lane creation has transcript context")
+    };
+    assert_eq!(session, expected_session);
+    let body::SourceBoundary::Proven { heads } = &context.source else {
+        panic!("fixture claim source must be proven")
+    };
+    let boundary = heads
+        .iter()
+        .find(|head| head.stream == body::TASK_CREATION_CONTEXT_STREAM)
+        .expect("claim source retains its registered session boundary");
+    assert_eq!(boundary, expected_boundary);
+    (context.clone(), boundary.clone())
+}
+
+fn continue_claim_transcript(
+    bus: &Bus,
+    context: &wire::intent::TaskClaimContext,
+    boundary: &wire::TranscriptSourceHead,
+) {
+    let moved_position = body::TranscriptPosition {
+        member: boundary.next.member,
+        offset: boundary.next.offset + 64,
+    };
+    let moved_boundary = wire::TranscriptSourceHead {
+        next: moved_position,
+        ..boundary.clone()
+    };
+    let mut continuation = JournalWrite::new(
+        Actor::Spice,
+        format!("lane:{}", context.lane)
+            .parse()
+            .expect("fixture origin"),
+        Instant::new(jiff::Timestamp::now()).expect("fixture instant"),
+        Producer::ResidentRecognition,
+    );
+    let ingested = continuation
+        .fact(
+            body::JournalIngested {
+                lane: moved_boundary.lane,
+                vendor: moved_boundary.vendor.clone(),
+                stream: moved_boundary.stream.clone(),
+                source: moved_boundary.source,
+                supersedes: None,
+                from: boundary.next,
+                to: moved_position,
+                usage: Vec::new(),
+                non_usage_records: 1,
+                residue_records: 0,
+            },
+            FactCause::Root,
+        )
+        .expect("transcript continuation builds");
+    continuation.transcript_source_head(ingested, move |_| moved_boundary.clone());
+    assert!(matches!(
+        bus.commit(continuation)
+            .expect("transcript continuation commits"),
+        CommitOutcome::Committed(_)
+    ));
+}
+
+fn carry_claim_and_assert_context(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    task: &TaskHandle,
+    context: &wire::intent::TaskClaimContext,
+) {
+    let before_carry = board(bus, epoch, Actor::Operator);
+    let prior_claim = at(&before_carry, task)
+        .claim
+        .as_ref()
+        .expect("fixture claim")
+        .body
+        .clone();
+    let task_stamp = at(&before_carry, task).statement.body.born.clone();
+    let source = bus
+        .source_boundary(&context.lane)
+        .expect("continued source boundary reads");
+    let mut carry = JournalWrite::new(
+        Actor::Spice,
+        format!("lane:{}", context.lane)
+            .parse()
+            .expect("fixture carry origin"),
+        Instant::new(jiff::Timestamp::now()).expect("fixture carry instant"),
+        Producer::ResidentRecognition,
+    );
+    let carried = carry
+        .fact(
+            body::ClaimCarried {
+                task: task_stamp.clone(),
+                lane: context.lane,
+                occupant: prior_claim.occupant,
+                ancestor: prior_claim.occupant,
+                epoch: prior_claim.epoch,
+                source,
+            },
+            FactCause::Root,
+        )
+        .expect("claim carry builds");
+    carry.claim_head(task_stamp, carried, move |fact| wire::ClaimHead {
+        fact,
+        ..prior_claim
+    });
+    assert!(matches!(
+        bus.commit(carry).expect("claim carry commits"),
+        CommitOutcome::Committed(_)
+    ));
+    let after_carry = board(bus, epoch, Actor::Operator);
+    let carried_row = at(&after_carry, task);
+    assert_ne!(
+        carried_row.claim.as_ref().expect("carried claim").position,
+        context.claimed,
+        "the claim head moved to the carry fact"
+    );
+    assert_eq!(
+        carried_row.claim_context.as_ref(),
+        Some(context),
+        "claim recovery remains anchored to ClaimWon across continuation and carry"
+    );
+}
+
+#[test]
+fn task_show_keeps_git_provenance_compact_and_prints_its_exact_lookup() {
+    let (root, bus, epoch, _) = fixture("task-show-git-context", 0);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "SHOW-git00001",
+        "Recover one Git boundary",
+        Some("todo"),
+    );
+    let task_stamp = task.born().expect("fixture handle has a stamp");
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        format!("task:{task_stamp}")
+            .parse()
+            .expect("fixture task origin"),
+        Instant::new(jiff::Timestamp::now()).expect("fixture instant"),
+        Producer::CommandDoor,
+    );
+    write
+        .fact(
+            body::TaskDone {
+                task: task_stamp,
+                validation: "Git context fixture".to_owned(),
+                terminal: None,
+                git: Some(body::GitBoundary {
+                    head: "agent-head".to_owned(),
+                    integrated: "missing-merge-object".to_owned(),
+                    upstream: Some("origin/main".to_owned()),
+                    upstream_head: Some("baseline-head".to_owned()),
+                    local_commits: 2,
+                }),
+                source: body::SourceBoundary::Incomplete {
+                    reason: "fixture has no transcript".to_owned(),
+                },
+            },
+            FactCause::Root,
+        )
+        .expect("completion provenance builds");
+    let committed = match bus.commit(write).expect("completion provenance commits") {
+        CommitOutcome::Committed(committed) => committed,
+        outcome => panic!("completion provenance did not commit: {outcome:?}"),
+    };
+    let completed = Seq::new(committed.first()).expect("committed fact position");
+    let answer = board(&bus, epoch, Actor::Operator);
+    let row = at(&answer, &task);
+    assert_eq!(
+        row.git_context,
+        Some(wire::intent::TaskGitContext {
+            fact: completed,
+            kind: wire::intent::TaskGitContextKind::Completion,
+            boundary: body::GitBoundary {
+                head: "agent-head".to_owned(),
+                integrated: "missing-merge-object".to_owned(),
+                upstream: Some("origin/main".to_owned()),
+                upstream_head: Some("baseline-head".to_owned()),
+                local_commits: 2,
+            },
+        })
+    );
+
+    let shown = task_show(&answer, row, &[]);
+    assert!(shown.contains(&format!(
+        "git_context kind=completion fact={} head=agent-head integrated=missing-merge-object local_commits=2",
+        row.git_context.as_ref().expect("Git context").fact
+    )));
+    assert!(shown.contains("git_upstream origin/main"));
+    assert!(shown.contains("git_upstream_head baseline-head"));
+    let command = shown
+        .lines()
+        .find(|line| line.starts_with("git show "))
+        .expect("Git context carries one executable object lookup");
+    assert_eq!(
+        shell_words::split(command).expect("Git lookup is valid shell words"),
+        [
+            "git",
+            "show",
+            "-m",
+            "--first-parent",
+            "--stat",
+            "--patch",
+            "--end-of-options",
+            "missing-merge-object",
+        ]
+    );
+
+    let mut claimed = row.clone();
+    claimed.git_context.as_mut().expect("Git context").kind =
+        wire::intent::TaskGitContextKind::Claim;
+    let claimed_show = task_show(&answer, &claimed, &[]);
+    let claim_command = claimed_show
+        .lines()
+        .find(|line| line.starts_with("git show "))
+        .expect("claim Git context carries an executable object lookup");
+    assert_eq!(
+        shell_words::split(claim_command).expect("claim Git lookup is valid shell words"),
+        [
+            "git",
+            "show",
+            "--no-patch",
+            "--format=fuller",
+            "--end-of-options",
+            "agent-head",
+        ]
     );
     clean(&root, bus);
 }

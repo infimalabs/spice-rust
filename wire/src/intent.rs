@@ -34,7 +34,8 @@ use crate::witness::{Answer, Disposition, Name, TaskHandle};
 mod board;
 pub use board::{
     BoardActorRoute, BoardAnswer, BoardGraph, BoardHandout, BoardProjectPolicy, BoardRead,
-    BoardStatement, BoardTask, DocLedger, Positioned, ProjectVisibility, TextAnswer,
+    BoardStatement, BoardTask, DocLedger, Positioned, ProjectVisibility, TaskClaimContext,
+    TaskGitContext, TaskGitContextKind, TaskTranscriptRecovery, TextAnswer,
 };
 mod simple_answers;
 pub use simple_answers::{RecognitionAnswer, TasteAnswer};

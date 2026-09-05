@@ -81,6 +81,78 @@ fn authored_document_apply_is_atomic_idempotent_and_barrier_bound() {
 }
 
 #[test]
+fn document_rationale_and_later_notes_recover_through_the_task_ledger() {
+    let (root, bus, epoch, _) = fixture("document-context-recovery", 0);
+    let initial = board(&bus, epoch, Actor::Operator);
+    let applied = apply_document(
+        &bus,
+        epoch,
+        "# Goal\n\n- Recover compact context\n\n  Keep this rationale in the authored document instead of the task packet.\n\n  ```text\n  Imported decision with exact punctuation: yes.\n  ```\n",
+        &initial,
+    );
+    let task = applied
+        .answer
+        .touched
+        .last()
+        .expect("document creates its child task")
+        .clone();
+    assert_eq!(
+        at(&applied.board, &task)
+            .statement
+            .body
+            .description
+            .as_deref(),
+        Some("Keep this rationale in the authored document instead of the task packet.")
+    );
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskNote,
+        vec![Witness::Existence {
+            task: at(&applied.board, &task).statement.body.born.clone(),
+        }],
+        &TaskNote {
+            task: task.clone(),
+            note: "Later context remains append-only.".to_owned(),
+        },
+    ));
+
+    let current = board(&bus, epoch, Actor::Operator);
+    let shown = task_show(&current, at(&current, &task), &[]);
+    assert!(shown.contains(&format!("spice doc ledger {task}")));
+    assert!(
+        !shown.contains("Imported decision with exact punctuation: yes.")
+            && !shown.contains("Later context remains append-only."),
+        "task detail points to document context without duplicating annotation or note bodies"
+    );
+    let ledger = issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::DocLedger,
+        Vec::new(),
+        &DocLedger { task: task.clone() },
+    );
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::Text(TextAnswer { text }),
+        ..
+    }) = ledger
+    else {
+        panic!("task ledger returned another outcome: {ledger:?}");
+    };
+    assert!(text.contains("Keep this rationale in the authored document"));
+    assert!(text.contains("Imported decision with exact punctuation: yes."));
+    assert!(text.contains("Later context remains append-only."));
+    let recovered = board::Preview::classify(&text).expect("recovered ledger remains canonical");
+    let node = &recovered.document().nodes[recovered.document().root];
+    assert_eq!(node.annotations.len(), 2);
+    assert!(node.annotations[0].contains("Imported decision with exact punctuation: yes."));
+    assert!(node.annotations[1].contains("Later context remains append-only."));
+    clean(&root, bus);
+}
+
+#[test]
 fn authored_document_apply_refuses_to_edit_a_withdrawn_task() {
     let (root, bus, epoch, _) = fixture("document-withdrawn", 0);
     let initial_board = board(&bus, epoch, Actor::Operator);

@@ -92,6 +92,38 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
           "expiry": "2026-08-01T07:07:19.000Z",
           "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3"
         }
+      },
+      "claim_context": {
+        "claimed": 4,
+        "lane": "018f82d4-6f59-7d06-92e3-bce9131163c5",
+        "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c6",
+        "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
+        "source": {
+          "proven": {
+            "heads": [{
+              "lane": "018f82d4-6f59-7d06-92e3-bce9131163c5",
+              "vendor": "claude",
+              "stream": "session",
+              "source": "018f82d4-6f59-7d06-92e3-bce9131163c7",
+              "next": { "member": 3, "offset": 44 }
+            }]
+          }
+        },
+        "recovery": {
+          "kind": "transcript",
+          "session": "thread-123"
+        }
+      },
+      "git_context": {
+        "fact": 6,
+        "kind": "completion",
+        "boundary": {
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "integrated": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "upstream": "origin/main",
+          "upstream_head": "cccccccccccccccccccccccccccccccccccccccc",
+          "local_commits": 2
+        }
       }
     }
   ],
