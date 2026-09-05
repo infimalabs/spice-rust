@@ -14,10 +14,12 @@ const artifacts = join(root, "artifacts/canvas");
 const agentGeometryOwners = Object.freeze({
   activity: ':scope > .team-pane[data-team-mode="Compose"] '
     + '> .team-mode-pane[data-mode="Compose"] > .team-compose > .team-activity-grid',
-  committedCard: ':scope > .lane-mosaic-plane > .mosaic-message-card[data-layout-phase="committed"]',
+  committedCard: ':scope > .lane-mosaic-plane > .lane-mosaic-track '
+    + '> .mosaic-message-card[data-layout-phase="committed"]',
   emptyActivity: ":scope > .mosaic-message-empty",
   emptyFleet: ':scope > .team-pane[data-team-mode="Compose"] > .empty',
-  measuringCard: ':scope > .lane-mosaic-plane > .mosaic-message-card[data-layout-phase="measuring"]',
+  measuringCard: ':scope > .lane-mosaic-plane > .lane-mosaic-track '
+    + '> .mosaic-message-card[data-layout-phase="measuring"]',
   plane: ":scope > .lane-mosaic-plane",
 });
 const axisPanes = new Map([
@@ -373,7 +375,8 @@ async function waitForAgentWidths(page, state) {
   await waitForPageFunction(page, `${state} Mosaic widths commit`, TRANSITION_MS, () => (
     [...document.querySelectorAll(".lane-mosaic-plane")].every((plane) => (
       plane.dataset.measurementPhase === "ready"
-        && Math.abs(Number(plane.dataset.committedWidth) - plane.clientWidth) <= 1
+        && Math.abs(Number(plane.dataset.committedWidth)
+          - plane.querySelector(":scope > .lane-mosaic-track").clientWidth) <= 1
     ))
   ));
 }

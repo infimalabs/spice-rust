@@ -85,11 +85,12 @@ async function armPaintProbe(page) {
     let frame;
     const sample = () => {
       const cardStyle = getComputedStyle(card);
-      const planeStyle = getComputedStyle(plane);
+      const track = plane.querySelector(":scope > .lane-mosaic-track");
+      const trackStyle = getComputedStyle(track);
       const box = card.getBoundingClientRect();
       const planeBox = plane.getBoundingClientRect();
-      const gap = Number.parseFloat(planeStyle.columnGap);
-      const trackWidth = (plane.clientWidth - gap * 11) / 12;
+      const gap = Number.parseFloat(trackStyle.columnGap);
+      const trackWidth = (track.clientWidth - gap * 11) / 12;
       const layoutPhase = card.dataset.layoutPhase;
       const baseSpan = candidateSpans[0];
       const committedSpan = Number(card.dataset.span);
@@ -182,6 +183,7 @@ async function negativeControl(page) {
       "pointer-events:none",
       "overflow:hidden",
     ].join(";");
+    const track = sourcePlane.querySelector(":scope > .lane-mosaic-track").cloneNode(false);
     const card = source.cloneNode(true);
     card.dataset.layoutPhase = "committed";
     card.dataset.span = String(baseSpan);
@@ -190,16 +192,18 @@ async function negativeControl(page) {
     card.style.setProperty("--mosaic-measure-span", String(baseSpan));
     card.style.setProperty("top", "0");
     card.style.setProperty("height", "auto");
-    plane.append(card);
+    track.append(card);
+    plane.append(track);
     document.body.append(plane);
 
     const sample = () => {
       const cardStyle = getComputedStyle(card);
-      const planeStyle = getComputedStyle(plane);
+      const track = plane.querySelector(":scope > .lane-mosaic-track");
+      const trackStyle = getComputedStyle(track);
       const box = card.getBoundingClientRect();
       const planeBox = plane.getBoundingClientRect();
-      const gap = Number.parseFloat(planeStyle.columnGap);
-      const trackWidth = (plane.clientWidth - gap * 11) / 12;
+      const gap = Number.parseFloat(trackStyle.columnGap);
+      const trackWidth = (track.clientWidth - gap * 11) / 12;
       const committedSpan = Number(card.dataset.span);
       return {
         allowedSpan: committedSpan,

@@ -43,7 +43,8 @@ export async function waitForCompactionReady(page, divider, label) {
       && boundary.dataset.track === "0"
       && boundary.dataset.span === "12"
       && plane?.dataset.measurementPhase === "ready"
-      && Math.abs(Number(plane.dataset.committedWidth) - plane.clientWidth) <= 1;
+      && Math.abs(Number(plane.dataset.committedWidth)
+        - plane.querySelector(":scope > .lane-mosaic-track").clientWidth) <= 1;
   }, key);
   return key;
 }
@@ -60,7 +61,8 @@ export async function resizeCompactionViewport(page, divider, viewport, label) {
     return boundary?.dataset.layoutPhase === "committed"
       && plane?.dataset.measurementPhase === "ready"
       && Number(plane.dataset.committedWidth) !== expected.before
-      && Math.abs(Number(plane.dataset.committedWidth) - plane.clientWidth) <= 1;
+      && Math.abs(Number(plane.dataset.committedWidth)
+        - plane.querySelector(":scope > .lane-mosaic-track").clientWidth) <= 1;
   }, { key, before });
 }
 
@@ -106,6 +108,7 @@ export async function assertCompactionDivider(
       };
     };
     const plane = boundary.closest(".lane-mosaic-plane");
+    const track = boundary.closest(".lane-mosaic-track");
     const labelNode = boundary.querySelector(".mosaic-compaction-label");
     const agent = boundary.querySelector(".mosaic-compaction-agent");
     const agentStyle = getComputedStyle(agent);
@@ -142,6 +145,7 @@ export async function assertCompactionDivider(
         creationIndex: Number(boundary.dataset.creationIndex),
       },
       plane: { ...rect(plane), clientWidth: plane.clientWidth },
+      track: { ...rect(track), clientWidth: track.clientWidth },
       pageBackground,
       accentColor,
       inkColor,
@@ -168,9 +172,9 @@ export async function assertCompactionDivider(
 
   assert.equal(geometry.card.display, "grid", `${label} is a grid divider`);
   assert.ok(geometry.card.width > 0 && geometry.card.height > 0, `${label} paints visible pixels`);
-  assert.ok(Math.abs(geometry.card.left - geometry.plane.left) <= 0.5, `${label} starts at the plane edge`);
-  assert.ok(Math.abs(geometry.card.right - geometry.plane.right) <= 0.5, `${label} ends at the plane edge`);
-  assert.ok(Math.abs(geometry.card.width - geometry.plane.clientWidth) <= 1, `${label} uses the full plane width`);
+  assert.ok(Math.abs(geometry.card.left - geometry.track.left) <= 0.5, `${label} starts at the track edge`);
+  assert.ok(Math.abs(geometry.card.right - geometry.track.right) <= 0.5, `${label} ends at the track edge`);
+  assert.ok(Math.abs(geometry.card.width - geometry.track.clientWidth) <= 1, `${label} uses the full track width`);
   assert.equal(geometry.card.background, "rgba(0, 0, 0, 0)", `${label} has no panel surface`);
   assert.deepEqual(
     [
@@ -342,8 +346,9 @@ export async function assertNoUnavailableToolTerminal(
       },
       lattice: (() => {
         const plane = card.closest(".lane-mosaic-plane");
+        const track = card.closest(".lane-mosaic-track");
         return {
-          gap: Number.parseFloat(getComputedStyle(plane).rowGap),
+          gap: Number.parseFloat(getComputedStyle(track).rowGap),
           module: Number(plane.dataset.module),
         };
       })(),

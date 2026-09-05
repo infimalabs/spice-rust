@@ -202,10 +202,10 @@ export async function assertPersistentMosaic(
     const sheet = [...document.styleSheets].find((candidate) => candidate.href?.endsWith("mosaic.css"));
     if (!sheet) throw new Error("the Mosaic stylesheet is absent");
     const rules = [
-      ".lane-mosaic-plane.mosaic-width-probe-tiny { width: 12px; }",
-      ".lane-mosaic-plane.mosaic-width-probe-a { width: 540px; }",
-      ".lane-mosaic-plane.mosaic-width-probe-b { width: 580px; }",
-      ".lane-mosaic-plane.mosaic-width-probe-final { width: 620px; }",
+      ".lane-mosaic-plane.mosaic-width-probe-tiny > .lane-mosaic-track { width: 12px; }",
+      ".lane-mosaic-plane.mosaic-width-probe-a > .lane-mosaic-track { width: 540px; }",
+      ".lane-mosaic-plane.mosaic-width-probe-b > .lane-mosaic-track { width: 580px; }",
+      ".lane-mosaic-plane.mosaic-width-probe-final > .lane-mosaic-track { width: 620px; }",
     ];
     return rules.map((rule) => sheet.insertRule(rule, sheet.cssRules.length));
   });

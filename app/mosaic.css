@@ -947,21 +947,33 @@ body:has(.shell--mosaic),
 .team-activity-grid {
   position: relative; display: flex;
   flex: 1 1 auto; min-height: 0; flex-direction: column;
-  padding: 11px; border-top: 1px solid var(--line);
+  padding: 0; border-top: 1px solid var(--line);
 }
 .team-activity-grid[data-empty="true"] .lane-mosaic-plane { display: none; }
 .lane-mosaic-plane {
+  --mosaic-edge-gutter: 11px;
   --mosaic-gap: .75rem;
   --mosaic-module: 3.75rem;
   /* Rust copies the integer geometry into custom properties through CSSOM.
      Typed attr() collapses this plane in Firefox, while style attributes are
      deliberately refused by the Canvas CSP. */
-  position: relative; display: grid; flex: 1 1 auto; min-height: 0; min-width: 0;
+  position: relative; display: block; flex: 1 1 auto; min-height: 0; min-width: 0;
   height: calc(var(--mosaic-plane-rows) * var(--mosaic-module) - var(--mosaic-gap));
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-  column-gap: var(--mosaic-gap); row-gap: var(--mosaic-gap);
   max-height: none;
   overflow-y: auto; overflow-anchor: none;
+}
+.lane-mosaic-track {
+  position: relative; display: grid; min-width: 0;
+  width: calc(100% - var(--mosaic-edge-gutter) - var(--mosaic-edge-gutter));
+  height: calc(
+    var(--mosaic-plane-rows) * var(--mosaic-module)
+      - var(--mosaic-gap)
+      + var(--mosaic-edge-gutter)
+      + var(--mosaic-edge-gutter)
+  );
+  margin-inline: var(--mosaic-edge-gutter);
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  column-gap: var(--mosaic-gap); row-gap: var(--mosaic-gap);
 }
 .lane-mosaic-plane[data-measurement-phase="base"] {
   /* Measurement is an enhancement, not admission. A fresh hidden or narrow
@@ -970,11 +982,15 @@ body:has(.shell--mosaic),
      cards in ordinary grid flow until the persistent plane takes ownership. */
   height: auto; visibility: visible; pointer-events: auto;
 }
+.lane-mosaic-plane[data-measurement-phase="base"] .lane-mosaic-track {
+  height: auto;
+  padding-block: var(--mosaic-edge-gutter);
+}
 .lane-mosaic-plane .mosaic-message-card[data-layout-phase="measuring"] {
   visibility: hidden; pointer-events: none;
 }
 .lane-mosaic-plane .mosaic-message-card[data-mosaic-measurement-active="true"] {
-  top: 0; height: auto;
+  top: var(--mosaic-edge-gutter); height: auto;
   grid-column-start: 1;
   grid-column-end: span var(--mosaic-measure-span);
 }
@@ -989,7 +1005,11 @@ body:has(.shell--mosaic),
 .lane-mosaic-plane[data-lanes="1"] { --mosaic-module: 1.25rem; }
 .lane-mosaic-plane .mosaic-message-card {
   position: absolute;
-  top: calc((var(--mosaic-max-row) - var(--mosaic-base) - var(--mosaic-rows)) * var(--mosaic-module));
+  top: calc(
+    var(--mosaic-edge-gutter)
+      + (var(--mosaic-max-row) - var(--mosaic-base) - var(--mosaic-rows))
+        * var(--mosaic-module)
+  );
   height: calc(var(--mosaic-rows) * var(--mosaic-module) - var(--mosaic-gap));
   grid-column-start: calc(var(--mosaic-track) + 1);
   grid-column-end: span var(--mosaic-span);
@@ -998,8 +1018,11 @@ body:has(.shell--mosaic),
 }
 .lane-mosaic-plane[data-measurement-phase="base"] .mosaic-message-card,
 .lane-mosaic-plane .mosaic-message-card[data-layout-phase="measuring"] {
-  top: 0; height: auto; grid-column-start: 1;
+  top: var(--mosaic-edge-gutter); height: auto; grid-column-start: 1;
   grid-column-end: span var(--mosaic-measure-span);
+}
+.lane-mosaic-plane[data-measurement-phase="base"] .mosaic-message-card {
+  top: 0;
 }
 .lane-mosaic-plane .mosaic-message-card.liquid { transition: opacity 180ms ease-out; }
 .lane-mosaic-plane .mosaic-message-card.frozen { transition: none; }

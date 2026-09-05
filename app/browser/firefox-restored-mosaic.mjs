@@ -17,6 +17,7 @@ import { assertComposerPointerSelection } from "./composer-shards.mjs";
 import { launchBrowser } from "./headless-launch.mjs";
 import { assertLaneHeaderPipMatrix } from "./lane-header-pips.mjs";
 import { assertNaturalMessageFooterInsets } from "./message-card-reference.mjs";
+import { captureMessageStreamBoundaries } from "./message-stream-boundaries.mjs";
 import { assertCandidateMeasurementPaintAtomic } from "./mosaic-candidate-paint.mjs";
 import {
   assertQuoteBlockDensity,
@@ -373,6 +374,7 @@ export async function assertFirefoxRestoredMosaic(
     await captureQuoteBlockDensity(page, quoteCards, artifacts, "firefox-quotes-wide");
     await assertCandidateMeasurementPaintAtomic(page, "firefox");
     await assertNaturalMessageFooterInsets(console, "Firefox wide restored Mosaic");
+    await captureMessageStreamBoundaries(page, console, artifacts, "firefox");
     const imageFixture = await installFirefoxImageFixture(page);
     await assertFirefoxImageFixture(imageFixture, "Firefox wide image fixture");
     await imageFixture.screenshot({ path: join(artifacts, "firefox-image-previews-wide.png") });
