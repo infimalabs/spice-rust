@@ -74,3 +74,16 @@ fn path_fragment_macro_invocations_refuse_before_rust_expansion() {
         "unexpected refusal: {error}",
     );
 }
+
+#[test]
+fn renamed_non_file_compiler_macro_does_not_create_file_authority() {
+    let fixture = Fixture::new(
+        "renamed-non-file-compiler-macro",
+        &[(
+            "lib.rs",
+            "use std::stringify as include_str;\npub const VALUE: &str = include_str!(missing.txt);\n",
+        )],
+    );
+    assert!(fixture.reach().is_empty());
+    fixture.assert_compiles("lib.rs");
+}

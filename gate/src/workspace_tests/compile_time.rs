@@ -7,9 +7,8 @@ use syn::parse::Parser;
 use syn::punctuated::Punctuated;
 use syn::visit::Visit;
 
-mod output_macro;
-
-use output_macro::{OutputMacroAuthority, OutputMacroResolution};
+use super::source_reach::macro_scope::{attribute_may_expand_items, exported_macro_rules};
+use super::source_reach::{CompilerMacroKind, FileMacroResolution, FileMacroScope};
 
 const AUTHORITY_VERSION: u64 = 1;
 
@@ -187,52 +186,86 @@ fn scan_target(
     package: &PackageInventory,
     target: &TargetIdentity,
 ) -> Result<CompileTimeScan, WorkspaceTestError> {
-    let mut sources = BTreeSet::from([target.source.clone()]);
-    sources.extend(
-        target
-            .declared_path_sources
-            .iter()
-            .filter(|source| source.path.extension() == Some(OsStr::new("rs")))
-            .map(|source| source.path.clone()),
-    );
     let mut scan = CompileTimeScan::default();
-    let mut parsed_sources = Vec::new();
-    let mut output_macros = OutputMacroAuthority::compiler(package.compiler_std_extern);
-    for source in sources {
-        let document = fs::read_to_string(&source).map_err(|error| {
-            non_cacheable(format!(
-                "read Cargo package {:?} compile-time source {}: {error}",
-                package.name,
-                source.display(),
-            ))
-        })?;
-        let syntax = syn::parse_file(&document).map_err(|error| {
-            non_cacheable(format!(
-                "parse Cargo package {:?} compile-time source {}: {error}",
-                package.name,
-                source.display(),
-            ))
-        })?;
-        output_macros.merge(OutputMacroAuthority::from_file(
-            &syntax,
-            package.compiler_std_extern,
-        ));
-        parsed_sources.push((source, syntax));
-    }
-    for (source, syntax) in parsed_sources {
-        let mut visitor = CompileTimeVisitor {
-            package: &package.name,
-            source: &source,
-            scan: &mut scan,
-            output_macros,
-            error: None,
-        };
-        visitor.visit_file(&syntax);
-        if let Some(error) = visitor.error {
-            return Err(error);
+    let root = parse_compile_time_source(package, &target.source)?;
+    let exported_macros = exported_macro_rules(&root.items);
+    let root_scope = package.namespace_context.root_scope(&root.attrs);
+    scan_compile_time_source(
+        package,
+        &target.source,
+        &root,
+        root_scope,
+        true,
+        &exported_macros,
+        &mut scan,
+    )?;
+    let mut visited = BTreeSet::new();
+    for source in target
+        .declared_path_sources
+        .iter()
+        .filter(|source| source.path.extension() == Some(OsStr::new("rs")))
+    {
+        let syntax = parse_compile_time_source(package, &source.path)?;
+        for inherited in &source.scopes {
+            if visited.insert((source.path.clone(), inherited.clone())) {
+                scan_compile_time_source(
+                    package,
+                    &source.path,
+                    &syntax,
+                    inherited.scope.clone(),
+                    inherited.crate_root,
+                    &exported_macros,
+                    &mut scan,
+                )?;
+            }
         }
     }
     Ok(scan)
+}
+
+fn parse_compile_time_source(
+    package: &PackageInventory,
+    source: &Path,
+) -> Result<syn::File, WorkspaceTestError> {
+    let document = fs::read_to_string(source).map_err(|error| {
+        non_cacheable(format!(
+            "read Cargo package {:?} compile-time source {}: {error}",
+            package.name,
+            source.display(),
+        ))
+    })?;
+    syn::parse_file(&document).map_err(|error| {
+        non_cacheable(format!(
+            "parse Cargo package {:?} compile-time source {}: {error}",
+            package.name,
+            source.display(),
+        ))
+    })
+}
+
+fn scan_compile_time_source(
+    package: &PackageInventory,
+    source: &Path,
+    syntax: &syn::File,
+    scope: FileMacroScope,
+    crate_root: bool,
+    exported_macros: &BTreeSet<String>,
+    scan: &mut CompileTimeScan,
+) -> Result<(), WorkspaceTestError> {
+    let mut visitor = CompileTimeVisitor {
+        package: &package.name,
+        source,
+        scan,
+        scope,
+        crate_root,
+        exported_macros,
+        error: None,
+    };
+    visitor.scan_file(syntax);
+    match visitor.error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 #[derive(Default)]
@@ -247,7 +280,9 @@ struct CompileTimeVisitor<'a> {
     package: &'a str,
     source: &'a Path,
     scan: &'a mut CompileTimeScan,
-    output_macros: OutputMacroAuthority,
+    scope: FileMacroScope,
+    crate_root: bool,
+    exported_macros: &'a BTreeSet<String>,
     error: Option<WorkspaceTestError>,
 }
 
@@ -256,28 +291,90 @@ impl<'ast> Visit<'ast> for CompileTimeVisitor<'_> {
         if self.error.is_some() {
             return;
         }
-        let name = invocation
+        if invocation.path.is_ident("macro_rules") {
+            return;
+        }
+        let spelling = invocation
             .path
             .segments
             .last()
-            .map(|segment| segment.ident.to_string());
-        match name.as_deref() {
-            Some("println") => match self.output_macros.resolve(&invocation.path) {
-                OutputMacroResolution::Compiler => self.scan_println(invocation),
-                OutputMacroResolution::Unresolved => self.refuse(format!(
-                    "cannot prove standard output-macro origin for {}!",
-                    display_macro_path(&invocation.path),
-                )),
-            },
-            Some("env" | "option_env") => self.scan_environment_macro(invocation),
-            Some(
-                "concat" | "include" | "include_bytes" | "include_str" | "cfg" | "file" | "line"
-                | "column" | "module_path" | "stringify",
-            ) => {}
-            Some(name) => self.refuse(format!("invokes unrecognized macro {name}!")),
-            None => self.refuse("invokes a macro without a path identity".to_owned()),
+            .map(|segment| super::source_reach::ident_name(&segment.ident));
+        let Some(spelling) = spelling else {
+            self.refuse("invokes a macro without a path identity".to_owned());
+            return;
+        };
+        if CompilerMacroKind::from_name(&spelling).is_none() {
+            self.refuse(format!("invokes unrecognized macro {spelling}!"));
+            return;
         }
-        syn::visit::visit_macro(self, invocation);
+        let Some((_, resolution)) = self.scope.resolve_compiler_macro(&invocation.path) else {
+            self.refuse(format!(
+                "cannot prove compiler macro origin for {}!",
+                display_macro_path(&invocation.path),
+            ));
+            return;
+        };
+        match resolution {
+            FileMacroResolution::Compiler(kind) => self.scan_compiler_macro(kind, invocation),
+            FileMacroResolution::Shadowed => self.refuse(format!(
+                "resolves {}! to a user-owned macro",
+                display_macro_path(&invocation.path),
+            )),
+            FileMacroResolution::Unresolved => self.refuse(format!(
+                "cannot prove compiler macro origin for {}!",
+                display_macro_path(&invocation.path),
+            )),
+        }
+    }
+
+    fn visit_attribute(&mut self, attribute: &'ast syn::Attribute) {
+        let prelude_control =
+            attribute.path().is_ident("no_std") || attribute.path().is_ident("no_implicit_prelude");
+        if self.error.is_none() && !prelude_control && attribute_may_expand_items(attribute) {
+            self.refuse(format!(
+                "uses unresolved compile-time attribute {}",
+                display_macro_path(attribute.path()),
+            ));
+        } else {
+            syn::visit::visit_attribute(self, attribute);
+        }
+    }
+
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        for attribute in &item.attrs {
+            self.visit_attribute(attribute);
+        }
+        let Some((_, items)) = &item.content else {
+            return;
+        };
+        let outer = self.scope.clone();
+        let crate_root = self.crate_root;
+        self.scope = outer.clone().child_module();
+        self.crate_root = false;
+        self.scan_items(items);
+        self.scope = outer;
+        self.crate_root = crate_root;
+    }
+
+    fn visit_block(&mut self, block: &'ast syn::Block) {
+        let outer = self.scope.clone();
+        let crate_root = self.crate_root;
+        self.scope = self
+            .scope
+            .clone()
+            .child_block()
+            .with_block_items(block, self.exported_macros);
+        self.crate_root = false;
+        let mut textual = self.scope.clone();
+        for statement in &block.stmts {
+            if let syn::Stmt::Item(item) = statement {
+                textual = textual.with_textual_item(item);
+            }
+            self.scope = textual.clone();
+            syn::visit::visit_stmt(self, statement);
+        }
+        self.scope = outer;
+        self.crate_root = crate_root;
     }
 
     fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
@@ -351,6 +448,83 @@ impl<'ast> Visit<'ast> for CompileTimeVisitor<'_> {
 }
 
 impl CompileTimeVisitor<'_> {
+    fn scan_file(&mut self, syntax: &syn::File) {
+        for attribute in &syntax.attrs {
+            self.visit_attribute(attribute);
+        }
+        self.scan_items(&syntax.items);
+    }
+
+    fn scan_items(&mut self, items: &[Item]) {
+        let mut textual = self
+            .scope
+            .clone()
+            .with_items(items, self.crate_root, self.exported_macros)
+            .with_generated_items(items, self.crate_root);
+        for item in items {
+            textual = textual.with_textual_item(item);
+            self.scope = textual.clone();
+            self.visit_item(item);
+            if self.error.is_some() {
+                return;
+            }
+        }
+    }
+
+    fn scan_compiler_macro(&mut self, kind: CompilerMacroKind, invocation: &syn::Macro) {
+        match kind {
+            CompilerMacroKind::Println => self.scan_println(invocation),
+            CompilerMacroKind::Env | CompilerMacroKind::OptionEnv => {
+                self.scan_environment_macro(invocation);
+            }
+            CompilerMacroKind::Concat => self.scan_concat(invocation),
+            CompilerMacroKind::Include
+            | CompilerMacroKind::IncludeStr
+            | CompilerMacroKind::IncludeBytes => self.scan_file_macro_argument(invocation),
+            CompilerMacroKind::File
+            | CompilerMacroKind::Line
+            | CompilerMacroKind::Column
+            | CompilerMacroKind::ModulePath => self.require_empty_macro(kind, invocation),
+            CompilerMacroKind::Cfg | CompilerMacroKind::Stringify => {}
+        }
+    }
+
+    fn scan_concat(&mut self, invocation: &syn::Macro) {
+        let parser = Punctuated::<Expr, syn::Token![,]>::parse_terminated;
+        let Ok(arguments) = parser.parse2(invocation.tokens.clone()) else {
+            self.refuse("uses malformed concat! input".to_owned());
+            return;
+        };
+        for argument in arguments {
+            match argument {
+                Expr::Lit(_) => {}
+                Expr::Macro(expression) => self.visit_macro(&expression.mac),
+                _ => {
+                    self.refuse("uses computed concat! input".to_owned());
+                    return;
+                }
+            }
+        }
+    }
+
+    fn scan_file_macro_argument(&mut self, invocation: &syn::Macro) {
+        let Ok(argument) = syn::parse2::<Expr>(invocation.tokens.clone()) else {
+            self.refuse("uses malformed compiler file-macro input".to_owned());
+            return;
+        };
+        match argument {
+            Expr::Lit(_) => {}
+            Expr::Macro(expression) => self.visit_macro(&expression.mac),
+            _ => self.refuse("uses computed compiler file-macro input".to_owned()),
+        }
+    }
+
+    fn require_empty_macro(&mut self, kind: CompilerMacroKind, invocation: &syn::Macro) {
+        if !invocation.tokens.is_empty() {
+            self.refuse(format!("uses malformed {}! input", kind.name()));
+        }
+    }
+
     fn scan_println(&mut self, invocation: &syn::Macro) {
         let parser = Punctuated::<Expr, syn::Token![,]>::parse_terminated;
         let Ok(arguments) = parser.parse2(invocation.tokens.clone()) else {

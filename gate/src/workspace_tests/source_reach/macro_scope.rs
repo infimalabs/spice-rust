@@ -8,40 +8,40 @@ pub(super) struct UseBindingContext<'a> {
     pub(super) conditional: bool,
 }
 
-#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
-pub(super) enum FileMacroResolution {
-    Compiler(FileMacroKind),
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(in crate::workspace_tests) enum FileMacroResolution {
+    Compiler(CompilerMacroKind),
     Shadowed,
     Unresolved,
 }
 
-#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct FileMacroBindings {
-    inherited: [FileMacroResolution; 3],
-    imports: [Option<FileMacroResolution>; 3],
-    textual: [Option<FileMacroResolution>; 3],
+    inherited: [FileMacroResolution; 13],
+    imports: [Option<FileMacroResolution>; 13],
+    textual: [Option<FileMacroResolution>; 13],
 }
 
 impl FileMacroBindings {
-    pub(super) const fn compiler() -> Self {
+    pub(super) fn compiler(standard_prelude: bool) -> Self {
+        let mut inherited = CompilerMacroKind::ALL.map(FileMacroResolution::Compiler);
+        if !standard_prelude {
+            inherited[CompilerMacroKind::Println.index()] = FileMacroResolution::Unresolved;
+        }
         Self {
-            inherited: [
-                FileMacroResolution::Compiler(FileMacroKind::Include),
-                FileMacroResolution::Compiler(FileMacroKind::IncludeStr),
-                FileMacroResolution::Compiler(FileMacroKind::IncludeBytes),
-            ],
-            imports: [None; 3],
-            textual: [None; 3],
+            inherited,
+            imports: [None; 13],
+            textual: [None; 13],
         }
     }
 
-    pub(super) fn resolve(self, name: FileMacroKind) -> FileMacroResolution {
+    pub(super) fn resolve(self, name: CompilerMacroKind) -> FileMacroResolution {
         self.textual[name.index()]
             .or(self.imports[name.index()])
             .unwrap_or(self.inherited[name.index()])
     }
 
-    pub(super) fn bind_import(&mut self, name: FileMacroKind, resolution: FileMacroResolution) {
+    pub(super) fn bind_import(&mut self, name: CompilerMacroKind, resolution: FileMacroResolution) {
         let binding = &mut self.imports[name.index()];
         *binding = Some(match *binding {
             None => resolution,
@@ -50,39 +50,43 @@ impl FileMacroBindings {
         });
     }
 
-    pub(super) fn bind_textual(&mut self, name: FileMacroKind, resolution: FileMacroResolution) {
+    pub(super) fn bind_textual(
+        &mut self,
+        name: CompilerMacroKind,
+        resolution: FileMacroResolution,
+    ) {
         self.textual[name.index()] = Some(resolution);
     }
 
     pub(super) fn mark_imports_unresolved(&mut self) {
-        for kind in FileMacroKind::ALL {
+        for kind in CompilerMacroKind::ALL {
             self.bind_import(kind, FileMacroResolution::Unresolved);
         }
     }
 
     pub(super) fn child_module(self) -> Self {
         let mut inherited = self.inherited;
-        for kind in FileMacroKind::ALL {
+        for kind in CompilerMacroKind::ALL {
             if let Some(textual) = self.textual[kind.index()] {
                 inherited[kind.index()] = textual;
             }
         }
         Self {
             inherited,
-            imports: [None; 3],
-            textual: [None; 3],
+            imports: [None; 13],
+            textual: [None; 13],
         }
     }
 
     pub(super) fn child_block(self) -> Self {
         let mut inherited = self.inherited;
-        for kind in FileMacroKind::ALL {
+        for kind in CompilerMacroKind::ALL {
             inherited[kind.index()] = self.resolve(kind);
         }
         Self {
             inherited,
-            imports: [None; 3],
-            textual: [None; 3],
+            imports: [None; 13],
+            textual: [None; 13],
         }
     }
 }
@@ -179,7 +183,7 @@ pub(super) fn local_macro_rules(items: &[Item]) -> BTreeSet<String> {
         .collect()
 }
 
-pub(super) fn exported_macro_rules(items: &[Item]) -> BTreeSet<String> {
+pub(in crate::workspace_tests) fn exported_macro_rules(items: &[Item]) -> BTreeSet<String> {
     items
         .iter()
         .filter(|item| {
