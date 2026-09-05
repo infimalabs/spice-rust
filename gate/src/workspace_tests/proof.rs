@@ -129,6 +129,37 @@ pub struct CargoGateShardPlanning<'a> {
     pub include_tests: bool,
 }
 
+pub(crate) struct CargoPackageInputClosure {
+    pub(crate) input_paths: Vec<String>,
+    pub(crate) non_cacheable_reason: Option<String>,
+}
+
+pub(crate) fn cargo_package_input_closure_at(
+    root: &Path,
+    selected_paths: &[String],
+    changed_sources: &[String],
+    environment: &Environment,
+    cargo: &OsStr,
+    package_names: &[&str],
+) -> Result<CargoPackageInputClosure, WorkspaceTestError> {
+    let inventory = acquire_resolved_inventory(root, environment, cargo)?;
+    let mut input_paths = BTreeSet::new();
+    let mut reasons = BTreeSet::new();
+    for package in package_names {
+        let authority =
+            package_input_authority(&inventory, root, package, selected_paths, changed_sources)?;
+        input_paths.extend(authority.input_paths);
+        if let CargoShardReuse::NonCacheable { reason } = authority.reuse {
+            reasons.insert(reason);
+        }
+    }
+    Ok(CargoPackageInputClosure {
+        input_paths: input_paths.into_iter().collect(),
+        non_cacheable_reason: (!reasons.is_empty())
+            .then(|| reasons.into_iter().collect::<Vec<_>>().join("; ")),
+    })
+}
+
 impl CargoGateShardPlan {
     #[must_use]
     pub fn typechecks(&self) -> &[CargoGateShard] {

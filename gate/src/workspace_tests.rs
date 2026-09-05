@@ -40,6 +40,7 @@ use coordinator::{
 use inventory::*;
 pub(crate) use inventory::{RustCheckUnit, workspace_package_reach_at};
 use prebuild::*;
+pub(crate) use proof::cargo_package_input_closure_at;
 pub use proof::{
     CargoGateShard, CargoGateShardKind, CargoGateShardPlan, CargoGateShardPlanning,
     CargoGateShardResult, plan_cargo_gate_shards_at, run_cargo_gate_shard_at,
