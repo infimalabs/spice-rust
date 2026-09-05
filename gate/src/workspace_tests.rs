@@ -45,7 +45,7 @@ pub use proof::{
     CargoGateShardResult, plan_cargo_gate_shards_at, run_cargo_gate_shard_at,
 };
 use selection::{package_inventory, selection_plan};
-use source_reach::declared_path_sources;
+use source_reach::{FileMacroCrateContext, declared_path_sources};
 
 /// Whether the compiled Cargo workspace engine applies to this selected tree.
 ///

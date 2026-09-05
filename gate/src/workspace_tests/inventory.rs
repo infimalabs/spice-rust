@@ -132,6 +132,7 @@ pub(super) struct Metadata {
 pub(super) struct MetadataPackage {
     pub(super) id: String,
     pub(super) name: String,
+    pub(super) edition: String,
     #[serde(default)]
     pub(super) version: String,
     pub(super) manifest_path: PathBuf,
@@ -160,6 +161,8 @@ pub(super) struct MetadataResolveNode {
 
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct MetadataDependency {
+    pub(super) name: String,
+    pub(super) rename: Option<String>,
     pub(super) path: Option<PathBuf>,
 }
 
