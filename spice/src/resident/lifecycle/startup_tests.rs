@@ -52,61 +52,7 @@ fn resident_startup_leaves_a_vacant_drain_team_idle_without_work() {
 }
 
 #[test]
-fn resident_startup_claims_before_starting_a_drain_team_with_work() {
-    let fixture = AdvisoryRtkFixture::new();
-    initialize_git(&fixture.root);
-    let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
-        .expect("fixture bus starts");
-    seed_vacant_team(&bus, &fixture, wire::intent::LineageLife::Drain);
-    let task = seed_selectable_task(&bus);
-    let repository = Repository::discover(&fixture.root).expect("fixture repository resolves");
-    let surface =
-        super::super::load_startup_surface(&repository).expect("fixture startup policy resolves");
-    let capabilities = canvas::axum::Capabilities::default();
-    let discovery = canvas::Discovery {
-        endpoint: "http://127.0.0.1:1".to_owned(),
-        capability: fixture.capability,
-        epoch: fixture.epoch,
-    };
-    let lane_runtime = lane_surface::Runtime::new(&capabilities, &discovery, fixture.reporter());
-    let mut runtime = Runtime::new(&surface.config.lane);
-    let mut seats = Seats::new();
-    let mut diagnostic = Vec::new();
-
-    assert_eq!(
-        runtime
-            .reconcile(
-                &bus,
-                &repository,
-                &fixture.paths,
-                fixture.epoch,
-                &mut seats,
-                &lane_runtime,
-                &surface.config,
-                &mut diagnostic,
-            )
-            .expect("Drain startup with work reconciles"),
-        None,
-    );
-
-    assert!(
-        seats.occupied(fixture.lane),
-        "Drain seat did not start: {}",
-        String::from_utf8_lossy(&diagnostic)
-    );
-    assert_automatic_claim(&bus, &task, fixture.lane, &seats);
-    assert!(
-        String::from_utf8(diagnostic)
-            .expect("diagnostic is UTF-8")
-            .contains("lifecycle started trigger=drain-queue")
-    );
-    stop(fixture.lane, &mut seats, "started Drain member");
-    bus.verify().expect("Drain startup authority verifies");
-    bus.shutdown().expect("fixture bus stops");
-}
-
-#[test]
-fn one_drain_reconcile_claims_one_task_for_one_member() {
+fn changing_team_policy_to_drain_waits_until_work_arrives() {
     let fixture = AdvisoryRtkFixture::new();
     initialize_git(&fixture.root);
     let sibling: CanonicalUuid = "018f82d4-6f59-7d06-92e3-000000000005"
@@ -117,80 +63,9 @@ fn one_drain_reconcile_claims_one_task_for_one_member() {
     seed_vacant_team_members(
         &bus,
         &fixture,
-        wire::intent::LineageLife::Drain,
+        wire::intent::LineageLife::Drive,
         &[fixture.lane, sibling],
     );
-    let task = seed_selectable_task(&bus);
-    let repository = Repository::discover(&fixture.root).expect("fixture repository resolves");
-    let surface =
-        super::super::load_startup_surface(&repository).expect("fixture startup policy resolves");
-    let capabilities = canvas::axum::Capabilities::default();
-    let discovery = canvas::Discovery {
-        endpoint: "http://127.0.0.1:1".to_owned(),
-        capability: fixture.capability,
-        epoch: fixture.epoch,
-    };
-    let lane_runtime = lane_surface::Runtime::new(&capabilities, &discovery, fixture.reporter());
-    let mut runtime = Runtime::new(&surface.config.lane);
-    let mut seats = Seats::new();
-
-    runtime
-        .reconcile(
-            &bus,
-            &repository,
-            &fixture.paths,
-            fixture.epoch,
-            &mut seats,
-            &lane_runtime,
-            &surface.config,
-            &mut Vec::new(),
-        )
-        .expect("first Drain member reconciles");
-    assert!(seats.occupied(fixture.lane));
-    assert!(!seats.occupied(sibling));
-    assert_automatic_claim(&bus, &task, fixture.lane, &seats);
-
-    runtime
-        .reconcile(
-            &bus,
-            &repository,
-            &fixture.paths,
-            fixture.epoch,
-            &mut seats,
-            &lane_runtime,
-            &surface.config,
-            &mut Vec::new(),
-        )
-        .expect("second idle Drain reconciliation succeeds");
-    assert!(seats.occupied(fixture.lane));
-    assert!(!seats.occupied(sibling));
-    assert_eq!(
-        bus.task_snapshot()
-            .expect("contention snapshot reads")
-            .tasks()
-            .iter()
-            .filter(|heads| {
-                heads
-                    .claim()
-                    .is_some_and(|claim| claim.body().disposition == ClaimDisposition::Active)
-            })
-            .count(),
-        1,
-        "the sole task has exactly one active claim"
-    );
-
-    stop(fixture.lane, &mut seats, "selected Drain member");
-    bus.verify().expect("Drain contention authority verifies");
-    bus.shutdown().expect("fixture bus stops");
-}
-
-#[test]
-fn changing_team_policy_to_drain_waits_until_work_arrives() {
-    let fixture = AdvisoryRtkFixture::new();
-    initialize_git(&fixture.root);
-    let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
-        .expect("fixture bus starts");
-    seed_vacant_team(&bus, &fixture, wire::intent::LineageLife::Drive);
     let repository = Repository::discover(&fixture.root).expect("fixture repository resolves");
     let surface =
         super::super::load_startup_surface(&repository).expect("fixture startup policy resolves");
@@ -219,28 +94,9 @@ fn changing_team_policy_to_drain_waits_until_work_arrives() {
         None,
     );
     assert!(!seats.occupied(fixture.lane));
+    assert!(!seats.occupied(sibling));
 
-    let request = wire::intent::LineageConfigure {
-        topology_revision: 1,
-        lineage_id: fixture.lane,
-        member: None,
-        life: Some(wire::intent::LineageLife::Drain),
-        manual_projects: None,
-    };
-    let command = wire::Command {
-        v: wire::WireVersion::CURRENT,
-        id: fixture.occupant,
-        epoch: fixture.epoch,
-        kind: wire::CommandKind::LineageConfigure,
-        expected: Vec::new(),
-        body: serde_json::to_value(&request).expect("configuration encodes"),
-    }
-    .admit(&wire::Accepted {
-        wire: wire::WireVersion::CURRENT,
-        actor: Actor::Operator,
-        epoch: fixture.epoch,
-    })
-    .expect("configuration admits");
+    let (request, command) = drain_configuration(&fixture);
     runtime
         .backoff
         .parked
@@ -293,15 +149,88 @@ fn changing_team_policy_to_drain_waits_until_work_arrives() {
             &mut diagnostic,
         )
         .expect("newly available Drain work reconciles");
-    assert!(
-        seats.occupied(fixture.lane),
-        "Drain seat did not start after task arrival: {}",
-        String::from_utf8_lossy(&diagnostic)
-    );
-    assert_automatic_claim(&bus, &task, fixture.lane, &seats);
+    assert_drain_launch(&bus, &task, fixture.lane, sibling, &seats, &diagnostic);
+
+    runtime
+        .reconcile(
+            &bus,
+            &repository,
+            &fixture.paths,
+            fixture.epoch,
+            &mut seats,
+            &lane_runtime,
+            &surface.config,
+            &mut Vec::new(),
+        )
+        .expect("second idle Drain reconciliation succeeds");
+    assert!(seats.occupied(fixture.lane));
+    assert!(!seats.occupied(sibling));
+    assert_eq!(active_claim_count(&bus), 1);
     stop(fixture.lane, &mut seats, "updated Drain member");
     bus.verify().expect("policy update authority verifies");
     bus.shutdown().expect("fixture bus stops");
+}
+
+fn drain_configuration(
+    fixture: &AdvisoryRtkFixture,
+) -> (wire::intent::LineageConfigure, wire::AdmittedCommand) {
+    let request = wire::intent::LineageConfigure {
+        topology_revision: 1,
+        lineage_id: fixture.lane,
+        member: None,
+        life: Some(wire::intent::LineageLife::Drain),
+        manual_projects: None,
+    };
+    let command = wire::Command {
+        v: wire::WireVersion::CURRENT,
+        id: fixture.occupant,
+        epoch: fixture.epoch,
+        kind: wire::CommandKind::LineageConfigure,
+        expected: Vec::new(),
+        body: serde_json::to_value(&request).expect("configuration encodes"),
+    }
+    .admit(&wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch: fixture.epoch,
+    })
+    .expect("configuration admits");
+    (request, command)
+}
+
+fn active_claim_count(bus: &Bus) -> usize {
+    bus.task_snapshot()
+        .expect("contention snapshot reads")
+        .tasks()
+        .iter()
+        .filter(|heads| {
+            heads
+                .claim()
+                .is_some_and(|claim| claim.body().disposition == ClaimDisposition::Active)
+        })
+        .count()
+}
+
+fn assert_drain_launch(
+    bus: &Bus,
+    task: &wire::TaskStamp,
+    lane: CanonicalUuid,
+    sibling: CanonicalUuid,
+    seats: &Seats,
+    diagnostic: &[u8],
+) {
+    assert!(
+        seats.occupied(lane),
+        "Drain seat did not start after task arrival: {}",
+        String::from_utf8_lossy(diagnostic)
+    );
+    assert!(!seats.occupied(sibling));
+    assert_automatic_claim(bus, task, lane, seats);
+    assert!(
+        String::from_utf8_lossy(diagnostic).contains("lifecycle started trigger=drain-queue"),
+        "Drain launch diagnostic did not follow the automatic claim: {}",
+        String::from_utf8_lossy(diagnostic)
+    );
 }
 
 fn seed_selectable_task(bus: &Bus) -> wire::TaskStamp {

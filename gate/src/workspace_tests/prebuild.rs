@@ -672,8 +672,10 @@ fn prebuilt_test_cases_with_deadline(
         Cancellation::Token(cancellation),
         &owner,
     )?;
-    let outcome = sill::spawn(spec)
-        .map_err(|error| WorkspaceTestError::new(format!("{owner} launch failed: {error}")))?
+    let running = sill::spawn(spec)
+        .map_err(|error| WorkspaceTestError::new(format!("{owner} launch failed: {error}")))?;
+    let process_id = running.id();
+    let outcome = running
         .wait()
         .map_err(|error| WorkspaceTestError::new(format!("{owner} wait failed: {error}")))?;
     let capture_failed = !outcome.outputs_drained()
@@ -681,7 +683,7 @@ fn prebuilt_test_cases_with_deadline(
         || outcome.stderr().is_some_and(|output| output.truncated());
     if matches!(outcome.completion(), Completion::Cancelled(_)) {
         return Err(WorkspaceTestError::synthetic_cancellation(format!(
-            "{owner} ended as {}: stdout-tail={:?}; stderr-tail={:?}",
+            "{owner} process-id={process_id} ended as {}: stdout-tail={:?}; stderr-tail={:?}",
             completion_name(outcome.completion()),
             captured_excerpt(outcome.stdout()),
             captured_excerpt(outcome.stderr()),
@@ -691,7 +693,7 @@ fn prebuilt_test_cases_with_deadline(
         || capture_failed
     {
         return Err(WorkspaceTestError::new(format!(
-            "{owner} ended as {}: stdout-tail={:?}; stderr-tail={:?}",
+            "{owner} process-id={process_id} ended as {}: stdout-tail={:?}; stderr-tail={:?}",
             completion_name(outcome.completion()),
             captured_excerpt(outcome.stdout()),
             captured_excerpt(outcome.stderr()),

@@ -141,7 +141,7 @@ fn canvas_analysis(
             &environment,
             |code, message| FindingDetail::CanvasWebOutput { code, message },
         ) {
-            return failure.analysis;
+            return *failure.analysis;
         }
     }
     Analysis::terminal(

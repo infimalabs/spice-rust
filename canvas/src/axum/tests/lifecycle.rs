@@ -291,6 +291,7 @@ async fn shutdown_closes_partial_upgrade_pre_hello_and_active_sockets() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn shutdown_forces_transport_closed_when_a_session_cannot_finish_draining() {
+    assert_eq!(SESSION_DRAIN_GRACE, Duration::from_secs(1));
     let app = TestApp::new();
     let capabilities = Capabilities::default();
     capabilities
@@ -302,9 +303,12 @@ async fn shutdown_forces_transport_closed_when_a_session_cannot_finish_draining(
     let state = Arc::clone(&server.state);
     let session = SessionGuard::enter(&state);
 
-    timeout(ASSERTION_DEADLINE, state.close())
-        .await
-        .expect("session drain has a finite grace");
+    timeout(
+        ASSERTION_DEADLINE,
+        state.close_with_grace(Duration::from_millis(10)),
+    )
+    .await
+    .expect("session drain has a finite grace");
     assert!(state.connections.is_cancelled());
     assert_eq!(state.sessions.load(Ordering::Acquire), 1);
 
