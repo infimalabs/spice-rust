@@ -69,6 +69,12 @@ pub(super) fn handle_incoming(
         .remove(&identity.id)
         .ok_or_else(|| format!("response named unknown command {}", identity.id))?;
     let demand = kind.is_demand();
+    let demand_response = demand
+        .then(|| classify_demand_response(session, bytes))
+        .transpose()?;
+    if let Some(DemandResponse::Committed(range)) = &demand_response {
+        demands.admit(identity.id, *range)?;
+    }
     let mut runtime_slot = data.write();
     let runtime = runtime_slot
         .as_mut()
@@ -77,14 +83,8 @@ pub(super) fn handle_incoming(
     if !demand && application.lane_authority {
         demands.observe_authority();
     }
-    if demand {
-        let committed = settle_demand(
-            session,
-            demands,
-            identity.id,
-            application.lane_authority,
-            bytes,
-        )?;
+    if let Some(response) = demand_response {
+        let committed = settle_demand(demands, identity.id, application.lane_authority, response)?;
         if application.refresh {
             demands.await_authority(committed);
         }
@@ -113,33 +113,46 @@ impl CommandApplication {
     }
 }
 
-fn settle_demand(
-    session: &Session,
-    demands: &mut DemandQueue<ClientAction>,
-    id: CanonicalUuid,
-    rebase_next: bool,
-    bytes: &[u8],
-) -> Result<bool, String> {
+enum DemandResponse {
+    Committed(wire::SeqRange),
+    Refused(String),
+}
+
+fn classify_demand_response(session: &Session, bytes: &[u8]) -> Result<DemandResponse, String> {
     let admitted: crate::Admitted<Response<serde_json::Value>> = admit_response(session, bytes)?;
     match &admitted.get().outcome {
         wire::Outcome::Reply(reply) => match reply.position {
-            wire::ReplyPosition::Committed(range) => {
-                demands.commit(id, range, rebase_next)?;
-                Ok(true)
-            }
+            wire::ReplyPosition::Committed(range) => Ok(DemandResponse::Committed(range)),
             wire::ReplyPosition::Snapshot(_) | wire::ReplyPosition::Direct {} => Err(format!(
-                "mutating command demand {id} returned a non-committed position"
+                "mutating command demand {} returned a non-committed position",
+                admitted.get().id
             )),
         },
-        wire::Outcome::Refusal(refusal) => {
-            demands.refuse(
-                id,
-                format!("{}: {}", refusal.reason(), refusal.explanation()),
-            )?;
-            Ok(false)
+        wire::Outcome::Refusal(refusal) => Ok(DemandResponse::Refused(format!(
+            "{}: {}",
+            refusal.reason(),
+            refusal.explanation()
+        ))),
+        wire::Outcome::Fault(fault) => Ok(DemandResponse::Refused(format!(
+            "{}: {}",
+            fault.reason, fault.detail
+        ))),
+    }
+}
+
+fn settle_demand(
+    demands: &mut DemandQueue<ClientAction>,
+    id: CanonicalUuid,
+    rebase_next: bool,
+    response: DemandResponse,
+) -> Result<bool, String> {
+    match response {
+        DemandResponse::Committed(range) => {
+            demands.commit(id, range, rebase_next)?;
+            Ok(true)
         }
-        wire::Outcome::Fault(fault) => {
-            demands.refuse(id, format!("{}: {}", fault.reason, fault.detail))?;
+        DemandResponse::Refused(issue) => {
+            demands.refuse(id, issue)?;
             Ok(false)
         }
     }
