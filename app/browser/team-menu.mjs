@@ -92,13 +92,20 @@ async function assertTopChromeSpacing(page, artifacts) {
         };
         const strip = node.querySelector(".task-pill-strip");
         const summary = node.querySelector(".canvas-menu > summary");
+        const stamp = summary.querySelector(".canvas-menu-flame");
         const pill = strip.querySelector(".task-pill");
         const style = getComputedStyle(node);
+        const summaryStyle = getComputedStyle(summary);
         return {
           viewportWidth: innerWidth,
           bar: box(node),
           strip: box(strip),
           summary: box(summary),
+          stamp: box(stamp),
+          summaryPaddingLeft: summaryStyle.paddingLeft,
+          summaryPaddingRight: summaryStyle.paddingRight,
+          accessibleName: summary.getAttribute("aria-label"),
+          hasTextLabel: Boolean(summary.querySelector(".canvas-menu-label")),
           paddingTop: style.paddingTop,
           paddingBottom: style.paddingBottom,
           paddingLeft: style.paddingLeft,
@@ -125,6 +132,38 @@ async function assertTopChromeSpacing(page, artifacts) {
         geometry.strip.right <= geometry.summary.left + 1,
         `${label} keeps task pills clear of the Spice menu`,
       );
+      assert.equal(geometry.accessibleName, "Open Spice Canvas menu");
+      assert.equal(geometry.hasTextLabel, false, `${label} keeps the control wordless`);
+      assert.deepEqual(
+        [geometry.summary.right - geometry.summary.left, geometry.summary.bottom - geometry.summary.top],
+        [43, 30],
+        `${label} preserves the predecessor outer dimensions`,
+      );
+      assert.deepEqual(
+        [geometry.stamp.right - geometry.stamp.left, geometry.stamp.bottom - geometry.stamp.top],
+        [31, 25],
+        `${label} preserves the predecessor cut-out stamp`,
+      );
+      assert.deepEqual([geometry.summaryPaddingLeft, geometry.summaryPaddingRight], ["2px", "8px"]);
+      const trigger = page.locator(".canvas-menu > summary");
+      const stableTriggerBox = async (state) => {
+        const box = await trigger.boundingBox();
+        assert.ok(box, `${label} ${state} trigger remains visible`);
+        assert.deepEqual([box.width, box.height], [43, 30], `${label} ${state} keeps cut-out geometry`);
+      };
+      await trigger.hover();
+      await stableTriggerBox("hover");
+      await trigger.focus();
+      assert.ok(await trigger.evaluate((node) => node === document.activeElement));
+      await stableTriggerBox("focus");
+      await page.evaluate(() => { document.documentElement.style.fontSize = "24px"; });
+      await stableTriggerBox("zoom");
+      await page.evaluate(() => { document.documentElement.style.fontSize = ""; });
+      await page.mouse.move(0, 0);
+      await trigger.evaluate((node) => node.blur());
+      if (label === "desktop") {
+        await trigger.screenshot({ path: join(artifacts, "canvas-fast-mode-inactive.png") });
+      }
       assert.ok(
         geometry.bar.left >= -0.5 && geometry.bar.right <= geometry.viewportWidth + 0.5,
         `${label} keeps the top chrome inside the viewport`,
@@ -185,7 +224,7 @@ async function assertTopChromeSpacing(page, artifacts) {
         expandedGeometry.navigationRight <= expandedGeometry.summaryLeft + 1,
         `${label} keeps Agents adjacent to and clear of the pepper trigger`,
       );
-      assert.equal(expandedGeometry.summaryWidth, 30, `${label} keeps the pepper trigger 30px wide`);
+      assert.equal(expandedGeometry.summaryWidth, 43, `${label} keeps the cut-out trigger 43px wide`);
       assert.equal(expandedGeometry.summaryHeight, 30, `${label} keeps the pepper trigger 30px high`);
       assert.ok(expandedGeometry.stripWidth >= 96, `${label} preserves the 6rem task viewport minimum`);
       assert.ok(expandedGeometry.navigationWidth >= 160, `${label} preserves the 10rem navigation minimum`);
@@ -417,6 +456,11 @@ export async function assertTeamMenu(page, fixture, artifacts) {
   assert.equal(await panel.locator(".canvas-menu-page").getAttribute("data-menu-page"), "agents");
   await panel.getByRole("heading", { name: "Global", exact: true }).waitFor();
   const fastMode = panel.getByRole("menuitemcheckbox", { name: /Fast mode/i });
+  const trigger = page.locator(".canvas-menu > summary");
+  const offAppearance = await trigger.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return [style.backgroundColor, style.borderColor, node.getBoundingClientRect().width];
+  });
   assert.equal(await fastMode.getAttribute("aria-checked"), "false");
   assert.match(await fastMode.innerText(), /Fast mode\s+off/);
 
@@ -448,17 +492,27 @@ export async function assertTeamMenu(page, fixture, artifacts) {
         .querySelector('[role="menuitemcheckbox"]')
         ?.getAttribute("aria-checked") === "true",
     );
-    const trigger = page.locator(".canvas-menu > summary");
     assert.match(await trigger.getAttribute("title"), /fast mode on/i);
     assert.ok(await trigger.evaluate((node) => node.classList.contains("canvas-menu-trigger--fast")));
+    const onAppearance = await trigger.evaluate((node) => {
+      const style = getComputedStyle(node);
+      return [style.backgroundColor, style.borderColor, node.getBoundingClientRect().width];
+    });
+    assert.notDeepEqual(onAppearance.slice(0, 2), offAppearance.slice(0, 2));
+    assert.equal(onAppearance[2], offAppearance[2], "mode color changes without shifting the cut-out");
+    await trigger.screenshot({ path: join(artifacts, "canvas-fast-mode-active-control.png") });
     await page.emulateMedia({ reducedMotion: "reduce" });
     assert.equal(
-      await page.locator(".canvas-menu-flame").evaluate((node) => getComputedStyle(node).animationName),
+      await page.locator(".canvas-menu-flame").evaluate(
+        (node) => getComputedStyle(node, "::before").animationName,
+      ),
       "none",
       "reduced motion leaves the flame visible without animation",
     );
     assert.notEqual(
-      await page.locator(".canvas-menu-flame").evaluate((node) => getComputedStyle(node).opacity),
+      await page.locator(".canvas-menu-flame").evaluate(
+        (node) => getComputedStyle(node, "::before").opacity,
+      ),
       "0",
       "reduced motion preserves the fast-mode status treatment",
     );

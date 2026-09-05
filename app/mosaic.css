@@ -294,55 +294,40 @@ body:has(.shell--mosaic),
 }
 .task-pill.dormant .task-pill-count { background: var(--muted); }
 .task-pill.system .task-pill-count { background: var(--warning); }
-.canvas-menu {
-  position: relative;
-  flex: 0 0 auto;
-}
+.canvas-menu { position: relative; flex: 0 0 auto; }
 .canvas-menu > summary {
-  position: relative;
-  display: inline-grid;
-  width: 30px;
-  height: 30px;
-  place-items: center;
-  padding: 0;
-  border: 1px solid color-mix(in srgb, var(--accent) 46%, var(--line));
-  border-radius: 999px;
-  background: var(--panel);
-  color: var(--accent);
-  cursor: pointer;
-  list-style: none;
+  --canvas-menu-accent: var(--accent);
+  --canvas-menu-surface: color-mix(in srgb, var(--control-surface-soft) 88%, var(--accent) 12%);
+  display: inline-grid; place-items: center; width: 43px; height: 30px; padding: 0 8px 0 2px;
+  border: 1px solid color-mix(in srgb, var(--canvas-menu-accent) 42%, var(--canvas-menu-surface));
+  border-radius: 999px; background: var(--canvas-menu-surface); color: color-mix(in srgb, var(--canvas-menu-accent) 76%, var(--ink));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--canvas-menu-accent) 5%, transparent);
+  cursor: pointer; list-style: none;
 }
 .canvas-menu > summary:hover,
-.canvas-menu > summary:focus-visible {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, var(--panel));
-}
+.canvas-menu > summary:focus-visible { --canvas-menu-surface: color-mix(in srgb, var(--control-surface-soft) 78%, var(--canvas-menu-accent) 22%); border-color: color-mix(in srgb, var(--canvas-menu-accent) 58%, var(--canvas-menu-surface)); background: var(--canvas-menu-surface); color: var(--ink); }
 .canvas-menu > summary:active,
 .canvas-menu[open] > summary {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 16%, var(--panel));
+  --canvas-menu-surface: color-mix(in srgb, var(--control) 76%, var(--canvas-menu-accent) 24%);
+  border-color: color-mix(in srgb, var(--canvas-menu-accent) 70%, var(--canvas-menu-surface)); background: var(--canvas-menu-surface); color: var(--ink);
 }
 .canvas-menu > summary::-webkit-details-marker { display: none; }
-.canvas-menu-pepper { position: relative; z-index: 1; font-size: 15px; line-height: 1; }
 .canvas-menu-flame {
-  position: absolute;
-  font-size: 12px;
-  line-height: 1;
-  opacity: 0;
-  pointer-events: none;
+  grid-area: 1 / 1; position: relative; display: inline-grid; place-items: center;
+  width: 31px; min-width: 31px; height: 25px; padding: 0; overflow: hidden;
+  border-radius: 999px; background: var(--page); font-size: 0;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--canvas-menu-accent) 12%, transparent);
 }
-.canvas-menu-trigger--fast {
-  border-color: color-mix(in srgb, var(--warning) 72%, var(--line));
-  background: color-mix(in srgb, var(--warning) 13%, var(--panel));
+.canvas-menu-pepper { grid-area: 1 / 1; position: relative; z-index: 1; font-size: 15px; line-height: 1; }
+.canvas-menu-flame::before {
+  content: "🔥"; position: absolute;
+  inset: 50% auto auto 50%; transform: translate(-50%, -50%); transform-origin: 50% 50%;
+  font-size: 12px; line-height: 1; opacity: 0; pointer-events: none;
 }
-.canvas-menu-trigger--fast .canvas-menu-flame { animation: canvas-fast-mode-pulse 5s ease-in-out infinite; opacity: .78; }
-@keyframes canvas-fast-mode-pulse {
-  0%, 100% { opacity: .18; transform: scale(.9); }
-  45% { opacity: .82; transform: scale(1.08); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .canvas-menu-trigger--fast .canvas-menu-flame { animation: none; opacity: .78; }
-}
+.canvas-menu > summary.canvas-menu-trigger--fast { --canvas-menu-accent: var(--warning); --canvas-menu-surface: color-mix(in srgb, var(--control) 82%, var(--warning) 18%); }
+.canvas-menu-trigger--fast .canvas-menu-flame::before { animation: canvas-fast-mode-pulse 5s ease-in-out infinite; opacity: .82; }
+@keyframes canvas-fast-mode-pulse { 0%, 100% { opacity: 0; } 45% { opacity: .92; } }
+@media (prefers-reduced-motion: reduce) { .canvas-menu-trigger--fast .canvas-menu-flame::before { animation: none; opacity: .82; } }
 .canvas-navigation {
   display: flex;
   flex: 0 1 18rem;
