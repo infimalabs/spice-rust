@@ -159,25 +159,36 @@ async function assertTopChromeSpacing(page, artifacts) {
       );
       assert.equal(
         await page.locator(".task-pill-strip").count(),
-        0,
-        `${label} replaces task pills while navigation is open`,
+        1,
+        `${label} keeps task pills mounted while navigation is open`,
       );
       const expandedGeometry = await page.locator(".commandbar--mosaic").evaluate((node) => {
+        const strip = node.querySelector(".task-pill-strip").getBoundingClientRect();
         const navigation = node.querySelector(".canvas-navigation").getBoundingClientRect();
         const summary = node.querySelector(".canvas-menu > summary").getBoundingClientRect();
         return {
+          stripRight: strip.right,
+          stripWidth: strip.width,
+          navigationLeft: navigation.left,
           navigationRight: navigation.right,
+          navigationWidth: navigation.width,
           summaryLeft: summary.left,
           summaryWidth: summary.width,
           summaryHeight: summary.height,
         };
       });
       assert.ok(
+        expandedGeometry.stripRight <= expandedGeometry.navigationLeft + 1,
+        `${label} keeps task pills adjacent to and clear of navigation`,
+      );
+      assert.ok(
         expandedGeometry.navigationRight <= expandedGeometry.summaryLeft + 1,
         `${label} keeps Agents adjacent to and clear of the pepper trigger`,
       );
       assert.equal(expandedGeometry.summaryWidth, 30, `${label} keeps the pepper trigger 30px wide`);
       assert.equal(expandedGeometry.summaryHeight, 30, `${label} keeps the pepper trigger 30px high`);
+      assert.ok(expandedGeometry.stripWidth >= 96, `${label} preserves the 6rem task viewport minimum`);
+      assert.ok(expandedGeometry.navigationWidth >= 160, `${label} preserves the 10rem navigation minimum`);
       if (viewport.width <= 560) {
         await addOverflowControls(panel);
       }
@@ -236,7 +247,7 @@ async function waitForDisclosure(page, expanded, reason) {
       return trigger?.getAttribute("aria-expanded") === String(expected)
         && menu.hasAttribute("open") === expected
         && Boolean(document.querySelector(".canvas-navigation")) === expected
-        && Boolean(document.querySelector(".task-pill-strip")) === !expected;
+        && Boolean(document.querySelector(".task-pill-strip"));
     },
     expanded,
   );
@@ -259,17 +270,40 @@ async function assertPepperDisclosure(page) {
     assert.ok(maximumScroll > 0, "the narrow task strip has a real horizontal offset to reset");
     await taskStrip.evaluate((node) => { node.scrollLeft = node.scrollWidth; });
     assert.ok(await taskStrip.evaluate((node) => node.scrollLeft > 0), "the task strip scrolls away from its start");
+    const retainedPill = taskStrip.locator(".task-pill").last();
+    const identity = await retainedPill.evaluate((node) => {
+      node.dataset.menuIdentity = crypto.randomUUID();
+      node.focus();
+      return node.dataset.menuIdentity;
+    });
+
+    await trigger.evaluate((node) => node.click());
+    await waitForDisclosure(page, true, "programmatic open retains the task strip");
+    assert.equal(await retainedPill.getAttribute("data-menu-identity"), identity);
+    assert.equal(await retainedPill.evaluate((node) => document.activeElement === node), true);
+    await trigger.evaluate((node) => node.click());
+    await waitForDisclosure(page, false, "programmatic close retains the task strip");
+    assert.equal(await retainedPill.evaluate((node) => document.activeElement === node), true);
 
     await trigger.click();
     await waitForDisclosure(page, true, "the pepper disclosure exposes Canvas destinations");
+    assert.equal(
+      await taskStrip.evaluate((node) => node.scrollLeft),
+      maximumScroll,
+      "opening the menu preserves task-pill scroll position",
+    );
     await page.locator(".mosaic-workspace").click({ position: { x: 2, y: 2 } });
     await waitForDisclosure(page, false, "an outside pointer dismisses the pepper disclosure");
-    assert.equal(await taskStrip.evaluate((node) => node.scrollLeft), 0, "the remounted task strip starts at its first pill");
-    const firstPill = await taskStrip.locator(".task-pill").first().boundingBox();
-    const stripStart = await taskStrip.boundingBox();
+    assert.equal(
+      await taskStrip.evaluate((node) => node.scrollLeft),
+      maximumScroll,
+      "closing the menu preserves task-pill scroll position",
+    );
+    const lastPill = await taskStrip.locator(".task-pill").last().boundingBox();
+    const stripEnd = await taskStrip.boundingBox();
     assert.ok(
-      firstPill && stripStart && firstPill.x >= stripStart.x - 0.5,
-      "the remounted task strip exposes its first pill",
+      lastPill && stripEnd && lastPill.x + lastPill.width <= stripEnd.x + stripEnd.width + 0.5,
+      "the retained task strip keeps its last pill visible",
     );
   } finally {
     await page.setViewportSize(previous);
