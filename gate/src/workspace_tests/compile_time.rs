@@ -249,7 +249,12 @@ impl<'ast> Visit<'ast> for CompileTimeVisitor<'_> {
         match name.as_deref() {
             Some("println") => self.scan_println(invocation),
             Some("env" | "option_env") => self.scan_environment_macro(invocation),
-            _ => {}
+            Some(
+                "concat" | "include" | "include_bytes" | "include_str" | "cfg" | "file" | "line"
+                | "column" | "module_path" | "stringify",
+            ) => {}
+            Some(name) => self.refuse(format!("invokes unrecognized macro {name}!")),
+            None => self.refuse("invokes a macro without a path identity".to_owned()),
         }
         syn::visit::visit_macro(self, invocation);
     }
@@ -302,8 +307,25 @@ impl<'ast> Visit<'ast> for CompileTimeVisitor<'_> {
                 }
                 return;
             }
+            if filesystem_write_call(&path) {
+                self.refuse(format!(
+                    "emits unbounded compile-time filesystem output through {path}"
+                ));
+                return;
+            }
+            self.refuse(format!("invokes unrecognized executable call {path}"));
+            return;
         }
-        syn::visit::visit_expr_call(self, call);
+        self.refuse("invokes an indirect callable expression".to_owned());
+    }
+
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        if self.error.is_none() {
+            self.refuse(format!(
+                "invokes unbounded method dispatch .{}()",
+                call.method,
+            ));
+        }
     }
 }
 
@@ -311,15 +333,15 @@ impl CompileTimeVisitor<'_> {
     fn scan_println(&mut self, invocation: &syn::Macro) {
         let parser = Punctuated::<Expr, syn::Token![,]>::parse_terminated;
         let Ok(arguments) = parser.parse2(invocation.tokens.clone()) else {
-            if invocation.tokens.to_string().contains("rerun") {
-                self.refuse("emits a dynamic or malformed Cargo rerun directive".to_owned());
-            }
+            self.refuse("emits computed compile-time output".to_owned());
             return;
         };
         let Some(Expr::Lit(first)) = arguments.first() else {
+            self.refuse("emits computed compile-time output".to_owned());
             return;
         };
         let Lit::Str(value) = &first.lit else {
+            self.refuse("emits computed compile-time output".to_owned());
             return;
         };
         let value = value.value();
@@ -413,6 +435,17 @@ fn filesystem_read_call(path: &str) -> bool {
             | "fs::canonicalize"
             | "fs::File::open"
             | "File::open"
+    )
+}
+
+fn filesystem_write_call(path: &str) -> bool {
+    matches!(
+        path,
+        "std::fs::write"
+            | "std::fs::File::create"
+            | "fs::write"
+            | "fs::File::create"
+            | "File::create"
     )
 }
 

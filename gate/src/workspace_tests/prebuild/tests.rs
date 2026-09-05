@@ -249,6 +249,7 @@ fn policy_artifacts_produce_the_exact_selected_executable() {
     let fixture = DiscoveryFixture::new();
     let executable = fixture.script("selected-test", "exit 0\n");
     let inventory = Inventory {
+        resolution: CargoResolution::default(),
         packages: vec![PackageInventory {
             id: "fixture-id".to_owned(),
             name: "fixture".to_owned(),
