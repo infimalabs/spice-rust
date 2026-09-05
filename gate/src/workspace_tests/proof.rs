@@ -494,6 +494,12 @@ mod tests {
             assert_eq!(shard.argv()[3], shard.package());
             assert!(shard.input_paths().contains(&"Cargo.toml".to_owned()));
             assert!(shard.input_paths().contains(&"Cargo.lock".to_owned()));
+            assert_eq!(
+                shard
+                    .input_paths()
+                    .contains(&"proof-authority.txt".to_owned()),
+                shard.package() == "fixture",
+            );
             let own_source = format!("{}/src/lib.rs", shard.package());
             let peer = if shard.package() == "fixture" {
                 "peer/src/lib.rs"
@@ -552,6 +558,26 @@ mod tests {
         assert!(error.to_string().contains("ended as exit code="), "{error}");
     }
 
+    #[test]
+    fn incomplete_file_macro_authority_refuses_before_a_shard_can_be_planned() {
+        let fixture = Fixture::new("incomplete-file-macro");
+        fs::write(
+            fixture.root.join("fixture/src/lib.rs"),
+            "pub const AUTHORITY: &str = include_str!(\"../../missing.txt\");\n",
+        )
+        .expect("write incomplete file-macro source");
+
+        let error = fixture
+            .try_plan(true)
+            .expect_err("incomplete file-macro closure cannot produce Cargo shards");
+        assert!(
+            error
+                .to_string()
+                .contains("is not readable selected-tree authority"),
+            "unexpected refusal: {error}",
+        );
+    }
+
     struct Fixture {
         root: PathBuf,
         outputs: PathBuf,
@@ -586,7 +612,10 @@ mod tests {
             .expect("write package manifest");
             fs::write(
                 root.join("fixture/src/lib.rs"),
-                "pub const VALUE: u8 = 1;\n",
+                concat!(
+                    "pub const VALUE: u8 = 1;\n",
+                    "pub const AUTHORITY: &str = include_str!(\"../../proof-authority.txt\");\n",
+                ),
             )
             .expect("write library source");
             fs::write(
@@ -603,6 +632,8 @@ mod tests {
                 .expect("write peer source");
             fs::write(root.join("notes.txt"), "not a Cargo input\n")
                 .expect("write unrelated source");
+            fs::write(root.join("proof-authority.txt"), "root Cargo input\n")
+                .expect("write root Cargo authority");
             Self { root, outputs }
         }
 
@@ -615,6 +646,11 @@ mod tests {
         }
 
         fn plan(&self, include_tests: bool) -> CargoGateShardPlan {
+            self.try_plan(include_tests)
+                .expect("plan fixture Cargo shards")
+        }
+
+        fn try_plan(&self, include_tests: bool) -> Result<CargoGateShardPlan, WorkspaceTestError> {
             let changed_sources = [
                 "fixture/src/lib.rs".to_owned(),
                 "peer/src/lib.rs".to_owned(),
@@ -628,6 +664,7 @@ mod tests {
                 "notes.txt".to_owned(),
                 "peer/Cargo.toml".to_owned(),
                 "peer/src/lib.rs".to_owned(),
+                "proof-authority.txt".to_owned(),
             ];
             plan_cargo_gate_shards_at(CargoGateShardPlanning {
                 root: &self.root,
@@ -639,7 +676,6 @@ mod tests {
                 cargo: OsStr::new("cargo"),
                 include_tests,
             })
-            .expect("plan fixture Cargo shards")
         }
     }
 
