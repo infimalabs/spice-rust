@@ -8,9 +8,11 @@ async function fleetGeometry(fleet) {
   return fleet.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
     const style = getComputedStyle(element);
+    const minimumToken = style.getPropertyValue("--lineage-surface-min-inline").trim();
     const surfaces = [...element.querySelectorAll(":scope > .team-surface")];
     const surfaceGeometry = surfaces.map((surface) => {
       const rect = surface.getBoundingClientRect();
+      const surfaceStyle = getComputedStyle(surface);
       const clipped = [...surface.querySelectorAll("button, textarea, table")].some((control) => {
         const controlRect = control.getBoundingClientRect();
         return controlRect.left < rect.left - 1 || controlRect.right > rect.right + 1;
@@ -20,8 +22,10 @@ async function fleetGeometry(fleet) {
         left: rect.left,
         right: rect.right,
         width: rect.width,
+        minWidth: Number.parseFloat(minimumToken) * Number.parseFloat(surfaceStyle.fontSize),
+        minWidthToken: minimumToken,
         height: rect.height,
-        direction: getComputedStyle(surface).direction,
+        direction: surfaceStyle.direction,
         overflow: surface.scrollWidth - surface.clientWidth,
         clipped,
       };
@@ -57,8 +61,13 @@ function assertTrack(geometry, label) {
   assert.ok(geometry.pageOverflowY <= 1, `${label} has no page-level vertical overflow`);
   assert.ok(Math.abs(geometry.scrollLeft - geometry.overflowX) <= 1, `${label} is right anchored`);
   assert.ok(Math.abs(geometry.lastRight - geometry.right) <= 1, `${label} reveals the newest lane`);
-  assert.ok(geometry.surfaces.every(({ width, height, direction, overflow, clipped }) => (
-    width >= 512 && height <= geometry.height + 1 && direction === "ltr" && overflow <= 1 && !clipped
+  assert.ok(geometry.surfaces.every(({ width, minWidth, minWidthToken, height, direction, overflow, clipped }) => (
+    width >= minWidth - 0.5
+      && minWidthToken === "20em"
+      && height <= geometry.height + 1
+      && direction === "ltr"
+      && overflow <= 1
+      && !clipped
   )), `${label} surfaces remain readable: ${JSON.stringify(geometry)}`);
 }
 

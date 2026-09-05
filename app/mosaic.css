@@ -516,7 +516,7 @@ body:has(.shell--mosaic),
 .mosaic-workspace[hidden] { display: none; }
 
 .lineage-fleet {
-  --lineage-surface-min-inline: 32rem;
+  --lineage-surface-min-inline: 20em;
   display: flex;
   flex-flow: row nowrap;
   align-items: stretch;

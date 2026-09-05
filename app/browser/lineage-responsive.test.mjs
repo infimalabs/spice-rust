@@ -42,19 +42,24 @@ async function geometry(page) {
   return page.locator(".lineage-fleet").evaluate((fleet) => {
     const bounds = fleet.getBoundingClientRect();
     const style = getComputedStyle(fleet);
+    const minimumToken = style.getPropertyValue("--lineage-surface-min-inline").trim();
     const surfaces = [...fleet.children].map((surface) => {
       const rect = surface.getBoundingClientRect();
+      const surfaceStyle = getComputedStyle(surface);
       const clipped = [...surface.querySelectorAll("button, textarea, table")].some((control) => {
         const controlRect = control.getBoundingClientRect();
         return controlRect.left < rect.left - 1 || controlRect.right > rect.right + 1;
       });
       return {
+        weight: Number(surface.dataset.lineageWeight),
+        minWidth: Number.parseFloat(minimumToken) * Number.parseFloat(surfaceStyle.fontSize),
+        minWidthToken: minimumToken,
         top: Math.round(rect.top),
         left: rect.left,
         right: rect.right,
         width: rect.width,
         height: rect.height,
-        direction: getComputedStyle(surface).direction,
+        direction: surfaceStyle.direction,
         overflow: surface.scrollWidth - surface.clientWidth,
         clipped,
       };
@@ -88,8 +93,14 @@ function assertTrack(layout, label, overflow) {
   assert.equal(layout.tabIndex, 0);
   assert.ok(layout.overflowY <= 1, `${label} has no vertical overflow`);
   assert.ok(layout.pageOverflowX <= 1, `${label} does not widen the page`);
-  assert.ok(layout.surfaces.every(({ width, height, direction, overflow: inner, clipped }) => (
-    width >= 512 && height <= layout.height + 1 && direction === "ltr" && inner <= 1 && !clipped
+  assert.ok(layout.surfaces.every(({ width, minWidth, minWidthToken, height, direction, overflow: inner, clipped }) => (
+    width >= minWidth - 0.5
+      && minWidth === 320
+      && minWidthToken === "20em"
+      && height <= layout.height + 1
+      && direction === "ltr"
+      && inner <= 1
+      && !clipped
   )), `${label} surfaces remain readable: ${JSON.stringify(layout)}`);
   assert.ok(layout.surfaces.every((surface, index) => (
     index === 0 || layout.surfaces[index - 1].left < surface.left
@@ -119,6 +130,25 @@ async function setCount(page, count) {
   await page.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(resolveFrame)));
 }
 
+async function setWeights(page, weights) {
+  await setCount(page, weights.length);
+  await page.locator(".lineage-fleet").evaluate((fleet, values) => {
+    [...fleet.children].forEach((surface, index) => {
+      surface.dataset.lineageWeight = String(values[index]);
+    });
+  }, weights);
+  await page.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(resolveFrame)));
+}
+
+function assertRatio(layout, expected, label) {
+  const ratio = layout.surfaces[1].width / layout.surfaces[0].width;
+  assert.ok(
+    Math.abs(ratio - expected) <= expected * 0.04,
+    `${label} renders ${expected}:1 within four percent: ${JSON.stringify(layout)}`,
+  );
+  assert.equal(layout.overflowX <= 1, true, `${label} does not overflow the fleet`);
+}
+
 test("lineage minima govern weighted fleet layout in Chromium and Firefox", async (t) => {
   const document = await responsiveDocument();
   for (const engine of ["chromium", "firefox"]) {
@@ -128,13 +158,29 @@ test("lineage minima govern weighted fleet layout in Chromium and Firefox", asyn
       const page = await context.newPage();
       try {
         await page.setContent(document);
-        await expectRightEdge(page, `${engine} initial two-lane track`);
-        await setWidth(page, 1200);
-        const weighted = await geometry(page);
-        assert.ok(weighted.surfaces[0].width >= 512 && weighted.surfaces[1].width > 512);
-        assertTrack(weighted, `${engine} weighted row`, false);
+        await setWidth(page, 2560);
+        for (const [weights, expected] of [[[1, 1], 1], [[1, 2], 2], [[1, 6], 6]]) {
+          await setWeights(page, weights);
+          const weighted = await geometry(page);
+          assertTrack(weighted, `${engine} ${expected}:1 weighted row`, false);
+          assertRatio(weighted, expected, `${engine} ${expected}:1 weighted row`);
+          assert.deepEqual(weighted.surfaces.map(({ weight }) => weight), weights);
+        }
 
-        for (const count of [2, 3, 7]) {
+        await setWidth(page, 700);
+        const floorActive = await geometry(page);
+        assertTrack(floorActive, `${engine} floor-active weighted row`, false);
+        assert.ok(floorActive.surfaces[0].width <= 321, `${engine} solo lane holds its floor`);
+        assert.ok(floorActive.surfaces[1].width > floorActive.surfaces[0].width);
+
+        await setWidth(page, 600);
+        await expectRightEdge(page, `${engine} two-lane floor overflow`);
+        await setWeights(page, [1, 3, 6]);
+        await setWidth(page, 932);
+        const threeLane = await expectRightEdge(page, `${engine} three weighted lane floors`);
+        assert.deepEqual(threeLane.surfaces.map(({ weight }) => weight), [1, 3, 6]);
+
+        for (const count of [3, 7]) {
           await setCount(page, count);
           await setWidth(page, 932);
           await expectRightEdge(page, `${engine} ${count}-lane desktop track`);
@@ -153,11 +199,11 @@ test("lineage minima govern weighted fleet layout in Chromium and Firefox", asyn
         assert.ok(traversed.scrollLeft < traversed.maxScroll, `${engine} horizontal wheel traverses west`);
 
         await page.locator(".lineage-fleet").evaluate((fleet) => { fleet.scrollLeft = fleet.scrollWidth; });
-        await setCount(page, 3);
+        await setWeights(page, [1, 3, 6]);
         await expectRightEdge(page, `${engine} added lane remains at east edge`);
         await setCount(page, 2);
         await page.setViewportSize({ width: 700, height: 700 });
-        await setWidth(page, 700);
+        await setWidth(page, 600);
         await expectRightEdge(page, `${engine} narrow track after removal and resize`);
       } finally {
         await context.close();
