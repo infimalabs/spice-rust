@@ -511,7 +511,6 @@ body:has(.shell--mosaic),
   width: 100%;
   max-width: none;
   padding: 0 var(--canvas-frame-edge-inline) var(--canvas-frame-edge-block-end);
-  container: lineage-layout / inline-size;
 }
 
 .mosaic-workspace { display: flex; min-height: 0; }
@@ -520,12 +519,15 @@ body:has(.shell--mosaic),
 .lineage-fleet {
   --lineage-surface-min-inline: 32rem;
   display: flex;
+  flex-wrap: wrap;
   align-items: stretch;
+  align-content: flex-start;
   flex: 1 1 auto;
   gap: .5rem;
   width: 100%;
   min-height: 0;
   min-width: 0;
+  overflow: hidden auto;
 }
 
 .team-surface {
@@ -537,7 +539,7 @@ body:has(.shell--mosaic),
   flex: var(--lineage-weight, 4) 1 0;
   flex-direction: column;
   width: auto;
-  min-height: 0;
+  min-height: 100%;
   min-width: min(100%, var(--lineage-surface-min-inline));
   max-width: 100%;
   container-type: inline-size;

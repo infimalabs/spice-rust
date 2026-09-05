@@ -41,23 +41,57 @@ async function setWidth(page, width) {
 async function geometry(page) {
   return page.locator(".lineage-fleet").evaluate((fleet) => {
     const bounds = fleet.getBoundingClientRect();
+    const surfaces = [...fleet.children].map((surface) => {
+      const rect = surface.getBoundingClientRect();
+      const clipped = [...surface.querySelectorAll("button, textarea, table")].some((control) => {
+        const controlRect = control.getBoundingClientRect();
+        return controlRect.left < rect.left - 1 || controlRect.right > rect.right + 1;
+      });
+      return {
+        top: Math.round(rect.top),
+        width: rect.width,
+        height: rect.height,
+        contained: rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1,
+        overflow: surface.scrollWidth - surface.clientWidth,
+        clipped,
+      };
+    });
     return {
-      direction: getComputedStyle(fleet).flexDirection,
-      surfaces: [...fleet.children].map((surface) => {
-        const rect = surface.getBoundingClientRect();
-        return {
-          width: rect.width,
-          contained: rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1,
-          overflow: surface.scrollWidth - surface.clientWidth,
-        };
-      }),
+      rows: new Set(surfaces.map(({ top }) => top)).size,
+      height: bounds.height,
+      overflowX: fleet.scrollWidth - fleet.clientWidth,
+      overflowY: fleet.scrollHeight - fleet.clientHeight,
+      surfaces,
     };
   });
 }
 
-async function expectDirection(page, width, direction) {
+function assertReadable(layout, label) {
+  assert.ok(layout.overflowX <= 1, `${label} fleet has no horizontal overflow`);
+  assert.ok(layout.surfaces.every(({ width, contained, overflow, clipped }) => (
+    width >= 512 && contained && overflow <= 1 && !clipped
+  )), `${label} surfaces remain readable: ${JSON.stringify(layout)}`);
+  if (layout.rows > 1) {
+    assert.ok(layout.overflowY > 0, `${label} wrapped rows use the fleet scroller`);
+    assert.ok(layout.surfaces.every(({ height }) => height >= layout.height - 1));
+  }
+}
+
+async function expectRows(page, width, rows) {
   await setWidth(page, width);
-  assert.equal((await geometry(page)).direction, direction, `${width}px direction`);
+  const layout = await geometry(page);
+  assert.equal(layout.rows, rows, `${width}px row count`);
+  assertReadable(layout, `${width}px`);
+  return layout;
+}
+
+async function setCount(page, count) {
+  await page.locator(".lineage-fleet").evaluate((fleet, nextCount) => {
+    while (fleet.childElementCount > nextCount) fleet.lastElementChild.remove();
+    while (fleet.childElementCount < nextCount) {
+      fleet.append(fleet.firstElementChild.cloneNode(true));
+    }
+  }, count);
 }
 
 test("lineage minima govern weighted fleet layout in Chromium and Firefox", async (t) => {
@@ -65,28 +99,37 @@ test("lineage minima govern weighted fleet layout in Chromium and Firefox", asyn
   for (const engine of ["chromium", "firefox"]) {
     await t.test(engine, async () => {
       const browser = await launchBrowser(engine);
-      const context = await browser.newContext({ viewport: { width: 1800, height: 700 } });
+      const context = await browser.newContext({ viewport: { width: 4000, height: 700 } });
       const page = await context.newPage();
       try {
         await page.setContent(document);
-        const narrow = await geometry(page);
-        assert.equal(narrow.direction, "column", `${engine} stacks at 932px`);
-        assert.ok(narrow.surfaces.every(
-          ({ width, contained, overflow }) => width >= 512 && contained && overflow <= 1,
-        ));
-        await expectDirection(page, 1031, "column");
-        await expectDirection(page, 1032, "row");
-        await expectDirection(page, 1033, "row");
+        await expectRows(page, 932, 2);
         await setWidth(page, 1200);
         const weighted = await geometry(page);
         assert.ok(weighted.surfaces[0].width >= 512 && weighted.surfaces[1].width > 512);
+        assertReadable(weighted, `${engine} weighted row`);
 
-        await page.locator(".lineage-fleet").evaluate((fleet) => {
-          fleet.append(fleet.firstElementChild.cloneNode(true));
+        for (const count of [2, 3, 4, 7]) {
+          await setCount(page, count);
+          const boundary = count * 512 + (count - 1) * 8;
+          await expectRows(page, boundary - 1, 2);
+          await expectRows(page, boundary, 1);
+          await expectRows(page, boundary + 1, 1);
+        }
+
+        await setCount(page, 2);
+        await page.setViewportSize({ width: 900, height: 700 });
+        await page.locator(".mosaic-workspace").evaluate((workspace) => {
+          workspace.style.width = "900px";
+          workspace.style.height = "auto";
+          workspace.querySelector(".lineage-fleet").style.height = "auto";
         });
-        await expectDirection(page, 1551, "column");
-        await expectDirection(page, 1552, "row");
-        await expectDirection(page, 1553, "row");
+        const documentFlow = await page.locator(".lineage-fleet").evaluate((fleet) => ({
+          direction: getComputedStyle(fleet).flexDirection,
+          wrap: getComputedStyle(fleet).flexWrap,
+          overflowY: getComputedStyle(fleet).overflowY,
+        }));
+        assert.deepEqual(documentFlow, { direction: "column", wrap: "nowrap", overflowY: "visible" });
       } finally {
         await context.close();
         await browser.close();
