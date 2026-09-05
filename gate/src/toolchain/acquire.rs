@@ -77,6 +77,7 @@ pub struct RimCapture {
     directory: PathBuf,
     search_path: Option<OsString>,
     changes: Vec<String>,
+    staged_changes: bool,
 }
 
 impl RimCapture {
@@ -111,7 +112,21 @@ impl RimCapture {
             directory,
             search_path,
             changes: changes.into_iter().collect(),
+            staged_changes: false,
         })
+    }
+
+    /// Capture a command rim whose changed paths must come from its staged selector.
+    ///
+    /// The battery replaces the empty path inventory only after materializing
+    /// the exact index authority that supplies the candidate tree.
+    pub fn staged(
+        directory: impl Into<PathBuf>,
+        search_path: Option<OsString>,
+    ) -> Result<Self, RimDirectoryError> {
+        let mut capture = Self::new(directory, search_path, [] as [String; 0])?;
+        capture.staged_changes = true;
+        Ok(capture)
     }
 
     /// Absolute directory the search path was captured in.
@@ -138,6 +153,10 @@ impl RimCapture {
     pub(crate) fn with_changes(mut self, changes: Vec<String>) -> Self {
         self.changes = changes;
         self
+    }
+
+    pub(crate) const fn derives_staged_changes(&self) -> bool {
+        self.staged_changes
     }
 }
 

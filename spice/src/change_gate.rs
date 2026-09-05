@@ -433,6 +433,12 @@ impl StagedActionSelection {
     pub fn reject_state(&self) -> Result<(), crate::gate::RunError> {
         self.anchor.reject_state()
     }
+
+    /// Return the retained staged anchor after an enclosing admission consumes the selection.
+    #[must_use]
+    pub fn into_anchor(self) -> crate::gate::PreparedArm<'static> {
+        self.anchor
+    }
 }
 
 /// Capture staged content and apply the ordinary packaged change selector without executing it.
@@ -441,9 +447,23 @@ impl StagedActionSelection {
 ///
 /// Returns the same capture and packaged-selection failures as [`run`].
 pub fn prepare_staged_actions() -> Result<StagedActionSelection, ChangeGateError> {
+    prepare_staged_actions_with_claim(gate::ClaimCapture::Idle)
+}
+
+/// Capture and select staged actions under the caller's exact board claim.
+pub fn prepare_staged_actions_with_claim(
+    claim: gate::ClaimCapture,
+) -> Result<StagedActionSelection, ChangeGateError> {
     let anchor = SelectionSurface::Packaged
-        .prepare_anchor(gate::ClaimCapture::Idle)
+        .prepare_anchor(claim)
         .map_err(ChangeGateError::gate)?;
+    prepare_staged_actions_from_anchor(anchor)
+}
+
+/// Apply packaged action selection to an already captured staged anchor.
+pub fn prepare_staged_actions_from_anchor(
+    anchor: crate::gate::PreparedArm<'static>,
+) -> Result<StagedActionSelection, ChangeGateError> {
     let (selection, tests) = select_changes(&anchor, SelectionSurface::Packaged)?;
     let cargo_tests = tests.cargo_selected(anchor.root(), anchor.changes());
     Ok(StagedActionSelection {

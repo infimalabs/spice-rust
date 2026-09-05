@@ -82,6 +82,20 @@ impl Fixture {
             .output()
             .expect("run plan-phase pre-commit gate")
     }
+
+    fn run_idle_pre_commit(&self) -> Output {
+        fs::write(self.root.join("implementation.txt"), "implementation\n")
+            .expect("write attempted implementation");
+        stage_all(&self.root);
+        Command::new(env!("CARGO_BIN_EXE_spice"))
+            .args(["gate", "pre-commit"])
+            .current_dir(&self.root)
+            .env_remove(wire::SpiceVariable::Lane.as_str())
+            .env_remove(wire::SpiceVariable::PreCommitSource.as_str())
+            .env_remove(spice::install::INSTALLED_PRE_COMMIT_ENVIRONMENT)
+            .output()
+            .expect("run idle pre-commit admission")
+    }
 }
 
 impl Drop for Fixture {
@@ -106,6 +120,27 @@ fn pre_commit_gate_captures_the_plan_claim_and_preserves_the_staged_attempt() {
         staged_blob(&fixture.root, "implementation.txt"),
         b"implementation\n",
         "the refusing gate must leave the attempted implementation staged",
+    );
+}
+
+#[test]
+fn pre_commit_cache_miss_prints_exact_individual_and_aggregate_proof_commands() {
+    let fixture = Fixture::new();
+    let output = fixture.run_idle_pre_commit();
+    let rendered = streams(&output);
+
+    assert!(!output.status.success(), "{rendered}");
+    assert!(
+        rendered.contains("gate::pre-commit-proof-missing"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("command=`spice gate prove "),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("aggregate-command=`spice gate prove --missing`"),
+        "{rendered}"
     );
 }
 

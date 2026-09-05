@@ -351,6 +351,7 @@ fn install_cargo_with_metadata(programs: &Path, cargo_log: &Path) {
         "packages": [{
             "id": "verify-process-fixture-id",
             "name": "verify-process-fixture",
+            "edition": "2024",
             "manifest_path": "$PWD/Cargo.toml",
             "targets": [{
                 "name": "verify_process_fixture",

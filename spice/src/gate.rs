@@ -16,6 +16,7 @@ use ::gate::{
     ClaimCapture, FocusedArmReport, GateId, HygieneConfiguration, KillRun,
     RepositoryExecutionEvent, RimCapture, Selector, StateRunScope,
 };
+use gix::bstr::ByteSlice as _;
 use wire::Digest;
 
 use crate::repository::{Repository, StateError};
@@ -503,8 +504,18 @@ pub fn prepare_arm_at(
     selector: Selector,
     gate_id: GateId,
 ) -> Result<PreparedArm<'static>, RunError> {
+    prepare_arm_at_with_claim(directory, selector, gate_id, ClaimCapture::Idle)
+}
+
+/// Capture one selected arm at an admitted directory with an exact board claim.
+pub fn prepare_arm_at_with_claim(
+    directory: &Path,
+    selector: Selector,
+    gate_id: GateId,
+    claim: ClaimCapture,
+) -> Result<PreparedArm<'static>, RunError> {
     let compiler_environment = compiler_environment();
-    capture::capture_at_inner(
+    capture::capture_at_inner_with_claim(
         directory,
         selector,
         InputMode::Generic,
@@ -512,6 +523,7 @@ pub fn prepare_arm_at(
         None,
         None,
         None,
+        claim,
     )
     .map(|capture| PreparedArm {
         capture,
@@ -816,8 +828,16 @@ fn search_path() -> Option<OsString> {
 }
 
 fn acting_actor(repository: &Path) -> Result<String, RunError> {
-    let output = git(repository, &["config", "--get", "user.email"])?;
-    let actor = std::str::from_utf8(&output)
+    let repository =
+        gix::open(repository).map_err(|error| RunError::refusal("gate::actor-refused", error))?;
+    let actor = repository
+        .config_snapshot()
+        .string("user.email")
+        .ok_or_else(|| {
+            RunError::refusal("gate::actor-refused", "Git user.email is not configured")
+        })?;
+    let actor = actor
+        .to_str()
         .map_err(|error| RunError::refusal("gate::actor-refused", error))?
         .trim();
     if actor.is_empty() || actor.contains(['\n', '\r']) {
@@ -830,20 +850,12 @@ fn acting_actor(repository: &Path) -> Result<String, RunError> {
 }
 
 fn selected_changes(repository: &Path, selector: &Selector) -> Result<Vec<String>, RunError> {
+    if matches!(selector, Selector::Staged) {
+        // Gate rebinds this placeholder from the exact sealed index materialization.
+        return Ok(Vec::new());
+    }
     let arguments: Vec<OsString> = match selector {
-        Selector::Staged => [
-            "diff",
-            "--cached",
-            // Report renames as deletion plus addition so both ownership and
-            // policy classes survive independently of user Git configuration.
-            "--no-renames",
-            "--name-only",
-            "-z",
-            "--diff-filter=ACMRD",
-        ]
-        .into_iter()
-        .map(OsString::from)
-        .collect(),
+        Selector::Staged => unreachable!("staged changes come from the sealed index"),
         Selector::Revision(revision) => {
             if revision.starts_with('-') {
                 return Err(RunError::refusal(
@@ -887,11 +899,6 @@ fn parse_selected_changes(output: &[u8]) -> Result<Vec<String>, RunError> {
     changes.sort();
     changes.dedup();
     Ok(changes)
-}
-
-fn git(repository: &Path, arguments: &[&str]) -> Result<Vec<u8>, RunError> {
-    let arguments = arguments.iter().map(OsString::from).collect::<Vec<_>>();
-    git_os(repository, &arguments)
 }
 
 fn git_os(repository: &Path, arguments: &[OsString]) -> Result<Vec<u8>, RunError> {

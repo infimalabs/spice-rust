@@ -45,9 +45,11 @@ const SELF_PATH: &str = "xtask/tests/git_boundaries.rs";
 /// Counts make each exception closed: another spelling in one of these files
 /// still has to be reviewed and declared. The policy test below separately
 /// rejects executable constructors that name Git through `PATH`.
-const INERT_ABSOLUTE_GIT_TEST_SITES: [(&str, usize); 2] = [
+const INERT_ABSOLUTE_GIT_TEST_SITES: [(&str, usize); 4] = [
+    ("gate/src/tree/tests.rs", 1),
     ("proof/src/bin/spice-proof-darwin-runner/tests.rs", 1),
     ("spice/src/cargo_isolation/tests.rs", 1),
+    ("spice/tests/gate_admission_benchmark.rs", 2),
 ];
 
 /// Every git subcommand that can reach the network.

@@ -167,6 +167,8 @@ pub enum Domain {
     GateBatteryReceipt,
     /// One immutable passing receipt published by a proof-aware gate runner.
     GatePassReceipt,
+    /// One complete pre-commit admission over an exact candidate tree.
+    GateAdmission,
     /// One durable single-flight lease for producing gate evidence.
     GateEvidenceLease,
     /// One complete current persistent gate-state ledger.
@@ -245,6 +247,7 @@ impl Domain {
             | Self::GateSelection
             | Self::GateBatteryReceipt
             | Self::GatePassReceipt
+            | Self::GateAdmission
             | Self::GateEvidenceLease
             | Self::GateStateLedger
             | Self::GateStateReceipt
@@ -319,6 +322,7 @@ impl Domain {
             Self::GateSelection => "spice.gate.selection.v1",
             Self::GateBatteryReceipt => "spice.gate.battery-receipt.v1",
             Self::GatePassReceipt => "spice.gate.pass-receipt.v1",
+            Self::GateAdmission => "spice.gate.admission.v1",
             Self::GateEvidenceLease => "spice.gate.evidence-lease.v1",
             Self::GateStateLedger => "spice.gate.state-ledger.v1",
             Self::GateStateReceipt => "spice.gate.state-receipt.v1",

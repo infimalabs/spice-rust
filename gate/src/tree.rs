@@ -42,7 +42,7 @@ pub use error::TreeError;
 use source::{IndexSeal, RevisionSeal, SelectionSeal, head_seal};
 use workspace::{BuildRoot, release_workspace};
 #[cfg(test)]
-use workspace::{reclaim_abandoned, workspace_lock};
+use workspace::{reclaim_abandoned, workspace_lock, workspace_parent};
 
 /// Which immutable Git source a gate should measure.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,16 +102,19 @@ impl Selector {
                 let index = before.open(&repo, &build.workspace)?;
                 let items = index_items(&index)?;
                 materialize_items(&repo, &build.root, &items)?;
-                let renames = staged_renames(&repo, head_commit, &index)?;
+                let candidate_tree = write_index_tree(&repo, &items)?;
+                let staged_diff = staged_diff(&repo, head_commit, &index)?;
                 let authority = StagedAuthority {
                     entries: items.clone(),
+                    candidate_tree,
                     rename_base: head_commit,
-                    renames: renames.clone(),
+                    renames: staged_diff.renames.clone(),
+                    changes: staged_diff.changes,
                 };
                 (
                     items,
                     SelectionSeal::Index { before, head },
-                    renames,
+                    staged_diff.renames,
                     Some(authority),
                     true,
                 )
@@ -156,13 +159,16 @@ impl Selector {
 /// Semantic authority carried by one staged index independently of its on-disk encoding.
 ///
 /// Canonical entries retain path, object, and executable mode. Rename authority
-/// additionally retains the exact `HEAD` commit used as the comparison base and
-/// the complete detected old-to-new map.
+/// additionally retains the exact `HEAD` commit used as the comparison base,
+/// the complete detected old-to-new map, and every changed path derived from
+/// that same comparison.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StagedAuthority {
     entries: Vec<Item>,
+    candidate_tree: String,
     rename_base: Option<gix::ObjectId>,
     renames: RenameMap,
+    changes: Vec<String>,
 }
 
 /// One semantic component that differs between staged authority captures.
@@ -177,10 +183,22 @@ pub enum StagedAuthorityDifference {
 }
 
 impl StagedAuthority {
+    /// Git tree object identity for this exact staged entry inventory.
+    #[must_use]
+    pub fn candidate_tree_identity(&self) -> &str {
+        &self.candidate_tree
+    }
+
     /// Exact commit used as the staged rename and ancestry baseline.
     #[must_use]
     pub fn baseline_identity(&self) -> Option<String> {
         self.rename_base.map(|identity| identity.to_string())
+    }
+
+    /// Changed paths derived from this exact index and rename baseline.
+    #[must_use]
+    pub fn changed_paths(&self) -> &[String] {
+        &self.changes
     }
 
     /// Name every semantic component that differs in another staged capture.
@@ -301,16 +319,22 @@ impl SelectedTree {
         self.source.verify(&repository)
     }
 
-    /// Refresh the staged byte seal after a gate-owned Git observation writes
-    /// index cache data without changing staged semantics.
+    /// Refresh a byte-level staged seal only when gate-owned observation rewrote
+    /// index cache data without changing any staged semantics.
     ///
-    /// Canonical entries, the exact `HEAD` rename base, and rename lineage are
-    /// independently recaptured and compared before the new seal is accepted.
+    /// Canonical entries, candidate tree, changed paths, the exact `HEAD`
+    /// rename base, and rename lineage are recaptured before accepting the new
+    /// seal. A current seal and every revision selection remain untouched.
     pub(crate) fn refresh_staged_seal(&mut self) -> Result<(), TreeError> {
         let Some(expected) = self.staged_authority.as_ref() else {
             return self.verify_source();
         };
         let repository = open_repository(&self.repository)?;
+        match self.source.verify(&repository) {
+            Ok(()) => return Ok(()),
+            Err(TreeError::IndexChanged { .. }) => {}
+            Err(error) => return Err(error),
+        }
         let before = IndexSeal::capture(&repository)?;
         let head = head_seal(&repository)?;
         let scratch = BuildRoot::create()?;
@@ -320,11 +344,14 @@ impl SelectedTree {
             .transpose()?;
         let index = before.open(&repository, &scratch.workspace)?;
         let items = index_items(&index)?;
-        let renames = staged_renames(&repository, head_commit, &index)?;
+        let candidate_tree = write_index_tree(&repository, &items)?;
+        let staged_diff = staged_diff(&repository, head_commit, &index)?;
         let observed = StagedAuthority {
             entries: items,
+            candidate_tree,
             rename_base: head_commit,
-            renames,
+            renames: staged_diff.renames,
+            changes: staged_diff.changes,
         };
         if !expected.differences(&observed).is_empty() {
             return Err(TreeError::IndexChanged {
@@ -377,11 +404,48 @@ impl SelectedTree {
         self.staged_authority.as_ref()
     }
 
+    pub(crate) fn staged_changes(&self) -> Option<&[String]> {
+        self.staged_authority
+            .as_ref()
+            .map(StagedAuthority::changed_paths)
+    }
+
     /// Whether acceptance of this source may publish current gate state.
     #[must_use]
     pub(crate) const fn publishes_state(&self) -> bool {
         self.publishes_state
     }
+}
+
+fn write_index_tree(repo: &gix::Repository, items: &[Item]) -> Result<String, TreeError> {
+    let mut editor = repo
+        .edit_tree(gix::ObjectId::empty_tree(repo.object_hash()))
+        .map_err(|source| TreeError::Repository {
+            path: repository_path(repo),
+            evidence: format!("cannot initialize staged candidate tree: {source}"),
+        })?;
+    for item in items {
+        let kind = match item.mode {
+            FileMode::Regular => gix::object::tree::EntryKind::Blob,
+            FileMode::Executable => gix::object::tree::EntryKind::BlobExecutable,
+        };
+        editor
+            .upsert(item.path.as_str(), kind, item.id)
+            .map_err(|source| TreeError::Repository {
+                path: repository_path(repo),
+                evidence: format!(
+                    "cannot add {:?} to staged candidate tree: {source}",
+                    item.path
+                ),
+            })?;
+    }
+    editor
+        .write()
+        .map(|identity| identity.detach().to_string())
+        .map_err(|source| TreeError::Repository {
+            path: repository_path(repo),
+            evidence: format!("cannot write staged candidate tree: {source}"),
+        })
 }
 
 impl Drop for SelectedTree {
@@ -468,13 +532,25 @@ struct Item {
     mode: FileMode,
 }
 
-fn staged_renames(
+struct StagedDiff {
+    renames: RenameMap,
+    changes: Vec<String>,
+}
+
+fn staged_diff(
     repo: &gix::Repository,
     head_commit: Option<gix::ObjectId>,
     index: &gix::index::State,
-) -> Result<RenameMap, TreeError> {
+) -> Result<StagedDiff, TreeError> {
     let Some(head_commit) = head_commit else {
-        return Ok(RenameMap::default());
+        return Ok(StagedDiff {
+            renames: RenameMap::default(),
+            changes: index
+                .entries()
+                .iter()
+                .map(|entry| normalized_path(entry.path(index)))
+                .collect::<Result<_, _>>()?,
+        });
     };
     let tree = commit_tree_id(repo, "HEAD", head_commit)?;
     let tree_index = repo
@@ -499,21 +575,24 @@ fn staged_renames(
         evidence: format!("cannot initialize the staged rename path matcher: {source}"),
     })?;
     let mut pairs = Vec::new();
+    let mut changes = Vec::new();
     gix_diff::index(
         &tree_index,
         index,
         |change| {
-            if let gix_diff::index::ChangeRef::Rewrite {
-                source_location,
-                location,
-                copy: false,
-                ..
-            } = change
-            {
-                pairs.push((
-                    normalized_path(source_location.as_ref())?,
-                    normalized_path(location.as_ref())?,
-                ));
+            match change {
+                gix_diff::index::ChangeRef::Rewrite {
+                    source_location,
+                    location,
+                    copy: false,
+                    ..
+                } => {
+                    let source = normalized_path(source_location.as_ref())?;
+                    let destination = normalized_path(location.as_ref())?;
+                    pairs.push((source.clone(), destination.clone()));
+                    changes.extend([source, destination]);
+                }
+                change => changes.push(normalized_path(change.location().as_ref())?),
             }
             Ok::<_, TreeError>(std::ops::ControlFlow::Continue(()))
         },
@@ -534,10 +613,13 @@ fn staged_renames(
         path: repository_path(repo),
         evidence: format!("cannot capture staged renames from the sealed index: {source}"),
     })?;
-    RenameMap::new(pairs).map_err(|source| TreeError::Repository {
+    let renames = RenameMap::new(pairs).map_err(|source| TreeError::Repository {
         path: repository_path(repo),
         evidence: format!("staged rename map is invalid: {source}"),
-    })
+    })?;
+    changes.sort();
+    changes.dedup();
+    Ok(StagedDiff { renames, changes })
 }
 
 fn repository_path(repo: &gix::Repository) -> PathBuf {

@@ -23,6 +23,7 @@ pub(super) struct Layout {
     pub(super) objects: PathBuf,
     pub(super) actions: PathBuf,
     pub(super) leases: PathBuf,
+    pub(super) admissions: PathBuf,
     pub(super) locks: PathBuf,
 }
 
@@ -38,6 +39,7 @@ impl Layout {
             objects: root.join("objects"),
             actions: root.join("actions"),
             leases: root.join("leases"),
+            admissions: root.join("admissions"),
             locks: root.join("locks"),
             root,
         };
@@ -45,6 +47,7 @@ impl Layout {
             &layout.objects,
             &layout.actions,
             &layout.leases,
+            &layout.admissions,
             &layout.locks,
         ] {
             create_directory(path)?;
@@ -79,6 +82,7 @@ impl Layout {
             &self.objects,
             &self.actions,
             &self.leases,
+            &self.admissions,
             &self.locks,
         ] {
             require_directory(path)?;
@@ -500,7 +504,7 @@ fn read_directory(path: &Path) -> Result<Vec<DirEntry>, EvidenceStoreError> {
     Ok(entries)
 }
 
-fn create_directory(path: &Path) -> Result<(), EvidenceStoreError> {
+pub(super) fn create_directory(path: &Path) -> Result<(), EvidenceStoreError> {
     match fs::create_dir(path) {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}

@@ -110,6 +110,117 @@ fn successful_batch_publishes_every_receipt_and_index() {
 }
 
 #[test]
+fn exact_batch_lookup_reports_missing_and_refuses_mismatched_authority() {
+    let fixture = Fixture::new("batch-lookup");
+    let store = fixture.store();
+    let present_key = derive_action_key(b"present admission action");
+    let missing_key = derive_action_key(b"missing admission action");
+    let receipt = pass_receipt(&present_key, b"present admission result");
+    store.publish(&receipt).unwrap();
+    let expected = [
+        ReceiptExpectation::new(
+            "present",
+            present_key.clone(),
+            receipt.action_spec().clone(),
+            receipt.input_manifest().clone(),
+        )
+        .unwrap(),
+        ReceiptExpectation::new(
+            "missing",
+            missing_key,
+            receipt.action_spec().clone(),
+            receipt.input_manifest().clone(),
+        )
+        .unwrap(),
+    ];
+
+    let observed = store.lookup_batch_exact(&expected).unwrap();
+    assert_eq!(observed.len(), 2);
+    assert_eq!(
+        observed[0].as_ref().unwrap().receipt(),
+        &receipt.id().unwrap()
+    );
+    assert!(observed[1].is_none());
+
+    let mismatched = [ReceiptExpectation::new(
+        "present",
+        present_key,
+        receipt.action_spec().clone(),
+        Digest::compute(Domain::GateInputManifest, b"different manifest"),
+    )
+    .unwrap()];
+    let error = store.lookup_batch_exact(&mismatched).unwrap_err();
+    assert_eq!(error.reason(), "gate-evidence::receipt-authority-mismatch");
+}
+
+#[test]
+fn immutable_candidate_admission_round_trips_and_concurrent_publishers_converge() {
+    let fixture = Fixture::new("admission-publication");
+    let store = fixture.store();
+    let action_key = derive_action_key(b"admitted action");
+    let receipt = pass_receipt(&action_key, b"admitted result");
+    store.publish(&receipt).unwrap();
+    let expected = ReceiptExpectation::new(
+        "formatters",
+        action_key,
+        receipt.action_spec().clone(),
+        receipt.input_manifest().clone(),
+    )
+    .unwrap();
+    let action = store
+        .lookup_batch_exact(&[expected])
+        .unwrap()
+        .remove(0)
+        .unwrap();
+    let created_at: wire::Instant = "2026-09-04T12:00:00.000Z".parse().unwrap();
+    let expires_at: wire::Instant = "2026-09-04T12:10:00.000Z".parse().unwrap();
+    let bundle = AdmissionBundle::new(AdmissionBundleFields {
+        candidate_tree: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+        branch: "refs/heads/main".to_owned(),
+        head: Some("89abcdef0123456789abcdef0123456789abcdef".to_owned()),
+        selection: Digest::compute(Domain::GateSelection, b"selection"),
+        policy: Digest::compute(Domain::GatePolicy, b"policy"),
+        gate_set: Digest::compute(Domain::GateSet, b"gate set"),
+        actions: vec![action],
+        live_checks: vec![
+            AdmissionLiveCheck::new(
+                "staging",
+                Digest::compute(Domain::GateFocusedReport, b"staging result"),
+            )
+            .unwrap(),
+        ],
+        claim: Digest::compute(Domain::GateRepositoryAuthority, b"claim"),
+        created_at,
+        expires_at,
+    })
+    .unwrap();
+    let expected_id = bundle.id().unwrap();
+    let bytes = bundle.encode().unwrap();
+    assert_eq!(AdmissionBundle::decode(&bytes).unwrap(), bundle);
+
+    let barrier = Arc::new(Barrier::new(4));
+    let mut workers = Vec::new();
+    for _ in 0..4 {
+        let store = store.clone();
+        let bundle = bundle.clone();
+        let barrier = Arc::clone(&barrier);
+        workers.push(thread::spawn(move || {
+            barrier.wait();
+            store.publish_admission(&bundle).unwrap()
+        }));
+    }
+    for worker in workers {
+        assert_eq!(worker.join().unwrap(), expected_id);
+    }
+    let path = store
+        .layout
+        .admissions
+        .join(bundle.candidate_tree())
+        .join(expected_id.as_str());
+    assert_eq!(fs::read(path).unwrap(), bytes);
+}
+
+#[test]
 fn later_batch_failure_restores_every_index_and_new_object() {
     let fixture = Fixture::new("batch-failure");
     let store = fixture.store();

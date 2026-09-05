@@ -8,11 +8,52 @@ pub(super) fn dispatch(
     claim: gate::ClaimCapture,
 ) -> Result<Report, WorkerFailure> {
     write_phase(progress, &WorkerPhase::Policy).map_err(worker_io_failure)?;
-    let dispatch = configured::Dispatch::capture().map_err(configured_failure)?;
+    let dispatch =
+        configured::Dispatch::capture_with_claim(claim.clone()).map_err(configured_failure)?;
+    dispatch_captured(Some(progress), started, claim, dispatch)
+}
+
+pub(super) fn dispatch_captured(
+    mut progress: Option<&mut File>,
+    started: Instant,
+    claim: gate::ClaimCapture,
+    dispatch: configured::Dispatch,
+) -> Result<Report, WorkerFailure> {
     let source = dispatch.source().clone();
-    let (packaged, mut dispatch) = packaged(progress, dispatch, &source, claim)?;
+    let (packaged, admission, mut dispatch) = if dispatch.admission_enabled() {
+        dispatch
+            .require_admission_approved()
+            .map_err(configured_failure)?;
+        let (handoff, staged) = dispatch.into_admission().map_err(configured_failure)?;
+        let (admission, staged) = admission::run(claim, staged)?.into_parts();
+        if admission.source() != &source {
+            return Err(WorkerFailure {
+                reason: "gate::pre-commit-staged-source-moved".to_owned(),
+                detail: format!(
+                    "dispatcher source {source} differs from admission source {}",
+                    admission.source(),
+                ),
+                fault: false,
+            });
+        }
+        let dispatch = handoff.resume(staged).map_err(configured_failure)?;
+        (None, Some(admission), dispatch)
+    } else {
+        let progress = progress.as_deref_mut().ok_or_else(|| WorkerFailure {
+            reason: "gate::pre-commit-progress-unavailable".to_owned(),
+            detail: "packaged execution requires a progress stream".to_owned(),
+            fault: true,
+        })?;
+        let (packaged, dispatch) = packaged(progress, dispatch, &source, claim)?;
+        (packaged, None, dispatch)
+    };
 
     let configured = if dispatch.has_configured() {
+        let progress = progress.ok_or_else(|| WorkerFailure {
+            reason: "gate::pre-commit-progress-unavailable".to_owned(),
+            detail: "configured execution requires a progress stream".to_owned(),
+            fault: true,
+        })?;
         write_phase(
             progress,
             &WorkerPhase::Configured {
@@ -23,14 +64,15 @@ pub(super) fn dispatch(
         let remaining = WORK_RUNTIME
             .saturating_sub(started.elapsed())
             .saturating_sub(configured::cleanup_reserve());
-        dispatch
+        let configured = dispatch
             .execute_configured(remaining, Cancellation::Never, progress)
-            .map_err(configured_failure)?
+            .map_err(configured_failure)?;
+        dispatch.verify().map_err(configured_failure)?;
+        configured
     } else {
         None
     };
-    dispatch.verify().map_err(configured_failure)?;
-    Report::new(source, packaged, configured).map_err(|detail| WorkerFailure {
+    Report::new(source, packaged, admission, configured).map_err(|detail| WorkerFailure {
         reason: "gate::pre-commit-report-invalid".to_owned(),
         detail,
         fault: true,

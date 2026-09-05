@@ -533,12 +533,20 @@ impl DispatchAuthority {
 pub(super) struct Dispatch {
     repository: Repository,
     policy: DispatchPolicy,
+    claim: gate::ClaimCapture,
     anchor: spice::gate::PreparedArm<'static>,
     authority: DispatchAuthority,
 }
 
+pub(super) struct AdmissionDispatch {
+    repository: Repository,
+    policy: DispatchPolicy,
+    claim: gate::ClaimCapture,
+    authority: DispatchAuthority,
+}
+
 impl Dispatch {
-    pub(super) fn capture() -> Result<Self, ConfiguredFailure> {
+    pub(super) fn capture_with_claim(claim: gate::ClaimCapture) -> Result<Self, ConfiguredFailure> {
         let current = env::current_dir().map_err(|error| {
             ConfiguredFailure::fault(
                 "gate::pre-commit-working-directory-unavailable",
@@ -548,20 +556,24 @@ impl Dispatch {
         let repository = Repository::discover(&current).map_err(|error| {
             ConfiguredFailure::fault("gate::pre-commit-repository-unresolved", error.to_string())
         })?;
-        Self::capture_at(repository)
+        Self::capture_at_with_claim(repository, claim)
     }
 
-    pub(super) fn capture_at(repository: Repository) -> Result<Self, ConfiguredFailure> {
+    fn capture_at_with_claim(
+        repository: Repository,
+        claim: gate::ClaimCapture,
+    ) -> Result<Self, ConfiguredFailure> {
         let state = repository.admit_state().map_err(|error| {
             ConfiguredFailure::fault("gate::pre-commit-state-unavailable", error.to_string())
         })?;
         fs::create_dir_all(state.locks()).map_err(|error| {
             ConfiguredFailure::fault("gate::pre-commit-state-unavailable", error.to_string())
         })?;
-        let anchor = spice::gate::prepare_arm_at(
+        let anchor = spice::gate::prepare_arm_at_with_claim(
             repository.worktree_root(),
             gate::Selector::staged(),
             gate::GateId::Staging,
+            claim.clone(),
         )
         .map_err(|error| {
             ConfiguredFailure::refusal("gate::pre-commit-staged-source-refused", error.to_string())
@@ -572,10 +584,13 @@ impl Dispatch {
         let mut dispatch = Self {
             repository,
             policy,
+            claim,
             anchor,
             authority,
         };
-        dispatch.verify()?;
+        if !dispatch.admission_enabled() {
+            dispatch.verify()?;
+        }
         Ok(dispatch)
     }
 
@@ -583,12 +598,30 @@ impl Dispatch {
         self.policy.builtins
     }
 
+    pub(super) fn admission_enabled(&self) -> bool {
+        self.policy.builtins || self.policy.commands.iter().any(is_source_gate_contract)
+    }
+
+    pub(super) fn require_admission_approved(&self) -> Result<(), ConfiguredFailure> {
+        if self.policy.commands.iter().any(is_source_gate_contract) {
+            self.policy.require_approved(&self.repository)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn has_configured(&self) -> bool {
-        !self.policy.commands.is_empty()
+        self.policy
+            .commands
+            .iter()
+            .any(|command| !is_source_gate_contract(command))
     }
 
     pub(super) fn configured_count(&self) -> usize {
-        self.policy.commands.len()
+        self.policy
+            .commands
+            .iter()
+            .filter(|command| !is_source_gate_contract(command))
+            .count()
     }
 
     pub(super) fn source(&self) -> &Digest {
@@ -611,10 +644,11 @@ impl Dispatch {
     }
 
     fn refresh_anchor(&mut self, trigger: &str) -> Result<(), ConfiguredFailure> {
-        let anchor = spice::gate::prepare_arm_at(
+        let anchor = spice::gate::prepare_arm_at_with_claim(
             self.repository.worktree_root(),
             gate::Selector::staged(),
             gate::GateId::Staging,
+            self.claim.clone(),
         )
         .map_err(|error| {
             ConfiguredFailure::refusal(
@@ -642,6 +676,7 @@ impl Dispatch {
         let Self {
             repository,
             policy,
+            claim,
             anchor,
             authority,
         } = self;
@@ -657,12 +692,42 @@ impl Dispatch {
         let mut rebound = Self {
             repository,
             policy,
+            claim,
             anchor,
             authority,
         };
         rebound.refresh_anchor("battery-handoff")?;
         rebound.verify()?;
         Ok(rebound)
+    }
+
+    pub(super) fn into_admission(
+        self,
+    ) -> Result<(AdmissionDispatch, spice::change_gate::StagedActionSelection), ConfiguredFailure>
+    {
+        let Self {
+            repository,
+            policy,
+            claim,
+            anchor,
+            authority,
+        } = self;
+        let staged =
+            spice::change_gate::prepare_staged_actions_from_anchor(anchor).map_err(|error| {
+                ConfiguredFailure::refusal(
+                    "gate::pre-commit-staged-source-refused",
+                    error.to_string(),
+                )
+            })?;
+        Ok((
+            AdmissionDispatch {
+                repository,
+                policy,
+                claim,
+                authority,
+            },
+            staged,
+        ))
     }
 
     pub(super) fn execute_configured(
@@ -699,7 +764,13 @@ impl Dispatch {
         let source = self.source().clone();
         let paths = self.authority.selected_paths.clone();
         let root = self.repository.worktree_root().to_path_buf();
-        let commands = self.policy.commands.clone();
+        let commands = self
+            .policy
+            .commands
+            .iter()
+            .filter(|command| !is_source_gate_contract(command))
+            .cloned()
+            .collect::<Vec<_>>();
         let spice = self
             .policy
             .spice
@@ -723,6 +794,32 @@ impl Dispatch {
             &mut verify,
         )
         .map(Some)
+    }
+}
+
+impl AdmissionDispatch {
+    pub(super) fn resume(
+        self,
+        staged: spice::change_gate::StagedActionSelection,
+    ) -> Result<Dispatch, ConfiguredFailure> {
+        let anchor = staged.into_anchor();
+        let observed = DispatchAuthority::capture(&anchor)?;
+        if let Some(movement) = self.authority.movement(&observed) {
+            return Err(ConfiguredFailure::refusal(
+                "gate::pre-commit-staged-source-moved",
+                format!("trigger=admission-handoff; {movement}"),
+            ));
+        }
+        self.policy.verify_selected(anchor.root())?;
+        let mut dispatch = Dispatch {
+            repository: self.repository,
+            policy: self.policy,
+            claim: self.claim,
+            anchor,
+            authority: observed,
+        };
+        dispatch.verify()?;
+        Ok(dispatch)
     }
 }
 

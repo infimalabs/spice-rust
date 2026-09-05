@@ -5,6 +5,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(target_family = "unix")]
+use std::os::unix::fs::MetadataExt as _;
+
 use sill::{Acquisition, LockFile, Possession};
 
 use super::{
@@ -20,6 +23,7 @@ const WORKSPACE_LOCK: &str = "gate-tree-workspace";
 
 /// The prefix every gate tree workspace name begins with.
 const WORKSPACE_PREFIX: &str = "spice-gate-tree-";
+const WORKSPACE_PARENT_PREFIX: &str = "spice-gate-workspaces-";
 
 #[derive(Debug)]
 pub(super) struct BuildRoot {
@@ -31,7 +35,7 @@ pub(super) struct BuildRoot {
 impl BuildRoot {
     pub(super) fn create() -> Result<Self, TreeError> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let temporary = std::env::temp_dir();
+        let temporary = workspace_parent()?;
         reclaim_abandoned(&temporary);
         for _ in 0..128 {
             let nonce = NEXT.fetch_add(1, Ordering::Relaxed);
@@ -101,6 +105,59 @@ impl BuildRoot {
             possession: self.possession.take(),
         }
     }
+}
+
+pub(super) fn workspace_parent() -> Result<PathBuf, TreeError> {
+    let temporary = std::env::temp_dir();
+    #[cfg(target_family = "unix")]
+    let owner = {
+        // SAFETY: geteuid has no preconditions and observes this process only.
+        unsafe { libc::geteuid() }
+    };
+    #[cfg(not(target_family = "unix"))]
+    let owner = std::process::id();
+    let parent = temporary.join(format!("{WORKSPACE_PARENT_PREFIX}{owner}"));
+    let created = match create_private_workspace(&parent) {
+        Ok(()) => true,
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => false,
+        Err(source) => {
+            return Err(TreeError::io(
+                "creating the selected-tree workspace parent",
+                &parent,
+                source,
+            ));
+        }
+    };
+    validate_workspace_parent(&parent, owner)?;
+    if created {
+        reclaim_abandoned(&temporary);
+    }
+    Ok(parent)
+}
+
+fn validate_workspace_parent(path: &Path, owner: u32) -> Result<(), TreeError> {
+    let metadata = fs::symlink_metadata(path).map_err(|source| {
+        TreeError::io(
+            "inspecting the selected-tree workspace parent",
+            path,
+            source,
+        )
+    })?;
+    #[cfg(target_family = "unix")]
+    let valid = metadata.is_dir() && metadata.uid() == owner && metadata.mode() & 0o777 == 0o700;
+    #[cfg(not(target_family = "unix"))]
+    let valid = metadata.is_dir();
+    if valid {
+        return Ok(());
+    }
+    Err(TreeError::io(
+        "validating the selected-tree workspace parent",
+        path,
+        io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "workspace parent must be an owner-private real directory",
+        ),
+    ))
 }
 
 /// Take one workspace name's lock, and clear anything a dead run left under it.

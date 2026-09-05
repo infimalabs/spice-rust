@@ -60,6 +60,153 @@ struct PreparedAction {
     execution: PreparedExecution,
 }
 
+pub(super) struct AdmissionPreparation {
+    candidate_tree: String,
+    staged: StagedActionSelection,
+    actions: Vec<gate::ReceiptExpectation>,
+    selection: Digest,
+    policy: Digest,
+    gate_set: Digest,
+}
+
+impl AdmissionPreparation {
+    pub(super) fn candidate_tree(&self) -> &str {
+        &self.candidate_tree
+    }
+
+    pub(super) fn source(&self) -> &Digest {
+        self.staged.selection().source()
+    }
+
+    pub(super) fn actions(&self) -> &[gate::ReceiptExpectation] {
+        &self.actions
+    }
+
+    pub(super) fn selection(&self) -> &Digest {
+        &self.selection
+    }
+
+    pub(super) fn policy(&self) -> &Digest {
+        &self.policy
+    }
+
+    pub(super) fn gate_set(&self) -> &Digest {
+        &self.gate_set
+    }
+
+    pub(super) fn head(&self) -> Option<String> {
+        self.staged
+            .anchor()
+            .staged_authority()
+            .and_then(gate::tree::StagedAuthority::baseline_identity)
+    }
+
+    pub(super) fn verify_source(&self) -> Result<(), ProveFailure> {
+        self.staged
+            .anchor()
+            .verify_source()
+            .map_err(ProveFailure::run)
+    }
+
+    pub(super) fn execute_live_checks(
+        &self,
+    ) -> Result<Vec<gate::AdmissionLiveCheck>, ProveFailure> {
+        let mut checks = Vec::new();
+        for gate_id in self.staged.selection().gate_ids().iter().copied() {
+            if gate::gate_action_reuse_class(gate_id) != Some(ActionReuseClass::LiveOnly) {
+                continue;
+            }
+            let mut arm = self
+                .staged
+                .anchor()
+                .derive_reached_arm(self.staged.selection(), gate_id)
+                .map_err(ProveFailure::run)?;
+            let report = arm.execute().map_err(ProveFailure::run)?;
+            if !report.admits() {
+                return Err(ProveFailure::refusal(
+                    "gate::pre-commit-live-check-regressed",
+                    refusal_detail(&report),
+                ));
+            }
+            let result = Digest::compute(
+                Domain::GateFocusedReport,
+                &report.encode().map_err(|error| {
+                    ProveFailure::fault("gate::pre-commit-live-result-unencodable", error)
+                })?,
+            );
+            checks.push(
+                gate::AdmissionLiveCheck::new(gate_id.to_string(), result)
+                    .map_err(ProveFailure::store)?,
+            );
+        }
+        checks.sort_by(|left, right| left.action().cmp(right.action()));
+        Ok(checks)
+    }
+
+    pub(super) fn accept_state(&self) -> Result<(), ProveFailure> {
+        self.staged
+            .anchor()
+            .accept_state(gate::StateRunScope::Partial)
+            .map_err(ProveFailure::run)
+    }
+
+    pub(super) fn reject_state(&self) -> Result<(), ProveFailure> {
+        self.staged.reject_state().map_err(ProveFailure::run)
+    }
+
+    pub(super) fn into_staged(self) -> StagedActionSelection {
+        self.staged
+    }
+}
+
+pub(super) fn prepare_admission_from_staged(
+    repository: &Repository,
+    store: &EvidenceStore,
+    staged: StagedActionSelection,
+) -> Result<AdmissionPreparation, ProveFailure> {
+    let staged_authority = staged
+        .anchor()
+        .staged_authority()
+        .expect("staged action preparation retains staged authority");
+    let candidate_tree = staged_authority.candidate_tree_identity().to_owned();
+    let context = staged.anchor().context().map_err(ProveFailure::run)?;
+    let policy = context.policy().clone();
+    let gate_set = gate::canonical_gate_set_digest()
+        .map_err(|error| ProveFailure::fault("gate::prove-manifest-invalid", error))?;
+    let selection = digest_encoded(Domain::GateSelection, staged.selection())?;
+    let request = Request {
+        action: None,
+        missing: true,
+    };
+    let mut actions = prepare_action_authorities(
+        &staged,
+        store,
+        request,
+        repository.worktree_root(),
+        repository.common_dir(),
+    )?
+    .into_iter()
+    .map(|prepared| {
+        gate::ReceiptExpectation::new(
+            prepared.action,
+            prepared.action_key,
+            prepared.action_spec,
+            prepared.input_manifest,
+        )
+        .map_err(ProveFailure::store)
+    })
+    .collect::<Result<Vec<_>, _>>()?;
+    actions.sort_by(|left, right| left.action().cmp(right.action()));
+    Ok(AdmissionPreparation {
+        candidate_tree,
+        staged,
+        actions,
+        selection,
+        policy,
+        gate_set,
+    })
+}
+
 enum PreparedExecution {
     Gate(Box<spice::gate::PreparedArm<'static>>),
     Cargo(Box<CargoExecution>),
@@ -208,48 +355,12 @@ fn prepare_actions(
     writable_root: &Path,
     common: &Path,
 ) -> Result<(Vec<ProveActionReport>, Vec<PreparedAction>), ProveFailure> {
-    let requested = requested_actions(staged.selection(), request)?;
-    let manifest = BatteryManifest::canonical()
-        .map_err(|error| ProveFailure::fault("gate::prove-manifest-invalid", error))?;
-    let gate_set = gate::canonical_gate_set_digest()
-        .map_err(|error| ProveFailure::fault("gate::prove-manifest-invalid", error))?;
-    let baseline = staged
-        .anchor()
-        .staged_authority()
-        .and_then(gate::tree::StagedAuthority::baseline_identity);
-    let mut prepared_actions = Vec::new();
-    for gate_id in requested {
-        prepared_actions.push(prepare_action(
-            staged,
-            &manifest,
-            &gate_set,
-            baseline.as_deref(),
-            gate_id,
-        )?);
-    }
-
-    if cargo_request(request) {
-        prepared_actions.extend(prepare_cargo_actions(
-            staged,
-            &manifest,
-            &gate_set,
-            request,
-            writable_root,
-        )?);
-    }
-
-    // Complete every authority before consulting evidence. In particular, an
-    // incomplete Cargo executable boundary must never find an older under-keyed receipt.
+    let prepared_actions =
+        prepare_action_authorities(staged, store, request, writable_root, common)?;
     let mut present = Vec::new();
     let mut pending = Vec::new();
     for prepared in prepared_actions {
         classify_prepared(store, request.missing, prepared, &mut present, &mut pending)?;
-    }
-    if canvas::request(request) {
-        let prepared = canvas::prepare(staged, store, &gate_set, request, writable_root, common)?;
-        for action in prepared {
-            classify_prepared(store, request.missing, action, &mut present, &mut pending)?;
-        }
     }
 
     if let Some(action) = request.action
@@ -263,6 +374,56 @@ fn prepare_actions(
     present.sort_by(|left, right| proof_action_order(&left.action, &right.action));
     pending.sort_by(|left, right| proof_action_order(&left.action, &right.action));
     Ok((present, pending))
+}
+
+fn prepare_action_authorities(
+    staged: &StagedActionSelection,
+    store: &EvidenceStore,
+    request: Request<'_>,
+    writable_root: &Path,
+    common: &Path,
+) -> Result<Vec<PreparedAction>, ProveFailure> {
+    let requested = requested_actions(staged.selection(), request)?;
+    let manifest = BatteryManifest::canonical()
+        .map_err(|error| ProveFailure::fault("gate::prove-manifest-invalid", error))?;
+    let gate_set = gate::canonical_gate_set_digest()
+        .map_err(|error| ProveFailure::fault("gate::prove-manifest-invalid", error))?;
+    let baseline = staged
+        .anchor()
+        .staged_authority()
+        .and_then(gate::tree::StagedAuthority::baseline_identity);
+    let mut prepared = Vec::new();
+    for gate_id in requested {
+        prepared.push(prepare_action(
+            staged,
+            &manifest,
+            &gate_set,
+            baseline.as_deref(),
+            gate_id,
+        )?);
+    }
+
+    if cargo_request(request) {
+        prepared.extend(prepare_cargo_actions(
+            staged,
+            &manifest,
+            &gate_set,
+            request,
+            writable_root,
+        )?);
+    }
+
+    if canvas::request(request) {
+        prepared.extend(canvas::prepare(
+            staged,
+            store,
+            &gate_set,
+            request,
+            writable_root,
+            common,
+        )?);
+    }
+    Ok(prepared)
 }
 
 fn classify_prepared(
@@ -964,12 +1125,28 @@ fn refusal<B>(reason: &str, detail: impl Into<String>) -> Outcome<B> {
     ))
 }
 
-enum ProveFailure {
+pub(super) enum ProveFailure {
     Refusal { reason: String, detail: String },
     Fault { reason: String, detail: String },
 }
 
 impl ProveFailure {
+    pub(super) fn reason(&self) -> &str {
+        match self {
+            Self::Refusal { reason, .. } | Self::Fault { reason, .. } => reason,
+        }
+    }
+
+    pub(super) fn detail(&self) -> &str {
+        match self {
+            Self::Refusal { detail, .. } | Self::Fault { detail, .. } => detail,
+        }
+    }
+
+    pub(super) const fn is_fault(&self) -> bool {
+        matches!(self, Self::Fault { .. })
+    }
+
     fn refusal(reason: impl Into<String>, detail: impl ToString) -> Self {
         Self::Refusal {
             reason: reason.into(),

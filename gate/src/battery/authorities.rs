@@ -639,6 +639,13 @@ impl<'trace> BatteryCapture<'trace> {
             None => BatteryStateRun::capture(&repository)?,
         };
         let repository_source = RepositorySelection::capture(&repository, selector, input_mode)?;
+        let rim = match (
+            rim.derives_staged_changes(),
+            repository_source.tree().staged_changes(),
+        ) {
+            (true, Some(changes)) => rim.with_changes(changes.to_vec()),
+            _ => rim,
+        };
         let tree = repository_source.tree();
         let (state, bound_actor) =
             state_run.bind(tree.paths(), tree.renames(), tree.publishes_state(), &actor)?;
