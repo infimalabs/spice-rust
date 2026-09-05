@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant as Monotonic};
 
 use bus::Bus;
-use journal::{FactCause, JournalGuard, JournalWrite, PendingFact};
+use journal::{FactCause, GuardError, JournalGuard, JournalWrite, PendingFact};
 use lane::capture::{
     CaptureExit, CaptureFailure, CaptureRecord, CaptureReportError, CaptureReporter,
 };
@@ -84,6 +84,87 @@ const SESSION_PROOF: Duration = Duration::from_secs(10);
 // A second declaration crosses a separate child write and capture callback.
 // Keep the duplicate window bounded, but long enough to survive scheduler load.
 const SESSION_SETTLE: Duration = Duration::from_millis(250);
+
+/// Record one compaction recovered from the current occupant's preserved session.
+pub(super) fn recover_session_compaction(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    thread: &str,
+    locus: listen::Locus,
+) -> CommandResult<bool> {
+    let observed = current_residency(bus, epoch)?;
+    let current = observed
+        .body()
+        .lanes
+        .iter()
+        .find(|row| row.lane == lane && row.occupant == Some(occupant))
+        .and_then(|row| row.session.as_ref());
+    if !current.is_some_and(|session| {
+        session.lane == lane && session.occupant == occupant && session.identity == thread
+    }) {
+        return Ok(false);
+    }
+
+    let compacted = wire::body::LaneCompacted {
+        lane,
+        occupant,
+        stream: format!("session:{thread}"),
+        member: locus.member,
+        offset: locus.offset,
+        length: locus.length,
+    };
+    let snapshot = bus
+        .fact_snapshot()
+        .map_err(|error| store_fault("lane::compaction-journal-unreadable", &error.to_string()))?;
+    if compaction_recorded(&snapshot, &compacted) {
+        return Ok(false);
+    }
+
+    let guarded = compacted.clone();
+    let mut proposal = write(Actor::Spice, epoch, Producer::ResidentRecognition)?;
+    guard_residency(&mut proposal, &observed);
+    proposal.guard(JournalGuard::new(move |read| {
+        let snapshot = read
+            .fact_snapshot()
+            .map_err(|error| GuardError::Invalid(error.to_string()))?;
+        if compaction_recorded(&snapshot, &guarded) {
+            Err(GuardError::refused("lane::compaction-recorded"))
+        } else {
+            Ok(())
+        }
+    }));
+    proposal
+        .fact(compacted.clone(), FactCause::Existing(observed.position()))
+        .map_err(|error| store_fault("lane::compaction-fact-invalid", &error.to_string()))?;
+    match commit(bus, proposal) {
+        Ok(_) => Ok(true),
+        Err(Outcome::Refusal(refusal)) => {
+            let snapshot = bus.fact_snapshot().map_err(|error| {
+                store_fault("lane::compaction-journal-unreadable", &error.to_string())
+            })?;
+            if compaction_recorded(&snapshot, &compacted) {
+                Ok(false)
+            } else {
+                Err(Outcome::Refusal(refusal))
+            }
+        }
+        Err(outcome) => Err(outcome),
+    }
+}
+
+fn compaction_recorded(
+    snapshot: &journal::FactSnapshot,
+    expected: &wire::body::LaneCompacted,
+) -> bool {
+    snapshot.facts().iter().any(|envelope| {
+        envelope
+            .fact
+            .read::<wire::body::LaneCompacted>()
+            .is_some_and(|body| body == *expected)
+    })
+}
 
 /// Resolve the one durable subscription row for a lineage.
 fn subscription_row(
