@@ -1,14 +1,18 @@
 //! Proof-aware execution of selected reusable gate actions.
 
+use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
 use std::time::Instant as MonotonicInstant;
 
 use gate::{
     ActionInputClosure, ActionInputInventory, ActionKey, ActionKeyAuthority, ActionNonFileInput,
     ActionNonFileKind, ActionReuseClass, ActionSpec, ActionSpecFields, ActionToolRequirement,
-    ArmDisposition, BatteryManifest, BatteryToolEvidence, EvidenceProducerRecord, EvidenceStore,
-    FocusedArmReport, GateId, PassReceipt, PassReceiptFields,
+    ArmDisposition, BatteryManifest, BatteryToolEvidence, CargoGateShard, CargoGateShardKind,
+    CargoGateShardPlanning, EvidenceProducerRecord, EvidenceStore, FocusedArmReport, GateId,
+    PassReceipt, PassReceiptFields,
 };
 use serde::Serialize;
+use sill::Environment;
 use wire::{Digest, Domain, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
 use spice::change_gate::{ChangeGateError, StagedActionSelection};
@@ -33,7 +37,7 @@ pub(crate) struct ProveReport {
 #[derive(Serialize)]
 #[serde(deny_unknown_fields)]
 struct ProveActionReport {
-    action: GateId,
+    action: String,
     action_key: ActionKey,
     disposition: ProveDisposition,
     receipt: gate::ReceiptId,
@@ -47,15 +51,28 @@ enum ProveDisposition {
 }
 
 struct PreparedAction {
-    gate_id: GateId,
+    action: String,
     action_key: ActionKey,
     action_spec: Digest,
     input_manifest: Digest,
-    arm: spice::gate::PreparedArm<'static>,
+    execution: PreparedExecution,
+}
+
+enum PreparedExecution {
+    Gate(Box<spice::gate::PreparedArm<'static>>),
+    Cargo(Box<CargoExecution>),
+}
+
+struct CargoExecution {
+    shard: CargoGateShard,
+    root: PathBuf,
+    writable_root: PathBuf,
+    environment: Environment,
+    cargo: OsString,
 }
 
 struct PendingReceipt {
-    gate_id: GateId,
+    action: String,
     action_key: ActionKey,
     receipt: PassReceipt,
 }
@@ -72,14 +89,13 @@ pub(crate) fn prove(matches: &clap::ArgMatches) -> Outcome<ProveReport> {
         );
     }
     if let Some(action) = request.action
-        && gate_id(action).is_none()
+        && !registered_request(action)
     {
         return refusal(
             "gate::prove-action-unregistered",
-            format!("{action:?} is not a registered gate action"),
+            format!("{action:?} is not a registered gate action or Cargo shard"),
         );
     }
-
     match run(request) {
         Ok(report) => Outcome::Reply(Reply {
             position: ReplyPosition::Direct {},
@@ -99,13 +115,14 @@ fn run(request: Request<'_>) -> Result<ProveReport, ProveFailure> {
     let staged = spice::change_gate::prepare_staged_actions().map_err(ProveFailure::selection)?;
     let store = EvidenceStore::open(repository.common_dir()).map_err(ProveFailure::store)?;
 
-    let (mut actions, pending) = match prepare_actions(&staged, &store, request) {
-        Ok(prepared) => prepared,
-        Err(error) => {
-            let _ = staged.reject_state();
-            return Err(error);
-        }
-    };
+    let (mut actions, pending) =
+        match prepare_actions(&staged, &store, request, repository.worktree_root()) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                let _ = staged.reject_state();
+                return Err(error);
+            }
+        };
     let published = complete_transaction(
         pending,
         execute,
@@ -114,7 +131,7 @@ fn run(request: Request<'_>) -> Result<ProveReport, ProveFailure> {
         |pending| publish(&store, pending),
     )?;
     actions.extend(published);
-    actions.sort_by_key(|row| gate_position(row.action));
+    actions.sort_by(|left, right| proof_action_order(&left.action, &right.action));
     Ok(ProveReport {
         candidate_tree: candidate_tree.to_string(),
         source: staged.selection().source().clone(),
@@ -130,7 +147,7 @@ fn publish(
         .publish(&pending.receipt)
         .map_err(ProveFailure::store)?;
     Ok(ProveActionReport {
-        action: pending.gate_id,
+        action: pending.action,
         action_key: pending.action_key,
         disposition: ProveDisposition::Published,
         receipt: publication.receipt().clone(),
@@ -176,6 +193,7 @@ fn prepare_actions(
     staged: &StagedActionSelection,
     store: &EvidenceStore,
     request: Request<'_>,
+    writable_root: &Path,
 ) -> Result<(Vec<ProveActionReport>, Vec<PreparedAction>), ProveFailure> {
     let requested = requested_actions(staged.selection(), request)?;
     let manifest = BatteryManifest::canonical()
@@ -191,27 +209,55 @@ fn prepare_actions(
 
     for gate_id in requested {
         let prepared = prepare_action(staged, &manifest, &gate_set, baseline.as_deref(), gate_id)?;
+        classify_prepared(store, request.missing, prepared, &mut present, &mut pending)?;
+    }
 
-        let current = if request.missing {
-            store
-                .lookup(&prepared.action_key)
-                .map_err(ProveFailure::store)?
-        } else {
-            None
-        };
-        if !action_needed(request.missing, current.is_some()) {
-            let receipt = current.expect("a filtered action has a current receipt");
-            present.push(ProveActionReport {
-                action: prepared.gate_id,
-                action_key: prepared.action_key,
-                disposition: ProveDisposition::Present,
-                receipt: receipt.id().map_err(ProveFailure::store)?,
-            });
-        } else {
-            pending.push(prepared);
+    if cargo_request(request) {
+        let prepared = prepare_cargo_actions(staged, &manifest, &gate_set, request, writable_root)?;
+        for action in prepared {
+            classify_prepared(store, request.missing, action, &mut present, &mut pending)?;
         }
     }
+
+    if let Some(action) = request.action
+        && !request_matches_any(action, &present, &pending)
+    {
+        return Err(ProveFailure::refusal(
+            "gate::prove-action-unregistered",
+            format!("{action:?} is not a selected registered gate or Cargo action"),
+        ));
+    }
+    present.sort_by(|left, right| proof_action_order(&left.action, &right.action));
+    pending.sort_by(|left, right| proof_action_order(&left.action, &right.action));
     Ok((present, pending))
+}
+
+fn classify_prepared(
+    store: &EvidenceStore,
+    missing: bool,
+    prepared: PreparedAction,
+    present: &mut Vec<ProveActionReport>,
+    pending: &mut Vec<PreparedAction>,
+) -> Result<(), ProveFailure> {
+    let current = if missing {
+        store
+            .lookup(&prepared.action_key)
+            .map_err(ProveFailure::store)?
+    } else {
+        None
+    };
+    if action_needed(missing, current.is_some()) {
+        pending.push(prepared);
+    } else {
+        let receipt = current.expect("a filtered action has a current receipt");
+        present.push(ProveActionReport {
+            action: prepared.action,
+            action_key: prepared.action_key,
+            disposition: ProveDisposition::Present,
+            receipt: receipt.id().map_err(ProveFailure::store)?,
+        });
+    }
+    Ok(())
 }
 
 fn prepare_action(
@@ -285,12 +331,223 @@ fn prepare_action(
     )
     .map_err(ProveFailure::action_input)?;
     Ok(PreparedAction {
-        gate_id,
+        action: gate_id.to_string(),
         action_key,
         action_spec,
         input_manifest,
-        arm,
+        execution: PreparedExecution::Gate(Box::new(arm)),
     })
+}
+
+fn prepare_cargo_actions(
+    staged: &StagedActionSelection,
+    manifest: &BatteryManifest,
+    gate_set: &Digest,
+    request: Request<'_>,
+    writable_root: &Path,
+) -> Result<Vec<PreparedAction>, ProveFailure> {
+    let typecheck_selected = staged
+        .selection()
+        .gate_ids()
+        .contains(&GateId::RustTypecheck);
+    if !typecheck_selected && !staged.cargo_tests() {
+        return Ok(Vec::new());
+    }
+    if !typecheck_selected {
+        return Err(ProveFailure::refusal(
+            "gate::prove-cargo-authority-unavailable",
+            "Cargo tests were selected without the canonical Rust toolchain arm",
+        ));
+    }
+
+    let arm = staged
+        .anchor()
+        .derive_reached_arm(staged.selection(), GateId::RustTypecheck)
+        .map_err(ProveFailure::run)?;
+    let context = arm.context().map_err(ProveFailure::run)?;
+    let cargo_environment = normalized_cargo_environment(arm.compiler_environment());
+    let environment = Environment::new(cargo_environment.iter().cloned())
+        .map_err(|error| ProveFailure::refusal("gate::prove-cargo-environment-refused", error))?;
+    let base = arm.materialize_staged_base().map_err(ProveFailure::run)?;
+    let plan = gate::plan_cargo_gate_shards_at(CargoGateShardPlanning {
+        root: arm.root(),
+        base: base.as_ref().map(gate::SelectedTree::root),
+        source: staged.selection().source().clone(),
+        changed_sources: staged.selection().changed_sources(),
+        selected_paths: arm.paths(),
+        environment: environment.clone(),
+        cargo: OsStr::new("cargo"),
+        include_tests: staged.cargo_tests(),
+    })
+    .map_err(ProveFailure::cargo)?;
+
+    let shards = selected_cargo_shards(
+        request,
+        typecheck_selected.then_some(plan.typechecks()),
+        staged.cargo_tests().then_some(plan.tests()),
+    );
+    let declaration = declaration(manifest, GateId::RustTypecheck)?;
+    shards
+        .into_iter()
+        .map(|shard| {
+            prepare_cargo_action(
+                &arm,
+                &context,
+                gate_set,
+                declaration,
+                writable_root,
+                &cargo_environment,
+                environment.clone(),
+                shard.clone(),
+            )
+        })
+        .collect()
+}
+
+fn selected_cargo_shards<'a>(
+    request: Request<'_>,
+    typechecks: Option<&'a [CargoGateShard]>,
+    tests: Option<&'a [CargoGateShard]>,
+) -> Vec<&'a CargoGateShard> {
+    let typechecks = typechecks.unwrap_or_default();
+    let tests = tests.unwrap_or_default();
+    match request.action {
+        None => typechecks.iter().chain(tests).collect(),
+        Some("rust-typecheck") => typechecks.iter().collect(),
+        Some("cargo-tests") => tests.iter().collect(),
+        Some(action) if action.starts_with("cargo:typecheck:") => typechecks
+            .iter()
+            .filter(|shard| shard.action_id() == action)
+            .collect(),
+        Some(action) if action.starts_with("cargo:test:") => tests
+            .iter()
+            .filter(|shard| shard.action_id() == action)
+            .collect(),
+        Some(_) => Vec::new(),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_cargo_action(
+    arm: &spice::gate::PreparedArm<'_>,
+    context: &gate::BatteryContext,
+    gate_set: &Digest,
+    typecheck_declaration: &str,
+    writable_root: &Path,
+    cargo_environment: &[(OsString, OsString)],
+    execution_environment: Environment,
+    shard: CargoGateShard,
+) -> Result<PreparedAction, ProveFailure> {
+    let tools = action_tools(context.tools())?;
+    let (environment_names, environment) = environment(cargo_environment)?;
+    let tool_authority = digest_encoded(Domain::GateTool, &context.tools())?;
+    let configuration = digest_encoded(Domain::GateConfiguration, &context.configuration())?;
+    let inventory = digest_encoded(Domain::GateInventory, &shard)?;
+    let declaration = match shard.kind() {
+        CargoGateShardKind::Typecheck => typecheck_declaration,
+        CargoGateShardKind::Test => "gate::cargo-workspace-tests::proof-shard-v1",
+    };
+    let non_files = vec![
+        non_file(
+            ActionNonFileKind::Declaration,
+            "compiled-declaration",
+            Digest::compute(Domain::GateBatteryManifest, declaration.as_bytes()),
+        )?,
+        non_file(
+            ActionNonFileKind::GateSet,
+            "canonical-gate-set",
+            gate_set.clone(),
+        )?,
+        non_file(
+            ActionNonFileKind::Policy,
+            "compiled-policy",
+            context.policy().clone(),
+        )?,
+        non_file(
+            ActionNonFileKind::Policy,
+            "resolved-configuration",
+            configuration,
+        )?,
+        non_file(
+            ActionNonFileKind::Toolchain,
+            "discovered-tools",
+            tool_authority.clone(),
+        )?,
+        non_file(
+            ActionNonFileKind::Environment,
+            "compiler-environment",
+            environment.clone(),
+        )?,
+        non_file(ActionNonFileKind::Inventory, "cargo-shard", inventory)?,
+    ];
+    let input_manifest = arm
+        .compile_explicit_action_input(shard.input_paths().to_vec(), non_files)
+        .map_err(ProveFailure::run)?;
+    let input_manifest = input_manifest
+        .digest()
+        .map_err(ProveFailure::action_input)?;
+    let mut argv = Vec::with_capacity(shard.argv().len() + 1);
+    argv.push("cargo".to_owned());
+    argv.extend_from_slice(shard.argv());
+    let spec = ActionSpec::new(ActionSpecFields {
+        action_id: shard.action_id().to_owned(),
+        runner: "spice-cargo-proof-shard".to_owned(),
+        runner_version: RUNNER_VERSION,
+        declaration: declaration.to_owned(),
+        argv,
+        cwd: ".".to_owned(),
+        environment_names,
+        tools,
+        input_strategy: "cargo-package-closure-v1".to_owned(),
+        reuse: ActionReuseClass::Cacheable,
+    })
+    .map_err(ProveFailure::action_input)?;
+    let action_spec = spec.digest().map_err(ProveFailure::action_input)?;
+    let action_key = gate::derive_authority_bound_action_key(
+        &spec,
+        &ActionKeyAuthority {
+            input_manifest: input_manifest.clone(),
+            policy: context.policy().clone(),
+            gate_set: gate_set.clone(),
+            tools: tool_authority,
+            environment,
+            baseline: None,
+        },
+    )
+    .map_err(ProveFailure::action_input)?;
+    Ok(PreparedAction {
+        action: shard.action_id().to_owned(),
+        action_key,
+        action_spec,
+        input_manifest,
+        execution: PreparedExecution::Cargo(Box::new(CargoExecution {
+            shard,
+            root: arm.root().to_path_buf(),
+            writable_root: writable_root.to_path_buf(),
+            environment: execution_environment,
+            cargo: OsString::from("cargo"),
+        })),
+    })
+}
+
+fn normalized_cargo_environment(values: &[(OsString, OsString)]) -> Vec<(OsString, OsString)> {
+    const OUTPUT_ONLY: [&str; 3] = ["PWD", "CARGO_TARGET_DIR", "CARGO_BUILD_BUILD_DIR"];
+    const DISABLED_WRAPPERS: [&str; 2] = ["RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER"];
+    let mut normalized = values
+        .iter()
+        .filter(|(name, _)| {
+            !OUTPUT_ONLY
+                .iter()
+                .any(|candidate| name == OsStr::new(candidate))
+                && !DISABLED_WRAPPERS
+                    .iter()
+                    .any(|candidate| name == OsStr::new(candidate))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    normalized.extend(DISABLED_WRAPPERS.map(|name| (OsString::from(name), OsString::new())));
+    normalized.sort();
+    normalized
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -378,24 +635,52 @@ fn action_baseline(
     }
 }
 
-fn execute(mut action: PreparedAction) -> Result<PendingReceipt, ProveFailure> {
+fn execute(action: PreparedAction) -> Result<PendingReceipt, ProveFailure> {
     let started_at = now()?;
     let started = MonotonicInstant::now();
-    let report = action.arm.execute().map_err(ProveFailure::run)?;
+    let typed_result = match action.execution {
+        PreparedExecution::Gate(mut arm) => {
+            let report = arm.execute().map_err(ProveFailure::run)?;
+            if !report.admits() {
+                return Err(ProveFailure::refusal(
+                    "gate::prove-action-regressed",
+                    refusal_detail(&report),
+                ));
+            }
+            Digest::compute(
+                Domain::GateFocusedReport,
+                &report.encode().map_err(|error| {
+                    ProveFailure::fault("gate::prove-result-unencodable", error)
+                })?,
+            )
+        }
+        PreparedExecution::Cargo(execution) => {
+            let CargoExecution {
+                shard,
+                root,
+                writable_root,
+                environment,
+                cargo,
+            } = *execution;
+            let result = gate::run_cargo_gate_shard_at(
+                &root,
+                &writable_root,
+                environment,
+                &cargo,
+                &shard,
+                &mut std::io::stderr(),
+            )
+            .map_err(ProveFailure::cargo)?;
+            Digest::compute(
+                Domain::GateFocusedReport,
+                &wire::encode(&result).map_err(|error| {
+                    ProveFailure::fault("gate::prove-result-unencodable", error)
+                })?,
+            )
+        }
+    };
     let duration_millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let finished_at = now()?;
-    if !report.admits() {
-        return Err(ProveFailure::refusal(
-            "gate::prove-action-regressed",
-            refusal_detail(&report),
-        ));
-    }
-    let typed_result = Digest::compute(
-        Domain::GateFocusedReport,
-        &report
-            .encode()
-            .map_err(|error| ProveFailure::fault("gate::prove-result-unencodable", error))?,
-    );
     let receipt = PassReceipt::new(PassReceiptFields {
         action_key: action.action_key.clone(),
         action_spec: action.action_spec,
@@ -409,7 +694,7 @@ fn execute(mut action: PreparedAction) -> Result<PendingReceipt, ProveFailure> {
     })
     .map_err(ProveFailure::store)?;
     Ok(PendingReceipt {
-        gate_id: action.gate_id,
+        action: action.action,
         action_key: action.action_key,
         receipt,
     })
@@ -420,6 +705,9 @@ fn requested_actions(
     request: Request<'_>,
 ) -> Result<Vec<GateId>, ProveFailure> {
     let named = request.action.and_then(gate_id);
+    if request.action.is_some() && named.is_none() {
+        return Ok(Vec::new());
+    }
     if let Some(gate_id) = named
         && !selection.gate_ids().contains(&gate_id)
     {
@@ -430,6 +718,9 @@ fn requested_actions(
     }
     let mut requested = Vec::new();
     for gate_id in selection.gate_ids().iter().copied() {
+        if gate_id == GateId::RustTypecheck {
+            continue;
+        }
         if named.is_some_and(|named| named != gate_id) {
             continue;
         }
@@ -447,6 +738,45 @@ fn requested_actions(
         }
     }
     Ok(requested)
+}
+
+fn cargo_request(request: Request<'_>) -> bool {
+    request.missing
+        || request.action.is_some_and(|action| {
+            action == "rust-typecheck"
+                || action == "cargo-tests"
+                || action.starts_with("cargo:typecheck:")
+                || action.starts_with("cargo:test:")
+        })
+}
+
+fn registered_request(action: &str) -> bool {
+    gate_id(action).is_some()
+        || action == "cargo-tests"
+        || action.starts_with("cargo:typecheck:")
+        || action.starts_with("cargo:test:")
+}
+
+fn request_matches_any(
+    requested: &str,
+    present: &[ProveActionReport],
+    pending: &[PreparedAction],
+) -> bool {
+    let exact = present.iter().any(|row| row.action == requested)
+        || pending.iter().any(|row| row.action == requested);
+    exact
+        || (requested == "rust-typecheck"
+            && present
+                .iter()
+                .map(|row| row.action.as_str())
+                .chain(pending.iter().map(|row| row.action.as_str()))
+                .any(|action| action.starts_with("cargo:typecheck:")))
+        || (requested == "cargo-tests"
+            && present
+                .iter()
+                .map(|row| row.action.as_str())
+                .chain(pending.iter().map(|row| row.action.as_str()))
+                .any(|action| action.starts_with("cargo:test:")))
 }
 
 fn declaration(manifest: &BatteryManifest, gate_id: GateId) -> Result<&str, ProveFailure> {
@@ -540,6 +870,22 @@ fn gate_position(gate_id: GateId) -> usize {
         .expect("registered gate ids have canonical positions")
 }
 
+fn proof_action_order(left: &str, right: &str) -> std::cmp::Ordering {
+    proof_action_position(left)
+        .cmp(&proof_action_position(right))
+        .then_with(|| left.cmp(right))
+}
+
+fn proof_action_position(action: &str) -> usize {
+    if action.starts_with("cargo:typecheck:") {
+        return gate_position(GateId::RustTypecheck);
+    }
+    if action.starts_with("cargo:test:") {
+        return GateId::BATTERY.len();
+    }
+    gate_id(action).map_or(GateId::BATTERY.len() + 1, gate_position)
+}
+
 fn now() -> Result<wire::Instant, ProveFailure> {
     wire::Instant::new(jiff::Timestamp::now())
         .map_err(|error| ProveFailure::fault("gate::prove-clock-invalid", error))
@@ -606,6 +952,10 @@ impl ProveFailure {
         Self::refusal("gate::prove-action-input-refused", error)
     }
 
+    fn cargo(error: gate::WorkspaceTestError) -> Self {
+        Self::refusal("gate::prove-cargo-shard-refused", error)
+    }
+
     fn outcome<B>(self) -> Outcome<B> {
         match self {
             Self::Refusal { reason, detail } => refusal(&reason, detail),
@@ -637,6 +987,62 @@ mod tests {
         assert!(action_needed(false, true));
         assert!(action_needed(true, false));
         assert!(!action_needed(true, true));
+    }
+
+    #[test]
+    fn cargo_selectors_are_explicit_and_keep_canonical_report_order() {
+        assert!(cargo_request(Request {
+            action: Some("rust-typecheck"),
+            missing: false,
+        }));
+        assert!(cargo_request(Request {
+            action: Some("cargo:test:fixture::lib:fixture"),
+            missing: false,
+        }));
+        assert!(!cargo_request(Request {
+            action: Some("formatters"),
+            missing: false,
+        }));
+        assert_eq!(
+            proof_action_order("taste", "cargo:typecheck:fixture::lib:fixture"),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            proof_action_order(
+                "cargo:typecheck:fixture::lib:fixture",
+                "canvas-web-typecheck"
+            ),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            proof_action_order("private-internals", "cargo:test:fixture::lib:fixture"),
+            std::cmp::Ordering::Less
+        );
+    }
+
+    #[test]
+    fn cargo_environment_omits_worktree_outputs_and_matches_forced_wrappers() {
+        let normalized = normalized_cargo_environment(&[
+            (OsString::from("PWD"), OsString::from("/worktree-a")),
+            (
+                OsString::from("CARGO_TARGET_DIR"),
+                OsString::from("/worktree-a/target"),
+            ),
+            (
+                OsString::from("CARGO_BUILD_BUILD_DIR"),
+                OsString::from("/worktree-a/build"),
+            ),
+            (OsString::from("RUSTC_WRAPPER"), OsString::from("sccache")),
+            (OsString::from("RUSTFLAGS"), OsString::from("--cfg=proof")),
+        ]);
+        assert_eq!(
+            normalized,
+            [
+                (OsString::from("RUSTC_WORKSPACE_WRAPPER"), OsString::new()),
+                (OsString::from("RUSTC_WRAPPER"), OsString::new()),
+                (OsString::from("RUSTFLAGS"), OsString::from("--cfg=proof")),
+            ]
+        );
     }
 
     #[test]

@@ -27,6 +27,7 @@ use crate::WORKSPACE_TEST_CONCURRENCY_CAP;
 mod coordinator;
 mod inventory;
 mod prebuild;
+mod proof;
 mod selection;
 mod source_reach;
 
@@ -37,6 +38,10 @@ use coordinator::{
 use inventory::*;
 pub(crate) use inventory::{RustCheckUnit, workspace_package_reach_at};
 use prebuild::*;
+pub use proof::{
+    CargoGateShard, CargoGateShardKind, CargoGateShardPlan, CargoGateShardPlanning,
+    CargoGateShardResult, plan_cargo_gate_shards_at, run_cargo_gate_shard_at,
+};
 use selection::{package_inventory, selection_plan};
 use source_reach::declared_path_sources;
 

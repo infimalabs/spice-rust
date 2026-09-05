@@ -15,6 +15,18 @@ pub(super) enum TestExecution {
     CurrentSourceCargo,
 }
 
+impl TestExecution {
+    pub(super) fn cargo_selected(&self, root: &Path, changes: &[String]) -> bool {
+        match self {
+            Self::CurrentSourceCargo => gate::cargo_workspace_tests_applicable(root, changes),
+            Self::Packaged { engines } => {
+                engines.contains(&crate::config::TestEngine::CargoWorkspace)
+                    && gate::cargo_workspace_tests_applicable(root, changes)
+            }
+        }
+    }
+}
+
 pub(super) struct TestRun<'a> {
     selected_root: &'a Path,
     roots: WorkspaceTestRoots<'a>,
@@ -59,15 +71,7 @@ pub(super) fn run_selected_tests(
     execution: TestExecution,
     progress: &mut impl Write,
 ) -> Result<TestSelectionReport, ChangeGateError> {
-    let cargo_selected = match execution {
-        TestExecution::CurrentSourceCargo => {
-            gate::cargo_workspace_tests_applicable(run.selected_root, run.changes)
-        }
-        TestExecution::Packaged { engines } => {
-            engines.contains(&crate::config::TestEngine::CargoWorkspace)
-                && gate::cargo_workspace_tests_applicable(run.selected_root, run.changes)
-        }
-    };
+    let cargo_selected = execution.cargo_selected(run.selected_root, run.changes);
     if !cargo_selected {
         return TestSelectionReport::complete_without_engines(run.source, run.changes.to_vec())
             .map_err(|error| ChangeGateError::protocol("test-selection-invalid", error));

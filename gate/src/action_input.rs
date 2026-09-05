@@ -427,6 +427,37 @@ pub fn compile_action_input(
     Ok(ActionInputClosure::Reusable(manifest))
 }
 
+/// Compile one reusable input closure from an explicit canonical path inventory.
+///
+/// Proof runners use this boundary for actions below a gate arm, such as one
+/// Cargo package-and-target shard. The caller remains responsible for proving
+/// that `paths` is the complete action closure; this function validates and
+/// canonicalizes the selected-tree entries and non-file authorities.
+pub fn compile_explicit_action_input(
+    tree: &SelectedTree,
+    paths: Vec<String>,
+    non_files: Vec<ActionNonFileInput>,
+) -> Result<ActionInputManifest, ActionInputError> {
+    let inventory = ActionInputInventory::complete(Vec::new(), non_files)?;
+    let paths = paths.into_iter().collect::<BTreeSet<_>>();
+    if paths.is_empty() {
+        return Err(ActionInputError::new(
+            "explicit action input closure must name at least one path",
+        ));
+    }
+    let entries = paths
+        .into_iter()
+        .map(|path| manifest_entry(tree, path))
+        .collect::<Result<Vec<_>, _>>()?;
+    let manifest = ActionInputManifest {
+        version: ACTION_INPUT_MANIFEST_VERSION,
+        entries,
+        non_files: inventory.non_files,
+    };
+    manifest.validate()?;
+    Ok(manifest)
+}
+
 fn manifest_entry(
     tree: &SelectedTree,
     path: String,

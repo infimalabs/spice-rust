@@ -407,6 +407,7 @@ pub fn run_current_source(
 pub struct StagedActionSelection {
     anchor: crate::gate::PreparedArm<'static>,
     selection: ChangeSelectionReport,
+    cargo_tests: bool,
 }
 
 impl StagedActionSelection {
@@ -420,6 +421,12 @@ impl StagedActionSelection {
     #[must_use]
     pub const fn selection(&self) -> &ChangeSelectionReport {
         &self.selection
+    }
+
+    /// Whether packaged policy selected canonical Cargo workspace tests.
+    #[must_use]
+    pub const fn cargo_tests(&self) -> bool {
+        self.cargo_tests
     }
 
     /// Discard any focused state observations accumulated by derived actions.
@@ -437,8 +444,13 @@ pub fn prepare_staged_actions() -> Result<StagedActionSelection, ChangeGateError
     let anchor = SelectionSurface::Packaged
         .prepare_anchor(gate::ClaimCapture::Idle)
         .map_err(ChangeGateError::gate)?;
-    let (selection, _) = select_changes(&anchor, SelectionSurface::Packaged)?;
-    Ok(StagedActionSelection { anchor, selection })
+    let (selection, tests) = select_changes(&anchor, SelectionSurface::Packaged)?;
+    let cargo_tests = tests.cargo_selected(anchor.root(), anchor.changes());
+    Ok(StagedActionSelection {
+        anchor,
+        selection,
+        cargo_tests,
+    })
 }
 
 #[derive(Clone, Copy)]

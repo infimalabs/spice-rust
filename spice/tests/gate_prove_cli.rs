@@ -15,6 +15,15 @@ fn prove_contract_uses_positional_action_and_unconditional_staged_source() {
         ["spice", "gate", "prove", "formatters", "--missing"].as_slice(),
         ["spice", "gate", "prove", "--missing"].as_slice(),
         ["spice", "gate", "prove", "taste"].as_slice(),
+        ["spice", "gate", "prove", "rust-typecheck"].as_slice(),
+        ["spice", "gate", "prove", "cargo-tests"].as_slice(),
+        [
+            "spice",
+            "gate",
+            "prove",
+            "cargo:typecheck:fixture::lib:fixture",
+        ]
+        .as_slice(),
     ] {
         spice::cli::command()
             .try_get_matches_from(arguments)
