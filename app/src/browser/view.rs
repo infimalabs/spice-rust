@@ -46,6 +46,7 @@ pub(super) struct CanvasRender<'a> {
     pub lineage_controls: &'a UseReducerHandle<LineageControls>,
     pub composer_drafts: &'a UseReducerHandle<ComposerDrafts>,
     pub submissions: &'a SubmissionHandle,
+    pub lineage_fleet: &'a NodeRef,
     pub unsafe_intent: bool,
     pub sender: &'a SenderHandle,
     pub agents: &'a AgentControls,
@@ -109,6 +110,7 @@ pub(super) fn render_workspace(render: &CanvasRender<'_>, active_axis: Axis) -> 
                         render.sender,
                         render.composer_drafts,
                         render.submissions,
+                        render.lineage_fleet,
                         render.lineage_controls,
                         render.agents,
                     )}

@@ -496,6 +496,7 @@ fn canvas_app() -> Html {
     let mosaic = use_state(|| true);
     let canvas_menu_open = use_state(|| false);
     let lineage_controls = use_reducer(LineageControls::restore);
+    let lineage_fleet = use_node_ref();
     let composer_drafts = use_reducer(ComposerDrafts::default);
     let submission_status = use_state(SubmissionStatus::default);
     let submissions = SubmissionHandle {
@@ -566,6 +567,12 @@ fn canvas_app() -> Html {
     use_speech_reset(speech.clone(), speech_runtime.clone());
     use_mosaic_root_scroll(*mosaic);
     use_canvas_menu_dismissal(canvas_menu_open.clone());
+    let lineage_count = surface
+        .read()
+        .as_ref()
+        .and_then(CanvasRuntime::lanes)
+        .map_or(0, |lanes| lanes.lanes.len());
+    watchband::use_lineage_fleet_right_edge(lineage_fleet.clone(), lineage_count);
 
     let refresh = refresh_callback(sender.clone(), axis.clone());
     let submit_note = note_submit_callback(
@@ -583,6 +590,7 @@ fn canvas_app() -> Html {
         lineage_controls: &lineage_controls,
         composer_drafts: &composer_drafts,
         submissions: &submissions,
+        lineage_fleet: &lineage_fleet,
         unsafe_intent,
         sender: &sender,
         agents: &agents,

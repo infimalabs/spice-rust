@@ -20,7 +20,7 @@ async function responsiveDocument() {
     .mosaic-workspace .content { padding: 0; }
     .lineage-fleet { height: 600px; }
   </style><main class="mosaic-workspace"><div class="content">
-    <div class="lineage-fleet">${surface(1)}${surface(4)}</div>
+    <div class="lineage-fleet" tabindex="0" aria-label="Lineage lanes">${surface(1)}${surface(4)}</div>
   </div></main>`;
 }
 
@@ -41,6 +41,7 @@ async function setWidth(page, width) {
 async function geometry(page) {
   return page.locator(".lineage-fleet").evaluate((fleet) => {
     const bounds = fleet.getBoundingClientRect();
+    const style = getComputedStyle(fleet);
     const surfaces = [...fleet.children].map((surface) => {
       const rect = surface.getBoundingClientRect();
       const clipped = [...surface.querySelectorAll("button, textarea, table")].some((control) => {
@@ -49,9 +50,11 @@ async function geometry(page) {
       });
       return {
         top: Math.round(rect.top),
+        left: rect.left,
+        right: rect.right,
         width: rect.width,
         height: rect.height,
-        contained: rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1,
+        direction: getComputedStyle(surface).direction,
         overflow: surface.scrollWidth - surface.clientWidth,
         clipped,
       };
@@ -59,29 +62,50 @@ async function geometry(page) {
     return {
       rows: new Set(surfaces.map(({ top }) => top)).size,
       height: bounds.height,
+      left: bounds.left,
+      right: bounds.right,
+      direction: style.direction,
+      flexDirection: style.flexDirection,
+      overflowStyleX: style.overflowX,
+      overflowStyleY: style.overflowY,
+      tabIndex: fleet.tabIndex,
+      scrollLeft: fleet.scrollLeft,
+      maxScroll: fleet.scrollWidth - fleet.clientWidth,
       overflowX: fleet.scrollWidth - fleet.clientWidth,
       overflowY: fleet.scrollHeight - fleet.clientHeight,
+      pageOverflowX: document.documentElement.scrollWidth - innerWidth,
       surfaces,
     };
   });
 }
 
-function assertReadable(layout, label) {
-  assert.ok(layout.overflowX <= 1, `${label} fleet has no horizontal overflow`);
-  assert.ok(layout.surfaces.every(({ width, contained, overflow, clipped }) => (
-    width >= 512 && contained && overflow <= 1 && !clipped
+function assertTrack(layout, label, overflow) {
+  assert.equal(layout.rows, 1, `${label} remains one row`);
+  assert.equal(layout.direction, "ltr");
+  assert.equal(layout.flexDirection, "row");
+  assert.equal(layout.overflowStyleX, "auto");
+  assert.equal(layout.overflowStyleY, "hidden");
+  assert.equal(layout.tabIndex, 0);
+  assert.ok(layout.overflowY <= 1, `${label} has no vertical overflow`);
+  assert.ok(layout.pageOverflowX <= 1, `${label} does not widen the page`);
+  assert.ok(layout.surfaces.every(({ width, height, direction, overflow: inner, clipped }) => (
+    width >= 512 && height <= layout.height + 1 && direction === "ltr" && inner <= 1 && !clipped
   )), `${label} surfaces remain readable: ${JSON.stringify(layout)}`);
-  if (layout.rows > 1) {
-    assert.ok(layout.overflowY > 0, `${label} wrapped rows use the fleet scroller`);
-    assert.ok(layout.surfaces.every(({ height }) => height >= layout.height - 1));
-  }
+  assert.ok(layout.surfaces.every((surface, index) => (
+    index === 0 || layout.surfaces[index - 1].left < surface.left
+  )), `${label} preserves DOM order west to east`);
+  assert.equal(layout.maxScroll > 1, overflow, `${label} horizontal overflow`);
 }
 
-async function expectRows(page, width, rows) {
-  await setWidth(page, width);
+async function expectRightEdge(page, label, overflow = true) {
+  await page.locator(".lineage-fleet").evaluate((fleet) => { fleet.scrollLeft = fleet.scrollWidth; });
   const layout = await geometry(page);
-  assert.equal(layout.rows, rows, `${width}px row count`);
-  assertReadable(layout, `${width}px`);
+  assertTrack(layout, label, overflow);
+  assert.ok(Math.abs(layout.scrollLeft - layout.maxScroll) <= 1, `${label} reaches the right edge`);
+  assert.ok(
+    Math.abs(layout.surfaces.at(-1).right - layout.right) <= 1,
+    `${label} reveals newest lane: ${JSON.stringify(layout)}`,
+  );
   return layout;
 }
 
@@ -92,6 +116,7 @@ async function setCount(page, count) {
       fleet.append(fleet.firstElementChild.cloneNode(true));
     }
   }, count);
+  await page.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(resolveFrame)));
 }
 
 test("lineage minima govern weighted fleet layout in Chromium and Firefox", async (t) => {
@@ -103,33 +128,37 @@ test("lineage minima govern weighted fleet layout in Chromium and Firefox", asyn
       const page = await context.newPage();
       try {
         await page.setContent(document);
-        await expectRows(page, 932, 2);
+        await expectRightEdge(page, `${engine} initial two-lane track`);
         await setWidth(page, 1200);
         const weighted = await geometry(page);
         assert.ok(weighted.surfaces[0].width >= 512 && weighted.surfaces[1].width > 512);
-        assertReadable(weighted, `${engine} weighted row`);
+        assertTrack(weighted, `${engine} weighted row`, false);
 
-        for (const count of [2, 3, 4, 7]) {
+        for (const count of [2, 3, 7]) {
           await setCount(page, count);
-          const boundary = count * 512 + (count - 1) * 8;
-          await expectRows(page, boundary - 1, 2);
-          await expectRows(page, boundary, 1);
-          await expectRows(page, boundary + 1, 1);
+          await setWidth(page, 932);
+          await expectRightEdge(page, `${engine} ${count}-lane desktop track`);
         }
 
+        await page.locator(".lineage-fleet").focus();
+        await page.keyboard.press("ArrowLeft");
+        await page.waitForTimeout(50);
+        let traversed = await geometry(page);
+        assert.ok(traversed.scrollLeft < traversed.maxScroll, `${engine} keyboard traverses west`);
+        await page.locator(".lineage-fleet").evaluate((fleet) => { fleet.scrollLeft = fleet.scrollWidth; });
+        await page.locator(".lineage-fleet").hover();
+        await page.mouse.wheel(-300, 0);
+        await page.waitForTimeout(50);
+        traversed = await geometry(page);
+        assert.ok(traversed.scrollLeft < traversed.maxScroll, `${engine} horizontal wheel traverses west`);
+
+        await page.locator(".lineage-fleet").evaluate((fleet) => { fleet.scrollLeft = fleet.scrollWidth; });
+        await setCount(page, 3);
+        await expectRightEdge(page, `${engine} added lane remains at east edge`);
         await setCount(page, 2);
-        await page.setViewportSize({ width: 900, height: 700 });
-        await page.locator(".mosaic-workspace").evaluate((workspace) => {
-          workspace.style.width = "900px";
-          workspace.style.height = "auto";
-          workspace.querySelector(".lineage-fleet").style.height = "auto";
-        });
-        const documentFlow = await page.locator(".lineage-fleet").evaluate((fleet) => ({
-          direction: getComputedStyle(fleet).flexDirection,
-          wrap: getComputedStyle(fleet).flexWrap,
-          overflowY: getComputedStyle(fleet).overflowY,
-        }));
-        assert.deepEqual(documentFlow, { direction: "column", wrap: "nowrap", overflowY: "visible" });
+        await page.setViewportSize({ width: 700, height: 700 });
+        await setWidth(page, 700);
+        await expectRightEdge(page, `${engine} narrow track after removal and resize`);
       } finally {
         await context.close();
         await browser.close();

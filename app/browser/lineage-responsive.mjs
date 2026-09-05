@@ -1,33 +1,13 @@
 import assert from "node:assert/strict";
 
-const lineageThreshold = (count) => count * 32 + (count - 1) * 0.5;
-
 async function settleLayout(page) {
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve())));
-}
-
-async function setContentWidth(page, content, widthRem) {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const geometry = await content.evaluate((element) => {
-      const style = getComputedStyle(element);
-      const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
-      return {
-        content: element.clientWidth - padding,
-        root: parseFloat(getComputedStyle(document.documentElement).fontSize),
-        viewport: innerWidth,
-      };
-    });
-    await page.setViewportSize({
-      width: Math.round(geometry.viewport + widthRem * geometry.root - geometry.content),
-      height: 988,
-    });
-    await settleLayout(page);
-  }
 }
 
 async function fleetGeometry(fleet) {
   return fleet.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
     const surfaces = [...element.querySelectorAll(":scope > .team-surface")];
     const surfaceGeometry = surfaces.map((surface) => {
       const rect = surface.getBoundingClientRect();
@@ -37,14 +17,26 @@ async function fleetGeometry(fleet) {
       });
       return {
         top: Math.round(rect.top),
+        left: rect.left,
+        right: rect.right,
         width: rect.width,
-        contained: rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1,
+        height: rect.height,
+        direction: getComputedStyle(surface).direction,
         overflow: surface.scrollWidth - surface.clientWidth,
         clipped,
       };
     });
     return {
       rows: new Set(surfaceGeometry.map(({ top }) => top)).size,
+      height: bounds.height,
+      right: bounds.right,
+      direction: style.direction,
+      flexDirection: style.flexDirection,
+      overflowX: element.scrollWidth - element.clientWidth,
+      overflowY: element.scrollHeight - element.clientHeight,
+      scrollLeft: element.scrollLeft,
+      lastRight: surfaceGeometry.at(-1)?.right,
+      pageOverflowY: document.documentElement.scrollHeight - innerHeight,
       ids: surfaces.map((surface) => surface.dataset.lineageId),
       modes: surfaces.map((surface) => surface.querySelector(".team-pane")?.dataset.teamMode),
       drafts: surfaces.flatMap((surface) => [...surface.querySelectorAll("textarea")]
@@ -56,16 +48,22 @@ async function fleetGeometry(fleet) {
   });
 }
 
-async function assertRows(page, content, fleet, width, expected) {
-  await setContentWidth(page, content, width);
-  const geometry = await fleetGeometry(fleet);
-  assert.equal(geometry.rows, expected, `${width}rem fleet row count`);
-  return geometry;
+function assertTrack(geometry, label) {
+  assert.equal(geometry.rows, 1, `${label} remains one row`);
+  assert.equal(geometry.direction, "ltr");
+  assert.equal(geometry.flexDirection, "row");
+  assert.ok(geometry.overflowX > 0, `${label} owns horizontal overflow`);
+  assert.ok(geometry.overflowY <= 1, `${label} has no vertical fleet overflow`);
+  assert.ok(geometry.pageOverflowY <= 1, `${label} has no page-level vertical overflow`);
+  assert.ok(Math.abs(geometry.scrollLeft - geometry.overflowX) <= 1, `${label} is right anchored`);
+  assert.ok(Math.abs(geometry.lastRight - geometry.right) <= 1, `${label} reveals the newest lane`);
+  assert.ok(geometry.surfaces.every(({ width, height, direction, overflow, clipped }) => (
+    width >= 512 && height <= geometry.height + 1 && direction === "ltr" && overflow <= 1 && !clipped
+  )), `${label} surfaces remain readable: ${JSON.stringify(geometry)}`);
 }
 
 export async function assertLineageResponsiveLayout(page, console_) {
   const originalViewport = page.viewportSize();
-  const content = page.locator(".mosaic-workspace .content");
   const fleet = console_;
   await fleet.locator(".lane-mosaic-plane").evaluateAll((lanes) => {
     lanes.forEach((lane) => { lane.scrollTop = Math.min(24, lane.scrollHeight - lane.clientHeight); });
@@ -77,19 +75,19 @@ export async function assertLineageResponsiveLayout(page, console_) {
     await page.setViewportSize({ width: 932, height: 988 });
     await settleLayout(page);
     const reproduction = await fleetGeometry(fleet);
-    assert.equal(reproduction.rows, 2, "932px wraps two lineages");
-    assert.ok(reproduction.surfaces.every(
-      ({ width, contained, overflow, clipped }) => width >= 512 && contained && overflow <= 1 && !clipped,
-    ), `932px surfaces remain readable: ${JSON.stringify(reproduction)}`);
-    await assertRows(page, content, fleet, lineageThreshold(2) - 0.0625, 2);
-    await assertRows(page, content, fleet, lineageThreshold(2), 1);
-    await assertRows(page, content, fleet, lineageThreshold(2) + 0.0625, 1);
+    assertTrack(reproduction, "932px reproduction");
+    await fleet.focus();
+    await page.keyboard.press("ArrowLeft");
+    await settleLayout(page);
+    const traversed = await fleetGeometry(fleet);
+    assert.ok(traversed.scrollLeft < traversed.overflowX, "keyboard traverses toward older lanes");
+    await fleet.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
 
     await fleet.evaluate((element) => element.append(element.firstElementChild.cloneNode(true)));
     cloned = true;
-    await assertRows(page, content, fleet, lineageThreshold(3) - 0.0625, 2);
-    await assertRows(page, content, fleet, lineageThreshold(3), 1);
-    await assertRows(page, content, fleet, lineageThreshold(3) + 0.0625, 1);
+    await page.setViewportSize({ width: 700, height: 988 });
+    await settleLayout(page);
+    assertTrack(await fleetGeometry(fleet), "narrow three-lane track");
     await fleet.evaluate((element) => element.lastElementChild.remove());
     cloned = false;
 

@@ -53,6 +53,7 @@ pub(super) fn render_lineage(
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
     submissions: &SubmissionHandle,
+    lineage_fleet: &NodeRef,
     lineage_controls: &UseReducerHandle<LineageControls>,
     controls: &view::AgentControls,
 ) -> Html {
@@ -91,7 +92,13 @@ pub(super) fn render_lineage(
     let can_arrange_lineages = runtime.offers(CommandKind::LineageArrange);
     let topology = watchband::topology(&lanes.lanes);
     if lanes.lanes.is_empty() {
-        return render_empty_fleet(runtime, lanes.epoch, lineage_controls, controls);
+        return render_empty_fleet(
+            runtime,
+            lanes.epoch,
+            lineage_fleet,
+            lineage_controls,
+            controls,
+        );
     }
     let render = FleetRender {
         runtime,
@@ -109,7 +116,29 @@ pub(super) fn render_lineage(
         lineage_controls,
         controls,
     };
-    render_populated_fleet(&lanes.lanes, &standings, &render)
+    render_populated_fleet(&lanes.lanes, &standings, lineage_fleet, &render)
+}
+
+#[hook]
+pub(super) fn use_lineage_fleet_right_edge(host: NodeRef, lineage_count: usize) {
+    use_effect_with((host, lineage_count), move |(host, _)| {
+        let registration = host.cast::<web_sys::HtmlElement>().and_then(|element| {
+            element.set_scroll_left(element.scroll_width());
+            let observed = element.clone();
+            let callback =
+                Closure::<dyn FnMut(js_sys::Array, web_sys::ResizeObserver)>::new(move |_, _| {
+                    observed.set_scroll_left(observed.scroll_width())
+                });
+            let observer = web_sys::ResizeObserver::new(callback.as_ref().unchecked_ref()).ok()?;
+            observer.observe(&element);
+            Some((observer, callback))
+        });
+        move || {
+            if let Some((observer, _callback)) = registration {
+                observer.disconnect();
+            }
+        }
+    });
 }
 
 #[allow(
