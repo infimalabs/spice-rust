@@ -476,7 +476,13 @@ async function installTaskChipFixture(page, surface) {
       <p data-task-chip-case="ordinary"><span data-prose>Settled </span>${chip(handles.generated)}<span data-prose> in one pass.</span></p>
       <p data-task-chip-case="long"><span data-prose>Transferred </span>${chip(handles.long)}<span data-prose> with its identity intact.</span></p>
       <p data-task-chip-case="multi"><span data-prose>Related </span>${chip("CARDS-1kRZRDy7")}<span data-prose> and </span>${chip("MOSAIC-1kRYqQxy")}<span data-prose> remain distinct.</span></p>
-      <blockquote data-task-chip-case="quoted"><p><span data-prose>In </span>${chip(handles.generated)}<span data-prose> the reply remains aligned.</span></p></blockquote>
+      <div data-task-chip-case="quoted-first">
+        <blockquote>
+          <p><span data-prose>Quoted </span>${chip(handles.generated)}<span data-prose> first.</span></p>
+          <blockquote><p><span data-prose>Nested </span>${chip(handles.generated)}<span data-prose> again.</span></p></blockquote>
+        </blockquote>
+        <p><span data-prose>Authored </span>${chip(handles.generated)}<span data-prose> and </span>${chip(handles.generated)}<span data-prose> remain highlighted.</span></p>
+      </div>
     `;
     const footer = fixture.querySelector(".message-footer");
     if (!footer) throw new Error("task-chip fixture requires a message footer");
@@ -635,8 +641,14 @@ function assertTaskChipMeasurement(label, measured) {
     }
   }
   assert.ok(
-    baselineRows.has("ordinary") && baselineRows.has("quoted"),
+    baselineRows.has("ordinary") && baselineRows.has("quoted-first"),
     `${label} ordinary and quote-nested chips share neighboring prose baselines`,
+  );
+  const quotedFirst = measured.cases.find(({ name }) => name === "quoted-first");
+  assert.deepEqual(
+    quotedFirst.chips.map(({ handle }) => handle),
+    Array(4).fill(GENERATED_MAX_TASK_HANDLE),
+    `${label} quoted, nested-quoted, and later prose occurrences all remain chips`,
   );
   const ordinary = measured.cases.find(({ name }) => name === "ordinary").chips[0];
   const long = measured.cases.find(({ name }) => name === "long").chips[0];
