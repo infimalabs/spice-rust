@@ -301,7 +301,9 @@ impl ActionInputManifest {
             }
             prior = Some(entry.path());
         }
-        if !self.non_files.windows(2).all(|pair| pair[0] < pair[1]) {
+        if !self.non_files.windows(2).all(|pair| {
+            pair[0] < pair[1] && !(pair[0].kind == pair[1].kind && pair[0].name == pair[1].name)
+        }) {
             return Err(ActionInputError::new(
                 "action input manifest non-file inputs must be sorted and unique",
             ));
