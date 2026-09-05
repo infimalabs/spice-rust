@@ -225,6 +225,92 @@ async function assertTopChromeSpacing(page, artifacts) {
   }
 }
 
+async function waitForDisclosure(page, expanded, reason) {
+  await waitForPageFunction(
+    page,
+    reason,
+    TRANSITION_MS,
+    (expected) => {
+      const menu = document.querySelector(".canvas-menu");
+      const trigger = menu?.querySelector(":scope > summary");
+      return trigger?.getAttribute("aria-expanded") === String(expected)
+        && menu.hasAttribute("open") === expected
+        && Boolean(document.querySelector(".canvas-navigation")) === expected
+        && Boolean(document.querySelector(".task-pill-strip")) === !expected;
+    },
+    expanded,
+  );
+}
+
+async function assertPepperDisclosure(page) {
+  const menu = page.locator(".canvas-menu");
+  const trigger = menu.locator(":scope > summary");
+  const navigation = page.getByRole("navigation", { name: "Canvas views" });
+  const taskStrip = page.getByRole("navigation", { name: "Open task projects" });
+
+  assert.equal(await trigger.getAttribute("aria-haspopup"), "menu");
+  await waitForDisclosure(page, false, "the pepper disclosure begins closed");
+
+  const previous = page.viewportSize();
+  assert.ok(previous, "the disclosure check has a viewport to restore");
+  try {
+    await page.setViewportSize({ width: 332, height: 720 });
+    const maximumScroll = await taskStrip.evaluate((node) => node.scrollWidth - node.clientWidth);
+    assert.ok(maximumScroll > 0, "the narrow task strip has a real horizontal offset to reset");
+    await taskStrip.evaluate((node) => { node.scrollLeft = node.scrollWidth; });
+    assert.ok(await taskStrip.evaluate((node) => node.scrollLeft > 0), "the task strip scrolls away from its start");
+
+    await trigger.click();
+    await waitForDisclosure(page, true, "the pepper disclosure exposes Canvas destinations");
+    await page.locator(".brand-dots").click({ position: { x: 2, y: 2 } });
+    await waitForDisclosure(page, false, "an outside pointer dismisses the pepper disclosure");
+    assert.equal(await taskStrip.evaluate((node) => node.scrollLeft), 0, "the remounted task strip starts at its first pill");
+    const firstPill = await taskStrip.locator(".task-pill").first().boundingBox();
+    const stripStart = await taskStrip.boundingBox();
+    assert.ok(
+      firstPill && stripStart && firstPill.x >= stripStart.x - 0.5,
+      "the remounted task strip exposes its first pill",
+    );
+  } finally {
+    await page.setViewportSize(previous);
+  }
+
+  await trigger.click();
+  await waitForDisclosure(page, true, "the pepper disclosure reopens for focus dismissal");
+  const outsideFocus = page.locator('.mosaic-workspace[data-active="true"] textarea').first();
+  await outsideFocus.focus();
+  await waitForDisclosure(page, false, "focus outside the pepper disclosure dismisses it");
+  assert.ok(
+    await outsideFocus.evaluate((node) => node === document.activeElement),
+    "outside focus remains on its requested control",
+  );
+
+  await trigger.click();
+  await waitForDisclosure(page, true, "the pepper disclosure reopens for Escape dismissal");
+  await navigation.getByRole("button", { name: /^Tasks/ }).focus();
+  await page.keyboard.press("Escape");
+  await waitForDisclosure(page, false, "Escape dismisses the pepper disclosure");
+  assert.ok(
+    await trigger.evaluate((node) => node === document.activeElement),
+    "Escape restores focus to the pepper trigger",
+  );
+
+  await trigger.click();
+  await waitForDisclosure(page, true, "the pepper disclosure reopens for destination selection");
+  await navigation.getByRole("button", { name: /^Tasks/ }).click();
+  await page.getByRole("heading", { name: "Tasks", exact: true }).waitFor({ timeout: TRANSITION_MS });
+  await waitForDisclosure(page, false, "a Canvas destination closes the pepper disclosure");
+  const panel = await openSpiceMenu(page);
+  assert.equal(
+    await panel.locator(".canvas-menu-page").getAttribute("data-menu-page"),
+    "flow",
+    "the reopened pepper panel belongs to the selected destination",
+  );
+  await panel.getByRole("heading", { name: "Tasks", exact: true }).waitFor();
+  await chooseCanvasView(page, "Agents");
+  await waitForDisclosure(page, false, "the disclosure check restores the Agents workspace");
+}
+
 async function assertAxisMenu(page, view, copy) {
   const visibleView = {
     Flow: "Tasks",
@@ -279,6 +365,7 @@ async function assertResidentLineage(fixture, lane, lineage, policyLineage, reas
 export async function assertTeamMenu(page, fixture, artifacts) {
   await chooseCanvasView(page, "Agents");
   await assertTopChromeSpacing(page, artifacts);
+  await assertPepperDisclosure(page);
   await chooseCanvasView(page, "Topology");
   await page.getByRole("heading", { name: "Teams", exact: true }).waitFor();
   await openSpiceMenu(page);
