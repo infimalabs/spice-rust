@@ -32,7 +32,7 @@ export async function assertIntegratedMosaicProof(
       const footerRight = card.querySelector(".message-footer-right");
       const agent = card.querySelector(".message-agent-name");
       const agentLabel = card.querySelector(".message-agent-label");
-      const separator = card.querySelector(".message-footer-separator");
+      const actionGroup = card.querySelector(".message-actions");
       const age = card.querySelector(".message-age");
       const ageBox = age?.getBoundingClientRect();
       const footerBox = footer?.getBoundingClientRect();
@@ -72,7 +72,8 @@ export async function assertIntegratedMosaicProof(
           whiteSpace: getComputedStyle(agent).whiteSpace,
           labelRight: agentLabel.getBoundingClientRect().right,
         } : null,
-        separatorLeft: separator?.getBoundingClientRect().left ?? null,
+        actionGroupLeft: actionGroup?.getBoundingClientRect().left ?? null,
+        separatorCount: card.querySelectorAll(".message-footer-separator").length,
         age: ageBox ? { height: ageBox.height, width: ageBox.width } : null,
         actions: [...card.querySelectorAll(".message-actions button")].map((button) => {
           const bounds = button.getBoundingClientRect();
@@ -108,7 +109,8 @@ export async function assertIntegratedMosaicProof(
       && card.agent.whiteSpace === "normal"
       && card.agent.scrollWidth <= card.agent.clientWidth + 1
       && card.agent.scrollHeight <= card.agent.clientHeight + 1
-      && Math.abs(card.separatorLeft - card.agent.labelRight - 6) <= 1
+      && card.separatorCount === 0
+      && Math.abs(card.actionGroupLeft - card.agent.labelRight - 6) <= 1
   )), "integrated footers show complete right-aligned identities without overlap or overflow");
   for (const label of expectedLabels) {
     assert.ok(agentCards.some((card) => card.agent.text === label),

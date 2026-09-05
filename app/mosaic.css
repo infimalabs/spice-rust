@@ -1131,7 +1131,7 @@ body:has(.shell--mosaic),
 }
 .team-surface .message-footer-identity {
   display: inline-flex; flex: 1 1 auto; align-items: flex-end;
-  gap: 6px; min-width: 0;
+  min-width: 0;
 }
 .team-surface .message-age {
   display: block;
@@ -1170,7 +1170,6 @@ body:has(.shell--mosaic),
 .team-surface .message-agent-label { min-width: 0; overflow: visible; overflow-wrap: anywhere; text-overflow: clip; white-space: normal; }
 .team-surface .message-agent-name:hover,
 .team-surface .message-agent-name:focus-visible { color: var(--ink); }
-.team-surface .message-footer-separator { flex: 0 0 auto; }
 .team-surface .message-actions {
   display: flex;
   flex: 0 0 auto;
