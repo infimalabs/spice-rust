@@ -623,8 +623,26 @@ impl std::error::Error for MediaError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::{Value, json};
 
     const PNG: &str = "iVBORw0KGgo=";
+    const SECOND_PNG: &str = "iVBORw0KGgpB";
+
+    fn directive() -> CanonicalUuid {
+        "5f72a0b1-6273-4495-9f46-0718293a4b5c"
+            .parse()
+            .expect("fixture directive")
+    }
+
+    fn reference_value() -> Value {
+        let media = Media::from_base64("capture.png", "image/png", PNG).unwrap();
+        serde_json::to_value(AgentMediaReference::from_media(directive(), 0, &media).unwrap())
+            .unwrap()
+    }
+
+    fn decode_reference(value: &Value) -> Result<AgentMediaReference, serde_json::Error> {
+        crate::decode(&serde_json::to_vec(value).unwrap())
+    }
 
     #[test]
     fn canonical_png_has_one_byte_identity() {
@@ -642,6 +660,130 @@ mod tests {
                 .unwrap(),
             "a bare URL is not browsable authored Markdown",
         );
+    }
+
+    #[test]
+    fn agent_references_bind_ordered_decoded_identity_without_payloads() {
+        let media = [
+            Media::from_base64("first.png", "image/png", PNG).unwrap(),
+            Media::from_base64("second.png", "image/png", SECOND_PNG).unwrap(),
+        ];
+
+        let references = agent_media_references(directive(), &media).unwrap();
+
+        assert_eq!(references.len(), media.len());
+        for (ordinal, (reference, source)) in references.iter().zip(&media).enumerate() {
+            let bytes = source.decoded_bytes().unwrap();
+            assert_eq!(reference.directive(), directive());
+            assert_eq!(
+                reference.digest(),
+                &Digest::compute(Domain::MediaContent, &bytes)
+            );
+            assert_eq!(reference.name(), source.name);
+            assert_eq!(reference.content_type(), source.content_type);
+            assert_eq!(reference.bytes(), u64::try_from(bytes.len()).unwrap());
+            assert_eq!(reference.ordinal(), u8::try_from(ordinal).unwrap());
+
+            let encoded = crate::encode(reference).unwrap();
+            assert!(encoded.len() <= MAX_AGENT_MEDIA_REFERENCE_BYTES);
+            assert_eq!(
+                crate::decode::<AgentMediaReference>(&encoded).unwrap(),
+                *reference
+            );
+            let object = serde_json::from_slice::<Value>(&encoded).unwrap();
+            assert_eq!(
+                object
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                [
+                    "bytes",
+                    "content_type",
+                    "digest",
+                    "directive",
+                    "name",
+                    "ordinal"
+                ]
+            );
+            let rendered = String::from_utf8(encoded).unwrap();
+            assert!(!rendered.contains("data_url"));
+            assert!(!rendered.contains("data:image"));
+            assert!(!rendered.contains(&source.data_url));
+        }
+    }
+
+    #[test]
+    fn forged_reference_fields_fail_closed_through_the_wire_decoder() {
+        let cases = [
+            ("unknown", json!(true), "unknown field"),
+            ("name", json!(""), "reference name must be non-empty"),
+            (
+                "name",
+                json!("line\nbreak.png"),
+                "reference name must be non-empty",
+            ),
+            (
+                "name",
+                json!("x".repeat(MAX_MEDIA_NAME_BYTES + 1)),
+                "reference name must be non-empty",
+            ),
+            (
+                "content_type",
+                json!("text/plain"),
+                "reference type \"text/plain\" is unsupported",
+            ),
+            (
+                "ordinal",
+                json!(MAX_MEDIA_ITEMS),
+                "reference ordinal 8 exceeds maximum 7",
+            ),
+            ("bytes", json!(0), "reference byte count 0 is outside"),
+            (
+                "bytes",
+                json!(MAX_MEDIA_BYTES + 1),
+                "reference byte count 8388609 is outside",
+            ),
+        ];
+
+        for (field, forged, expected) in cases {
+            let mut value = reference_value();
+            value
+                .as_object_mut()
+                .unwrap()
+                .insert(field.to_owned(), forged);
+            let error = decode_reference(&value).unwrap_err().to_string();
+            assert!(
+                error.contains(expected),
+                "forged {field} produced unexpected refusal: {error}",
+            );
+        }
+    }
+
+    #[test]
+    fn every_boundary_valid_reference_shape_round_trips_below_the_encoded_bound() {
+        let supported = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+        for content_type in supported {
+            let mut value = reference_value();
+            let object = value.as_object_mut().unwrap();
+            object.insert("name".to_owned(), json!("\\\"".repeat(127) + "x"));
+            object.insert("content_type".to_owned(), json!(content_type));
+            object.insert("bytes".to_owned(), json!(MAX_MEDIA_BYTES));
+            object.insert("ordinal".to_owned(), json!(MAX_MEDIA_ITEMS - 1));
+
+            let reference = decode_reference(&value).unwrap();
+            let encoded = crate::encode(&reference).unwrap();
+            assert!(
+                encoded.len() <= MAX_AGENT_MEDIA_REFERENCE_BYTES,
+                "{content_type} boundary reference encoded to {} bytes",
+                encoded.len(),
+            );
+            assert_eq!(
+                crate::decode::<AgentMediaReference>(&encoded).unwrap(),
+                reference
+            );
+        }
     }
 
     #[test]
