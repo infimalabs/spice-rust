@@ -93,7 +93,8 @@ use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-const USAGE: &str = "usage: spice gate reference-transaction <prepared|committed|aborted>";
+const USAGE: &str =
+    "usage: spice gate reference-transaction <preparing|prepared|committed|aborted>";
 const PREPARED: &str = "prepared";
 const PROTECTED_COMMIT_LIMIT: usize = 5;
 const ASCII_ZERO: u8 = 0x30;
@@ -150,6 +151,7 @@ pub fn apply(
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TransactionState {
+    Preparing,
     Prepared,
     Committed,
     Aborted,
@@ -158,6 +160,7 @@ enum TransactionState {
 impl TransactionState {
     fn parse(value: &OsStr) -> Option<Self> {
         match value.to_str() {
+            Some("preparing") => Some(Self::Preparing),
             Some("prepared") => Some(Self::Prepared),
             Some("committed") => Some(Self::Committed),
             Some("aborted") => Some(Self::Aborted),
@@ -167,6 +170,7 @@ impl TransactionState {
 
     const fn as_str(self) -> &'static str {
         match self {
+            Self::Preparing => "preparing",
             Self::Prepared => "prepared",
             Self::Committed => "committed",
             Self::Aborted => "aborted",
