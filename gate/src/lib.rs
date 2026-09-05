@@ -17,6 +17,8 @@ mod change_selection;
 pub mod config;
 pub mod core;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod evidence_store;
+#[cfg(not(target_arch = "wasm32"))]
 mod held_root;
 pub mod hygiene;
 pub mod input;
@@ -97,6 +99,13 @@ pub use core::{
     MergeIntegrityEvidence, MergeTreeCompletion, PlanPhaseEvidence,
     PredecessorObservation as CorePredecessorObservation, RepoDocLimit, RepoDocsEvidence,
     RepoShapeEvidence, StagingEvidence, core_declarations, evaluate_core,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use evidence_store::{
+    ActionKey, CollectionReport as EvidenceCollectionReport, EvidenceLease, EvidenceStore,
+    EvidenceStoreError, LeaseAcquisition, PassReceipt, PassReceiptFields,
+    ProducerRecord as EvidenceProducerRecord, Publication as EvidencePublication, ReceiptId,
+    derive_action_key,
 };
 pub use hygiene::{
     AnalysisEvidence, AnalyzerEvidence, EvidenceState, ExclusionEvidence, HYGIENE_ARMS,

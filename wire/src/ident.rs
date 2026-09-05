@@ -157,8 +157,14 @@ pub enum Domain {
     GateRepositoryAuthority,
     /// One exact staged-index or committed-revision selection.
     GateSelection,
+    /// One canonical gate action specification and complete input closure.
+    GateActionKey,
     /// The retained bytes of one published battery receipt, exactly as read.
     GateBatteryReceipt,
+    /// One immutable passing receipt published by a proof-aware gate runner.
+    GatePassReceipt,
+    /// One durable single-flight lease for producing gate evidence.
+    GateEvidenceLease,
     /// One complete current persistent gate-state ledger.
     GateStateLedger,
     /// One immutable accepted or rejected gate-state transition.
@@ -221,7 +227,8 @@ impl Domain {
             | Self::GateBounds
             | Self::GateBaseline
             | Self::GateTool
-            | Self::GateInventory => self.verification_input_tag(),
+            | Self::GateInventory
+            | Self::GateActionKey => self.verification_input_tag(),
             Self::GateMeasurement
             | Self::GateReceipt
             | Self::GateBatteryManifest
@@ -231,6 +238,8 @@ impl Domain {
             | Self::GateRepositoryAuthority
             | Self::GateSelection
             | Self::GateBatteryReceipt
+            | Self::GatePassReceipt
+            | Self::GateEvidenceLease
             | Self::GateStateLedger
             | Self::GateStateReceipt
             | Self::ConfigExecutableSurface => self.verification_output_tag(),
@@ -285,6 +294,7 @@ impl Domain {
             Self::GateBaseline => "spice.gate.baseline.v1",
             Self::GateTool => "spice.gate.tool.v1",
             Self::GateInventory => "spice.gate.inventory.v1",
+            Self::GateActionKey => "spice.gate.action-key.v1",
             _ => panic!("digest-domain tag partition is closed"),
         }
     }
@@ -300,6 +310,8 @@ impl Domain {
             Self::GateRepositoryAuthority => "spice.gate.repository-authority.v1",
             Self::GateSelection => "spice.gate.selection.v1",
             Self::GateBatteryReceipt => "spice.gate.battery-receipt.v1",
+            Self::GatePassReceipt => "spice.gate.pass-receipt.v1",
+            Self::GateEvidenceLease => "spice.gate.evidence-lease.v1",
             Self::GateStateLedger => "spice.gate.state-ledger.v1",
             Self::GateStateReceipt => "spice.gate.state-receipt.v1",
             Self::ConfigExecutableSurface => "spice.config.executable-surface.v1",
