@@ -1,5 +1,18 @@
 use super::*;
 
+#[derive(Clone, Copy)]
+struct DeclaredReach {
+    test_only: bool,
+    dependent_tests: bool,
+}
+
+#[derive(Default)]
+struct SourceGraph {
+    declared: BTreeMap<PathBuf, DeclaredReach>,
+    visited: BTreeSet<(PathBuf, bool, bool, Vec<Vec<String>>)>,
+    conservative_downstream: bool,
+}
+
 /// Acquire exact external module and `include!` sources with their Cargo target.
 pub(super) fn declared_path_sources(
     target_source: &Path,
@@ -10,115 +23,251 @@ pub(super) fn declared_path_sources(
             target_source.display()
         ))
     })?;
-    let mut declared = BTreeMap::new();
-    let mut visited = BTreeSet::new();
-    collect_declared_sources(
+    let mut graph = SourceGraph::default();
+    graph.collect_declared_sources(
         target_source,
         module_dir,
-        false,
-        &mut declared,
-        &mut visited,
+        DeclaredReach {
+            test_only: false,
+            dependent_tests: true,
+        },
+        &[],
+        0,
     )?;
-    declared.remove(target_source);
-    Ok(declared
+    if graph.conservative_downstream {
+        for reach in graph.declared.values_mut() {
+            if !reach.test_only {
+                reach.dependent_tests = true;
+            }
+        }
+    }
+    graph.declared.remove(target_source);
+    Ok(graph
+        .declared
         .into_iter()
-        .map(|(path, test_only)| DeclaredPathSource { path, test_only })
+        .map(|(path, reach)| DeclaredPathSource {
+            path,
+            test_only: reach.test_only,
+            dependent_tests: reach.dependent_tests,
+        })
         .collect())
 }
 
-fn collect_declared_sources(
-    source: &Path,
-    module_dir: &Path,
-    test_only: bool,
-    declared: &mut BTreeMap<PathBuf, bool>,
-    visited: &mut BTreeSet<(PathBuf, bool)>,
-) -> Result<(), WorkspaceTestError> {
-    let source = fs::canonicalize(source).unwrap_or_else(|_| source.to_path_buf());
-    if !visited.insert((source.clone(), test_only)) {
-        return Ok(());
-    }
-    let document = match fs::read_to_string(&source) {
-        Ok(document) => document,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => {
-            return Err(WorkspaceTestError::new(format!(
-                "read Rust source {} while resolving staged test reach: {error}",
-                source.display()
-            )));
+impl SourceGraph {
+    fn collect_declared_sources(
+        &mut self,
+        source: &Path,
+        module_dir: &Path,
+        reach: DeclaredReach,
+        inherited_reexports: &[Vec<String>],
+        module_depth: usize,
+    ) -> Result<(), WorkspaceTestError> {
+        let source = fs::canonicalize(source).unwrap_or_else(|_| source.to_path_buf());
+        if !self.visited.insert((
+            source.clone(),
+            reach.test_only,
+            reach.dependent_tests,
+            inherited_reexports.to_vec(),
+        )) {
+            return Ok(());
         }
-    };
-    let syntax = syn::parse_file(&document).map_err(|error| {
-        WorkspaceTestError::new(format!(
-            "parse Rust source {} while resolving staged test reach: {error}",
-            source.display()
-        ))
-    })?;
-    collect_declared_items(
-        &syntax.items,
-        &source,
-        module_dir,
-        test_only,
-        declared,
-        visited,
-    )
-}
-
-fn collect_declared_items(
-    items: &[Item],
-    source: &Path,
-    module_dir: &Path,
-    test_only: bool,
-    declared: &mut BTreeMap<PathBuf, bool>,
-    visited: &mut BTreeSet<(PathBuf, bool)>,
-) -> Result<(), WorkspaceTestError> {
-    for item in items {
-        match item {
-            Item::Mod(module) => {
-                let test_only = test_only || exact_cfg_test(&module.attrs);
-                if let Some((_, inline)) = &module.content {
-                    let child_dir = module_dir.join(module.ident.to_string());
-                    collect_declared_items(
-                        inline, source, &child_dir, test_only, declared, visited,
-                    )?;
-                } else if let Some(module_source) =
-                    external_module_source(module, source, module_dir)?
-                {
-                    let module_source = fs::canonicalize(&module_source).unwrap_or(module_source);
-                    let child_dir = child_module_dir(&module_source)?;
-                    record_declared_source(declared, module_source.clone(), test_only);
-                    collect_declared_sources(
-                        &module_source,
-                        &child_dir,
-                        test_only,
-                        declared,
-                        visited,
-                    )?;
-                }
+        let document = match fs::read_to_string(&source) {
+            Ok(document) => document,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => {
+                return Err(WorkspaceTestError::new(format!(
+                    "read Rust source {} while resolving staged test reach: {error}",
+                    source.display()
+                )));
             }
-            Item::Macro(invocation) if invocation.mac.path.is_ident("include") => {
-                let test_only = test_only || exact_cfg_test(&invocation.attrs);
-                let path =
-                    syn::parse2::<LitStr>(invocation.mac.tokens.clone()).map_err(|error| {
+        };
+        let syntax = syn::parse_file(&document).map_err(|error| {
+            WorkspaceTestError::new(format!(
+                "parse Rust source {} while resolving staged test reach: {error}",
+                source.display()
+            ))
+        })?;
+        self.collect_declared_items(
+            &syntax.items,
+            &source,
+            module_dir,
+            reach,
+            inherited_reexports,
+            module_depth,
+        )
+    }
+
+    fn collect_declared_items(
+        &mut self,
+        items: &[Item],
+        source: &Path,
+        module_dir: &Path,
+        reach: DeclaredReach,
+        inherited_reexports: &[Vec<String>],
+        module_depth: usize,
+    ) -> Result<(), WorkspaceTestError> {
+        let (mut reexport_paths, uncertain_reexport) = public_reexport_paths(items, module_depth);
+        reexport_paths.extend(inherited_reexports.iter().cloned());
+        if reach.dependent_tests && uncertain_reexport {
+            self.conservative_downstream = true;
+        }
+        for item in items {
+            match item {
+                Item::Mod(module) => {
+                    let test_only = reach.test_only || exact_cfg_test(&module.attrs);
+                    let module_name = module.ident.to_string();
+                    let child_reexports = reexport_paths
+                        .iter()
+                        .filter(|path| path.first().is_some_and(|segment| segment == &module_name))
+                        .filter(|path| path.len() > 1)
+                        .map(|path| path[1..].to_vec())
+                        .collect::<Vec<_>>();
+                    let reexported = reexport_paths
+                        .iter()
+                        .any(|path| path.first().is_some_and(|segment| segment == &module_name));
+                    let child_reach = DeclaredReach {
+                        test_only,
+                        dependent_tests: !test_only
+                            && reach.dependent_tests
+                            && (public_visibility(&module.vis) || reexported || uncertain_reexport),
+                    };
+                    if let Some((_, inline)) = &module.content {
+                        let child_dir = module_dir.join(module_name);
+                        self.collect_declared_items(
+                            inline,
+                            source,
+                            &child_dir,
+                            child_reach,
+                            &child_reexports,
+                            module_depth.saturating_add(1),
+                        )?;
+                    } else if let Some(module_source) =
+                        external_module_source(module, source, module_dir)?
+                    {
+                        let module_source =
+                            fs::canonicalize(&module_source).unwrap_or(module_source);
+                        let child_dir = child_module_dir(&module_source)?;
+                        record_declared_source(
+                            &mut self.declared,
+                            module_source.clone(),
+                            child_reach.test_only,
+                            child_reach.dependent_tests,
+                        );
+                        self.collect_declared_sources(
+                            &module_source,
+                            &child_dir,
+                            child_reach,
+                            &child_reexports,
+                            module_depth.saturating_add(1),
+                        )?;
+                    }
+                }
+                Item::Macro(invocation) if invocation.mac.path.is_ident("include") => {
+                    let test_only = reach.test_only || exact_cfg_test(&invocation.attrs);
+                    let included_reach = DeclaredReach {
+                        test_only,
+                        dependent_tests: !test_only && reach.dependent_tests,
+                    };
+                    let path =
+                        syn::parse2::<LitStr>(invocation.mac.tokens.clone()).map_err(|error| {
+                            WorkspaceTestError::new(format!(
+                                "Rust source {} has a non-literal include path: {error}",
+                                source.display()
+                            ))
+                        })?;
+                    let parent = source.parent().ok_or_else(|| {
                         WorkspaceTestError::new(format!(
-                            "Rust source {} has a non-literal include path: {error}",
+                            "included Rust source {} has no parent",
                             source.display()
                         ))
                     })?;
-                let parent = source.parent().ok_or_else(|| {
-                    WorkspaceTestError::new(format!(
-                        "included Rust source {} has no parent",
-                        source.display()
-                    ))
-                })?;
-                let included = parent.join(path.value());
-                let included = fs::canonicalize(&included).unwrap_or(included);
-                record_declared_source(declared, included.clone(), test_only);
-                collect_declared_sources(&included, module_dir, test_only, declared, visited)?;
+                    let included = parent.join(path.value());
+                    let included = fs::canonicalize(&included).unwrap_or(included);
+                    record_declared_source(
+                        &mut self.declared,
+                        included.clone(),
+                        included_reach.test_only,
+                        included_reach.dependent_tests,
+                    );
+                    self.collect_declared_sources(
+                        &included,
+                        module_dir,
+                        included_reach,
+                        &reexport_paths,
+                        module_depth,
+                    )?;
+                }
+                _ => {}
             }
-            _ => {}
         }
+        Ok(())
     }
-    Ok(())
+}
+
+fn public_visibility(visibility: &syn::Visibility) -> bool {
+    matches!(visibility, syn::Visibility::Public(_))
+}
+
+fn public_reexport_paths(items: &[Item], module_depth: usize) -> (Vec<Vec<String>>, bool) {
+    let mut paths = Vec::new();
+    let mut uncertain = false;
+    for item in items {
+        let Item::Use(item) = item else {
+            continue;
+        };
+        if !public_visibility(&item.vis) || exact_cfg_test(&item.attrs) {
+            continue;
+        }
+        collect_public_use_paths(
+            &item.tree,
+            module_depth,
+            Vec::new(),
+            &mut paths,
+            &mut uncertain,
+        );
+    }
+    (paths, uncertain)
+}
+
+fn collect_public_use_paths(
+    tree: &syn::UseTree,
+    module_depth: usize,
+    prefix: Vec<String>,
+    paths: &mut Vec<Vec<String>>,
+    uncertain: &mut bool,
+) {
+    match tree {
+        syn::UseTree::Path(path) if path.ident == "self" => {
+            collect_public_use_paths(&path.tree, module_depth, prefix, paths, uncertain);
+        }
+        syn::UseTree::Path(path) if path.ident == "crate" && module_depth == 0 => {
+            collect_public_use_paths(&path.tree, module_depth, prefix, paths, uncertain);
+        }
+        syn::UseTree::Path(path) if path.ident == "crate" || path.ident == "super" => {
+            *uncertain = true;
+        }
+        syn::UseTree::Path(path) => {
+            let mut prefix = prefix;
+            prefix.push(path.ident.to_string());
+            collect_public_use_paths(&path.tree, module_depth, prefix, paths, uncertain);
+        }
+        syn::UseTree::Name(name) => {
+            let mut path = prefix;
+            path.push(name.ident.to_string());
+            paths.push(path);
+        }
+        syn::UseTree::Rename(rename) => {
+            let mut path = prefix;
+            path.push(rename.ident.to_string());
+            paths.push(path);
+        }
+        syn::UseTree::Group(group) => {
+            for tree in &group.items {
+                collect_public_use_paths(tree, module_depth, prefix.clone(), paths, uncertain);
+            }
+        }
+        syn::UseTree::Glob(_) => *uncertain = true,
+    }
 }
 
 fn exact_cfg_test(attributes: &[syn::Attribute]) -> bool {
@@ -136,16 +285,23 @@ fn exact_cfg_test(attributes: &[syn::Attribute]) -> bool {
 }
 
 fn record_declared_source(
-    declared: &mut BTreeMap<PathBuf, bool>,
+    declared: &mut BTreeMap<PathBuf, DeclaredReach>,
     source: PathBuf,
     test_only: bool,
+    dependent_tests: bool,
 ) {
     // One production edge is enough to make a multiply-declared source part
     // of ordinary library reach; test-only survives only when every edge is.
     declared
         .entry(source)
-        .and_modify(|existing| *existing &= test_only)
-        .or_insert(test_only);
+        .and_modify(|existing| {
+            existing.test_only &= test_only;
+            existing.dependent_tests |= dependent_tests;
+        })
+        .or_insert(DeclaredReach {
+            test_only,
+            dependent_tests,
+        });
 }
 
 fn child_module_dir(source: &Path) -> Result<PathBuf, WorkspaceTestError> {
@@ -221,3 +377,6 @@ fn path_attribute(source: &Path, meta: &Meta) -> Result<String, WorkspaceTestErr
     };
     Ok(path.value())
 }
+
+#[cfg(test)]
+mod tests;

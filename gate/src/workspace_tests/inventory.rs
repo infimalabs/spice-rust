@@ -169,6 +169,7 @@ pub(super) struct MissingBinaryOutput<'a> {
 pub(super) struct DeclaredPathSource {
     pub(super) path: PathBuf,
     pub(super) test_only: bool,
+    pub(super) dependent_tests: bool,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
