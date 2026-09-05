@@ -11,6 +11,7 @@ import {
 import { primaryDestination } from "./composer-shards.mjs";
 import { assertPrimaryComposerDragging } from "./composer-dragging.mjs";
 import { assertAgentRenewalRequest, captureReferenceControls } from "./control-reference.mjs";
+import { assertLineageResponsiveLayout } from "./lineage-responsive.mjs";
 import {
   chooseCanvasView,
   reply,
@@ -92,6 +93,7 @@ export async function assertPerTeamWatchbands(
     ["Tasks", "Info"],
     "a subsequent primary switch preserves the secondary selection",
   );
+  await assertLineageResponsiveLayout(page, console);
   await secondarySurface.getByRole("tab", { name: /^Compose/ }).click();
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
