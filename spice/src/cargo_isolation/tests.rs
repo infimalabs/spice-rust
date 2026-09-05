@@ -1,4 +1,4 @@
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::os::unix::ffi::OsStringExt as _;
 use std::os::unix::fs::PermissionsExt as _;
@@ -414,6 +414,64 @@ fn host_debug_output_redacts_the_seed_environment() {
     let debug = format!("{host:?}");
     assert!(debug.contains("<redacted>"));
     assert!(!debug.contains("secret-fixture-token"));
+}
+
+#[test]
+fn compiler_environment_preserves_the_private_home_and_binds_native_tools() {
+    let fixture = Fixture::new();
+    let private_home = fixture.root.join("private-cargo-home");
+    fs::create_dir(&private_home).expect("create private Cargo home");
+    let host = Host::from_environment(
+        &fixture.repository,
+        [
+            (
+                OsString::from(BOOTSTRAP_HOME_VARIABLE),
+                fixture.bootstrap.clone().into_os_string(),
+            ),
+            (
+                OsString::from(CARGO_HOME_VARIABLE),
+                private_home.clone().into_os_string(),
+            ),
+            (
+                OsString::from(NATIVE_CARGO_VARIABLE),
+                fixture.cargo.clone().into_os_string(),
+            ),
+            (
+                OsString::from(NATIVE_RUSTC_VARIABLE),
+                fixture.rustc.clone().into_os_string(),
+            ),
+            (
+                OsString::from(NATIVE_RUSTDOC_VARIABLE),
+                fixture.rustdoc.clone().into_os_string(),
+            ),
+            (OsString::from("PATH"), OsString::new()),
+            (OsString::from(RUSTC_VARIABLE), OsString::from("rustc")),
+        ],
+    )
+    .expect("admit explicit compiler authority");
+
+    let environment = host
+        .compiler_environment()
+        .expect("bind admitted compiler authority");
+    let entries = environment
+        .entries()
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(entries[OsStr::new(CARGO_HOME_VARIABLE)], private_home);
+    assert_eq!(entries[OsStr::new("PATH")], OsString::new());
+    assert_eq!(
+        entries[OsStr::new(NATIVE_CARGO_VARIABLE)],
+        fs::canonicalize(&fixture.cargo).expect("canonicalize fixture Cargo")
+    );
+    assert_eq!(
+        entries[OsStr::new(RUSTC_VARIABLE)],
+        fs::canonicalize(&fixture.rustc).expect("canonicalize fixture rustc")
+    );
+    assert_eq!(
+        entries[OsStr::new(RUSTDOC_VARIABLE)],
+        fs::canonicalize(&fixture.rustdoc).expect("canonicalize fixture rustdoc")
+    );
 }
 
 #[test]
