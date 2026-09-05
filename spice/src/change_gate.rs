@@ -23,11 +23,15 @@ use crate::repository::Repository;
 mod cargo_budget;
 mod policy_schedule;
 mod progress;
+mod selection_policy;
 mod test_execution;
 mod worker_scheduler;
 
 use cargo_budget::CargoBudget;
 use progress::{SharedProgress, publish_test_selection};
+use selection_policy::packaged_policy;
+#[cfg(test)]
+use selection_policy::packaged_selection_policy;
 use test_execution::{TestExecution, TestRun, run_selected_tests};
 use worker_scheduler::WorkerScheduler;
 
@@ -348,14 +352,10 @@ struct ChangeGateExecution {
 struct PartialStateContext<'a> {
     selection: &'a ChangeSelectionReport,
     source: &'a wire::Digest,
+    environment: &'a Environment,
     surface: SelectionSurface,
     claim: gate::ClaimCapture,
     budget: CargoBudget,
-}
-
-struct PackagedPolicy {
-    selection: gate::ChangeSelectionPolicy,
-    test_engines: Vec<crate::config::TestEngine>,
 }
 
 /// Execute the ordinary staged-change gate without an ambient repository-wide selector.
@@ -464,7 +464,10 @@ pub fn prepare_staged_actions_with_claim(
 pub fn prepare_staged_actions_from_anchor(
     anchor: crate::gate::PreparedArm<'static>,
 ) -> Result<StagedActionSelection, ChangeGateError> {
-    let (selection, tests) = select_changes(&anchor, SelectionSurface::Packaged)?;
+    let environment = ambient_environment().map_err(|error| {
+        ChangeGateError::environment("change-gate-environment-unavailable", error)
+    })?;
+    let (selection, tests) = select_changes(&anchor, SelectionSurface::Packaged, &environment)?;
     let cargo_tests = tests.cargo_selected(anchor.root(), anchor.changes());
     Ok(StagedActionSelection {
         anchor,
@@ -505,6 +508,9 @@ fn run_with_selection(
     let capture_started = Instant::now();
     let budget = CargoBudget::detect(gate::WORKSPACE_TEST_CONCURRENCY_CAP);
     publish_budget(progress, budget, "prioritized-bounded-policy-then-tests")?;
+    let environment = ambient_environment().map_err(|error| {
+        ChangeGateError::environment("change-gate-environment-unavailable", error)
+    })?;
     let retry_claim = claim.clone();
     let mut anchor = surface
         .prepare_anchor(claim)
@@ -512,7 +518,7 @@ fn run_with_selection(
     publish_phase_terminal(progress, "capture", capture_started, "success")?;
     publish_phase(progress, "selection", Some(anchor.changes().len()))?;
     let selection_started = Instant::now();
-    let (selection, test_execution) = select_changes(&anchor, surface)?;
+    let (selection, test_execution) = select_changes(&anchor, surface, &environment)?;
     publish_selection(progress, &selection)?;
     publish_phase_terminal(progress, "selection", selection_started, "success")?;
 
@@ -545,9 +551,7 @@ fn run_with_selection(
         test_changes: anchor.changes().to_vec(),
         test_execution,
         budget,
-        environment: ambient_environment().map_err(|error| {
-            ChangeGateError::environment("change-gate-environment-unavailable", error)
-        })?,
+        environment: environment.clone(),
     };
     let source = selection.source().clone();
     let mut shared_progress = SharedProgress::new(progress);
@@ -585,6 +589,7 @@ fn run_with_selection(
         PartialStateContext {
             selection: &selection,
             source: &source,
+            environment: &environment,
             surface,
             claim: retry_claim,
             budget,
@@ -634,7 +639,8 @@ fn settle_partial_state<W: Write + Send + ?Sized>(
                     .surface
                     .prepare_anchor(context.claim.clone())
                     .map_err(ChangeGateError::gate)?;
-                let (retry_selection, _) = select_changes(&retry, context.surface)?;
+                let (retry_selection, _) =
+                    select_changes(&retry, context.surface, context.environment)?;
                 if &retry_selection != context.selection || retry.source() != context.source {
                     return Err(ChangeGateError::refusal(
                         "change-gate-source-moved",
@@ -664,11 +670,13 @@ fn settle_partial_state<W: Write + Send + ?Sized>(
 fn select_changes(
     anchor: &crate::gate::PreparedArm<'_>,
     surface: SelectionSurface,
+    environment: &Environment,
 ) -> Result<(ChangeSelectionReport, TestExecution), ChangeGateError> {
     let (selection, test_execution) =
         match surface {
             SelectionSurface::Packaged => {
-                let policy = packaged_policy(anchor.root(), anchor.paths())?;
+                let policy =
+                    packaged_policy(anchor.root(), anchor.paths(), anchor.changes(), environment)?;
                 let selection = gate::select_change_gates(
                     anchor.source().clone(),
                     anchor.changes(),
@@ -815,56 +823,6 @@ fn publish_budget(
     progress
         .flush()
         .map_err(|error| ChangeGateError::environment("change-gate-progress-unavailable", error))
-}
-
-#[cfg(test)]
-fn packaged_selection_policy(
-    root: &Path,
-    tracked_sources: &[String],
-) -> Result<gate::ChangeSelectionPolicy, ChangeGateError> {
-    packaged_policy(root, tracked_sources).map(|policy| policy.selection)
-}
-
-fn packaged_policy(
-    root: &Path,
-    tracked_sources: &[String],
-) -> Result<PackagedPolicy, ChangeGateError> {
-    const TRACKED_POLICY: &str = "spice-rust.toml";
-
-    let path = root.join(TRACKED_POLICY);
-    let tracked = match fs::read_to_string(&path) {
-        Ok(text) => Some(text),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-        Err(error) => {
-            return Err(ChangeGateError::environment(
-                "change-selection-policy-unavailable",
-                format!("{}: {error}", path.display()),
-            ));
-        }
-    };
-    let document = tracked
-        .as_deref()
-        .map(|text| crate::config::Document::new(TRACKED_POLICY, text));
-    let resolved = crate::config::resolve(crate::config::Inputs::new(document, None, &[]))
-        .map_err(|error| ChangeGateError::refusal("change-selection-policy-refused", error))?;
-    let policy = resolved.root().policy();
-    let selection = gate::ChangeSelectionPolicy::new(gate::ChangeSelectionPolicyInputs {
-        tracked_sources,
-        policy_authorities: &[TRACKED_POLICY.to_owned(), "baseline.toml".to_owned()],
-        configured: tracked.is_some(),
-        repository_documents: policy.repo_truth().docs(),
-        file_shape_suffixes: policy.file_shape().source_suffixes(),
-        complexity_suffixes: policy.languages().complexity(),
-        magic_suffixes: policy.languages().magic(),
-        package_roots: policy.package_roots(),
-        generated_paths: policy.generated_paths(),
-        test_paths: policy.test_paths(),
-    })
-    .map_err(|error| ChangeGateError::refusal("change-selection-policy-refused", error))?;
-    Ok(PackagedPolicy {
-        selection,
-        test_engines: policy.test_engines().to_vec(),
-    })
 }
 
 fn run_policy_and_tests<W: Write + Send + ?Sized>(

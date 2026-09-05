@@ -44,6 +44,8 @@ pub struct ChangeSelectionPolicyInputs<'a> {
     pub magic_suffixes: Option<&'a [String]>,
     /// Optional repository package roots.
     pub package_roots: &'a [String],
+    /// Exact Rust modules reached by Cargo compile-time targets.
+    pub declared_rust_sources: &'a [String],
     /// Optional generated-path selectors.
     pub generated_paths: &'a [String],
     /// Optional test-path selectors.
@@ -64,6 +66,7 @@ pub struct ChangeSelectionPolicy {
     complexity_suffixes: Vec<String>,
     magic_suffixes: Vec<String>,
     package_roots: Vec<String>,
+    declared_rust_sources: Vec<String>,
     generated_paths: Vec<String>,
     test_paths: Vec<String>,
 }
@@ -106,6 +109,10 @@ impl ChangeSelectionPolicy {
             complexity_suffixes,
             magic_suffixes,
             package_roots: selectors("policy.package_roots", inputs.package_roots)?,
+            declared_rust_sources: exact_paths(
+                "declared Cargo Rust source",
+                inputs.declared_rust_sources,
+            )?,
             generated_paths: selectors("policy.generated_paths", inputs.generated_paths)?,
             test_paths: selectors("policy.test_paths", inputs.test_paths)?,
         })
@@ -324,6 +331,9 @@ impl ChangeSelectionPolicy {
     }
 
     fn compiled_rust_source(&self, path: &str) -> bool {
+        if contains_exact(&self.declared_rust_sources, path) {
+            return true;
+        }
         let Some(root) = compiled_package_root(path) else {
             return false;
         };

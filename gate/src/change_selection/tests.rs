@@ -62,6 +62,7 @@ fn policy<'a>(
         complexity_suffixes: suffixes,
         magic_suffixes: suffixes,
         package_roots,
+        declared_rust_sources: &[],
         generated_paths,
         test_paths,
     })
@@ -221,6 +222,68 @@ fn a_differently_shaped_rust_repository_uses_policy_not_package_names() {
 }
 
 #[test]
+fn declared_compile_time_modules_are_compiled_without_admitting_loose_rust() {
+    let tracked = strings(&[
+        "Cargo.toml",
+        "crates/nebula/Cargo.toml",
+        "crates/nebula/build.rs",
+        "crates/nebula/build/admission.rs",
+        "crates/nebula/build/loose.rs",
+    ]);
+    let declared = strings(&["crates/nebula/build/admission.rs"]);
+    let policy = ChangeSelectionPolicy::new(ChangeSelectionPolicyInputs {
+        tracked_sources: &tracked,
+        policy_authorities: &[],
+        configured: false,
+        repository_documents: None,
+        file_shape_suffixes: None,
+        complexity_suffixes: None,
+        magic_suffixes: None,
+        package_roots: &[],
+        declared_rust_sources: &declared,
+        generated_paths: &[],
+        test_paths: &[],
+    })
+    .expect("compile declared Cargo source policy");
+
+    let selected = selection(&["crates/nebula/build/admission.rs"], &policy);
+    assert!(selected.gate_ids().contains(&GateId::RustTypecheck));
+    let loose = select_change_gates(
+        source(),
+        &strings(&["crates/nebula/build/loose.rs"]),
+        &policy,
+    )
+    .expect_err("an undeclared sibling remains loose Rust");
+    assert!(
+        loose
+            .detail()
+            .contains("outside every compiled workspace root")
+    );
+
+    let mut escaping = declared;
+    escaping.push("../escape.rs".to_owned());
+    let error = ChangeSelectionPolicy::new(ChangeSelectionPolicyInputs {
+        tracked_sources: &tracked,
+        policy_authorities: &[],
+        configured: false,
+        repository_documents: None,
+        file_shape_suffixes: None,
+        complexity_suffixes: None,
+        magic_suffixes: None,
+        package_roots: &[],
+        declared_rust_sources: &escaping,
+        generated_paths: &[],
+        test_paths: &[],
+    })
+    .expect_err("escaping declared source must refuse");
+    assert!(
+        error
+            .detail()
+            .contains("not a normalized repository-relative path")
+    );
+}
+
+#[test]
 fn mixed_language_generated_package_and_test_policy_shapes_selection() {
     let tracked = strings(&[
         "pyproject.toml",
@@ -344,6 +407,7 @@ fn configured_policy_missing_a_required_language_class_refuses() {
         complexity_suffixes: None,
         magic_suffixes: Some(&suffixes),
         package_roots: &[],
+        declared_rust_sources: &[],
         generated_paths: &[],
         test_paths: &[],
     })
@@ -366,6 +430,7 @@ fn repository_documents_do_not_activate_the_excluded_file_shape_arm() {
         complexity_suffixes: Some(&suffixes),
         magic_suffixes: Some(&suffixes),
         package_roots: &[],
+        declared_rust_sources: &[],
         generated_paths: &[],
         test_paths: &[],
     })

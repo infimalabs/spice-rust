@@ -9,6 +9,107 @@ const REPRESENTATIVE_CHANGES: [&str; 5] = [
 ];
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the focused Cargo inventory test captures its process environment once"
+)]
+fn declared_fold_build_module_selects_owner_and_dependent_checks() {
+    let root = workspace_root();
+    let environment = Environment::new(std::env::vars_os()).expect("capture test environment");
+    let environment = without_pre_commit_dispatch(environment).expect("sanitize test environment");
+    let inventory = acquire_inventory(&root, &environment, OsStr::new("cargo"))
+        .expect("acquire repository Cargo inventory");
+    let changed = "fold/build/admission.rs";
+    let claims = source_claims(&inventory, changed, &root.join(changed));
+    assert!(
+        claims
+            .iter()
+            .flat_map(|claim| &claim.targets)
+            .any(|target| { target.kind.split('+').any(|kind| kind == "custom-build") })
+    );
+
+    let checks = cargo_check_selections(&inventory, &root, &[changed.to_owned()])
+        .expect("select declared build module checks");
+    assert!(checks.iter().any(|check| check.name == "fold"));
+    assert!(checks.iter().any(|check| check.name == "spice"));
+}
+
+#[test]
+fn compile_time_module_inventory_is_exact_and_rejects_ambiguous_ownership() {
+    let root = synthetic_root("compile-time-modules");
+    let package_root = root.join("sample");
+    fs::create_dir_all(package_root.join("build")).expect("create compile-time module fixture");
+    fs::write(
+        package_root.join("build.rs"),
+        "#[path = \"build/admission.rs\"] mod admission;\nfn main() {}\n",
+    )
+    .expect("write build target");
+    fs::write(
+        package_root.join("build/admission.rs"),
+        "pub fn validate() {}\n",
+    )
+    .expect("write declared build module");
+    fs::write(package_root.join("build/loose.rs"), "pub fn loose() {}\n")
+        .expect("write undeclared sibling");
+    let build = target(
+        &package_root,
+        "sample",
+        "custom-build",
+        "build-script-build",
+        "build.rs",
+    );
+    let mut inventory = single_package_inventory(&root, &package_root, vec![build]);
+
+    assert_eq!(
+        declared_compile_time_sources(&inventory, &root).expect("select declared build module"),
+        ["sample/build/admission.rs"]
+    );
+
+    fs::write(
+        package_root.join("generated.rs"),
+        "#[path = \"build/generated.rs\"] mod generated;\n",
+    )
+    .expect("write unresolved generated target");
+    let unresolved = single_package_inventory(
+        &root,
+        &package_root,
+        vec![target(
+            &package_root,
+            "sample",
+            "custom-build",
+            "generated",
+            "generated.rs",
+        )],
+    );
+    assert!(
+        declared_compile_time_sources(&unresolved, &root)
+            .expect("unresolved generated source remains absent")
+            .is_empty()
+    );
+
+    fs::write(
+        package_root.join("macro.rs"),
+        "#[path = \"build/admission.rs\"] mod admission;\n",
+    )
+    .expect("write proc-macro target");
+    inventory.packages[0].declared_targets.push(target(
+        &package_root,
+        "sample",
+        "proc-macro",
+        "sample_macros",
+        "macro.rs",
+    ));
+    let error = declared_compile_time_sources(&inventory, &root)
+        .expect_err("duplicate compile-time ownership must refuse");
+    assert!(
+        error
+            .to_string()
+            .contains("ambiguous Cargo target ownership")
+    );
+    fs::remove_dir_all(root).expect("remove compile-time module fixture");
+}
+
+#[test]
 fn representative_steer_and_resident_change_has_exact_contract_edges() {
     let root = workspace_root();
     let inventory = representative_inventory(&root);
@@ -529,6 +630,30 @@ fn deletion_inventory(root: &Path, with_removed: bool) -> Inventory {
 
 fn synthetic_root(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!("gate-selection-{label}-{}", std::process::id()))
+}
+
+fn single_package_inventory(
+    root: &Path,
+    package_root: &Path,
+    targets: Vec<TargetIdentity>,
+) -> Inventory {
+    Inventory {
+        resolution: CargoResolution::default(),
+        packages: vec![PackageInventory {
+            id: "sample".to_owned(),
+            name: "sample".to_owned(),
+            root: package_root.to_path_buf(),
+            dependencies: Vec::new(),
+            namespace_context: FileMacroCrateContext::test_default(),
+            compile_time_authority: None,
+            declared_targets: targets.clone(),
+            removed_targets: Vec::new(),
+            targets,
+        }],
+        binary_outputs: Vec::new(),
+        target_directory: root.join("target"),
+        build_directory: root.join("target/cargo-build"),
+    }
 }
 
 fn target(root: &Path, package: &str, kind: &str, name: &str, source: &str) -> TargetIdentity {
