@@ -77,6 +77,14 @@ pub(super) struct PlaywrightSnapshot {
 }
 
 impl PlaywrightSnapshot {
+    #[cfg(test)]
+    pub(super) fn empty() -> Self {
+        Self {
+            files: Vec::new(),
+            authority: Digest::compute(Domain::GateTool, b"empty Playwright test snapshot"),
+        }
+    }
+
     pub(super) fn capture(
         selected_root: &Path,
         installed_root: &Path,

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use super::*;
 
-const BUILD_DECLARATION: &str = "gate::canvas::build-action-v2";
+const BUILD_DECLARATION: &str = "gate::canvas::build-action-v3";
 const SHARD_DECLARATION: &str = "gate::canvas::browser-shard-action-v1";
 const CANVAS_RUNNER_VERSION: u64 = 3;
 const CANVAS_BINARY_VARIABLE: &str = "SPICE_CANVAS_BINARY"; // env-policy: allow
@@ -35,7 +35,6 @@ use packages::PlaywrightSnapshot;
 #[derive(Clone)]
 pub(super) struct CanvasExecution {
     root: PathBuf,
-    repository: PathBuf,
     common: PathBuf,
     environment: Vec<(OsString, OsString)>,
     build_inputs: Vec<String>,
@@ -172,7 +171,6 @@ pub(super) fn prepare(
         &environment,
         &environment_names,
         &tools,
-        repository,
         common,
         &environment_values,
         Arc::clone(&build),
@@ -215,7 +213,6 @@ pub(super) fn prepare(
                 &environment,
                 &environment_names,
                 &tools,
-                repository,
                 common,
                 &environment_values,
                 Arc::clone(&build),
@@ -267,7 +264,6 @@ fn prepare_build(
     environment: &Digest,
     environment_names: &[String],
     tools: &[ActionToolRequirement],
-    repository: &Path,
     common: &Path,
     environment_values: &[(OsString, OsString)],
     build: SharedCanvasBuild,
@@ -301,7 +297,6 @@ fn prepare_build(
         tools,
         CanvasExecution {
             root: arm.root().to_path_buf(),
-            repository: repository.to_path_buf(),
             common: common.to_path_buf(),
             environment: environment_values.to_vec(),
             build_inputs: present_build_inputs(plan.build_inputs(), arm.paths()),
@@ -321,7 +316,6 @@ fn prepare_shard(
     environment: &Digest,
     environment_names: &[String],
     tools: &[ActionToolRequirement],
-    repository: &Path,
     common: &Path,
     environment_values: &[(OsString, OsString)],
     build: SharedCanvasBuild,
@@ -371,7 +365,6 @@ fn prepare_shard(
         tools,
         CanvasExecution {
             root: arm.root().to_path_buf(),
-            repository: repository.to_path_buf(),
             common: common.to_path_buf(),
             environment: environment_values.to_vec(),
             build_inputs: present_build_inputs(plan.build_inputs(), arm.paths()),
@@ -674,7 +667,6 @@ fn run_build(execution: &CanvasExecution) -> Result<Arc<CanvasBuild>, ProveFailu
         .args([
             OsStr::new("app/browser/canvas-proof-build.mjs"),
             execution.common.as_os_str(),
-            execution.repository.as_os_str(),
         ])
         .env_remove(CANVAS_BINARY_VARIABLE)
         .output()
@@ -796,6 +788,9 @@ fn process_failure(output: &std::process::Output) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt as _;
+
     use super::*;
 
     fn success<T>(result: Result<T, ProveFailure>) -> T {
@@ -916,5 +911,111 @@ mod tests {
             ),
             ["present.txt"]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn canvas_build_process_reads_only_the_private_selected_root() {
+        let selected = CanvasWorkspace(success(exclusive_workspace("canvas-selected-source")));
+        let checkout = CanvasWorkspace(success(exclusive_workspace("canvas-live-checkout")));
+        let tools = CanvasWorkspace(success(exclusive_workspace("canvas-build-tools")));
+        for root in [&selected.0, &checkout.0] {
+            fs::create_dir_all(root.join(".cargo")).expect("create Cargo configuration directory");
+        }
+        fs::create_dir_all(selected.0.join("app/browser"))
+            .expect("create selected launcher directory");
+        fs::create_dir_all(checkout.0.join(".git")).expect("create checkout Git directory");
+        fs::create_dir(&tools.0).expect("create tool directory");
+        fs::write(selected.0.join("Cargo.lock"), "selected-lock\n")
+            .expect("write selected lockfile");
+        fs::write(
+            selected.0.join(".cargo/config.toml"),
+            "selected-configuration\n",
+        )
+        .expect("write selected Cargo configuration");
+        fs::write(
+            selected.0.join("app/browser/canvas-proof-build.mjs"),
+            "// selected launcher\n",
+        )
+        .expect("write selected launcher");
+        fs::write(checkout.0.join("Cargo.lock"), "initial-live-lock\n")
+            .expect("write live lockfile");
+        fs::write(
+            checkout.0.join(".cargo/config.toml"),
+            "initial-live-configuration\n",
+        )
+        .expect("write live Cargo configuration");
+
+        let node = tools.0.join("node");
+        fs::write(
+            &node,
+            concat!(
+                "#!/bin/sh\n",
+                "{\n",
+                "  /bin/pwd\n",
+                "  for argument in \"$@\"; do /usr/bin/printf 'arg=%s\\n' \"$argument\"; done\n",
+                "  /usr/bin/printf 'lock='; /bin/cat Cargo.lock\n",
+                "  /usr/bin/printf 'config='; /bin/cat .cargo/config.toml\n",
+                "} > canvas-test-ledger\n",
+                "/bin/mkdir -p target/debug dist/stage-app\n",
+                "/usr/bin/touch target/debug/spice dist/stage-app/current\n",
+            ),
+        )
+        .expect("write test Node executable");
+        fs::set_permissions(&node, fs::Permissions::from_mode(0o700))
+            .expect("make test Node executable");
+
+        let make_execution = || CanvasExecution {
+            root: selected.0.clone(),
+            common: checkout.0.join(".git"),
+            environment: vec![(OsString::from("PATH"), tools.0.as_os_str().to_owned())],
+            build_inputs: vec![
+                ".cargo/config.toml".to_owned(),
+                "Cargo.lock".to_owned(),
+                "app/browser/canvas-proof-build.mjs".to_owned(),
+            ],
+            shard: None,
+            build: Arc::new(Mutex::new(None)),
+            playwright: Arc::new(PlaywrightSnapshot::empty()),
+        };
+        let first = make_execution();
+        let first_result = success(execute(first.clone(), gate::CANVAS_BUILD_ACTION));
+        let first_ledger = build_ledger(&first);
+
+        fs::write(checkout.0.join("Cargo.lock"), "mutated-live-lock\n")
+            .expect("mutate live lockfile");
+        fs::write(
+            checkout.0.join(".cargo/config.toml"),
+            "mutated-live-configuration\n",
+        )
+        .expect("mutate live Cargo configuration");
+        let second = make_execution();
+        let second_result = success(execute(second.clone(), gate::CANVAS_BUILD_ACTION));
+        let second_ledger = build_ledger(&second);
+
+        assert_eq!(first_result, second_result);
+        for ledger in [&first_ledger, &second_ledger] {
+            assert!(ledger.contains("arg=app/browser/canvas-proof-build.mjs\n"));
+            assert!(ledger.contains(&format!("arg={}\n", checkout.0.join(".git").display())));
+            assert!(ledger.contains("lock=selected-lock\n"));
+            assert!(ledger.contains("config=selected-configuration\n"));
+            assert!(!ledger.contains("live-lock"));
+            assert!(!ledger.contains("live-configuration"));
+            assert!(!ledger.contains(&format!("arg={}\n", checkout.0.display())));
+        }
+        for root in [&selected.0, &checkout.0] {
+            assert!(!root.join("target").exists());
+            assert!(!root.join("dist").exists());
+        }
+    }
+
+    fn build_ledger(execution: &CanvasExecution) -> String {
+        let shared = execution.build.lock().expect("lock Canvas build state");
+        let build = shared
+            .as_ref()
+            .expect("Canvas build ran")
+            .as_ref()
+            .expect("Canvas build succeeded");
+        fs::read_to_string(build.root.join("canvas-test-ledger")).expect("read Canvas build ledger")
     }
 }

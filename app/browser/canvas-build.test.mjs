@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import {
   chmod,
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -11,8 +13,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 
 const here = dirname(fileURLToPath(import.meta.url));
+const execute = promisify(execFile);
 
 function restoreEnvironment(name, value) {
   if (value === undefined) delete process.env[name];
@@ -58,6 +62,55 @@ test("a prebuilt resident cannot absorb exact-appliance app publication", async 
   } finally {
     restoreEnvironment("SPICE_CANVAS_BINARY", previousBinary);
     restoreEnvironment("SPICE_APP_CALL_LEDGER", previousLedger);
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
+test("the proof launcher builds only from its selected source root", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "spice-canvas-proof-build-"));
+  const selected = join(fixture, "selected");
+  const browser = join(selected, "app/browser");
+  const live = join(fixture, "live");
+  const common = join(fixture, "common");
+  const ledger = join(fixture, "proof-build-ledger");
+
+  try {
+    await mkdir(browser, { recursive: true });
+    await mkdir(join(selected, ".cargo"), { recursive: true });
+    await mkdir(join(live, ".cargo"), { recursive: true });
+    for (const module of ["canvas-build.mjs", "canvas-proof-build.mjs"]) {
+      await writeFile(join(browser, module), await readFile(join(here, module)));
+    }
+    await writeFile(join(selected, "Cargo.lock"), "selected-lock\n");
+    await writeFile(join(selected, ".cargo/config.toml"), "selected-configuration\n");
+    await writeFile(join(live, "Cargo.lock"), "initial-live-lock\n");
+    await writeFile(join(live, ".cargo/config.toml"), "initial-live-configuration\n");
+
+    const appliance = join(common, ".spice-install/bin/spice");
+    await mkdir(dirname(appliance), { recursive: true });
+    await writeFile(appliance, [
+      "#!/bin/sh",
+      "/usr/bin/printf '%s|%s|%s|%s\\n' \"$PWD\" \"$*\" \"$(/bin/cat Cargo.lock)\" \"$(/bin/cat .cargo/config.toml)\" >> \"$SPICE_APP_CALL_LEDGER\"",
+      "",
+    ].join("\n"));
+    await chmod(appliance, 0o755);
+
+    await writeFile(join(live, "Cargo.lock"), "mutated-live-lock\n");
+    await writeFile(join(live, ".cargo/config.toml"), "mutated-live-configuration\n");
+    const environment = { ...process.env, SPICE_APP_CALL_LEDGER: ledger };
+    delete environment.SPICE_CANVAS_BINARY;
+    await execute(process.execPath, [join(browser, "canvas-proof-build.mjs"), common], {
+      cwd: live,
+      env: environment,
+    });
+
+    const selectedRoot = await realpath(selected);
+    assert.equal(await readFile(ledger, "utf8"), [
+      `${selectedRoot}|dev cargo -- build --locked --target-dir target -p spice --bin spice|selected-lock|selected-configuration`,
+      `${selectedRoot}|dev xtask -- app|selected-lock|selected-configuration`,
+      "",
+    ].join("\n"));
+  } finally {
     await rm(fixture, { recursive: true, force: true });
   }
 });
