@@ -37,42 +37,41 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
     let task_pills = task_pills(runtime);
     html! {
         <header class="commandbar commandbar--mosaic">
+            <nav class="task-pill-strip" aria-label="Open task projects">
+                if task_pills.is_empty() {
+                    <span class="task-pill-empty">{"No open tasks"}</span>
+                } else {
+                    {for task_pills.into_iter().map(|pill| {
+                        let axis = render.axis.clone();
+                        let mosaic = render.mosaic.clone();
+                        html! {
+                            <button
+                                class={classes!(
+                                    "task-pill",
+                                    pill.hidden.then_some("system"),
+                                    (pill.active > 0).then_some("active"),
+                                    (pill.ready == 0 && pill.active == 0).then_some("dormant"),
+                                )}
+                                type="button"
+                                title={pill.title()}
+                                data-task-stem={pill.stem.clone()}
+                                data-ready={pill.ready.to_string()}
+                                data-active={pill.active.to_string()}
+                                data-unavailable={pill.unavailable.to_string()}
+                                onclick={Callback::from(move |_| {
+                                    axis.set(Axis::Flow);
+                                    mosaic.set(false);
+                                })}
+                            >
+                                <span>{pill.stem.clone()}</span>
+                                <span class="task-pill-count">{pill.count()}</span>
+                            </button>
+                        }
+                    })}
+                }
+            </nav>
             if **render.menu_open {
                 {render_navigation(&render, runtime)}
-            } else {
-                <nav class="task-pill-strip" aria-label="Open task projects">
-                    if task_pills.is_empty() {
-                        <span class="task-pill-empty">{"No open tasks"}</span>
-                    } else {
-                        {for task_pills.into_iter().map(|pill| {
-                            let axis = render.axis.clone();
-                            let mosaic = render.mosaic.clone();
-                            html! {
-                                <button
-                                    class={classes!(
-                                        "task-pill",
-                                        pill.hidden.then_some("system"),
-                                        (pill.active > 0).then_some("active"),
-                                        (pill.ready == 0 && pill.active == 0).then_some("dormant"),
-                                    )}
-                                    type="button"
-                                    title={pill.title()}
-                                    data-task-stem={pill.stem.clone()}
-                                    data-ready={pill.ready.to_string()}
-                                    data-active={pill.active.to_string()}
-                                    data-unavailable={pill.unavailable.to_string()}
-                                    onclick={Callback::from(move |_| {
-                                        axis.set(Axis::Flow);
-                                        mosaic.set(false);
-                                    })}
-                                >
-                                    <span>{pill.stem.clone()}</span>
-                                    <span class="task-pill-count">{pill.count()}</span>
-                                </button>
-                            }
-                        })}
-                    }
-                </nav>
             }
             {render_canvas_menu(&render, runtime)}
         </header>

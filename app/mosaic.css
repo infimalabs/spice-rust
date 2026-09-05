@@ -261,10 +261,10 @@ body:has(.shell--mosaic),
 
 .task-pill-strip {
   display: flex;
-  flex: 1 1 auto;
+  flex: 1 1 12rem;
   align-items: center;
   gap: 6px;
-  min-width: 0;
+  min-width: 6rem;
   overflow-x: auto;
 }
 .task-pill,
@@ -345,8 +345,8 @@ body:has(.shell--mosaic),
 }
 .canvas-navigation {
   display: flex;
-  flex: 1 1 auto;
-  min-width: 0;
+  flex: 0 1 18rem;
+  min-width: 10rem;
   justify-content: flex-end;
   gap: 3px;
   overflow-x: auto;
