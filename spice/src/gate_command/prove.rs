@@ -1102,7 +1102,10 @@ mod tests {
                 "name = \"fixture\"\n",
                 "version = \"0.1.0\"\n",
                 "edition = \"2024\"\n",
-                "build = \"build.rs\"\n",
+                "build = \"build.rs\"\n\n",
+                "[package.metadata.spice.cargo-proof]\n",
+                "version = 1\n",
+                "complete = true\n",
             ),
         )
         .expect("write Cargo fixture manifest");
@@ -1117,8 +1120,11 @@ mod tests {
             ),
         )
         .expect("write Cargo fixture lockfile");
-        fs::write(root.join("build.rs"), "fn main() {}\n")
-            .expect("write Cargo fixture build script");
+        fs::write(
+            root.join("build.rs"),
+            "fn main() { println!(\"{}\", \"cargo::rerun-if-changed=../authority.txt\"); }\n",
+        )
+        .expect("write Cargo fixture build script");
         fs::write(root.join("src/lib.rs"), "pub const VALUE: u8 = 1;\n")
             .expect("write Cargo fixture library");
         let environment =
@@ -1149,7 +1155,7 @@ mod tests {
             panic!("non-reusable shard must be refused before identity preparation");
         };
         assert_eq!(reason, "gate::prove-cargo-action-not-reusable");
-        assert!(detail.contains("no complete package.metadata.spice.cargo-proof"));
+        assert!(detail.contains("computed or interpolated compile-time output"));
         fs::remove_dir_all(root).expect("remove Cargo planning fixture");
     }
 
