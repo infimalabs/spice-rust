@@ -19,6 +19,35 @@ pub(crate) enum DemandStatus {
     Refused(String),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DemandResponse {
+    Committed(SeqRange),
+    Refused(String),
+}
+
+pub(crate) fn classify_demand_outcome(
+    id: CanonicalUuid,
+    outcome: &wire::Outcome<serde_json::Value>,
+) -> Result<DemandResponse, String> {
+    match outcome {
+        wire::Outcome::Reply(reply) => match reply.position {
+            wire::ReplyPosition::Committed(range) => Ok(DemandResponse::Committed(range)),
+            wire::ReplyPosition::Snapshot(_) | wire::ReplyPosition::Direct {} => Err(format!(
+                "mutating command demand {id} returned a non-committed position"
+            )),
+        },
+        wire::Outcome::Refusal(refusal) => Ok(DemandResponse::Refused(format!(
+            "{}: {}",
+            refusal.reason(),
+            refusal.explanation()
+        ))),
+        wire::Outcome::Fault(fault) => Ok(DemandResponse::Refused(format!(
+            "{}: {}",
+            fault.reason, fault.detail
+        ))),
+    }
+}
+
 /// One client-identified mutation and the exact body its retry must preserve.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Demand<T> {
@@ -221,6 +250,13 @@ impl<T> DemandQueue<T> {
 mod tests {
     use super::*;
 
+    fn reply(position: wire::ReplyPosition) -> wire::Outcome<serde_json::Value> {
+        wire::Outcome::Reply(wire::Reply {
+            position,
+            body: serde_json::Value::Null,
+        })
+    }
+
     fn id(suffix: u8) -> CanonicalUuid {
         format!("018f82d4-6f59-7d06-92e3-bce9131163{suffix:02x}")
             .parse()
@@ -342,5 +378,46 @@ mod tests {
                 *body = "rebased steer";
             })
             .expect("second prepared from refreshed authority");
+    }
+
+    #[test]
+    fn response_classification_requires_a_committed_range() {
+        assert_eq!(
+            classify_demand_outcome(id(1), &reply(wire::ReplyPosition::Committed(range(1)))),
+            Ok(DemandResponse::Committed(range(1)))
+        );
+        assert!(
+            classify_demand_outcome(id(1), &reply(wire::ReplyPosition::Snapshot(range(1).last)))
+                .is_err()
+        );
+        assert!(classify_demand_outcome(id(1), &reply(wire::ReplyPosition::Direct {})).is_err());
+    }
+
+    #[test]
+    fn refusal_and_fault_classification_carry_no_sequence() {
+        let refusal = wire::Outcome::Refusal(wire::Refusal::bare(wire::RefusalDiagnostic::new(
+            "lane::revision-stale",
+            None,
+            Some("read lanes again".to_owned()),
+            None,
+        )));
+        let fault = wire::Outcome::Fault(wire::Fault {
+            class: wire::FaultClass::Protocol,
+            reason: "command::invalid".to_owned(),
+            detail: "bad body".to_owned(),
+        });
+
+        assert_eq!(
+            classify_demand_outcome(id(1), &refusal),
+            Ok(DemandResponse::Refused(
+                "lane::revision-stale: read lanes again".to_owned()
+            ))
+        );
+        assert_eq!(
+            classify_demand_outcome(id(1), &fault),
+            Ok(DemandResponse::Refused(
+                "command::invalid: bad body".to_owned()
+            ))
+        );
     }
 }

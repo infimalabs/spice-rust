@@ -23,7 +23,7 @@ use wire::{
 };
 use yew::prelude::*;
 
-use crate::command_demands::DemandQueue;
+use crate::command_demands::{DemandQueue, DemandResponse, classify_demand_outcome};
 use crate::compose::{self, Notice};
 use crate::composer_submissions::{Submission, SubmissionQueue, SubmissionStatus};
 use crate::runtime::{CanvasSurface, topology_mutation_requires_refresh};
