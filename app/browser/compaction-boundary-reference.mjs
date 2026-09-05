@@ -215,8 +215,8 @@ export async function assertCompactionDivider(
 
   assert.deepEqual(
     geometry.label.childClasses,
-    ["mosaic-compaction-age", "", "mosaic-compaction-context"],
-    `${label} keeps age, separator, and compacted-context hierarchy`,
+    ["mosaic-compaction-age", "mosaic-compaction-context"],
+    `${label} keeps age and compacted-context hierarchy`,
   );
   assert.equal(
     geometry.card.accessibleLabel,
@@ -257,7 +257,7 @@ export async function assertCompactionDivider(
       `${label} visibly truncates attribution text: ${attributionEvidence}`,
     );
   }
-  assert.equal(geometry.context.text, "context, compacted");
+  assert.equal(geometry.context.text, "compacted context");
   assert.ok(Number.parseFloat(geometry.contextGroup.gap) > 0, `${label} separates agent and context`);
   assert.match(geometry.label.fontFamily, /system-ui/);
   assert.equal(geometry.label.fontSize, "12px");

@@ -253,10 +253,9 @@ fn render_compaction_boundary(message: &wire::AgentMessage, attribution: &str) -
             <span class="mosaic-compaction-rule" aria-hidden="true"></span>
             <span class="mosaic-compaction-label">
                 <Age authored={display_millis} class="mosaic-compaction-age" />
-                <span aria-hidden="true">{"\u{b7}"}</span>
                 <span class="mosaic-compaction-context">
                     <span class="mosaic-compaction-agent" title={attribution.clone()}>{attribution}</span>
-                    <span class="message-key">{"context, compacted"}</span>
+                    <span class="message-key">{"compacted context"}</span>
                 </span>
             </span>
             <span class="mosaic-compaction-rule" aria-hidden="true"></span>
