@@ -293,7 +293,7 @@ async fn drain_demands(
             .clone()
     };
     send_demand_as(principal, writer, pending, demand.id, demand.body).await?;
-    demands.admit(demand.id)
+    demands.sent(demand.id)
 }
 
 impl ClientAction {
