@@ -3,6 +3,7 @@ use super::*;
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(in crate::workspace_tests) enum CompilerMacroKind {
     Println,
+    Format,
     Env,
     OptionEnv,
     Concat,
@@ -28,8 +29,9 @@ pub(in crate::workspace_tests) enum CompilerMacroPath {
 }
 
 impl CompilerMacroKind {
-    pub(in crate::workspace_tests) const ALL: [Self; 13] = [
+    pub(in crate::workspace_tests) const ALL: [Self; 14] = [
         Self::Println,
+        Self::Format,
         Self::Env,
         Self::OptionEnv,
         Self::Concat,
@@ -51,6 +53,7 @@ impl CompilerMacroKind {
     pub(in crate::workspace_tests) fn from_name(name: &str) -> Option<Self> {
         match name {
             "println" => Some(Self::Println),
+            "format" => Some(Self::Format),
             "env" => Some(Self::Env),
             "option_env" => Some(Self::OptionEnv),
             "concat" => Some(Self::Concat),
@@ -70,6 +73,7 @@ impl CompilerMacroKind {
     pub(in crate::workspace_tests) const fn name(self) -> &'static str {
         match self {
             Self::Println => "println",
+            Self::Format => "format",
             Self::Env => "env",
             Self::OptionEnv => "option_env",
             Self::Concat => "concat",
@@ -98,7 +102,10 @@ impl CompilerMacroKind {
         self,
         namespace: QualifiedNamespace,
     ) -> bool {
-        !matches!((self, namespace), (Self::Println, QualifiedNamespace::Core))
+        !matches!(
+            (self, namespace),
+            (Self::Println | Self::Format, QualifiedNamespace::Core)
+        )
     }
 
     pub(in crate::workspace_tests) fn classify_path(path: &syn::Path) -> Option<CompilerMacroPath> {

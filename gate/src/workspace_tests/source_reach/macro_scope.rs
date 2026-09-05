@@ -17,9 +17,9 @@ pub(in crate::workspace_tests) enum FileMacroResolution {
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct FileMacroBindings {
-    inherited: [FileMacroResolution; 13],
-    imports: [Option<FileMacroResolution>; 13],
-    textual: [Option<FileMacroResolution>; 13],
+    inherited: [FileMacroResolution; 14],
+    imports: [Option<FileMacroResolution>; 14],
+    textual: [Option<FileMacroResolution>; 14],
 }
 
 impl FileMacroBindings {
@@ -27,11 +27,12 @@ impl FileMacroBindings {
         let mut inherited = CompilerMacroKind::ALL.map(FileMacroResolution::Compiler);
         if !standard_prelude {
             inherited[CompilerMacroKind::Println.index()] = FileMacroResolution::Unresolved;
+            inherited[CompilerMacroKind::Format.index()] = FileMacroResolution::Unresolved;
         }
         Self {
             inherited,
-            imports: [None; 13],
-            textual: [None; 13],
+            imports: [None; 14],
+            textual: [None; 14],
         }
     }
 
@@ -73,8 +74,8 @@ impl FileMacroBindings {
         }
         Self {
             inherited,
-            imports: [None; 13],
-            textual: [None; 13],
+            imports: [None; 14],
+            textual: [None; 14],
         }
     }
 
@@ -85,8 +86,8 @@ impl FileMacroBindings {
         }
         Self {
             inherited,
-            imports: [None; 13],
-            textual: [None; 13],
+            imports: [None; 14],
+            textual: [None; 14],
         }
     }
 }

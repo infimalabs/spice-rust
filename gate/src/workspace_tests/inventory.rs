@@ -243,6 +243,7 @@ pub(super) struct PackageInventory {
 pub(super) struct CompileTimeAuthorityDeclaration {
     pub(super) files: Vec<String>,
     pub(super) environment: Vec<String>,
+    pub(super) calls: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]

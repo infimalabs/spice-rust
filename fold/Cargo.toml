@@ -9,6 +9,28 @@ publish.workspace = true
 [package.metadata.spice.cargo-proof]
 version = 1
 complete = true
+calls = [
+    ".any",
+    ".as_str",
+    ".contains",
+    ".insert",
+    ".into",
+    ".is_empty",
+    ".is_some_and",
+    ".iter",
+    ".starts_with",
+    ".strip_suffix",
+    ".write_str",
+    "BTreeSet::new",
+    "Err",
+    "Ok",
+    "Refusal::new",
+    "Self",
+    "admission::validate",
+    "pattern_matches",
+    "validate_rows",
+    "validate_sources",
+]
 
 [dependencies]
 journal = { path = "../journal" }
