@@ -770,8 +770,25 @@ fn execute_selected_tests(
     )
     .map_err(output_error)?;
     output.flush().map_err(output_error)?;
-    let prebuilt = if shards.len() > 1 {
-        let prebuilt = prebuild_selected_tests(
+    let prebuilt = if let Some(reusable) = roots.reusable {
+        let started = Instant::now();
+        writeln!(
+            output,
+            "[rust-test] stage=selected-prebuild targets={} batches=0 lanes=0 source=rust-policy",
+            tests.len(),
+        )
+        .map_err(output_error)?;
+        let prebuilt = prebuilt_test_plan(&selected, reusable.cargo_artifacts())?;
+        writeln!(
+            output,
+            "[rust-test] stage=selected-prebuild-terminal elapsed_ms={} disposition=reused source=rust-policy",
+            started.elapsed().as_millis(),
+        )
+        .map_err(output_error)?;
+        output.flush().map_err(output_error)?;
+        Some(prebuilt)
+    } else if shards.len() > 1 {
+        Some(prebuild_selected_tests(
             root,
             &environment,
             OsStr::new("cargo"),
@@ -779,7 +796,11 @@ fn execute_selected_tests(
             prebuild_budget,
             policy.concurrency.min(SELECTED_PREBUILD_CONCURRENCY),
             output,
-        )?;
+        )?)
+    } else {
+        None
+    };
+    let prebuilt = if let Some(prebuilt) = prebuilt {
         if let Some(budget) = prebuild_budget {
             *policy = RunPolicy::production_prebuilt_budgeted(budget);
         } else {

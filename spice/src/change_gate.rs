@@ -472,11 +472,7 @@ fn run_with_selection(
     publish_phase(progress, "capture", None)?;
     let capture_started = Instant::now();
     let budget = CargoBudget::detect(gate::WORKSPACE_TEST_CONCURRENCY_CAP);
-    publish_budget(
-        progress,
-        budget,
-        "prioritized-bounded-policy-overlapped-tests",
-    )?;
+    publish_budget(progress, budget, "prioritized-bounded-policy-then-tests")?;
     let retry_claim = claim.clone();
     let mut anchor = surface
         .prepare_anchor(claim)
@@ -748,14 +744,16 @@ fn publish_budget(
         progress,
         concat!(
             "[change-gate-budget] cpus={} ordinary_lanes={} advisory_share={} worker_process_cap={} ",
-            "policy_jobs={} test_concurrency={} shard_jobs={} test_threads={} ",
-            "worker_scope=direct-roots nested_children=inherit-parent-slot scheduling={}"
+            "policy_jobs={} native_policy_jobs={} policy_peak={} test_concurrency={} shard_jobs={} test_threads={} ",
+            "worker_scope=phase-peaks policy_and_tests=nonoverlapping scheduling={}"
         ),
         budget.cpus(),
         budget.ordinary_lanes(),
         budget.advisory_lane_share(),
         budget.worker_processes(),
         budget.policy_jobs(),
+        budget.native_policy_jobs(),
+        budget.policy_slots(),
         budget.test_concurrency(),
         budget.shard_jobs(),
         budget.test_threads(),
@@ -768,14 +766,14 @@ fn publish_budget(
             concat!(
                 "[change-gate-budget-warning] reason=advisory-lane-share-exceeded ",
                 "host_capacity={} ordinary_lanes={} advisory_share={} requested_slots={} ",
-                "allocations=policy_jobs:{}+test_prebuild_shards:{}x{}={} ",
+                "allocations=policy_peak:{} test_peak:{}x{}={} ",
                 "action=continue-unchanged"
             ),
             budget.cpus(),
             budget.ordinary_lanes(),
             budget.advisory_lane_share(),
             budget.requested_slots(),
-            budget.policy_jobs(),
+            budget.policy_slots(),
             budget.test_concurrency(),
             budget.shard_jobs(),
             budget.test_slots(),
@@ -873,42 +871,29 @@ fn run_policy_and_tests<W: Write + Send + ?Sized>(
         Some(workspace) => test_run.with_reusable(workspace),
         None => test_run,
     };
-    let mut test_progress = progress.clone();
-    let test_scheduler = scheduler.clone();
-    let (focused, tests) = std::thread::scope(|scope| {
-        let tests = scope.spawn(move || {
-            let _permit = test_scheduler.acquire()?;
-            let started = Instant::now();
-            let result = run_selected_tests(test_run, test_execution, &mut test_progress);
-            let disposition = if result.is_ok() { "success" } else { "failed" };
-            publish_phase_terminal(&mut test_progress, "tests", started, disposition)?;
-            result
-        });
-        let policy_started = Instant::now();
-        let focused = run_focused_policy(
-            anchor,
-            selection,
-            source,
-            budget,
-            &scheduler,
-            preexecuted.reports,
-            progress,
-        );
-        let policy_disposition = if focused.is_ok() { "success" } else { "failed" };
-        publish_phase_terminal(
-            progress,
-            "policy-remainder",
-            policy_started,
-            policy_disposition,
-        )?;
-        let tests = tests.join().map_err(|_| {
-            ChangeGateError::protocol(
-                "change-gate-tests-panicked",
-                "selected workspace-test execution panicked",
-            )
-        })?;
-        Ok::<_, ChangeGateError>((focused?, tests?))
-    })?;
+    let policy_started = Instant::now();
+    let focused = run_focused_policy(
+        anchor,
+        selection,
+        source,
+        budget,
+        &scheduler,
+        preexecuted.reports,
+        progress,
+    );
+    let policy_disposition = if focused.is_ok() { "success" } else { "failed" };
+    publish_phase_terminal(
+        progress,
+        "policy-remainder",
+        policy_started,
+        policy_disposition,
+    )?;
+    let focused = focused?;
+    let test_started = Instant::now();
+    let tests = run_selected_tests(test_run, test_execution, progress);
+    let test_disposition = if tests.is_ok() { "success" } else { "failed" };
+    publish_phase_terminal(progress, "tests", test_started, test_disposition)?;
+    let tests = tests?;
     let policy = ChangePolicyReport::focused_summaries(source, focused.summaries);
     Ok((tests, policy))
 }
@@ -947,49 +932,52 @@ fn preexecute_policy_screen<W: Write + Send + ?Sized>(
     {
         let gate_id = reach.gate_id();
         publish_policy_start(progress, gate_id)?;
-        let started = Instant::now();
         let arm = prepare_policy_arm(anchor, selection, reach, budget, progress)?;
-        prepared.push((gate_id, started, arm));
+        prepared.push((gate_id, arm));
     }
 
-    let executed = std::thread::scope(|scope| {
+    let completed = std::thread::scope(|scope| {
         let handles = prepared
             .into_iter()
-            .map(|(gate_id, started, mut arm)| {
+            .map(|(gate_id, mut arm)| {
+                let started = Instant::now();
                 let handle = scope.spawn(move || {
-                    let _permit = scheduler.acquire()?;
-                    let report = arm.execute().map_err(ChangeGateError::gate)?;
-                    let workspace = (gate_id == GateId::RustTypecheck)
-                        .then(|| arm.reusable_rust_workspace().cloned())
-                        .flatten();
-                    Ok::<_, ChangeGateError>((report, workspace))
+                    let result = (|| {
+                        let _permit = scheduler.acquire()?;
+                        let report = arm.execute().map_err(ChangeGateError::gate)?;
+                        let workspace = (gate_id == GateId::RustTypecheck)
+                            .then(|| arm.reusable_rust_workspace().cloned())
+                            .flatten();
+                        Ok::<_, ChangeGateError>((report, workspace))
+                    })();
+                    (result, started.elapsed())
                 });
-                (gate_id, started, handle)
+                (gate_id, handle)
             })
             .collect::<Vec<_>>();
-        let mut executed = Vec::with_capacity(handles.len());
-        for (gate_id, started, handle) in handles {
-            let result = handle.join().map_err(|_| {
+        let mut completed = Vec::with_capacity(handles.len());
+        for (gate_id, handle) in handles {
+            let (result, elapsed) = handle.join().map_err(|_| {
                 ChangeGateError::protocol(
                     "change-gate-policy-panicked",
                     format!("focused {} policy arm panicked", gate_id.as_str()),
                 )
             })?;
-            let disposition = match &result {
-                Ok((report, _)) if report.admits() => "completed",
-                Ok(_) => "refused",
-                Err(_) => "failed",
-            };
-            publish_policy_terminal(progress, gate_id, started, disposition)?;
-            let (report, workspace) = result?;
-            executed.push((gate_id, report, workspace));
+            completed.push((gate_id, result, elapsed));
         }
-        Ok::<_, ChangeGateError>(executed)
+        Ok::<_, ChangeGateError>(completed)
     })?;
 
     let mut reports = BTreeMap::new();
     let mut rust_workspace = None;
-    for (gate_id, report, workspace) in executed {
+    for (gate_id, result, elapsed) in completed {
+        let disposition = match &result {
+            Ok((report, _)) if report.admits() => "completed",
+            Ok(_) => "refused",
+            Err(_) => "failed",
+        };
+        publish_policy_terminal_elapsed(progress, gate_id, elapsed, disposition)?;
+        let (report, workspace) = result?;
         validate_focused_policy_source(&report, source)?;
         if gate_id == GateId::RustTypecheck {
             rust_workspace = workspace;
@@ -1261,8 +1249,13 @@ fn prepare_policy_arm(
     let mut prepared = anchor
         .derive_reached_arm(selection, gate_id)
         .map_err(ChangeGateError::gate)?;
+    let cargo_jobs = if gate_id == GateId::RustTypecheck {
+        budget.native_policy_jobs()
+    } else {
+        budget.policy_jobs()
+    };
     prepared
-        .bind_cargo_jobs(budget.policy_jobs())
+        .bind_cargo_jobs(cargo_jobs)
         .map_err(ChangeGateError::gate)?;
     let execution_objects = prepared.execution_objects().ok_or_else(|| {
         ChangeGateError::protocol(

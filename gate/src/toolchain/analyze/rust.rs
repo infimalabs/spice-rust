@@ -17,8 +17,8 @@ use std::os::unix::fs::PermissionsExt as _;
 
 use super::{
     Analysis, CARGO, CARGO_BUILD_DIRECTORY, CARGO_TARGET_DIRECTORY, COMPILED_HOME_DIRECTORY,
-    CargoSelection, CompileInvocation, CompilerResources, HOME_DIRECTORY, RUSTC_WORKSPACE_WRAPPER,
-    RUSTC_WRAPPER, run_compile_analysis_with_wait, tool_search_path,
+    CargoSelection, CompileCapture, CompileInvocation, CompilerResources, HOME_DIRECTORY,
+    RUSTC_WORKSPACE_WRAPPER, RUSTC_WRAPPER, run_compile_analysis_with_wait, tool_search_path,
 };
 use crate::measure::Bounds;
 use crate::toolchain::{
@@ -96,6 +96,7 @@ fn rust_typecheck_with_workspace(
                     let mut elapsed = Duration::ZERO;
                     let mut observed_units = 0_u64;
                     let mut refusal = None;
+                    let mut cargo_artifacts = Vec::new();
                     let unit_count = units.len();
                     let unit_identities = units
                         .iter()
@@ -113,6 +114,7 @@ fn rust_typecheck_with_workspace(
                             program: cargo,
                             arguments: &arguments,
                             cwd: &workspace.source,
+                            capture: CompileCapture::CargoJsonTail,
                         };
                         match run_compile_analysis_with_wait(
                             declaration.id,
@@ -123,9 +125,13 @@ fn rust_typecheck_with_workspace(
                             |code, message| FindingDetail::RustTypeOutput { code, message },
                             wait.clone(),
                         ) {
-                            Ok(duration) => {
+                            Ok(success) => {
                                 observed_units = observed_units.saturating_add(1);
-                                elapsed = elapsed.saturating_add(duration);
+                                elapsed = elapsed.saturating_add(success.elapsed());
+                                cargo_artifacts.extend(success.into_stdout());
+                                if cargo_artifacts.last().is_some_and(|byte| *byte != b'\n') {
+                                    cargo_artifacts.push(b'\n');
+                                }
                             }
                             Err(failure) => {
                                 let (analysis, duration) = failure.into_parts();
@@ -149,7 +155,12 @@ fn rust_typecheck_with_workspace(
                         )
                     });
                     if observed_units > 0 {
-                        analysis.timed(timing(elapsed, &compiler_bounds, observed_units))
+                        let mut analysis =
+                            analysis.timed(timing(elapsed, &compiler_bounds, observed_units));
+                        if analysis.outcome == ArmOutcome::Passed {
+                            analysis.cargo_artifacts = cargo_artifacts;
+                        }
+                        analysis
                     } else {
                         analysis
                     }
@@ -217,7 +228,7 @@ pub(in crate::toolchain) const RUST_BUILD_DIRECTORY: &str = "spice-gate-native-s
 
 impl RustWorkspace {
     fn create(selected: &Path, repository: &Path) -> Result<Self, String> {
-        let workspace = rust_analysis_workspace(repository)?;
+        let workspace = rust_analysis_workspace(repository, Vec::new())?;
         Self::create_at(selected, workspace.source(), workspace.cargo_target())
     }
 
@@ -297,6 +308,7 @@ impl RustWorkspace {
 
 pub(in crate::toolchain) fn rust_analysis_workspace(
     repository: &Path,
+    cargo_artifacts: Vec<u8>,
 ) -> Result<RustAnalysisWorkspace, String> {
     let (worktree_git, _) = crate::tree::git_directories(repository).map_err(|error| {
         format!(
@@ -311,6 +323,7 @@ pub(in crate::toolchain) fn rust_analysis_workspace(
         source,
         cargo_target,
         cargo_build,
+        cargo_artifacts,
     })
 }
 

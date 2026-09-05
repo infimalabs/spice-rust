@@ -51,6 +51,7 @@ impl WorkspacePackageReach {
                 if target.test_harness {
                     arguments.push("--no-run".to_owned());
                 }
+                arguments.push("--message-format=json-render-diagnostics".to_owned());
                 units.push(RustCheckUnit {
                     identity: format!("{}::{}", check.name, target.identity),
                     arguments,

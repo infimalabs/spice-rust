@@ -122,12 +122,14 @@ fn canvas_analysis(
             program: cargo,
             arguments: CARGO_WASM_ARGUMENTS,
             cwd: source,
+            capture: CompileCapture::Prefix,
         },
         CompileInvocation {
             name: "trunk canvas build",
             program: trunk,
             arguments: TRUNK_BUILD_ARGUMENTS,
             cwd: app.as_path(),
+            capture: CompileCapture::Prefix,
         },
     ];
     for invocation in invocations {

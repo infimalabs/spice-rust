@@ -510,15 +510,18 @@ impl<'trace> RepositoryExecutor<'trace> {
             self.reached_paths.as_deref(),
         );
         if let Some(gate_id) = self.selected {
-            let observation = acquire_toolchain_arm(&source, &self.contract, gate_id)
-                .map_err(|error| error.to_string())?;
+            let (observation, cargo_artifacts) =
+                acquire_toolchain_arm(&source, &self.contract, gate_id)
+                    .map_err(|error| error.to_string())?;
             let report = measure_toolchain_arm(observation).map_err(|error| error.to_string())?;
             if gate_id == GateId::RustTypecheck
                 && report.outcome == crate::toolchain::ArmOutcome::Passed
             {
-                self.reusable_rust_workspace = Some(
-                    crate::toolchain::completed_rust_analysis_workspace(self.tree.repository())?,
-                );
+                self.reusable_rust_workspace =
+                    Some(crate::toolchain::completed_rust_analysis_workspace(
+                        self.tree.repository(),
+                        cargo_artifacts,
+                    )?);
             }
             return Ok(vec![ArmEvidence::Toolchain { report }]);
         }

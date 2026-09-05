@@ -285,6 +285,7 @@ pub(super) fn prebuilt_test_plan(
         })
         .collect::<BTreeMap<_, _>>();
     let mut artifacts = BTreeMap::new();
+    let mut observed_test_artifacts = BTreeSet::new();
     for (line_index, line) in messages.split(|byte| *byte == b'\n').enumerate() {
         if line.is_empty() {
             continue;
@@ -306,6 +307,7 @@ pub(super) fn prebuilt_test_plan(
             continue;
         };
         let key = (package_id, target.kind.join("+"), target.name);
+        observed_test_artifacts.insert(key.clone());
         if !selected.contains_key(&key) {
             continue;
         }
@@ -329,7 +331,7 @@ pub(super) fn prebuilt_test_plan(
         .collect::<Vec<_>>();
     if !missing.is_empty() {
         return Err(WorkspaceTestError::new(format!(
-            "selected prebuild omitted test artifact(s): {missing:?}",
+            "selected prebuild omitted test artifact(s): {missing:?}; observed reusable test artifacts: {observed_test_artifacts:?}",
         )));
     }
     let mut plan = selected
