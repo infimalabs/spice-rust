@@ -505,12 +505,8 @@ impl<'ast> Visit<'ast> for GeneratedOutputVisitor<'_> {
         if self.error.is_some() {
             return;
         }
-        let is_file_macro = invocation.path.get_ident().is_some_and(|ident| {
-            matches!(
-                ident.to_string().as_str(),
-                "include" | "include_str" | "include_bytes"
-            )
-        });
+        let is_file_macro =
+            super::source_reach::FileMacroKind::from_path(&invocation.path).is_some();
         if is_file_macro {
             match out_dir_include(invocation.tokens.clone()) {
                 Ok(Some(output)) => {

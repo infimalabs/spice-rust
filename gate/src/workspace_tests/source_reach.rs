@@ -32,7 +32,7 @@ struct SourceGraph {
 }
 
 #[derive(Clone, Copy)]
-enum FileMacroKind {
+pub(super) enum FileMacroKind {
     Include,
     IncludeStr,
     IncludeBytes,
@@ -53,6 +53,25 @@ impl FileMacroKind {
             Self::Include => "include!",
             Self::IncludeStr => "include_str!",
             Self::IncludeBytes => "include_bytes!",
+        }
+    }
+
+    pub(super) fn from_path(path: &syn::Path) -> Option<Self> {
+        let segments = path.segments.iter().collect::<Vec<_>>();
+        if segments
+            .iter()
+            .any(|segment| !matches!(segment.arguments, syn::PathArguments::None))
+        {
+            return None;
+        }
+        match segments.as_slice() {
+            [name] if path.leading_colon.is_none() => Self::from_name(&ident_name(&name.ident)),
+            [namespace, name]
+                if matches!(ident_name(&namespace.ident).as_str(), "std" | "core") =>
+            {
+                Self::from_name(&ident_name(&name.ident))
+            }
+            _ => None,
         }
     }
 }
@@ -476,11 +495,7 @@ impl<'ast> Visit<'ast> for FileMacroVisitor<'_> {
     }
 
     fn visit_macro(&mut self, invocation: &'ast syn::Macro) {
-        if let Some(kind) = invocation
-            .path
-            .get_ident()
-            .and_then(|ident| FileMacroKind::from_name(&ident.to_string()))
-        {
+        if let Some(kind) = FileMacroKind::from_path(&invocation.path) {
             self.record(kind, invocation.tokens.clone());
         } else {
             self.scan(invocation.tokens.clone());
@@ -550,27 +565,15 @@ fn file_macro_references_in_tokens(
     let mut references = Vec::new();
     let mut index = 0;
     while index < trees.len() {
-        let TokenTree::Ident(ident) = &trees[index] else {
+        let Some((kind, arguments_index, next_index)) = file_macro_invocation_at(&trees, index)
+        else {
             if let TokenTree::Group(group) = &trees[index] {
                 references.extend(file_macro_references_in_tokens(group.stream(), source)?);
             }
             index += 1;
             continue;
         };
-        let Some(kind) = FileMacroKind::from_name(&ident.to_string()) else {
-            index += 1;
-            continue;
-        };
-        let namespaced = index >= 2
-            && matches!(&trees[index - 1], TokenTree::Punct(punct) if punct.as_char() == ':')
-            && matches!(&trees[index - 2], TokenTree::Punct(punct) if punct.as_char() == ':');
-        let invocation = matches!(trees.get(index + 1), Some(TokenTree::Punct(punct)) if punct.as_char() == '!')
-            && matches!(trees.get(index + 2), Some(TokenTree::Group(_)));
-        if namespaced || !invocation {
-            index += 1;
-            continue;
-        }
-        let Some(TokenTree::Group(arguments)) = trees.get(index + 2) else {
+        let Some(TokenTree::Group(arguments)) = trees.get(arguments_index) else {
             unreachable!("macro invocation shape was checked")
         };
         let argument = syn::parse2::<FileMacroArgument>(arguments.stream()).map_err(|error| {
@@ -586,9 +589,66 @@ fn file_macro_references_in_tokens(
                 path: path.value(),
             });
         }
-        index += 3;
+        index = next_index;
     }
     Ok(references)
+}
+
+fn file_macro_invocation_at(
+    trees: &[TokenTree],
+    index: usize,
+) -> Option<(FileMacroKind, usize, usize)> {
+    let TokenTree::Ident(first) = trees.get(index)? else {
+        return None;
+    };
+    let unqualified = FileMacroKind::from_name(&ident_name(first))
+        .filter(|_| !path_separator_before(trees, index))
+        .map(|kind| (kind, index + 2, index + 3));
+    if let Some((kind, arguments, next)) = unqualified
+        && macro_arguments_at(trees, index + 1, arguments)
+    {
+        return Some((kind, arguments, next));
+    }
+
+    if !matches!(ident_name(first).as_str(), "std" | "core")
+        || qualified_namespace_has_parent(trees, index)
+        || !path_separator_at(trees, index + 1)
+    {
+        return None;
+    }
+    let TokenTree::Ident(name) = trees.get(index + 3)? else {
+        return None;
+    };
+    let kind = FileMacroKind::from_name(&ident_name(name))?;
+    macro_arguments_at(trees, index + 4, index + 5).then_some((kind, index + 5, index + 6))
+}
+
+fn macro_arguments_at(trees: &[TokenTree], bang: usize, arguments: usize) -> bool {
+    matches!(trees.get(bang), Some(TokenTree::Punct(punct)) if punct.as_char() == '!')
+        && matches!(trees.get(arguments), Some(TokenTree::Group(_)))
+}
+
+fn path_separator_at(trees: &[TokenTree], index: usize) -> bool {
+    matches!(trees.get(index), Some(TokenTree::Punct(punct)) if punct.as_char() == ':')
+        && matches!(trees.get(index + 1), Some(TokenTree::Punct(punct)) if punct.as_char() == ':')
+}
+
+fn path_separator_before(trees: &[TokenTree], index: usize) -> bool {
+    index >= 2 && path_separator_at(trees, index - 2)
+}
+
+fn qualified_namespace_has_parent(trees: &[TokenTree], index: usize) -> bool {
+    path_separator_before(trees, index)
+        && index >= 3
+        && matches!(
+            trees.get(index - 3),
+            Some(TokenTree::Ident(_) | TokenTree::Group(_))
+        )
+}
+
+fn ident_name(ident: &proc_macro2::Ident) -> String {
+    let name = ident.to_string();
+    name.strip_prefix("r#").unwrap_or(&name).to_owned()
 }
 
 fn item_attributes(item: &Item) -> &[syn::Attribute] {
