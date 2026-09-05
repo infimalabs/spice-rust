@@ -13,9 +13,17 @@ async function fleetGeometry(fleet) {
     const surfaceGeometry = surfaces.map((surface) => {
       const rect = surface.getBoundingClientRect();
       const surfaceStyle = getComputedStyle(surface);
-      const clipped = [...surface.querySelectorAll("button, textarea, table")].some((control) => {
+      const controls = [...surface.querySelectorAll("button, textarea, table")]
+        .filter((control) => control.closest('.team-mode-pane[data-active="false"]') === null);
+      const clippedControls = controls.flatMap((control) => {
         const controlRect = control.getBoundingClientRect();
-        return controlRect.left < rect.left - 1 || controlRect.right > rect.right + 1;
+        if (controlRect.left >= rect.left - 1 && controlRect.right <= rect.right + 1) return [];
+        return [{
+          tag: control.tagName,
+          className: control.className,
+          left: controlRect.left,
+          right: controlRect.right,
+        }];
       });
       return {
         top: Math.round(rect.top),
@@ -27,7 +35,7 @@ async function fleetGeometry(fleet) {
         height: rect.height,
         direction: surfaceStyle.direction,
         overflow: surface.scrollWidth - surface.clientWidth,
-        clipped,
+        clipped: clippedControls,
       };
     });
     return {
@@ -52,11 +60,11 @@ async function fleetGeometry(fleet) {
   });
 }
 
-function assertTrack(geometry, label) {
+function assertTrack(geometry, label, overflow) {
   assert.equal(geometry.rows, 1, `${label} remains one row`);
   assert.equal(geometry.direction, "ltr");
   assert.equal(geometry.flexDirection, "row");
-  assert.ok(geometry.overflowX > 0, `${label} owns horizontal overflow`);
+  assert.equal(geometry.overflowX > 1, overflow, `${label} horizontal overflow`);
   assert.ok(geometry.overflowY <= 1, `${label} has no vertical fleet overflow`);
   assert.ok(geometry.pageOverflowY <= 1, `${label} has no page-level vertical overflow`);
   assert.ok(Math.abs(geometry.scrollLeft - geometry.overflowX) <= 1, `${label} is right anchored`);
@@ -67,7 +75,7 @@ function assertTrack(geometry, label) {
       && height <= geometry.height + 1
       && direction === "ltr"
       && overflow <= 1
-      && !clipped
+      && clipped.length === 0
   )), `${label} surfaces remain readable: ${JSON.stringify(geometry)}`);
 }
 
@@ -84,19 +92,18 @@ export async function assertLineageResponsiveLayout(page, console_) {
     await page.setViewportSize({ width: 932, height: 988 });
     await settleLayout(page);
     const reproduction = await fleetGeometry(fleet);
-    assertTrack(reproduction, "932px reproduction");
-    await fleet.focus();
-    await page.keyboard.press("ArrowLeft");
-    await settleLayout(page);
-    const traversed = await fleetGeometry(fleet);
-    assert.ok(traversed.scrollLeft < traversed.overflowX, "keyboard traverses toward older lanes");
-    await fleet.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
+    assertTrack(reproduction, "932px reproduction", false);
 
     await fleet.evaluate((element) => element.append(element.firstElementChild.cloneNode(true)));
     cloned = true;
     await page.setViewportSize({ width: 700, height: 988 });
     await settleLayout(page);
-    assertTrack(await fleetGeometry(fleet), "narrow three-lane track");
+    assertTrack(await fleetGeometry(fleet), "narrow three-lane track", true);
+    await fleet.focus();
+    await page.keyboard.press("ArrowLeft");
+    await page.waitForTimeout(50);
+    const traversed = await fleetGeometry(fleet);
+    assert.ok(traversed.scrollLeft < traversed.overflowX, "keyboard traverses toward older lanes");
     await fleet.evaluate((element) => element.lastElementChild.remove());
     cloned = false;
 
