@@ -278,8 +278,9 @@ pub(super) fn find_thread(
             ));
         }
     }
-    let mut paths = match find_named_transcript(&root.join(layout.sessions_directory), thread) {
+    let discovered = match find_named_transcript(&root.join(layout.sessions_directory), thread) {
         Ok(matches) => matches,
+        Err(_) if !indexed_paths.is_empty() => return Ok(indexed_paths),
         Err(error) => {
             return Err(state_failure.map_or_else(
                 || error.to_string(),
@@ -287,8 +288,10 @@ pub(super) fn find_thread(
             ));
         }
     };
-    paths.retain(|path| !indexed_paths.contains(path));
-    paths.extend(indexed_paths);
+    let paths = discovered
+        .into_iter()
+        .chain(indexed_paths)
+        .collect::<BTreeSet<_>>();
     if !paths.is_empty() {
         return Ok(paths.into_iter().collect());
     }
@@ -575,6 +578,117 @@ mod tests {
             preferred_vendor: None,
             home: None,
         }
+    }
+
+    fn write_codex_state(home: &Path, paths: &[&Path]) {
+        let state = rusqlite::Connection::open(home.join("state_5.sqlite"))
+            .expect("Codex state fixture opens");
+        state
+            .execute("CREATE TABLE threads (id TEXT, rollout_path TEXT)", [])
+            .expect("Codex state fixture schema");
+        for path in paths {
+            state
+                .execute(
+                    "INSERT INTO threads (id, rollout_path) VALUES (?1, ?2)",
+                    (THREAD, path.to_string_lossy().as_ref()),
+                )
+                .expect("Codex state fixture row");
+        }
+    }
+
+    #[test]
+    fn indexed_codex_paths_survive_a_missing_sessions_directory() {
+        let scratch = Scratch::new("indexed-only");
+        let indexed = scratch.path().join("indexed.jsonl");
+        fs::write(&indexed, b"\n").expect("indexed transcript exists");
+        write_codex_state(scratch.path(), &[&indexed]);
+
+        assert_eq!(
+            find_thread(
+                THREAD,
+                &spice::extension::CODEX,
+                &codex_environment(scratch.path()),
+            )
+            .expect("the state index is sufficient transcript authority"),
+            [indexed],
+        );
+    }
+
+    #[test]
+    fn indexed_codex_paths_survive_a_depth_limited_sessions_tree() {
+        let scratch = Scratch::new("indexed-depth");
+        let indexed = scratch.path().join("indexed.jsonl");
+        fs::write(&indexed, b"\n").expect("indexed transcript exists");
+        write_codex_state(scratch.path(), &[&indexed]);
+        let mut directory = scratch.path().join("sessions");
+        for depth in 0..=SEARCH_DEPTH {
+            directory = directory.join(format!("level-{depth}"));
+        }
+        fs::create_dir_all(&directory).expect("deep Codex session branch exists");
+
+        assert_eq!(
+            find_thread(
+                THREAD,
+                &spice::extension::CODEX,
+                &codex_environment(scratch.path()),
+            )
+            .expect("incomplete discovery cannot erase indexed authority"),
+            [indexed],
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn indexed_codex_paths_survive_an_unreadable_sessions_branch() {
+        let scratch = Scratch::new("indexed-unreadable");
+        let indexed = scratch.path().join("indexed.jsonl");
+        fs::write(&indexed, b"\n").expect("indexed transcript exists");
+        write_codex_state(scratch.path(), &[&indexed]);
+        let denied = scratch.path().join("sessions/denied");
+        fs::create_dir_all(&denied).expect("denied Codex session branch exists");
+        let original = fs::metadata(&denied)
+            .expect("denied branch metadata")
+            .permissions();
+        let mut blocked = original.clone();
+        blocked.set_mode(0o0);
+        fs::set_permissions(&denied, blocked).expect("deny fixture branch reads");
+
+        let read_result = fs::read_dir(&denied);
+        let lookup = find_thread(
+            THREAD,
+            &spice::extension::CODEX,
+            &codex_environment(scratch.path()),
+        );
+        fs::set_permissions(&denied, original).expect("restore fixture permissions");
+        read_result.expect_err("fixture must force a real read_dir failure");
+        assert_eq!(
+            lookup.expect("incomplete discovery cannot erase indexed authority"),
+            [indexed],
+        );
+    }
+
+    #[test]
+    fn complete_codex_discovery_merges_indexed_paths_in_global_order() {
+        let scratch = Scratch::new("indexed-merge");
+        let sessions = scratch.path().join("sessions");
+        fs::create_dir_all(&sessions).expect("Codex sessions directory exists");
+        let first = sessions.join(format!("a-{THREAD}.jsonl"));
+        let middle = sessions.join("m-indexed.jsonl");
+        let last = sessions.join(format!("z-{THREAD}.jsonl"));
+        for path in [&first, &middle, &last] {
+            fs::write(path, b"\n").expect("Codex transcript exists");
+        }
+        write_codex_state(scratch.path(), &[&last, &middle, &last]);
+
+        assert_eq!(
+            find_thread(
+                THREAD,
+                &spice::extension::CODEX,
+                &codex_environment(scratch.path()),
+            )
+            .expect("complete discovery augments indexed authority"),
+            [first, middle, last],
+        );
     }
 
     #[cfg(unix)]
