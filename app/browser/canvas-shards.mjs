@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+
+export const CANVAS_PROOF_RELEASE = "0.31.0";
+export const CANVAS_BUILD_ACTION = "canvas:build";
+export const CANVAS_ACTION_PREFIX = "canvas:shard:";
 
 export const SHARD_FLAG = "--spice-shard";
 export const SHARD_EVENT_PREFIX = "CANVAS-SHARD ";
@@ -21,50 +26,19 @@ const EXPECTED_SCENARIOS = [
   "resident-restart",
 ];
 
-export const CANVAS_SHARDS = Object.freeze([
-  Object.freeze({
-    name: "ownership",
-    scenarios: Object.freeze(["launch-boundaries", "fixture-reaping"]),
-  }),
-  Object.freeze({
-    name: "readiness",
-    scenarios: Object.freeze(["light-readiness"]),
-  }),
-  Object.freeze({
-    name: "task-chip",
-    scenarios: Object.freeze(["inline-task-chip"]),
-  }),
-  Object.freeze({
-    name: "interaction",
-    scenarios: Object.freeze([
-      "agent-conversation",
-      "reference-composer",
-      "firefox-restored-mosaic",
-      "authority-task-flow",
-      "automatic-speech",
-    ]),
-  }),
-  Object.freeze({
-    name: "lease",
-    // This shard crosses one production automatic-claim deadline. The rolling
-    // lease itself consumes 100 seconds after the observed heartbeat, plus
-    // restart catch-up under the ordinary browser load policy.
-    timeoutMs: 180_000,
-    scenarios: Object.freeze(["composer-lease"]),
-  }),
-  Object.freeze({
-    name: "resilience",
-    scenarios: Object.freeze([
-      "variant-surfaces",
-      "socket-resilience",
-      "team-lifecycle",
-    ]),
-  }),
-  Object.freeze({
-    name: "restart",
-    scenarios: Object.freeze(["resident-restart"]),
-  }),
-]);
+const registry = JSON.parse(readFileSync(new URL("./canvas-shards.json", import.meta.url), "utf8"));
+assert.deepEqual(Object.keys(registry), ["version", "shards"], "Canvas registry has one schema");
+assert.equal(registry.version, 1, "Canvas registry uses the current schema");
+
+export const CANVAS_SHARDS = Object.freeze(registry.shards.map((shard) => Object.freeze({
+  name: shard.name,
+  timeoutMs: shard.timeout_ms,
+  scenarios: Object.freeze([...shard.scenarios]),
+})));
+
+export function canvasShardAction(name) {
+  return `${CANVAS_ACTION_PREFIX}${name}`;
+}
 
 /// Prove every named scenario belongs to exactly one independently runnable shard.
 export function assertShardInventory(shards = CANVAS_SHARDS) {
@@ -82,6 +56,10 @@ export function assertShardInventory(shards = CANVAS_SHARDS) {
     "the shard registry covers the complete Canvas scenario inventory",
   );
   assert.ok(shards.every((shard) => shard.scenarios.length > 0), "every shard owns a scenario");
+  assert.ok(
+    shards.every((shard) => Number.isSafeInteger(shard.timeoutMs) && shard.timeoutMs > 0),
+    "every shard owns one positive timeout",
+  );
 }
 
 /// Prove removal of a registration trips the same complete-inventory gate.

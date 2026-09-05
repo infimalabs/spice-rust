@@ -62,6 +62,9 @@ fn main() -> ExitCode {
             run_gate(arguments.collect(), &mut output, &mut io::stderr().lock())
         }
         Some(value) if value == OsStr::new("app") => run_app(arguments.collect(), &mut output),
+        Some(value) if value == OsStr::new("__canvas-proof-app") => {
+            run_canvas_proof_app(arguments.collect(), &mut output)
+        }
         Some(value) if value == OsStr::new("build-cache") => {
             run_build_cache(arguments.collect(), &mut output)
         }
@@ -133,6 +136,19 @@ fn run_app(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResu
             Err(usage_error().into())
         }
     }
+}
+
+fn run_canvas_proof_app(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResult {
+    let [source_root, publish_root] = arguments.as_slice() else {
+        return Err(usage_error().into());
+    };
+    xtask::proof_app(
+        Path::new(source_root),
+        Path::new(publish_root),
+        &release_environment(),
+        output,
+    )
+    .map_err(Into::into)
 }
 
 fn run_gate(

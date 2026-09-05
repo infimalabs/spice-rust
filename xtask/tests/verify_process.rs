@@ -162,7 +162,7 @@ fn scoped_verifier_runs_one_package_without_any_full_only_action() {
         FORMAT_ACTION,
         "cargo clippy --locked --workspace --all-targets -- -D warnings",
         "cargo check --locked --workspace --target wasm32-unknown-unknown",
-        "npm run test:canvas (BROWSER-1kKSWhZk guard)",
+        "npm run test:canvas (Canvas browser guard)",
         WORKSPACE_TEST_ACTION,
         "canonical Rust gate battery",
         "contract landing",

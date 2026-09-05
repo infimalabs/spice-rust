@@ -184,8 +184,12 @@ export function ownFixture({
           // fixture directory, and it is the only record of what to reap.
           const vendors = await recordedVendorPids(fixture);
           await attempt(() => stopOwnedResident(owner, stop), "could not stop its resident");
+          // A resident can launch an occupant while its graceful shutdown is
+          // crossing the process boundary. Merge a post-stop ledger snapshot
+          // so that occupant cannot appear after the ownership set was frozen.
+          vendors.push(...await recordedVendorPids(fixture));
           await attempt(
-            () => reapRecordedVendors(vendors, processes),
+            () => reapRecordedVendors([...new Set(vendors)], processes),
             "could not reap its stand-ins",
           );
           await attempt(() => rm(fixture, { recursive: true, force: true }), `left ${fixture}`);

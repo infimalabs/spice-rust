@@ -18,7 +18,7 @@ mod verify_timing;
 #[cfg(not(target_arch = "wasm32"))]
 mod workspace_tests;
 
-pub use app::{AppBuildError, app, app_to};
+pub use app::{AppBuildError, app, app_to, proof_app};
 pub use build_cache::{
     BuildCacheContext, BuildCacheDisposition, BuildCacheError, BuildCacheReport, BuildCacheRequest,
     BuildCacheRootKind, BuildCacheRootReport, BuildCacheTargetDirectory, build_cache,
@@ -56,7 +56,7 @@ const RETIRED_REPOSITORY_ACTIONS: [&str; 13] = [
     "cargo canvas-wasm-typecheck",
     "cargo check --locked --workspace --target wasm32-unknown-unknown",
     "spice dev xtask -- app (canvas compiler evidence)",
-    "npm run test:canvas (BROWSER-1kKSWhZk guard)",
+    "npm run test:canvas (Canvas browser guard)",
     "deterministic sharded cargo test --locked --workspace --all-targets",
     "cargo doc --locked --workspace --lib --bins --no-deps",
     "cargo test --locked --workspace --doc",

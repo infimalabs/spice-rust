@@ -17,6 +17,8 @@ mod action_input;
 mod action_spec;
 pub mod battery;
 pub mod camp;
+#[cfg(not(target_arch = "wasm32"))]
+mod canvas_actions;
 mod change_selection;
 pub mod config;
 pub mod core;
@@ -80,6 +82,11 @@ pub use battery::{BatteryCapture, BatteryStateRun, RepositoryExecutionEvent, Sta
 pub use camp::{
     BoundRelation, CAMP_REPORT_VERSION, Camp, CampError, CampFinding, CampReport, CampRunError,
     CampStanding, DistributionReport, LocusDistance, SharedBound,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use canvas_actions::{
+    CANVAS_ACTION_GROUP, CANVAS_ACTION_PREFIX, CANVAS_ACTION_REGISTRY, CANVAS_BUILD_ACTION,
+    CANVAS_PREDECESSOR_RELEASE, CanvasActionError, CanvasActionPlan, CanvasShard,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use change_selection::compile_language_reach;

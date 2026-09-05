@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -11,6 +10,7 @@ import { auditOwnership } from "./canvas-process-ownership.mjs";
 import {
   assertShardInventory,
   assertShardMutationGuard,
+  CANVAS_PROOF_RELEASE,
   CANVAS_SHARDS,
   SHARD_EVENT_PREFIX,
   SHARD_FLAG,
@@ -19,28 +19,15 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
 const worker = join(here, "canvas.spec.mjs");
-const COVERAGE_FLAG = "--spice-coverage-receipt";
 const PREBUILT_APP_FLAG = "--spice-prebuilt-app";
 const CONCURRENCY_FLAG = "--spice-concurrency";
-const COVERAGE_RECEIPT = "BROWSER-1kKSWhZk browser coverage complete\n";
+const RETIRED_COVERAGE_FLAG = "--spice-coverage-receipt";
 const SHARD_TIMEOUT_MS = 120_000;
 const COORDINATOR_TIMEOUT_MS = 270_000;
 const PROGRESS_MS = 30_000;
 const TERMINATION_GRACE_MS = 30_000;
 const RESIDENT_CONCURRENCY = 4;
 const MAX_CONCURRENCY = 5;
-
-function coveragePath(arguments_) {
-  if (arguments_.length === 0) return null;
-  assert.deepEqual(
-    arguments_.slice(0, 1),
-    [COVERAGE_FLAG],
-    `expected ${COVERAGE_FLAG} FILE or no arguments`,
-  );
-  assert.equal(arguments_.length, 2, `expected ${COVERAGE_FLAG} FILE or no arguments`);
-  assert.ok(arguments_[1] && !arguments_[1].startsWith("--"), "coverage receipt names a file");
-  return arguments_[1];
-}
 
 function concurrencyFrom(arguments_) {
   const indexes = arguments_.flatMap((argument, index) =>
@@ -63,16 +50,21 @@ function concurrencyFrom(arguments_) {
   };
 }
 
-function invocation(arguments_) {
+export function invocation(arguments_) {
+  assert.ok(
+    !arguments_.includes(RETIRED_COVERAGE_FLAG),
+    `${RETIRED_COVERAGE_FLAG} marker-only evidence belongs to release ${CANVAS_PROOF_RELEASE}; `
+      + "use canvas:build and canvas:shard:* proof receipts",
+  );
   const prebuiltFlags = arguments_.filter((argument) => argument === PREBUILT_APP_FLAG);
   assert.ok(prebuiltFlags.length <= 1, `${PREBUILT_APP_FLAG} is singular`);
   const { concurrency, remaining } = concurrencyFrom(
     arguments_.filter((argument) => argument !== PREBUILT_APP_FLAG),
   );
+  assert.deepEqual(remaining, [], "Canvas coordinator arguments are fully recognized");
   return {
     concurrency,
     prebuiltApp: prebuiltFlags.length === 1,
-    receipt: coveragePath(remaining),
   };
 }
 
@@ -221,7 +213,7 @@ async function coordinate() {
   installTerminationHandlers();
   assertShardInventory();
   assertShardMutationGuard();
-  const { concurrency, prebuiltApp, receipt } = invocation(process.argv.slice(2));
+  const { concurrency, prebuiltApp } = invocation(process.argv.slice(2));
   const started = Date.now();
   await buildResident({ app: !prebuiltApp });
   const buildElapsedMs = Date.now() - started;
@@ -272,7 +264,6 @@ async function coordinate() {
   process.stdout.write(
     `canvas coordinator end elapsed_ms=${elapsedMs} cpu_ms=${cpuMs} peak_concurrency=${peak} slowest=${slowest.scenario} slowest_ms=${slowest.elapsedMs}\n`,
   );
-  if (receipt) await writeFile(receipt, COVERAGE_RECEIPT);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

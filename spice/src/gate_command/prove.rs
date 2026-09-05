@@ -18,6 +18,8 @@ use wire::{Digest, Domain, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosi
 use spice::change_gate::{ChangeGateError, StagedActionSelection};
 use spice::repository::Repository;
 
+mod canvas;
+
 const RUNNER_VERSION: u64 = 1;
 
 #[derive(Clone, Copy)]
@@ -61,6 +63,7 @@ struct PreparedAction {
 enum PreparedExecution {
     Gate(Box<spice::gate::PreparedArm<'static>>),
     Cargo(Box<CargoExecution>),
+    Canvas(Box<canvas::CanvasExecution>),
 }
 
 struct CargoExecution {
@@ -115,14 +118,19 @@ fn run(request: Request<'_>) -> Result<ProveReport, ProveFailure> {
     let staged = spice::change_gate::prepare_staged_actions().map_err(ProveFailure::selection)?;
     let store = EvidenceStore::open(repository.common_dir()).map_err(ProveFailure::store)?;
 
-    let (mut actions, pending) =
-        match prepare_actions(&staged, &store, request, repository.worktree_root()) {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                let _ = staged.reject_state();
-                return Err(error);
-            }
-        };
+    let (mut actions, pending) = match prepare_actions(
+        &staged,
+        &store,
+        request,
+        repository.worktree_root(),
+        repository.common_dir(),
+    ) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            let _ = staged.reject_state();
+            return Err(error);
+        }
+    };
     let published = complete_transaction(
         pending,
         execute,
@@ -198,6 +206,7 @@ fn prepare_actions(
     store: &EvidenceStore,
     request: Request<'_>,
     writable_root: &Path,
+    common: &Path,
 ) -> Result<(Vec<ProveActionReport>, Vec<PreparedAction>), ProveFailure> {
     let requested = requested_actions(staged.selection(), request)?;
     let manifest = BatteryManifest::canonical()
@@ -222,13 +231,19 @@ fn prepare_actions(
             classify_prepared(store, request.missing, action, &mut present, &mut pending)?;
         }
     }
+    if canvas::request(request) {
+        let prepared = canvas::prepare(staged, store, &gate_set, request, writable_root, common)?;
+        for action in prepared {
+            classify_prepared(store, request.missing, action, &mut present, &mut pending)?;
+        }
+    }
 
     if let Some(action) = request.action
         && !request_matches_any(action, &present, &pending)
     {
         return Err(ProveFailure::refusal(
             "gate::prove-action-unregistered",
-            format!("{action:?} is not a selected registered gate or Cargo action"),
+            format!("{action:?} is not a selected registered gate, Cargo shard, or Canvas action"),
         ));
     }
     present.sort_by(|left, right| proof_action_order(&left.action, &right.action));
@@ -682,6 +697,7 @@ fn execute(action: PreparedAction) -> Result<PendingReceipt, ProveFailure> {
                 })?,
             )
         }
+        PreparedExecution::Canvas(execution) => canvas::execute(*execution, &action.action)?,
     };
     let duration_millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let finished_at = now()?;
@@ -745,7 +761,7 @@ fn requested_actions(
 }
 
 fn cargo_request(request: Request<'_>) -> bool {
-    request.missing
+    (request.missing && request.action.is_none())
         || request.action.is_some_and(|action| {
             action == "rust-typecheck"
                 || action == "cargo-tests"
@@ -759,6 +775,7 @@ fn registered_request(action: &str) -> bool {
         || action == "cargo-tests"
         || action.starts_with("cargo:typecheck:")
         || action.starts_with("cargo:test:")
+        || canvas::registered(action)
 }
 
 fn request_matches_any(
@@ -781,6 +798,7 @@ fn request_matches_any(
                 .map(|row| row.action.as_str())
                 .chain(pending.iter().map(|row| row.action.as_str()))
                 .any(|action| action.starts_with("cargo:test:")))
+        || canvas::matches_group(requested, present, pending)
 }
 
 fn declaration(manifest: &BatteryManifest, gate_id: GateId) -> Result<&str, ProveFailure> {
@@ -887,6 +905,12 @@ fn proof_action_position(action: &str) -> usize {
     if action.starts_with("cargo:test:") {
         return GateId::BATTERY.len();
     }
+    if action == gate::CANVAS_BUILD_ACTION {
+        return GateId::BATTERY.len() + 1;
+    }
+    if action.starts_with(gate::CANVAS_ACTION_PREFIX) {
+        return GateId::BATTERY.len() + 2;
+    }
     gate_id(action).map_or(GateId::BATTERY.len() + 1, gate_position)
 }
 
@@ -960,6 +984,10 @@ impl ProveFailure {
         Self::refusal("gate::prove-cargo-shard-refused", error)
     }
 
+    fn canvas(error: gate::CanvasActionError) -> Self {
+        Self::refusal("gate::prove-canvas-action-refused", error)
+    }
+
     fn outcome<B>(self) -> Outcome<B> {
         match self {
             Self::Refusal { reason, detail } => refusal(&reason, detail),
@@ -1005,7 +1033,7 @@ mod tests {
         }));
         assert!(!cargo_request(Request {
             action: Some("formatters"),
-            missing: false,
+            missing: true,
         }));
         assert_eq!(
             proof_action_order("taste", "cargo:typecheck:fixture::lib:fixture"),
