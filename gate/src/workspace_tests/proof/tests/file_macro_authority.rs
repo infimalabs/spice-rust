@@ -11,14 +11,12 @@ fn opaque_expansion_file_macro_authority_refuses_before_a_shard_can_be_planned()
     fs::write(
         fixture.root.join("fixture/src/lib.rs"),
         concat!(
-            "mod definitions {\n",
-            "    macro_rules! include_str { ($path:literal) => { \"owned\" }; }\n",
-            "    #[macro_export]\n",
-            "    macro_rules! outer {\n",
-            "        () => { pub const VALUE: &str = include_str!(\"../../file-macro-authority.txt\"); };\n",
-            "    }\n",
+            "macro_rules! outer {\n",
+            "    ($macro_name:ident) => {\n",
+            "        pub const VALUE: &str = $macro_name!(\"../../file-macro-authority.txt\");\n",
+            "    };\n",
             "}\n",
-            "outer!();\n",
+            "outer!(include_str);\n",
         ),
     )
     .expect("write opaque expansion file-macro source");
@@ -27,9 +25,9 @@ fn opaque_expansion_file_macro_authority_refuses_before_a_shard_can_be_planned()
         .try_plan(true)
         .expect_err("opaque file-macro expansion authority cannot produce Cargo shards");
     assert!(
-        error
-            .to_string()
-            .contains("cannot prove expansion-site file-macro namespace for include_str!"),
+        error.to_string().contains(
+            "cannot prove expansion-site file-macro namespace for macro path containing $macro_name"
+        ),
         "unexpected refusal: {error}",
     );
 }
