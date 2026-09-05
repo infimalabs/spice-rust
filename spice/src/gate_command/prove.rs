@@ -22,6 +22,8 @@ mod canvas;
 #[cfg(test)]
 #[path = "prove/cargo_authority_tests.rs"]
 mod cargo_authority_tests;
+#[path = "prove/single_flight.rs"]
+mod single_flight;
 
 const RUNNER_VERSION: u64 = 1;
 
@@ -287,12 +289,11 @@ fn run(request: Request<'_>) -> Result<ProveReport, ProveFailure> {
             return Err(error);
         }
     };
-    let published = complete_transaction(
+    let published = single_flight::run(
+        &store,
         pending,
-        execute,
         || validate_source(&repository, &staged, &candidate_tree),
         || staged.reject_state().map_err(ProveFailure::run),
-        |pending| publish(&store, pending),
     )?;
     actions.extend(published);
     actions.sort_by(|left, right| proof_action_order(&left.action, &right.action));
@@ -303,25 +304,7 @@ fn run(request: Request<'_>) -> Result<ProveReport, ProveFailure> {
     })
 }
 
-fn publish(
-    store: &EvidenceStore,
-    pending: Vec<PendingReceipt>,
-) -> Result<Vec<ProveActionReport>, ProveFailure> {
-    let publications = store
-        .publish_batch(pending.iter().map(|pending| &pending.receipt))
-        .map_err(ProveFailure::store)?;
-    Ok(pending
-        .into_iter()
-        .zip(publications)
-        .map(|(pending, publication)| ProveActionReport {
-            action: pending.action,
-            action_key: pending.action_key,
-            disposition: ProveDisposition::Published,
-            receipt: publication.receipt().clone(),
-        })
-        .collect())
-}
-
+#[cfg(test)]
 fn complete_transaction<A, R, O, E>(
     actions: Vec<A>,
     mut execute: impl FnMut(A) -> Result<R, E>,

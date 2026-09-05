@@ -201,6 +201,9 @@ pub(super) fn read_lease(
         ));
     }
     validate_owner(&record.owner)?;
+    if let Some(failure) = &record.failure {
+        validate_lease_failure(&failure.reason, &failure.detail)?;
+    }
     Ok(Some(record))
 }
 

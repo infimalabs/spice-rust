@@ -1,0 +1,347 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
+use std::thread;
+use std::time::{Duration, SystemTime};
+
+use gate::{EvidenceLease, EvidenceStore, LeaseAcquisition};
+use notify::{RecursiveMode, Watcher as _};
+
+use super::{PreparedAction, ProveActionReport, ProveDisposition, ProveFailure, execute};
+
+#[cfg(test)]
+#[path = "single_flight/tests.rs"]
+mod tests;
+
+const LEASE_LIFETIME: Duration = Duration::from_secs(30);
+const RENEW_INTERVAL: Duration = Duration::from_secs(10);
+const WAIT_LIMIT: Duration = Duration::from_secs(600);
+
+pub(super) fn run(
+    store: &EvidenceStore,
+    actions: Vec<PreparedAction>,
+    validate: impl FnOnce() -> Result<(), ProveFailure>,
+    cleanup: impl FnOnce() -> Result<(), ProveFailure>,
+) -> Result<Vec<ProveActionReport>, ProveFailure> {
+    let owner = format!(
+        "proof:{}:{}",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple()
+    );
+    let mut present = Vec::new();
+    let mut pending = Vec::new();
+    let mut failure = None;
+    for action in actions {
+        let claimed = match claim(store, &owner, &action.action, &action.action_key) {
+            Ok(claimed) => claimed,
+            Err(error) => {
+                failure = Some(error);
+                break;
+            }
+        };
+        match claimed {
+            Claim::Present(report) => present.push(report),
+            Claim::Lease(lease) => match execute(action) {
+                Ok(receipt) => pending.push((receipt, lease)),
+                Err(error) => {
+                    lease.fail(&error);
+                    failure = Some(error);
+                    break;
+                }
+            },
+        }
+    }
+    if failure.is_none()
+        && let Err(error) = validate()
+    {
+        failure = Some(error);
+    }
+    if let Err(error) = cleanup()
+        && failure.is_none()
+    {
+        failure = Some(error);
+    }
+    if let Some(error) = failure {
+        for (_, lease) in &pending {
+            lease.fail(&error);
+        }
+        return Err(error);
+    }
+    for (_, lease) in &pending {
+        if let Err(error) = lease.renew_now() {
+            for (_, lease) in &pending {
+                lease.fail(&error);
+            }
+            return Err(error);
+        }
+    }
+    let leases = pending
+        .iter()
+        .map(|(_, lease)| lease.current())
+        .collect::<Vec<_>>();
+    let publications = match store
+        .publish_batch_leased(
+            pending
+                .iter()
+                .zip(&leases)
+                .map(|((pending, _), lease)| (&pending.receipt, lease)),
+            SystemTime::now(),
+        )
+        .map_err(ProveFailure::store)
+    {
+        Ok(publications) => publications,
+        Err(error) => {
+            for (_, lease) in &pending {
+                lease.fail(&error);
+            }
+            return Err(error);
+        }
+    };
+    present.extend(pending.into_iter().zip(publications).map(
+        |((pending, _lease), publication)| ProveActionReport {
+            action: pending.action,
+            action_key: pending.action_key,
+            disposition: ProveDisposition::Published,
+            receipt: publication.receipt().clone(),
+        },
+    ));
+    Ok(present)
+}
+
+enum Claim {
+    Present(ProveActionReport),
+    Lease(LeaseGuard),
+}
+
+fn claim(
+    store: &EvidenceStore,
+    owner: &str,
+    action: &str,
+    action_key: &gate::ActionKey,
+) -> Result<Claim, ProveFailure> {
+    if let Some(receipt) = store.lookup(action_key).map_err(ProveFailure::store)? {
+        return present(action, action_key, receipt);
+    }
+    match store
+        .acquire_lease(action_key, owner, SystemTime::now(), LEASE_LIFETIME)
+        .map_err(ProveFailure::store)?
+    {
+        LeaseAcquisition::Acquired { lease, .. } => {
+            return acquired(store, action, action_key, lease, false);
+        }
+        LeaseAcquisition::Failed {
+            reason,
+            detail,
+            fault,
+            ..
+        } => return Err(shared_failure(reason, detail, fault)),
+        LeaseAcquisition::Busy { .. } => {}
+    }
+    let started = std::time::Instant::now();
+    let (changes, receiver) = mpsc::channel();
+    let mut watcher = notify::recommended_watcher(move |event| {
+        let _ = changes.send(event);
+    })
+    .map_err(watch_failure)?;
+    watcher
+        .watch(store.root(), RecursiveMode::Recursive)
+        .map_err(watch_failure)?;
+    loop {
+        if let Some(receipt) = store.lookup(action_key).map_err(ProveFailure::store)? {
+            return present(action, action_key, receipt);
+        }
+        match store
+            .acquire_lease(action_key, owner, SystemTime::now(), LEASE_LIFETIME)
+            .map_err(ProveFailure::store)?
+        {
+            LeaseAcquisition::Acquired { lease, recovered } => {
+                return acquired(store, action, action_key, lease, !recovered);
+            }
+            LeaseAcquisition::Busy {
+                expires_at_millis, ..
+            } => {
+                let remaining = WAIT_LIMIT.saturating_sub(started.elapsed());
+                if remaining.is_zero() {
+                    return Err(ProveFailure::refusal(
+                        "gate::prove-peer-action-timeout",
+                        format!("timed out waiting for action {action}"),
+                    ));
+                }
+                let until_expiry = Duration::from_millis(expires_at_millis).saturating_sub(
+                    SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default(),
+                );
+                match receiver.recv_timeout(remaining.min(until_expiry)) {
+                    Ok(Ok(_)) | Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    Ok(Err(error)) => return Err(watch_failure(error)),
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        return Err(ProveFailure::fault(
+                            "gate::prove-peer-observer-lost",
+                            "evidence-store observer disconnected",
+                        ));
+                    }
+                }
+            }
+            LeaseAcquisition::Failed {
+                reason,
+                detail,
+                fault,
+                ..
+            } => {
+                return Err(shared_failure(reason, detail, fault));
+            }
+        }
+    }
+}
+
+fn present(
+    action: &str,
+    action_key: &gate::ActionKey,
+    receipt: gate::PassReceipt,
+) -> Result<Claim, ProveFailure> {
+    Ok(Claim::Present(ProveActionReport {
+        action: action.to_owned(),
+        action_key: action_key.clone(),
+        disposition: ProveDisposition::Present,
+        receipt: receipt.id().map_err(ProveFailure::store)?,
+    }))
+}
+
+fn acquired(
+    store: &EvidenceStore,
+    action: &str,
+    action_key: &gate::ActionKey,
+    lease: EvidenceLease,
+    released_by_peer: bool,
+) -> Result<Claim, ProveFailure> {
+    if let Some(receipt) = store.lookup(action_key).map_err(ProveFailure::store)? {
+        store.release_lease(&lease).map_err(ProveFailure::store)?;
+        return present(action, action_key, receipt);
+    }
+    if released_by_peer {
+        store.release_lease(&lease).map_err(ProveFailure::store)?;
+        return Err(ProveFailure::refusal(
+            "gate::prove-peer-action-failed",
+            format!("action {action} was released without a receipt"),
+        ));
+    }
+    Ok(Claim::Lease(LeaseGuard::new(store.clone(), lease)))
+}
+
+fn shared_failure(reason: String, detail: String, fault: bool) -> ProveFailure {
+    if fault {
+        ProveFailure::fault(reason, detail)
+    } else {
+        ProveFailure::refusal(reason, detail)
+    }
+}
+
+fn watch_failure(error: notify::Error) -> ProveFailure {
+    ProveFailure::fault("gate::prove-peer-observer-failed", error)
+}
+
+struct LeaseGuard {
+    store: EvidenceStore,
+    lease: Arc<Mutex<EvidenceLease>>,
+    failure: Arc<Mutex<Option<(String, String)>>>,
+    stop: mpsc::Sender<()>,
+    worker: Option<thread::JoinHandle<()>>,
+    terminal: AtomicBool,
+}
+
+impl LeaseGuard {
+    fn new(store: EvidenceStore, lease: EvidenceLease) -> Self {
+        Self::new_with_timing(store, lease, LEASE_LIFETIME, RENEW_INTERVAL)
+    }
+
+    fn new_with_timing(
+        store: EvidenceStore,
+        lease: EvidenceLease,
+        lifetime: Duration,
+        renew_interval: Duration,
+    ) -> Self {
+        let lease = Arc::new(Mutex::new(lease));
+        let failure = Arc::new(Mutex::new(None));
+        let (stop, stopped) = mpsc::channel();
+        let worker_store = store.clone();
+        let worker_lease = Arc::clone(&lease);
+        let worker_failure = Arc::clone(&failure);
+        let worker = thread::spawn(move || {
+            while stopped.recv_timeout(renew_interval).is_err() {
+                let mut lease = worker_lease.lock().expect("lease mutex is not poisoned");
+                match worker_store.renew_lease(&lease, SystemTime::now(), lifetime) {
+                    Ok(renewed) => *lease = renewed,
+                    Err(error) => {
+                        *worker_failure
+                            .lock()
+                            .expect("failure mutex is not poisoned") =
+                            Some((error.reason().to_owned(), error.detail().to_owned()));
+                        break;
+                    }
+                }
+            }
+        });
+        Self {
+            store,
+            lease,
+            failure,
+            stop,
+            worker: Some(worker),
+            terminal: AtomicBool::new(false),
+        }
+    }
+
+    fn renew_now(&self) -> Result<(), ProveFailure> {
+        if let Some((reason, detail)) = self
+            .failure
+            .lock()
+            .expect("failure mutex is not poisoned")
+            .clone()
+        {
+            return Err(ProveFailure::refusal(reason, detail));
+        }
+        let mut lease = self.lease.lock().expect("lease mutex is not poisoned");
+        *lease = self
+            .store
+            .renew_lease(&lease, SystemTime::now(), LEASE_LIFETIME)
+            .map_err(ProveFailure::store)?;
+        Ok(())
+    }
+
+    fn current(&self) -> EvidenceLease {
+        self.lease
+            .lock()
+            .expect("lease mutex is not poisoned")
+            .clone()
+    }
+
+    fn fail(&self, failure: &ProveFailure) {
+        let lease = self.current();
+        if self
+            .store
+            .fail_lease(
+                &lease,
+                failure.reason(),
+                failure.detail(),
+                failure.is_fault(),
+            )
+            .is_ok()
+        {
+            self.terminal.store(true, Ordering::Release);
+        }
+    }
+}
+
+impl Drop for LeaseGuard {
+    fn drop(&mut self) {
+        let _ = self.stop.send(());
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+        if !self.terminal.load(Ordering::Acquire)
+            && let Ok(lease) = self.lease.lock()
+        {
+            let _ = self.store.release_lease(&lease);
+        }
+    }
+}

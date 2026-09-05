@@ -438,6 +438,106 @@ fn stale_lease_takeover_is_exact_and_old_tokens_cannot_release_it() {
 }
 
 #[test]
+fn leased_publication_requires_the_exact_live_action_token() {
+    let fixture = Fixture::new("leased-publication");
+    let store = fixture.store();
+    let action = derive_action_key(b"published action");
+    let other = derive_action_key(b"other action");
+    let start = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+    let lease = acquired(
+        store
+            .acquire_lease(&action, "worker-a", start, Duration::from_secs(10))
+            .unwrap(),
+    );
+    let receipt = pass_receipt(&action, b"passed");
+    let other_receipt = pass_receipt(&other, b"other");
+
+    assert_eq!(
+        store
+            .publish_batch_leased([(&other_receipt, &lease)], start)
+            .unwrap_err()
+            .reason(),
+        "gate-evidence::lease-action-mismatch"
+    );
+    assert_eq!(
+        store
+            .publish_batch_leased([(&receipt, &lease)], start + Duration::from_secs(10))
+            .unwrap_err()
+            .reason(),
+        "gate-evidence::lease-expired"
+    );
+    let publication = store
+        .publish_batch_leased([(&receipt, &lease)], start + Duration::from_secs(9))
+        .unwrap();
+    assert_eq!(publication.len(), 1);
+    assert!(store.lookup(&action).unwrap().is_some());
+}
+
+#[test]
+fn lease_failure_is_shared_until_one_expired_takeover() {
+    let fixture = Fixture::new("lease-failure");
+    let store = fixture.store();
+    let action = derive_action_key(b"failed action");
+    let start = SystemTime::UNIX_EPOCH + Duration::from_secs(2_000);
+    let lease = acquired(
+        store
+            .acquire_lease(&action, "worker-a", start, Duration::from_secs(10))
+            .unwrap(),
+    );
+    store
+        .fail_lease(
+            &lease,
+            "gate::fixture-failed",
+            "fixture execution failed",
+            false,
+        )
+        .unwrap();
+    assert_eq!(
+        store
+            .publish_batch_leased([(&pass_receipt(&action, b"late"), &lease)], start)
+            .unwrap_err()
+            .reason(),
+        "gate-evidence::lease-terminal"
+    );
+
+    for owner in ["worker-b", "worker-c"] {
+        assert!(matches!(
+            store.acquire_lease(
+                &action,
+                owner,
+                start + Duration::from_secs(9),
+                Duration::from_secs(10),
+            ).unwrap(),
+            LeaseAcquisition::Failed { reason, detail, fault: false, .. }
+                if reason == "gate::fixture-failed" && detail == "fixture execution failed"
+        ));
+    }
+    assert_eq!(
+        store
+            .renew_lease(
+                &lease,
+                start + Duration::from_secs(1),
+                Duration::from_secs(10)
+            )
+            .unwrap_err()
+            .reason(),
+        "gate-evidence::lease-terminal"
+    );
+    let LeaseAcquisition::Acquired { recovered, .. } = store
+        .acquire_lease(
+            &action,
+            "worker-b",
+            start + Duration::from_secs(10),
+            Duration::from_secs(10),
+        )
+        .unwrap()
+    else {
+        panic!("expired failure must admit one takeover");
+    };
+    assert!(recovered);
+}
+
+#[test]
 fn garbage_collection_is_bounded_and_retains_ambiguous_bytes() {
     let fixture = Fixture::new("collection");
     let store = fixture.store();

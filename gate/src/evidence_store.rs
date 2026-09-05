@@ -334,6 +334,13 @@ pub enum LeaseAcquisition {
         owner: String,
         expires_at_millis: u64,
     },
+    Failed {
+        owner: String,
+        reason: String,
+        detail: String,
+        fault: bool,
+        expires_at_millis: u64,
+    },
 }
 
 /// Bounded collection result. Ambiguous bytes are retained and named.
@@ -558,6 +565,51 @@ impl EvidenceStore {
         self.publish_batch_with(receipts, |_| Ok(()))
     }
 
+    /// Publish receipts only while each caller retains its exact live action lease.
+    pub fn publish_batch_leased<'a>(
+        &self,
+        entries: impl IntoIterator<Item = (&'a PassReceipt, &'a EvidenceLease)>,
+        now: SystemTime,
+    ) -> Result<Vec<Publication>, EvidenceStoreError> {
+        let now = millis(now)?;
+        let entries = entries.into_iter().collect::<Vec<_>>();
+        self.with_lock(|layout| {
+            for (receipt, lease) in &entries {
+                if receipt.action() != lease.action() {
+                    return Err(EvidenceStoreError::new(
+                        "gate-evidence::lease-action-mismatch",
+                        format!(
+                            "receipt action {} differs from lease action {}",
+                            receipt.action(),
+                            lease.action(),
+                        ),
+                    ));
+                }
+                let record = require_lease(layout, lease)?;
+                if record.failure.is_some() {
+                    return Err(EvidenceStoreError::new(
+                        "gate-evidence::lease-terminal",
+                        format!(
+                            "lease for {} already carries a terminal failure",
+                            lease.action
+                        ),
+                    ));
+                }
+                if record.expires_at_millis <= now {
+                    return Err(EvidenceStoreError::new(
+                        "gate-evidence::lease-expired",
+                        format!("lease expired at {}", record.expires_at_millis),
+                    ));
+                }
+            }
+            let receipts = entries
+                .iter()
+                .map(|(receipt, _)| *receipt)
+                .collect::<Vec<_>>();
+            publish_batch(layout, &receipts, &mut |_| Ok(()))
+        })
+    }
+
     fn publish_batch_with<'a>(
         &self,
         receipts: impl IntoIterator<Item = &'a PassReceipt>,
@@ -654,6 +706,15 @@ impl EvidenceStore {
             if let Some(record) = &existing
                 && record.expires_at_millis > now
             {
+                if let Some(failure) = &record.failure {
+                    return Ok(LeaseAcquisition::Failed {
+                        owner: record.owner.clone(),
+                        reason: failure.reason.clone(),
+                        detail: failure.detail.clone(),
+                        fault: failure.fault,
+                        expires_at_millis: record.expires_at_millis,
+                    });
+                }
                 return Ok(LeaseAcquisition::Busy {
                     owner: record.owner.clone(),
                     expires_at_millis: record.expires_at_millis,
@@ -698,6 +759,15 @@ impl EvidenceStore {
         })?;
         self.with_lock(|layout| {
             let record = require_lease(layout, lease)?;
+            if record.failure.is_some() {
+                return Err(EvidenceStoreError::new(
+                    "gate-evidence::lease-terminal",
+                    format!(
+                        "lease for {} already carries a terminal failure",
+                        lease.action
+                    ),
+                ));
+            }
             if record.expires_at_millis <= now {
                 return Err(EvidenceStoreError::new(
                     "gate-evidence::lease-expired",
@@ -720,6 +790,31 @@ impl EvidenceStore {
         self.with_lock(|layout| {
             require_lease(layout, lease)?;
             remove_file(&layout.lease_path(&lease.action))
+        })
+    }
+
+    /// Publish one bounded terminal failure for every waiter on this exact lease.
+    pub fn fail_lease(
+        &self,
+        lease: &EvidenceLease,
+        reason: &str,
+        detail: &str,
+        fault: bool,
+    ) -> Result<(), EvidenceStoreError> {
+        validate_lease_failure(reason, detail)?;
+        let mut end = detail.len().min(16 * 1024);
+        while !detail.is_char_boundary(end) {
+            end -= 1;
+        }
+        let detail = &detail[..end];
+        self.with_lock(|layout| {
+            let mut record = require_lease(layout, lease)?;
+            record.failure = Some(LeaseFailure {
+                reason: reason.to_owned(),
+                detail: detail.to_owned(),
+                fault,
+            });
+            publish_json(&layout.lease_path(&lease.action), &record)
         })
     }
 
@@ -849,6 +944,16 @@ struct LeaseRecord {
     token: Digest,
     owner: String,
     expires_at_millis: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    failure: Option<LeaseFailure>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LeaseFailure {
+    reason: String,
+    detail: String,
+    fault: bool,
 }
 
 impl LeaseRecord {
@@ -859,6 +964,7 @@ impl LeaseRecord {
             token,
             owner,
             expires_at_millis,
+            failure: None,
         }
     }
 }
@@ -879,6 +985,22 @@ fn validate_owner(owner: &str) -> Result<(), EvidenceStoreError> {
         return Err(EvidenceStoreError::new(
             "gate-evidence::lease-owner-invalid",
             "lease owner must be 1..=256 printable bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_lease_failure(reason: &str, detail: &str) -> Result<(), EvidenceStoreError> {
+    if reason.is_empty() || reason.len() > 256 || reason.chars().any(char::is_control) {
+        return Err(EvidenceStoreError::new(
+            "gate-evidence::lease-failure-invalid",
+            "lease failure reason must be 1..=256 printable bytes",
+        ));
+    }
+    if detail.is_empty() {
+        return Err(EvidenceStoreError::new(
+            "gate-evidence::lease-failure-invalid",
+            "lease failure detail must be nonempty",
         ));
     }
     Ok(())
