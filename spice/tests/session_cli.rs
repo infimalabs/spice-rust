@@ -970,7 +970,7 @@ fn provider_turn_identity_and_final_deduplication_cross_query_folds() {
 }
 
 #[test]
-fn token_reporting_refuses_invalid_time_and_keeps_an_unknown_context_unknown() {
+fn token_reporting_contains_invalid_time_and_keeps_an_unknown_context_unknown() {
     let scratch = Scratch::new("token-admission");
     let path = scratch.path().join("usage.jsonl");
     let invalid = codex_event(
@@ -994,11 +994,16 @@ fn token_reporting_refuses_invalid_time_and_keeps_an_unknown_context_unknown() {
     );
     write_jsonl(&path, &[invalid]);
 
-    refusal(
+    let invalid_tokens = reply_forms(
         &strings(&["session", "tokens", &path.to_string_lossy()]),
         &[],
-        "session::transcript-timestamp-invalid",
+        "tokens",
     );
+    assert_eq!(invalid_tokens["usage"].as_array().map(Vec::len), Some(1));
+    assert_eq!(invalid_tokens["usage"][0]["source"], "TOTAL");
+    assert_eq!(invalid_tokens["usage"][0]["snapshots"], 0);
+    assert_eq!(invalid_tokens["residues"][0]["kind"], "timestamp-invalid");
+    assert_eq!(invalid_tokens["residues"][0]["line"], 1);
     write_jsonl(&path, &[valid_unknown]);
 
     let tokens = reply_forms(

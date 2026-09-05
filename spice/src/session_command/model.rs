@@ -401,6 +401,7 @@ pub(crate) struct ThreadView {
     pub(crate) id: String,
     pub(crate) vendor: Vendor,
     pub(crate) transcript: String,
+    pub(crate) transcripts: Vec<String>,
     pub(crate) turns: usize,
     pub(crate) compactions: usize,
     pub(crate) start: Option<String>,
@@ -499,6 +500,7 @@ pub(crate) enum Report {
     },
     Thread {
         source: SourceView,
+        sources: Vec<SourceView>,
         thread: ThreadView,
         residues: Vec<Residue>,
     },

@@ -26,10 +26,11 @@ pub(crate) fn resolve_inputs(
     let resolved = if values.is_empty() {
         resolve_ambient(environment)?
     } else {
-        values
-            .iter()
-            .map(|value| resolve_input(value, environment))
-            .collect::<Result<Vec<_>, _>>()?
+        let mut resolved = Vec::new();
+        for value in values {
+            resolved.extend(resolve_input(value, environment)?);
+        }
+        resolved
     };
     deduplicate(resolved)
 }
@@ -37,7 +38,7 @@ pub(crate) fn resolve_inputs(
 pub(crate) fn resolve_thread(
     value: &str,
     environment: &Environment,
-) -> Result<ResolvedSource, Refusal> {
+) -> Result<Vec<ResolvedSource>, Refusal> {
     let registry = spice::extension::registry()
         .expect("compiled extension declarations are validated by the test gate");
     resolve_thread_from_registry(value, environment, &registry)
@@ -47,7 +48,7 @@ fn resolve_thread_from_registry(
     value: &str,
     environment: &Environment,
     registry: &spice::extension::Registry<'_>,
-) -> Result<ResolvedSource, Refusal> {
+) -> Result<Vec<ResolvedSource>, Refusal> {
     let thread = canonical_thread(value).ok_or_else(|| {
         refusal(
             "session::thread-invalid",
@@ -61,8 +62,12 @@ fn resolve_thread_from_registry(
     let mut failures = Vec::new();
     for vendor in vendors {
         match find_thread(&thread, vendor, environment) {
-            Ok(path) => {
-                return admit(path, Some(vendor), Some(thread));
+            Ok(paths) => {
+                let admitted = paths
+                    .into_iter()
+                    .map(|path| admit(path, Some(vendor), Some(thread.clone())))
+                    .collect::<Result<Vec<_>, _>>()?;
+                return deduplicate(admitted);
             }
             Err(detail) => failures.push(detail),
         }
@@ -88,7 +93,7 @@ fn resolve_ambient(environment: &Environment) -> Result<Vec<ResolvedSource>, Ref
                     "repair the live vendor thread identity or pass an explicit transcript path",
                 )
             })?;
-            let path =
+            let paths =
                 find_thread(&thread, vendor_environment.vendor, environment).map_err(|detail| {
                     refusal(
                         "session::ambient-transcript-unresolved",
@@ -96,11 +101,11 @@ fn resolve_ambient(environment: &Environment) -> Result<Vec<ResolvedSource>, Ref
                         &format!("pass the transcript path explicitly; {detail}"),
                     )
                 })?;
-            return Ok(vec![admit(
-                path,
-                Some(vendor_environment.vendor),
-                Some(thread),
-            )?]);
+            let admitted = paths
+                .into_iter()
+                .map(|path| admit(path, Some(vendor_environment.vendor), Some(thread.clone())))
+                .collect::<Result<Vec<_>, _>>()?;
+            return deduplicate(admitted);
         }
     }
 
@@ -137,10 +142,10 @@ fn resolve_ambient(environment: &Environment) -> Result<Vec<ResolvedSource>, Ref
         .collect()
 }
 
-fn resolve_input(value: &str, environment: &Environment) -> Result<ResolvedSource, Refusal> {
+fn resolve_input(value: &str, environment: &Environment) -> Result<Vec<ResolvedSource>, Refusal> {
     let expanded = expand_home(value, environment);
     if expanded.exists() {
-        return admit(expanded, None, None);
+        return Ok(vec![admit(expanded, None, None)?]);
     }
     if canonical_thread(value).is_some() {
         return resolve_thread(value, environment);
@@ -242,7 +247,7 @@ pub(super) fn find_thread(
     thread: &str,
     vendor: &'static spice::extension::Vendor,
     environment: &Environment,
-) -> Result<PathBuf, String> {
+) -> Result<Vec<PathBuf>, String> {
     let vendor_environment = environment
         .vendors
         .iter()
@@ -255,12 +260,14 @@ pub(super) fn find_thread(
         layout.default_home,
     )?;
     let mut state_failure = None;
+    let mut indexed_paths = Vec::new();
     if let Some(vendor::TranscriptIndex::CodexStateV5 { file }) = layout.state_index {
         let state = root.join(file);
         if state.is_file() {
-            match codex_state_path(&state, thread) {
-                Ok(Some(path)) if path.is_file() => return Ok(path),
-                Ok(_) => {}
+            match codex_state_paths(&state, thread) {
+                Ok(indexed) => {
+                    indexed_paths.extend(indexed.into_iter().filter(|path| path.is_file()));
+                }
                 Err(error) => state_failure = Some(format!("{}: {error}", state.display())),
             }
         } else {
@@ -271,15 +278,19 @@ pub(super) fn find_thread(
             ));
         }
     }
-    match find_named_transcript(&root.join(layout.sessions_directory), thread) {
-        Ok(Some(path)) => return Ok(path),
-        Ok(None) => {}
+    let mut paths = match find_named_transcript(&root.join(layout.sessions_directory), thread) {
+        Ok(matches) => matches,
         Err(error) => {
             return Err(state_failure.map_or_else(
                 || error.to_string(),
                 |failure| format!("{failure}; {error}"),
             ));
         }
+    };
+    paths.retain(|path| !indexed_paths.contains(path));
+    paths.extend(indexed_paths);
+    if !paths.is_empty() {
+        return Ok(paths.into_iter().collect());
     }
     Err(state_failure.unwrap_or_else(|| {
         format!(
@@ -290,26 +301,27 @@ pub(super) fn find_thread(
     }))
 }
 
-fn codex_state_path(state: &Path, thread: &str) -> Result<Option<PathBuf>, String> {
+fn codex_state_paths(state: &Path, thread: &str) -> Result<Vec<PathBuf>, String> {
     let connection = Connection::open_with_flags(
         state,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(|error| error.to_string())?;
     let mut statement = connection
-        .prepare("SELECT rollout_path FROM threads WHERE replace(lower(id), '-', '') = ?1 LIMIT 1")
+        .prepare("SELECT rollout_path FROM threads WHERE replace(lower(id), '-', '') = ?1")
         .map_err(|error| error.to_string())?;
     let mut rows = statement
         .query([thread])
         .map_err(|error| error.to_string())?;
-    let Some(row) = rows.next().map_err(|error| error.to_string())? else {
-        return Ok(None);
-    };
-    let path = row
-        .get::<_, String>(0)
-        .map(PathBuf::from)
-        .map_err(|error| error.to_string())?;
-    Ok(Some(path))
+    let mut paths = BTreeSet::new();
+    while let Some(row) = rows.next().map_err(|error| error.to_string())? {
+        let path = row
+            .get::<_, String>(0)
+            .map(PathBuf::from)
+            .map_err(|error| error.to_string())?;
+        paths.insert(path);
+    }
+    Ok(paths.into_iter().collect())
 }
 
 #[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -365,10 +377,7 @@ impl fmt::Display for TranscriptSearchError {
     }
 }
 
-fn find_named_transcript(
-    root: &Path,
-    thread: &str,
-) -> Result<Option<PathBuf>, TranscriptSearchError> {
+fn find_named_transcript(root: &Path, thread: &str) -> Result<Vec<PathBuf>, TranscriptSearchError> {
     let mut pending = vec![(root.to_path_buf(), 0_usize)];
     let mut matches = Vec::new();
     let mut issues = Vec::new();
@@ -428,7 +437,8 @@ fn find_named_transcript(
         return Err(TranscriptSearchError { issues });
     }
     matches.sort();
-    Ok(matches.into_iter().next_back())
+    matches.dedup();
+    Ok(matches)
 }
 
 fn environment_root(
@@ -650,13 +660,13 @@ mod tests {
     }
 
     #[test]
-    fn complete_walk_distinguishes_empty_from_newest_match() {
+    fn complete_walk_returns_every_matching_transcript_in_order() {
         let scratch = Scratch::new("complete");
         let root = scratch.path().join("sessions");
         fs::create_dir_all(&root).expect("session root exists");
         assert_eq!(
             find_named_transcript(&root, THREAD).expect("empty complete walk"),
-            None
+            Vec::<PathBuf>::new()
         );
 
         let older = root.join(format!("a-{THREAD}.jsonl"));
@@ -665,7 +675,7 @@ mod tests {
         fs::write(&newest, b"\n").expect("newest transcript exists");
         assert_eq!(
             find_named_transcript(&root, THREAD).expect("complete matching walk"),
-            Some(newest)
+            vec![older, newest]
         );
     }
 
@@ -698,11 +708,12 @@ mod tests {
 
         let resolved = resolve_thread_from_registry(THREAD, &environment, &registry)
             .expect("third declaration resolves its transcript");
-        assert_eq!(resolved.vendor, super::Vendor::declared(fixture));
-        assert_eq!(resolved.dialect, Some(listen::Dialect::Codex));
-        assert_eq!(resolved.thread.as_deref(), Some(THREAD));
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].vendor, super::Vendor::declared(fixture));
+        assert_eq!(resolved[0].dialect, Some(listen::Dialect::Codex));
+        assert_eq!(resolved[0].thread.as_deref(), Some(THREAD));
         assert_eq!(
-            resolved.path,
+            resolved[0].path,
             transcript.canonicalize().expect("fixture path")
         );
 

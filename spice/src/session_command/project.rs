@@ -7,8 +7,8 @@ use wire::Refusal;
 use super::model::{
     ActivityView, CommandAudit, CommandRecord, CommandView, CommitView, CompactionRecord,
     CompactionView, Dataset, DialogueLine, MessageRecord, MessageView, PhaseExample, PhaseView,
-    PruningView, RecallAuthorities, RecallWindow, Report, SliceView, SourceView, ThreadView,
-    TimelineView, TokenRecord, TokenView, TurnRecord, TurnView,
+    PruningView, RecallAuthorities, RecallWindow, Report, SliceView, ThreadView, TimelineView,
+    TokenRecord, TokenView, TurnRecord, TurnView,
 };
 
 // Two report families are split out by `mod` rather than left inline, following
@@ -582,12 +582,22 @@ pub(crate) fn commits(dataset: &Dataset, matches: &ArgMatches) -> Result<Report,
     })
 }
 
-pub(crate) fn thread(source: SourceView, dataset: &Dataset, id: String) -> Report {
+pub(crate) fn thread(dataset: &Dataset, id: String) -> Report {
+    let source = dataset
+        .sources
+        .last()
+        .cloned()
+        .expect("one resolved thread yields at least one source");
     let latest = dataset.turns.last();
     let thread = ThreadView {
         id,
         vendor: source.vendor,
         transcript: source.path.clone(),
+        transcripts: dataset
+            .sources
+            .iter()
+            .map(|source| source.path.clone())
+            .collect(),
         turns: dataset.turns.len(),
         compactions: dataset.compactions.len(),
         start: dataset.turns.first().map(|turn| turn.start_ts.clone()),
@@ -596,6 +606,7 @@ pub(crate) fn thread(source: SourceView, dataset: &Dataset, id: String) -> Repor
     };
     Report::Thread {
         source,
+        sources: dataset.sources.clone(),
         thread,
         residues: dataset.residues.clone(),
     }
