@@ -27,6 +27,7 @@ mod boundary;
 mod claim_index;
 mod creation_context_migration;
 mod identity_migration;
+mod lane_compaction;
 mod lineage_migration;
 mod read;
 mod release_notes_migration;

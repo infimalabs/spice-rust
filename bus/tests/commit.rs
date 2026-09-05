@@ -100,7 +100,10 @@ fn fleet_sized_task_snapshots_decode_only_the_committed_tail() {
     assert_eq!(applied.last().get(), FLEET_FACTS as u64);
 
     let bus = Bus::start(journal).expect("dedicated writer starts");
+    let cold = bus.fact_snapshot().expect("cold fact snapshot reads");
     let before = bus.task_snapshot().expect("fleet snapshot loads once");
+    let retained = bus.fact_snapshot().expect("retained fact snapshot reads");
+    assert_eq!(retained, cold);
     let payload_bytes = before
         .facts()
         .iter()
@@ -131,6 +134,14 @@ fn fleet_sized_task_snapshots_decode_only_the_committed_tail() {
     committed(bus.commit(tail).expect("tail commit answers"));
 
     let after = bus.task_snapshot().expect("advanced snapshot reads");
+    let current_facts = bus.fact_snapshot().expect("advanced fact snapshot reads");
+    assert_eq!(current_facts.horizon(), after.cursor());
+    assert_eq!(
+        current_facts.facts().iter().collect::<Vec<_>>(),
+        after.facts().iter().collect::<Vec<_>>()
+    );
+    assert_eq!(retained.horizon(), before.cursor());
+    assert_eq!(retained.facts().len(), FLEET_FACTS);
     assert_eq!(after.facts().len(), FLEET_FACTS + 1);
     assert_eq!(after.facts().horizon().map(Seq::get), Some(8_502));
     let committed_tail = after.facts().after(before.cursor()).collect::<Vec<_>>();

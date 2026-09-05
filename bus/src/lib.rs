@@ -733,7 +733,14 @@ mod runtime {
                     let _ = ready.send(());
                 }
                 Request::Snapshot { answer } => {
-                    let _ = answer.send(journal.fact_snapshot());
+                    // The writer already admitted this immutable history and
+                    // advances it on every commit. Startup materializers must
+                    // not decode that same journal again for each view.
+                    let snapshot = task_snapshot.as_ref().map_or_else(
+                        || journal.fact_snapshot(),
+                        |snapshot| snapshot.facts.snapshot(),
+                    );
+                    let _ = answer.send(snapshot);
                 }
                 Request::Cursor { answer } => {
                     let _ = answer.send(journal.read(|read| read.cursor()));

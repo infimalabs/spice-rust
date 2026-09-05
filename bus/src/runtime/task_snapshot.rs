@@ -23,6 +23,10 @@ struct TaskFactChunk {
 }
 
 impl TaskFacts {
+    pub(super) fn snapshot(&self) -> Result<FactSnapshot, SnapshotError> {
+        FactSnapshot::from_facts(self.iter().cloned().collect())
+    }
+
     fn from_snapshot(snapshot: FactSnapshot) -> Self {
         let horizon = snapshot.horizon();
         let rows = snapshot.into_facts();

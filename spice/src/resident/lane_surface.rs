@@ -115,10 +115,7 @@ pub(super) fn recover_session_compaction(
         offset: locus.offset,
         length: locus.length,
     };
-    let snapshot = bus
-        .fact_snapshot()
-        .map_err(|error| store_fault("lane::compaction-journal-unreadable", &error.to_string()))?;
-    if compaction_recorded(&snapshot, &compacted) {
+    if compaction_recorded(bus, &compacted)? {
         return Ok(false);
     }
 
@@ -126,10 +123,7 @@ pub(super) fn recover_session_compaction(
     let mut proposal = write(Actor::Spice, epoch, Producer::ResidentRecognition)?;
     guard_residency(&mut proposal, &observed);
     proposal.guard(JournalGuard::new(move |read| {
-        let snapshot = read
-            .fact_snapshot()
-            .map_err(|error| GuardError::Invalid(error.to_string()))?;
-        if compaction_recorded(&snapshot, &guarded) {
+        if read.lane_compaction_recorded(&guarded)? {
             Err(GuardError::refused("lane::compaction-recorded"))
         } else {
             Ok(())
@@ -141,10 +135,7 @@ pub(super) fn recover_session_compaction(
     match commit(bus, proposal) {
         Ok(_) => Ok(true),
         Err(Outcome::Refusal(refusal)) => {
-            let snapshot = bus.fact_snapshot().map_err(|error| {
-                store_fault("lane::compaction-journal-unreadable", &error.to_string())
-            })?;
-            if compaction_recorded(&snapshot, &compacted) {
+            if compaction_recorded(bus, &compacted)? {
                 Ok(false)
             } else {
                 Err(Outcome::Refusal(refusal))
@@ -154,16 +145,10 @@ pub(super) fn recover_session_compaction(
     }
 }
 
-fn compaction_recorded(
-    snapshot: &journal::FactSnapshot,
-    expected: &wire::body::LaneCompacted,
-) -> bool {
-    snapshot.facts().iter().any(|envelope| {
-        envelope
-            .fact
-            .read::<wire::body::LaneCompacted>()
-            .is_some_and(|body| body == *expected)
-    })
+fn compaction_recorded(bus: &Bus, expected: &wire::body::LaneCompacted) -> CommandResult<bool> {
+    let expected = expected.clone();
+    bus.read(move |read| read.lane_compaction_recorded(&expected))
+        .map_err(|error| store_fault("lane::compaction-journal-unreadable", &error.to_string()))
 }
 
 /// Resolve the one durable subscription row for a lineage.

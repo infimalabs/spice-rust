@@ -10,6 +10,7 @@ use crate::Journal;
 mod claim_index;
 mod commit;
 mod indexed_read;
+mod lane;
 mod read_metrics;
 mod receipt;
 mod steering_index;
