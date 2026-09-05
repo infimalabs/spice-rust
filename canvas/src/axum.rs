@@ -23,12 +23,13 @@ use ::axum::routing::{get, post};
 use base64::Engine as _;
 use sha2::{Digest as _, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::{Mutex, Notify, Semaphore, mpsc, oneshot, watch};
+use tokio::sync::{Mutex, Notify, Semaphore, oneshot, watch};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use crate::Discovery;
 
+mod control;
 mod listener;
 mod socket;
 
@@ -265,7 +266,8 @@ struct SurfaceState {
     speech: crate::SpeechConfig,
     speech_slot: Semaphore,
     admission: Mutex<Admission>,
-    commands: mpsc::Sender<ControlRequest>,
+    admission_changed: watch::Sender<Admission>,
+    commands: control::Sender<ControlRequest>,
     stream: Option<crate::stream::Source>,
     closed: watch::Sender<bool>,
     connections: CancellationToken,
@@ -411,7 +413,7 @@ enum EnqueueError {
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AdmissionObservation {
-    Ordering(wire::CanonicalUuid),
+    Reserving(wire::CanonicalUuid),
     Queued(wire::CanonicalUuid),
 }
 
@@ -425,14 +427,15 @@ impl SurfaceState {
         command: wire::AdmittedCommand,
     ) -> Result<PendingResponse, EnqueueError> {
         let dark = is_dark(&command);
-        let mut admission = self.admission.lock().await;
-        if *admission != Admission::Open {
+        let mut closed = self.closed.subscribe();
+        let mut admission_changed = self.admission_changed.subscribe();
+        if *self.admission.lock().await != Admission::Open {
             return Err(EnqueueError::NotAdmitting);
         }
         #[cfg(test)]
         self.admission_observed
-            .send_replace(Some(AdmissionObservation::Ordering(command.id())));
-        let mut closed = self.closed.subscribe();
+            .send_replace(Some(AdmissionObservation::Reserving(command.id())));
+        let class = control::class(command.kind());
         let permit = tokio::select! {
             biased;
             changed = closed.changed() => {
@@ -440,22 +443,34 @@ impl SurfaceState {
                 return Err(EnqueueError::NotAdmitting);
             },
             _ = self.connections.cancelled() => return Err(EnqueueError::NotAdmitting),
-            permit = self.commands.reserve() => {
-                permit.map_err(|_| EnqueueError::ControlClosed)?
+            changed = admission_changed.changed() => {
+                let _ = changed;
+                return Err(EnqueueError::NotAdmitting);
+            },
+            permit = self.commands.reserve(class) => {
+                permit.map_err(|()| EnqueueError::ControlClosed)?
             }
         };
+        let mut admission = self.admission.lock().await;
+        if *admission != Admission::Open {
+            return Err(EnqueueError::NotAdmitting);
+        }
         let (answer, returned) = oneshot::channel();
         let (sent, response_sent) = oneshot::channel();
         if dark {
             *admission = Admission::Dark;
+            self.admission_changed.send_replace(Admission::Dark);
         }
         #[cfg(test)]
         let id = command.id();
-        permit.send(ControlRequest {
-            command,
-            answer,
-            response_sent,
-        });
+        permit.send(
+            ControlRequest {
+                command,
+                answer,
+                response_sent,
+            },
+            dark,
+        );
         #[cfg(test)]
         self.admission_observed
             .send_replace(Some(AdmissionObservation::Queued(id)));
@@ -466,12 +481,14 @@ impl SurfaceState {
         let mut admission = self.admission.lock().await;
         if *admission == Admission::Dark {
             *admission = Admission::Open;
+            self.admission_changed.send_replace(Admission::Open);
         }
     }
 
     async fn close(&self) {
         self.closed.send_replace(true);
         *self.admission.lock().await = Admission::Closed;
+        self.admission_changed.send_replace(Admission::Closed);
         let drain = async {
             loop {
                 let notified = self.sessions_closed.notified();
@@ -552,14 +569,14 @@ impl ControlRequest {
     }
 }
 
-/// Bounded receiver for authenticated resident command requests.
+/// Server-owned bounded-priority receiver for authenticated resident commands.
 #[derive(Debug)]
 pub struct Control {
-    receiver: mpsc::Receiver<ControlRequest>,
+    receiver: control::Receiver<ControlRequest>,
 }
 
 impl Control {
-    /// Wait for the next authenticated operator or lane request.
+    /// Wait for the next request under the scheduler's bounded 3:1 demand rule.
     pub async fn recv(&mut self) -> Option<ControlRequest> {
         self.receiver.recv().await
     }
@@ -567,6 +584,11 @@ impl Control {
     /// Stop admitting senders while preserving requests already in the queue.
     pub fn close(&mut self) {
         self.receiver.close();
+    }
+
+    #[cfg(test)]
+    fn is_empty(&self) -> bool {
+        self.receiver.is_empty()
     }
 }
 
@@ -630,7 +652,7 @@ impl Server {
         app: crate::AppSource,
         speech: crate::SpeechConfig,
         stream: Option<crate::stream::Source>,
-        capacity: usize,
+        class_capacity: usize,
     ) -> Result<(Self, Control), std::io::Error> {
         let Binding { requested, access } = binding;
         if !requested.ip().is_loopback() && !access.allows_non_loopback() {
@@ -641,8 +663,9 @@ impl Server {
         }
         let listener = tokio::net::TcpListener::bind(requested).await?;
         let (authority, origin) = reachable_as(listener.local_addr()?);
-        let (commands, receiver) = mpsc::channel(capacity);
+        let (commands, receiver) = control::channel(class_capacity);
         let (closed, _) = watch::channel(false);
+        let (admission_changed, _) = watch::channel(Admission::Open);
         let connections = CancellationToken::new();
         #[cfg(test)]
         let (admission_observed, _) = watch::channel(None);
@@ -659,6 +682,7 @@ impl Server {
                     speech,
                     speech_slot: Semaphore::new(1),
                     admission: Mutex::new(Admission::Open),
+                    admission_changed,
                     commands,
                     stream,
                     closed,

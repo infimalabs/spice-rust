@@ -353,7 +353,7 @@ async fn operator_lane_replacement_and_reconnect_cross_the_live_door() {
         wire::Outcome::Refusal(ref refusal)
             if refusal.reason() == "command::authority"
     ));
-    assert!(control.receiver.try_recv().is_err());
+    assert!(control.is_empty());
 
     let (mut operator_socket, accepted) = authenticate(address, operator(), epoch()).await;
     assert_eq!(accepted.actor, wire::Actor::Operator);
@@ -474,7 +474,7 @@ async fn saturated_queue_orders_concurrent_work_before_dark_and_refuses_later_wo
         wire::ResidentState::Seated,
     )
     .await;
-    wait_for_admission(&mut observed, AdmissionObservation::Ordering(blocked_id)).await;
+    wait_for_admission(&mut observed, AdmissionObservation::Reserving(blocked_id)).await;
 
     let dark_id = identity(0xe2);
     send_change(&mut dark, dark_id, epoch(), wire::ResidentState::Dark).await;
@@ -512,7 +512,7 @@ async fn saturated_queue_orders_concurrent_work_before_dark_and_refuses_later_wo
         .respond(state_reply(wire::ResidentState::Dark))
         .expect("Dark client waits");
     assert_eq!(response(&mut dark).await.id, dark_id);
-    assert!(control.receiver.try_recv().is_err());
+    assert!(control.is_empty());
 
     shutdown.send(()).expect("server stops");
     timeout(ASSERTION_DEADLINE, server_task)
@@ -520,6 +520,217 @@ async fn saturated_queue_orders_concurrent_work_before_dark_and_refuses_later_wo
         .expect("server stops before deadline")
         .expect("server task")
         .expect("server stops");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_saturated_ordinary_class_cannot_block_an_authenticated_demand() {
+    let app = TestApp::new();
+    let capabilities = Capabilities::default();
+    capabilities
+        .insert(operator(), wire::Actor::Operator)
+        .expect("operator capability");
+    let (server, mut control) = Server::bind_with_capacity(
+        Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
+        epoch(),
+        capabilities,
+        app.source(),
+        speech(),
+        None,
+        1,
+    )
+    .await
+    .expect("binds");
+    let state = Arc::clone(&server.state);
+    let mut observed = state.admission_observed.subscribe();
+    let address = server.local_addr().expect("local address");
+    let (shutdown, stopped) = oneshot::channel();
+    let server_task = tokio::spawn(server.up_until(async move {
+        let _ = stopped.await;
+    }));
+    let (mut first, _) = authenticate(address, operator(), epoch()).await;
+    let (mut blocked, _) = authenticate(address, operator(), epoch()).await;
+    let (mut demand, _) = authenticate(address, operator(), epoch()).await;
+
+    let first_id = identity(0xb0);
+    send_change(&mut first, first_id, epoch(), wire::ResidentState::Seated).await;
+    wait_for_admission(&mut observed, AdmissionObservation::Queued(first_id)).await;
+
+    let blocked_id = identity(0xb1);
+    send_change(
+        &mut blocked,
+        blocked_id,
+        epoch(),
+        wire::ResidentState::Seated,
+    )
+    .await;
+    wait_for_admission(&mut observed, AdmissionObservation::Reserving(blocked_id)).await;
+
+    let demand_id = identity(0xb2);
+    send_lineage_configuration(&mut demand, demand_id).await;
+    wait_for_admission(&mut observed, AdmissionObservation::Queued(demand_id)).await;
+
+    let prioritized = control.recv().await.expect("demand enters Control");
+    assert_eq!(prioritized.command().id(), demand_id);
+    refuse_and_observe(prioritized, &mut demand, demand_id).await;
+
+    let first_request = control.recv().await.expect("first ordinary request");
+    assert_eq!(first_request.command().id(), first_id);
+    refuse_and_observe(first_request, &mut first, first_id).await;
+    wait_for_admission(&mut observed, AdmissionObservation::Queued(blocked_id)).await;
+
+    let blocked_request = control.recv().await.expect("blocked ordinary request");
+    assert_eq!(blocked_request.command().id(), blocked_id);
+    refuse_and_observe(blocked_request, &mut blocked, blocked_id).await;
+
+    shutdown.send(()).expect("server stops");
+    server_task
+        .await
+        .expect("server task")
+        .expect("server stops");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn priority_is_three_to_one_and_dark_waits_for_both_classes() {
+    let app = TestApp::new();
+    let capabilities = Capabilities::default();
+    capabilities
+        .insert(operator(), wire::Actor::Operator)
+        .expect("operator capability");
+    let (server, mut control) = Server::bind_with_capacity(
+        Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
+        epoch(),
+        capabilities,
+        app.source(),
+        speech(),
+        None,
+        8,
+    )
+    .await
+    .expect("binds");
+    let state = Arc::clone(&server.state);
+    let mut observed = state.admission_observed.subscribe();
+    let address = server.local_addr().expect("local address");
+    let (shutdown, stopped) = oneshot::channel();
+    let server_task = tokio::spawn(server.up_until(async move {
+        let _ = stopped.await;
+    }));
+    let (mut ordinary, _) = authenticate(address, operator(), epoch()).await;
+    let (mut dark, _) = authenticate(address, operator(), epoch()).await;
+    let mut demands = Vec::new();
+    for _ in 0..4 {
+        demands.push(authenticate(address, operator(), epoch()).await.0);
+    }
+
+    let ordinary_id = identity(0xc0);
+    send_change(
+        &mut ordinary,
+        ordinary_id,
+        epoch(),
+        wire::ResidentState::Seated,
+    )
+    .await;
+    wait_for_admission(&mut observed, AdmissionObservation::Queued(ordinary_id)).await;
+
+    let demand_ids = [
+        identity(0xc1),
+        identity(0xc2),
+        identity(0xc3),
+        identity(0xc4),
+    ];
+    for (socket, id) in demands.iter_mut().zip(demand_ids) {
+        send_lineage_configuration(socket, id).await;
+        wait_for_admission(&mut observed, AdmissionObservation::Queued(id)).await;
+    }
+
+    let dark_id = identity(0xc5);
+    send_change(&mut dark, dark_id, epoch(), wire::ResidentState::Dark).await;
+    wait_for_admission(&mut observed, AdmissionObservation::Queued(dark_id)).await;
+    assert_eq!(*state.admission.lock().await, Admission::Dark);
+
+    let refused_id = identity(0xc6);
+    send_change(
+        &mut ordinary,
+        refused_id,
+        epoch(),
+        wire::ResidentState::Seated,
+    )
+    .await;
+    let refused = response(&mut ordinary).await;
+    assert_eq!(refused.id, refused_id);
+    assert!(matches!(
+        refused.outcome,
+        wire::Outcome::Refusal(ref refusal)
+            if refusal.reason() == "resident::not-admitting"
+    ));
+
+    for (socket, id) in demands.iter_mut().zip(demand_ids).take(3) {
+        let request = control.recv().await.expect("prioritized demand");
+        assert_eq!(request.command().id(), id);
+        refuse_and_observe(request, socket, id).await;
+    }
+
+    let ordinary_request = control.recv().await.expect("bounded ordinary turn");
+    assert_eq!(ordinary_request.command().id(), ordinary_id);
+    refuse_and_observe(ordinary_request, &mut ordinary, ordinary_id).await;
+
+    let last_demand = control.recv().await.expect("pre-Dark demand");
+    assert_eq!(last_demand.command().id(), demand_ids[3]);
+    refuse_and_observe(last_demand, &mut demands[3], demand_ids[3]).await;
+
+    let dark_request = control.recv().await.expect("Dark barrier");
+    assert_eq!(dark_request.command().id(), dark_id);
+    let dark_receipt = dark_request
+        .respond(state_reply(wire::ResidentState::Dark))
+        .expect("Dark client waits");
+    assert_eq!(response(&mut dark).await.id, dark_id);
+    dark_receipt.wait().await;
+    assert!(control.is_empty());
+
+    shutdown.send(()).expect("server stops");
+    server_task
+        .await
+        .expect("server task")
+        .expect("server stops");
+}
+
+async fn send_lineage_configuration(socket: &mut ClientSocket, id: wire::CanonicalUuid) {
+    send_client(
+        socket,
+        &wire::Command {
+            v: wire::WireVersion::CURRENT,
+            id,
+            epoch: epoch(),
+            kind: wire::CommandKind::LineageConfigure,
+            expected: Vec::new(),
+            body: wire::intent::LineageConfigure {
+                topology_revision: 1,
+                lineage_id: identity(0xb3),
+                member: None,
+                life: Some(wire::intent::LineageLife::Steer),
+                manual_projects: None,
+            },
+        },
+    )
+    .await;
+}
+
+async fn refuse_and_observe(
+    request: ControlRequest,
+    socket: &mut ClientSocket,
+    id: wire::CanonicalUuid,
+) {
+    let receipt = request
+        .respond(wire::Outcome::Refusal(wire::Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "fixture::scheduler-observed".to_owned(),
+                None,
+                None,
+                None,
+            ),
+        )))
+        .expect("client waits for response");
+    assert_eq!(response(socket).await.id, id);
+    receipt.wait().await;
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -562,7 +773,7 @@ async fn shutdown_interrupts_a_queue_reservation_blocked_by_saturation() {
         wire::ResidentState::Seated,
     )
     .await;
-    wait_for_admission(&mut observed, AdmissionObservation::Ordering(blocked_id)).await;
+    wait_for_admission(&mut observed, AdmissionObservation::Reserving(blocked_id)).await;
 
     shutdown.send(()).expect("shutdown requests");
     timeout(ASSERTION_DEADLINE, server_task)
@@ -744,7 +955,8 @@ fn host_and_origin_must_name_the_published_endpoint() {
         speech: speech(),
         speech_slot: Semaphore::new(1),
         admission: Mutex::new(Admission::Open),
-        commands: mpsc::channel(1).0,
+        admission_changed: watch::channel(Admission::Open).0,
+        commands: control::channel(1).0,
         stream: None,
         closed: watch::channel(false).0,
         connections: CancellationToken::new(),
