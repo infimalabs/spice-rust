@@ -463,6 +463,170 @@ fn unresolved_qualified_namespaces_refuse_before_literal_admission() {
             .contains("cannot prove qualified file-macro namespace for std::include_str!"),
         "unexpected refusal: {error}",
     );
+
+    let generated_parent = Fixture::new(
+        "generated-parent-qualified-rename",
+        &[(
+            "lib.rs",
+            concat!(
+                "make_items!();\n",
+                "use ::std as standard;\n",
+                "mod child {\n",
+                "    use super::standard as core;\n",
+                "    const VALUE: &str = core::include_str!(\"missing.txt\");\n",
+                "}\n",
+            ),
+        )],
+    );
+    let error = generated_parent
+        .reach_result_from("lib.rs", FileMacroCrateContext::test_default())
+        .expect_err("generated parent items can compete with compiler renames");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot prove qualified file-macro namespace for core::include_str!"),
+        "unexpected refusal: {error}",
+    );
+}
+
+#[test]
+fn conditional_qualified_bindings_refuse_before_literal_admission() {
+    let disabled = Fixture::new(
+        "conditional-qualified-module",
+        &[
+            (
+                "lib.rs",
+                concat!(
+                    "#[cfg(any())] mod std {}\n",
+                    "pub const VALUE: &str = std::include_str!(\"input.txt\");\n",
+                ),
+            ),
+            ("input.txt", "compiler owned\n"),
+        ],
+    );
+    let error = disabled
+        .reach_result_from("lib.rs", FileMacroCrateContext::test_default())
+        .expect_err("a conditional std binding needs target configuration authority");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot prove qualified file-macro namespace for std::include_str!"),
+        "unexpected refusal: {error}",
+    );
+    disabled.assert_compiles("lib.rs");
+
+    let conditional_macro_import = Fixture::new(
+        "conditional-qualified-macro-use",
+        &[(
+            "lib.rs",
+            concat!(
+                "#[cfg_attr(any(), macro_use)] mod support {}\n",
+                "const VALUE: &str = std::include_str!(\"missing.txt\");\n",
+            ),
+        )],
+    );
+    let error = conditional_macro_import
+        .reach_result_from("lib.rs", FileMacroCrateContext::test_default())
+        .expect_err("conditional macro imports can change the namespace");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot prove qualified file-macro namespace for std::include_str!"),
+        "unexpected refusal: {error}",
+    );
+}
+
+#[test]
+fn transitive_compiler_renames_cross_module_boundaries() {
+    let fixture = Fixture::new(
+        "transitive-qualified-compiler",
+        &[
+            (
+                "lib.rs",
+                concat!(
+                    "use ::std as r#standard;\n",
+                    "use self::{standard as core};\n",
+                    "pub const ROOT: &str = core::include_str!(\"input.txt\");\n",
+                    "pub mod child {\n",
+                    "    use super::standard as core;\n",
+                    "    use super::standard::include_bytes as include_str;\n",
+                    "    pub const CHILD: &str = core::include_str!(\"input.txt\");\n",
+                    "    pub const DATA: &[u8] = include_str!(\"data.bin\");\n",
+                    "    pub mod nested {\n",
+                    "        use super::super::standard as std;\n",
+                    "        pub const NESTED: &str = std::include_str!(\"input.txt\");\n",
+                    "    }\n",
+                    "}\n",
+                    "pub mod external;\n",
+                ),
+            ),
+            (
+                "external.rs",
+                concat!(
+                    "use crate::{standard as standard2};\n",
+                    "use self::{standard2 as core};\n",
+                    "pub const EXTERNAL: &str = core::include_str!(\"input.txt\");\n",
+                ),
+            ),
+            ("input.txt", "compiler text\n"),
+            ("data.bin", "compiler bytes\n"),
+        ],
+    );
+
+    assert_eq!(
+        fixture.reach(),
+        BTreeMap::from([
+            ("data.bin".to_owned(), (false, true)),
+            ("external.rs".to_owned(), (false, true)),
+            ("input.txt".to_owned(), (false, true)),
+        ]),
+    );
+    fixture.assert_compiles("lib.rs");
+}
+
+#[test]
+fn transitive_user_unknown_duplicate_and_cyclic_bindings_are_distinct() {
+    let user = Fixture::new(
+        "transitive-qualified-user",
+        &[(
+            "lib.rs",
+            concat!(
+                "#[macro_export] macro_rules! owned { ($path:literal) => { \"owned\" }; }\n",
+                "mod user { pub use crate::owned as include_str; }\n",
+                "use user as standard;\n",
+                "use standard as std;\n",
+                "const VALUE: &str = std::include_str!(\"missing.txt\");\n",
+            ),
+        )],
+    );
+    assert!(user.reach().is_empty());
+    user.assert_compiles("lib.rs");
+
+    for (name, source) in [
+        (
+            "unknown",
+            "use missing as standard;\nuse standard as std;\nconst VALUE: &str = std::include_str!(\"missing.txt\");\n",
+        ),
+        (
+            "duplicate",
+            "mod user {}\nuse ::std as chosen;\nuse user as chosen;\nuse chosen as core;\nconst VALUE: &str = core::include_str!(\"missing.txt\");\n",
+        ),
+        (
+            "cycle",
+            "use right as left;\nuse left as right;\nuse left as std;\nconst VALUE: &str = std::include_str!(\"missing.txt\");\n",
+        ),
+    ] {
+        let fixture = Fixture::new(name, &[("lib.rs", source)]);
+        let error = fixture
+            .reach_result_from("lib.rs", FileMacroCrateContext::test_default())
+            .expect_err("an incomplete namespace chain must refuse");
+        assert!(
+            error
+                .to_string()
+                .contains("cannot prove qualified file-macro namespace"),
+            "unexpected refusal for {name}: {error}",
+        );
+    }
 }
 
 #[test]

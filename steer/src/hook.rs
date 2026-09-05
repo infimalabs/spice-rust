@@ -65,23 +65,23 @@ impl Stage {
 pub const STAGES: [Stage; 5] = [
     Stage {
         path: "entry.sh",
-        bytes: std::include_str!("../hooks/entry.sh"),
+        bytes: ::std::include_str!("../hooks/entry.sh"),
     },
     Stage {
         path: "static/stage.sh",
-        bytes: std::include_str!("../hooks/static/stage.sh"),
+        bytes: ::std::include_str!("../hooks/static/stage.sh"),
     },
     Stage {
         path: "shell/.zshenv",
-        bytes: std::include_str!("../hooks/shell/.zshenv"),
+        bytes: ::std::include_str!("../hooks/shell/.zshenv"),
     },
     Stage {
         path: "shell/bash_env",
-        bytes: std::include_str!("../hooks/shell/bash_env"),
+        bytes: ::std::include_str!("../hooks/shell/bash_env"),
     },
     Stage {
         path: "wrappers/spice",
-        bytes: std::include_str!("../hooks/wrappers/spice"),
+        bytes: ::std::include_str!("../hooks/wrappers/spice"),
     },
 ];
 

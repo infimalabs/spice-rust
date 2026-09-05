@@ -6,12 +6,14 @@ use syn::punctuated::Punctuated;
 use syn::visit::Visit;
 
 mod macro_scope;
+mod namespace_scope;
 
 use macro_scope::{
     FileMacroBindings, FileMacroResolution, UseBindingContext, attribute_may_expand_items,
     conditional_binding, exported_macro_rules, generated_namespace_is_unresolved,
     local_macro_rules, macro_rules_name,
 };
+use namespace_scope::NamespaceScopes;
 
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
 struct DeclaredReach {
@@ -72,22 +74,20 @@ enum RustEdition {
     Modern,
 }
 
-#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct FileMacroCrateContext {
     edition: RustEdition,
     std_extern: NamespaceResolution,
     core_extern: NamespaceResolution,
+    externs: BTreeMap<String, NamespaceResolution>,
 }
 
-#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
 struct FileMacroScope {
     edition: RustEdition,
     crate_std: NamespaceResolution,
     crate_core: NamespaceResolution,
-    local_std: NamespaceResolution,
-    local_core: NamespaceResolution,
-    global_std: NamespaceResolution,
-    global_core: NamespaceResolution,
+    namespaces: NamespaceScopes,
     macros: FileMacroBindings,
 }
 
@@ -131,20 +131,25 @@ impl FileMacroCrateContext {
                 )));
             }
         };
-        let mut std_extern = NamespaceResolution::Compiler;
-        let mut core_extern = NamespaceResolution::Compiler;
+        let mut externs = BTreeMap::from([
+            ("std".to_owned(), NamespaceResolution::Compiler),
+            ("core".to_owned(), NamespaceResolution::Compiler),
+        ]);
         for dependency in dependencies {
-            let name = dependency.rename.as_ref().unwrap_or(&dependency.name);
-            match name.replace('-', "_").as_str() {
-                "std" => std_extern = NamespaceResolution::Unresolved,
-                "core" => core_extern = NamespaceResolution::Unresolved,
-                _ => {}
-            }
+            let name = dependency
+                .rename
+                .as_ref()
+                .unwrap_or(&dependency.name)
+                .replace('-', "_");
+            merge_namespace_binding(&mut externs, name, NamespaceResolution::Shadowed);
         }
+        let std_extern = externs["std"];
+        let core_extern = externs["core"];
         Ok(Self {
             edition,
             std_extern,
             core_extern,
+            externs,
         })
     }
 
@@ -154,10 +159,14 @@ impl FileMacroCrateContext {
             edition: RustEdition::Modern,
             std_extern: NamespaceResolution::Compiler,
             core_extern: NamespaceResolution::Compiler,
+            externs: BTreeMap::from([
+                ("std".to_owned(), NamespaceResolution::Compiler),
+                ("core".to_owned(), NamespaceResolution::Compiler),
+            ]),
         }
     }
 
-    fn root_scope(self, attributes: &[syn::Attribute]) -> FileMacroScope {
+    fn root_scope(&self, attributes: &[syn::Attribute]) -> FileMacroScope {
         let no_std = attributes
             .iter()
             .any(|attribute| attribute.path().is_ident("no_std"));
@@ -174,46 +183,36 @@ impl FileMacroCrateContext {
         } else {
             self.core_extern
         };
+        let mut global = self.externs.clone();
+        global.insert("std".to_owned(), std_extern);
+        global.insert("core".to_owned(), core_extern);
         FileMacroScope {
             edition: self.edition,
             crate_std: self.std_extern,
             crate_core: self.core_extern,
-            local_std: std_extern,
-            local_core: core_extern,
-            global_std: std_extern,
-            global_core: core_extern,
+            namespaces: NamespaceScopes::new(global),
             macros: FileMacroBindings::compiler(),
         }
     }
 }
 
 impl FileMacroScope {
-    fn resolve(self, namespace: QualifiedNamespace, leading_global: bool) -> NamespaceResolution {
-        match (namespace, leading_global) {
-            (QualifiedNamespace::Std, false) => self.local_std,
-            (QualifiedNamespace::Core, false) => self.local_core,
-            (QualifiedNamespace::Std, true) => self.global_std,
-            (QualifiedNamespace::Core, true) => self.global_core,
-        }
+    fn resolve(&self, namespace: QualifiedNamespace, leading_global: bool) -> NamespaceResolution {
+        self.namespaces.resolve(namespace.name(), leading_global)
     }
 
-    fn child_module(self) -> Self {
-        Self {
-            local_std: self.global_std,
-            local_core: self.global_core,
-            macros: self.macros.child_module(),
-            ..self
-        }
+    fn child_module(mut self) -> Self {
+        self.namespaces.enter_child_module();
+        self.macros = self.macros.child_module();
+        self
     }
 
-    fn child_block(self) -> Self {
-        Self {
-            macros: self.macros.child_block(),
-            ..self
-        }
+    fn child_block(mut self) -> Self {
+        self.macros = self.macros.child_block();
+        self
     }
 
-    fn resolve_macro(self, name: FileMacroKind) -> FileMacroResolution {
+    fn resolve_macro(&self, name: FileMacroKind) -> FileMacroResolution {
         self.macros.resolve(name)
     }
 
@@ -223,14 +222,25 @@ impl FileMacroScope {
         crate_root: bool,
         exported_macros: &BTreeSet<String>,
     ) -> Self {
+        let item_refs = items.iter().collect::<Vec<_>>();
+        self.resolve_namespace_items(&item_refs, crate_root, true);
         let local_macros = local_macro_rules(items);
         for item in items {
-            self.apply_item(item, crate_root, exported_macros, &local_macros);
+            self.apply_macro_item(item, exported_macros, &local_macros);
         }
         self
     }
 
     fn with_block_items(mut self, block: &syn::Block, exported_macros: &BTreeSet<String>) -> Self {
+        let items = block
+            .stmts
+            .iter()
+            .filter_map(|statement| match statement {
+                syn::Stmt::Item(item) => Some(item),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        self.resolve_namespace_items(&items, false, false);
         let local_macros = block
             .stmts
             .iter()
@@ -243,15 +253,13 @@ impl FileMacroScope {
             .collect::<BTreeSet<_>>();
         for statement in &block.stmts {
             if let syn::Stmt::Item(item) = statement {
-                self.apply_item(item, false, exported_macros, &local_macros);
+                self.apply_macro_item(item, exported_macros, &local_macros);
             }
         }
         for statement in &block.stmts {
             if let syn::Stmt::Item(item) = statement
                 && generated_namespace_is_unresolved(item)
             {
-                self.mark_unresolved(QualifiedNamespace::Std, false);
-                self.mark_unresolved(QualifiedNamespace::Core, false);
                 self.macros.mark_imports_unresolved();
             } else if let syn::Stmt::Item(item) = statement
                 && item_attributes(item).iter().any(attribute_may_expand_items)
@@ -262,10 +270,8 @@ impl FileMacroScope {
         self
     }
 
-    fn with_generated_items(mut self, items: &[Item], crate_root: bool) -> Self {
+    fn with_generated_items(mut self, items: &[Item], _crate_root: bool) -> Self {
         if items.iter().any(generated_namespace_is_unresolved) {
-            self.mark_unresolved(QualifiedNamespace::Std, crate_root);
-            self.mark_unresolved(QualifiedNamespace::Core, crate_root);
             self.macros.mark_imports_unresolved();
         }
         if items
@@ -276,6 +282,17 @@ impl FileMacroScope {
             self.macros.mark_imports_unresolved();
         }
         self
+    }
+
+    fn resolve_namespace_items(&mut self, items: &[&Item], crate_root: bool, module_scope: bool) {
+        self.namespaces.resolve_items(
+            items,
+            crate_root,
+            module_scope,
+            self.edition,
+            self.crate_std,
+            self.crate_core,
+        );
     }
 
     fn with_textual_item(mut self, item: &Item) -> Self {
@@ -292,10 +309,9 @@ impl FileMacroScope {
         self
     }
 
-    fn apply_item(
+    fn apply_macro_item(
         &mut self,
         item: &Item,
-        crate_root: bool,
         exported_macros: &BTreeSet<String>,
         local_macros: &BTreeSet<String>,
     ) {
@@ -305,44 +321,17 @@ impl FileMacroScope {
         {
             self.macros.mark_imports_unresolved();
         }
-        match item {
-            Item::ExternCrate(item) => {
-                let bound = item
-                    .rename
-                    .as_ref()
-                    .map_or_else(|| ident_name(&item.ident), |(_, name)| ident_name(name));
-                let source = ident_name(&item.ident);
-                if let Some(namespace) = qualified_namespace(&bound) {
-                    let resolution = if let Some(source_namespace) = qualified_namespace(&source) {
-                        self.crate_resolution(source_namespace)
-                    } else {
-                        NamespaceResolution::Shadowed
-                    };
-                    self.bind(namespace, resolution, crate_root);
-                }
-            }
-            Item::Mod(item) => {
-                if let Some(namespace) = qualified_namespace(&ident_name(&item.ident)) {
-                    self.bind(namespace, NamespaceResolution::Shadowed, false);
-                    if crate_root && matches!(self.edition, RustEdition::Edition2015) {
-                        self.bind_global(namespace, NamespaceResolution::Shadowed);
-                    }
-                }
-            }
-            Item::Use(item) => {
-                self.apply_use_tree(
-                    &item.tree,
-                    &mut Vec::new(),
-                    UseBindingContext {
-                        crate_root,
-                        leading_global: item.leading_colon.is_some(),
-                        exported_macros,
-                        local_macros,
-                        conditional: conditional_binding(&item.attrs),
-                    },
-                );
-            }
-            _ => {}
+        if let Item::Use(item) = item {
+            self.apply_use_tree(
+                &item.tree,
+                &mut Vec::new(),
+                UseBindingContext {
+                    leading_global: item.leading_colon.is_some(),
+                    exported_macros,
+                    local_macros,
+                    conditional: conditional_binding(&item.attrs),
+                },
+            );
         }
     }
 
@@ -380,8 +369,6 @@ impl FileMacroScope {
                 self.bind_use(&source, &ident_name(&rename.rename), context);
             }
             syn::UseTree::Glob(_) => {
-                self.mark_unresolved(QualifiedNamespace::Std, context.crate_root);
-                self.mark_unresolved(QualifiedNamespace::Core, context.crate_root);
                 self.macros.mark_imports_unresolved();
             }
             syn::UseTree::Group(group) => {
@@ -393,19 +380,6 @@ impl FileMacroScope {
     }
 
     fn bind_use(&mut self, source: &[String], bound: &str, context: UseBindingContext<'_>) {
-        if let Some(namespace) = qualified_namespace(bound) {
-            let resolution = if let [source] = source
-                && let Some(source_namespace) = qualified_namespace(source)
-            {
-                self.resolve(source_namespace, context.leading_global)
-            } else {
-                NamespaceResolution::Shadowed
-            };
-            self.bind(namespace, resolution, false);
-            if context.crate_root && matches!(self.edition, RustEdition::Edition2015) {
-                self.bind_global(namespace, resolution);
-            }
-        }
         if let Some(name) = FileMacroKind::from_name(bound) {
             let resolution = if context.conditional {
                 FileMacroResolution::Unresolved
@@ -422,17 +396,17 @@ impl FileMacroScope {
     }
 
     fn imported_macro_resolution(
-        self,
+        &self,
         source: &[String],
         leading_global: bool,
         exported_macros: &BTreeSet<String>,
         local_macros: &BTreeSet<String>,
     ) -> FileMacroResolution {
-        if let [namespace, name] = source
-            && let Some(namespace) = qualified_namespace(namespace)
+        if let Some((name, namespace_path)) = source.split_last()
             && let Some(kind) = FileMacroKind::from_name(name)
+            && !namespace_path.is_empty()
         {
-            return match self.resolve(namespace, leading_global) {
+            return match self.resolve_namespace_path(namespace_path, leading_global, false, false) {
                 NamespaceResolution::Compiler => FileMacroResolution::Compiler(kind),
                 NamespaceResolution::Shadowed | NamespaceResolution::Unresolved => {
                     FileMacroResolution::Unresolved
@@ -452,49 +426,37 @@ impl FileMacroScope {
         }
     }
 
-    fn bind(
-        &mut self,
-        namespace: QualifiedNamespace,
-        resolution: NamespaceResolution,
-        global: bool,
-    ) {
-        match namespace {
-            QualifiedNamespace::Std => self.local_std = resolution,
-            QualifiedNamespace::Core => self.local_core = resolution,
-        }
-        if global {
-            self.bind_global(namespace, resolution);
-        }
+    fn resolve_namespace_path(
+        &self,
+        path: &[String],
+        leading_global: bool,
+        crate_root: bool,
+        module_scope: bool,
+    ) -> NamespaceResolution {
+        self.namespaces.resolve_path(
+            path,
+            leading_global,
+            // Import chains resolve module-wide, including later declarations.
+            self.namespaces.visible(),
+            crate_root,
+            module_scope,
+        )
     }
+}
 
-    fn bind_global(&mut self, namespace: QualifiedNamespace, resolution: NamespaceResolution) {
-        match namespace {
-            QualifiedNamespace::Std => self.global_std = resolution,
-            QualifiedNamespace::Core => self.global_core = resolution,
-        }
-    }
-
-    fn mark_unresolved(&mut self, namespace: QualifiedNamespace, crate_root: bool) {
-        if matches!(
-            self.resolve(namespace, false),
-            NamespaceResolution::Compiler
-        ) {
-            self.bind(namespace, NamespaceResolution::Unresolved, false);
-        }
-        if crate_root
-            && matches!(self.edition, RustEdition::Edition2015)
-            && matches!(self.resolve(namespace, true), NamespaceResolution::Compiler)
-        {
-            self.bind_global(namespace, NamespaceResolution::Unresolved);
-        }
-    }
-
-    fn crate_resolution(self, namespace: QualifiedNamespace) -> NamespaceResolution {
-        match namespace {
-            QualifiedNamespace::Std => self.crate_std,
-            QualifiedNamespace::Core => self.crate_core,
-        }
-    }
+fn merge_namespace_binding(
+    bindings: &mut BTreeMap<String, NamespaceResolution>,
+    name: String,
+    resolution: NamespaceResolution,
+) {
+    bindings
+        .entry(name)
+        .and_modify(|existing| {
+            if *existing != resolution {
+                *existing = NamespaceResolution::Unresolved;
+            }
+        })
+        .or_insert(resolution);
 }
 
 fn qualified_namespace(name: &str) -> Option<QualifiedNamespace> {
@@ -734,12 +696,13 @@ impl SourceGraph {
         }
         let scope = walk
             .scope
+            .clone()
             .unwrap_or_else(|| self.namespace_context.root_scope(&syntax.attrs));
         if !self.visited.insert(SourceVisit {
             source: source.clone(),
             reach: walk.reach,
             inherited_reexports: walk.inherited_reexports.clone(),
-            scope,
+            scope: scope.clone(),
         }) {
             return Ok(());
         }
@@ -755,6 +718,7 @@ impl SourceGraph {
     ) -> Result<(), WorkspaceTestError> {
         let explicit_scope = walk
             .scope
+            .clone()
             .expect("source walk scope is established before item traversal")
             .with_items(items, walk.crate_root, &self.exported_macros);
         let scope = explicit_scope.with_generated_items(items, walk.crate_root);
@@ -786,18 +750,18 @@ impl SourceGraph {
                 dependent_tests: !test_only && walk.reach.dependent_tests,
                 public_namespace: !test_only && walk.reach.public_namespace,
             };
-            let item_scope = textual_scope.with_textual_item(item);
+            let item_scope = textual_scope.clone().with_textual_item(item);
             let item_walk = SourceWalk {
                 reach: item_reach,
                 inherited_reexports: reexport_paths.clone(),
-                scope: Some(item_scope),
+                scope: Some(item_scope.clone()),
                 crate_root: walk.crate_root,
                 ..walk.clone()
             };
             for reference in file_macro_references(
                 item,
                 source,
-                item_scope,
+                item_scope.clone(),
                 walk.crate_root,
                 &self.exported_macros,
             )? {
@@ -834,7 +798,7 @@ impl SourceGraph {
                             reach: child_reach,
                             inherited_reexports: child_reexports,
                             module_depth: walk.module_depth.saturating_add(1),
-                            scope: Some(item_scope.child_module()),
+                            scope: Some(item_scope.clone().child_module()),
                             crate_root: false,
                         },
                     )?;
@@ -851,7 +815,7 @@ impl SourceGraph {
                             reach: child_reach,
                             inherited_reexports: child_reexports,
                             module_depth: walk.module_depth.saturating_add(1),
-                            scope: Some(item_scope.child_module()),
+                            scope: Some(item_scope.clone().child_module()),
                             crate_root: false,
                         },
                     )?;
@@ -963,12 +927,13 @@ impl SourceGraph {
     ) -> Result<(), WorkspaceTestError> {
         let scope = walk
             .scope
+            .clone()
             .expect("included source retains its invocation scope");
         let visit = SourceVisit {
             source: source.to_path_buf(),
             reach: walk.reach,
             inherited_reexports: walk.inherited_reexports.clone(),
-            scope,
+            scope: scope.clone(),
         };
         if !self.visited.insert(visit) {
             return Ok(());
@@ -1021,10 +986,11 @@ impl<'ast> Visit<'ast> for FileMacroVisitor<'_> {
     }
 
     fn visit_block(&mut self, block: &'ast syn::Block) {
-        let outer = self.scope;
+        let outer = self.scope.clone();
         let crate_root = self.crate_root;
         let mut scope = self
             .scope
+            .clone()
             .child_block()
             .with_block_items(block, self.exported_macros);
         self.crate_root = false;
@@ -1032,7 +998,7 @@ impl<'ast> Visit<'ast> for FileMacroVisitor<'_> {
             if let syn::Stmt::Item(item) = statement {
                 scope = scope.with_textual_item(item);
             }
-            self.scope = scope;
+            self.scope = scope.clone();
             syn::visit::visit_stmt(self, statement);
         }
         self.scope = outer;
@@ -1069,7 +1035,7 @@ impl FileMacroVisitor<'_> {
                 self.references.push(FileMacroReference {
                     kind,
                     path: path.value(),
-                    scope: self.scope,
+                    scope: self.scope.clone(),
                     crate_root: self.crate_root,
                 });
             }
@@ -1111,7 +1077,12 @@ impl FileMacroVisitor<'_> {
         if self.error.is_some() {
             return;
         }
-        match file_macro_references_in_tokens(tokens, self.source, self.scope, self.crate_root) {
+        match file_macro_references_in_tokens(
+            tokens,
+            self.source,
+            self.scope.clone(),
+            self.crate_root,
+        ) {
             Ok(references) => self.references.extend(references),
             Err(error) => self.error = Some(error),
         }
@@ -1156,7 +1127,7 @@ fn file_macro_references_in_tokens(
                 references.extend(file_macro_references_in_tokens(
                     group.stream(),
                     source,
-                    scope,
+                    scope.clone(),
                     crate_root,
                 )?);
             }
@@ -1213,7 +1184,7 @@ fn file_macro_references_in_tokens(
             references.push(FileMacroReference {
                 kind,
                 path: path.value(),
-                scope,
+                scope: scope.clone(),
                 crate_root,
             });
         }

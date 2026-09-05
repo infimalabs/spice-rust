@@ -99,7 +99,7 @@ const BINARY_PATH: &str = ".spice-install/bin/spice";
 const RETIRED_XTASK_PATH: &str = ".spice-install/bin/xtask";
 const RETIRED_XTASK_GUARD_PATH: &str = ".spice-install/bin/xtask.guard";
 
-const SKILL: &str = std::include_str!("../agent/SKILL.md");
+const SKILL: &str = ::std::include_str!("../agent/SKILL.md");
 
 #[cfg(debug_assertions)]
 #[doc(hidden)]

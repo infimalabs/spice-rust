@@ -99,7 +99,7 @@ impl std::error::Error for FoldIdError {}
 
 // Textual inclusion is the contract here: this declaration-only registry is
 // interpreted by the runtime macro above and by the build-time admission macro.
-std::include!("registry.rs");
+::std::include!("registry.rs");
 
 /// The closed operational fold registry.
 #[derive(Clone, Copy, Debug)]

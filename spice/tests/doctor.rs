@@ -300,7 +300,7 @@ fn assert_task_metadata(report: &DoctorReport<Root>) {
 #[test]
 fn both_forms_admit_the_exact_tracked_shared_metadata_without_mutation() {
     let repository = Scratch::repository("shared-metadata");
-    let tracked = std::include_bytes!("../../spice-rust.toml");
+    let tracked = ::std::include_bytes!("../../spice-rust.toml");
     fs::write(repository.path().join("spice-rust.toml"), tracked)
         .expect("copy exact tracked configuration");
     let hook = repository.path().join(".git/.spice/hooks/pre-commit");
