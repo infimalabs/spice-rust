@@ -180,7 +180,7 @@ fn a_completed_review_records_the_reviewing_lanes_own_closing_boundary() {
 
 #[test]
 fn closing_boundary_doc_sites_resolve_by_name_to_the_reads_they_describe() {
-    let sites = include_str!("closing_boundary.rs")
+    let sites = ::std::include_str!("closing_boundary.rs")
         .lines()
         .filter(|line| line.starts_with("/// Pins the closing-boundary read in `"))
         .map(|line| {
@@ -195,7 +195,7 @@ fn closing_boundary_doc_sites_resolve_by_name_to_the_reads_they_describe() {
         "both closing-boundary tests must name their production read"
     );
 
-    let progress = include_str!("../progress.rs");
+    let progress = ::std::include_str!("../progress.rs");
     for site in sites {
         assert!(
             !site.contains([':', '.']),

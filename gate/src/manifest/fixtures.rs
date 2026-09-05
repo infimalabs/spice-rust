@@ -1,8 +1,8 @@
 use super::*;
 
-const SYSTEM: &str = include_str!("../../tests/fixtures/gate-manifest/system.toml");
-const REPOSITORY: &str = include_str!("../../tests/fixtures/gate-manifest/repository.toml");
-const WORKTREE: &str = include_str!("../../tests/fixtures/gate-manifest/worktree.toml");
+const SYSTEM: &str = ::std::include_str!("../../tests/fixtures/gate-manifest/system.toml");
+const REPOSITORY: &str = ::std::include_str!("../../tests/fixtures/gate-manifest/repository.toml");
+const WORKTREE: &str = ::std::include_str!("../../tests/fixtures/gate-manifest/worktree.toml");
 
 fn inputs() -> PredecessorInputs<'static> {
     PredecessorInputs::new("/installed/0.31.0/spice-rust.toml", SYSTEM)

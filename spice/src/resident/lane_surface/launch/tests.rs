@@ -72,7 +72,7 @@ fn launch_skill_comes_only_from_initialized_git_common_state() {
             if fault.reason == "lane::skill-unavailable"
                 && fault.detail.contains("does not match this appliance")
     ));
-    fs::write(&common, include_bytes!("../../../../agent/SKILL.md"))
+    fs::write(&common, ::std::include_bytes!("../../../../agent/SKILL.md"))
         .expect("current common skill writes");
 
     assert_eq!(
@@ -98,8 +98,11 @@ fn launch_skill_comes_only_from_initialized_git_common_state() {
         fs::remove_file(&common).expect("redirected common skill removes");
         fs::remove_dir(common.parent().expect("common skill parent"))
             .expect("common skill parent removes");
-        fs::write(&accidental, include_bytes!("../../../../agent/SKILL.md"))
-            .expect("redirect target carries current skill");
+        fs::write(
+            &accidental,
+            ::std::include_bytes!("../../../../agent/SKILL.md"),
+        )
+        .expect("redirect target carries current skill");
         symlink(
             accidental.parent().expect("accidental skill parent"),
             common.parent().expect("common skill parent"),

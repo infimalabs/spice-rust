@@ -110,7 +110,7 @@ fn the_tracked_vocabulary_is_doctor_rows_plus_the_named_foreign_class() {
             .all(|pair| pair[0] < pair[1]),
         "foreign tracked names stay canonical and duplicate-free"
     );
-    let tracked: WorkspacePolicy = toml::from_str(include_str!("../../spice-rust.toml"))
+    let tracked: WorkspacePolicy = toml::from_str(std::include_str!("../../spice-rust.toml"))
         .expect("tracked workspace policy decodes");
     let reported: Vec<_> = SpiceVariable::ALL
         .iter()

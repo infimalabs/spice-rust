@@ -138,7 +138,7 @@ mod tests {
 
     /// The identity both installed-Spice proof-image xtask actions compare against.
     const SHELL_READABLE_IDENTITY: &str =
-        include_str!("../../dist/proof-image/identity.txt").trim_ascii();
+        ::std::include_str!("../../dist/proof-image/identity.txt").trim_ascii();
 
     #[test]
     fn the_shell_readable_identity_names_the_compiled_image() {

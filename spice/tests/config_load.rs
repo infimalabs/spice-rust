@@ -531,7 +531,7 @@ fn repository_failure_is_distinct_and_loader_source_has_no_ambient_or_mutating_p
     assert!(error.acquisition().is_empty());
     assert!(error.resolution().is_none());
 
-    let source = include_str!("../src/config/load.rs");
+    let source = std::include_str!("../src/config/load.rs");
     for forbidden in [
         "read_dir",
         "current_dir",

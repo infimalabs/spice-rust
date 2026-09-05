@@ -305,7 +305,7 @@ fn required_skill(repository: &Repository) -> CommandResult<PathBuf> {
             ),
         )
     })?;
-    if bytes != include_bytes!("../../../agent/SKILL.md") {
+    if bytes != ::std::include_bytes!("../../../agent/SKILL.md") {
         return Err(store_fault(
             "lane::skill-unavailable",
             &format!(

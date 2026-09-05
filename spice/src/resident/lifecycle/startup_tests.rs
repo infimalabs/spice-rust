@@ -324,7 +324,7 @@ fn initialize_git(root: &std::path::Path) {
     let skill = spice::install::installed_skill(&repository);
     std::fs::create_dir_all(skill.parent().expect("installed skill parent"))
         .expect("installed skill parent creates");
-    std::fs::write(&skill, include_bytes!("../../../agent/SKILL.md"))
+    std::fs::write(&skill, ::std::include_bytes!("../../../agent/SKILL.md"))
         .expect("current installed skill writes");
     crate::test_repository::stage_all(root);
     crate::test_repository::commit(root, "fixture opening");

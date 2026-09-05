@@ -184,7 +184,7 @@ fn equivalent_repeated_resolutions_are_identical_and_the_resolver_has_no_io_surf
     let second = resolve(documents(Some(tracked), Some(local))).expect("second resolution");
     assert_eq!(first, second);
 
-    let source = include_str!("../../src/config/resolve.rs");
+    let source = ::std::include_str!("../../src/config/resolve.rs");
     for forbidden in [
         "std::fs",
         "std::env",

@@ -5,6 +5,14 @@ use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::visit::Visit;
 
+mod macro_scope;
+
+use macro_scope::{
+    FileMacroBindings, FileMacroResolution, UseBindingContext, attribute_may_expand_items,
+    conditional_binding, exported_macro_rules, generated_namespace_is_unresolved,
+    local_macro_rules, macro_rules_name,
+};
+
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
 struct DeclaredReach {
     test_only: bool,
@@ -30,6 +38,7 @@ struct SourceGraph {
     namespace_context: FileMacroCrateContext,
     declared: BTreeMap<PathBuf, DeclaredReach>,
     visited: BTreeSet<SourceVisit>,
+    exported_macros: BTreeSet<String>,
     conservative_downstream: bool,
 }
 
@@ -43,7 +52,7 @@ struct SourceWalk {
     crate_root: bool,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) enum FileMacroKind {
     Include,
     IncludeStr,
@@ -79,6 +88,7 @@ struct FileMacroScope {
     local_core: NamespaceResolution,
     global_std: NamespaceResolution,
     global_core: NamespaceResolution,
+    macros: FileMacroBindings,
 }
 
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
@@ -172,6 +182,7 @@ impl FileMacroCrateContext {
             local_core: core_extern,
             global_std: std_extern,
             global_core: core_extern,
+            macros: FileMacroBindings::compiler(),
         }
     }
 }
@@ -190,21 +201,49 @@ impl FileMacroScope {
         Self {
             local_std: self.global_std,
             local_core: self.global_core,
+            macros: self.macros.child_module(),
             ..self
         }
     }
 
-    fn with_items(mut self, items: &[Item], crate_root: bool) -> Self {
+    fn child_block(self) -> Self {
+        Self {
+            macros: self.macros.child_block(),
+            ..self
+        }
+    }
+
+    fn resolve_macro(self, name: FileMacroKind) -> FileMacroResolution {
+        self.macros.resolve(name)
+    }
+
+    fn with_items(
+        mut self,
+        items: &[Item],
+        crate_root: bool,
+        exported_macros: &BTreeSet<String>,
+    ) -> Self {
+        let local_macros = local_macro_rules(items);
         for item in items {
-            self.apply_item(item, crate_root);
+            self.apply_item(item, crate_root, exported_macros, &local_macros);
         }
         self
     }
 
-    fn with_block_items(mut self, block: &syn::Block) -> Self {
+    fn with_block_items(mut self, block: &syn::Block, exported_macros: &BTreeSet<String>) -> Self {
+        let local_macros = block
+            .stmts
+            .iter()
+            .filter_map(|statement| match statement {
+                syn::Stmt::Item(item) if !conditional_binding(item_attributes(item)) => {
+                    macro_rules_name(item)
+                }
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
         for statement in &block.stmts {
             if let syn::Stmt::Item(item) = statement {
-                self.apply_item(item, false);
+                self.apply_item(item, false, exported_macros, &local_macros);
             }
         }
         for statement in &block.stmts {
@@ -213,29 +252,59 @@ impl FileMacroScope {
             {
                 self.mark_unresolved(QualifiedNamespace::Std, false);
                 self.mark_unresolved(QualifiedNamespace::Core, false);
+                self.macros.mark_imports_unresolved();
+            } else if let syn::Stmt::Item(item) = statement
+                && item_attributes(item).iter().any(attribute_may_expand_items)
+            {
+                self.macros.mark_imports_unresolved();
             }
         }
         self
     }
 
-    fn with_generated_items(
-        mut self,
-        items: &[Item],
-        except: Option<usize>,
-        crate_root: bool,
-    ) -> Self {
-        if items
-            .iter()
-            .enumerate()
-            .any(|(index, item)| Some(index) != except && generated_namespace_is_unresolved(item))
-        {
+    fn with_generated_items(mut self, items: &[Item], crate_root: bool) -> Self {
+        if items.iter().any(generated_namespace_is_unresolved) {
             self.mark_unresolved(QualifiedNamespace::Std, crate_root);
             self.mark_unresolved(QualifiedNamespace::Core, crate_root);
+            self.macros.mark_imports_unresolved();
+        }
+        if items
+            .iter()
+            .flat_map(item_attributes)
+            .any(attribute_may_expand_items)
+        {
+            self.macros.mark_imports_unresolved();
         }
         self
     }
 
-    fn apply_item(&mut self, item: &Item, crate_root: bool) {
+    fn with_textual_item(mut self, item: &Item) -> Self {
+        if let Some(name) = macro_rules_name(item)
+            && let Some(kind) = FileMacroKind::from_name(&name)
+        {
+            let resolution = if conditional_binding(item_attributes(item)) {
+                FileMacroResolution::Unresolved
+            } else {
+                FileMacroResolution::Shadowed
+            };
+            self.macros.bind_textual(kind, resolution);
+        }
+        self
+    }
+
+    fn apply_item(
+        &mut self,
+        item: &Item,
+        crate_root: bool,
+        exported_macros: &BTreeSet<String>,
+        local_macros: &BTreeSet<String>,
+    ) {
+        if item_attributes(item)
+            .iter()
+            .any(|attribute| attribute.path().is_ident("macro_use"))
+        {
+            self.macros.mark_imports_unresolved();
+        }
         match item {
             Item::ExternCrate(item) => {
                 let bound = item
@@ -264,8 +333,13 @@ impl FileMacroScope {
                 self.apply_use_tree(
                     &item.tree,
                     &mut Vec::new(),
-                    crate_root,
-                    item.leading_colon.is_some(),
+                    UseBindingContext {
+                        crate_root,
+                        leading_global: item.leading_colon.is_some(),
+                        exported_macros,
+                        local_macros,
+                        conditional: conditional_binding(&item.attrs),
+                    },
                 );
             }
             _ => {}
@@ -276,13 +350,12 @@ impl FileMacroScope {
         &mut self,
         tree: &syn::UseTree,
         prefix: &mut Vec<String>,
-        crate_root: bool,
-        leading_global: bool,
+        context: UseBindingContext<'_>,
     ) {
         match tree {
             syn::UseTree::Path(path) => {
                 prefix.push(ident_name(&path.ident));
-                self.apply_use_tree(&path.tree, prefix, crate_root, leading_global);
+                self.apply_use_tree(&path.tree, prefix, context);
                 prefix.pop();
             }
             syn::UseTree::Name(name) => {
@@ -295,7 +368,7 @@ impl FileMacroScope {
                     (source, Some(name))
                 };
                 if let Some(bound) = bound {
-                    self.bind_use(&source, &bound, crate_root, leading_global);
+                    self.bind_use(&source, &bound, context);
                 }
             }
             syn::UseTree::Rename(rename) => {
@@ -304,39 +377,78 @@ impl FileMacroScope {
                 if name != "self" {
                     source.push(name);
                 }
-                self.bind_use(
-                    &source,
-                    &ident_name(&rename.rename),
-                    crate_root,
-                    leading_global,
-                );
+                self.bind_use(&source, &ident_name(&rename.rename), context);
             }
             syn::UseTree::Glob(_) => {
-                self.mark_unresolved(QualifiedNamespace::Std, crate_root);
-                self.mark_unresolved(QualifiedNamespace::Core, crate_root);
+                self.mark_unresolved(QualifiedNamespace::Std, context.crate_root);
+                self.mark_unresolved(QualifiedNamespace::Core, context.crate_root);
+                self.macros.mark_imports_unresolved();
             }
             syn::UseTree::Group(group) => {
                 for tree in &group.items {
-                    self.apply_use_tree(tree, prefix, crate_root, leading_global);
+                    self.apply_use_tree(tree, prefix, context);
                 }
             }
         }
     }
 
-    fn bind_use(&mut self, source: &[String], bound: &str, crate_root: bool, leading_global: bool) {
-        let Some(namespace) = qualified_namespace(bound) else {
-            return;
-        };
-        let resolution = if let [source] = source
-            && let Some(source_namespace) = qualified_namespace(source)
+    fn bind_use(&mut self, source: &[String], bound: &str, context: UseBindingContext<'_>) {
+        if let Some(namespace) = qualified_namespace(bound) {
+            let resolution = if let [source] = source
+                && let Some(source_namespace) = qualified_namespace(source)
+            {
+                self.resolve(source_namespace, context.leading_global)
+            } else {
+                NamespaceResolution::Shadowed
+            };
+            self.bind(namespace, resolution, false);
+            if context.crate_root && matches!(self.edition, RustEdition::Edition2015) {
+                self.bind_global(namespace, resolution);
+            }
+        }
+        if let Some(name) = FileMacroKind::from_name(bound) {
+            let resolution = if context.conditional {
+                FileMacroResolution::Unresolved
+            } else {
+                self.imported_macro_resolution(
+                    source,
+                    context.leading_global,
+                    context.exported_macros,
+                    context.local_macros,
+                )
+            };
+            self.macros.bind_import(name, resolution);
+        }
+    }
+
+    fn imported_macro_resolution(
+        self,
+        source: &[String],
+        leading_global: bool,
+        exported_macros: &BTreeSet<String>,
+        local_macros: &BTreeSet<String>,
+    ) -> FileMacroResolution {
+        if let [namespace, name] = source
+            && let Some(namespace) = qualified_namespace(namespace)
+            && let Some(kind) = FileMacroKind::from_name(name)
         {
-            self.resolve(source_namespace, leading_global)
-        } else {
-            NamespaceResolution::Shadowed
+            return match self.resolve(namespace, leading_global) {
+                NamespaceResolution::Compiler => FileMacroResolution::Compiler(kind),
+                NamespaceResolution::Shadowed | NamespaceResolution::Unresolved => {
+                    FileMacroResolution::Unresolved
+                }
+            };
+        }
+        let known_user_macro = match source {
+            [root, name] if root == "crate" => exported_macros.contains(name),
+            [root, name] if root == "self" => local_macros.contains(name),
+            [name] => local_macros.contains(name),
+            _ => false,
         };
-        self.bind(namespace, resolution, false);
-        if crate_root && matches!(self.edition, RustEdition::Edition2015) {
-            self.bind_global(namespace, resolution);
+        if known_user_macro {
+            FileMacroResolution::Shadowed
+        } else {
+            FileMacroResolution::Unresolved
         }
     }
 
@@ -393,14 +505,17 @@ fn qualified_namespace(name: &str) -> Option<QualifiedNamespace> {
     }
 }
 
-fn generated_namespace_is_unresolved(item: &Item) -> bool {
-    let Item::Macro(item) = item else {
-        return false;
-    };
-    !item.mac.path.is_ident("macro_rules") && FileMacroKind::classify_path(&item.mac.path).is_none()
-}
-
 impl FileMacroKind {
+    const ALL: [Self; 3] = [Self::Include, Self::IncludeStr, Self::IncludeBytes];
+
+    const fn index(self) -> usize {
+        match self {
+            Self::Include => 0,
+            Self::IncludeStr => 1,
+            Self::IncludeBytes => 2,
+        }
+    }
+
     fn from_name(name: &str) -> Option<Self> {
         match name {
             "include" => Some(Self::Include),
@@ -527,6 +642,7 @@ fn bounded_out_dir_concat(invocation: &syn::Macro) -> syn::Result<bool> {
 
 struct FileMacroVisitor<'a> {
     source: &'a Path,
+    exported_macros: &'a BTreeSet<String>,
     scope: FileMacroScope,
     crate_root: bool,
     references: Vec<FileMacroReference>,
@@ -552,6 +668,7 @@ pub(super) fn declared_path_sources(
         namespace_context,
         declared: BTreeMap::new(),
         visited: BTreeSet::new(),
+        exported_macros: BTreeSet::new(),
         conservative_downstream: false,
     };
     graph.collect_declared_sources(
@@ -611,6 +728,10 @@ impl SourceGraph {
                 source.display()
             ))
         })?;
+        if walk.crate_root {
+            self.exported_macros
+                .extend(exported_macro_rules(&syntax.items));
+        }
         let scope = walk
             .scope
             .unwrap_or_else(|| self.namespace_context.root_scope(&syntax.attrs));
@@ -635,8 +756,8 @@ impl SourceGraph {
         let explicit_scope = walk
             .scope
             .expect("source walk scope is established before item traversal")
-            .with_items(items, walk.crate_root);
-        let scope = explicit_scope.with_generated_items(items, None, walk.crate_root);
+            .with_items(items, walk.crate_root, &self.exported_macros);
+        let scope = explicit_scope.with_generated_items(items, walk.crate_root);
         let (local_reexports, uncertain_reexport) = public_reexports(items, walk.module_depth);
         if walk.reach.dependent_tests && uncertain_reexport {
             self.conservative_downstream = true;
@@ -657,15 +778,15 @@ impl SourceGraph {
                 })
                 .map(|reexport| reexport.path),
         );
-        for (item_index, item) in items.iter().enumerate() {
+        let mut textual_scope = scope;
+        for item in items {
             let test_only = walk.reach.test_only || exact_cfg_test(item_attributes(item));
             let item_reach = DeclaredReach {
                 test_only,
                 dependent_tests: !test_only && walk.reach.dependent_tests,
                 public_namespace: !test_only && walk.reach.public_namespace,
             };
-            let item_scope =
-                explicit_scope.with_generated_items(items, Some(item_index), walk.crate_root);
+            let item_scope = textual_scope.with_textual_item(item);
             let item_walk = SourceWalk {
                 reach: item_reach,
                 inherited_reexports: reexport_paths.clone(),
@@ -673,7 +794,13 @@ impl SourceGraph {
                 crate_root: walk.crate_root,
                 ..walk.clone()
             };
-            for reference in file_macro_references(item, source, item_scope, walk.crate_root)? {
+            for reference in file_macro_references(
+                item,
+                source,
+                item_scope,
+                walk.crate_root,
+                &self.exported_macros,
+            )? {
                 self.collect_file_macro_source(reference, source, &item_walk)?;
             }
             if let Item::Mod(module) = item {
@@ -707,7 +834,7 @@ impl SourceGraph {
                             reach: child_reach,
                             inherited_reexports: child_reexports,
                             module_depth: walk.module_depth.saturating_add(1),
-                            scope: Some(scope.child_module()),
+                            scope: Some(item_scope.child_module()),
                             crate_root: false,
                         },
                     )?;
@@ -724,12 +851,13 @@ impl SourceGraph {
                             reach: child_reach,
                             inherited_reexports: child_reexports,
                             module_depth: walk.module_depth.saturating_add(1),
-                            scope: Some(scope.child_module()),
+                            scope: Some(item_scope.child_module()),
                             crate_root: false,
                         },
                     )?;
                 }
             }
+            textual_scope = item_scope;
         }
         Ok(())
     }
@@ -881,7 +1009,7 @@ impl<'ast> Visit<'ast> for FileMacroVisitor<'_> {
     fn visit_macro(&mut self, invocation: &'ast syn::Macro) {
         match FileMacroKind::classify_path(&invocation.path) {
             Some(FileMacroPath::Unqualified(kind)) => {
-                self.record(kind, invocation.tokens.clone());
+                self.record_unqualified(kind, invocation.tokens.clone());
             }
             Some(FileMacroPath::Qualified {
                 namespace,
@@ -895,9 +1023,18 @@ impl<'ast> Visit<'ast> for FileMacroVisitor<'_> {
     fn visit_block(&mut self, block: &'ast syn::Block) {
         let outer = self.scope;
         let crate_root = self.crate_root;
-        self.scope = self.scope.with_block_items(block);
+        let mut scope = self
+            .scope
+            .child_block()
+            .with_block_items(block, self.exported_macros);
         self.crate_root = false;
-        syn::visit::visit_block(self, block);
+        for statement in &block.stmts {
+            if let syn::Stmt::Item(item) = statement {
+                scope = scope.with_textual_item(item);
+            }
+            self.scope = scope;
+            syn::visit::visit_stmt(self, statement);
+        }
         self.scope = outer;
         self.crate_root = crate_root;
     }
@@ -908,6 +1045,21 @@ impl<'ast> Visit<'ast> for FileMacroVisitor<'_> {
 }
 
 impl FileMacroVisitor<'_> {
+    fn record_unqualified(&mut self, name: FileMacroKind, tokens: TokenStream) {
+        match self.scope.resolve_macro(name) {
+            FileMacroResolution::Compiler(kind) => self.record(kind, tokens),
+            FileMacroResolution::Shadowed => {}
+            FileMacroResolution::Unresolved if self.error.is_none() => {
+                self.error = Some(WorkspaceTestError::new(format!(
+                    "Rust source {} cannot prove unqualified file-macro namespace for {}",
+                    self.source.display(),
+                    name.name(),
+                )));
+            }
+            FileMacroResolution::Unresolved => {}
+        }
+    }
+
     fn record(&mut self, kind: FileMacroKind, tokens: TokenStream) {
         if self.error.is_some() {
             return;
@@ -971,9 +1123,11 @@ fn file_macro_references(
     source: &Path,
     scope: FileMacroScope,
     crate_root: bool,
+    exported_macros: &BTreeSet<String>,
 ) -> Result<Vec<FileMacroReference>, WorkspaceTestError> {
     let mut visitor = FileMacroVisitor {
         source,
+        exported_macros,
         scope,
         crate_root,
         references: Vec::new(),
@@ -1013,7 +1167,20 @@ fn file_macro_references_in_tokens(
             unreachable!("macro invocation shape was checked")
         };
         let kind = match path {
-            FileMacroPath::Unqualified(kind) => kind,
+            FileMacroPath::Unqualified(name) => match scope.resolve_macro(name) {
+                FileMacroResolution::Compiler(kind) => kind,
+                FileMacroResolution::Shadowed => {
+                    index = next_index;
+                    continue;
+                }
+                FileMacroResolution::Unresolved => {
+                    return Err(WorkspaceTestError::new(format!(
+                        "Rust source {} cannot prove unqualified file-macro namespace for {}",
+                        source.display(),
+                        name.name(),
+                    )));
+                }
+            },
             FileMacroPath::Qualified {
                 namespace,
                 kind,
