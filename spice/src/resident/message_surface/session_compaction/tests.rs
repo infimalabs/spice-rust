@@ -192,6 +192,96 @@ fn codex_recovery_precedes_display_and_display_only_replay_is_inert() {
 }
 
 #[test]
+fn codex_startup_recovers_latest_boundary_beyond_the_canvas_tail_once() {
+    const THREAD: &str = "018f7777-7777-7444-8888-999999999999";
+    const OLD_BOUNDARY: &str =
+        "{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"compacted\",\"payload\":{}}\n";
+    const LATEST_BOUNDARY: &str =
+        "{\"timestamp\":\"2030-04-12T19:44:09.271Z\",\"type\":\"compacted\",\"payload\":{}}\n";
+    const LIVE_BOUNDARY: &str =
+        "{\"timestamp\":\"2030-04-12T20:44:09.271Z\",\"type\":\"compacted\",\"payload\":{}}\n";
+    let scratch = Scratch::new("codex-recovery-before-tail");
+    let transcript = scratch
+        .0
+        .join("sessions")
+        .join(format!("rollout-{THREAD}.jsonl"));
+    fs::create_dir_all(transcript.parent().expect("transcript parent"))
+        .expect("Codex session directory exists");
+    let filler = "x".repeat(1_800);
+    let mut contents = OLD_BOUNDARY.to_owned();
+    for index in 0..40 {
+        contents.push_str(&codex_assistant_record(index, &filler));
+    }
+    let latest_offset = u64::try_from(contents.len()).expect("fixture offset fits u64");
+    contents.push_str(LATEST_BOUNDARY);
+    for index in 40..340 {
+        contents.push_str(&codex_assistant_record(index, &filler));
+    }
+    fs::write(&transcript, &contents).expect("long Codex transcript is written");
+
+    let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163e5");
+    let author = uuid("018f82d4-6f59-7d06-92e3-bce9131163ef");
+    let residency = session_residency_for(lane, author, THREAD, "codex");
+    let publisher = Messages::default();
+    let mut state = observed_state(lane);
+    let mut diagnostic = Vec::new();
+    let mut recovered = Vec::new();
+    let mut compactions = SessionCompactions::new(codex_environment(&scratch.0));
+
+    for _ in 0..2 {
+        compactions
+            .synchronize_with(
+                &residency,
+                &publisher,
+                &mut state,
+                &mut diagnostic,
+                |_, _, _, locus| {
+                    recovered.push(locus);
+                    Ok(())
+                },
+            )
+            .expect("Codex startup synchronization succeeds");
+    }
+
+    assert_eq!(recovered.len(), 1, "startup recovery is not replayed");
+    assert_eq!(recovered[0].member, session_member(THREAD));
+    assert_eq!(recovered[0].offset, latest_offset);
+    assert_eq!(
+        recovered[0].length,
+        u64::try_from(LATEST_BOUNDARY.len()).expect("boundary length fits u64")
+    );
+    assert!(
+        publisher.0.lock().expect("message lock").is_empty(),
+        "the boundary outside the Canvas tail is not displayed",
+    );
+
+    append(&transcript, LIVE_BOUNDARY.as_bytes());
+    compactions
+        .synchronize_with(
+            &residency,
+            &publisher,
+            &mut state,
+            &mut diagnostic,
+            |_, _, _, locus| {
+                recovered.push(locus);
+                Ok(())
+            },
+        )
+        .expect("live Codex synchronization succeeds");
+    assert_eq!(recovered.len(), 2, "live append scanning remains active");
+    assert_eq!(
+        publisher.0.lock().expect("message lock").len(),
+        1,
+        "the live boundary remains visible",
+    );
+    assert!(
+        diagnostic.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&diagnostic)
+    );
+}
+
+#[test]
 fn incomplete_boundary_waits_for_its_jsonl_delimiter() {
     let scratch = Scratch::new("partial");
     let transcript = scratch.transcript();
@@ -1178,6 +1268,12 @@ fn observation_instant() -> wire::Instant {
         .expect("fixture observation instant")
 }
 
+fn codex_assistant_record(index: usize, filler: &str) -> String {
+    format!(
+        "{{\"timestamp\":\"2030-04-12T18:44:08.000Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{{\"type\":\"output_text\",\"text\":\"{index}:{filler}\"}}]}}}}\n"
+    )
+}
+
 fn claude_environment(home: &Path) -> crate::session_command::Environment {
     crate::session_command::Environment::new(
         vec![crate::session_command::VendorEnvironment::new(
@@ -1267,6 +1363,7 @@ fn cursor(path: &Path, dialect: listen::Dialect) -> Cursor {
         prefix: blake3::Hasher::new(),
         guard: None,
         validation: None,
+        startup_recovery: None,
     }
 }
 
