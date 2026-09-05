@@ -7,7 +7,7 @@ use gate::{
 };
 use wire::{Digest, Domain};
 
-use super::{Claim, LeaseGuard, claim};
+use super::{Claim, LeaseGuard, Timing, acquired, claim, claim_with_timing};
 
 struct Fixture {
     root: std::path::PathBuf,
@@ -100,6 +100,117 @@ fn waiter_receives_the_producers_terminal_failure() {
 }
 
 #[test]
+fn acquired_lease_rechecks_a_racing_receipt_before_execution() {
+    let fixture = Fixture::new("acquired-recheck");
+    let action = derive_action_key(b"receipt after acquisition");
+    let LeaseAcquisition::Acquired { lease, .. } = fixture
+        .store
+        .acquire_lease(
+            &action,
+            "producer",
+            SystemTime::now(),
+            Duration::from_secs(5),
+        )
+        .unwrap()
+    else {
+        panic!("producer acquires action");
+    };
+    let published = receipt(&action);
+    fixture.store.publish(&published).unwrap();
+
+    let Ok(Claim::Present(report)) = acquired(
+        &fixture.store,
+        "shared",
+        &action,
+        lease,
+        false,
+        test_timing(),
+    ) else {
+        panic!("racing receipt becomes present");
+    };
+    assert_eq!(report.receipt, published.id().unwrap());
+    let LeaseAcquisition::Acquired { lease, .. } = fixture
+        .store
+        .acquire_lease(&action, "next", SystemTime::now(), Duration::from_secs(1))
+        .unwrap()
+    else {
+        panic!("receipt recheck releases acquired lease");
+    };
+    fixture.store.release_lease(&lease).unwrap();
+}
+
+#[test]
+fn busy_waiter_stops_at_its_bound_without_disturbing_the_producer() {
+    let fixture = Fixture::new("wait-limit");
+    let action = derive_action_key(b"bounded waiter");
+    let LeaseAcquisition::Acquired { lease, .. } = fixture
+        .store
+        .acquire_lease(
+            &action,
+            "producer",
+            SystemTime::now(),
+            Duration::from_secs(5),
+        )
+        .unwrap()
+    else {
+        panic!("producer acquires action");
+    };
+    let Err(error) = claim_with_timing(
+        &fixture.store,
+        "waiter",
+        "shared",
+        &action,
+        Timing {
+            wait_limit: Duration::from_millis(20),
+            ..test_timing()
+        },
+    ) else {
+        panic!("busy waiter reaches its bound");
+    };
+    assert_eq!(error.reason(), "gate::prove-peer-action-timeout");
+    assert!(matches!(
+        fixture.store.acquire_lease(
+            &action,
+            "contender",
+            SystemTime::now(),
+            Duration::from_secs(1),
+        ).unwrap(),
+        LeaseAcquisition::Busy { owner, .. } if owner == "producer"
+    ));
+    fixture.store.release_lease(&lease).unwrap();
+}
+
+#[test]
+fn dropping_a_guard_releases_only_its_exact_token() {
+    let fixture = Fixture::new("guard-drop");
+    let action = derive_action_key(b"dropped guard");
+    let LeaseAcquisition::Acquired { lease, .. } = fixture
+        .store
+        .acquire_lease(
+            &action,
+            "producer",
+            SystemTime::now(),
+            Duration::from_secs(5),
+        )
+        .unwrap()
+    else {
+        panic!("producer acquires action");
+    };
+    let obsolete = lease.clone();
+    drop(LeaseGuard::new(fixture.store.clone(), lease, test_timing()));
+    let LeaseAcquisition::Acquired { lease, recovered } = fixture
+        .store
+        .acquire_lease(&action, "next", SystemTime::now(), Duration::from_secs(1))
+        .unwrap()
+    else {
+        panic!("guard drop releases action");
+    };
+    assert!(!recovered);
+    assert!(fixture.store.release_lease(&obsolete).is_err());
+    fixture.store.release_lease(&lease).unwrap();
+}
+
+#[test]
 fn renewal_retains_one_long_running_producer() {
     let fixture = Fixture::new("renewal");
     let action = derive_action_key(b"renewed action");
@@ -115,11 +226,14 @@ fn renewal_retains_one_long_running_producer() {
     else {
         panic!("producer acquires action");
     };
-    let guard = LeaseGuard::new_with_timing(
+    let guard = LeaseGuard::new(
         fixture.store.clone(),
         lease,
-        Duration::from_secs(2),
-        Duration::from_millis(50),
+        Timing {
+            lease_lifetime: Duration::from_secs(2),
+            renew_interval: Duration::from_millis(50),
+            ..test_timing()
+        },
     );
     thread::sleep(Duration::from_millis(600));
     assert!(matches!(
@@ -138,22 +252,56 @@ fn renewal_retains_one_long_running_producer() {
 fn expired_producer_admits_one_waiter_takeover() {
     let fixture = Fixture::new("takeover");
     let action = derive_action_key(b"expired action");
-    let LeaseAcquisition::Acquired { lease: _lease, .. } = fixture
+    let LeaseAcquisition::Acquired { lease, .. } = fixture
         .store
         .acquire_lease(
             &action,
             "departed",
             SystemTime::now(),
-            Duration::from_millis(20),
+            Duration::from_millis(200),
         )
         .unwrap()
     else {
         panic!("departed producer acquires action");
     };
+    assert!(matches!(
+        fixture.store.acquire_lease(
+            &action,
+            "early",
+            SystemTime::now(),
+            Duration::from_secs(1),
+        ).unwrap(),
+        LeaseAcquisition::Busy { owner, .. } if owner == "departed"
+    ));
+    thread::sleep(Duration::from_millis(220));
     let Ok(Claim::Lease(guard)) = claim(&fixture.store, "waiter", "shared", &action) else {
         panic!("expired producer admits waiter takeover");
     };
     assert_eq!(guard.current().owner(), "waiter");
+    assert!(matches!(
+        fixture.store.acquire_lease(
+            &action,
+            "contender",
+            SystemTime::now(),
+            Duration::from_secs(1),
+        ).unwrap(),
+        LeaseAcquisition::Busy { owner, .. } if owner == "waiter"
+    ));
+    assert!(fixture.store.release_lease(&lease).is_err());
+    assert!(
+        fixture
+            .store
+            .publish_batch_leased([(&receipt(&action), &lease)], SystemTime::now())
+            .is_err()
+    );
+}
+
+fn test_timing() -> Timing {
+    Timing {
+        lease_lifetime: Duration::from_secs(2),
+        renew_interval: Duration::from_secs(1),
+        wait_limit: Duration::from_secs(1),
+    }
 }
 
 fn receipt(action: &gate::ActionKey) -> PassReceipt {
