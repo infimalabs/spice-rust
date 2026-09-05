@@ -158,6 +158,74 @@ fn repeated_source_declarations_retain_each_public_reexport_path() {
     );
 }
 
+#[test]
+fn item_reexports_do_not_publish_an_entire_private_facade_namespace() {
+    let fixture = Fixture::new(
+        "private-facade",
+        &[
+            ("lib.rs", "mod facade;\npub use facade::Thing;\n"),
+            (
+                "facade.rs",
+                concat!(
+                    "mod implementation;\n",
+                    "pub mod unrelated;\n",
+                    "pub use implementation::Internal as Thing;\n",
+                ),
+            ),
+            ("facade/implementation.rs", "pub struct Internal;\n"),
+            ("facade/unrelated.rs", "pub struct Unrelated;\n"),
+        ],
+    );
+
+    assert_eq!(
+        fixture.reach(),
+        BTreeMap::from([
+            ("facade.rs".to_owned(), (false, true)),
+            ("facade/implementation.rs".to_owned(), (false, true)),
+            ("facade/unrelated.rs".to_owned(), (false, false)),
+        ]),
+    );
+}
+
+#[test]
+fn reexported_module_namespaces_publish_their_public_descendants() {
+    let fixture = Fixture::new(
+        "reexported-namespace",
+        &[
+            ("lib.rs", "mod facade;\npub use facade::api;\n"),
+            ("facade.rs", "pub mod api;\npub mod unrelated;\n"),
+            ("facade/api.rs", "pub mod nested;\n"),
+            ("facade/api/nested.rs", "pub struct Public;\n"),
+            ("facade/unrelated.rs", "pub struct Unrelated;\n"),
+        ],
+    );
+
+    assert_eq!(
+        fixture.reach(),
+        BTreeMap::from([
+            ("facade.rs".to_owned(), (false, true)),
+            ("facade/api.rs".to_owned(), (false, true)),
+            ("facade/api/nested.rs".to_owned(), (false, true)),
+            ("facade/unrelated.rs".to_owned(), (false, false)),
+        ]),
+    );
+}
+
+#[test]
+fn an_unparseable_declared_source_refuses_the_graph() {
+    let fixture = Fixture::new(
+        "unparseable",
+        &[("lib.rs", "mod broken;\n"), ("broken.rs", "not Rust {{")],
+    );
+
+    let error = declared_path_sources(&fixture.root.join("lib.rs"))
+        .expect_err("an unparseable declared source must refuse");
+    assert!(
+        error.to_string().contains("parse Rust source"),
+        "unexpected refusal: {error}",
+    );
+}
+
 struct Fixture {
     root: PathBuf,
 }
