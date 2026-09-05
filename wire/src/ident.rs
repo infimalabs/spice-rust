@@ -141,6 +141,8 @@ pub enum Domain {
     GateTool,
     /// Every path one gate walk reached, admitted or not, with its reason.
     GateInventory,
+    /// One action's complete ordered file and non-file input closure.
+    GateInputManifest,
     /// The quantities one gate run measured.
     GateMeasurement,
     /// The complete current identity and ordered outcome of one gate run.
@@ -228,6 +230,7 @@ impl Domain {
             | Self::GateBaseline
             | Self::GateTool
             | Self::GateInventory
+            | Self::GateInputManifest
             | Self::GateActionKey => self.verification_input_tag(),
             Self::GateMeasurement
             | Self::GateReceipt
@@ -294,6 +297,7 @@ impl Domain {
             Self::GateBaseline => "spice.gate.baseline.v1",
             Self::GateTool => "spice.gate.tool.v1",
             Self::GateInventory => "spice.gate.inventory.v1",
+            Self::GateInputManifest => "spice.gate.input-manifest.v1",
             Self::GateActionKey => "spice.gate.action-key.v1",
             _ => panic!("digest-domain tag partition is closed"),
         }

@@ -138,10 +138,14 @@ impl Selector {
         make_immutable(&build.root)?;
         verify_immutable(&build.root, &items)?;
         source.verify(&repo)?;
+        let files = SelectedFiles {
+            paths: items.iter().map(|item| item.path.clone()).collect(),
+            modes: items.iter().map(|item| item.mode.into()).collect(),
+        };
         Ok(build.finish(
             repository,
             source,
-            items.into_iter().map(|item| item.path).collect(),
+            files,
             renames,
             staged_authority,
             publishes_state,
@@ -211,11 +215,26 @@ pub struct SelectedTree {
     root: PathBuf,
     repository: PathBuf,
     source: SelectionSeal,
-    paths: Vec<String>,
+    files: SelectedFiles,
     renames: RenameMap,
     staged_authority: Option<StagedAuthority>,
     publishes_state: bool,
     possession: Option<Possession>,
+}
+
+/// Git file mode retained for one regular selected-tree entry.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum SelectedFileMode {
+    /// Git regular blob mode `100644`.
+    Regular,
+    /// Git executable blob mode `100755`.
+    Executable,
+}
+
+#[derive(Debug)]
+struct SelectedFiles {
+    paths: Vec<String>,
+    modes: Vec<SelectedFileMode>,
 }
 
 impl SelectedTree {
@@ -327,7 +346,17 @@ impl SelectedTree {
     /// Canonical regular paths carried by this exact selected source.
     #[must_use]
     pub fn paths(&self) -> &[String] {
-        &self.paths
+        &self.files.paths
+    }
+
+    /// Git mode for one canonical selected path.
+    #[must_use]
+    pub fn mode(&self, path: &str) -> Option<SelectedFileMode> {
+        self.files
+            .paths
+            .binary_search_by(|candidate| candidate.as_str().cmp(path))
+            .ok()
+            .map(|index| self.files.modes[index])
     }
 
     /// Canonical old-to-new paths detected from this exact selected source.
@@ -415,6 +444,15 @@ pub(crate) fn open_repository(path: &Path) -> Result<gix::Repository, TreeError>
 enum FileMode {
     Regular,
     Executable,
+}
+
+impl From<FileMode> for SelectedFileMode {
+    fn from(value: FileMode) -> Self {
+        match value {
+            FileMode::Regular => Self::Regular,
+            FileMode::Executable => Self::Executable,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
