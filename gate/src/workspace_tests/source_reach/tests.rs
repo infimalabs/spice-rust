@@ -2,6 +2,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
 
+mod metavariable_expansion;
+mod repeated_metavariable_expansion;
+
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
@@ -28,7 +31,6 @@ fn declared_sources_distinguish_private_public_reexported_and_test_only_modules(
             ("tests/support.rs", "pub struct TestOnly;\n"),
         ],
     );
-
     assert_eq!(
         fixture.reach(),
         BTreeMap::from([
@@ -887,7 +889,6 @@ fn module_wide_user_imports_shadow_before_their_item() {
             ("child.txt", "compiler owned\n"),
         ],
     );
-
     assert_eq!(
         fixture.reach(),
         BTreeMap::from([("child.txt".to_owned(), (false, false))]),
@@ -910,7 +911,6 @@ fn renamed_compiler_macro_retains_its_source_semantics() {
             ("input.txt", "compiler text\n"),
         ],
     );
-
     assert_eq!(
         fixture.reach(),
         BTreeMap::from([("input.txt".to_owned(), (false, true))]),

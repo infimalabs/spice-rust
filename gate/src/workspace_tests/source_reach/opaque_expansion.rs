@@ -1,5 +1,9 @@
 use super::*;
 
+mod dynamic_macro;
+
+use dynamic_macro::dynamic_macro_invocation_at;
+
 impl FileMacroPath {
     fn spelling(self) -> String {
         match self {
@@ -29,6 +33,12 @@ pub(super) fn opaque_expansion_file_macro_error(
                 "Rust source {} cannot prove expansion-site file-macro namespace for {}",
                 source.display(),
                 path.spelling(),
+            )));
+        }
+        if let Some(name) = dynamic_macro_invocation_at(&trees, index) {
+            return Some(WorkspaceTestError::new(format!(
+                "Rust source {} cannot prove expansion-site file-macro namespace for macro path containing ${name}",
+                source.display(),
             )));
         }
         if let TokenTree::Group(group) = tree
