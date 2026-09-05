@@ -43,6 +43,19 @@ pub fn app(environment: &ReleaseEnvironment, output: &mut impl Write) -> Result<
     app_from(&root, &root, environment, output)
 }
 
+/// Compile one proof runner's selected source into its private publication root.
+///
+/// Both roots are explicit because the selected source is not a Git worktree;
+/// the proof runner owns source identity and lifecycle outside this compiler.
+pub fn proof_app(
+    source_root: &Path,
+    publish_root: &Path,
+    environment: &ReleaseEnvironment,
+    output: &mut impl Write,
+) -> Result<(), AppBuildError> {
+    app_from(source_root, publish_root, environment, output)
+}
+
 /// Refuse the retired cross-worktree verifier app publication path.
 ///
 /// The function remains as a compatibility boundary for the former hidden

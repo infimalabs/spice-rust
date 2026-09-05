@@ -96,3 +96,58 @@ test("fixture cleanup joins a recorded group after its leader exits", async () =
   await assert.rejects(() => access(fixture), { code: "ENOENT" });
   await assert.rejects(() => access(linkedRoot), { code: "ENOENT" });
 });
+
+test("fixture cleanup reaps a vendor enrolled during resident shutdown", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "spice-canvas-cleanup-race-"));
+  const linkedRoot = await mkdtemp(join(tmpdir(), "spice-canvas-cleanup-race-lanes-"));
+  const early = 424_243;
+  const late = 424_244;
+  await writeFile(join(fixture, VENDOR_PID_LEDGER), `${early}\n`);
+  const child = new EventEmitter();
+  child.exitCode = null;
+  child.signalCode = null;
+  child.kill = () => assert.fail("the completed graceful stop must not escalate");
+  const living = new Set([early]);
+  const delivered = [];
+  const processes = {
+    kill(target, signal) {
+      const pid = Math.abs(target);
+      if (signal === 0) {
+        if (living.has(pid)) return;
+        const error = new Error("fixture process target is absent");
+        error.code = "ESRCH";
+        throw error;
+      }
+      delivered.push({ target, signal });
+      living.delete(pid);
+    },
+    async settled(predicate) {
+      return predicate();
+    },
+  };
+  const owner = ownFixture({
+    fixture,
+    linkedRoot,
+    processes,
+    stop: async () => {
+      living.add(late);
+      await writeFile(join(fixture, VENDOR_PID_LEDGER), `${early}\n${late}\n`);
+      child.exitCode = 0;
+    },
+  });
+  owner.ownResident({ child });
+
+  await owner.cleanup();
+
+  assert.deepEqual(
+    delivered,
+    [
+      { target: -early, signal: "SIGTERM" },
+      { target: -late, signal: "SIGTERM" },
+    ],
+    "teardown merges vendors recorded before and during resident shutdown",
+  );
+  assert.deepEqual([...living], [], "every recorded vendor is reaped");
+  await assert.rejects(() => access(fixture), { code: "ENOENT" });
+  await assert.rejects(() => access(linkedRoot), { code: "ENOENT" });
+});

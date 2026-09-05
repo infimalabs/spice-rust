@@ -872,7 +872,9 @@ async function assertSameGenerationResume(
 
 assertBoundaryLoadReading();
 const run = startShardWorker(process.argv.slice(2));
-if (process.env.SPICE_CANVAS_PREBUILT !== "1") await buildResident();
+if (process.env.SPICE_CANVAS_PREBUILT !== "1" && !process.env.SPICE_CANVAS_BINARY) {
+  await buildResident();
+}
 let fixture;
 let linkedRoot;
 let owner;

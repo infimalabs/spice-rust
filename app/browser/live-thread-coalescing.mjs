@@ -9,6 +9,9 @@ import {
   waitForPageFunction as waitForPage,
 } from "./canvas-fixture.mjs";
 
+// A causal refresh may traverse several bounded thread pages before it reaches root.
+const THREAD_REPLAY_MS = TRANSITION_MS * 4;
+
 function decode(message) {
   return JSON.parse(typeof message === "string" ? message : message.toString("utf8"));
 }
@@ -101,7 +104,7 @@ export async function assertLiveThreadCoalescing(browser, endpoint, fixture, par
   assert.equal(matchingRefreshes.length, 1, "one fact burst emits one thread request");
 
   const thread = page.locator('[data-pane="lineage"]');
-  await waitForPage(page, "the live causal pane is repopulated", TRANSITION_MS, (expected) => {
+  await waitForPage(page, "the live causal pane is repopulated", THREAD_REPLAY_MS, (expected) => {
     const pane = document.querySelector('[data-pane="lineage"]');
     const first = pane?.querySelector("tbody tr td");
     const terminal = pane?.querySelector(".section-count");

@@ -85,6 +85,13 @@ exit status copied from another process, or a hand-written receipt is not proof
 because it does not establish the immutable source, declaration, command,
 environment, tool, and result as one execution.
 
+Release 0.31.0's `BROWSER-1kKSWhZk browser coverage complete` marker and its
+`--spice-coverage-receipt` writer are retired together. Current Canvas
+completion is the registry-derived set containing `canvas:build` and exactly
+one `canvas:shard:<name>` receipt for every current shard. Supplying the retired
+writer flag is a refusal naming release 0.31.0; marker bytes are never executed,
+translated, or admitted as a second completion path.
+
 ## Storage and lifecycle
 
 Evidence lives under the canonical Git common directory:

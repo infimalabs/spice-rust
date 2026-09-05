@@ -4,7 +4,32 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { drainShardQueue } from "./canvas-coordinator.mjs";
+import { drainShardQueue, invocation } from "./canvas-coordinator.mjs";
+import {
+  assertShardInventory,
+  CANVAS_BUILD_ACTION,
+  CANVAS_SHARDS,
+  canvasShardAction,
+} from "./canvas-shards.mjs";
+
+test("release 0.31.0 marker-only Canvas evidence is refused", () => {
+  assert.throws(
+    () => invocation(["--spice-coverage-receipt", "/tmp/marker"]),
+    /marker-only evidence belongs to release 0\.31\.0.*canvas:build and canvas:shard:\*/,
+  );
+});
+
+test("the canonical registry derives one build action and one action per shard", () => {
+  assert.equal(CANVAS_BUILD_ACTION, "canvas:build");
+  assert.deepEqual(
+    CANVAS_SHARDS.map(({ name }) => canvasShardAction(name)),
+    CANVAS_SHARDS.map(({ name }) => `canvas:shard:${name}`),
+  );
+  assert.throws(
+    () => assertShardInventory(CANVAS_SHARDS.slice(1)),
+    /complete Canvas scenario inventory/,
+  );
+});
 
 function deferred() {
   let resolve;

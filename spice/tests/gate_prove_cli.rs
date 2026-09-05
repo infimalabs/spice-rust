@@ -17,6 +17,9 @@ fn prove_contract_uses_positional_action_and_unconditional_staged_source() {
         ["spice", "gate", "prove", "taste"].as_slice(),
         ["spice", "gate", "prove", "rust-typecheck"].as_slice(),
         ["spice", "gate", "prove", "cargo-tests"].as_slice(),
+        ["spice", "gate", "prove", "canvas"].as_slice(),
+        ["spice", "gate", "prove", "canvas:build"].as_slice(),
+        ["spice", "gate", "prove", "canvas:shard:interaction"].as_slice(),
         [
             "spice",
             "gate",
