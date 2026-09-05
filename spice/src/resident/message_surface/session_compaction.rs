@@ -46,6 +46,7 @@ struct Cursor {
     prefix: blake3::Hasher,
     guard: Option<RecordGuard>,
     validation: Option<PrefixValidation>,
+    startup_recovery: Option<listen::Locus>,
 }
 
 struct PendingTool {
@@ -195,13 +196,15 @@ impl SessionCompactions {
 
         for (lane, session) in current {
             self.ensure_cursor(lane, session, diagnostic);
-            let Some((scanned, path, author, dialect, thread)) =
+            let Some((scanned, startup_recovery, path, author, dialect, thread)) =
                 self.cursors.get_mut(&lane).map(|cursor| {
                     let path = cursor.path.clone();
                     let author = cursor.author;
                     let dialect = cursor.dialect;
                     let thread = cursor.thread.clone();
-                    (scan(cursor), path, author, dialect, thread)
+                    let scanned = scan(cursor);
+                    let startup_recovery = cursor.startup_recovery.take();
+                    (scanned, startup_recovery, path, author, dialect, thread)
                 })
             else {
                 continue;
@@ -209,8 +212,13 @@ impl SessionCompactions {
             match scanned {
                 Ok(records) => {
                     self.reported.remove(&lane);
+                    if dialect == listen::Dialect::Codex
+                        && let Some(locus) = startup_recovery
+                    {
+                        recover(lane, author, &thread, locus)?;
+                    }
                     for record in records {
-                        if dialect == listen::Dialect::Codex {
+                        if dialect == listen::Dialect::Codex && startup_recovery.is_none() {
                             recover(lane, author, &thread, record.locus())?;
                         }
                         publish(record, lane, author, publisher, state)?;
@@ -291,6 +299,7 @@ impl Cursor {
             prefix: blake3::Hasher::new(),
             guard: None,
             validation: None,
+            startup_recovery: None,
         }
     }
 }
@@ -313,6 +322,9 @@ impl CompactionRecord {
 
 fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
     if !cursor.initialized {
+        if cursor.dialect == listen::Dialect::Codex {
+            return bootstrap_codex(cursor, canvas::stream::INITIAL_MESSAGE_LIMIT + 1);
+        }
         return bootstrap(cursor, canvas::stream::INITIAL_MESSAGE_LIMIT + 1);
     }
     if cursor.validation.is_some() {
@@ -357,6 +369,41 @@ fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
         after_authentication_read: None,
     });
     advance_validation(cursor)
+}
+
+/// Recover durable Codex authority from the complete source while retaining
+/// only the bounded tail used for Canvas display.
+fn bootstrap_codex(cursor: &mut Cursor, visible_limit: usize) -> io::Result<Vec<CompactionRecord>> {
+    let checkpoint = history_checkpoint(&cursor.path)?;
+    let mut recovery = Cursor::new(
+        cursor.thread.clone(),
+        cursor.path.clone(),
+        cursor.dialect,
+        cursor.author,
+    );
+    let (boundaries, _) = bootstrap_before(
+        &mut recovery,
+        usize::MAX,
+        Some(checkpoint.next),
+        Some(checkpoint.source),
+    )?;
+    let latest = boundaries.last().map(CompactionRecord::locus);
+    let (display, _) = bootstrap_before(
+        cursor,
+        visible_limit,
+        Some(checkpoint.next),
+        Some(checkpoint.source),
+    )?;
+    let observed = FileStamp::read(&File::open(&cursor.path)?)?;
+    if observed != checkpoint.source {
+        reset(cursor);
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "preserved Codex session changed during startup recovery",
+        ));
+    }
+    cursor.startup_recovery = latest;
+    Ok(display)
 }
 
 /// Seed a new resident from the bounded initial visible tail Canvas presents.
@@ -706,6 +753,7 @@ fn reset(cursor: &mut Cursor) {
     cursor.prefix = blake3::Hasher::new();
     cursor.guard = None;
     cursor.validation = None;
+    cursor.startup_recovery = None;
 }
 
 fn advance_validation(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
