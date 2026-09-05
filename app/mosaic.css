@@ -1194,7 +1194,7 @@ body:has(.shell--mosaic),
   min-height: 17px;
   align-items: center;
   vertical-align: baseline;
-  padding: 1px 5px;
+  margin: 2px 0px; padding: 0px 4px;
   overflow: hidden;
   border: 1px solid var(--accent);
   border-radius: 999px;

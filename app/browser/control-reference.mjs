@@ -548,6 +548,14 @@ async function measureTaskChipFixture(fixture) {
         textOverflow: style.textOverflow,
         verticalAlign: style.verticalAlign,
         whiteSpace: style.whiteSpace,
+        marginTop: style.marginTop,
+        marginRight: style.marginRight,
+        marginBottom: style.marginBottom,
+        marginLeft: style.marginLeft,
+        paddingTop: style.paddingTop,
+        paddingRight: style.paddingRight,
+        paddingBottom: style.paddingBottom,
+        paddingLeft: style.paddingLeft,
         labelOverflowX: labelStyle.overflowX,
         labelTextOverflow: labelStyle.textOverflow,
         labelWhiteSpace: labelStyle.whiteSpace,
@@ -611,6 +619,16 @@ function assertTaskChipMeasurement(label, measured) {
       assert.equal(chip.labelTextOverflow, "ellipsis", `${label} ${chip.handle} label paints ellipsis`);
       assert.equal(chip.labelOverflowX, "hidden", `${label} ${chip.handle} label clips its text`);
       assert.equal(chip.verticalAlign, "baseline", `${label} ${chip.handle} follows prose baseline`);
+      assert.deepEqual(
+        [chip.marginTop, chip.marginRight, chip.marginBottom, chip.marginLeft],
+        ["2px", "0px", "2px", "0px"],
+        `${label} ${chip.handle} uses the requested block-only margin`,
+      );
+      assert.deepEqual(
+        [chip.paddingTop, chip.paddingRight, chip.paddingBottom, chip.paddingLeft],
+        ["0px", "4px", "0px", "4px"],
+        `${label} ${chip.handle} uses the requested inline-only padding`,
+      );
       assert.ok(
         Math.abs(chip.fontSize - measured.quote.fontSize) <= 0.01
           && Math.abs(chip.lineHeight - measured.quote.lineHeight) <= 0.01,
