@@ -332,7 +332,7 @@ body:has(.shell--mosaic),
   display: flex;
   flex: 0 1 18rem;
   min-width: 10rem;
-  justify-content: flex-end;
+  justify-content: safe flex-end;
   gap: 3px;
   overflow-x: auto;
 }

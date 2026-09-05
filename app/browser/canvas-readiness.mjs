@@ -308,7 +308,7 @@ export async function assertAgentWorkspaceGeometry(page, state) {
       `${state} surface reaches the content lower inset: ${JSON.stringify({ geometry, surface })}`,
     );
     assert.equal(surface.style.display, "flex", `${state} team surface owns a flex column`);
-    assert.equal(surface.style.minHeight, "0px", `${state} team surface can shrink to the viewport`);
+    assert.equal(surface.style.minHeight, "100%", `${state} team surface fills the fleet block`);
     assert.equal(surface.pane.display, "flex", `${state} team pane participates in flex sizing`);
     assert.equal(surface.pane.minHeight, "0px", `${state} team pane releases its automatic minimum`);
     if (surface.compose) {
