@@ -9,6 +9,8 @@ use crate::{
     ChangeSelectionPolicy, ChangeSelectionPolicyInputs, ChangeSelectionReport, select_change_gates,
 };
 
+mod collection;
+
 #[test]
 fn immutable_receipts_and_atomic_indexes_round_trip_canonically() {
     let fixture = Fixture::new("round-trip");

@@ -19,6 +19,10 @@ const CONSUMPTION_VERSION: u64 = 1;
 pub struct AdmissionTransactionId(Digest);
 
 impl AdmissionTransactionId {
+    pub(super) const fn from_digest(digest: Digest) -> Self {
+        Self(digest)
+    }
+
     #[must_use]
     pub fn derive(canonical_updates: &[u8]) -> Self {
         let mut framed = b"reference-transaction-consumption-v1\0".to_vec();
@@ -97,6 +101,12 @@ impl AdmissionConsumption {
 
     pub fn admissions(&self) -> impl Iterator<Item = &AdmissionId> {
         self.entries.iter().map(|entry| &entry.admission)
+    }
+
+    pub(super) fn admission_references(&self) -> impl Iterator<Item = (&str, &AdmissionId)> {
+        self.entries
+            .iter()
+            .map(|entry| (entry.tree.as_str(), &entry.admission))
     }
 
     fn encode(&self) -> Result<Vec<u8>, EvidenceStoreError> {
@@ -273,7 +283,7 @@ fn matching_admission(
     Ok(Some((id, bundle)))
 }
 
-fn read_record(
+pub(super) fn read_record(
     path: &std::path::Path,
     transaction: &AdmissionTransactionId,
 ) -> Result<Option<AdmissionConsumption>, EvidenceStoreError> {

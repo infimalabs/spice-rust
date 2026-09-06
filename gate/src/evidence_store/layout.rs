@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::fs::{self, DirEntry, OpenOptions};
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
@@ -7,6 +6,9 @@ use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use super::*;
+
+mod collection;
+pub(super) use collection::collect_layout;
 
 const STATE_DIRECTORY: &str = ".spice-rs";
 const STORE_DIRECTORY: &str = "gate-evidence";
@@ -498,96 +500,17 @@ pub(super) fn remove_file(path: &Path) -> Result<(), EvidenceStoreError> {
     sync_directory(path.parent().expect("record has a parent"))
 }
 
-pub(super) fn collect_layout(
-    layout: &Layout,
-    now: SystemTime,
-    minimum_age: Duration,
-    limit: usize,
-) -> Result<CollectionReport, EvidenceStoreError> {
-    let mut report = CollectionReport {
-        removed_objects: 0,
-        removed_leases: 0,
-        retained: Vec::new(),
-    };
-    let mut remaining = limit;
-    let mut referenced = BTreeSet::new();
-    let mut indexes_ambiguous = false;
-    for entry in read_directory(&layout.actions)? {
-        match action_from_entry(&entry).and_then(|action| read_index(layout, &action)) {
-            Ok(Some(index)) => {
-                referenced.insert(index.receipt);
-            }
-            Ok(None) => unreachable!("directory entry disappeared while locked"),
-            Err(error) => {
-                indexes_ambiguous = true;
-                report
-                    .retained
-                    .push(format!("{}: {error}", entry.path().display()));
-            }
-        }
-    }
-    if !indexes_ambiguous && remaining > 0 {
-        let mut candidates = Vec::new();
-        for entry in read_directory(&layout.objects)? {
-            match receipt_from_entry(&entry).and_then(|id| {
-                read_receipt(layout, &id, None)?;
-                Ok(id)
-            }) {
-                Ok(id) if referenced.contains(&id) => {}
-                Ok(_) => match old_enough(&entry.path(), now, minimum_age) {
-                    Ok(true) => candidates.push(entry.path()),
-                    Ok(false) => {}
-                    Err(error) => report
-                        .retained
-                        .push(format!("{}: {error}", entry.path().display())),
-                },
-                Err(error) => report
-                    .retained
-                    .push(format!("{}: {error}", entry.path().display())),
-            }
-        }
-        candidates.sort();
-        for path in candidates.into_iter().take(remaining) {
-            remove_file(&path)?;
-            report.removed_objects += 1;
-            remaining -= 1;
-        }
-    }
-    if remaining > 0 {
-        let now_millis = millis(now)?;
-        for entry in read_directory(&layout.leases)? {
-            if remaining == 0 {
-                break;
-            }
-            match action_from_entry(&entry).and_then(|action| read_lease(layout, &action)) {
-                Ok(Some(record)) if record.expires_at_millis <= now_millis => {
-                    remove_file(&entry.path())?;
-                    report.removed_leases += 1;
-                    remaining -= 1;
-                }
-                Ok(Some(_)) => {}
-                Ok(None) => unreachable!("directory entry disappeared while locked"),
-                Err(error) => report
-                    .retained
-                    .push(format!("{}: {error}", entry.path().display())),
-            }
-        }
-    }
-    report.retained.sort();
-    Ok(report)
-}
-
 fn action_from_entry(entry: &DirEntry) -> Result<ActionKey, EvidenceStoreError> {
     let digest = digest_from_entry(entry)?;
     Ok(ActionKey(digest))
 }
 
-fn receipt_from_entry(entry: &DirEntry) -> Result<ReceiptId, EvidenceStoreError> {
+pub(super) fn receipt_from_entry(entry: &DirEntry) -> Result<ReceiptId, EvidenceStoreError> {
     let digest = digest_from_entry(entry)?;
     Ok(ReceiptId(digest))
 }
 
-fn digest_from_entry(entry: &DirEntry) -> Result<Digest, EvidenceStoreError> {
+pub(super) fn digest_from_entry(entry: &DirEntry) -> Result<Digest, EvidenceStoreError> {
     let name = entry.file_name().into_string().map_err(|_| {
         EvidenceStoreError::new(
             "gate-evidence::entry-name-invalid",
@@ -599,7 +522,7 @@ fn digest_from_entry(entry: &DirEntry) -> Result<Digest, EvidenceStoreError> {
     })
 }
 
-fn old_enough(
+pub(super) fn old_enough(
     path: &Path,
     now: SystemTime,
     minimum_age: Duration,
@@ -669,7 +592,7 @@ fn read_regular(path: &Path, limit: u64) -> Result<Vec<u8>, EvidenceStoreError> 
     })
 }
 
-fn read_directory(path: &Path) -> Result<Vec<DirEntry>, EvidenceStoreError> {
+pub(super) fn read_directory(path: &Path) -> Result<Vec<DirEntry>, EvidenceStoreError> {
     let mut entries = fs::read_dir(path)
         .map_err(|error| EvidenceStoreError::io("read directory", path, error))?
         .collect::<Result<Vec<_>, _>>()

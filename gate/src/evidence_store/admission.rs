@@ -20,6 +20,10 @@ const MAX_ADMISSION_ACTIONS: usize = 256;
 pub struct AdmissionId(Digest);
 
 impl AdmissionId {
+    pub(super) const fn from_digest(digest: Digest) -> Self {
+        Self(digest)
+    }
+
     #[must_use]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
@@ -406,7 +410,7 @@ pub(super) fn publish(
 
 #[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-struct AdmissionIndex {
+pub(super) struct AdmissionIndex {
     version: u64,
     candidate_tree: String,
     branch: String,
@@ -415,6 +419,16 @@ struct AdmissionIndex {
     admission: AdmissionId,
     created_at: Instant,
     expires_at: Instant,
+}
+
+impl AdmissionIndex {
+    pub(super) fn reference(&self) -> (&str, &AdmissionId) {
+        (&self.candidate_tree, &self.admission)
+    }
+
+    pub(super) fn key(&self) -> Result<Digest, EvidenceStoreError> {
+        index_key(&self.candidate_tree, &self.branch, self.head.as_deref())
+    }
 }
 
 fn publish_index(
@@ -514,7 +528,9 @@ fn index_key(
     Ok(Digest::compute(Domain::GateAdmission, &framed))
 }
 
-fn read_index(path: &std::path::Path) -> Result<Option<AdmissionIndex>, EvidenceStoreError> {
+pub(super) fn read_index(
+    path: &std::path::Path,
+) -> Result<Option<AdmissionIndex>, EvidenceStoreError> {
     let Some(bytes) = read_optional_regular(path, MAX_RECEIPT_BYTES as u64)? else {
         return Ok(None);
     };
