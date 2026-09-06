@@ -8,6 +8,8 @@ use sill::{WaitError, WaitOutcome};
 use super::super::launch::test_support::{AdvisoryRtkFixture, SESSION};
 use super::*;
 
+mod claim_carry;
+
 struct RunningProcess;
 struct ExitedProcess;
 

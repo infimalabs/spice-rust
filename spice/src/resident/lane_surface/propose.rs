@@ -359,4 +359,4 @@ pub(super) fn commit_adopted(
 
 #[cfg(test)]
 #[path = "propose_tests.rs"]
-mod tests;
+pub(in crate::resident::lane_surface) mod tests;
