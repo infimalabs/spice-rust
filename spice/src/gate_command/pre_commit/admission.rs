@@ -11,6 +11,7 @@ use super::WorkerFailure;
 
 const ADMISSION_LIFETIME_SECONDS: i64 = 600;
 const ADMISSION_REUSE_WINDOW_SECONDS: i64 = 300;
+const ADMISSION_STABILITY_ATTEMPTS: usize = 4;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -101,26 +102,14 @@ pub(super) fn run(
             return Err(error);
         }
     };
-    let live_checks = match early_live_checks {
-        Some(checks) => checks,
-        None => match preparation.execute_live_checks() {
+    let live_checks =
+        match settle_admission_state(&mut preparation, &repository, &claim, early_live_checks) {
             Ok(checks) => checks,
             Err(error) => {
                 let _ = preparation.reject_state();
                 return Err(prove_failure(error));
             }
-        },
-    };
-    if let Err(error) = preparation.verify_current(&repository, &claim) {
-        let _ = preparation.reject_state();
-        return Err(prove_failure(error));
-    }
-    if let Err(error) = preparation.accept_state() {
-        return Err(prove_failure(error));
-    }
-    preparation
-        .verify_current(&repository, &claim)
-        .map_err(prove_failure)?;
+        };
     let (created_at, expires_at) = admission_window()?;
     let live_check_count = live_checks.len();
     let bundle = AdmissionBundle::new(AdmissionBundleFields {
@@ -151,6 +140,34 @@ pub(super) fn run(
         report,
         staged: preparation.into_staged(),
     })
+}
+
+fn settle_admission_state(
+    preparation: &mut super::super::prove::AdmissionPreparation,
+    repository: &Repository,
+    claim: &gate::ClaimCapture,
+    mut early_live_checks: Option<Vec<gate::AdmissionLiveCheck>>,
+) -> Result<Vec<gate::AdmissionLiveCheck>, super::super::prove::ProveFailure> {
+    for _ in 0..ADMISSION_STABILITY_ATTEMPTS {
+        let live_checks = match early_live_checks.take() {
+            Some(checks) => checks,
+            None => preparation.execute_live_checks()?,
+        };
+        if preparation.verify_current(repository, claim)? {
+            continue;
+        }
+        preparation.accept_state()?;
+        if preparation.verify_current(repository, claim)? {
+            continue;
+        }
+        return Ok(live_checks);
+    }
+    Err(super::super::prove::ProveFailure::refusal(
+        "gate::source-moved",
+        format!(
+            "staged index did not stabilize after {ADMISSION_STABILITY_ATTEMPTS} semantic recaptures"
+        ),
+    ))
 }
 
 fn lookup_evidence(
