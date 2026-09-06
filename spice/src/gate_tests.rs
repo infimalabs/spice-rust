@@ -1,4 +1,5 @@
 use super::*;
+use std::process::Command;
 
 #[test]
 fn staged_renames_retain_both_owners_independent_of_git_rename_configuration() {
@@ -152,6 +153,49 @@ fn compiler_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs
         (OsString::from("RUSTFLAGS"), OsString::from("--cfg=bound")),
     ]);
     assert_ne!(producer, drifted);
+}
+
+#[test]
+fn compiler_child_receives_semantic_inputs_but_no_operational_routing() {
+    let routing = [
+        wire::SpiceVariable::Hooks,
+        wire::SpiceVariable::Inbox,
+        wire::SpiceVariable::Lane,
+        wire::SpiceVariable::PreCommitPaths,
+        wire::SpiceVariable::PreCommitSource,
+        wire::SpiceVariable::WrapperSpice,
+    ];
+    let mut input = routing
+        .map(|variable| {
+            (
+                OsString::from(variable.as_str()),
+                OsString::from("routing-only"),
+            )
+        })
+        .to_vec();
+    input.extend([
+        (
+            OsString::from("ARBITRARY_BUILD_INPUT"),
+            OsString::from("retained"),
+        ),
+        (
+            OsString::from(wire::SpiceVariable::NativeCargo.as_str()),
+            OsString::from("/toolchain/cargo"),
+        ),
+    ]);
+    let captured = compiler_environment_from(input);
+    let output = Command::new("/usr/bin/env")
+        .env_clear()
+        .envs(captured)
+        .output()
+        .expect("spawn with the captured compiler environment");
+    assert!(output.status.success());
+    let child = String::from_utf8(output.stdout).expect("child environment is UTF-8");
+    for variable in routing {
+        assert!(!child.contains(&format!("{}=", variable.as_str())));
+    }
+    assert!(child.contains("ARBITRARY_BUILD_INPUT=retained"));
+    assert!(child.contains("SPICE_RS_NATIVE_CARGO=/toolchain/cargo"));
 }
 
 #[test]
