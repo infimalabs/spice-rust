@@ -565,6 +565,10 @@ fn codex_item_completed_variants_are_typed_non_emitting_companions() {
             "CommandExecution",
             br#"{"timestamp":"2026-09-05T07:11:16.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"CommandExecution","id":"exec-1","command":["/bin/zsh","-lc","cargo test"],"cwd":"file:///repo","process_id":123,"status":"completed","parsed_cmd":[],"source":"unified_exec_startup","stdout":"ok","stderr":"","aggregated_output":"ok","formatted_output":"ok","exit_code":0,"duration":{"secs":1,"nanos":2}}}}"#,
         ),
+        (
+            "ImageView",
+            br#"{"timestamp":"2026-09-05T07:11:16.001Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"ImageView","id":"exec-image-1","path":"file:///tmp/capture.png"}}}"#,
+        ),
     ];
 
     for (kind, bytes) in companions {
@@ -588,6 +592,85 @@ fn codex_item_completed_variants_are_typed_non_emitting_companions() {
                 discriminator: "event_msg:item_completed:FutureItem".to_owned(),
             } && residue.accounted_bytes() == unknown.len() as u64
     ));
+
+    let malformed = br#"{"timestamp":"2026-09-05T07:11:18.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"ImageView","id":"exec-image-2"}}}"#;
+    let detected = decode_record(None, malformed, locus(malformed))
+        .expect("a malformed ImageView companion remains bounded residue");
+    assert!(matches!(
+        detected.decoded,
+        Decoded::Residue(ref residue)
+            if residue.kind == ResidueKind::Absent { field: "path" }
+                && residue.accounted_bytes() == malformed.len() as u64
+    ));
+}
+
+#[test]
+fn codex_unified_exec_image_result_retains_one_typed_media_output() {
+    const CALL: &str = "call_N4XyMbDlajHB5WdorSMM6UBb";
+    const PNG: &str = "iVBORw0KGgo=";
+    let call = serde_json::to_vec(&serde_json::json!({
+        "timestamp": "2026-09-06T18:15:34.681Z",
+        "type": "response_item",
+        "payload": {
+            "type": "custom_tool_call",
+            "id": "ctc-image",
+            "status": "completed",
+            "call_id": CALL,
+            "name": "exec",
+            "input": "const r = await tools.view_image({ path: image }); image(r.image_url);",
+        },
+    }))
+    .expect("captured call fixture encodes");
+    let result = serde_json::to_vec(&serde_json::json!({
+        "timestamp": "2026-09-06T18:15:34.867Z",
+        "type": "response_item",
+        "payload": {
+            "type": "custom_tool_call_output",
+            "id": "ctco-image",
+            "call_id": CALL,
+            "output": [
+                {"type": "input_text", "text": "Script completed\nWall time 0.1 seconds"},
+                {
+                    "type": "input_image",
+                    "detail": "original",
+                    "image_url": format!("data:image/png;base64,{PNG}"),
+                },
+            ],
+        },
+    }))
+    .expect("captured result fixture encodes");
+
+    let decoded = decode(Dialect::Codex, &call, locus(&call)).expect("captured call decodes");
+    assert!(matches!(
+        decoded.events(),
+        [Event::Tool(tool)]
+            if tool.call_id == CALL
+                && matches!(&tool.moment, ToolMoment::Call { name, arguments }
+                    if name == "exec" && arguments.contains("tools.view_image"))
+    ));
+    let decoded = decode(Dialect::Codex, &result, locus(&result)).expect("captured result decodes");
+    let [Event::Tool(tool)] = decoded.events() else {
+        panic!("captured image output remains one tool result");
+    };
+    let ToolMoment::Result(outcome) = &tool.moment else {
+        panic!("captured image output remains a result");
+    };
+    assert_eq!(tool.call_id, CALL);
+    assert_eq!(
+        outcome.output.as_deref(),
+        Some("Script completed\nWall time 0.1 seconds")
+    );
+    let [media] = outcome.media.as_slice() else {
+        panic!("captured output retains exactly one image");
+    };
+    assert_eq!(media.name, "tool-image");
+    assert_eq!(media.content_type, "image/png");
+    let bytes = media.decoded_bytes().expect("captured image bytes admit");
+    assert_eq!(bytes.len(), 8);
+    assert_eq!(
+        media.identity().expect("captured image identity derives"),
+        wire::Digest::compute(wire::Domain::MediaContent, &bytes),
+    );
 }
 
 #[test]

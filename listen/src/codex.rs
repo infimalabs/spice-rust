@@ -286,6 +286,11 @@ fn rollout_completed_item_companion(payload: &Object) -> Events {
             string(item, "id")?;
             Ok(Vec::new())
         }
+        "ImageView" => {
+            string(item, "id")?;
+            string(item, "path")?;
+            Ok(Vec::new())
+        }
         other => Err(drift(&format!("event_msg:item_completed:{other}"))),
     }
 }
