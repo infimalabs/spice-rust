@@ -1,6 +1,6 @@
 //! External executable authority for focused reusable gate actions.
 
-use gate::{ActionToolRequirement, ArmEvidence, BatteryContext, BatteryToolEvidence};
+use gate::{ActionToolRequirement, ArmEvidence, BatteryContext, BatteryState, BatteryToolEvidence};
 use wire::{Digest, Domain};
 
 use super::{ProveFailure, digest_encoded, refusal_detail};
@@ -26,7 +26,7 @@ pub(super) fn execute(
         return Err(moved("before execution"));
     }
     let report = arm.execute().map_err(ProveFailure::run)?;
-    if executed_tools(&report) != expected.as_slice()
+    if !report_tools_match(&report, &expected)
         || arm.action_tools().map_err(ProveFailure::run)? != expected
     {
         return Err(moved("during execution"));
@@ -88,6 +88,16 @@ fn executed_tools(report: &gate::FocusedArmReport) -> &[gate::ToolEvidence] {
         ArmEvidence::Toolchain { report } => &report.tools,
         _ => &[],
     }
+}
+
+fn report_tools_match(report: &gate::FocusedArmReport, expected: &[gate::ToolEvidence]) -> bool {
+    let observed = executed_tools(report);
+    observed == expected
+        || (observed.is_empty()
+            && matches!(
+                report.result().state(),
+                BatteryState::NotApplicable | BatteryState::Excluded
+            ))
 }
 
 fn moved(stage: &str) -> ProveFailure {
