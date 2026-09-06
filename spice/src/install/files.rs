@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::repository::Repository;
 
-use super::handle::AdmittedPath;
+use super::handle::{AdmittedPath, retirement_temporary_name};
 use super::{
     Asset, FileImage, Generation, InstallError, ObservedFile, Operation, ParentObservation,
     ReceiptGeneration, Retirement, fixed_asset_bytes, read_binary,
@@ -13,6 +13,7 @@ use super::{
 pub(super) fn retire_path(
     repository: &Repository,
     retirement: &Retirement,
+    index: usize,
 ) -> Result<Option<Generation>, InstallError> {
     let path = AdmittedPath::open(
         repository.common_dir(),
@@ -22,17 +23,70 @@ pub(super) fn retire_path(
         0,
     )?;
     let current = path.observe()?;
-    if let Some(current) = current {
-        if !retirement.expects_in_place(Some(&current)) {
-            return Err(super::retirement_drift(retirement, Some(current)));
+    if !retirement.discards_payload() {
+        if let Some(current) = current {
+            if !retirement.expects_in_place(Some(&current)) {
+                return Err(super::retirement_drift(retirement, Some(current)));
+            }
+            path.remove(current.generation)?;
         }
-        path.remove(current.generation)?;
-    } else if !retirement.expects_in_place(None) {
-        // Absence is also the completed side of an interrupted retirement.
-        // The progress verifier admits that transition before reaching here.
         return path.parent_generation();
     }
+    let temporary = retirement_temporary_name(index);
+    let staged = path.observe_named(&temporary)?;
+    match (current, staged) {
+        (Some(current), None) if retirement.expects_in_place(Some(&current)) => {
+            path.retire(current.generation, &temporary)?;
+        }
+        (None, Some(staged)) if retirement.expects_in_place(Some(&staged)) => {
+            path.resume_retirement(staged.generation, &temporary)?;
+        }
+        (None, None) => {}
+        (Some(_), Some(_)) => {
+            return Err(temporary_collision(repository, retirement, &temporary));
+        }
+        (Some(current), None) => {
+            return Err(super::retirement_drift(retirement, Some(current)));
+        }
+        (None, Some(staged)) => {
+            return Err(super::retirement_drift(retirement, Some(staged)));
+        }
+    }
     path.parent_generation()
+}
+
+pub(super) fn prepare_retirement(
+    repository: &Repository,
+    retirement: &Retirement,
+    index: usize,
+) -> Result<Option<Generation>, InstallError> {
+    debug_assert!(retirement.discards_payload());
+    let path = AdmittedPath::open(
+        repository.common_dir(),
+        &retirement.destination,
+        &retirement.parent,
+        false,
+        0,
+    )?;
+    let current = path.observe()?;
+    if !retirement.expects_in_place(current.as_ref()) {
+        return Err(super::retirement_drift(retirement, current));
+    }
+    let temporary = retirement_temporary_name(index);
+    if path.observe_named(&temporary)?.is_some() {
+        return Err(temporary_collision(repository, retirement, &temporary));
+    }
+    path.parent_generation()
+}
+
+fn temporary_collision(
+    repository: &Repository,
+    retirement: &Retirement,
+    temporary: &std::ffi::OsStr,
+) -> InstallError {
+    let mut path = retirement.destination(repository);
+    path.set_file_name(temporary);
+    InstallError::ParentChanged(path)
 }
 
 pub(super) fn restore_retirement(

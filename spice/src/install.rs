@@ -33,7 +33,8 @@ pub use binding::{Generation, ParentObservation};
 pub use error::InstallError;
 use files::{
     cleanup_operation, matches_generated, materialize_generated, observe, observe_bound,
-    publish_bound, publish_operation, restore_operation, restore_retirement, retire_path,
+    prepare_retirement, publish_bound, publish_operation, restore_operation, restore_retirement,
+    retire_path,
 };
 use path::validate_relative;
 use progress::{

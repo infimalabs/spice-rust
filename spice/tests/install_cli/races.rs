@@ -206,3 +206,95 @@ fn killed_record_publication_is_reported_then_reclaimed() {
     let aged = age_and_diagnose_publication(&fixture, &temporary);
     preview_then_reclaim_publication(&fixture, &temporary, aged);
 }
+
+fn fold_path(fixture: &Fixture) -> PathBuf {
+    fixture.root.join(".git/.spice-rs/data/spicefolds.sqlite3")
+}
+
+fn crash_fold_retirement(fixture: &Fixture, action: &str) -> (String, PathBuf, PathBuf, u64) {
+    let fold = fold_path(fixture);
+    fs::write(&fold, b"crash-only fold payload\n").expect("write obsolete fold payload");
+    let inode = fs::metadata(&fold)
+        .expect("inspect obsolete fold payload")
+        .ino();
+    let unrelated = fold.parent().unwrap().join(".spice-install-unrelated.tmp");
+    fs::write(&unrelated, b"operator temporary\n").expect("write unrelated temporary");
+    let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
+    assert!(preview.plan().rollback_archive().is_none());
+    let (index, retirement) = preview
+        .plan()
+        .retirements()
+        .iter()
+        .enumerate()
+        .find(|(_, retirement)| retirement.path() == ".spice-rs/data/spicefolds.sqlite3")
+        .expect("preview carries the fold retirement");
+    assert!(retirement.rollback().is_none());
+    let temporary = fold
+        .parent()
+        .unwrap()
+        .join(format!(".spice-install-retirement-{index}.tmp"));
+    let digest = preview.digest().to_string();
+    let paused = fixture.spawn_paused(
+        &["--json", "install", &format!("--apply={digest}")],
+        action,
+        fold.clone(),
+        Release::Withheld,
+    );
+    let (_, killed) = kill(paused);
+    assert_eq!(killed.code, None);
+    (digest, temporary, unrelated, inode)
+}
+
+fn resume_fold_retirement(fixture: &Fixture, digest: &str) {
+    let receipt: InstallReceipt =
+        reply_body(fixture.invoke(&["--json", "install", &format!("--apply={digest}")]));
+    assert_eq!(receipt.status(), InstallStatus::Complete);
+    assert!(fs::metadata(fixture.record()).unwrap().len() < MIN_PRIVATE_INSTALL_RECORD as u64);
+}
+
+#[test]
+fn killed_after_fold_rename_completes_only_the_admitted_retirement() {
+    let fixture = Fixture::new("fold-retirement-renamed");
+    let fold = fold_path(&fixture);
+    let (digest, temporary, unrelated, inode) = crash_fold_retirement(&fixture, "retire-renamed");
+    assert!(!fold.exists());
+    assert_eq!(
+        fs::metadata(&temporary)
+            .expect("renamed fold payload remains")
+            .ino(),
+        inode,
+    );
+
+    resume_fold_retirement(&fixture, &digest);
+
+    assert!(!fold.exists());
+    assert!(!temporary.exists());
+    assert_eq!(fs::read(&unrelated).unwrap(), b"operator temporary\n");
+    assert!(
+        !fs::read(fixture.record())
+            .unwrap()
+            .windows(b"crash-only fold payload".len())
+            .any(|window| window == b"crash-only fold payload")
+    );
+}
+
+#[test]
+fn killed_after_fold_unlink_recognizes_and_records_completion() {
+    let fixture = Fixture::new("fold-retirement-unlinked");
+    let fold = fold_path(&fixture);
+    let (digest, temporary, unrelated, _) = crash_fold_retirement(&fixture, "retire-unlinked");
+    assert!(!fold.exists());
+    assert!(!temporary.exists());
+
+    resume_fold_retirement(&fixture, &digest);
+
+    assert!(!fold.exists());
+    assert!(!temporary.exists());
+    assert_eq!(fs::read(&unrelated).unwrap(), b"operator temporary\n");
+    assert!(
+        !fs::read(fixture.record())
+            .unwrap()
+            .windows(b"crash-only fold payload".len())
+            .any(|window| window == b"crash-only fold payload")
+    );
+}
