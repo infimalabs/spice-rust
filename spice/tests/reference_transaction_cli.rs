@@ -14,6 +14,9 @@ use wire::{Actor, Digest, Domain};
 #[path = "support/git_repository.rs"]
 mod git_repository;
 
+#[path = "reference_transaction_cli/movement.rs"]
+mod movement;
+
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 const USAGE: &str =
     "usage: spice gate reference-transaction <preparing|prepared|committed|aborted>\n";

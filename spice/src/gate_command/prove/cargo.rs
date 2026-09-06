@@ -55,7 +55,7 @@ pub(super) fn prepare(
     let context = arm.context().map_err(ProveFailure::run)?;
     let authority = authority(arm.root(), arm.compiler_environment())?;
     let (source_execution, external_source) =
-        source_authority(arm.root(), &authority.execution_environment)?;
+        source_authority(writable_root, arm.root(), &authority.execution_environment)?;
     let environment = Environment::new(authority.execution_environment.iter().cloned())
         .map_err(|error| ProveFailure::refusal("gate::prove-cargo-environment-refused", error))?;
     let base = arm.materialize_staged_base().map_err(ProveFailure::run)?;
@@ -247,12 +247,16 @@ pub(super) fn authority(
 
 pub(super) fn source_authority(
     root: &Path,
+    selected_root: &Path,
     environment: &[(OsString, OsString)],
 ) -> Result<(SourceExecution, CargoExternalSourceAuthority), ProveFailure> {
-    let host = spice::cargo_isolation::Host::from_environment(root, environment.iter().cloned())
-        .map_err(ProveFailure::cargo_isolation)?;
+    let host =
+        spice::cargo_isolation::Host::from_environment(selected_root, environment.iter().cloned())
+            .map_err(ProveFailure::cargo_isolation)?;
     let cargo_home = environment_value(environment, "CARGO_HOME")?;
-    let lockfile = fs::read(root.join("Cargo.lock"))
+    // The home belongs to the live worktree; the lockfile belongs to the
+    // immutable staged source. Neither authority can stand in for the other.
+    let lockfile = fs::read(selected_root.join("Cargo.lock"))
         .map_err(|error| ProveFailure::refusal("gate::prove-cargo-source-unavailable", error))?;
     let source = spice::cargo_isolation::readmit_source_generation(
         Path::new(cargo_home),

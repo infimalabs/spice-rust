@@ -50,8 +50,11 @@ pub(super) fn authority(
     let (cargo_environment, cargo_source) = if needs_cargo {
         let cargo = cargo_authority(anchor.root(), anchor.compiler_environment())?;
         let (_, environment) = environment(&cargo.action_environment)?;
-        let (_, external_source) =
-            cargo_source_authority(anchor.root(), &cargo.execution_environment)?;
+        let (_, external_source) = cargo_source_authority(
+            repository.worktree_root(),
+            anchor.root(),
+            &cargo.execution_environment,
+        )?;
         (
             Some(environment),
             Some(digest_encoded(Domain::GateInventory, &external_source)?),

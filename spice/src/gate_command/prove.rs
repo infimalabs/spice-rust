@@ -41,7 +41,7 @@ mod tools;
 #[cfg(test)]
 use cargo::require_reusable_shard as require_reusable_cargo_shard;
 use cargo::{
-    authority as cargo_authority, environment_value, request as cargo_request,
+    authority as cargo_authority, request as cargo_request,
     source_authority as cargo_source_authority,
 };
 use fingerprint::PreparedActions;

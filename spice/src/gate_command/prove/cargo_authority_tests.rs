@@ -6,6 +6,84 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use super::cargo_authority;
 
 #[test]
+fn staged_lockfile_uses_the_live_worktrees_private_home() {
+    use spice::cargo_isolation::{CARGO_HOME_VARIABLE, Host, prepare_manual};
+
+    let root = std::env::temp_dir().join(format!("spice-prove-source-{}", uuid::Uuid::new_v4()));
+    let worktree = root.join("worktree");
+    let selected = root.join("selected");
+    let bootstrap = root.join("bootstrap");
+    let tools = root.join("tools");
+    for directory in [&worktree, &selected, &bootstrap, &tools] {
+        fs::create_dir_all(directory).unwrap();
+    }
+    gix::init(&worktree).unwrap();
+    let repository = spice::repository::Repository::discover(&worktree).unwrap();
+    let lockfile = "version = 4\npackage = []\n";
+    fs::write(worktree.join("Cargo.lock"), lockfile).unwrap();
+    fs::write(selected.join("Cargo.lock"), lockfile).unwrap();
+    for name in ["cargo", "rustc", "rustdoc"] {
+        let path = tools.join(name);
+        fs::write(&path, "#!/bin/sh\nexit 91\n").unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let host = Host::new(
+        bootstrap,
+        tools.join("cargo"),
+        tools.join("rustc"),
+        tools.join("rustdoc"),
+    )
+    .unwrap();
+    let home = prepare_manual(&repository, &host).unwrap();
+    let mut environment = host.compiler_environment().unwrap().entries().to_vec();
+    for (name, value) in &mut environment {
+        if name == OsStr::new(CARGO_HOME_VARIABLE) {
+            *value = home.home().as_os_str().to_owned();
+        }
+    }
+    let accepted = super::cargo_source_authority(&worktree, &selected, &environment);
+    assert!(
+        accepted.is_ok(),
+        "the selected copy retains its owner's admitted home"
+    );
+    let Err(error) = super::cargo_source_authority(&selected, &selected, &environment) else {
+        panic!("the selected copy must not impersonate the home owner");
+    };
+    assert!(error.detail().contains("home-owner-mismatch"));
+
+    // The working copy can diverge without changing the exact staged source.
+    fs::write(
+        worktree.join("Cargo.lock"),
+        format!("{lockfile}# unstaged\n"),
+    )
+    .unwrap();
+    assert!(super::cargo_source_authority(&worktree, &selected, &environment).is_ok());
+    fs::write(
+        selected.join("Cargo.lock"),
+        format!("{lockfile}# staged drift\n"),
+    )
+    .unwrap();
+    let Err(error) = super::cargo_source_authority(&worktree, &selected, &environment) else {
+        panic!("a different selected lockfile needs its own admitted generation");
+    };
+    assert!(error.detail().contains("generation-lock-mismatch"));
+    drop(accepted);
+    drop(home);
+    writable_directories(&root);
+    fs::remove_dir_all(root).unwrap();
+}
+
+fn writable_directories(path: &std::path::Path) {
+    let metadata = fs::symlink_metadata(path).unwrap();
+    if metadata.is_dir() {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+        for entry in fs::read_dir(path).unwrap() {
+            writable_directories(&entry.unwrap().path());
+        }
+    }
+}
+
+#[test]
 fn cargo_authority_binds_absolute_tools_before_planning() {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(

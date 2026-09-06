@@ -137,8 +137,16 @@ from different parent commits. Prepared selects the unexpired bundle whose
 branch, prior tip, candidate tree, policy, and gate-set authorities all match;
 zero or multiple matches refuse instead of choosing by recency.
 
-`reference-transaction prepared` resolves each queued commit's tree and checks
-the matching admission bundle before writing an idempotent pending record.
+`reference-transaction prepared` first checks history protection. An unchanged
+branch tip or a commit already reachable from a local branch, remote-tracking
+ref, or tag does not need another admission: moving a ref within existing history
+does not author a prospective commit. Reachability compares commit identity,
+not tree equality, and uses the refs held before the transaction is committed.
+Admissions issued for another branch or an earlier tip cannot obstruct these
+updates. Rewinds that abandon published history still refuse.
+
+For newly introduced commits, prepared resolves each queued commit's tree and
+checks the matching admission bundle before writing an idempotent pending record.
 `committed` promotes that record to commit credit. `aborted` removes it.
 `preparing` does no repository or evidence work. No reference-transaction state
 executes a test or waits for a proof producer.

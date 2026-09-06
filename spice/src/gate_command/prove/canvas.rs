@@ -149,7 +149,7 @@ pub(super) fn prepare(
         .derive_reached_arm(staged.selection(), GateId::CanvasWebTypecheck)
         .map_err(ProveFailure::run)?;
     let context = arm.context().map_err(ProveFailure::run)?;
-    let (plan, environment_values) = canvas_plan(&arm)?;
+    let (plan, environment_values) = canvas_plan(&arm, repository)?;
     let action_environment = super::normalized_action_environment(&environment_values);
     let (environment_names, environment) = environment(&action_environment)?;
     let playwright = Arc::new(PlaywrightSnapshot::capture(arm.root(), repository)?);
@@ -236,29 +236,12 @@ pub(super) fn prepare(
 
 fn canvas_plan(
     arm: &spice::gate::PreparedArm<'_>,
+    repository: &Path,
 ) -> Result<(CanvasActionPlan, Vec<(OsString, OsString)>), ProveFailure> {
     let cargo = super::cargo_authority(arm.root(), arm.compiler_environment())?;
     let environment_values = normalized_environment(cargo.execution_environment.iter().cloned());
-    let host = spice::cargo_isolation::Host::from_environment(
-        arm.root(),
-        environment_values.iter().cloned(),
-    )
-    .map_err(ProveFailure::cargo_isolation)?;
-    let cargo_home = super::environment_value(&environment_values, "CARGO_HOME")?;
-    let lockfile = fs::read(arm.root().join("Cargo.lock"))
-        .map_err(|error| ProveFailure::refusal("gate::prove-cargo-source-unavailable", error))?;
-    let source = spice::cargo_isolation::readmit_source_generation(
-        Path::new(cargo_home),
-        &lockfile,
-        arm.root(),
-        &host,
-    )
-    .map_err(|error| ProveFailure::refusal("gate::prove-cargo-source-unavailable", error))?;
-    let external_source = gate::CargoExternalSourceAuthority::new(
-        source.generation().to_owned(),
-        source.manifest().to_owned(),
-    )
-    .map_err(ProveFailure::cargo)?;
+    let (_, external_source) =
+        super::cargo_source_authority(repository, arm.root(), &environment_values)?;
     let environment = Environment::new(environment_values.iter().cloned())
         .map_err(|error| ProveFailure::refusal("gate::prove-canvas-environment-refused", error))?;
     let plan = CanvasActionPlan::load(CanvasActionPlanning {

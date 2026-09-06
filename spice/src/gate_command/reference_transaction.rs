@@ -498,15 +498,21 @@ fn prepare_consumption(
         let Some(commit) = commit_oid(repository, update.new)? else {
             continue;
         };
+        let head = commit_oid(repository, update.reference)?;
+        if head.as_deref() == Some(commit.as_str()) || reachable_from_ref(repository, &commit)? {
+            continue;
+        }
         let Some(tree) = git_read(repository, &["rev-parse", &format!("{commit}^{{tree}}")])?
         else {
             continue;
         };
-        let head = commit_oid(repository, update.reference)?;
         candidates.push(
             gate::AdmissionCandidate::new(update.reference, head, commit, tree)
                 .map_err(|error| evidence_error(TransactionState::Prepared, error))?,
         );
+    }
+    if candidates.is_empty() {
+        return Ok(());
     }
     let store = evidence_store(repository, TransactionState::Prepared)?;
     let now = wire::Instant::new(jiff::Timestamp::now()).map_err(|error| {
@@ -520,6 +526,35 @@ fn prepare_consumption(
         .prepare_admission_consumption(&transaction, &candidates, now)
         .map(|_| ())
         .map_err(|error| evidence_error(TransactionState::Prepared, error))
+}
+
+/// Moving a ref within existing history does not author a prospective commit.
+/// Admissions bind the branch and prior tip at authoring time, so another lane's
+/// fast-forward must not consume them again. Compare commit reachability, never
+/// tree equality: a new commit with identical content still needs its admission.
+/// History protection runs before this check and continues to reject rewinds.
+fn reachable_from_ref(repository: &Path, commit: &str) -> Result<bool, ReferenceTransactionError> {
+    let output = git(
+        repository,
+        &[
+            "for-each-ref",
+            "--format=%(refname)",
+            "--count=1",
+            "--contains",
+            commit,
+            "refs/heads/",
+            "refs/remotes/",
+            "refs/tags/",
+        ],
+    )?;
+    if !output.status.success() {
+        return Err(ReferenceTransactionError::Evidence {
+            state: PREPARED,
+            reason: "gate-evidence::history-unreadable".to_owned(),
+            detail: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        });
+    }
+    Ok(!output.stdout.is_empty())
 }
 
 fn finish_consumption(
