@@ -92,6 +92,7 @@ async function geometry(page) {
           box: label.getBoundingClientRect().toJSON(),
           button: label.parentElement.getBoundingClientRect().toJSON(),
           overflow: getComputedStyle(label).overflow,
+          fontSize: getComputedStyle(label).fontSize,
           textOverflow: getComputedStyle(label).textOverflow,
           whiteSpace: getComputedStyle(label).whiteSpace,
         })),
@@ -147,10 +148,11 @@ function assertTrack(layout, label, overflow) {
         && child.right <= surface.right + 0.5
         && (index === 0 || children[index - 1].right <= child.left + 0.5)
     )), `${label} toolbar controls remain ordered and contained`);
-    assert.ok(surface.labels.every(({ box, button, overflow: inner, textOverflow, whiteSpace }) => (
+    assert.ok(surface.labels.every(({ box, button, overflow: inner, fontSize, textOverflow, whiteSpace }) => (
       box.left >= button.left - 0.5
         && box.right <= button.right + 0.5
         && inner === "hidden"
+        && fontSize === "12px"
         && textOverflow === "ellipsis"
         && whiteSpace === "nowrap"
     )), `${label} mode labels compress inside their tabs`);

@@ -73,7 +73,7 @@
   .refresh { min-width: 36px; padding: 0 8px; }
   .content { padding: 18px 14px 28px; }
   .team-toolbar { grid-template-columns: max-content minmax(0, 1fr) 30px; padding-inline: 4px; }
-  .team-mode { padding-inline: 4px; font-size: .6rem; }
+  .team-mode { padding-inline: 4px; }
   .team-mode-badge { display: none; }
   .team-task-workspace { padding-inline: 8px; }
   .team-task-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }

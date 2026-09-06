@@ -360,7 +360,7 @@
 @container (max-width: 20rem) {
   .team-toolbar { gap: 4px; padding-inline: 5px; }
   .team-mode-rail { gap: 0; padding: 2px; }
-  .team-mode { gap: 2px; padding-inline: 3px; font-size: .56rem; }
+  .team-mode { gap: 2px; padding-inline: 3px; }
   .team-mode-badge { display: none; }
 }
 
