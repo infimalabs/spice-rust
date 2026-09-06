@@ -225,6 +225,290 @@ fn immutable_candidate_admission_round_trips_and_concurrent_publishers_converge(
 }
 
 #[test]
+fn admission_consumption_is_idempotent_across_prepare_commit_and_abort() {
+    let fixture = Fixture::new("admission-consumption-lifecycle");
+    let producer = fixture.store();
+    let tree = "0123456789abcdef0123456789abcdef01234567";
+    let commit = "1111111111111111111111111111111111111111";
+    let head = "89abcdef0123456789abcdef0123456789abcdef";
+    let admission =
+        publish_candidate_admission(&producer, tree, "refs/heads/main", Some(head), b"lifecycle");
+    let consumer = fixture.store();
+    let transaction = AdmissionTransactionId::derive(b"lifecycle transaction");
+    let candidate =
+        AdmissionCandidate::new("refs/heads/main", Some(head.to_owned()), commit, tree).unwrap();
+    let now = "2026-09-04T12:05:00.000Z".parse().unwrap();
+
+    assert!(
+        consumer
+            .prepare_admission_consumption(&transaction, std::slice::from_ref(&candidate), now)
+            .unwrap()
+    );
+    assert!(
+        consumer
+            .prepare_admission_consumption(&transaction, std::slice::from_ref(&candidate), now)
+            .unwrap()
+    );
+    assert!(consumer.admission_credit(&transaction).unwrap().is_none());
+
+    let committed = consumer
+        .commit_admission_consumption(&transaction)
+        .unwrap()
+        .expect("pending admission promotes");
+    assert_eq!(committed.commits().collect::<Vec<_>>(), [commit]);
+    assert_eq!(committed.admissions().collect::<Vec<_>>(), [&admission]);
+    assert_eq!(
+        consumer.commit_admission_consumption(&transaction).unwrap(),
+        Some(committed.clone())
+    );
+    assert!(!consumer.abort_admission_consumption(&transaction).unwrap());
+    assert_eq!(
+        consumer.admission_credit(&transaction).unwrap(),
+        Some(committed)
+    );
+}
+
+#[test]
+fn aborted_consumption_removes_only_its_pending_transaction() {
+    let fixture = Fixture::new("admission-consumption-abort");
+    let store = fixture.store();
+    let tree = "0123456789abcdef0123456789abcdef01234567";
+    publish_candidate_admission(&store, tree, "refs/heads/main", None, b"abort");
+    let transaction = AdmissionTransactionId::derive(b"aborted transaction");
+    let other = AdmissionTransactionId::derive(b"other transaction");
+    let candidate = AdmissionCandidate::new(
+        "refs/heads/main",
+        None,
+        "1111111111111111111111111111111111111111",
+        tree,
+    )
+    .unwrap();
+    let now = "2026-09-04T12:05:00.000Z".parse().unwrap();
+    store
+        .prepare_admission_consumption(&transaction, std::slice::from_ref(&candidate), now)
+        .unwrap();
+    store
+        .prepare_admission_consumption(&other, std::slice::from_ref(&candidate), now)
+        .unwrap();
+
+    assert!(store.abort_admission_consumption(&transaction).unwrap());
+    assert!(!store.abort_admission_consumption(&transaction).unwrap());
+    assert!(
+        store
+            .commit_admission_consumption(&transaction)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .commit_admission_consumption(&other)
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn multi_ref_consumption_is_sorted_and_shared_across_linked_store_handles() {
+    let fixture = Fixture::new("admission-consumption-multi-ref");
+    let producer = fixture.store();
+    let first_tree = "0123456789abcdef0123456789abcdef01234567";
+    let second_tree = "2222222222222222222222222222222222222222";
+    publish_candidate_admission(&producer, first_tree, "refs/heads/a", None, b"a");
+    publish_candidate_admission(&producer, second_tree, "refs/heads/b", None, b"b");
+    let transaction = AdmissionTransactionId::derive(b"multi-ref transaction");
+    let candidates = [
+        AdmissionCandidate::new(
+            "refs/heads/b",
+            None,
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            second_tree,
+        )
+        .unwrap(),
+        AdmissionCandidate::new(
+            "refs/heads/a",
+            None,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            first_tree,
+        )
+        .unwrap(),
+    ];
+    producer
+        .prepare_admission_consumption(
+            &transaction,
+            &candidates,
+            "2026-09-04T12:05:00.000Z".parse().unwrap(),
+        )
+        .unwrap();
+
+    let linked_consumer = fixture.store();
+    let credit = linked_consumer
+        .commit_admission_consumption(&transaction)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        credit.commits().collect::<Vec<_>>(),
+        [
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        ]
+    );
+}
+
+#[test]
+fn stale_or_mismatched_admission_refuses_before_pending_publication() {
+    let fixture = Fixture::new("admission-consumption-mismatch");
+    let store = fixture.store();
+    let tree = "0123456789abcdef0123456789abcdef01234567";
+    publish_candidate_admission(
+        &store,
+        tree,
+        "refs/heads/main",
+        Some("89abcdef0123456789abcdef0123456789abcdef"),
+        b"mismatch",
+    );
+    let transaction = AdmissionTransactionId::derive(b"mismatched transaction");
+    let candidate = AdmissionCandidate::new(
+        "refs/heads/main",
+        Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned()),
+        "1111111111111111111111111111111111111111",
+        tree,
+    )
+    .unwrap();
+    let error = store
+        .prepare_admission_consumption(
+            &transaction,
+            &[candidate],
+            "2026-09-04T12:20:00.000Z".parse().unwrap(),
+        )
+        .unwrap_err();
+    assert_eq!(
+        error.reason(),
+        "gate-evidence::admission-candidate-mismatch"
+    );
+    assert!(
+        store
+            .commit_admission_consumption(&transaction)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn current_admission_lookup_is_constant_over_accumulated_history() {
+    let fixture = Fixture::new("admission-current-index");
+    let store = fixture.store();
+    let tree = "0123456789abcdef0123456789abcdef01234567";
+    let older = publish_candidate_admission_at(
+        &store,
+        tree,
+        "refs/heads/main",
+        None,
+        b"older",
+        "2026-09-04T12:00:00.000Z",
+        "2026-09-04T12:20:00.000Z",
+    );
+    let newer = publish_candidate_admission_at(
+        &store,
+        tree,
+        "refs/heads/main",
+        None,
+        b"newer",
+        "2026-09-04T12:05:00.000Z",
+        "2026-09-04T12:15:00.000Z",
+    );
+    assert_ne!(older, newer);
+    let history = store.layout.admissions.join(tree);
+    for index in 0..128 {
+        fs::write(
+            history.join(format!("historical-{index}")),
+            b"malformed history",
+        )
+        .unwrap();
+    }
+    let transaction = AdmissionTransactionId::derive(b"indexed transaction");
+    let candidate = AdmissionCandidate::new(
+        "refs/heads/main",
+        None,
+        "1111111111111111111111111111111111111111",
+        tree,
+    )
+    .unwrap();
+
+    store
+        .prepare_admission_consumption(
+            &transaction,
+            &[candidate],
+            "2026-09-04T12:06:00.000Z".parse().unwrap(),
+        )
+        .unwrap();
+    let credit = store
+        .commit_admission_consumption(&transaction)
+        .unwrap()
+        .unwrap();
+    assert_eq!(credit.admissions().collect::<Vec<_>>(), [&newer]);
+}
+
+#[test]
+fn interrupted_commit_replays_from_pending_without_losing_credit() {
+    let fixture = Fixture::new("admission-consumption-crash");
+    let store = fixture.store();
+    let tree = "0123456789abcdef0123456789abcdef01234567";
+    publish_candidate_admission(&store, tree, "refs/heads/main", None, b"crash");
+    let transaction = AdmissionTransactionId::derive(b"crash transaction");
+    store
+        .prepare_admission_consumption(
+            &transaction,
+            &[AdmissionCandidate::new(
+                "refs/heads/main",
+                None,
+                "1111111111111111111111111111111111111111",
+                tree,
+            )
+            .unwrap()],
+            "2026-09-04T12:05:00.000Z".parse().unwrap(),
+        )
+        .unwrap();
+    let error = store
+        .with_lock(|layout| {
+            consumption::commit_with(layout, &transaction, || {
+                Err(EvidenceStoreError::new(
+                    "fixture::interrupted",
+                    "stop after credit",
+                ))
+            })
+        })
+        .unwrap_err();
+    assert_eq!(error.reason(), "fixture::interrupted");
+    assert!(store.admission_credit(&transaction).unwrap().is_some());
+    assert!(
+        store
+            .commit_admission_consumption(&transaction)
+            .unwrap()
+            .is_some()
+    );
+    assert!(!store.abort_admission_consumption(&transaction).unwrap());
+}
+
+#[test]
+fn malformed_pending_consumption_is_retained_and_never_promoted() {
+    let fixture = Fixture::new("admission-consumption-malformed");
+    let store = fixture.store();
+    let transaction = AdmissionTransactionId::derive(b"malformed transaction");
+    let pending = store.layout.pending_admission_path(&transaction);
+    fs::write(&pending, b"not canonical").unwrap();
+
+    let error = store
+        .commit_admission_consumption(&transaction)
+        .unwrap_err();
+    assert_eq!(
+        error.reason(),
+        "gate-evidence::admission-consumption-invalid"
+    );
+    assert_eq!(fs::read(pending).unwrap(), b"not canonical");
+    assert!(store.admission_credit(&transaction).unwrap().is_none());
+}
+
+#[test]
 fn later_batch_failure_restores_every_index_and_new_object() {
     let fixture = Fixture::new("batch-failure");
     let store = fixture.store();
@@ -725,6 +1009,65 @@ fn pass_receipt(action: &ActionKey, result: &[u8]) -> PassReceipt {
         ),
     })
     .unwrap()
+}
+
+fn publish_candidate_admission(
+    store: &EvidenceStore,
+    tree: &str,
+    branch: &str,
+    head: Option<&str>,
+    identity: &[u8],
+) -> AdmissionId {
+    publish_candidate_admission_at(
+        store,
+        tree,
+        branch,
+        head,
+        identity,
+        "2026-09-04T12:00:00.000Z",
+        "2026-09-04T12:10:00.000Z",
+    )
+}
+
+fn publish_candidate_admission_at(
+    store: &EvidenceStore,
+    tree: &str,
+    branch: &str,
+    head: Option<&str>,
+    identity: &[u8],
+    created_at: &str,
+    expires_at: &str,
+) -> AdmissionId {
+    let action_key = derive_action_key(identity);
+    let receipt = pass_receipt(&action_key, identity);
+    store.publish(&receipt).unwrap();
+    let expectation = ReceiptExpectation::new(
+        "formatters",
+        action_key,
+        receipt.action_spec().clone(),
+        receipt.input_manifest().clone(),
+    )
+    .unwrap();
+    let action = store
+        .lookup_batch_exact(&[expectation])
+        .unwrap()
+        .remove(0)
+        .unwrap();
+    let bundle = AdmissionBundle::new(AdmissionBundleFields {
+        candidate_tree: tree.to_owned(),
+        branch: branch.to_owned(),
+        head: head.map(str::to_owned),
+        selection: Digest::compute(Domain::GateSelection, identity),
+        policy: Digest::compute(Domain::GatePolicy, b"policy"),
+        gate_set: Digest::compute(Domain::GateSet, b"gate set"),
+        actions: vec![action],
+        live_checks: Vec::new(),
+        claim: Digest::compute(Domain::GateRepositoryAuthority, identity),
+        created_at: created_at.parse().unwrap(),
+        expires_at: expires_at.parse().unwrap(),
+    })
+    .unwrap();
+    store.publish_admission(&bundle).unwrap()
 }
 
 fn acquired(outcome: LeaseAcquisition) -> EvidenceLease {

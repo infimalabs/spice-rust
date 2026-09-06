@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use spice::install::{apply, installed_git_hooks, plan};
 use spice::repository::Repository;
+use wire::{Actor, Digest, Domain};
 
 #[path = "support/git_repository.rs"]
 mod git_repository;
@@ -18,34 +19,147 @@ const USAGE: &str =
     "usage: spice gate reference-transaction <preparing|prepared|committed|aborted>\n";
 
 #[test]
-fn preparing_committed_and_aborted_are_inert_before_input_or_repository_access() {
+fn preparing_is_inert_before_input_or_repository_access() {
     let scratch = Scratch::directory("inert-states");
     let marker = scratch.join("git-entered");
     let git_script = format!("#!/bin/sh\n: >'{}'\nexit 91\n", marker.display());
     let git = scratch.executable("bin/git", git_script.as_bytes());
     let path = git.parent().expect("sentinel Git has a parent");
-    for state in ["preparing", "committed", "aborted"] {
-        let mut child = Command::new(spice())
-            .args(["gate", "reference-transaction", state])
-            .current_dir(scratch.path())
-            .env("PATH", path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("run inert transaction state");
-        child
-            .stdin
-            .take()
-            .expect("inert stdin is piped")
-            .write_all(b"malformed input that prepared would reject\n")
-            .expect("write malformed inert input");
-        let output = child.wait_with_output().expect("collect inert output");
-        assert_success(&output, state);
-        assert!(output.stdout.is_empty());
-        assert!(output.stderr.is_empty());
-    }
+    let mut child = Command::new(spice())
+        .args(["gate", "reference-transaction", "preparing"])
+        .current_dir(scratch.path())
+        .env("PATH", path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("run inert transaction state");
+    child
+        .stdin
+        .take()
+        .expect("inert stdin is piped")
+        .write_all(b"malformed input that prepared would reject\n")
+        .expect("write malformed inert input");
+    let output = child.wait_with_output().expect("collect inert output");
+    assert_success(&output, "preparing");
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
     assert!(!marker.exists(), "an inert state launched Git");
+}
+
+#[test]
+fn malformed_terminal_states_refuse_before_repository_access() {
+    let scratch = Scratch::directory("malformed-terminal-states");
+    let marker = scratch.join("git-entered");
+    let git_script = format!("#!/bin/sh\n: >'{}'\nexit 91\n", marker.display());
+    let git = scratch.executable("bin/git", git_script.as_bytes());
+    for state in ["committed", "aborted"] {
+        let output = invoke_prepared_arguments(
+            scratch.path(),
+            "malformed\n",
+            git.parent(),
+            &["gate", "reference-transaction", state],
+        );
+        assert_eq!(output.status.code(), Some(1), "{}", streams(&output));
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("malformed reference-transaction")
+        );
+    }
+    assert!(!marker.exists(), "malformed terminal input launched Git");
+}
+
+#[test]
+fn prepared_commit_and_abort_consume_exact_admissions_across_linked_worktrees() {
+    let main = Scratch::repository("credit-main");
+    configure_identity(main.path());
+    fs::write(main.join("tracked"), "base\n").unwrap();
+    git(main.path(), &["add", "tracked"]);
+    git(main.path(), &["commit", "--no-verify", "-m", "base"]);
+    let head = git(main.path(), &["rev-parse", "HEAD"]);
+    fs::write(main.join("tracked"), "candidate\n").unwrap();
+    git(main.path(), &["add", "tracked"]);
+    let tree = git(main.path(), &["write-tree"]);
+    let candidate = git(
+        main.path(),
+        &["commit-tree", &tree, "-p", &head, "-m", "candidate"],
+    );
+    let linked = Scratch::directory("credit-linked");
+    git_repository::link(main.path(), linked.path(), "linked");
+    git(linked.path(), &["update-ref", "refs/heads/linked", &head]);
+    publish_admission(main.path(), &tree, "refs/heads/linked", Some(&head));
+    let queue = format!("{head} {candidate} refs/heads/linked\n");
+    let transaction = transaction_id(&head, &candidate, "refs/heads/linked");
+    let cargo_marker = linked.join("cargo-entered");
+    let cargo_script = format!("#!/bin/sh\n: >'{}'\nexit 91\n", cargo_marker.display());
+    let cargo = linked.executable("bin/cargo", cargo_script.as_bytes());
+    let path = PathBuf::from(
+        std::env::join_paths([
+            cargo.parent().expect("sentinel Cargo has a parent"),
+            Path::new("/usr/bin"),
+            Path::new("/bin"),
+        ])
+        .expect("compose prepared hook PATH"),
+    );
+
+    let prepared = invoke_prepared_command(linked.path(), &queue, Some(&path));
+    assert_success(&prepared, "linked prepared consumption");
+    assert!(
+        !cargo_marker.exists(),
+        "prepared consumption launched Cargo"
+    );
+    let store = evidence_store(main.path());
+    assert!(store.admission_credit(&transaction).unwrap().is_none());
+
+    let committed = invoke_prepared_arguments(
+        main.path(),
+        &queue,
+        None,
+        &["gate", "reference-transaction", "committed"],
+    );
+    assert_success(&committed, "cross-worktree committed consumption");
+    let credit = store
+        .admission_credit(&transaction)
+        .unwrap()
+        .expect("committed state publishes durable credit");
+    assert_eq!(credit.commits().collect::<Vec<_>>(), [candidate.as_str()]);
+
+    let retry = invoke_prepared_arguments(
+        linked.path(),
+        &queue,
+        None,
+        &["gate", "reference-transaction", "committed"],
+    );
+    assert_success(&retry, "committed retry");
+    let aborted_after_commit = invoke_prepared_arguments(
+        linked.path(),
+        &queue,
+        None,
+        &["gate", "reference-transaction", "aborted"],
+    );
+    assert_success(&aborted_after_commit, "abort after committed retry");
+    assert_eq!(store.admission_credit(&transaction).unwrap(), Some(credit));
+
+    let abort_queue = format!("{head} {candidate} refs/heads/main\n");
+    publish_admission(main.path(), &tree, "refs/heads/main", Some(&head));
+    assert_success(
+        &invoke_prepared(main.path(), &abort_queue),
+        "main prepared consumption",
+    );
+    assert_success(
+        &invoke_prepared_arguments(
+            main.path(),
+            &abort_queue,
+            None,
+            &["gate", "reference-transaction", "aborted"],
+        ),
+        "main aborted consumption",
+    );
+    assert!(
+        store
+            .admission_credit(&transaction_id(&head, &candidate, "refs/heads/main"))
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]
@@ -259,6 +373,92 @@ fn invoke_prepared_arguments(
         .write_all(input.as_bytes())
         .expect("write prepared queue");
     child.wait_with_output().expect("collect prepared output")
+}
+
+fn configure_identity(root: &Path) {
+    git(root, &["config", "user.email", "fixture@example.invalid"]);
+    git(root, &["config", "user.name", "Fixture"]);
+}
+
+fn git(root: &Path, arguments: &[&str]) -> String {
+    let output = Command::new("git")
+        .args(arguments)
+        .current_dir(root)
+        .output()
+        .expect("run fixture git");
+    assert!(
+        output.status.success(),
+        "git {:?}: {}",
+        arguments,
+        streams(&output)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+fn evidence_store(root: &Path) -> gate::EvidenceStore {
+    let repository = Repository::discover(root).expect("discover evidence repository");
+    gate::EvidenceStore::open(repository.common_dir()).expect("open shared evidence store")
+}
+
+fn publish_admission(root: &Path, tree: &str, branch: &str, head: Option<&str>) {
+    let store = evidence_store(root);
+    let action_key = gate::derive_action_key(branch.as_bytes());
+    let now = jiff::Timestamp::now();
+    let started_at = wire::Instant::new(
+        now.checked_sub(jiff::SignedDuration::from_secs(60))
+            .expect("fixture start is representable"),
+    )
+    .unwrap();
+    let finished_at = wire::Instant::new(now).unwrap();
+    let receipt = gate::PassReceipt::new(gate::PassReceiptFields {
+        action_key: action_key.clone(),
+        action_spec: Digest::compute(Domain::GatePolicy, b"reference transaction action"),
+        input_manifest: Digest::compute(Domain::GateInventory, tree.as_bytes()),
+        typed_result: Digest::compute(Domain::GateMeasurement, b"passing result"),
+        started_at,
+        finished_at,
+        duration_millis: 60_000,
+        artifacts: Vec::new(),
+        producer: gate::EvidenceProducerRecord::new(None, None, None, Some(Actor::Spice), None),
+    })
+    .unwrap();
+    store.publish(&receipt).unwrap();
+    let expectation = gate::ReceiptExpectation::new(
+        "formatters",
+        action_key,
+        receipt.action_spec().clone(),
+        receipt.input_manifest().clone(),
+    )
+    .unwrap();
+    let action = store
+        .lookup_batch_exact(&[expectation])
+        .unwrap()
+        .remove(0)
+        .unwrap();
+    let bundle = gate::AdmissionBundle::new(gate::AdmissionBundleFields {
+        candidate_tree: tree.to_owned(),
+        branch: branch.to_owned(),
+        head: head.map(str::to_owned),
+        selection: Digest::compute(Domain::GateSelection, b"selection"),
+        policy: Digest::compute(Domain::GatePolicy, b"policy"),
+        gate_set: Digest::compute(Domain::GateSet, b"gate set"),
+        actions: vec![action],
+        live_checks: Vec::new(),
+        claim: Digest::compute(Domain::GateRepositoryAuthority, b"claim"),
+        created_at: started_at,
+        expires_at: wire::Instant::new(
+            now.checked_add(jiff::SignedDuration::from_secs(600))
+                .expect("fixture expiry is representable"),
+        )
+        .unwrap(),
+    })
+    .unwrap();
+    store.publish_admission(&bundle).unwrap();
+}
+
+fn transaction_id(old: &str, new: &str, reference: &str) -> gate::AdmissionTransactionId {
+    let bytes = wire::encode(&[(reference, old, new)]).unwrap();
+    gate::AdmissionTransactionId::derive(&bytes)
 }
 
 fn spice() -> &'static str {

@@ -17,6 +17,7 @@ use sill::{LockFile, LockName};
 use wire::{Actor, CanonicalUuid, Digest, Domain, Instant, TaskHandle};
 
 mod admission;
+mod consumption;
 mod fingerprint;
 mod layout;
 use layout::*;
@@ -25,6 +26,7 @@ pub use admission::{
     AdmissionAction, AdmissionBundle, AdmissionBundleFields, AdmissionId, AdmissionLiveCheck,
     ReceiptExpectation,
 };
+pub use consumption::{AdmissionCandidate, AdmissionConsumption, AdmissionTransactionId};
 pub use fingerprint::{
     ActionFingerprintAuthority, ActionFingerprintAuthorityFields, ActionFingerprintManifest,
     ActionFingerprintManifestFields, ActionFingerprintResolution,
@@ -679,6 +681,40 @@ impl EvidenceStore {
         bundle: &AdmissionBundle,
     ) -> Result<AdmissionId, EvidenceStoreError> {
         self.with_lock(|layout| admission::publish(layout, bundle))
+    }
+
+    /// Verify current admissions and idempotently record their pending consumption.
+    pub fn prepare_admission_consumption(
+        &self,
+        transaction: &AdmissionTransactionId,
+        candidates: &[AdmissionCandidate],
+        now: Instant,
+    ) -> Result<bool, EvidenceStoreError> {
+        self.with_lock(|layout| consumption::prepare(layout, transaction, candidates, now))
+    }
+
+    /// Promote one exact pending consumption batch to immutable durable credit.
+    pub fn commit_admission_consumption(
+        &self,
+        transaction: &AdmissionTransactionId,
+    ) -> Result<Option<AdmissionConsumption>, EvidenceStoreError> {
+        self.with_lock(|layout| consumption::commit(layout, transaction))
+    }
+
+    /// Remove only one exact pending consumption batch.
+    pub fn abort_admission_consumption(
+        &self,
+        transaction: &AdmissionTransactionId,
+    ) -> Result<bool, EvidenceStoreError> {
+        self.with_lock(|layout| consumption::abort(layout, transaction))
+    }
+
+    /// Read durable credit for one exact reference transaction.
+    pub fn admission_credit(
+        &self,
+        transaction: &AdmissionTransactionId,
+    ) -> Result<Option<AdmissionConsumption>, EvidenceStoreError> {
+        self.with_lock(|layout| consumption::credit(layout, transaction))
     }
 
     /// Acquire a durable single-flight lease, replacing it only at expiry.
