@@ -23,131 +23,161 @@ fn real_judge_does_not_block_the_current_thread_resident_surface() {
         .enable_all()
         .build()
         .expect("current-thread resident runtime");
-    let judge_pid = runtime.block_on(async {
-        let bus = &setup.bus;
-        let paths = &setup.paths;
-        let config = &setup.config;
-        let epoch = setup.epoch;
-        let lanes = setup.lanes;
-        let timer_commits = bus.reader().subscribe();
-        let proof_commits = bus.reader().subscribe();
-        let mut timers = timers::Runtime::start(config.projects.clone(), config.steering.clone())
-            .expect("timer authority starts");
-        let mut lifecycle = lifecycle::Runtime::new(&config.lane);
-        let mut progress = Vec::new();
-        let mut endpoint = Vec::new();
-        let started = start_surface(
-            bus,
-            paths,
-            epoch,
-            current_residency(bus, epoch)
-                .expect("current residency")
-                .body(),
-            config,
-            SurfaceLaunch {
-                binding: CanvasBinding::local(EPHEMERAL_LOOPBACK),
-                open: false,
-                progress: &mut progress,
-                endpoint: &mut endpoint,
-                daemon: None,
-            },
-        )
-        .await
-        .expect("Canvas surface starts");
-        assert!(!paths.canvas.exists(), "surface published before drive");
-        let StartedSurface {
-            capabilities,
-            discovery,
-            control,
-            mut publication,
-            shutdown,
-            server_task,
-            message_publisher,
-            progress,
-        } = started;
-        let capture::Channels {
-            reporter,
-            records,
-            failures,
-            exits,
-        } = capture::channels();
-        let supervisor_reports =
-            capture::SupervisorReports::bind(paths).expect("supervisor capture endpoint binds");
-        let reads = read_materializations::CurrentReads::start(bus, paths, &config.consent)
-            .expect("fixture read materializations start");
-        let command_surface = command_surface::Surface::new(
-            bus,
-            &setup.repository,
-            paths,
-            epoch,
-            command_surface::Runtimes::new(
-                lane_surface::Runtime::new(&capabilities, &discovery, reporter.clone()),
-                lane_recovery::Runtime::new(reporter.clone()),
-            ),
-            config,
-            &reads,
-        );
-        publish_ready_surface(
-            bus,
-            epoch,
-            &command_surface,
-            &mut setup.seats,
-            progress,
-            &mut timers,
-            &mut lifecycle,
-            &mut publication,
-        )
-        .await
-        .expect("live surface publishes before the liveness exercise");
-        let pending_events = setup.adjudication.observe_pending();
-        let (submitter, completions) = setup.adjudication.parts();
-        let entered_path = setup.judge.entered.clone();
-        let entered = tokio::task::spawn_blocking(move || {
-            fs::read_to_string(entered_path).expect("judge entry FIFO reports its process")
-        });
-        let exercise = exercise_live_surface(
-            bus,
-            paths,
-            reporter,
-            proof_commits,
-            entered,
-            pending_events,
-            lanes.taste_lane,
-            lanes.taste_occupant,
-            lanes.failure_lane,
-            lanes.failure_occupant,
-            lanes.exit_lane,
-            lanes.exit_occupant,
-        );
-        let drive = drive_surface(
-            bus,
-            epoch,
-            &mut setup.seats,
-            &command_surface,
-            control,
-            publication,
-            shutdown,
-            server_task,
-            message_publisher,
-            MessageState::default(),
-            message_surface::SessionCompactions::new(crate::session_environment()),
-            Some(submitter),
-            Some(completions),
-            records,
-            failures,
-            exits,
-            supervisor_reports,
-            progress,
-            timers,
-            timer_commits,
-            lifecycle,
-        );
-        let (driven, judge_pid) = tokio::join!(drive, exercise);
-        driven.expect("Down stops the live surface");
-        judge_pid
-    });
+    let judge_pid = runtime.block_on(run_liveness_surface(&mut setup));
 
     finish_liveness(setup, &judge_pid);
+}
+
+async fn run_liveness_surface(setup: &mut LivenessSetup) -> String {
+    let bus = &setup.bus;
+    let paths = &setup.paths;
+    let config = &setup.config;
+    let epoch = setup.epoch;
+    let lanes = setup.lanes;
+    let timer_commits = bus.reader().subscribe();
+    let proof_commits = bus.reader().subscribe();
+    let mut timers = timers::Runtime::start(config.projects.clone(), config.steering.clone())
+        .expect("timer authority starts");
+    let mut lifecycle = lifecycle::Runtime::new(&config.lane);
+    let mut progress = Vec::new();
+    let mut endpoint = Vec::new();
+    let started = start_surface(
+        bus,
+        paths,
+        epoch,
+        current_residency(bus, epoch)
+            .expect("current residency")
+            .body(),
+        config,
+        SurfaceLaunch {
+            binding: CanvasBinding::local(EPHEMERAL_LOOPBACK),
+            open: false,
+            progress: &mut progress,
+            endpoint: &mut endpoint,
+            daemon: None,
+        },
+    )
+    .await
+    .expect("Canvas surface starts");
+    assert!(!paths.canvas.exists(), "surface published before drive");
+    let StartedSurface {
+        capabilities,
+        discovery,
+        control,
+        mut publication,
+        shutdown,
+        server_task,
+        message_publisher,
+        progress,
+    } = started;
+    let capture::Channels {
+        reporter,
+        records,
+        failures,
+        exits,
+    } = capture::channels();
+    let supervisor_reports =
+        capture::SupervisorReports::bind(paths).expect("supervisor capture endpoint binds");
+    let reads = read_materializations::CurrentReads::start(bus, paths, &config.consent)
+        .expect("fixture read materializations start");
+    let context = LivenessSurfaceContext {
+        bus,
+        repository: &setup.repository,
+        paths,
+        epoch,
+        config,
+    };
+    let command_surface =
+        liveness_command_surface(context, &capabilities, &discovery, reporter.clone(), &reads);
+    publish_ready_surface(
+        bus,
+        epoch,
+        &command_surface,
+        &mut setup.seats,
+        progress,
+        &mut timers,
+        &mut lifecycle,
+        &mut publication,
+    )
+    .await
+    .expect("live surface publishes before the liveness exercise");
+    let pending_events = setup.adjudication.observe_pending();
+    let (submitter, completions) = setup.adjudication.parts();
+    let entered_path = setup.judge.entered.clone();
+    let entered = tokio::task::spawn_blocking(move || {
+        fs::read_to_string(entered_path).expect("judge entry FIFO reports its process")
+    });
+    let exercise = exercise_live_surface(
+        bus,
+        paths,
+        reporter,
+        proof_commits,
+        entered,
+        pending_events,
+        lanes,
+    );
+    let drive = drive_surface(
+        bus,
+        epoch,
+        &mut setup.seats,
+        &command_surface,
+        control,
+        publication,
+        shutdown,
+        server_task,
+        message_publisher,
+        MessageState::default(),
+        message_surface::SessionCompactions::new(crate::session_environment()),
+        Some(submitter),
+        Some(completions),
+        records,
+        failures,
+        exits,
+        supervisor_reports,
+        progress,
+        timers,
+        timer_commits,
+        lifecycle,
+    );
+    let (driven, judge_pid) = tokio::join!(drive, exercise);
+    driven.expect("Down stops the live surface");
+    judge_pid
+}
+
+struct LivenessSurfaceContext<'a> {
+    bus: &'a Bus,
+    repository: &'a Repository,
+    paths: &'a RuntimePaths,
+    epoch: CanonicalUuid,
+    config: &'a SurfaceConfig,
+}
+
+fn liveness_command_surface<'a>(
+    context: LivenessSurfaceContext<'a>,
+    capabilities: &'a canvas::axum::Capabilities,
+    discovery: &'a canvas::Discovery,
+    reporter: std::sync::Arc<dyn lane::capture::CaptureReporter>,
+    reads: &'a read_materializations::CurrentReads,
+) -> command_surface::Surface<'a> {
+    let LivenessSurfaceContext {
+        bus,
+        repository,
+        paths,
+        epoch,
+        config,
+    } = context;
+    command_surface::Surface::new(
+        bus,
+        repository,
+        paths,
+        epoch,
+        command_surface::Runtimes::new(
+            lane_surface::Runtime::new(capabilities, discovery, reporter.clone()),
+            lane_recovery::Runtime::new(reporter),
+        ),
+        config,
+        reads,
+    )
 }
 
 #[derive(Clone, Copy)]
@@ -325,17 +355,12 @@ async fn exercise_live_surface(
     mut commits: bus::BroadcastSubscriber,
     entered: tokio::task::JoinHandle<String>,
     pending_events: Receiver<usize>,
-    taste_lane: CanonicalUuid,
-    taste_occupant: CanonicalUuid,
-    failure_lane: CanonicalUuid,
-    failure_occupant: CanonicalUuid,
-    exit_lane: CanonicalUuid,
-    exit_occupant: CanonicalUuid,
+    lanes: LivenessLanes,
 ) -> String {
     reporter
         .record(taste_record(
-            taste_lane,
-            taste_occupant,
+            lanes.taste_lane,
+            lanes.taste_occupant,
             "polling now",
             false,
         ))
@@ -356,26 +381,26 @@ async fn exercise_live_surface(
     );
     reporter
         .record(taste_record(
-            taste_lane,
-            taste_occupant,
+            lanes.taste_lane,
+            lanes.taste_occupant,
             "polling later",
             true,
         ))
         .expect("later taste record reports");
     wait_for_two_pending(pending_events).await;
     reporter.failed(lane::capture::CaptureFailure {
-        lane: failure_lane,
-        occupant: failure_occupant,
+        lane: lanes.failure_lane,
+        occupant: lanes.failure_occupant,
         failure: ObservationFailure::SinkRefused {
             stream: OutputStream::Stdout,
             detail: "fixture tape refusal".to_owned(),
         },
     });
     reporter.exited(lane::capture::CaptureExit {
-        lane: exit_lane,
-        occupant: exit_occupant,
+        lane: lanes.exit_lane,
+        occupant: lanes.exit_occupant,
     });
-    wait_for_runtime_evidence(bus, &mut commits, taste_lane).await;
+    wait_for_runtime_evidence(bus, &mut commits, lanes.taste_lane).await;
 
     expect_reply(
         "later lane read",
