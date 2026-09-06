@@ -24,6 +24,7 @@ pub(super) struct Layout {
     pub(super) actions: PathBuf,
     pub(super) leases: PathBuf,
     pub(super) admissions: PathBuf,
+    pub(super) fingerprints: PathBuf,
     pub(super) locks: PathBuf,
 }
 
@@ -40,6 +41,7 @@ impl Layout {
             actions: root.join("actions"),
             leases: root.join("leases"),
             admissions: root.join("admissions"),
+            fingerprints: root.join("fingerprints"),
             locks: root.join("locks"),
             root,
         };
@@ -48,6 +50,7 @@ impl Layout {
             &layout.actions,
             &layout.leases,
             &layout.admissions,
+            &layout.fingerprints,
             &layout.locks,
         ] {
             create_directory(path)?;
@@ -83,6 +86,7 @@ impl Layout {
             &self.actions,
             &self.leases,
             &self.admissions,
+            &self.fingerprints,
             &self.locks,
         ] {
             require_directory(path)?;

@@ -99,6 +99,13 @@ impl PlaywrightSnapshot {
         Ok(second)
     }
 
+    pub(super) fn capture_for_lookup(
+        selected_root: &Path,
+        installed_root: &Path,
+    ) -> Result<Self, ProveFailure> {
+        Self::capture_once(selected_root, installed_root)
+    }
+
     fn capture_once(selected_root: &Path, installed_root: &Path) -> Result<Self, ProveFailure> {
         let lock = load_lock(selected_root)?;
         let modules = installed_root.join("node_modules");

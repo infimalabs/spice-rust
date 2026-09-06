@@ -6,11 +6,13 @@ use std::path::{Path, PathBuf};
 use std::time::Instant as MonotonicInstant;
 
 use gate::{
-    ActionInputClosure, ActionInputInventory, ActionKey, ActionKeyAuthority, ActionNonFileInput,
-    ActionNonFileKind, ActionReuseClass, ActionSpec, ActionSpecFields, ActionToolRequirement,
-    ArmDisposition, BatteryManifest, BatteryToolEvidence, CargoExternalSourceAuthority,
-    CargoGateShard, CargoGateShardKind, CargoGateShardPlanning, EvidenceProducerRecord,
-    EvidenceStore, FocusedArmReport, GateId, PassReceipt, PassReceiptFields,
+    ActionFingerprintAuthority, ActionFingerprintAuthorityFields, ActionFingerprintManifest,
+    ActionFingerprintManifestFields, ActionInputClosure, ActionInputInventory, ActionKey,
+    ActionKeyAuthority, ActionNonFileInput, ActionNonFileKind, ActionReuseClass, ActionSpec,
+    ActionSpecFields, ActionToolRequirement, ArmDisposition, BatteryManifest, BatteryToolEvidence,
+    CargoExternalSourceAuthority, CargoGateShard, CargoGateShardKind, CargoGateShardPlanning,
+    EvidenceProducerRecord, EvidenceStore, FocusedArmReport, GateId, PassReceipt,
+    PassReceiptFields,
 };
 use serde::Serialize;
 use sill::Environment;
@@ -23,8 +25,12 @@ mod canvas;
 #[cfg(test)]
 #[path = "prove/cargo_authority_tests.rs"]
 mod cargo_authority_tests;
+#[path = "prove/fingerprint.rs"]
+mod fingerprint;
 #[path = "prove/single_flight.rs"]
 mod single_flight;
+
+use fingerprint::PreparedActions;
 
 const RUNNER_VERSION: u64 = 1;
 
@@ -66,13 +72,78 @@ struct PreparedAction {
     execution: PreparedExecution,
 }
 
+impl PreparedAction {
+    fn expectation(&self) -> Result<gate::ReceiptExpectation, ProveFailure> {
+        gate::ReceiptExpectation::new(
+            self.action.clone(),
+            self.action_key.clone(),
+            self.action_spec.clone(),
+            self.input_manifest.clone(),
+        )
+        .map_err(ProveFailure::store)
+    }
+}
+
 pub(super) struct AdmissionPreparation {
     candidate_tree: String,
     staged: StagedActionSelection,
-    actions: Vec<gate::ReceiptExpectation>,
     selection: Digest,
     policy: Digest,
     gate_set: Digest,
+}
+
+pub(super) struct AdmissionLookup {
+    candidate_tree: String,
+    anchor: spice::gate::PreparedArm<'static>,
+    authority: ActionFingerprintAuthority,
+    policy: Digest,
+    gate_set: Digest,
+}
+
+impl AdmissionLookup {
+    pub(super) const fn authority(&self) -> &ActionFingerprintAuthority {
+        &self.authority
+    }
+
+    pub(super) fn reject_state(&self) -> Result<(), ProveFailure> {
+        self.anchor.reject_state().map_err(ProveFailure::run)
+    }
+
+    pub(super) fn execute_live_checks(
+        &self,
+    ) -> Result<Vec<gate::AdmissionLiveCheck>, ProveFailure> {
+        [GateId::PlanPhase, GateId::Staging]
+            .into_iter()
+            .map(|gate_id| {
+                let arm = self
+                    .anchor
+                    .derive_live_arm(gate_id)
+                    .map_err(ProveFailure::run)?;
+                execute_live_arm(arm, gate_id)
+            })
+            .collect()
+    }
+
+    pub(super) fn restore(
+        self,
+        manifest: &ActionFingerprintManifest,
+    ) -> Result<AdmissionPreparation, ProveFailure> {
+        let selection = manifest.selection().clone();
+        let selection_digest = digest_encoded(Domain::GateSelection, &selection)?;
+        let staged = spice::change_gate::restore_staged_actions(
+            self.anchor,
+            selection,
+            manifest.cargo_tests(),
+        )
+        .map_err(ProveFailure::selection)?;
+        Ok(AdmissionPreparation {
+            candidate_tree: self.candidate_tree,
+            staged,
+            selection: selection_digest,
+            policy: self.policy,
+            gate_set: self.gate_set,
+        })
+    }
 }
 
 impl AdmissionPreparation {
@@ -82,10 +153,6 @@ impl AdmissionPreparation {
 
     pub(super) fn source(&self) -> &Digest {
         self.staged.selection().source()
-    }
-
-    pub(super) fn actions(&self) -> &[gate::ReceiptExpectation] {
-        &self.actions
     }
 
     pub(super) fn selection(&self) -> &Digest {
@@ -122,28 +189,12 @@ impl AdmissionPreparation {
             if gate::gate_action_reuse_class(gate_id) != Some(ActionReuseClass::LiveOnly) {
                 continue;
             }
-            let mut arm = self
+            let arm = self
                 .staged
                 .anchor()
                 .derive_reached_arm(self.staged.selection(), gate_id)
                 .map_err(ProveFailure::run)?;
-            let report = arm.execute().map_err(ProveFailure::run)?;
-            if !report.admits() {
-                return Err(ProveFailure::refusal(
-                    "gate::pre-commit-live-check-regressed",
-                    refusal_detail(&report),
-                ));
-            }
-            let result = Digest::compute(
-                Domain::GateFocusedReport,
-                &report.encode().map_err(|error| {
-                    ProveFailure::fault("gate::pre-commit-live-result-unencodable", error)
-                })?,
-            );
-            checks.push(
-                gate::AdmissionLiveCheck::new(gate_id.to_string(), result)
-                    .map_err(ProveFailure::store)?,
-            );
+            checks.push(execute_live_arm(arm, gate_id)?);
         }
         checks.sort_by(|left, right| left.action().cmp(right.action()));
         Ok(checks)
@@ -165,49 +216,49 @@ impl AdmissionPreparation {
     }
 }
 
-pub(super) fn prepare_admission_from_staged(
+fn execute_live_arm(
+    mut arm: spice::gate::PreparedArm<'static>,
+    gate_id: GateId,
+) -> Result<gate::AdmissionLiveCheck, ProveFailure> {
+    let report = arm.execute().map_err(ProveFailure::run)?;
+    if !report.admits() {
+        return Err(ProveFailure::refusal(
+            "gate::pre-commit-live-check-regressed",
+            refusal_detail(&report),
+        ));
+    }
+    let result = Digest::compute(
+        Domain::GateFocusedReport,
+        &report.encode().map_err(|error| {
+            ProveFailure::fault("gate::pre-commit-live-result-unencodable", error)
+        })?,
+    );
+    gate::AdmissionLiveCheck::new(gate_id.to_string(), result).map_err(ProveFailure::store)
+}
+
+pub(super) fn prepare_admission_from_anchor(
     repository: &Repository,
-    store: &EvidenceStore,
-    staged: StagedActionSelection,
-) -> Result<AdmissionPreparation, ProveFailure> {
-    let staged_authority = staged
-        .anchor()
+    anchor: spice::gate::PreparedArm<'static>,
+) -> Result<AdmissionLookup, ProveFailure> {
+    let staged_authority = anchor
         .staged_authority()
         .expect("staged action preparation retains staged authority");
     let candidate_tree = staged_authority.candidate_tree_identity().to_owned();
-    let context = staged.anchor().context().map_err(ProveFailure::run)?;
+    let context = anchor.context().map_err(ProveFailure::run)?;
     let policy = context.policy().clone();
     let gate_set = gate::canonical_gate_set_digest()
         .map_err(|error| ProveFailure::fault("gate::prove-manifest-invalid", error))?;
-    let selection = digest_encoded(Domain::GateSelection, staged.selection())?;
-    let request = Request {
-        action: None,
-        missing: true,
-    };
-    let mut actions = prepare_action_authorities(
-        &staged,
-        store,
-        request,
-        repository.worktree_root(),
-        repository.common_dir(),
-    )?
-    .into_iter()
-    .map(|prepared| {
-        gate::ReceiptExpectation::new(
-            prepared.action,
-            prepared.action_key,
-            prepared.action_spec,
-            prepared.input_manifest,
-        )
-        .map_err(ProveFailure::store)
-    })
-    .collect::<Result<Vec<_>, _>>()?;
-    actions.sort_by(|left, right| left.action().cmp(right.action()));
-    Ok(AdmissionPreparation {
+    let authority = fingerprint::admission_authority(
+        repository,
+        &anchor,
+        &candidate_tree,
+        policy.clone(),
+        gate_set.clone(),
+    )?;
+    Ok(AdmissionLookup {
         candidate_tree,
-        staged,
-        actions,
-        selection,
+        anchor,
+        authority,
         policy,
         gate_set,
     })
@@ -238,7 +289,8 @@ struct CargoSourceExecution {
 #[derive(Debug)]
 struct CargoAuthority {
     cargo: PathBuf,
-    environment: Vec<(OsString, OsString)>,
+    execution_environment: Vec<(OsString, OsString)>,
+    action_environment: Vec<(OsString, OsString)>,
 }
 
 struct PendingReceipt {
@@ -282,10 +334,50 @@ fn run(request: Request<'_>) -> Result<ProveReport, ProveFailure> {
         .map_err(|error| ProveFailure::fault("gate::prove-repository-unresolved", error))?;
     let candidate_tree =
         spice::gate::capture_candidate_tree(&repository).map_err(ProveFailure::run)?;
-    let staged = spice::change_gate::prepare_staged_actions().map_err(ProveFailure::selection)?;
+    let anchor = spice::change_gate::prepare_staged_anchor().map_err(ProveFailure::selection)?;
     let store = EvidenceStore::open(repository.common_dir()).map_err(ProveFailure::store)?;
-
-    let (mut actions, pending) = match prepare_actions(
+    let fingerprint = (request.missing && request.action.is_none())
+        .then(|| fingerprint::current_authority(&repository, &anchor, &candidate_tree))
+        .transpose()?;
+    let staged = if let Some(authority) = fingerprint.as_ref() {
+        match fingerprint::lookup_complete(&store, authority) {
+            Ok(Some(actions)) => {
+                validate_source(&repository, &anchor, &candidate_tree)?;
+                anchor.reject_state().map_err(ProveFailure::run)?;
+                return Ok(ProveReport {
+                    candidate_tree: candidate_tree.to_string(),
+                    source: anchor.source().clone(),
+                    actions,
+                });
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let _ = anchor.reject_state();
+                return Err(error);
+            }
+        }
+        match store
+            .lookup_action_fingerprints(authority)
+            .map_err(ProveFailure::store)
+        {
+            Ok(Some(manifest)) => spice::change_gate::restore_staged_actions(
+                anchor,
+                manifest.selection().clone(),
+                manifest.cargo_tests(),
+            )
+            .map_err(ProveFailure::selection)?,
+            Ok(None) => spice::change_gate::prepare_staged_actions_from_anchor(anchor)
+                .map_err(ProveFailure::selection)?,
+            Err(error) => {
+                let _ = anchor.reject_state();
+                return Err(error);
+            }
+        }
+    } else {
+        spice::change_gate::prepare_staged_actions_from_anchor(anchor)
+            .map_err(ProveFailure::selection)?
+    };
+    let (mut actions, pending, expectations) = match prepare_actions(
         &staged,
         &store,
         request,
@@ -298,10 +390,28 @@ fn run(request: Request<'_>) -> Result<ProveReport, ProveFailure> {
             return Err(error);
         }
     };
+    if let Some(authority) = fingerprint.as_ref()
+        && let Err(error) = ActionFingerprintManifest::new(ActionFingerprintManifestFields {
+            authority: authority.clone(),
+            selection: staged.selection().clone(),
+            cargo_tests: staged.cargo_tests(),
+            actions: expectations.clone(),
+        })
+        .map_err(ProveFailure::store)
+        .and_then(|manifest| {
+            store
+                .publish_action_fingerprints(&manifest)
+                .map(|_| ())
+                .map_err(ProveFailure::store)
+        })
+    {
+        let _ = staged.reject_state();
+        return Err(error);
+    }
     let published = single_flight::run(
         &store,
         pending,
-        || validate_source(&repository, &staged, &candidate_tree),
+        || validate_source(&repository, staged.anchor(), &candidate_tree),
         || staged.reject_state().map_err(ProveFailure::run),
     )?;
     actions.extend(published);
@@ -314,31 +424,35 @@ fn run(request: Request<'_>) -> Result<ProveReport, ProveFailure> {
 }
 
 #[cfg(test)]
-fn complete_transaction<A, R, O, E>(
+fn complete_actions<A, R, O, E>(
     actions: Vec<A>,
     mut execute: impl FnMut(A) -> Result<R, E>,
-    validate: impl FnOnce() -> Result<(), E>,
+    mut validate: impl FnMut() -> Result<(), E>,
     cleanup: impl FnOnce() -> Result<(), E>,
-    publish: impl FnOnce(Vec<R>) -> Result<Vec<O>, E>,
+    mut publish: impl FnMut(R) -> Result<O, E>,
 ) -> Result<Vec<O>, E> {
-    let executed = actions
+    let completed = actions
         .into_iter()
-        .map(&mut execute)
-        .collect::<Result<Vec<_>, _>>();
-    let validated = if executed.is_ok() { validate() } else { Ok(()) };
+        .try_fold(Vec::new(), |mut reports, action| {
+            let receipt = execute(action)?;
+            validate()?;
+            reports.push(publish(receipt)?);
+            Ok(reports)
+        });
     let cleaned = cleanup();
-    let receipts = executed?;
-    validated?;
+    let reports = completed?;
     cleaned?;
-    publish(receipts)
+    Ok(reports)
 }
 
 fn validate_source(
     repository: &Repository,
-    staged: &StagedActionSelection,
+    anchor: &spice::gate::PreparedArm<'_>,
     candidate_tree: &spice::gate::CandidateTree,
 ) -> Result<(), ProveFailure> {
-    staged.anchor().verify_source().map_err(ProveFailure::run)?;
+    anchor
+        .verify_refreshable_source()
+        .map_err(ProveFailure::run)?;
     let observed = spice::gate::capture_candidate_tree(repository).map_err(ProveFailure::run)?;
     if &observed != candidate_tree {
         return Err(ProveFailure::refusal(
@@ -355,9 +469,14 @@ fn prepare_actions(
     request: Request<'_>,
     writable_root: &Path,
     common: &Path,
-) -> Result<(Vec<ProveActionReport>, Vec<PreparedAction>), ProveFailure> {
+) -> Result<PreparedActions, ProveFailure> {
     let prepared_actions =
         prepare_action_authorities(staged, store, request, writable_root, common)?;
+    let mut expectations = prepared_actions
+        .iter()
+        .map(PreparedAction::expectation)
+        .collect::<Result<Vec<_>, _>>()?;
+    expectations.sort_by(|left, right| left.action().cmp(right.action()));
     let mut present = Vec::new();
     let mut pending = Vec::new();
     for prepared in prepared_actions {
@@ -374,7 +493,7 @@ fn prepare_actions(
     }
     present.sort_by(|left, right| proof_action_order(&left.action, &right.action));
     pending.sort_by(|left, right| proof_action_order(&left.action, &right.action));
-    Ok((present, pending))
+    Ok((present, pending, expectations))
 }
 
 fn prepare_action_authorities(
@@ -472,7 +591,8 @@ fn prepare_action(
         .expect("requested actions are classified as reusable");
     let baseline = action_baseline(gate_id, reuse, baseline)?;
     let tools = action_tools(context.tools())?;
-    let (environment_names, environment) = environment(arm.compiler_environment())?;
+    let action_environment = normalized_action_environment(arm.compiler_environment());
+    let (environment_names, environment) = environment(&action_environment)?;
     let tool_authority = digest_encoded(Domain::GateTool, &context.tools())?;
     let inventory = action_inventory(
         staged,
@@ -561,26 +681,9 @@ fn prepare_cargo_actions(
         .map_err(ProveFailure::run)?;
     let context = arm.context().map_err(ProveFailure::run)?;
     let authority = cargo_authority(arm.root(), arm.compiler_environment())?;
-    let cargo_environment = authority.environment;
-    let cargo_home = environment_value(&cargo_environment, "CARGO_HOME")?;
-    let lockfile = fs::read(arm.root().join("Cargo.lock"))
-        .map_err(|error| ProveFailure::refusal("gate::prove-cargo-source-unavailable", error))?;
-    let source =
-        spice::cargo_isolation::source_generation_authority(Path::new(cargo_home), &lockfile)
-            .map_err(|error| {
-                ProveFailure::refusal("gate::prove-cargo-source-unavailable", error)
-            })?;
-    let external_source = CargoExternalSourceAuthority::new(
-        source.generation().to_owned(),
-        source.manifest().to_owned(),
-    )
-    .map_err(ProveFailure::cargo)?;
-    let source_execution = CargoSourceExecution {
-        home: PathBuf::from(cargo_home),
-        lockfile,
-        authority: source,
-    };
-    let environment = Environment::new(cargo_environment.iter().cloned())
+    let (source_execution, external_source) =
+        cargo_source_authority(arm.root(), &authority.execution_environment)?;
+    let environment = Environment::new(authority.execution_environment.iter().cloned())
         .map_err(|error| ProveFailure::refusal("gate::prove-cargo-environment-refused", error))?;
     let base = arm.materialize_staged_base().map_err(ProveFailure::run)?;
     let plan = gate::plan_cargo_gate_shards_at(CargoGateShardPlanning {
@@ -611,7 +714,7 @@ fn prepare_cargo_actions(
                 gate_set,
                 declaration,
                 writable_root,
-                &cargo_environment,
+                &authority.action_environment,
                 environment.clone(),
                 &authority.cargo,
                 source_execution.clone(),
@@ -761,10 +864,39 @@ fn cargo_authority(
     let environment = host
         .compiler_environment()
         .map_err(ProveFailure::cargo_isolation)?;
+    let execution_environment = environment.entries().to_vec();
     Ok(CargoAuthority {
         cargo: host.cargo().to_path_buf(),
-        environment: normalized_cargo_environment(environment.entries()),
+        action_environment: normalized_action_environment(&execution_environment),
+        execution_environment,
     })
+}
+
+fn cargo_source_authority(
+    root: &Path,
+    environment: &[(OsString, OsString)],
+) -> Result<(CargoSourceExecution, CargoExternalSourceAuthority), ProveFailure> {
+    let cargo_home = environment_value(environment, "CARGO_HOME")?;
+    let lockfile = fs::read(root.join("Cargo.lock"))
+        .map_err(|error| ProveFailure::refusal("gate::prove-cargo-source-unavailable", error))?;
+    let source =
+        spice::cargo_isolation::source_generation_authority(Path::new(cargo_home), &lockfile)
+            .map_err(|error| {
+                ProveFailure::refusal("gate::prove-cargo-source-unavailable", error)
+            })?;
+    let external_source = CargoExternalSourceAuthority::new(
+        source.generation().to_owned(),
+        source.manifest().to_owned(),
+    )
+    .map_err(ProveFailure::cargo)?;
+    Ok((
+        CargoSourceExecution {
+            home: PathBuf::from(cargo_home),
+            lockfile,
+            authority: source,
+        },
+        external_source,
+    ))
 }
 
 fn environment_value<'a>(
@@ -796,13 +928,19 @@ fn require_reusable_cargo_shard(shard: &CargoGateShard) -> Result<(), ProveFailu
     Ok(())
 }
 
-fn normalized_cargo_environment(values: &[(OsString, OsString)]) -> Vec<(OsString, OsString)> {
-    const OUTPUT_ONLY: [&str; 3] = ["PWD", "CARGO_TARGET_DIR", "CARGO_BUILD_BUILD_DIR"];
+fn normalized_action_environment(values: &[(OsString, OsString)]) -> Vec<(OsString, OsString)> {
+    const LOCATION_ONLY: [&str; 5] = [
+        "PWD",
+        "CARGO_HOME",
+        "CARGO_TARGET_DIR",
+        "CARGO_BUILD_BUILD_DIR",
+        gate::TEST_CARGO_METADATA_MARKER,
+    ];
     const DISABLED_WRAPPERS: [&str; 2] = ["RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER"];
     let mut normalized = values
         .iter()
         .filter(|(name, _)| {
-            !OUTPUT_ONLY
+            !LOCATION_ONLY
                 .iter()
                 .any(|candidate| name == OsStr::new(candidate))
                 && !DISABLED_WRAPPERS

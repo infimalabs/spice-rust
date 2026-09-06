@@ -114,11 +114,12 @@ pub use core::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use evidence_store::{
-    ActionKey, AdmissionAction, AdmissionBundle, AdmissionBundleFields, AdmissionId,
-    AdmissionLiveCheck, CollectionReport as EvidenceCollectionReport, EvidenceLease, EvidenceStore,
-    EvidenceStoreError, LeaseAcquisition, PassReceipt, PassReceiptFields,
-    ProducerRecord as EvidenceProducerRecord, Publication as EvidencePublication,
-    ReceiptExpectation, ReceiptId, derive_action_key,
+    ActionFingerprintAuthority, ActionFingerprintAuthorityFields, ActionFingerprintManifest,
+    ActionFingerprintManifestFields, ActionFingerprintResolution, ActionKey, AdmissionAction,
+    AdmissionBundle, AdmissionBundleFields, AdmissionId, AdmissionLiveCheck,
+    CollectionReport as EvidenceCollectionReport, EvidenceLease, EvidenceStore, EvidenceStoreError,
+    LeaseAcquisition, PassReceipt, PassReceiptFields, ProducerRecord as EvidenceProducerRecord,
+    Publication as EvidencePublication, ReceiptExpectation, ReceiptId, derive_action_key,
 };
 pub use hygiene::{
     AnalysisEvidence, AnalyzerEvidence, EvidenceState, ExclusionEvidence, HYGIENE_ARMS,
@@ -248,11 +249,11 @@ pub use verdict::{
 #[cfg(not(target_arch = "wasm32"))]
 pub use workspace_tests::{
     CargoExternalSourceAuthority, CargoGateShard, CargoGateShardKind, CargoGateShardPlan,
-    CargoGateShardPlanning, CargoGateShardResult, WorkspaceTestBudget, WorkspaceTestError,
-    WorkspaceTestExecution, WorkspaceTestRoots, cargo_declared_compile_time_sources_at,
-    cargo_workspace_base_inventory_required, cargo_workspace_tests_applicable,
-    plan_cargo_gate_shards_at, prebuild_shared_at, run as run_workspace_tests,
-    run_at as run_workspace_tests_at, run_cargo_gate_shard_at, run_prebuilt_shared_at,
-    run_selected_at as run_selected_workspace_tests_at,
+    CargoGateShardPlanning, CargoGateShardResult, TEST_CARGO_METADATA_MARKER, WorkspaceTestBudget,
+    WorkspaceTestError, WorkspaceTestExecution, WorkspaceTestRoots,
+    cargo_declared_compile_time_sources_at, cargo_workspace_base_inventory_required,
+    cargo_workspace_tests_applicable, plan_cargo_gate_shards_at, prebuild_shared_at,
+    run as run_workspace_tests, run_at as run_workspace_tests_at, run_cargo_gate_shard_at,
+    run_prebuilt_shared_at, run_selected_at as run_selected_workspace_tests_at,
     run_selected_with_budget_at as run_selected_workspace_tests_with_budget_at,
 };

@@ -22,7 +22,7 @@ const NODE_PROBE: &str = concat!(
     "const {createRequire}=await import('node:module');",
     "const require=createRequire(import.meta.url);",
     "const {chromium,firefox}=await import('playwright');",
-    "console.log(JSON.stringify({node:process.version,playwright:require('playwright/package.json').version,",
+    "console.log(JSON.stringify({node:process.version,nodeExecutable:process.execPath,playwright:require('playwright/package.json').version,",
     "chromium:chromium.executablePath(),firefox:firefox.executablePath()}));",
 );
 
@@ -63,6 +63,8 @@ impl Drop for CanvasWorkspace {
 #[serde(deny_unknown_fields)]
 struct RuntimeProbe {
     node: String,
+    #[serde(rename = "nodeExecutable")]
+    node_executable: PathBuf,
     playwright: String,
     chromium: PathBuf,
     firefox: PathBuf,
@@ -71,7 +73,6 @@ struct RuntimeProbe {
 #[derive(Serialize)]
 #[serde(deny_unknown_fields)]
 struct RuntimeAuthority {
-    git_version: String,
     node_version: String,
     playwright_version: String,
     git_executable: Digest,
@@ -116,6 +117,23 @@ pub(super) fn matches_group(
             .any(|action| action == gate::CANVAS_BUILD_ACTION)
 }
 
+pub(super) fn fingerprint_authorities(
+    anchor: &spice::gate::PreparedArm<'_>,
+    context: &gate::BatteryContext,
+    installed_root: &Path,
+) -> Result<(Digest, Digest), ProveFailure> {
+    let cargo = super::cargo_authority(anchor.root(), anchor.compiler_environment())?;
+    let execution_environment = normalized_environment(cargo.execution_environment.iter().cloned());
+    let action_environment = super::normalized_action_environment(&execution_environment);
+    let (_, action_environment) = environment(&action_environment)?;
+    let playwright = PlaywrightSnapshot::capture_for_lookup(anchor.root(), installed_root)?;
+    let runtime = runtime_authority_at(&execution_environment, &playwright, installed_root)?;
+    Ok((
+        digest_encoded(Domain::GateTool, &(context.tools(), runtime))?,
+        action_environment,
+    ))
+}
+
 pub(super) fn prepare(
     staged: &StagedActionSelection,
     store: &EvidenceStore,
@@ -144,7 +162,8 @@ pub(super) fn prepare(
         .map_err(ProveFailure::run)?;
     let context = arm.context().map_err(ProveFailure::run)?;
     let (plan, environment_values) = canvas_plan(&arm)?;
-    let (environment_names, environment) = environment(&environment_values)?;
+    let action_environment = super::normalized_action_environment(&environment_values);
+    let (environment_names, environment) = environment(&action_environment)?;
     let playwright = Arc::new(PlaywrightSnapshot::capture(arm.root(), repository)?);
     let runtime = runtime_authority(&environment_values, &playwright)?;
     let tool_authority = digest_encoded(Domain::GateTool, &(context.tools(), &runtime))?;
@@ -231,7 +250,7 @@ fn canvas_plan(
     arm: &spice::gate::PreparedArm<'_>,
 ) -> Result<(CanvasActionPlan, Vec<(OsString, OsString)>), ProveFailure> {
     let cargo = super::cargo_authority(arm.root(), arm.compiler_environment())?;
-    let environment_values = normalized_environment(cargo.environment.iter().cloned());
+    let environment_values = normalized_environment(cargo.execution_environment.iter().cloned());
     let cargo_home = super::environment_value(&environment_values, "CARGO_HOME")?;
     let lockfile = fs::read(arm.root().join("Cargo.lock"))
         .map_err(|error| ProveFailure::refusal("gate::prove-cargo-source-unavailable", error))?;
@@ -578,9 +597,17 @@ fn runtime_authority(
     fs::create_dir(&probe_workspace.0)
         .map_err(|error| ProveFailure::fault("gate::prove-canvas-workspace-unavailable", error))?;
     playwright.materialize(&probe_workspace.0)?;
+    runtime_authority_at(environment, playwright, &probe_workspace.0)
+}
+
+fn runtime_authority_at(
+    environment: &[(OsString, OsString)],
+    playwright: &PlaywrightSnapshot,
+    root: &Path,
+) -> Result<RuntimeAuthority, ProveFailure> {
     let output = command("node", environment)
         .args(["--input-type=module", "--eval", NODE_PROBE])
-        .current_dir(&probe_workspace.0)
+        .current_dir(root)
         .output()
         .map_err(|error| ProveFailure::fault("gate::prove-canvas-tool-unavailable", error))?;
     if !output.status.success() {
@@ -591,20 +618,7 @@ fn runtime_authority(
     }
     let probe: RuntimeProbe = serde_json::from_slice(&output.stdout)
         .map_err(|error| ProveFailure::fault("gate::prove-canvas-tool-invalid", error))?;
-    let node_path = command("node", environment)
-        .args(["--print", "process.execPath"])
-        .current_dir(&probe_workspace.0)
-        .output()
-        .map_err(|error| ProveFailure::fault("gate::prove-canvas-tool-unavailable", error))?;
-    if !node_path.status.success() {
-        return Err(ProveFailure::refusal(
-            "gate::prove-canvas-tool-refused",
-            process_failure(&node_path),
-        ));
-    }
-    let node_path = String::from_utf8(node_path.stdout)
-        .map_err(|error| ProveFailure::fault("gate::prove-canvas-tool-invalid", error))?;
-    let node = fs::read(node_path.trim())
+    let node = fs::read(&probe.node_executable)
         .map_err(|error| ProveFailure::fault("gate::prove-canvas-tool-unreadable", error))?;
     let chromium = fs::read(&probe.chromium)
         .map_err(|error| ProveFailure::fault("gate::prove-canvas-tool-unreadable", error))?;
@@ -612,21 +626,7 @@ fn runtime_authority(
         .map_err(|error| ProveFailure::fault("gate::prove-canvas-tool-unreadable", error))?;
     let git = fs::read("/usr/bin/git")
         .map_err(|error| ProveFailure::fault("gate::prove-canvas-tool-unreadable", error))?;
-    let git_version = Command::new("/usr/bin/git")
-        .arg("--version")
-        .output()
-        .map_err(|error| ProveFailure::fault("gate::prove-canvas-tool-unavailable", error))?;
-    if !git_version.status.success() {
-        return Err(ProveFailure::refusal(
-            "gate::prove-canvas-tool-refused",
-            process_failure(&git_version),
-        ));
-    }
     Ok(RuntimeAuthority {
-        git_version: String::from_utf8(git_version.stdout)
-            .map_err(|error| ProveFailure::fault("gate::prove-canvas-tool-invalid", error))?
-            .trim()
-            .to_owned(),
         node_version: probe.node,
         playwright_version: probe.playwright,
         git_executable: Digest::compute(Domain::GateTool, &git),

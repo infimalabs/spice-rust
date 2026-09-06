@@ -5,6 +5,10 @@ use std::thread;
 use super::*;
 use std::path::PathBuf;
 
+use crate::{
+    ChangeSelectionPolicy, ChangeSelectionPolicyInputs, ChangeSelectionReport, select_change_gates,
+};
+
 #[test]
 fn immutable_receipts_and_atomic_indexes_round_trip_canonically() {
     let fixture = Fixture::new("round-trip");
@@ -590,6 +594,113 @@ fn garbage_collection_is_bounded_and_retains_ambiguous_bytes() {
             .iter()
             .any(|item| item.contains(corrupt.as_str()))
     );
+}
+
+#[test]
+fn shared_fingerprint_manifest_round_trips_and_authority_drift_misses() {
+    let fixture = Fixture::new("fingerprint-round-trip");
+    let producer = fixture.store();
+    let consumer = fixture.store();
+    let authority = fingerprint_authority(b"environment-a");
+    let action = derive_action_key(b"fingerprinted action");
+    let receipt = pass_receipt(&action, b"fingerprinted result");
+    producer.publish(&receipt).unwrap();
+    let expected = ReceiptExpectation::new(
+        "cargo:typecheck:fixture::lib:fixture",
+        action,
+        receipt.action_spec().clone(),
+        receipt.input_manifest().clone(),
+    )
+    .unwrap();
+    let manifest = ActionFingerprintManifest::new(ActionFingerprintManifestFields {
+        authority: authority.clone(),
+        selection: fingerprint_selection(&authority),
+        cargo_tests: false,
+        actions: vec![expected],
+    })
+    .unwrap();
+
+    let published = producer.publish_action_fingerprints(&manifest).unwrap();
+    assert_eq!(published, authority.key().unwrap());
+    assert_eq!(
+        consumer.lookup_action_fingerprints(&authority).unwrap(),
+        Some(manifest.clone())
+    );
+    assert_eq!(
+        consumer
+            .lookup_batch_exact(manifest.actions())
+            .unwrap()
+            .into_iter()
+            .flatten()
+            .count(),
+        1
+    );
+    assert_eq!(
+        consumer
+            .lookup_action_fingerprints(&fingerprint_authority(b"environment-b"))
+            .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn corrupt_fingerprint_manifest_refuses_without_another_lookup_path() {
+    let fixture = Fixture::new("fingerprint-corrupt");
+    let store = fixture.store();
+    let authority = fingerprint_authority(b"environment");
+    let manifest = ActionFingerprintManifest::new(ActionFingerprintManifestFields {
+        authority: authority.clone(),
+        selection: fingerprint_selection(&authority),
+        cargo_tests: false,
+        actions: Vec::new(),
+    })
+    .unwrap();
+    let key = store.publish_action_fingerprints(&manifest).unwrap();
+    fs::write(
+        store.layout.fingerprints.join(key.as_str()),
+        b"not canonical",
+    )
+    .unwrap();
+
+    let error = store.lookup_action_fingerprints(&authority).unwrap_err();
+    assert_eq!(error.reason(), "gate-evidence::fingerprint-invalid");
+}
+
+fn fingerprint_authority(environment: &[u8]) -> ActionFingerprintAuthority {
+    ActionFingerprintAuthority::new(ActionFingerprintAuthorityFields {
+        candidate_tree: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+        baseline: Some("89abcdef0123456789abcdef0123456789abcdef".to_owned()),
+        source: Digest::compute(Domain::GateTree, b"source"),
+        policy: Digest::compute(Domain::GatePolicy, b"policy"),
+        gate_set: Digest::compute(Domain::GateSet, b"gate set"),
+        tools: Digest::compute(Domain::GateTool, b"tools"),
+        environment: Digest::compute(Domain::GateConfiguration, environment),
+        cargo_source: Some(Digest::compute(Domain::GateInventory, b"cargo source")),
+    })
+    .unwrap()
+}
+
+fn fingerprint_selection(authority: &ActionFingerprintAuthority) -> ChangeSelectionReport {
+    let tracked = vec!["spice-rust.toml".to_owned()];
+    let policy_authorities = vec!["spice-rust.toml".to_owned()];
+    let suffixes = vec![".rs".to_owned()];
+    let test_paths = vec!["tests".to_owned()];
+    let policy = ChangeSelectionPolicy::new(ChangeSelectionPolicyInputs {
+        tracked_sources: &tracked,
+        policy_authorities: &policy_authorities,
+        configured: true,
+        repository_documents: Some(&[]),
+        file_shape_suffixes: Some(&suffixes),
+        complexity_suffixes: Some(&suffixes),
+        magic_suffixes: Some(&suffixes),
+        package_roots: &[],
+        declared_rust_sources: &[],
+        generated_paths: &[],
+        test_paths: &test_paths,
+    })
+    .expect("compile fingerprint fixture policy");
+    select_change_gates(authority.source().clone(), &tracked, &policy)
+        .expect("select fingerprint fixture gates")
 }
 
 fn pass_receipt(action: &ActionKey, result: &[u8]) -> PassReceipt {

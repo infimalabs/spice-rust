@@ -1,3 +1,4 @@
+use std::io::{self, Write as _};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
@@ -28,7 +29,7 @@ const PRODUCTION_TIMING: Timing = Timing {
 pub(super) fn run(
     store: &EvidenceStore,
     actions: Vec<PreparedAction>,
-    validate: impl FnOnce() -> Result<(), ProveFailure>,
+    mut validate: impl FnMut() -> Result<(), ProveFailure>,
     cleanup: impl FnOnce() -> Result<(), ProveFailure>,
 ) -> Result<Vec<ProveActionReport>, ProveFailure> {
     let owner = format!(
@@ -37,7 +38,6 @@ pub(super) fn run(
         uuid::Uuid::new_v4().simple()
     );
     let mut present = Vec::new();
-    let mut pending = Vec::new();
     let mut failure = None;
     for action in actions {
         let claimed = match claim(store, &owner, &action.action, &action.action_key) {
@@ -48,15 +48,56 @@ pub(super) fn run(
             }
         };
         match claimed {
-            Claim::Present(report) => present.push(report),
-            Claim::Lease(lease) => match execute(action) {
-                Ok(receipt) => pending.push((receipt, lease)),
-                Err(error) => {
+            Claim::Present(report) => {
+                if let Err(error) = write_progress("present", &report) {
+                    failure = Some(error);
+                    break;
+                }
+                present.push(report);
+            }
+            Claim::Lease(lease) => {
+                let receipt = match execute(action) {
+                    Ok(receipt) => receipt,
+                    Err(error) => {
+                        lease.fail(&error);
+                        failure = Some(error);
+                        break;
+                    }
+                };
+                if let Err(error) = validate() {
                     lease.fail(&error);
                     failure = Some(error);
                     break;
                 }
-            },
+                if let Err(error) = lease.renew_now() {
+                    lease.fail(&error);
+                    failure = Some(error);
+                    break;
+                }
+                let current = lease.current();
+                let publication = match store
+                    .publish_batch_leased([(&receipt.receipt, &current)], SystemTime::now())
+                    .map_err(ProveFailure::store)
+                {
+                    Ok(mut publications) => publications.remove(0),
+                    Err(error) => {
+                        lease.fail(&error);
+                        failure = Some(error);
+                        break;
+                    }
+                };
+                let report = ProveActionReport {
+                    action: receipt.action,
+                    action_key: receipt.action_key,
+                    disposition: ProveDisposition::Published,
+                    receipt: publication.receipt().clone(),
+                };
+                if let Err(error) = write_progress("published", &report) {
+                    failure = Some(error);
+                    break;
+                }
+                present.push(report);
+            }
         }
     }
     if failure.is_none()
@@ -70,50 +111,20 @@ pub(super) fn run(
         failure = Some(error);
     }
     if let Some(error) = failure {
-        for (_, lease) in &pending {
-            lease.fail(&error);
-        }
         return Err(error);
     }
-    for (_, lease) in &pending {
-        if let Err(error) = lease.renew_now() {
-            for (_, lease) in &pending {
-                lease.fail(&error);
-            }
-            return Err(error);
-        }
-    }
-    let leases = pending
-        .iter()
-        .map(|(_, lease)| lease.current())
-        .collect::<Vec<_>>();
-    let publications = match store
-        .publish_batch_leased(
-            pending
-                .iter()
-                .zip(&leases)
-                .map(|((pending, _), lease)| (&pending.receipt, lease)),
-            SystemTime::now(),
-        )
-        .map_err(ProveFailure::store)
-    {
-        Ok(publications) => publications,
-        Err(error) => {
-            for (_, lease) in &pending {
-                lease.fail(&error);
-            }
-            return Err(error);
-        }
-    };
-    present.extend(pending.into_iter().zip(publications).map(
-        |((pending, _lease), publication)| ProveActionReport {
-            action: pending.action,
-            action_key: pending.action_key,
-            disposition: ProveDisposition::Published,
-            receipt: publication.receipt().clone(),
-        },
-    ));
     Ok(present)
+}
+
+fn write_progress(stage: &str, report: &ProveActionReport) -> Result<(), ProveFailure> {
+    let mut stderr = io::stderr().lock();
+    writeln!(
+        stderr,
+        "[gate-prove] stage={stage} action={:?} action_key={} receipt={}",
+        report.action, report.action_key, report.receipt,
+    )
+    .and_then(|()| stderr.flush())
+    .map_err(|error| ProveFailure::fault("gate::prove-progress-unavailable", error))
 }
 
 enum Claim {

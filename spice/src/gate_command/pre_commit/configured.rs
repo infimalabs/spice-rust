@@ -703,8 +703,7 @@ impl Dispatch {
 
     pub(super) fn into_admission(
         self,
-    ) -> Result<(AdmissionDispatch, spice::change_gate::StagedActionSelection), ConfiguredFailure>
-    {
+    ) -> Result<(AdmissionDispatch, spice::gate::PreparedArm<'static>), ConfiguredFailure> {
         let Self {
             repository,
             policy,
@@ -712,13 +711,6 @@ impl Dispatch {
             anchor,
             authority,
         } = self;
-        let staged =
-            spice::change_gate::prepare_staged_actions_from_anchor(anchor).map_err(|error| {
-                ConfiguredFailure::refusal(
-                    "gate::pre-commit-staged-source-refused",
-                    error.to_string(),
-                )
-            })?;
         Ok((
             AdmissionDispatch {
                 repository,
@@ -726,7 +718,7 @@ impl Dispatch {
                 claim,
                 authority,
             },
-            staged,
+            anchor,
         ))
     }
 

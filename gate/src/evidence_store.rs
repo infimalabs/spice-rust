@@ -17,12 +17,17 @@ use sill::{LockFile, LockName};
 use wire::{Actor, CanonicalUuid, Digest, Domain, Instant, TaskHandle};
 
 mod admission;
+mod fingerprint;
 mod layout;
 use layout::*;
 
 pub use admission::{
     AdmissionAction, AdmissionBundle, AdmissionBundleFields, AdmissionId, AdmissionLiveCheck,
     ReceiptExpectation,
+};
+pub use fingerprint::{
+    ActionFingerprintAuthority, ActionFingerprintAuthorityFields, ActionFingerprintManifest,
+    ActionFingerprintManifestFields, ActionFingerprintResolution,
 };
 
 /// Current on-disk evidence-store schema.
@@ -635,33 +640,36 @@ impl EvidenceStore {
         expected: &[ReceiptExpectation],
     ) -> Result<Vec<Option<AdmissionAction>>, EvidenceStoreError> {
         admission::validate_receipt_expectations(expected)?;
+        self.with_lock(|layout| lookup_batch_exact(layout, expected))
+    }
+
+    /// Publish one immutable reusable-action fingerprint manifest.
+    pub fn publish_action_fingerprints(
+        &self,
+        manifest: &ActionFingerprintManifest,
+    ) -> Result<ActionKey, EvidenceStoreError> {
+        self.with_lock(|layout| fingerprint::publish(layout, manifest))
+    }
+
+    /// Read the exact fingerprint manifest for one current fast-path authority.
+    pub fn lookup_action_fingerprints(
+        &self,
+        authority: &ActionFingerprintAuthority,
+    ) -> Result<Option<ActionFingerprintManifest>, EvidenceStoreError> {
+        self.with_lock(|layout| fingerprint::lookup(layout, authority))
+    }
+
+    /// Read one exact fingerprint manifest and all of its receipts under one lock.
+    pub fn lookup_fingerprint_receipts(
+        &self,
+        authority: &ActionFingerprintAuthority,
+    ) -> Result<Option<ActionFingerprintResolution>, EvidenceStoreError> {
         self.with_lock(|layout| {
-            expected
-                .iter()
-                .map(|expected| {
-                    let Some(index) = read_index(layout, expected.action_key())? else {
-                        return Ok(None);
-                    };
-                    let receipt = read_receipt(layout, &index.receipt, Some(expected.action_key()))?;
-                    if receipt.action_spec() != expected.action_spec()
-                        || receipt.input_manifest() != expected.input_manifest()
-                    {
-                        return Err(EvidenceStoreError::new(
-                            "gate-evidence::receipt-authority-mismatch",
-                            format!(
-                                "action {} expected spec={} manifest={} but receipt {} binds spec={} manifest={}",
-                                expected.action(),
-                                expected.action_spec(),
-                                expected.input_manifest(),
-                                index.receipt,
-                                receipt.action_spec(),
-                                receipt.input_manifest(),
-                            ),
-                        ));
-                    }
-                    Ok(Some(AdmissionAction::resolved(expected, index.receipt)))
-                })
-                .collect()
+            let Some(manifest) = fingerprint::lookup(layout, authority)? else {
+                return Ok(None);
+            };
+            let receipts = lookup_batch_exact(layout, manifest.actions())?;
+            Ok(Some(ActionFingerprintResolution::new(manifest, receipts)))
         })
     }
 
@@ -842,6 +850,38 @@ impl EvidenceStore {
         recover_publication(&self.layout)?;
         operation(&self.layout)
     }
+}
+
+fn lookup_batch_exact(
+    layout: &Layout,
+    expected: &[ReceiptExpectation],
+) -> Result<Vec<Option<AdmissionAction>>, EvidenceStoreError> {
+    expected
+        .iter()
+        .map(|expected| {
+            let Some(index) = read_index(layout, expected.action_key())? else {
+                return Ok(None);
+            };
+            let receipt = read_receipt(layout, &index.receipt, Some(expected.action_key()))?;
+            if receipt.action_spec() != expected.action_spec()
+                || receipt.input_manifest() != expected.input_manifest()
+            {
+                return Err(EvidenceStoreError::new(
+                    "gate-evidence::receipt-authority-mismatch",
+                    format!(
+                        "action {} expected spec={} manifest={} but receipt {} binds spec={} manifest={}",
+                        expected.action(),
+                        expected.action_spec(),
+                        expected.input_manifest(),
+                        index.receipt,
+                        receipt.action_spec(),
+                        receipt.input_manifest(),
+                    ),
+                ));
+            }
+            Ok(Some(AdmissionAction::resolved(expected, index.receipt)))
+        })
+        .collect()
 }
 
 #[derive(Debug)]

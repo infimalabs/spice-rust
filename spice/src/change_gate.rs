@@ -450,6 +450,17 @@ pub fn prepare_staged_actions() -> Result<StagedActionSelection, ChangeGateError
     prepare_staged_actions_with_claim(gate::ClaimCapture::Idle)
 }
 
+/// Capture staged content for a fingerprint lookup without constructing packaged selection.
+///
+/// # Errors
+///
+/// Returns the same staged capture failures as [`prepare_staged_actions`].
+pub fn prepare_staged_anchor() -> Result<crate::gate::PreparedArm<'static>, ChangeGateError> {
+    SelectionSurface::Packaged
+        .prepare_anchor(gate::ClaimCapture::Idle)
+        .map_err(ChangeGateError::gate)
+}
+
 /// Capture and select staged actions under the caller's exact board claim.
 pub fn prepare_staged_actions_with_claim(
     claim: gate::ClaimCapture,
@@ -469,6 +480,47 @@ pub fn prepare_staged_actions_from_anchor(
     })?;
     let (selection, tests) = select_changes(&anchor, SelectionSurface::Packaged, &environment)?;
     let cargo_tests = tests.cargo_selected(anchor.root(), anchor.changes());
+    Ok(StagedActionSelection {
+        anchor,
+        selection,
+        cargo_tests,
+    })
+}
+
+/// Restore a previously validated packaged selection over the exact retained staged anchor.
+///
+/// # Errors
+///
+/// Refuses when the persisted selection does not name the anchor's source and changed paths.
+pub fn restore_staged_actions(
+    anchor: crate::gate::PreparedArm<'static>,
+    selection: ChangeSelectionReport,
+    cargo_tests: bool,
+) -> Result<StagedActionSelection, ChangeGateError> {
+    let encoded = selection.encode().map_err(|error| {
+        ChangeGateError::protocol("change-gate-selection-invalid", error.to_string())
+    })?;
+    let selection = ChangeSelectionReport::decode(&encoded).map_err(|error| {
+        ChangeGateError::protocol("change-gate-selection-invalid", error.to_string())
+    })?;
+    if selection.source() != anchor.source() {
+        return Err(ChangeGateError::protocol(
+            "change-gate-selection-source-mismatch",
+            "persisted selection names a different staged source",
+        ));
+    }
+    if selection.changed_sources() != anchor.changes() {
+        return Err(ChangeGateError::protocol(
+            "change-gate-selection-path-mismatch",
+            "persisted selection names different changed sources",
+        ));
+    }
+    if cargo_tests && !selection.gate_ids().contains(&GateId::RustTypecheck) {
+        return Err(ChangeGateError::protocol(
+            "change-gate-selection-cargo-mismatch",
+            "persisted Cargo tests require the selected Rust typecheck arm",
+        ));
+    }
     Ok(StagedActionSelection {
         anchor,
         selection,

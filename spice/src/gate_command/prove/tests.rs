@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::fs;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use super::*;
 
@@ -17,6 +18,58 @@ fn missing_filters_only_an_action_with_a_current_receipt() {
     assert!(action_needed(false, true));
     assert!(action_needed(true, false));
     assert!(!action_needed(true, true));
+}
+
+#[test]
+fn complete_fingerprint_returns_inside_the_bound_without_entering_planning() {
+    let authority = ActionFingerprintAuthority::new(ActionFingerprintAuthorityFields {
+        candidate_tree: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+        baseline: None,
+        source: Digest::compute(Domain::GateTree, b"source"),
+        policy: Digest::compute(Domain::GatePolicy, b"policy"),
+        gate_set: Digest::compute(Domain::GateSet, b"gate set"),
+        tools: Digest::compute(Domain::GateTool, b"tools"),
+        environment: Digest::compute(Domain::GateConfiguration, b"environment"),
+        cargo_source: None,
+    })
+    .expect("valid fingerprint authority");
+    let planned = AtomicUsize::new(0);
+    let started = Instant::now();
+
+    let Ok(resolution) = fingerprint::resolve(
+        Some(&authority),
+        |_| Ok(Some(Vec::new())),
+        || {
+            planned.fetch_add(1, Ordering::Relaxed);
+            Ok((Vec::new(), Vec::new(), Vec::new()))
+        },
+    ) else {
+        panic!("complete fingerprint must resolve");
+    };
+
+    assert!(
+        matches!(resolution, fingerprint::ActionResolution::Fingerprint(actions) if actions.is_empty())
+    );
+    assert_eq!(planned.load(Ordering::Relaxed), 0);
+    assert!(started.elapsed() < Duration::from_millis(100));
+
+    let Ok(resolution) = fingerprint::resolve(
+        Some(&authority),
+        |_| Ok(None),
+        || {
+            planned.fetch_add(1, Ordering::Relaxed);
+            Ok((Vec::new(), Vec::new(), Vec::new()))
+        },
+    ) else {
+        panic!("missing fingerprint planning failed");
+    };
+    let fingerprint::ActionResolution::Planned((present, pending, expected)) = resolution else {
+        panic!("missing fingerprint did not enter planning");
+    };
+    assert!(present.is_empty());
+    assert!(pending.is_empty());
+    assert!(expected.is_empty());
+    assert_eq!(planned.load(Ordering::Relaxed), 1);
 }
 
 #[test]
@@ -129,7 +182,7 @@ fn non_reusable_cargo_shard_is_refused_before_action_identity_preparation() {
 
 #[test]
 fn cargo_environment_omits_worktree_outputs_and_matches_forced_wrappers() {
-    let normalized = normalized_cargo_environment(&[
+    let normalized = normalized_action_environment(&[
         (OsString::from("PWD"), OsString::from("/worktree-a")),
         (
             OsString::from("CARGO_TARGET_DIR"),
@@ -140,6 +193,10 @@ fn cargo_environment_omits_worktree_outputs_and_matches_forced_wrappers() {
             OsString::from("/worktree-a/build"),
         ),
         (OsString::from("RUSTC_WRAPPER"), OsString::from("sccache")),
+        (
+            OsString::from("CARGO_HOME"),
+            OsString::from("/worktree-a/private-cargo"),
+        ),
         (OsString::from("RUSTFLAGS"), OsString::from("--cfg=proof")),
     ]);
     assert_eq!(
@@ -150,11 +207,22 @@ fn cargo_environment_omits_worktree_outputs_and_matches_forced_wrappers() {
             (OsString::from("RUSTFLAGS"), OsString::from("--cfg=proof")),
         ]
     );
+    assert_eq!(
+        normalized,
+        normalized_action_environment(&[
+            (
+                OsString::from("CARGO_HOME"),
+                OsString::from("/worktree-b/another-private-cargo"),
+            ),
+            (OsString::from("RUSTFLAGS"), OsString::from("--cfg=proof")),
+        ]),
+        "private home locations must not partition shared receipt identity",
+    );
 
     let Ok((_, first)) = environment(&normalized) else {
         panic!("digest first Cargo environment");
     };
-    let drifted = normalized_cargo_environment(&[
+    let drifted = normalized_action_environment(&[
         (
             OsString::from("FIXTURE_BUILD_INPUT"),
             OsString::from("changed"),
@@ -168,9 +236,9 @@ fn cargo_environment_omits_worktree_outputs_and_matches_forced_wrappers() {
 }
 
 #[test]
-fn interrupted_execution_cleans_up_without_reaching_publication() {
+fn interrupted_execution_retains_prior_publication_and_cleans_up() {
     let events = RefCell::new(Vec::new());
-    let result: Result<Vec<u8>, &str> = complete_transaction(
+    let result: Result<Vec<u8>, &str> = complete_actions(
         vec![1_u8, 2, 3],
         |action| {
             events.borrow_mut().push(format!("execute-{action}"));
@@ -188,20 +256,23 @@ fn interrupted_execution_cleans_up_without_reaching_publication() {
             events.borrow_mut().push("cleanup".to_owned());
             Ok(())
         },
-        |receipts| {
-            events.borrow_mut().push("publish".to_owned());
-            Ok(receipts)
+        |receipt| {
+            events.borrow_mut().push(format!("publish-{receipt}"));
+            Ok(receipt)
         },
     );
 
     assert_eq!(result, Err("interrupted"));
-    assert_eq!(events.into_inner(), ["execute-1", "execute-2", "cleanup"]);
+    assert_eq!(
+        events.into_inner(),
+        ["execute-1", "validate", "publish-1", "execute-2", "cleanup",]
+    );
 }
 
 #[test]
-fn source_validation_precedes_cleanup_and_publication() {
+fn source_validation_precedes_each_opportunistic_publication() {
     let events = RefCell::new(Vec::new());
-    let result = complete_transaction(
+    let result = complete_actions(
         vec![1_u8, 2],
         |action| {
             events.borrow_mut().push(format!("execute-{action}"));
@@ -215,9 +286,9 @@ fn source_validation_precedes_cleanup_and_publication() {
             events.borrow_mut().push("cleanup".to_owned());
             Ok(())
         },
-        |receipts| {
-            events.borrow_mut().push(format!("publish-{receipts:?}"));
-            Ok(receipts)
+        |receipt| {
+            events.borrow_mut().push(format!("publish-{receipt}"));
+            Ok(receipt)
         },
     );
 
@@ -226,26 +297,33 @@ fn source_validation_precedes_cleanup_and_publication() {
         events.into_inner(),
         [
             "execute-1",
+            "validate",
+            "publish-1",
             "execute-2",
             "validate",
+            "publish-2",
             "cleanup",
-            "publish-[1, 2]",
         ]
     );
 }
 
 #[test]
-fn aggregate_publication_failure_returns_no_partial_reports() {
-    let result: Result<Vec<u8>, &str> = complete_transaction(
+fn later_publication_failure_retains_the_prior_receipt() {
+    let published = RefCell::new(Vec::new());
+    let result: Result<Vec<u8>, &str> = complete_actions(
         vec![1_u8, 2],
         Ok::<_, &str>,
         || Ok(()),
         || Ok(()),
-        |receipts| {
-            assert_eq!(receipts, [1, 2]);
-            Err("later publication failed")
+        |receipt| {
+            if receipt == 2 {
+                return Err("later publication failed");
+            }
+            published.borrow_mut().push(receipt);
+            Ok(receipt)
         },
     );
 
     assert_eq!(result, Err("later publication failed"));
+    assert_eq!(published.into_inner(), [1]);
 }
