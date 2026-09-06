@@ -76,7 +76,7 @@ export async function assertHeldTaskCount(
   // by the production capture path, not prose styled to resemble a tool.
   const ticker = team.locator(".ticker");
   await writeFile(join(fixture, ".spice-tool-trigger"), "emit\n");
-  const toolLine = `tool: ${TOOL_ACTIVITY_TEXT}`;
+  const toolLine = TOOL_ACTIVITY_TEXT;
   await ticker.filter({ hasText: toolLine }).waitFor({ timeout: 15_000 });
   const toolTicker = await captureTicker(ticker);
   assertTickerPresentation(toolTicker, toolLine, lanes[0], "tool", "tool call");
@@ -107,7 +107,7 @@ export async function assertHeldTaskCount(
   // without writing to the page, because overwriting a rendered node here
   // desynchronizes the client's diff and suppresses the next activity update.
   assert.throws(
-    () => assertNewestLaneActivity(`tool: ${toolCallId} succeeded`, resultLine),
+    () => assertNewestLaneActivity(`${toolCallId} succeeded`, resultLine),
     /raw vendor tool identifier/,
     "the production assertion rejects a raw vendor identifier on the strip",
   );

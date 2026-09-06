@@ -4,7 +4,7 @@ use app::watchband::{
     TeamTaskSectionState, accent, arrangement, badge, elapsed_label, elapsed_label_deadline_millis,
     first_nonquoted_prose, leaf, one_line, remaining_label, remaining_label_deadline_millis,
     reported_tasks, response_speech_text, short, split_lineage, standing_title, standings,
-    task_mentions, ticker_line, topology, truncate,
+    task_mentions, ticker_chunks, ticker_line, topology, truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -894,6 +894,26 @@ fn the_ticker_folds_a_command_onto_one_line_within_its_budget() {
     assert_eq!(truncate("exec", 4), "exec");
     assert_eq!(truncate("exécut", 4), "exé…");
     assert_eq!(one_line("  spaced \r\n words  "), "spaced \\n words");
+}
+
+#[test]
+fn tool_ticker_chunks_promote_invocation_and_drop_redundant_taxonomy() {
+    assert_eq!(
+        ticker_chunks("tool", "command execution: zsh -lc: cargo test", 80),
+        ("zsh -lc".to_owned(), "cargo test".to_owned()),
+    );
+    assert_eq!(
+        ticker_chunks("tool", "Read: app/src/lib.rs", 80),
+        ("Read".to_owned(), "app/src/lib.rs".to_owned()),
+    );
+    assert_eq!(
+        ticker_chunks("assistant", "concise response", 80),
+        ("assistant".to_owned(), "concise response".to_owned()),
+    );
+    let (prefix, detail) = ticker_chunks("tool", "Bash: a deliberately long command", 18);
+    assert_eq!(prefix, "Bash");
+    assert!(detail.ends_with('…'));
+    assert!(format!("{prefix}: {detail}").chars().count() <= 18);
 }
 
 /// One team holding several agents, so a join has more than one agent to move.
