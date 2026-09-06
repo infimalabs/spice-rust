@@ -82,6 +82,7 @@ fn residency() -> ResidencyHead {
             manual_projects: Vec::new(),
             auto_projects: Vec::new(),
         }],
+        renewals: Vec::new(),
     }
 }
 

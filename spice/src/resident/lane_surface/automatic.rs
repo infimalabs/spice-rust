@@ -144,64 +144,83 @@ pub(in crate::resident) fn wake_automatic(
     decision: Option<&bus::TaskSnapshot>,
     reserved: Option<&crate::board_command::AutomaticClaim>,
 ) -> CommandResult<AutomaticWake> {
-    let expected_cursor = decision.and_then(bus::TaskSnapshot::cursor);
-    let observed = current_residency(bus, epoch)?;
-    let row = observed
-        .body()
-        .lanes
-        .iter()
-        .find(|row| row.lane == lane)
-        .cloned()
-        .ok_or_else(|| {
-            store_fault(
-                "lifecycle::wake-lane-missing",
-                "the selected automatic wake lane disappeared",
-            )
-        })?;
-    if row.occupant.is_some() || seats.occupied(lane) {
-        return Err(automatic_refusal(
-            "lifecycle::wake-capacity-moved",
-            "lane",
-            VACANT,
-            &row.disposition,
-            "reconcile after observing the current occupant",
-        ));
-    }
-    if row.life == "drain" {
-        return Err(automatic_refusal(
-            "lifecycle::wake-life-ended",
-            "lane.life",
-            "steer or drive",
-            &row.life,
-            "seat new capacity instead of re-seating a terminal lane",
-        ));
-    }
-    super::super::steering::lane_capability(&row)?;
-    let claim = automatic_claim_authority(bus, decision, lane)?;
-    if let Some(reserved) = reserved
-        && !claim.as_ref().is_some_and(|claim| {
-            claim.task == reserved.task
-                && claim.claim.body().lane == reserved.lane
-                && claim.claim.body().occupant == reserved.occupant
-        })
-    {
-        return Err(store_fault(
-            "lifecycle::available-work-claim-moved",
-            "the exact pre-launch claim is no longer active",
-        ));
-    }
-    let resume = launch_resume(paths, &row)?;
-    let fast_mode = super::super::settings_surface::fast_mode(bus)?;
+    wake_automatic_with(
+        bus,
+        paths,
+        epoch,
+        seats,
+        runtime,
+        WakeRequest {
+            lane,
+            occupant,
+            decision,
+            reserved,
+            renewal: None,
+        },
+    )
+}
+
+pub(super) fn wake_renewal(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+    runtime: &Runtime<'_>,
+    renewal: &wire::LaneRenewalRecord,
+    occupant: CanonicalUuid,
+) -> CommandResult<AutomaticWake> {
+    wake_automatic_with(
+        bus,
+        paths,
+        epoch,
+        seats,
+        runtime,
+        WakeRequest {
+            lane: renewal.lane,
+            occupant,
+            decision: None,
+            reserved: None,
+            renewal: Some(renewal),
+        },
+    )
+}
+
+struct WakeRequest<'a> {
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    decision: Option<&'a bus::TaskSnapshot>,
+    reserved: Option<&'a crate::board_command::AutomaticClaim>,
+    renewal: Option<&'a wire::LaneRenewalRecord>,
+}
+
+struct WakeAdmission {
+    expected_cursor: Option<wire::Seq>,
+    observed: journal::JournalHead<wire::ResidencyHead>,
+    row: wire::LaneResidency,
+    claim: Option<AutomaticClaimAuthority>,
+    resume: vendor::Resume,
+    fast_mode: bool,
+}
+
+fn wake_automatic_with(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+    runtime: &Runtime<'_>,
+    request: WakeRequest<'_>,
+) -> CommandResult<AutomaticWake> {
+    let admitted = admit_automatic_wake(bus, paths, epoch, seats, &request)?;
     let launch = match super::super::supervisor::launch(
         paths,
         OccupantLaunchRequest {
-            worktree: &row.worktree,
-            vendor: &row.vendor,
+            worktree: &admitted.row.worktree,
+            vendor: &admitted.row.vendor,
             epoch,
-            lane,
-            occupant,
-            resume,
-            fast_mode,
+            lane: request.lane,
+            occupant: request.occupant,
+            resume: admitted.resume,
+            fast_mode: admitted.fast_mode,
         },
         Arc::clone(&runtime.capture),
     ) {
@@ -214,28 +233,96 @@ pub(in crate::resident) fn wake_automatic(
         session: launch.session,
         git: launch.git,
     };
-    match seats.seat_detached(lane, occupant, launch.process) {
-        Ok(_) => {}
-        Err(error) => {
-            return Ok(AutomaticWake::Unstarted(super::super::environment_fault(
-                "lifecycle::wake-launch-failed",
-                &error.to_string(),
-            )));
-        }
+    if let Err(error) = seats.seat_detached(request.lane, request.occupant, launch.process) {
+        return Ok(AutomaticWake::Unstarted(super::super::environment_fault(
+            "lifecycle::wake-launch-failed",
+            &error.to_string(),
+        )));
     }
     if let Err(outcome) = commit_automatic_wake(
         bus,
         epoch,
-        &observed,
-        &row,
+        &admitted.observed,
+        &admitted.row,
         &proven,
-        expected_cursor,
-        claim.as_ref(),
+        WakeCommitAuthority {
+            expected_cursor: admitted.expected_cursor,
+            claim: admitted.claim.as_ref(),
+            renewal: request.renewal,
+        },
     ) {
-        stop_lane(seats, lane);
+        stop_lane(seats, request.lane);
         return Err(outcome);
     }
     Ok(AutomaticWake::Started)
+}
+
+fn admit_automatic_wake(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    seats: &Seats,
+    request: &WakeRequest<'_>,
+) -> CommandResult<WakeAdmission> {
+    let expected_cursor = request.decision.and_then(bus::TaskSnapshot::cursor);
+    let observed = current_residency(bus, epoch)?;
+    let row = observed
+        .body()
+        .lanes
+        .iter()
+        .find(|row| row.lane == request.lane)
+        .cloned()
+        .ok_or_else(|| {
+            store_fault(
+                "lifecycle::wake-lane-missing",
+                "the selected automatic wake lane disappeared",
+            )
+        })?;
+    if row.occupant.is_some() || seats.occupied(request.lane) {
+        return Err(automatic_refusal(
+            "lifecycle::wake-capacity-moved",
+            "lane",
+            VACANT,
+            &row.disposition,
+            "reconcile after observing the current occupant",
+        ));
+    }
+    if row.life == "drain" && request.renewal.is_none() {
+        return Err(automatic_refusal(
+            "lifecycle::wake-life-ended",
+            "lane.life",
+            "steer or drive",
+            &row.life,
+            "seat new capacity instead of re-seating a terminal lane",
+        ));
+    }
+    super::super::steering::lane_capability(&row)?;
+    let claim = automatic_claim_authority(bus, request.decision, request.lane)?;
+    if let Some(reserved) = request.reserved
+        && !claim.as_ref().is_some_and(|claim| {
+            claim.task == reserved.task
+                && claim.claim.body().lane == reserved.lane
+                && claim.claim.body().occupant == reserved.occupant
+        })
+    {
+        return Err(store_fault(
+            "lifecycle::available-work-claim-moved",
+            "the exact pre-launch claim is no longer active",
+        ));
+    }
+    let resume = match request.renewal {
+        Some(_) => vendor::Resume::Fresh,
+        None => launch_resume(paths, &row)?,
+    };
+    let fast_mode = super::super::settings_surface::fast_mode(bus)?;
+    Ok(WakeAdmission {
+        expected_cursor,
+        observed,
+        row,
+        claim,
+        resume,
+        fast_mode,
+    })
 }
 
 #[derive(Clone)]
@@ -400,17 +487,72 @@ fn promoted_lease(
     Ok(lease)
 }
 
+struct WakeCommitAuthority<'a> {
+    expected_cursor: Option<wire::Seq>,
+    claim: Option<&'a AutomaticClaimAuthority>,
+    renewal: Option<&'a wire::LaneRenewalRecord>,
+}
+
 fn commit_automatic_wake(
     bus: &Bus,
     epoch: CanonicalUuid,
     observed: &journal::JournalHead<wire::ResidencyHead>,
     row: &wire::LaneResidency,
     proven: &ProvenOccupant,
-    expected_cursor: Option<wire::Seq>,
-    claim: Option<&AutomaticClaimAuthority>,
+    authority: WakeCommitAuthority<'_>,
 ) -> CommandResult<()> {
+    let WakeCommitAuthority {
+        expected_cursor,
+        claim,
+        renewal,
+    } = authority;
     let at = wire::Instant::new(jiff::Timestamp::now())
         .map_err(|error| store_fault("lifecycle::claim-promotion-clock", &error.to_string()))?;
+    let (mut next, mut write, started) =
+        prepare_wake_commit(epoch, observed, row, proven, expected_cursor, claim)?;
+    let mut head = match claim {
+        Some(claim) if claim.claim.body().occupant != proven.occupant => {
+            carry_automatic_claim(&mut write, claim, row.lane, proven.occupant, epoch, started)?
+        }
+        _ => started,
+    };
+    if let Some(claim) = claim {
+        if claim.automatic && renewal.is_none() {
+            head = update_automatic_lease(&mut write, claim, epoch, at, head)?;
+        } else if claim.claim.body().occupant != proven.occupant {
+            let mut lease = claim.lease.body().clone();
+            lease.epoch = epoch;
+            let task = claim.task.clone();
+            write.lease_head(task, head, move |_| lease);
+        }
+    }
+    if let Some(renewal) = renewal {
+        let successor =
+            super::renewal::successor_record(renewal, &proven.session, next.topology_revision)?;
+        super::renewal::replace_renewal(&mut next, row.lane, Some(successor.clone()));
+        head = write
+            .fact(
+                wire::body::LaneRenewalChanged {
+                    lineage_id: successor.lineage_id,
+                    lane: successor.lane,
+                    renewal: Some(successor),
+                },
+                FactCause::Pending(head),
+            )
+            .map_err(|error| store_fault("lane::renewal-fact-invalid", &error.to_string()))?;
+    }
+    write.residency_head(head, move |_| next);
+    commit(bus, write).map(|_| ())
+}
+
+fn prepare_wake_commit(
+    epoch: CanonicalUuid,
+    observed: &journal::JournalHead<wire::ResidencyHead>,
+    row: &wire::LaneResidency,
+    proven: &ProvenOccupant,
+    expected_cursor: Option<wire::Seq>,
+    claim: Option<&AutomaticClaimAuthority>,
+) -> CommandResult<(wire::ResidencyHead, JournalWrite, PendingFact)> {
     let mut next = observed.body().clone();
     let next_row = next
         .lanes
@@ -452,24 +594,7 @@ fn commit_automatic_wake(
             FactCause::Pending(declared),
         )
         .map_err(|error| store_fault("lifecycle::wake-fact-invalid", &error.to_string()))?;
-    let mut head = match claim {
-        Some(claim) if claim.claim.body().occupant != proven.occupant => {
-            carry_automatic_claim(&mut write, claim, row.lane, proven.occupant, epoch, started)?
-        }
-        _ => started,
-    };
-    if let Some(claim) = claim {
-        if claim.automatic {
-            head = update_automatic_lease(&mut write, claim, epoch, at, head)?;
-        } else if claim.claim.body().occupant != proven.occupant {
-            let mut lease = claim.lease.body().clone();
-            lease.epoch = epoch;
-            let task = claim.task.clone();
-            write.lease_head(task, head, move |_| lease);
-        }
-    }
-    write.residency_head(head, move |_| next);
-    commit(bus, write).map(|_| ())
+    Ok((next, write, started))
 }
 
 #[cfg(test)]

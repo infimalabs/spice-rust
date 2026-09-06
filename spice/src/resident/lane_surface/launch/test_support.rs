@@ -23,6 +23,7 @@ pub(in crate::resident) struct AdvisoryRtkFixture {
     pub(in crate::resident) vendor: wire::Name,
     probe_log: PathBuf,
     occupant_environment: PathBuf,
+    launch_log: PathBuf,
 }
 
 impl AdvisoryRtkFixture {
@@ -69,6 +70,7 @@ impl AdvisoryRtkFixture {
         executable(&rtk);
 
         let occupant_environment = root.join("occupant-environment");
+        let launch_log = root.join("occupant-launches");
         let vendor = root.join("fake-claude");
         fs::write(
             &vendor,
@@ -76,6 +78,7 @@ impl AdvisoryRtkFixture {
                 concat!(
                     "#!/bin/sh\n",
                     "set -eu\n",
+                    "printf 'LAUNCH:%s\\n' \"$*\" >> '{}'\n",
                     "if [ \"${{SPICE_RS_RTK_EXECUTABLE+x}}\" = x ] || ",
                     "[ \"${{RTK_DB_PATH+x}}\" = x ]; then\n",
                     "  printf '%s\\n' present > '{}'\n",
@@ -87,6 +90,7 @@ impl AdvisoryRtkFixture {
                     "{{\"type\":\"system\",\"subtype\":\"init\",",
                     "\"session_id\":\"{}\"}}'\n",
                 ),
+                launch_log.display(),
                 occupant_environment.display(),
                 occupant_environment.display(),
                 SESSION,
@@ -124,6 +128,7 @@ impl AdvisoryRtkFixture {
             vendor: "claude".parse().expect("fixture vendor name"),
             probe_log,
             occupant_environment,
+            launch_log,
         }
     }
 
@@ -171,6 +176,14 @@ impl AdvisoryRtkFixture {
             !self.paths.runtime.join("agents").exists(),
             "resident launch recreated the superseded generic agents root"
         );
+    }
+
+    pub(in crate::resident) fn launches(&self) -> Vec<String> {
+        fs::read_to_string(&self.launch_log)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| line.strip_prefix("LAUNCH:").map(str::to_owned))
+            .collect()
     }
 }
 

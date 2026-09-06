@@ -74,7 +74,7 @@ export async function assertPerTeamWatchbands(
     [secondarySurface, "secondary"],
   ]) {
     assert.deepEqual(
-      await surface.getByRole("tab").allTextContents(),
+      await surface.getByRole("tab").locator(".team-mode-label").allTextContents(),
       ["Team", "Metrics", "Tasks", "Lanes"],
       `${label} team exposes the mirrored navigation order`,
     );

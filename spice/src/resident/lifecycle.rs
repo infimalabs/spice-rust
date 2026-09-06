@@ -210,6 +210,14 @@ impl Runtime {
         let now = Instant::new(jiff::Timestamp::now()).map_err(|error| {
             super::environment_fault("lifecycle::clock-invalid", &error.to_string())
         })?;
+        if lane_surface::reconcile_renewal(bus, paths, epoch, seats, lane_runtime, config)? {
+            self.backoff.release_all();
+            return Ok(self.holds.next().map(|(lane, at)| WakeDeadline {
+                lane,
+                at,
+                kind: WakeKind::Hold,
+            }));
+        }
         let snapshot = bus
             .task_snapshot()
             .map_err(|error| store_fault("lifecycle::snapshot-unreadable", &error.to_string()))?;
@@ -323,6 +331,10 @@ impl Runtime {
             return true;
         }
         false
+    }
+
+    pub(super) fn release_all(&mut self) {
+        self.backoff.release_all();
     }
 
     /// Classify one observed occupant death through the shared hold reducer.

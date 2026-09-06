@@ -408,6 +408,7 @@ fn seat_residency(write: &mut JournalWrite, fact: journal::PendingFact) {
             manual_projects: Vec::new(),
             auto_projects: Vec::new(),
         }],
+        renewals: Vec::new(),
     });
 }
 
