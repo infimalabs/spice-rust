@@ -3,8 +3,8 @@ use app::watchband::{
     ACCENTS, AGE_LABEL_WIDTH, FIELD_BUDGET, LINEAGE_JOIN_GUTTER, LineageDrop, SHORT_LEN,
     TeamTaskSectionState, accent, arrangement, badge, elapsed_label, elapsed_label_deadline_millis,
     first_nonquoted_prose, leaf, one_line, remaining_label, remaining_label_deadline_millis,
-    reported_tasks, short, split_lineage, standing_title, standings, task_mentions, ticker_line,
-    topology, truncate,
+    reported_tasks, response_speech_text, short, split_lineage, standing_title, standings,
+    task_mentions, ticker_line, topology, truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -804,6 +804,23 @@ fn an_entirely_quoted_message_has_no_composer_prose() {
         None
     );
     assert_eq!(first_nonquoted_prose(" \r\n\t\r\n"), None);
+}
+
+#[test]
+fn speech_uses_prepared_or_unquoted_response_text() {
+    assert_eq!(
+        response_speech_text(
+            "> borrowed context\n> > borrowed nested context\n\nagent response",
+            None,
+        )
+        .as_deref(),
+        Some("agent response"),
+    );
+    assert_eq!(
+        response_speech_text("> raw quote\n\nraw response", Some("prepared response")).as_deref(),
+        Some("prepared response"),
+    );
+    assert_eq!(response_speech_text("> only borrowed", None), None);
 }
 
 #[test]
