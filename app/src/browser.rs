@@ -33,8 +33,8 @@ use crate::speech_queue::{
 };
 use crate::thread_refresh::ThreadRefresh;
 use crate::{
-    Axis, CanvasRuntime, ChainEnd, Pane, Principal, Session, SteerPane, StreamDirective,
-    stale_reads,
+    Axis, CanvasDestination, CanvasRuntime, ChainEnd, Pane, Principal, Session, SteerPane,
+    StreamDirective, stale_reads,
 };
 
 mod clock;
@@ -555,6 +555,10 @@ fn canvas_app() -> Html {
     let agents = use_agent_controls(
         sender.clone(),
         surface.clone(),
+        view::CanvasNavigation {
+            axis: axis.clone(),
+            mosaic: mosaic.clone(),
+        },
         (*toggle_message).clone(),
         (*narrate).clone(),
         speech_message,
@@ -892,6 +896,7 @@ fn use_mosaic_root_scroll(mosaic: bool) {
 fn use_agent_controls(
     sender: SenderHandle,
     surface: UseStateHandle<SurfaceData>,
+    navigation: view::CanvasNavigation,
     speak: Callback<SpeechRequest>,
     narrate: Callback<NarrationBatch>,
     speech_message: UseStateHandle<Option<String>>,
@@ -902,6 +907,7 @@ fn use_agent_controls(
     let seat_life = use_state(|| "steer".to_owned());
     let seat_notice = use_state(Notice::none);
     view::AgentControls {
+        navigation,
         submit_seat: seat_submit(
             sender,
             surface,
@@ -1153,21 +1159,6 @@ fn metric(label: &'static str, value: String, detail: String) -> Html {
 
 fn empty(message: &'static str) -> Html {
     html! { <div class="empty">{message}</div> }
-}
-
-fn title(text: &str) -> String {
-    let mut output = String::with_capacity(text.len());
-    for (index, word) in text.split('-').enumerate() {
-        if index > 0 {
-            output.push(' ');
-        }
-        let mut characters = word.chars();
-        if let Some(first) = characters.next() {
-            output.extend(first.to_uppercase());
-            output.extend(characters);
-        }
-    }
-    output
 }
 
 fn short(value: &str) -> String {

@@ -83,7 +83,7 @@ async function readTeamWorktrees(team) {
   assert.equal(worktrees.length, 4, "the progressive team exposes four fixture worktrees");
   assert.ok(worktrees.every((worktree) => worktree.startsWith("/")),
     "each progressive fixture worktree is an absolute path");
-  await team.getByRole("tab", { name: /^Lanes/ }).click();
+  await team.getByRole("tab", { name: /^Agents/ }).click();
   return worktrees;
 }
 
@@ -259,7 +259,7 @@ export async function assertStagedMosaicHydration(
   const hiddenProbe = await armPlacementProbe(plane);
   await surface.getByRole("tab", { name: /^Tasks/ }).click();
   history.sendLive();
-  await surface.getByRole("tab", { name: /^Lanes/ }).click();
+  await surface.getByRole("tab", { name: /^Agents/ }).click();
   await waitForCard(page, history.keys.live, "live work received while Lanes is hidden appears");
   const revealed = await finishPlacementProbe(plane, hiddenProbe);
   assertPlacementStable(hiddenProbe, revealed, "the hidden live append reveal");
@@ -345,7 +345,7 @@ export async function assertStagedMosaicHydration(
   const restoredSurface = replayTeam.locator(
     `.team-surface[data-lineage-id="${lineage}"]`,
   );
-  await restoredSurface.getByRole("tab", { name: /^Lanes/ }).click();
+  await restoredSurface.getByRole("tab", { name: /^Agents/ }).click();
   history.sendHeads("reload", history.lanes, reloadGeneration);
   const reloadRequests = await history.waitForRequests(
     history.lanes, reloadGeneration, reloadRequestStart,

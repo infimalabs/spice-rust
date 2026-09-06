@@ -42,14 +42,31 @@ pub(in crate::browser) enum LineageMode {
 }
 
 impl LineageMode {
-    const ALL: [Self; 4] = [Self::Team, Self::Metrics, Self::Tasks, Self::Lanes];
-
-    pub(super) const fn label(self) -> &'static str {
+    pub(super) const fn key(self) -> &'static str {
         match self {
             Self::Team => "Team",
             Self::Metrics => "Metrics",
             Self::Tasks => "Tasks",
             Self::Lanes => "Lanes",
+        }
+    }
+
+    const fn destination(self) -> CanvasDestination {
+        match self {
+            Self::Team => CanvasDestination::Team,
+            Self::Metrics => CanvasDestination::Metrics,
+            Self::Tasks => CanvasDestination::Tasks,
+            Self::Lanes => CanvasDestination::Agents,
+        }
+    }
+
+    const fn from_destination(destination: CanvasDestination) -> Option<Self> {
+        match destination {
+            CanvasDestination::History => None,
+            CanvasDestination::Metrics => Some(Self::Metrics),
+            CanvasDestination::Team => Some(Self::Team),
+            CanvasDestination::Tasks => Some(Self::Tasks),
+            CanvasDestination::Agents => Some(Self::Lanes),
         }
     }
 }
@@ -68,6 +85,8 @@ pub(super) struct FleetRender<'a> {
     pub(super) drafts: &'a UseReducerHandle<ComposerDrafts>,
     pub(super) submissions: &'a SubmissionHandle,
     pub(super) lineage_controls: &'a UseReducerHandle<LineageControls>,
+    pub(super) axis: &'a UseStateHandle<Axis>,
+    pub(super) mosaic: &'a UseStateHandle<bool>,
     pub(super) controls: &'a view::AgentControls,
 }
 
@@ -76,6 +95,8 @@ pub(super) fn render_empty_fleet(
     epoch: CanonicalUuid,
     fleet: &NodeRef,
     lineage_controls: &UseReducerHandle<LineageControls>,
+    axis: &UseStateHandle<Axis>,
+    mosaic: &UseStateHandle<bool>,
     controls: &view::AgentControls,
 ) -> Html {
     let empty_lineage = crate::runtime::LaneRow {
@@ -86,14 +107,16 @@ pub(super) fn render_empty_fleet(
     let mode = lineage_controls.empty_mode();
     html! {
         <div ref={fleet.clone()} class="lineage-fleet" data-pane="agent-console" data-view="mosaic"
-            tabindex="0" aria-label="Lineage lanes">
+            tabindex="0" aria-label="Agent teams">
             <section class="team-surface" data-lineage-weight="1">
                 {render_empty_toolbar(
                     mode,
                     lineage_controls,
+                    axis,
+                    mosaic,
                     &[],
                 )}
-                <div class="team-pane" data-team-mode={mode.label()}>
+                <div class="team-pane" data-team-mode={mode.key()}>
                     {match mode {
                         LineageMode::Lanes => {
                             empty("No agents are assigned. Open Team to add one.")
@@ -119,7 +142,7 @@ pub(super) fn render_populated_fleet(
     let escape = lineage_menu_escape(render.lineage_controls);
     html! {
         <div ref={fleet.clone()} class="lineage-fleet" data-pane="agent-console" data-view="mosaic"
-            tabindex="0" aria-label="Lineage lanes" onclick={dismiss} onkeydown={escape}>
+            tabindex="0" aria-label="Agent teams" onclick={dismiss} onkeydown={escape}>
             {for lanes.iter().map(|lineage| {
                 if render.lineage_controls.is_closed(lineage.lane) {
                     return Html::default();
@@ -157,7 +180,7 @@ pub(super) fn render_populated_fleet(
                             lineage,
                             &lineage_standings,
                         )}
-                        <div class="team-pane" data-team-mode={mode.label()}>
+                        <div class="team-pane" data-team-mode={mode.key()}>
                             <div
                                 class="team-mode-pane"
                                 data-mode="Lanes"
@@ -185,7 +208,7 @@ pub(super) fn render_populated_fleet(
                             if mode != LineageMode::Lanes {
                                 <div
                                     class="team-mode-pane"
-                                    data-mode={mode.label()}
+                                    data-mode={mode.key()}
                                     data-active="true"
                                     aria-hidden="false"
                                 >
@@ -351,6 +374,8 @@ fn lineage_drop(
 fn render_empty_toolbar(
     mode: LineageMode,
     lineage_controls: &UseReducerHandle<LineageControls>,
+    axis: &UseStateHandle<Axis>,
+    mosaic: &UseStateHandle<bool>,
     standings: &[Standing],
 ) -> Html {
     html! {
@@ -360,7 +385,7 @@ fn render_empty_toolbar(
                 role="group"
                 aria-label={format!("{} admitted agents", standings.len())}
             ></span>
-            {render_mode_rail(mode, None, standings, lineage_controls)}
+            {render_mode_rail(mode, None, standings, lineage_controls, axis, mosaic)}
             <button
                 class="team-menu"
                 type="button"
@@ -472,6 +497,8 @@ fn render_lineage_toolbar(
                 Some(lineage.lane),
                 standings,
                 render.lineage_controls,
+                render.axis,
+                render.mosaic,
             )}
             {lineage_menu::trigger(lineage.lane, &control, render.lineage_controls)}
         </header>
@@ -485,13 +512,18 @@ fn render_mode_rail(
     lineage: Option<CanonicalUuid>,
     standings: &[Standing],
     lineage_controls: &UseReducerHandle<LineageControls>,
+    axis: &UseStateHandle<Axis>,
+    mosaic: &UseStateHandle<bool>,
 ) -> Html {
     html! {
         <nav class="team-mode-rail" role="tablist" aria-label="Live team views">
-            {for LineageMode::ALL.map(|candidate| {
-                let selected = candidate == mode;
+            {for CanvasDestination::ALL.map(|destination| {
+                let candidate = LineageMode::from_destination(destination);
+                let selected = destination == mode.destination();
                 let choose = lineage_controls.clone();
-                let badge = mode_badge(candidate, standings);
+                let destination_axis = axis.clone();
+                let destination_mosaic = mosaic.clone();
+                let badge = mode_badge(destination, standings);
                 html! {
                     <button
                         type="button"
@@ -499,14 +531,19 @@ fn render_mode_rail(
                         class={classes!("team-mode", selected.then_some("selected"))}
                         aria-selected={selected.to_string()}
                         onclick={Callback::from(move |_| {
-                            choose.dispatch(LineageControlAction::SetMode {
-                                lineage,
-                                mode: candidate,
-                            });
+                            if let Some(candidate) = candidate {
+                                choose.dispatch(LineageControlAction::SetMode {
+                                    lineage,
+                                    mode: candidate,
+                                });
+                            } else {
+                                destination_axis.set(Axis::Chronology);
+                                destination_mosaic.set(false);
+                            }
                         })}
                     >
-                        <span class="team-mode-label" title={candidate.label()}>
-                            {candidate.label()}
+                        <span class="team-mode-label" title={destination.label()}>
+                            {destination.label()}
                         </span>
                         if let Some(badge) = badge {
                             <span class="team-mode-badge">{badge}</span>
@@ -548,18 +585,19 @@ fn lineage_arrangement_key(
     })
 }
 
-fn mode_badge(mode: LineageMode, standings: &[Standing]) -> Option<String> {
-    let count = match mode {
-        LineageMode::Lanes => standings.iter().map(|standing| standing.pending).sum(),
-        LineageMode::Tasks => standings
+fn mode_badge(destination: CanvasDestination, standings: &[Standing]) -> Option<String> {
+    let count = match destination {
+        CanvasDestination::History => return None,
+        CanvasDestination::Agents => standings.iter().map(|standing| standing.pending).sum(),
+        CanvasDestination::Tasks => standings
             .iter()
             .filter(|standing| standing.handle.is_some())
             .count(),
-        LineageMode::Metrics => standings
+        CanvasDestination::Metrics => standings
             .iter()
             .filter(|standing| standing.held_since.is_some())
             .count(),
-        LineageMode::Team => standings.len(),
+        CanvasDestination::Team => standings.len(),
     };
     watchband::badge(count)
 }

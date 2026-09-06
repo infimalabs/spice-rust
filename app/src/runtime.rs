@@ -768,8 +768,8 @@ impl CanvasRuntime {
                 .lanes
                 .replace(admitted.scope(), LaneView::from(answer));
             (
-                "Lane snapshot".to_owned(),
-                format!("{} lanes", answer.lanes.len()),
+                "Agent snapshot".to_owned(),
+                format!("{} agents", answer.lanes.len()),
             )
         });
         matches!(&admitted.get().outcome, Outcome::Reply(_))
@@ -862,7 +862,7 @@ impl CanvasRuntime {
                     }
                 },
             );
-            (format!("Agent renewal for lane {}", answer.lane), state)
+            (format!("Agent renewal for {}", answer.lane), state)
         });
     }
 
@@ -892,7 +892,7 @@ impl CanvasRuntime {
     ) {
         self.apply_response(admitted, |_runtime, answer| {
             (
-                format!("Steered lane {lane}"),
+                format!("Steered agent {lane}"),
                 format!(
                     "key {} {}",
                     answer.key,

@@ -60,7 +60,7 @@ function surface(weight, taskContract) {
     <header class="team-toolbar">
       <span class="team-lights"><span class="team-light"></span></span>
       <nav class="team-mode-rail" role="tablist">
-        ${["Team", "Metrics", "Tasks", "Lanes"].map((label) => `<button class="team-mode">
+        ${["History", "Metrics", "Team", "Tasks", "Agents"].map((label) => `<button class="team-mode">
           <span class="team-mode-label">${label}</span><span class="team-mode-badge">88</span>
         </button>`).join("")}
       </nav>

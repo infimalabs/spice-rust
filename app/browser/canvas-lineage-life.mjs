@@ -75,7 +75,7 @@ async function findSevenMemberComposer(context, endpoint, lineageId) {
   await chooseCanvasView(page, "Lanes");
   const surface = page.locator(`.team-surface[data-lineage-id="${lineageId}"]`);
   await surface.waitFor();
-  await surface.getByRole("tab", { name: /^Lanes/ }).click();
+  await surface.getByRole("tab", { name: /^Agents/ }).click();
   const strip = surface.locator(":scope > .team-pane .team-composer > .team-agents");
   await strip.locator(":scope > .team-agent").nth(6).waitFor();
   return { monitor, strip };

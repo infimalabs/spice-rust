@@ -61,7 +61,7 @@ pub(super) fn render_lineage(
         return empty("No admitted live team is available.");
     };
     let Some(lanes) = runtime.lanes() else {
-        return empty("No lane snapshot is available.");
+        return empty("No agent snapshot is available.");
     };
     let waiting = runtime
         .inbox()
@@ -96,6 +96,8 @@ pub(super) fn render_lineage(
             lanes.epoch,
             lineage_fleet,
             lineage_controls,
+            &controls.navigation.axis,
+            &controls.navigation.mosaic,
             controls,
         );
     }
@@ -113,6 +115,8 @@ pub(super) fn render_lineage(
         drafts,
         submissions,
         lineage_controls,
+        axis: &controls.navigation.axis,
+        mosaic: &controls.navigation.mosaic,
         controls,
     };
     render_populated_fleet(&lanes.lanes, &standings, lineage_fleet, &render)
@@ -941,7 +945,7 @@ fn render_composer_body(
             )}
             <textarea
                 id={primary_textarea_id(lane_key)}
-                aria-label={format!("Message for {lane}")}
+                aria-label={format!("Message for agent {lane}")}
                 data-primary-composer-target-id={lane.to_string()}
                 rows="4"
                 value={draft.body.clone()}

@@ -83,60 +83,45 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
 }
 
 fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRuntime>) -> Html {
-    let destinations = [Axis::Topology, Axis::Magnitude, Axis::Flow];
     html! {
         <nav class="canvas-navigation" aria-label="Canvas views">
-            {for destinations.map(|candidate| {
+            {for CanvasDestination::ALL.map(|destination| {
                 let axis = render.axis.clone();
                 let mosaic = render.mosaic.clone();
                 let menu_open = render.menu_open.clone();
+                let destination_axis = destination.axis();
                 render_pill(
-                    super::axis_label(candidate),
-                    candidate.question(),
-                    !**render.mosaic && candidate == render.active_axis,
-                    watchband::badge(axis_count(candidate, runtime)),
+                    destination.label(),
+                    destination.description(),
+                    destination_axis.map_or(**render.mosaic, |candidate| {
+                        !**render.mosaic && candidate == render.active_axis
+                    }),
+                    navigation_badge(destination, runtime, render.submissions),
                     false,
                     Callback::from(move |_| {
-                        axis.set(candidate);
-                        mosaic.set(false);
+                        if let Some(candidate) = destination_axis {
+                            axis.set(candidate);
+                            mosaic.set(false);
+                        } else {
+                            mosaic.set(true);
+                        }
                         menu_open.set(false);
                     }),
                 )
             })}
-            {render_pill(
-                "Lanes",
-                "Converse across persistent team lanes",
-                **render.mosaic,
-                watchband::badge(waiting_directives(runtime, render.submissions)),
-                false,
-                {
-                    let mosaic = render.mosaic.clone();
-                    let menu_open = render.menu_open.clone();
-                    Callback::from(move |_| {
-                        mosaic.set(true);
-                        menu_open.set(false);
-                    })
-                },
-            )}
-            {{
-                let axis = render.axis.clone();
-                let mosaic = render.mosaic.clone();
-                let menu_open = render.menu_open.clone();
-                render_pill(
-                    super::axis_label(Axis::Chronology),
-                    "Global-only history of facts and command outcomes",
-                    !**render.mosaic && render.active_axis == Axis::Chronology,
-                    watchband::badge(axis_count(Axis::Chronology, runtime)),
-                    true,
-                    Callback::from(move |_| {
-                        axis.set(Axis::Chronology);
-                        mosaic.set(false);
-                        menu_open.set(false);
-                    }),
-                )
-            }}
         </nav>
     }
+}
+
+fn navigation_badge(
+    destination: CanvasDestination,
+    runtime: Option<&CanvasRuntime>,
+    submissions: &SubmissionStatus,
+) -> Option<String> {
+    destination.axis().map_or_else(
+        || watchband::badge(waiting_directives(runtime, submissions)),
+        |axis| watchband::badge(axis_count(axis, runtime)),
+    )
 }
 
 fn render_canvas_menu(render: &CommandBarRender<'_>, runtime: Option<&CanvasRuntime>) -> Html {

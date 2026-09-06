@@ -221,7 +221,7 @@ async function touchJoinTeam(page, fixture, dragged, target) {
 /// Dragging a team reorders teams; dropping on an edge joins them.
 export async function assertTeamArrangement(page, fixture, worktrees, artifacts) {
   const agents = page.locator('[data-pane="agent-console"]');
-  await agents.getByRole("tab", { name: /^Lanes/ }).first().click();
+  await agents.getByRole("tab", { name: /^Agents/ }).first().click();
   const seated = durableTeams((await reply(fixture, ["lane"])).body.lanes);
   assert.equal(seated.length, 2, "arranging teams needs two durable teams");
   const [primary, secondary] = seated;
@@ -378,7 +378,7 @@ export async function assertTeamArrangement(page, fixture, worktrees, artifacts)
     "Tasks",
     "retiring a sibling preserves the surviving team's selected view",
   );
-  await primarySurface.getByRole("tab", { name: /^Lanes/ }).click();
+  await primarySurface.getByRole("tab", { name: /^Agents/ }).click();
   assert.deepEqual(
     await renderedTeams(agents),
     [{ lineage: primary.lineage, lanes: [...primary.lanes, ...secondary.lanes] }],
