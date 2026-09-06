@@ -6,6 +6,8 @@
 
 use std::ffi::OsString;
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
@@ -377,12 +379,48 @@ fn hook_media_references_are_compact_and_preserve_attachment_order() {
     let document = deliver(&scratch, &answer).expect("media directive publishes");
     let context = additional_context(&document);
     let references = media_references(&context);
+    let projections = media_projections(&context);
 
     assert_eq!(references.len(), 2);
+    assert_eq!(projections.len(), 2);
     assert_eq!(references[0].name(), "first.png");
     assert_eq!(references[0].ordinal(), 0);
     assert_eq!(references[1].name(), "second.png");
     assert_eq!(references[1].ordinal(), 1);
+    for (projection, reference, source) in [
+        (&projections[0], &references[0], PNG_DATA_URL),
+        (&projections[1], &references[1], SECOND_PNG_DATA_URL),
+    ] {
+        assert_eq!(projection["lane"], LANE);
+        assert_eq!(projection["directive"], DIRECTIVE);
+        assert_eq!(projection["ordinal"], reference.ordinal());
+        assert_eq!(projection["digest"], reference.digest().as_str());
+        assert_eq!(projection["bytes"], reference.bytes());
+        assert_eq!(projection["content_type"], reference.content_type());
+        assert_eq!(projection["standing"], "live");
+        let path = PathBuf::from(projection["path"].as_str().expect("projection path"));
+        assert!(path.starts_with(&scratch.projections));
+        let expected = wire::Media::admit("capture.png", "image/png", source)
+            .expect("projection fixture media")
+            .decoded_bytes()
+            .expect("decode projection fixture");
+        assert_eq!(fs::read(&path).expect("read projected media"), expected);
+        assert!(fs::symlink_metadata(&path).unwrap().file_type().is_file());
+        #[cfg(unix)]
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+    #[cfg(unix)]
+    assert_eq!(
+        fs::metadata(&scratch.projections)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700,
+    );
     assert!(!context.contains("data_url"));
     assert!(!context.contains("data:image"));
     assert!(!context.contains("iVBORw0KGgo="));
@@ -392,6 +430,33 @@ fn hook_media_references_are_compact_and_preserve_attachment_order() {
         None,
         "an exact repeat is suppressed"
     );
+}
+
+#[test]
+fn retiring_media_removes_only_its_exact_disposable_projection() {
+    let scratch = HookScratch::new();
+    let answer = media_inbox_answer(
+        OCCUPANT,
+        64,
+        "inspect this capture",
+        &[("capture.png", PNG_DATA_URL)],
+    );
+    let document = deliver(&scratch, &answer).expect("media directive publishes");
+    let projection = media_projections(&additional_context(&document))
+        .pop()
+        .expect("one media projection");
+    let path = PathBuf::from(projection["path"].as_str().expect("projection path"));
+    let sentinel = scratch.projections.join("sentinel");
+    fs::write(&sentinel, b"unowned").expect("write unrelated projection-root file");
+
+    let retired = inbox_answer(OCCUPANT, 64, &[]);
+    assert_eq!(deliver(&scratch, &retired), None);
+    assert!(!path.exists(), "retired projection remains");
+    assert_eq!(fs::read(&sentinel).unwrap(), b"unowned");
+    let CommandAnswer::Inbox(original) = answer else {
+        panic!("fixture answer remains an inbox")
+    };
+    assert_eq!(original.lanes[0].pending[0].attachments.len(), 1);
 }
 
 #[test]
@@ -516,8 +581,14 @@ fn media_inbox_answer(
 }
 
 fn deliver(scratch: &HookScratch, answer: &CommandAnswer) -> Option<Vec<u8>> {
-    hook_document_at(answer, "claude", &scratch.state, &scratch.lock)
-        .expect("hook delivery succeeds")
+    hook_document_at(
+        answer,
+        "claude",
+        &scratch.state,
+        &scratch.lock,
+        &scratch.projections,
+    )
+    .expect("hook delivery succeeds")
 }
 
 fn additional_context(document: &[u8]) -> String {
@@ -536,10 +607,19 @@ fn media_references(context: &str) -> Vec<AgentMediaReference> {
         .collect()
 }
 
+fn media_projections(context: &str) -> Vec<serde_json::Value> {
+    context
+        .lines()
+        .filter_map(|line| line.strip_prefix("media-projection="))
+        .map(|encoded| serde_json::from_str(encoded).expect("hook media projection decodes"))
+        .collect()
+}
+
 struct HookScratch {
     root: PathBuf,
     state: PathBuf,
     lock: PathBuf,
+    projections: PathBuf,
 }
 
 impl HookScratch {
@@ -553,6 +633,7 @@ impl HookScratch {
         Self {
             state: root.join("steering-delivery.json"),
             lock: root.join("locks/steering-delivery"),
+            projections: root.join("steering-media"),
             root,
         }
     }
