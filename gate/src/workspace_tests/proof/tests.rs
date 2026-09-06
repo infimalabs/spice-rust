@@ -81,7 +81,7 @@ fn equivalent_roots_plan_identical_path_independent_shards() {
     clippy::disallowed_methods,
     reason = "the repository graph regression uses the active test environment"
 )]
-fn repository_fold_graph_reaches_external_libsqlite3_sys_build_script() {
+fn repository_journal_graph_reaches_external_libsqlite3_sys_build_script() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("gate crate has a workspace parent");
@@ -89,13 +89,13 @@ fn repository_fold_graph_reaches_external_libsqlite3_sys_build_script() {
         Environment::new(std::env::vars_os()).expect("ambient test environment is valid");
     let inventory = acquire_resolved_inventory(root, &environment, OsStr::new("cargo"))
         .expect("acquire repository Cargo graph");
-    let fold = inventory
+    let journal = inventory
         .packages
         .iter()
-        .find(|package| package.name == "fold")
-        .expect("repository contains fold");
-    let producers = resolved_compile_time_producers(&inventory, &fold.id)
-        .expect("classify fold compile-time producers");
+        .find(|package| package.name == "journal")
+        .expect("repository contains journal");
+    let producers = resolved_compile_time_producers(&inventory, &journal.id)
+        .expect("classify journal compile-time producers");
     let sqlite = producers
         .iter()
         .find(|producer| {
@@ -103,14 +103,14 @@ fn repository_fold_graph_reaches_external_libsqlite3_sys_build_script() {
                 && producer.kind == "custom-build"
                 && producer.target == "build-script-build"
         })
-        .expect("fold reaches libsqlite3-sys build script through rusqlite");
+        .expect("journal reaches libsqlite3-sys build script through rusqlite");
     assert!(sqlite.external);
     assert!(!sqlite.selected_tree_authority);
     assert!(sqlite.package_id.starts_with("registry+"));
     let serde_derive = producers
         .iter()
         .find(|producer| producer.package == "serde_derive" && producer.kind == "proc-macro")
-        .expect("fold reaches the external serde_derive proc macro");
+        .expect("journal reaches the external serde_derive proc macro");
     assert!(serde_derive.external);
     assert!(!serde_derive.selected_tree_authority);
     assert!(serde_derive.package_id.starts_with("registry+"));
