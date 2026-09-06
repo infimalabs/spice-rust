@@ -576,10 +576,6 @@ fn both_forms_report_the_same_read_only_state_without_leaking_environment() {
         ));
     }
     assert!(matches!(
-        subsystem(&report, DoctorSubsystem::Fold).observation,
-        DoctorObservation::NotApplicable { .. }
-    ));
-    assert!(matches!(
         subsystem(&report, DoctorSubsystem::Transport).observation,
         DoctorObservation::Unavailable { .. }
     ));
@@ -604,7 +600,7 @@ fn both_forms_report_the_same_read_only_state_without_leaking_environment() {
 }
 
 #[test]
-fn initialized_authority_and_folds_are_diagnosed_without_writing_any_state() {
+fn initialized_authority_is_diagnosed_without_writing_any_state() {
     let repository = Scratch::repository("initialized-state");
     repository.tracked("");
     let journal_path = repository
@@ -616,10 +612,6 @@ fn initialized_authority_and_folds_are_diagnosed_without_writing_any_state() {
         journal::SCHEMA_VERSION
     );
     drop(journal);
-    let folds_path = repository
-        .path()
-        .join(".git/.spice-rs/data/spicefolds.sqlite3");
-    drop(fold::Store::open(&folds_path).expect("initialize fold fixture"));
     let epoch: wire::CanonicalUuid = "00000000-0000-4000-8000-000000000051"
         .parse()
         .expect("fixture epoch");
@@ -663,7 +655,6 @@ fn initialized_authority_and_folds_are_diagnosed_without_writing_any_state() {
     for name in [
         DoctorSubsystem::Board,
         DoctorSubsystem::Journal,
-        DoctorSubsystem::Fold,
         DoctorSubsystem::Steering,
         DoctorSubsystem::Transport,
     ] {

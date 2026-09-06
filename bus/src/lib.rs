@@ -61,7 +61,7 @@ mod runtime {
             self.last
         }
 
-        /// Monotone fold cursor made visible by this commit.
+        /// Monotone journal cursor made visible by this commit.
         #[must_use]
         pub const fn cursor(&self) -> journal::crossing::JournalCursor {
             self.cursor

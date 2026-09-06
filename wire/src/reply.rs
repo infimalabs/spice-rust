@@ -311,61 +311,6 @@ pub struct JournalRestore {
     pub applied: bool,
 }
 
-/// One registered fold's current materialization state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FoldState {
-    /// Closed-inventory fold name.
-    pub fold: String,
-    /// Published generation, absent before first replay.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub generation: Option<u64>,
-    /// Reducer semantic version carried by that generation.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub reducer_version: Option<u32>,
-    /// Greatest journal fact applied by the generation.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub cursor: Option<Seq>,
-    /// Greatest position through which its answer is complete.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub horizon: Option<Seq>,
-    /// Exact command that recreates the fold.
-    pub recovery: String,
-    /// Closed-inventory inputs that bound and explain this answer.
-    pub sources: Vec<String>,
-    /// Deterministic derived answer, absent before first replay.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub payload: Option<serde_json::Value>,
-}
-
-/// Complete closed-inventory fold report or replay receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FoldReport {
-    /// Fold states in dependency-safe inventory order.
-    pub folds: Vec<FoldState>,
-}
-
 /// One verified cause thread reconstructed from immutable envelopes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

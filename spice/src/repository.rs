@@ -109,7 +109,6 @@ pub struct StatePaths {
     steering_delivery_lock: PathBuf,
     data: PathBuf,
     journal: PathBuf,
-    folds: PathBuf,
     gate_state: PathBuf,
     gate_state_lock: PathBuf,
     locks: PathBuf,
@@ -157,7 +156,6 @@ impl StatePaths {
         let worktree_locks = worktree_runtime.join("locks");
         Self {
             journal: data.join("spicejournal.sqlite3"),
-            folds: data.join("spicefolds.sqlite3"),
             gate_state: data.join("gate-state.json"),
             gate_state_lock: data.join("gate-state.lock"),
             locks: runtime.join("locks"),
@@ -230,12 +228,6 @@ impl StatePaths {
     #[must_use]
     pub fn journal(&self) -> &Path {
         &self.journal
-    }
-
-    /// Disposable fold materialization database.
-    #[must_use]
-    pub fn folds(&self) -> &Path {
-        &self.folds
     }
 
     /// Current Rust gate-state ledger shared by every linked worktree.
@@ -407,10 +399,9 @@ impl StatePaths {
     }
 
     /// Files whose shape this runtime admits before it does any work.
-    fn admitted_files(&self) -> [&Path; 8] {
+    fn admitted_files(&self) -> [&Path; 7] {
         [
             self.journal(),
-            self.folds(),
             self.gate_state(),
             self.gate_state_lock(),
             self.resident(),
@@ -427,10 +418,9 @@ impl StatePaths {
     /// an operator repairing a bad `config.toml` needs the runtime to reach the
     /// refusal that names it rather than stop at a shape check.
     #[must_use]
-    pub fn owned_files(&self) -> [&Path; 10] {
+    pub fn owned_files(&self) -> [&Path; 9] {
         let [
             journal,
-            folds,
             gate_state,
             gate_state_lock,
             resident,
@@ -440,7 +430,6 @@ impl StatePaths {
         ] = self.admitted_files();
         [
             journal,
-            folds,
             gate_state,
             gate_state_lock,
             resident,

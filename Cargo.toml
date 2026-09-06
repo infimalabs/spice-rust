@@ -9,7 +9,6 @@ members = [
     "consent",
     "dialect",
     "dist",
-    "fold",
     "gate",
     "journal",
     "lane",

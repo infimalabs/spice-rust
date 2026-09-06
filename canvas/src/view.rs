@@ -1,9 +1,7 @@
 //! Packing helpers for direct Canvas authority reads.
 //!
-//! Canvas axes are assembled by the live surface from their owning authorities;
-//! they are not fold-store rows. The only registered fold is `task::effort`,
-//! whose typed answer reaches both the CLI and Canvas through the resident
-//! effort surface.
+//! Canvas axes are assembled by the live surface from their owning authorities
+//! and are never stored as a second durable projection.
 
 /// Pack already-ranked rows without hiding overflow.
 #[must_use]

@@ -51,7 +51,7 @@ fn claim_won() -> body::ClaimWon {
         occupant: uuid("018f82d4-6f59-7d06-92e3-bce913116304"),
         epoch: uuid("018f82d4-6f59-7d06-92e3-bce913116305"),
         cell: Some(wire::ClaimCell {
-            project: "task.effort".to_owned(),
+            project: "task.delivery".to_owned(),
             phase: "todo".parse().expect("phase"),
         }),
         until: instant("2030-04-12T18:44:09.271828Z"),

@@ -209,8 +209,6 @@ pub enum DoctorSubsystem {
     Board,
     /// Canonical authority schema, cursor, facts, and heads.
     Journal,
-    /// Disposable fold materializations.
-    Fold,
     /// Durable steering replay.
     Steering,
     /// Current resident lane head.
@@ -228,7 +226,6 @@ impl DoctorSubsystem {
     pub const ALL: &[Self] = &[
         Self::Board,
         Self::Journal,
-        Self::Fold,
         Self::Steering,
         Self::Lane,
         Self::Transport,
@@ -561,7 +558,6 @@ mod tests {
         let expected = [
             "\"board\"",
             "\"journal\"",
-            "\"fold\"",
             "\"steering\"",
             "\"lane\"",
             "\"transport\"",

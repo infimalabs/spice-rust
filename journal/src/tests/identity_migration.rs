@@ -21,7 +21,6 @@ fn schema_five_contracts_every_authoritative_task_carrier_once() {
     store_bare_stamp_origin(&journal.connection, 2);
     insert_legacy_review_receipt(&journal.connection);
     insert_legacy_board_receipt(&journal.connection);
-    insert_legacy_effort_receipt(&journal.connection);
     journal
         .connection
         .execute_batch(
@@ -89,7 +88,6 @@ fn schema_five_contracts_every_authoritative_task_carrier_once() {
 
     assert_review_receipt(&journal.connection);
     assert_board_receipt(&journal.connection);
-    assert_effort_receipt(&journal.connection);
     admit_empty_steering_fold(&mut journal);
     journal
         .verify()
@@ -584,61 +582,6 @@ fn insert_legacy_board_receipt(connection: &Connection) {
     );
 }
 
-fn insert_legacy_effort_receipt(connection: &Connection) {
-    let id = uuid("018f82d4-6f59-7d06-92e3-bce913116324");
-    let epoch = uuid("018f82d4-6f59-7d06-92e3-bce913116325");
-    let request = Command {
-        v: WireVersion::CURRENT,
-        id,
-        epoch,
-        kind: CommandKind::EffortRead,
-        expected: Vec::new(),
-        body: wire::intent::EffortRead {
-            task: Some(HANDLE.parse().expect("fixture handle")),
-        },
-    };
-    let response = Response {
-        v: WireVersion::CURRENT,
-        id,
-        epoch,
-        outcome: Outcome::Reply(Reply {
-            position: ReplyPosition::Snapshot(Seq::new(2).expect("effort snapshot")),
-            body: wire::intent::EffortAnswer {
-                phases: vec![wire::intent::EffortPhaseAnswer {
-                    task: STAMP.parse().expect("fixture stamp"),
-                    phase: "todo".parse().expect("fixture phase"),
-                    phase_index: 0,
-                    opening: Seq::new(1).expect("opening fact"),
-                    closing: None,
-                    renewals: 0,
-                    opening_boundary: wire::body::SourceBoundary::Proven { heads: Vec::new() },
-                    closing_boundary: None,
-                    segments: Vec::new(),
-                    availability: wire::intent::EffortAvailability::Unavailable {
-                        reasons: Vec::new(),
-                    },
-                }],
-                aggregates: Vec::new(),
-            },
-        }),
-    };
-    let mut response = serde_json::to_value(response).expect("current effort response");
-    response["outcome"]["body"]["phases"][0]["task"] = Value::String(HANDLE.to_owned());
-    insert_receipt_row(
-        connection,
-        id,
-        epoch,
-        "effort::read",
-        request
-            .canonical_json()
-            .expect("effort request")
-            .into_bytes(),
-        wire::encode(&Vec::<Witness>::new()).expect("effort witnesses"),
-        serde_json::to_vec(&response).expect("legacy effort response"),
-        None,
-    );
-}
-
 #[allow(
     clippy::too_many_arguments,
     reason = "receipt fixture states every stored carrier"
@@ -725,22 +668,6 @@ fn assert_board_receipt(connection: &Connection) {
     assert_eq!(statement.born.as_str(), STAMP);
     assert_eq!(statement.handle.as_str(), HANDLE);
     assert_eq!(statement.provenance.as_str(), format!("task:{STAMP}"));
-}
-
-fn assert_effort_receipt(connection: &Connection) {
-    let response: Vec<u8> = connection
-        .query_row(
-            "SELECT response FROM command_receipts WHERE command_kind = 'effort::read'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("read migrated effort response");
-    let response: Response<wire::intent::EffortAnswer> =
-        wire::decode(&response).expect("migrated effort response is current wire");
-    let Outcome::Reply(reply) = response.outcome else {
-        panic!("effort receipt must remain a reply");
-    };
-    assert_eq!(reply.body.phases[0].task.as_str(), STAMP);
 }
 
 fn task_key_column(connection: &Connection) -> String {

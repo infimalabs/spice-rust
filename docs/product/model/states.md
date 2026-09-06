@@ -170,8 +170,7 @@ announced end* from *no history at all*.
 
 **Policy —** A manual claim opens with a 3600s lease and a 7200s renewal maximum.
 It records the lane's exact accounted source boundary; terminal evidence closes
-the attempt at another exact boundary, and effort uses only verified contiguous
-segments between them.
+the attempt at another exact boundary.
 
 ```mermaid
 sequenceDiagram

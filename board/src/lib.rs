@@ -46,7 +46,7 @@ pub use urgency::{
 /// One read barrier over current journal task heads.
 ///
 /// The schema identity comes from `journal`, completeness is stated with the
-/// shared fold cursor, and rows are checked [`Entry`] values. This is a
+/// journal cursor, and rows are checked [`Entry`] values. This is a
 /// disposable answer; none of it can update authority.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Snapshot {

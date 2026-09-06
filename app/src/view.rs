@@ -87,8 +87,6 @@ impl Axis {
 /// frames it, because its axis is a claim about what the reader wanted to know.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Pane {
-    /// Effort spent, at the packed horizon.
-    Effort,
     /// Pressure standing against the lanes.
     Pressure,
     /// Residue left behind by work already counted.
@@ -132,7 +130,6 @@ pub enum Pane {
 impl Pane {
     /// Every pane in the registry, grouped by axis in declaration order.
     pub const ALL: &'static [Self] = &[
-        Self::Effort,
         Self::Pressure,
         Self::Residue,
         Self::ConsentVolume,
@@ -163,7 +160,7 @@ impl Pane {
     #[must_use]
     pub const fn axis(self) -> Axis {
         match self {
-            Self::Effort | Self::Pressure | Self::Residue | Self::ConsentVolume => Axis::Magnitude,
+            Self::Pressure | Self::Residue | Self::ConsentVolume => Axis::Magnitude,
             Self::Tasks | Self::Claims | Self::Deferrals | Self::Reviews => Axis::Flow,
             Self::Lanes | Self::Worktrees | Self::Lineage | Self::Occupancy | Self::Residents => {
                 Axis::Topology
@@ -184,7 +181,6 @@ impl Pane {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Effort => "effort",
             Self::Pressure => "pressure",
             Self::Residue => "residue",
             Self::ConsentVolume => "consent-volume",

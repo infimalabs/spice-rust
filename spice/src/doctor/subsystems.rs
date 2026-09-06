@@ -59,7 +59,6 @@ impl<'a> Context<'a> {
         match subsystem {
             DoctorSubsystem::Board => self.board(&state.authority),
             DoctorSubsystem::Journal => state.authority.observation(),
-            DoctorSubsystem::Fold => fold(state.paths.folds()),
             DoctorSubsystem::Steering => steering(&state.authority),
             DoctorSubsystem::Lane => lane(&state.authority),
             DoctorSubsystem::Transport => transport(state.paths.canvas(), state.paths.resident()),
@@ -170,23 +169,6 @@ struct AuthoritySnapshot {
     facts: journal::FactSnapshot,
     task_heads: Vec<journal::TaskHeads>,
     residency: Option<ResidencyHead>,
-}
-
-fn fold(path: &Path) -> DoctorObservation {
-    match path.try_exists() {
-        Ok(false) => return not_applicable("fold materializations are not initialized"),
-        Err(error) => {
-            return unavailable(format!(
-                "fold materializations could not be inspected at {}: {error}",
-                path.display()
-            ));
-        }
-        Ok(true) => {}
-    }
-    match fold::Store::open_read_only(path).and_then(|store| store.snapshot()) {
-        Ok(_) => ready(),
-        Err(error) => unavailable(format!("fold materializations are unavailable: {error}")),
-    }
 }
 
 fn steering(authority: &Authority) -> DoctorObservation {

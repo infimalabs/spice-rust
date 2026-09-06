@@ -23,7 +23,7 @@ fn envelope(
 const EXPIRES: &str = "2030-04-12T19:44:09.271Z";
 
 /// One fact, and the cached reads it invalidates.
-type StaleRow = (serde_json::Value, [bool; 5]);
+type StaleRow = (serde_json::Value, [bool; 4]);
 
 /// Facts from `steer::*`, the namespace only the inbox is drawn from.
 fn steer_rows() -> Vec<StaleRow> {
@@ -37,16 +37,16 @@ fn steer_rows() -> Vec<StaleRow> {
                 "text": "look at the tile",
                 "expires": EXPIRES,
             }),
-            [false, false, true, false, false],
+            [false, false, true, false],
         ),
         (
             serde_json::json!({"kind": "steer::canceled", "key": "QmTKOamJ", "lane": LANE}),
-            [false, false, true, false, false],
+            [false, false, true, false],
         ),
     ]
 }
 
-/// Facts from `lane::*`, which move the roster, the inbox and effort together.
+/// Facts from `lane::*`, which move the roster and inbox together.
 fn lane_rows() -> Vec<StaleRow> {
     vec![
         (
@@ -58,7 +58,7 @@ fn lane_rows() -> Vec<StaleRow> {
                 "life": "continuous",
                 "vendor": "codex",
             }),
-            [false, true, true, false, true],
+            [false, true, true, false],
         ),
         (
             serde_json::json!({
@@ -67,19 +67,17 @@ fn lane_rows() -> Vec<StaleRow> {
                 "occupant": REQUEST,
                 "code": 0,
             }),
-            [false, true, true, false, true],
+            [false, true, true, false],
         ),
     ]
 }
 
-/// Facts from `task::*` and `claim::*`, the two namespaces the board is drawn
-/// from. Both move effort as well, because what a task cost is accounted
-/// against the claim that was held while it was spent.
+/// Facts from `task::*` and `claim::*`, the two namespaces the board is drawn from.
 fn task_and_claim_rows() -> Vec<StaleRow> {
     vec![
         (
             serde_json::json!({"kind": "task::phased", "task": "1kKRRsDP", "phase": "verify"}),
-            [true, false, false, false, true],
+            [true, false, false, false],
         ),
         (
             serde_json::json!({
@@ -87,7 +85,7 @@ fn task_and_claim_rows() -> Vec<StaleRow> {
                 "task": "1kKRRsDP",
                 "validation": "the suite is green",
             }),
-            [true, false, false, false, true],
+            [true, false, false, false],
         ),
         (
             serde_json::json!({
@@ -99,11 +97,11 @@ fn task_and_claim_rows() -> Vec<StaleRow> {
                 "epoch": EPOCH,
                 "until": EXPIRES,
             }),
-            [true, true, false, false, true],
+            [true, true, false, false],
         ),
         (
             serde_json::json!({"kind": "claim::freed", "task": "1kKRRsDP", "actor": "operator"}),
-            [true, true, false, false, true],
+            [true, true, false, false],
         ),
     ]
 }
@@ -118,7 +116,7 @@ fn consent_rows() -> Vec<StaleRow> {
                 "lane": LANE,
                 "operation": "write /etc/hosts",
             }),
-            [false, false, false, true, false],
+            [false, false, false, true],
         ),
         (
             serde_json::json!({
@@ -127,16 +125,13 @@ fn consent_rows() -> Vec<StaleRow> {
                 "lane": LANE,
                 "rule": "operator",
             }),
-            [false, false, false, true, false],
+            [false, false, false, true],
         ),
     ]
 }
 
-/// Facts from `journal::*` and `lineage::*`, which no cached read but effort is
-/// drawn from: the first rewrites the accounted transcript the counters come
-/// from, the second re-attributes which lineage owns a source locus. Both move
-/// effort while the board, the roster and the inbox stand, so these rows are
-/// what separate a per-read mapping from one that widens every read together.
+/// Facts from `journal::*` and `lineage::*`, which do not move these cached reads.
+/// These rows separate a per-read mapping from one that widens every read together.
 fn journal_and_lineage_rows() -> Vec<StaleRow> {
     vec![
         (
@@ -152,11 +147,11 @@ fn journal_and_lineage_rows() -> Vec<StaleRow> {
                 "non_usage_records": 3,
                 "residue_records": 0,
             }),
-            [false, false, false, false, true],
+            [false, false, false, false],
         ),
         (
             serde_json::json!({"kind": "journal::migrated", "from": 1, "to": 2, "epoch": EPOCH}),
-            [false, false, false, false, true],
+            [false, false, false, false],
         ),
         (
             serde_json::json!({
@@ -166,7 +161,7 @@ fn journal_and_lineage_rows() -> Vec<StaleRow> {
                 "from": "steer",
                 "life": "drive",
             }),
-            [false, false, false, false, true],
+            [false, false, false, false],
         ),
         (
             serde_json::json!({
@@ -174,7 +169,7 @@ fn journal_and_lineage_rows() -> Vec<StaleRow> {
                 "from": [{"lineage_id": LANE, "lanes": [LANE]}],
                 "lineages": [{"lineage_id": LANE, "lanes": []}],
             }),
-            [false, false, false, false, true],
+            [false, false, false, false],
         ),
     ]
 }
@@ -185,21 +180,21 @@ fn unread_namespace_rows() -> Vec<StaleRow> {
     vec![
         (
             serde_json::json!({"kind": "up::dark", "epoch": EPOCH}),
-            [false, false, false, false, false],
+            [false, false, false, false],
         ),
         (
             serde_json::json!({"kind": "vendor::armed", "vendor": "codex", "version": "0.1.0"}),
-            [false, false, false, false, false],
+            [false, false, false, false],
         ),
         (
             serde_json::json!({"kind": "taste::cleared", "taste": "loud", "locus": "app/src"}),
-            [false, false, false, false, false],
+            [false, false, false, false],
         ),
     ]
 }
 
 /// Which cached read each fact invalidates, as
-/// `[board, lanes, inbox, consent, effort]`.
+/// `[board, lanes, inbox, consent]`.
 ///
 /// This inventory is written out above rather than read back off the mapping it
 /// checks, so deleting an arm fails instead of agreeing with itself. The groups
@@ -234,13 +229,7 @@ fn a_live_fact_invalidates_exactly_the_reads_its_namespace_moves() {
         let pushed = fact_frame(envelope(41, "spice", &format!("lane:{LANE}"), &fact));
         let stale = stale_reads(&admitted_stream(&session, &pushed));
         assert_eq!(
-            [
-                stale.board(),
-                stale.lanes(),
-                stale.inbox(),
-                stale.consent(),
-                stale.effort(),
-            ],
+            [stale.board(), stale.lanes(), stale.inbox(), stale.consent(),],
             expected,
             "{kind} invalidated the wrong reads"
         );
@@ -281,14 +270,8 @@ fn only_the_tail_of_a_backlog_invalidates_reads_and_a_thread_walk_never_does() {
     let tail = admitted_stream(&session, &packed_frame("facts", &ascending, None, 42));
     let stale = stale_reads(&tail);
     assert_eq!(
-        [
-            stale.board(),
-            stale.lanes(),
-            stale.inbox(),
-            stale.consent(),
-            stale.effort(),
-        ],
-        [true, true, true, false, true],
+        [stale.board(), stale.lanes(), stale.inbox(), stale.consent(),],
+        [true, true, true, false],
         "a page widens to the union of its rows and no further"
     );
 

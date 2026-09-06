@@ -696,16 +696,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
-name = "fold"
-version = "0.0.0"
-dependencies = [
- "journal",
- "rusqlite",
- "serde_json",
- "wire",
-]
-
-[[package]]
 name = "foldhash"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3232,7 +3222,6 @@ dependencies = [
  "dialect",
  "dist",
  "flate2",
- "fold",
  "gate",
  "gix",
  "gix-config",

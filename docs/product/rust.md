@@ -116,9 +116,9 @@ Executable coverage lives in
 One resident holds the kernel lock and is the sole writer to one SQLite journal.
 A command transaction commits immutable facts, authoritative heads,
 coordination heads, its result, and the wake cursor together. The board reads
-those heads directly. Disposable folds live in a separate store and can be
-rebuilt from admitted journal history; transcript tape preserves vendor bytes
-without becoming semantic authority.
+those heads directly, while resident read models advance from admitted journal
+history in memory. Transcript tape preserves vendor bytes without becoming
+semantic authority.
 
 The journal accepts one schema and an ordered one-way migration chain. Wire and
 browser compatibility have independent versions and resident epochs; runtime
@@ -126,8 +126,7 @@ behavior never branches by release.
 
 Authorities: [`journal/src/guard.rs`](../../journal/src/guard.rs),
 [`journal/src/replay.rs`](../../journal/src/replay.rs),
-[`journal/src/migrate.rs`](../../journal/src/migrate.rs),
-[`fold/src/store.rs`](../../fold/src/store.rs), and
+[`journal/src/migrate.rs`](../../journal/src/migrate.rs), and
 [`wire/src/hello.rs`](../../wire/src/hello.rs).
 
 ## Principals and process life

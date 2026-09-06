@@ -459,15 +459,6 @@ fn migrate_response(row: &str, kind: &str, bytes: &[u8]) -> Result<Vec<u8>, Open
                     &format!("migrated board response is not current wire: {error}"),
                 )
             })?,
-        "effort::read" => wire::decode::<wire::Response<wire::intent::EffortAnswer>>(&bytes)
-            .map(drop)
-            .map_err(|error| {
-                invalid(
-                    "command_receipts",
-                    row,
-                    &format!("migrated effort response is not current wire: {error}"),
-                )
-            })?,
         _ => wire::decode::<wire::Response<Value>>(&bytes)
             .map(drop)
             .map_err(|error| {

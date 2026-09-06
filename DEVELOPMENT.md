@@ -21,14 +21,14 @@ metadata is the executable resolved graph and acyclicity authority.
 | Layer | Crates and ownership |
 | --- | --- |
 | Floors | `wire` owns crossing DTOs; `atomic` owns durable file replacement; `sill` owns process groups and advisory locks. |
-| Durable domain | `journal` is the sole SQLite authority; `tape` preserves vendor bytes; `dialect` classifies task documents without I/O; `fold` owns disposable projections; `board` derives task/claim views; `bus` is the resident's sole writer and timer rim. |
+| Durable domain | `journal` is the sole SQLite authority; `tape` preserves vendor bytes; `dialect` classifies task documents without I/O; `board` derives task/claim views; `bus` is the resident's sole writer and timer rim. |
 | Agent control | `listen` decodes preserved records; `consent` decides pre-action policy; `steer` owns durable direction and acknowledgment; `taste` selects prose reminders; `vendor` declares launch contracts; `lane` owns durable seats and supervised occupants. |
 | Product and artifacts | `app` is the WASM browser body and depends only on `wire`; `canvas` serves the loopback surface and app generations; `artifact` stores task evidence outside the journal; `dist` stages releases; `proof` verifies sealed appliances. |
 | Enforcement and composition | `gate` is hermetic repository enforcement and depends only on `atomic`, `sill`, and `wire`; `spice` composes daemonless CLI/resident surfaces; `xtask` owns repository-local build, verification, cache, and release orchestration. |
 
 These are ownership seams. Wire changes cross browser, journal, and resident;
 process lifecycle starts at `sill`. Authority writes belong to `journal`/`bus`,
-replayable views to `board`/`fold`, and browser code cannot reach server
+replayable task views to `board`, and browser code cannot reach server
 internals. Re-observe manifest changes through Cargo metadata.
 
 ## Tracked and generated surfaces
@@ -37,7 +37,6 @@ internals. Re-observe manifest changes through Cargo metadata.
 | --- | --- | --- |
 | `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml` | Tracked compiler and dependency contract. | Repair and commit; never regenerate blindly. |
 | `spice-rust.toml`, `baseline.toml`, `gate/src/battery/manifest.toml` | Tracked configuration, ratchet, and gate inventory. | Change with the owning compiled registry/tests. |
-| `fold/src/registry.rs`, `fold/build/{registry,admission}.rs` | Tracked fold declaration and validator; `build.rs` generates no source. | Edit both sides with the fold contract. |
 | `dist/stage-app/`, `dist/.stage-app-build-*` | Ignored atomic Canvas generations owned by `spice dev xtask -- app`. | Rebuild through that command; do not edit a generation. |
 | `dist/stage/{objects,targets}/` | Ignored content-addressed release staging owned by `spice dev xtask -- stage-target TARGET`. | Re-stage from tracked source and pins. |
 | `target/` and configured CargoBuild roots | Rebuildable compiler/test caches. | Use the bounded cleanup rules below. |

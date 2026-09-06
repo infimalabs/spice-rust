@@ -42,10 +42,6 @@ pub(super) async fn send_refresh(
 
 /// Refresh only the current reads invalidated by one streamed fact batch.
 ///
-/// Effort is deliberately absent: it is an optional, whole-history answer and
-/// is derived only when the operator opens Magnitude. The exact invalidation
-/// remains represented by [`crate::Stale`] so that an explicit read observes
-/// the current durable barrier.
 pub(super) async fn send_stale(
     principal: &Principal,
     writer: &mut SocketWriter,
@@ -66,22 +62,6 @@ pub(super) async fn send_stale(
         send_consent(principal, writer, pending).await?;
     }
     Ok(())
-}
-
-pub(super) async fn send_effort(
-    principal: &Principal,
-    writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
-) -> Result<(), String> {
-    send_if_offered(
-        principal,
-        writer,
-        pending,
-        PendingKind::Effort,
-        CommandKind::EffortRead,
-        EffortRead { task: None },
-    )
-    .await
 }
 
 async fn send_board(

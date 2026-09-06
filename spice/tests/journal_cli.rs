@@ -6,10 +6,9 @@ use rusqlite::{Connection, params};
 use serde::de::DeserializeOwned;
 use serde_json::json;
 use sill::{Acquisition, LockFile, LockName};
-use wire::intent::EffortAnswer;
 use wire::manifest::{JOURNAL_BACKUP_VERSION, JournalBackupManifest};
 use wire::{
-    Actor, AnyFact, Envelope, FactKind, FoldReport, JournalBackup, JournalReindex, JournalReport,
+    Actor, AnyFact, Envelope, FactKind, JournalBackup, JournalReindex, JournalReport,
     JournalRestore, JournalVerification, Origin, Outcome, Seq, ThreadReport, WireVersion,
 };
 
@@ -25,7 +24,6 @@ use readiness::Readiness;
 struct Fixture {
     root: PathBuf,
     authority: PathBuf,
-    folds: PathBuf,
     bundle: PathBuf,
 }
 
@@ -34,7 +32,6 @@ impl Fixture {
         let root = fixture_root::claim(&std::env::temp_dir(), "journal-cli");
         let data = root.join(".git/.spice-rs/data");
         let authority = data.join("spicejournal.sqlite3");
-        let folds = data.join("spicefolds.sqlite3");
         let bundle = root.join("operator-backup");
         fs::create_dir_all(&data).expect("create repository state fixture");
         staged_app::seed(&root);
@@ -42,7 +39,6 @@ impl Fixture {
         Self {
             root,
             authority,
-            folds,
             bundle,
         }
     }
@@ -181,10 +177,10 @@ impl Drop for RunningResident {
 }
 
 #[test]
-fn journal_replay_reindex_thread_backup_and_restore_round_trip() {
+fn journal_reindex_thread_backup_and_restore_round_trip() {
     let fixture = Fixture::new();
     let resident = fixture.start();
-    assert_journal_thread_and_fold(&fixture);
+    assert_journal_and_thread(&fixture);
     resident.stop(&fixture);
     assert_reindex(&fixture);
     assert_backup(&fixture);
@@ -231,71 +227,7 @@ fn authority_only_backup_v1_uses_the_sole_current_restore_path() {
         .expect("restored v1 authority verifies through the current path");
 }
 
-#[test]
-fn restored_authority_defers_ahead_effort_refusal_until_demand() {
-    let fixture = Fixture::new();
-    fixture.reply::<JournalBackup>(&[
-        "backup",
-        fixture.bundle.to_str().expect("UTF-8 backup path"),
-    ]);
-    append_note_fact(&fixture.authority, 4, 2);
-    let resident = fixture.start();
-    let ahead = fixture.reply::<EffortAnswer>(&["task", "effort"]);
-    let wire::ReplyPosition::Snapshot(ahead_cursor) = ahead.position else {
-        panic!("ahead effort reply did not carry its materialization cursor")
-    };
-    assert!(ahead_cursor >= Seq::new(4).expect("pre-resident position"));
-    resident.stop(&fixture);
-
-    let preview = fixture.reply::<JournalRestore>(&[
-        "restore",
-        fixture.bundle.to_str().expect("UTF-8 backup path"),
-    ]);
-    let restored = fixture.reply::<JournalRestore>(&[
-        "restore",
-        fixture.bundle.to_str().expect("UTF-8 backup path"),
-        &format!("--apply={}", preview.body.plan),
-    ]);
-    assert!(restored.body.applied);
-    let restored_cursor = journal::JournalReader::open(&fixture.authority)
-        .expect("restored authority opens")
-        .fact_snapshot()
-        .expect("restored authority snapshot")
-        .horizon()
-        .expect("restore recognition supplies a cursor");
-    assert_eq!(restored_cursor, Seq::new(3).expect("restored position"));
-    assert!(restored_cursor < ahead_cursor);
-
-    // Startup no longer derives unused current reads. The restored resident is
-    // healthy until task effort is actually demanded, at which point the
-    // ahead generation is refused without being replaced.
-    let restored_resident = fixture.start();
-    let refused = fixture.invoke(&["task", "effort"]);
-    assert_eq!(refused.status.code(), Some(2));
-    assert!(refused.stdout.is_empty(), "a refusal carried answer bytes");
-    let Outcome::<EffortAnswer>::Refusal(refusal) =
-        wire::decode(&refused.stderr).expect("effort refusal decodes")
-    else {
-        panic!("task effort did not refuse its ahead generation")
-    };
-    let diagnostic = refusal
-        .diagnostic()
-        .expect("ahead effort refusal carries its diagnostic");
-    assert_eq!(diagnostic.reason(), "fold::materialization-refused");
-    assert!(
-        diagnostic
-            .observed()
-            .is_some_and(|observed| observed.contains("GenerationAheadSnapshot")),
-        "{refusal:?}"
-    );
-    restored_resident.stop(&fixture);
-    assert!(
-        !fixture.root.join(".git/.spice-rs/canvas").exists(),
-        "stopped restored resident left its discovery behind"
-    );
-}
-
-fn assert_journal_thread_and_fold(fixture: &Fixture) {
+fn assert_journal_and_thread(fixture: &Fixture) {
     let reply = fixture.reply::<JournalReport>(&["journal"]);
     let wire::ReplyPosition::Snapshot(position) = reply.position else {
         panic!("journal read did not carry a snapshot position")
@@ -335,55 +267,6 @@ fn assert_journal_thread_and_fold(fixture: &Fixture) {
             .map(|entry| entry.seq.get())
             .collect::<Vec<_>>(),
         vec![1, 2]
-    );
-
-    // Current reads are derived on demand. Ask for task effort before
-    // inspecting its persisted fold generation; the generic fold report is a
-    // read of what already exists, not permission to derive every fold.
-    let live = fixture.reply::<EffortAnswer>(&["task", "effort"]);
-    assert_eq!(live.position, wire::ReplyPosition::Snapshot(position));
-    let materialized = fixture.reply::<FoldReport>(&["fold"]).body;
-    assert!(
-        fixture.folds.exists(),
-        "resident read publisher did not persist its current generation"
-    );
-    let fold_bytes = fs::read(&fixture.folds).expect("read resident-published folds");
-    let first = fixture
-        .reply::<FoldReport>(&["journal", "replay", "task::effort"])
-        .body;
-    let second = fixture
-        .reply::<FoldReport>(&["journal", "replay", "task::effort"])
-        .body;
-    assert_eq!(
-        first, materialized,
-        "replay replaced the resident's current deterministic generation"
-    );
-    assert_eq!(second, first, "repeated replay minted a generation");
-    assert_eq!(fixture.reply::<FoldReport>(&["fold"]).body, second);
-    assert_eq!(
-        fs::read(&fixture.folds).expect("read folds after report"),
-        fold_bytes,
-        "read-only fold report changed the materialization store"
-    );
-    let effort = first
-        .folds
-        .iter()
-        .find(|fold| fold.fold == "task::effort")
-        .expect("task effort state");
-    assert_eq!(effort.generation, Some(1));
-    assert_eq!(effort.cursor, Some(position));
-    assert_eq!(effort.horizon, Some(position));
-    assert_eq!(
-        effort.sources,
-        ["task::*", "claim::*", "lane::*", "lineage::*", "journal::*"]
-    );
-    let replay_answer: EffortAnswer =
-        serde_json::from_value(effort.payload.clone().expect("typed task effort payload"))
-            .expect("replay payload decodes as task effort");
-    let live_answer = live.body;
-    assert_eq!(
-        replay_answer, live_answer,
-        "journal replay and the live CLI/Canvas resident surface use the same typed materialization"
     );
 }
 
@@ -426,46 +309,6 @@ fn assert_reindex(fixture: &Fixture) {
     let reader = journal::JournalReader::open(&fixture.authority).expect("rebuilt authority opens");
     reader.verify().expect("rebuilt authority verifies");
     assert_eq!(reader.thread("2").expect("rebuilt thread").entries.len(), 2);
-}
-
-#[test]
-fn unknown_fold_refusal_puts_its_executable_recovery_first() {
-    let fixture = Fixture::new();
-    let resident = fixture.start();
-    let arguments = ["journal", "replay", "not::a-registered-fold"];
-
-    let json = fixture.invoke(&arguments);
-    assert_eq!(
-        json.status.code(),
-        Some(2),
-        "{}",
-        String::from_utf8_lossy(&json.stderr)
-    );
-    assert!(json.stdout.is_empty());
-    let Outcome::<FoldReport>::Refusal(refusal) =
-        wire::decode(&json.stderr).expect("fold refusal is typed")
-    else {
-        panic!("unknown fold did not refuse")
-    };
-    let wire::Refusal::Repairable {
-        command,
-        diagnostic,
-    } = refusal
-    else {
-        panic!("unknown fold must carry one executable recovery")
-    };
-    assert_eq!(command.arguments(), ["fold"]);
-    assert_eq!(diagnostic.reason(), "fold::selection-refused");
-
-    let text = fixture.invoke_form(&arguments, false);
-    assert_eq!(text.status.code(), Some(2));
-    assert!(text.stdout.is_empty());
-    let document = std::str::from_utf8(&text.stderr).expect("text refusal is UTF-8");
-    assert!(
-        document.starts_with("spice fold\nspice: fold::selection-refused\n"),
-        "recovery command did not precede the diagnostic: {document:?}"
-    );
-    resident.terminate(&fixture);
 }
 
 fn assert_backup(fixture: &Fixture) {
@@ -639,8 +482,6 @@ fn resident_reads_require_authentication_without_mutating_authority() {
     for arguments in [
         &["journal"][..],
         &["journal", "verify"][..],
-        &["journal", "replay", "task::effort"][..],
-        &["fold"][..],
         &["thread", "2"][..],
     ] {
         let output = fixture.invoke(arguments);
@@ -658,8 +499,11 @@ fn resident_reads_require_authentication_without_mutating_authority() {
         "unauthenticated reads changed authority"
     );
     assert!(
-        !fixture.folds.exists(),
-        "unauthenticated replay created folds"
+        !fixture
+            .root
+            .join(".git/.spice-rs/data/spicefolds.sqlite3")
+            .exists(),
+        "unauthenticated reads created the retired fold store"
     );
 }
 
@@ -855,57 +699,6 @@ fn append_note_facts(path: &Path, through: u64) {
             [i64::try_from(through).expect("fixture steering cursor fits")],
         )
         .expect("advance bounded-report steering cursor");
-}
-
-fn append_note_fact(path: &Path, seq: u64, cause: u64) {
-    let connection = Connection::open(path).expect("open authority for one note fact");
-    let envelope = fact(
-        seq,
-        Some(cause),
-        FactKind::TaskNoted,
-        json!({"task": "1kKRRsDP", "note": format!("note {seq}")}),
-    );
-    let bytes = wire::encode(&envelope).expect("encode note fact");
-    connection
-        .execute(
-            concat!(
-                "INSERT INTO fact_envelopes(seq, wire_version, instant, actor, origin, ",
-                "cause, kind, envelope) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
-            ),
-            params![
-                i64::try_from(seq).expect("fixture sequence fits"),
-                envelope.v.0,
-                envelope.at.to_string(),
-                envelope.actor.to_string(),
-                envelope.origin.as_str(),
-                i64::try_from(cause).expect("fixture cause fits"),
-                envelope.fact.kind().as_str(),
-                bytes,
-            ],
-        )
-        .expect("insert note fact");
-    connection
-        .execute(
-            "INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES (?1, ?2, ?3, 1, 2)",
-            params![
-                i64::try_from(seq).expect("fixture sequence fits"),
-                envelope.origin.as_str(),
-                i64::try_from(cause).expect("fixture cause fits"),
-            ],
-        )
-        .expect("insert note thread");
-    connection
-        .execute(
-            "UPDATE cursor_head SET seq = ?1, wake = 1 WHERE singleton = 1",
-            [i64::try_from(seq).expect("fixture cursor fits")],
-        )
-        .expect("advance cursor for one note fact");
-    connection
-        .execute(
-            "UPDATE steering_index SET indexed_seq = ?1 WHERE singleton = 1",
-            [i64::try_from(seq).expect("fixture steering cursor fits")],
-        )
-        .expect("advance steering cursor for one note fact");
 }
 
 fn fact(

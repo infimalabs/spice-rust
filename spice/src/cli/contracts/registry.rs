@@ -468,16 +468,6 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "board::task_show"
     ),
     row!(
-        ["task", "effort"],
-        "task effort [HANDLE]",
-        OperatorOrLane,
-        Read,
-        [],
-        [Resident],
-        Reply,
-        "fold::task_effort"
-    ),
-    row!(
         ["task", "next"],
         "task next",
         OperatorOrLane,
@@ -995,16 +985,6 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "journal::read"
     ),
     row!(
-        ["journal", "replay"],
-        "journal replay [FOLD]",
-        Operator,
-        Read,
-        [],
-        [Resident, OperatorCapability],
-        Reply,
-        "fold::replay"
-    ),
-    row!(
         ["journal", "reindex"],
         "journal reindex",
         Operator,
@@ -1023,16 +1003,6 @@ pub(super) const CONTRACTS: &[Contract] = &[
         [Resident, OperatorCapability],
         Reply,
         "journal::verify"
-    ),
-    row!(
-        ["fold"],
-        "fold",
-        Operator,
-        Read,
-        [],
-        [Resident, OperatorCapability],
-        Reply,
-        "fold::read"
     ),
     row!(
         ["thread"],

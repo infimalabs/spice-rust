@@ -8,14 +8,13 @@ use super::{
     BoardAnswer, BoardGraph, BoardHandout, BoardRead, ClaimAnswer, ClaimCarry, ClaimRenew,
     ClaimWin, ConsentAnswer, ConsentDecide, ConsentPolicy, ConsentPolicyAnswer, ConsentQueueAnswer,
     ConsentRead, DeliveryAnswer, DirectiveAnswer, DirectiveRef, DocAnswer, DocApply, DocLedger,
-    EffortAnswer, EffortRead, GateFindings, GlobalSettingsAnswer, GlobalSettingsRead,
-    GlobalSettingsSet, InboxAnswer, LaneAnswer, LaneArrange, LaneChangeAnswer, LaneRead,
-    LaneRecall, LaneRenewal, LaneRenewalAnswer, LaneSeat, LaneState, LineageArrange,
-    LineageConfigure, RecallAnswer, RecognitionAnswer, Recognize, ReleasePublish, StateAnswer,
-    SteerDispose, SteerInbox, SteerRepair, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskDefer,
-    TaskDelete, TaskDepends, TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef,
-    TaskReview, TaskWake, TasteAnswer, TasteProposalAdd, TasteRecord, TextAnswer, TrustAnswer,
-    TrustRef, UpChange,
+    GateFindings, GlobalSettingsAnswer, GlobalSettingsRead, GlobalSettingsSet, InboxAnswer,
+    LaneAnswer, LaneArrange, LaneChangeAnswer, LaneRead, LaneRecall, LaneRenewal,
+    LaneRenewalAnswer, LaneSeat, LaneState, LineageArrange, LineageConfigure, RecallAnswer,
+    RecognitionAnswer, Recognize, ReleasePublish, StateAnswer, SteerDispose, SteerInbox,
+    SteerRepair, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskDefer, TaskDelete, TaskDepends,
+    TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskReview, TaskWake,
+    TasteAnswer, TasteProposalAdd, TasteRecord, TextAnswer, TrustAnswer, TrustRef, UpChange,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -29,8 +28,6 @@ pub enum BodyShape {
     BoardHandout,
     /// [`DocLedger`]
     DocLedger,
-    /// [`EffortRead`]
-    EffortRead,
     /// [`GlobalSettingsRead`]
     GlobalSettingsRead,
     /// [`GlobalSettingsSet`]
@@ -142,8 +139,6 @@ pub enum AnswerShape {
     ConsentQueue,
     /// [`ConsentPolicyAnswer`]
     ConsentPolicy,
-    /// [`EffortAnswer`]
-    Effort,
     /// [`GlobalSettingsAnswer`]
     GlobalSettings,
     /// [`TrustAnswer`]
@@ -190,8 +185,6 @@ pub enum CommandAnswer {
     ConsentQueue(ConsentQueueAnswer),
     /// [`AnswerShape::ConsentPolicy`]
     ConsentPolicy(ConsentPolicyAnswer),
-    /// [`AnswerShape::Effort`]
-    Effort(Box<EffortAnswer>),
     /// [`AnswerShape::GlobalSettings`]
     GlobalSettings(GlobalSettingsAnswer),
     /// [`AnswerShape::Trust`]
@@ -228,7 +221,6 @@ impl CommandAnswer {
             Self::Consent(_) => AnswerShape::Consent,
             Self::ConsentQueue(_) => AnswerShape::ConsentQueue,
             Self::ConsentPolicy(_) => AnswerShape::ConsentPolicy,
-            Self::Effort(_) => AnswerShape::Effort,
             Self::GlobalSettings(_) => AnswerShape::GlobalSettings,
             Self::Trust(_) => AnswerShape::Trust,
             Self::Lane(_) => AnswerShape::Lane,
@@ -263,7 +255,6 @@ impl AnswerShape {
             | Self::Consent
             | Self::ConsentQueue => self.decode_primary(bytes),
             Self::ConsentPolicy
-            | Self::Effort
             | Self::GlobalSettings
             | Self::Trust
             | Self::Lane
@@ -295,7 +286,6 @@ impl AnswerShape {
     fn decode_secondary(self, bytes: &[u8]) -> Result<CommandAnswer, serde_json::Error> {
         Ok(match self {
             Self::ConsentPolicy => CommandAnswer::ConsentPolicy(crate::decode(bytes)?),
-            Self::Effort => CommandAnswer::Effort(Box::new(crate::decode(bytes)?)),
             Self::GlobalSettings => CommandAnswer::GlobalSettings(crate::decode(bytes)?),
             Self::Trust => CommandAnswer::Trust(crate::decode(bytes)?),
             Self::Lane => CommandAnswer::Lane(Box::new(crate::decode(bytes)?)),
@@ -341,7 +331,6 @@ impl CommandKind {
             | Self::BoardGraph
             | Self::BoardHandout
             | Self::DocLedger
-            | Self::EffortRead
             | Self::TaskAdd
             | Self::TaskOopsAdd
             | Self::TasteProposalAdd
@@ -404,7 +393,6 @@ impl CommandKind {
             Self::BoardGraph => Binding::of(B::BoardGraph, A::Text),
             Self::BoardHandout => Binding::of(B::BoardHandout, A::Text),
             Self::DocLedger => Binding::of(B::DocLedger, A::Text),
-            Self::EffortRead => Binding::of(B::EffortRead, A::Effort),
             Self::TaskAdd => Binding::of(B::TaskAdd, A::Task),
             Self::TaskOopsAdd => Binding::of(B::TaskOopsAdd, A::Task),
             Self::TasteProposalAdd => Binding::of(B::TasteProposalAdd, A::Task),
@@ -489,8 +477,6 @@ pub enum Intent {
     BoardHandout(BoardHandout),
     /// [`BodyShape::DocLedger`]
     DocLedger(DocLedger),
-    /// [`BodyShape::EffortRead`]
-    EffortRead(EffortRead),
     /// [`BodyShape::GlobalSettingsRead`]
     GlobalSettingsRead(GlobalSettingsRead),
     /// [`BodyShape::GlobalSettingsSet`]
@@ -586,7 +572,6 @@ impl Intent {
             | Self::BoardGraph(_)
             | Self::BoardHandout(_)
             | Self::DocLedger(_)
-            | Self::EffortRead(_)
             | Self::TaskAdd(_)
             | Self::TaskOopsAdd(_)
             | Self::TasteProposalAdd(_)
@@ -638,7 +623,6 @@ impl Intent {
             Self::BoardGraph(_) => BodyShape::BoardGraph,
             Self::BoardHandout(_) => BodyShape::BoardHandout,
             Self::DocLedger(_) => BodyShape::DocLedger,
-            Self::EffortRead(_) => BodyShape::EffortRead,
             Self::TaskAdd(_) => BodyShape::TaskAdd,
             Self::TaskOopsAdd(_) => BodyShape::TaskOopsAdd,
             Self::TasteProposalAdd(_) => BodyShape::TasteProposalAdd,
@@ -715,7 +699,6 @@ impl BodyShape {
                 | Self::BoardGraph
                 | Self::BoardHandout
                 | Self::DocLedger
-                | Self::EffortRead
                 | Self::TaskAdd
                 | Self::TaskOopsAdd
                 | Self::TasteProposalAdd
@@ -745,7 +728,6 @@ impl BodyShape {
                 | Self::BoardGraph
                 | Self::BoardHandout
                 | Self::DocLedger
-                | Self::EffortRead
                 | Self::TaskAdd
                 | Self::TaskOopsAdd
                 | Self::TasteProposalAdd
@@ -767,7 +749,6 @@ impl BodyShape {
             Self::BoardGraph => Intent::BoardGraph(crate::decode(bytes)?),
             Self::BoardHandout => Intent::BoardHandout(crate::decode(bytes)?),
             Self::DocLedger => Intent::DocLedger(crate::decode(bytes)?),
-            Self::EffortRead => Intent::EffortRead(crate::decode(bytes)?),
             Self::TaskAdd => Intent::TaskAdd(crate::decode(bytes)?),
             Self::TaskOopsAdd => Intent::TaskOopsAdd(crate::decode(bytes)?),
             Self::TasteProposalAdd => Intent::TasteProposalAdd(crate::decode(bytes)?),

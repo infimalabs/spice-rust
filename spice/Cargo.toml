@@ -22,7 +22,6 @@ consent = { path = "../consent" }
 dialect = { path = "../dialect" }
 dist = { path = "../dist" }
 flate2 = "1.1.8"
-fold = { path = "../fold" }
 gate = { path = "../gate" }
 journal = { path = "../journal" }
 lane = { path = "../lane" }

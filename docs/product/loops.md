@@ -160,7 +160,7 @@ eligibility class, not an urgency coefficient.
 flow length beyond the nonempty, unique-name membership law. The three workflow
 statuses and three claim dispositions are not incidental.
 
-**Acceptance** — journal replay and the board reconstruct every accepted phase
+**Acceptance** — journal authority and the board reconstruct every accepted phase
 transition; first-parent history of the explicitly resolved integrated baseline
 or release commit reconstructs the mutating landing subset; after an accepted
 lapse, the task becomes selectable if every other predicate admits it; a solo

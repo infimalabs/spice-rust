@@ -147,7 +147,6 @@ pub(super) fn cover_reply_frames(covered: &mut BTreeSet<String>) {
     );
     cover_journal_reply_frames(covered);
     cover_restore_reply_frames(covered);
-    cover_fold_reply_frames(covered);
     cover_transport_reply_frames(covered);
 }
 
@@ -201,47 +200,6 @@ fn cover_restore_reply_frames(covered: &mut BTreeSet<String>) {
                 previous: Some(digest("4")),
                 verification: restore_verification("5", 19),
                 applied: true,
-            },
-        ],
-    );
-}
-
-fn cover_fold_reply_frames(covered: &mut BTreeSet<String>) {
-    law(
-        covered,
-        "FoldState",
-        &[
-            FoldState {
-                fold: "task::effort".to_owned(),
-                generation: None,
-                reducer_version: None,
-                cursor: None,
-                horizon: None,
-                recovery: "spice journal replay task::effort".to_owned(),
-                sources: vec![
-                    "task::*".to_owned(),
-                    "claim::*".to_owned(),
-                    "lane::*".to_owned(),
-                    "lineage::*".to_owned(),
-                    "journal::*".to_owned(),
-                ],
-                payload: None,
-            },
-            FoldState {
-                fold: "task::effort".to_owned(),
-                generation: Some(2),
-                reducer_version: Some(1),
-                cursor: Some(seq(19)),
-                horizon: Some(seq(19)),
-                recovery: "spice journal replay task::effort".to_owned(),
-                sources: vec![
-                    "task::*".to_owned(),
-                    "claim::*".to_owned(),
-                    "lane::*".to_owned(),
-                    "lineage::*".to_owned(),
-                    "journal::*".to_owned(),
-                ],
-                payload: Some(serde_json::json!({"phases": [], "aggregates": []})),
             },
         ],
     );
