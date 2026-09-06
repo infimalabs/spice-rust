@@ -1,10 +1,10 @@
 //! Operator-facing preview text for one tool moment.
 //!
 //! The lane status strip is read by a person, so a tool moment renders as the
-//! work being done rather than as vendor bookkeeping: a call shows its name and
-//! enough of its arguments to recognize the command, and a result shows the
-//! call it answers instead of the `tool_use` id that joins them. The rules here
-//! follow the predecessor at `spice-z spice/serve/messagepresentation.py`.
+//! work being done rather than as vendor bookkeeping: command-execution calls
+//! show the command itself, other calls retain their tool name, and results show
+//! the call they answer instead of the `tool_use` id that joins them. The rules
+//! here follow the predecessor at `spice-z spice/serve/messagepresentation.py`.
 
 use std::collections::BTreeMap;
 
@@ -26,6 +26,8 @@ const MAX_CHARS: usize = 120;
 const ARGUMENT_KEYS: [&str; 8] = [
     "command", "cmd", "path", "query", "url", "input", "prompt", "text",
 ];
+
+const COMMAND_EXECUTION_TOOLS: [&str; 3] = ["exec_command", "command_execution", "Bash"];
 
 /// Call previews held only while their calls are still outstanding.
 ///
@@ -58,12 +60,12 @@ pub(super) fn activity(
     let key = (lane, tool.call_id.clone());
     match &tool.moment {
         listen::ToolMoment::Call { name, arguments } => {
-            let preview = call_preview(name, arguments);
+            let preview = activity_preview(name, arguments);
             previews.by_call.insert(key, preview.clone());
             preview
         }
         listen::ToolMoment::Update { name, arguments } => {
-            let preview = call_preview(name, arguments);
+            let preview = activity_preview(name, arguments);
             previews.by_call.insert(key, preview.clone());
             flatten(&format!("{preview} update"))
         }
@@ -83,6 +85,13 @@ pub(super) fn activity(
             )
         }
     }
+}
+
+fn activity_preview(name: &str, arguments: &str) -> String {
+    if COMMAND_EXECUTION_TOOLS.contains(&name.trim()) {
+        return flatten(&argument_preview(arguments));
+    }
+    call_preview(name, arguments)
 }
 
 pub(super) fn call_preview(name: &str, arguments: &str) -> String {

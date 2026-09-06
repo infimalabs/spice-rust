@@ -61,7 +61,7 @@ fn a_call_carries_the_command_line_and_not_merely_its_tool_name() {
             &tool(VENDOR_ID, call("Bash", BASH_INPUT)),
             &mut previews
         ),
-        "Bash: git status --short"
+        "git status --short"
     );
 }
 
@@ -81,7 +81,7 @@ fn a_result_names_its_call_and_never_paints_the_vendor_identifier() {
 
     let result = activity(lane(1), &tool(VENDOR_ID, succeeded()), &mut previews);
 
-    assert_eq!(result, "Bash: git status --short succeeded");
+    assert_eq!(result, "git status --short succeeded");
     assert!(
         !result.contains(VENDOR_ID),
         "an operator cannot act on a vendor correlation id: {result}"
@@ -153,7 +153,7 @@ fn one_call_identifier_reused_by_two_lanes_keeps_its_lanes_apart() {
     );
     assert_eq!(
         activity(lane(1), &tool(VENDOR_ID, succeeded()), &mut previews),
-        "Bash: git status --short succeeded",
+        "git status --short succeeded",
         "the owning lane still resolves its own call"
     );
 }
@@ -200,11 +200,11 @@ fn an_update_reports_the_running_call_and_still_answers_its_result() {
             ),
             &mut previews
         ),
-        "command execution: cargo test update"
+        "cargo test update"
     );
     assert_eq!(
         activity(lane(1), &tool(VENDOR_ID, succeeded()), &mut previews),
-        "command execution: cargo test succeeded"
+        "cargo test succeeded"
     );
 }
 
@@ -258,7 +258,7 @@ fn a_preview_is_flattened_onto_one_bounded_line() {
         "a truncated line says so: {preview}"
     );
     assert!(
-        preview.starts_with("Bash: echo one two "),
+        preview.starts_with("echo one two "),
         "runs of whitespace collapse to one space: {preview}"
     );
     assert!(!preview.contains('\n'), "the strip is one line: {preview}");
@@ -268,10 +268,7 @@ fn a_preview_is_flattened_onto_one_bounded_line() {
 #[test]
 fn a_preview_within_the_bound_is_not_elided() {
     let mut previews = CallPreviews::default();
-    let arguments = format!(
-        r#"{{"command":"{}"}}"#,
-        "y".repeat(MAX_CHARS - "Bash: ".len())
-    );
+    let arguments = format!(r#"{{"command":"{}"}}"#, "y".repeat(MAX_CHARS));
 
     let preview = activity(
         lane(1),
@@ -283,5 +280,45 @@ fn a_preview_within_the_bound_is_not_elided() {
     assert!(
         !preview.ends_with('\u{2026}'),
         "a preview at the bound is whole: {preview}"
+    );
+}
+
+#[test]
+fn only_structured_command_execution_names_suppress_their_taxonomy() {
+    for (name, arguments) in [
+        (
+            "exec_command",
+            r#"{"cmd":"cargo test:all --url https://host:443"}"#,
+        ),
+        (
+            "command_execution",
+            r#"{"command":"cargo test:all --url https://host:443"}"#,
+        ),
+        (
+            "Bash",
+            r#"{"command":"cargo test:all --url https://host:443"}"#,
+        ),
+    ] {
+        assert_eq!(
+            activity_preview(name, arguments),
+            "cargo test:all --url https://host:443",
+            "{name}",
+        );
+        assert_eq!(activity_preview(name, ""), "", "{name}");
+    }
+    assert_eq!(
+        activity_preview(
+            "exec_command",
+            r#"{"command":["cargo","test:all","--url","https://host:443"]}"#,
+        ),
+        "cargo test:all --url https://host:443",
+    );
+    assert_eq!(
+        activity_preview("command_execution", "cargo test:all --url https://host:443",),
+        "cargo test:all --url https://host:443",
+    );
+    assert_eq!(
+        activity_preview("unknown_command", r#"{"command":"cargo test:all"}"#),
+        "unknown command: cargo test:all",
     );
 }

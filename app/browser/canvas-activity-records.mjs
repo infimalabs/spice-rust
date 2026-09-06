@@ -27,7 +27,7 @@ export const toolCallId = "toolu_01LaneStatusStripWitness";
 /// strip, and the activity replay route captures the same frame off the socket
 /// to redeliver it. It is spelled here alone so a preview-rule change reds one
 /// constant instead of leaving a hand-copied duplicate matching nothing.
-export const TOOL_ACTIVITY_TEXT = "Bash: git status --short";
+export const TOOL_ACTIVITY_TEXT = "git status --short";
 
 export const toolActivityRecord = JSON.stringify({
   type: "assistant",
