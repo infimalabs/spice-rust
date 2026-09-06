@@ -299,7 +299,7 @@ export async function assertBidirectionalMediaExchange(page, fixture, worktree) 
   const identity = await cardIdentity(card);
   assert.equal(identity.activity, "tool");
   assert.match(identity.aria, /^Tool result from /);
-  assert.match(identity.text, /^exec: .*view_image.* completed$/);
+  assert.match(identity.text, /^const r = await tools\.view_image.* completed$/);
   assert.equal(identity.tool, "Tool");
   assert.match(identity.agent, /^Copy agent id for /);
   assert.equal(identity.source, dataUrl);
