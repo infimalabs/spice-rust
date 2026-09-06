@@ -706,7 +706,7 @@ pub(super) fn publish_test_version_7_receipt(repository: &Repository) -> Result<
 }
 
 #[cfg(debug_assertions)]
-pub(super) fn publish_test_version_12_receipt(repository: &Repository) -> Result<(), InstallError> {
+pub(super) fn publish_test_version_13_receipt(repository: &Repository) -> Result<(), InstallError> {
     let mut record = read_record(repository)?
         .ok_or_else(|| InstallError::InvalidRecord("test fixture receipt is absent".to_owned()))?
         .record;
@@ -723,20 +723,18 @@ pub(super) fn publish_test_version_12_receipt(repository: &Repository) -> Result
         .ok_or_else(|| {
             InstallError::InvalidRecord("test receipt has no fold-store retirement".to_owned())
         })?;
-    if let Some(archive) = &record.plan.rollback_archive {
-        let inline = archive.is_inline();
-        let mut rollback = archive.decode(repository)?;
-        rollback.retirements.remove(index);
-        let rebuilt = super::RollbackArchive::new(&rollback)?;
-        record.plan.rollback_archive = Some(if inline {
-            rebuilt.to_inline(repository)?
-        } else {
-            rebuilt
-        });
+    let retirement = &mut record.plan.retirements[index];
+    let path = retirement.destination(repository);
+    if let Some(observed) = super::files::observe(&path)? {
+        retirement.previous = Some(observed.clone());
+        retirement.observed = Some(observed);
+        fs::remove_file(&path).map_err(|source| {
+            InstallError::io("remove version-13 fold-store test fixture", &path, source)
+        })?;
     }
-    record.plan.retirements.remove(index);
-    record.retired_parents.remove(index);
-    record.restored_retirements.remove(index);
+    retirement.discard = false;
+    retirement.superseded = None;
+    retirement.rollback = None;
     record.version = super::PREVIOUS_RECORD_VERSION;
     record.plan.version = super::PREVIOUS_RECORD_VERSION;
     record.completed = record.plan.operation_count();
@@ -746,5 +744,5 @@ pub(super) fn publish_test_version_12_receipt(repository: &Repository) -> Result
     let bytes = wire::encode(&record).map_err(InstallError::Encode)?;
     let path = record_path(repository)?;
     fs::write(&path, bytes)
-        .map_err(|source| InstallError::io("publish version-12 test receipt", path, source))
+        .map_err(|source| InstallError::io("publish version-13 test receipt", path, source))
 }

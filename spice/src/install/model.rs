@@ -245,8 +245,9 @@ pub struct Operation {
 ///
 /// Retirements are deliberately separate from [`Operation`]: they publish no
 /// current asset and therefore never re-enter the install inventory. The exact
-/// prior image remains in the receipt so reversal can restore a complete
-/// pre-migration installation rather than a mixture.
+/// Reversible retirements keep the exact prior image so reversal restores a
+/// complete pre-migration installation. An explicitly discarded obsolete file
+/// keeps only its bounded comparison witness and is never restored.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Retirement {
@@ -261,6 +262,12 @@ pub struct Retirement {
     pub(super) superseded: Option<GeneratedImage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) rollback: Option<GeneratedImage>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(super) discard: bool,
+}
+
+const fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl Retirement {
@@ -290,7 +297,14 @@ impl Retirement {
         )
     }
 
+    pub(super) const fn discards_payload(&self) -> bool {
+        self.discard
+    }
+
     pub(super) fn rollback_witness(&self) -> Option<&GeneratedImage> {
+        if self.discard {
+            return None;
+        }
         self.rollback.as_ref().or(self.superseded.as_ref())
     }
 }

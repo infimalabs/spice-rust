@@ -10,7 +10,7 @@ use spice::install::{
     ApplianceState, InstallError, InstallStatus, apply, audit_appliance, capture_generation,
     installed_bash_env, installed_binary, installed_git_hooks, installed_skill,
     installed_spice_wrapper, installed_zdotdir, plan, publish_test_version_7_receipt,
-    publish_test_version_12_receipt, unapply,
+    publish_test_version_13_receipt, unapply,
 };
 use spice::repository::Repository;
 
@@ -22,7 +22,7 @@ const MAX_COMPACT_RECORD_BYTES: u64 = 64 * 1024;
 const RETIRED_FOLD_STORE: &str = ".git/.spice-rs/data/spicefolds.sqlite3";
 
 #[test]
-fn obsolete_fold_store_is_transactionally_retired_and_restored() {
+fn obsolete_fold_store_is_deleted_without_payload_retention_or_restoration() {
     let scratch = Scratch::new("retire-fold-store");
     let repository = scratch.repository();
     let store = scratch.join(RETIRED_FOLD_STORE);
@@ -40,14 +40,24 @@ fn obsolete_fold_store_is_transactionally_retired_and_restored() {
         .iter()
         .find(|retirement| retirement.path() == ".spice-rs/data/spicefolds.sqlite3")
         .expect("current plan retires the obsolete fold store");
-    let previous = retirement
-        .previous()
-        .expect("the plan carries exact rollback evidence");
-    assert_eq!(previous.mode(), 0o640);
-    assert_eq!(
-        previous.digest(),
-        &wire::Digest::compute(wire::Domain::InstallArtifact, b"obsolete fold bytes\n")
-    );
+    assert!(retirement.previous().is_none());
+    let document: serde_json::Value =
+        serde_json::from_slice(&planned.canonical_bytes().unwrap()).unwrap();
+    let retirement = document["retirements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|retirement| retirement["path"] == ".spice-rs/data/spicefolds.sqlite3")
+        .unwrap();
+    assert_eq!(retirement["discard"], true);
+    assert!(retirement.get("superseded").is_some());
+    for payload in ["previous", "observed", "rollback"] {
+        assert!(
+            retirement.get(payload).is_none(),
+            "discard retained {payload}"
+        );
+    }
+    assert!(planned.canonical_bytes().unwrap().len() < MAX_COMPACT_RECORD_BYTES as usize);
 
     apply(&repository, None, &planned.digest().unwrap()).unwrap();
     assert!(!store.exists());
@@ -58,11 +68,7 @@ fn obsolete_fold_store_is_transactionally_retired_and_restored() {
         unapply(&repository).unwrap().status(),
         InstallStatus::Uninstalled
     );
-    assert_eq!(fs::read(&store).unwrap(), b"obsolete fold bytes\n");
-    assert_eq!(
-        fs::metadata(&store).unwrap().permissions().mode() & 0o777,
-        0o640
-    );
+    assert!(!store.exists());
     assert_eq!(fs::read(&journal).unwrap(), b"journal authority\n");
     assert_eq!(fs::read(&unknown).unwrap(), b"operator state\n");
 }
@@ -106,40 +112,52 @@ fn obsolete_fold_store_symlink_and_non_regular_path_are_inert() {
 }
 
 #[test]
-fn version_12_refresh_retires_and_reverses_the_obsolete_fold_store() {
-    let scratch = Scratch::new("version-12-fold-store");
+fn version_13_payload_receipt_compacts_without_restoring_the_fold_store() {
+    let scratch = Scratch::new("version-13-fold-store");
     let repository = scratch.repository();
-    let source = scratch.join("fixture-spice");
-    fs::write(&source, b"#!/bin/sh\nexit 0\n").unwrap();
-    fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
-    let current = plan(&repository, Some(&source)).unwrap();
-    apply(&repository, Some(&source), &current.digest().unwrap()).unwrap();
-    publish_test_version_7_receipt(&repository).unwrap();
-    let migrated = plan(&repository, Some(&source)).unwrap();
-    apply(&repository, Some(&source), &migrated.digest().unwrap()).unwrap();
-    publish_test_version_12_receipt(&repository).unwrap();
     let store = scratch.join(RETIRED_FOLD_STORE);
     fs::create_dir_all(store.parent().unwrap()).unwrap();
-    fs::write(&store, b"version 12 fold bytes\n").unwrap();
+    let current = plan(&repository, None).unwrap();
+    apply(&repository, None, &current.digest().unwrap()).unwrap();
+    fs::write(&store, b"legacy fold bytes\n").unwrap();
+    publish_test_version_13_receipt(&repository).unwrap();
+    assert!(!store.exists());
+    let legacy: serde_json::Value =
+        serde_json::from_slice(&fs::read(scratch.record()).unwrap()).unwrap();
+    let retirement = legacy["plan"]["retirements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|retirement| retirement["path"] == ".spice-rs/data/spicefolds.sqlite3")
+        .unwrap();
+    assert_eq!(
+        retirement["previous"]["image"],
+        retirement["observed"]["image"]
+    );
+    let error = unapply(&repository).unwrap_err();
+    assert!(matches!(error, InstallError::InvalidRecord(detail)
+            if detail.contains("RETIREM-1kSR91Zl") && detail.contains("before unapply")));
+    assert!(!store.exists());
 
-    let planned = plan(&repository, Some(&source)).unwrap();
-    assert!(planned.version() > 12);
-    assert!(planned.has_rollback_archive());
+    let planned = plan(&repository, None).unwrap();
+    assert!(planned.version() > 13);
+    assert!(!planned.has_rollback_archive());
     let retirement = planned
         .retirements()
         .iter()
         .find(|retirement| retirement.path() == ".spice-rs/data/spicefolds.sqlite3")
         .expect("forward migration adds the fold-store retirement");
     assert!(retirement.previous().is_none());
-    apply(&repository, Some(&source), &planned.digest().unwrap()).unwrap();
+    apply(&repository, None, &planned.digest().unwrap()).unwrap();
     assert!(!store.exists());
+    assert!(fs::metadata(scratch.record()).unwrap().len() < MAX_COMPACT_RECORD_BYTES);
 
     unapply(&repository).unwrap();
-    assert_eq!(fs::read(store).unwrap(), b"version 12 fold bytes\n");
+    assert!(!store.exists());
 }
 
 #[test]
-fn compact_migration_archives_and_reverses_the_obsolete_fold_store() {
+fn compact_migration_deletes_without_archiving_or_restoring_the_obsolete_fold_store() {
     let scratch = Scratch::new("archived-fold-store");
     let repository = scratch.repository();
     let source = scratch.join("fixture-spice");
@@ -164,7 +182,7 @@ fn compact_migration_archives_and_reverses_the_obsolete_fold_store() {
     assert!(!store.exists());
 
     unapply(&repository).unwrap();
-    assert_eq!(fs::read(store).unwrap(), b"archived fold bytes\n");
+    assert!(!store.exists());
 }
 
 #[test]
