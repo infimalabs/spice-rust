@@ -25,7 +25,7 @@ const agentGeometryOwners = Object.freeze({
 const axisPanes = new Map([
   ["Metrics", ["Pressure", "Residue", "Consent Volume"]],
   ["Tasks", ["Tasks", "Claims", "Deferrals", "Reviews"]],
-  ["Team", ["Lanes", "Worktrees", "Lineage", "Occupancy", "Residents"]],
+  ["Team", ["Agents", "Worktrees", "Lineage", "Occupancy", "Residents"]],
   ["History", [
     "Compaction",
     "Queues",
@@ -435,9 +435,14 @@ export async function assertCanvas(page, scheme) {
   assert.equal(await page.locator(".canvas-navigation").count(), 0, "navigation stays collapsed");
   await page.getByLabel("Open Spice Canvas menu").click();
   assert.equal(
-    await page.locator(".canvas-navigation button.axis-button", { hasText: /^Lanes/ }).count(),
+    await page.locator(".canvas-navigation button.axis-button", { hasText: /^Agents/ }).count(),
     1,
-    "one disclosed Lanes entry reaches the one conversation surface",
+    "one disclosed Agents entry reaches the one conversation surface",
+  );
+  assert.equal(
+    await page.getByText("Lanes", { exact: true }).count(),
+    0,
+    "internal lane vocabulary is absent from visible Canvas labels",
   );
   await page.getByLabel("Open Spice Canvas menu").click();
   const pixels = await page.evaluate(() => {

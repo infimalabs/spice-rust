@@ -155,7 +155,7 @@ async function assertAutomaticSpeechEngine(engine, endpoint, fixture, worktree, 
     const surface = page.locator(".team-surface", {
       has: page.locator(`[data-agent-lane="${lane}"]`),
     });
-    await surface.getByRole("tab", { name: /^Lanes/ }).click();
+    await surface.getByRole("tab", { name: /^Agents/ }).click();
     const mode = surface.locator('.team-speech input[type="range"]');
     assert.equal(await mode.inputValue(), "1", `${engine} defaults to Speak`);
     assert.equal(await speechCount(page), 0, `${engine} materialized history stays silent`);

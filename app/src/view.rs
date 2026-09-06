@@ -81,6 +81,77 @@ impl Axis {
     }
 }
 
+/// User-facing Canvas destinations in their shared navigation order.
+///
+/// Internal axes and lane vocabulary remain stable; this registry is the
+/// presentation boundary that labels and orders both global and team controls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CanvasDestination {
+    History,
+    Metrics,
+    Team,
+    Tasks,
+    Agents,
+}
+
+impl CanvasDestination {
+    /// Every displayed destination, left to right.
+    pub const ALL: [Self; 5] = [
+        Self::History,
+        Self::Metrics,
+        Self::Team,
+        Self::Tasks,
+        Self::Agents,
+    ];
+
+    /// Presentation label independent of internal protocol spelling.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::History => "History",
+            Self::Metrics => "Metrics",
+            Self::Team => "Team",
+            Self::Tasks => "Tasks",
+            Self::Agents => "Agents",
+        }
+    }
+
+    /// Destination represented by one analytical axis.
+    #[must_use]
+    pub const fn for_axis(axis: Axis) -> Self {
+        match axis {
+            Axis::Chronology => Self::History,
+            Axis::Magnitude => Self::Metrics,
+            Axis::Topology => Self::Team,
+            Axis::Flow => Self::Tasks,
+        }
+    }
+
+    /// Analytical axis selected by this destination, absent for live agents.
+    #[must_use]
+    pub const fn axis(self) -> Option<Axis> {
+        match self {
+            Self::History => Some(Axis::Chronology),
+            Self::Metrics => Some(Axis::Magnitude),
+            Self::Team => Some(Axis::Topology),
+            Self::Tasks => Some(Axis::Flow),
+            Self::Agents => None,
+        }
+    }
+
+    /// Accessible description shared by every navigation surface.
+    #[must_use]
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::History => "Global history of facts and command outcomes",
+            Self::Metrics => "Current resident quantities and pressure",
+            Self::Team => "Resident teams, agents, capabilities, and possession",
+            Self::Tasks => "Tasks moving through their workflow",
+            Self::Agents => "Converse across persistent team agents",
+        }
+    }
+}
+
 /// Every derived pane, one registry row apiece.
 ///
 /// A pane is named for the question it answers rather than for the crate that
@@ -201,5 +272,50 @@ impl Pane {
             Self::Commands => "commands",
             Self::Recovery => "recovery",
         }
+    }
+
+    /// User-facing pane label independent of internal protocol spelling.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Pressure => "Pressure",
+            Self::Residue => "Residue",
+            Self::ConsentVolume => "Consent Volume",
+            Self::Tasks => "Tasks",
+            Self::Claims => "Claims",
+            Self::Deferrals => "Deferrals",
+            Self::Reviews => "Reviews",
+            Self::Lanes => "Agents",
+            Self::Worktrees => "Worktrees",
+            Self::Lineage => "Lineage",
+            Self::Occupancy => "Occupancy",
+            Self::Residents => "Residents",
+            Self::Compaction => "Compaction",
+            Self::Queues => "Queues",
+            Self::Directives => "Directives",
+            Self::ConsentDisposition => "Consent Disposition",
+            Self::Trust => "Trust",
+            Self::Commands => "Commands",
+            Self::Recovery => "Recovery",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canvas_destinations_own_the_complete_presentation_order() {
+        assert_eq!(
+            CanvasDestination::ALL.map(CanvasDestination::label),
+            ["History", "Metrics", "Team", "Tasks", "Agents"],
+        );
+        assert_eq!(CanvasDestination::Agents.axis(), None);
+        for axis in Axis::ALL {
+            assert_eq!(CanvasDestination::for_axis(*axis).axis(), Some(*axis));
+        }
+        assert_eq!(Pane::Lanes.as_str(), "lanes");
+        assert_eq!(Pane::Lanes.label(), "Agents");
     }
 }

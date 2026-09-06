@@ -199,7 +199,7 @@ export async function assertFirefoxRestoredMosaic(
     await chooseCanvasView(page, "Lanes");
     await assertCursorRelocation(page, artifacts, "firefox");
     const console = page.locator('[data-pane="agent-console"]');
-    await console.getByRole("tab", { name: /^Lanes/ }).click();
+    await console.getByRole("tab", { name: /^Agents/ }).click();
     await assertLaneHeaderPipMatrix(page, console, artifacts, "firefox", "dark");
     const linkedComposer = console.locator(".agent-composer-stack").filter({
       has: page.locator(
@@ -293,7 +293,7 @@ export async function assertFirefoxRestoredMosaic(
 
     await page.reload({ waitUntil: "networkidle" });
     await chooseCanvasView(page, "Lanes");
-    await console.getByRole("tab", { name: /^Lanes/ }).click();
+    await console.getByRole("tab", { name: /^Agents/ }).click();
     const restored = await settledMosaicCards(page, "after reload");
     assert.equal(restored.length, before.length, "Firefox reload restores every Mosaic card");
     await assertNaturalMessageFooterInsets(console, "Firefox reloaded Mosaic");

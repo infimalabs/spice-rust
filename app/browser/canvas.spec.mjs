@@ -165,7 +165,7 @@ async function assertDistinctWaitCallSites(page) {
 async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
   await chooseCanvasView(page, "Lanes");
   const team = page.locator('[data-pane="agent-console"]');
-  await team.getByRole("tab", { name: /^Lanes/ }).click();
+  await team.getByRole("tab", { name: /^Agents/ }).click();
   const lane = page.locator(`.team-agent[data-agent-lane="${seeded.lane}"]`);
   const activity = team.locator(`.mosaic-message-card[data-agent-lane="${seeded.lane}"]`);
   const quoteLane = page.locator(`.team-agent[data-agent-lane="${seeded.quoteLane}"]`);
@@ -607,7 +607,7 @@ try {
           state: "Firefox empty Lanes viewport",
         });
         const team = await seatAgentTeam(lightPage, fixture, worktrees);
-        await team.console.getByRole("tab", { name: /^Lanes/ }).click();
+        await team.console.getByRole("tab", { name: /^Agents/ }).click();
         const surface = team.console.locator(
           `.team-surface[data-lineage-id="${team.host.lineage_id}"]`,
         );
@@ -752,7 +752,7 @@ try {
         quoteProse: team.quoteProse,
         primaryHeadings: team.primaryHeadings,
       });
-      await team.console.getByRole("tab", { name: /^Lanes/ }).first().click();
+      await team.console.getByRole("tab", { name: /^Agents/ }).first().click();
       const primary = team.console.locator(
         `.team-surface[data-lineage-id="${team.host.lineage_id}"]`,
       );
@@ -914,7 +914,7 @@ try {
         );
         await assertTeamArrangement(lightPage, fixture, worktrees, artifacts);
         const renewedTeam = lightPage.locator('[data-pane="agent-console"]');
-        await renewedTeam.getByRole("tab", { name: /^Lanes/ }).first().click();
+        await renewedTeam.getByRole("tab", { name: /^Agents/ }).first().click();
         await assertAgentRenewalRequest(
           lightPage,
           renewedTeam.locator(".team-surface").first(),

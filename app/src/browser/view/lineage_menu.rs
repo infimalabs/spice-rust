@@ -82,7 +82,7 @@ fn render_lanes(
         return html! {
             <div class="canvas-menu-page" data-menu-page="lanes">
                 {render_global_settings(Some(runtime), sender)}
-                <p>{"Waiting for lane state…"}</p>
+                <p>{"Waiting for agent state…"}</p>
                 {render_version_footer(cursor)}
             </div>
         };
@@ -379,7 +379,7 @@ fn render_solo_members_drop(
     html! {
         <section class="canvas-menu-section canvas-unteamed" {ondragover} {ondrop}>
             <header>
-                <h2>{"Lanes Without Team"}</h2>
+                <h2>{"Agents Without Team"}</h2>
                 <span>{"drop here to remove from team"}</span>
             </header>
             <div class="canvas-team-members" data-team-drop="unteamed">

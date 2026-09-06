@@ -263,15 +263,15 @@ export async function assertCursorRelocation(page, artifacts, engine) {
       const navigation = page.locator(".canvas-navigation");
       assert.deepEqual(
         await navigation.locator(".pill-label").allTextContents(),
-        ["Team", "Metrics", "Tasks", "Lanes", "History"],
+        ["History", "Metrics", "Team", "Tasks", "Agents"],
         `${label} exposes one ordered navigation rail`,
       );
       assert.deepEqual(
         await navigation.locator(".axis-button").evaluateAll(
           (buttons) => buttons.map((button) => button.dataset.navigationTier),
         ),
-        ["primary", "primary", "primary", "primary", "secondary"],
-        `${label} keeps History outside the mirrored primary quartet`,
+        ["primary", "primary", "primary", "primary", "primary"],
+        `${label} uses one shared navigation tier`,
       );
       assert.equal(
         await page.locator(".task-pill-strip").count(),
@@ -597,7 +597,7 @@ async function assertPepperDisclosure(page) {
     await waitForDisclosure(page, true, "the pepper disclosure exposes Canvas destinations");
     const destinations = navigation.getByRole("button");
     await destinations.first().focus();
-    for (const [index, label] of ["Team", "Metrics", "Tasks", "Lanes", "History"].entries()) {
+    for (const [index, label] of ["History", "Metrics", "Team", "Tasks", "Agents"].entries()) {
       assert.match(
         (await page.locator(":focus").innerText()).trim(),
         new RegExp(`^${label}`),
@@ -735,9 +735,9 @@ export async function assertTeamMenu(page, fixture, artifacts) {
   await openSpiceMenu(page);
   assert.equal(
     await page.getByRole("navigation", { name: "Canvas views" })
-      .getByRole("button", { name: /^Lanes/ }).count(),
+      .getByRole("button", { name: /^Agents/ }).count(),
     1,
-    "the analytics pages keep the same route back to live Lanes",
+    "the analytics pages keep the same route back to live Agents",
   );
   await assertAxisMenu(page, "Topology", /resident teams, seats, capabilities/i);
   await assertAxisMenu(page, "Chronology", /facts, command outcomes, and their causal thread/i);
@@ -843,7 +843,7 @@ export async function assertTeamMenu(page, fixture, artifacts) {
   );
   assert.match(
     await panel.locator(".canvas-unteamed").innerText(),
-    /Lanes Without Team[\s\S]*No unteamed agents/i,
+    /Agents Without Team[\s\S]*No unteamed agents/i,
   );
 
   const initial = await reply(fixture, ["lane"]);

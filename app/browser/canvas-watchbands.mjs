@@ -59,7 +59,7 @@ export async function assertPerTeamWatchbands(
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Lanes");
   const console = page.locator('[data-pane="agent-console"]');
-  await console.getByRole("tab", { name: /^Lanes/ }).first().click();
+  await console.getByRole("tab", { name: /^Agents/ }).first().click();
   await waitForElement(page, "second team renders after reload", CONNECT_MS,
     console.locator(".team-surface").nth(1));
 
@@ -78,20 +78,23 @@ export async function assertPerTeamWatchbands(
   ]) {
     assert.deepEqual(
       await surface.getByRole("tab").locator(".team-mode-label").allTextContents(),
-      ["Team", "Metrics", "Tasks", "Lanes"],
+      ["History", "Metrics", "Team", "Tasks", "Agents"],
       `${label} team exposes the mirrored navigation order`,
     );
   }
   const primaryTabs = primarySurface.getByRole("tab");
   await primaryTabs.first().focus();
-  for (const [index, label] of ["Team", "Metrics", "Tasks", "Lanes"].entries()) {
+  for (const [index, label] of ["History", "Metrics", "Team", "Tasks", "Agents"].entries()) {
     assert.match(
       (await page.locator(":focus").innerText()).trim(),
       new RegExp(`^${label}`),
       `team keyboard traversal follows visible order at ${label}`,
     );
-    if (index < 3) await page.keyboard.press("Tab");
+    if (index < 4) await page.keyboard.press("Tab");
   }
+  await primaryTabs.first().click();
+  await page.getByRole("heading", { name: "History", exact: true }).waitFor();
+  await chooseCanvasView(page, "Lanes");
   const selectedMode = (surface) => surface.locator(".team-pane").getAttribute("data-team-mode");
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
@@ -117,13 +120,13 @@ export async function assertPerTeamWatchbands(
     "a subsequent primary switch preserves the secondary selection",
   );
   await assertLineageResponsiveLayout(page, console);
-  await secondarySurface.getByRole("tab", { name: /^Lanes/ }).click();
+  await secondarySurface.getByRole("tab", { name: /^Agents/ }).click();
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
     ["Tasks", "Lanes"],
     "a subsequent secondary switch preserves the primary selection",
   );
-  await primarySurface.getByRole("tab", { name: /^Lanes/ }).click();
+  await primarySurface.getByRole("tab", { name: /^Agents/ }).click();
   const noCardDestination = await primaryDestination(secondarySurface, secondary.lane);
   assert.equal(
     noCardDestination.rendered.length,
@@ -185,7 +188,7 @@ export async function assertPerTeamWatchbands(
     null,
     "ordinary emptiness is not announced as an unavailable snapshot",
   );
-  await secondarySurface.getByRole("tab", { name: /^Lanes/ }).click();
+  await secondarySurface.getByRole("tab", { name: /^Agents/ }).click();
   assert.equal(await console.locator(".team-surface").count(), 2);
   assert.equal(await console.locator(".team-speech").count(), 2);
   assert.equal(await console.locator(".team-lifetime").count(), 2);
@@ -394,7 +397,7 @@ export async function assertPerTeamWatchbands(
   });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
-  await primarySurface.getByRole("tab", { name: /^Lanes/ }).click();
+  await primarySurface.getByRole("tab", { name: /^Agents/ }).click();
   assert.equal(
     await secondarySurface.getByRole("button", { name: "Drive", exact: true }).count(),
     1,
@@ -414,7 +417,7 @@ export async function assertPerTeamWatchbands(
   assert.equal(await primarySurface.locator(".team-speech span").innerText(), "quiet");
   assert.equal(await secondarySurface.locator(".team-speech span").innerText(), "narrate");
   await console.getByRole("tab", { name: /^Team/ }).first().click();
-  await console.getByRole("tab", { name: /^Lanes/ }).first().click();
+  await console.getByRole("tab", { name: /^Agents/ }).first().click();
   assert.equal(await primarySpeech.inputValue(), "0", "Quiet survives a team redraw");
   assert.equal(await secondarySpeech.inputValue(), "2", "Narrate survives a team redraw");
   assert.equal(await primarySurface.locator(".team-speech span").innerText(), "quiet");
@@ -658,7 +661,7 @@ export async function assertPerTeamWatchbands(
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Lanes");
   const reconnected = page.locator('[data-pane="agent-console"]');
-  await reconnected.getByRole("tab", { name: /^Lanes/ }).first().click();
+  await reconnected.getByRole("tab", { name: /^Agents/ }).first().click();
   const restoredPrimary = reconnected.locator(
     `.team-surface[data-lineage-id="${primary.lineage_id}"]`,
   );
@@ -668,7 +671,7 @@ export async function assertPerTeamWatchbands(
   await restoredPrimary.locator('.team-speech input[type="range"]').fill("2");
   await restoredSecondary.locator('.team-speech input[type="range"]').fill("2");
   await reconnected.getByRole("tab", { name: /^Team/ }).first().click();
-  await reconnected.getByRole("tab", { name: /^Lanes/ }).first().click();
+  await reconnected.getByRole("tab", { name: /^Agents/ }).first().click();
   await page.evaluate(() => new Promise((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(resolve))));
   assert.deepEqual(
@@ -701,7 +704,7 @@ export async function captureReferenceViewport(page, artifacts) {
     path: join(artifacts, "canvas-reference-agent-details-dark.png"),
     fullPage: false,
   });
-  await team.getByRole("tab", { name: /^Lanes/ }).click();
+  await team.getByRole("tab", { name: /^Agents/ }).click();
   await team.locator(".mosaic-message-card").nth(3).waitFor({ timeout: 10_000 });
   assert.equal(
     await page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches),

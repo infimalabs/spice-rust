@@ -6,7 +6,14 @@ pub(super) mod chrome;
 mod lineage_menu;
 
 #[derive(Clone)]
+pub(super) struct CanvasNavigation {
+    pub(super) axis: UseStateHandle<Axis>,
+    pub(super) mosaic: UseStateHandle<bool>,
+}
+
+#[derive(Clone)]
 pub(super) struct AgentControls {
+    pub(super) navigation: CanvasNavigation,
     pub(super) seat_name: UseStateHandle<String>,
     pub(super) seat_worktree: UseStateHandle<String>,
     pub(super) seat_vendor: UseStateHandle<String>,
@@ -169,7 +176,11 @@ fn render_analytics(render: &CanvasRender<'_>, active_axis: Axis) -> Html {
             </div>
             <section class="metrics" aria-label="Current resident metrics">
                 {metric("Tasks", task_count.to_string(), format!("{active_tasks} active"))}
-                {metric("Lanes", lane_count.to_string(), resident_state(render.surface))}
+                {metric(
+                    CanvasDestination::Agents.label(),
+                    lane_count.to_string(),
+                    resident_state(render.surface),
+                )}
                 {metric(
                     "Consent",
                     pending_count.to_string(),
@@ -179,7 +190,7 @@ fn render_analytics(render: &CanvasRender<'_>, active_axis: Axis) -> Html {
             </section>
             <div class="pane-strip" aria-label="Panes on this axis">
                 {for active_axis.panes().map(|pane| html! {
-                    <span class="pane-chip">{title(pane.as_str())}</span>
+                    <span class="pane-chip">{pane.label()}</span>
                 })}
             </div>
             {render_axis(active_axis, render)}
@@ -188,12 +199,7 @@ fn render_analytics(render: &CanvasRender<'_>, active_axis: Axis) -> Html {
 }
 
 pub(super) const fn axis_label(axis: Axis) -> &'static str {
-    match axis {
-        Axis::Magnitude => "Metrics",
-        Axis::Flow => "Tasks",
-        Axis::Topology => "Team",
-        Axis::Chronology => "History",
-    }
+    CanvasDestination::for_axis(axis).label()
 }
 
 pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &AgentControls) -> Html {
@@ -386,21 +392,21 @@ pub(super) fn render_topology(surface: &SurfaceData) -> Html {
         return empty("No admitted topology is available.");
     };
     let Some(lanes) = runtime.lanes() else {
-        return empty("No lane snapshot is available.");
+        return empty("No agent snapshot is available.");
     };
     html! {
         <>
             <section class="section">
                 <div class="section-heading">
                     <h2>{"Resident topology"}</h2>
-                    <span class="section-count">{format!("{} lanes", lanes.lanes.len())}</span>
+                    <span class="section-count">{format!("{} agents", lanes.lanes.len())}</span>
                 </div>
                 if lanes.lanes.is_empty() {
-                    {empty("No lanes are seated.")}
+                    {empty("No agents are seated.")}
                 } else {
                     <div class="table-wrap"><table>
                         <thead><tr>
-                            <th>{"Lane"}</th><th>{"Standing"}</th><th>{"Occupant"}</th>
+                            <th>{"Agent"}</th><th>{"Standing"}</th><th>{"Occupant"}</th>
                             <th>{"Worktree"}</th><th>{"Vendor"}</th>
                         </tr></thead>
                         <tbody>{for lanes.lanes.iter().flat_map(|lineage| {
@@ -487,7 +493,7 @@ fn render_consent_pending(
                     <div class="table-wrap"><table>
                     <thead><tr>
                         <th>{"Operation"}</th><th>{"Rule"}</th>
-                        <th>{"Lane"}</th><th>{"Decision"}</th>
+                        <th>{"Agent"}</th><th>{"Decision"}</th>
                     </tr></thead>
                     <tbody>{for pending.iter().map(|request| {
                         let allow = ClientAction::Consent {

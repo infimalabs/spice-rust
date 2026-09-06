@@ -285,7 +285,7 @@ async function claimAutomatically({
   );
   assert.equal(claimAge.clock, "deadline", "claim age remains an elapsed clock");
   assert.equal(claimAge.expiry, null, "claim age cannot become an expiry countdown");
-  await team.getByRole("tab", { name: /^Lanes/ }).click();
+  await team.getByRole("tab", { name: /^Agents/ }).click();
   const promotedExpiry = await waitForPromotedClaimExpiry(
     fixture, lane, handle, replyAsLane, claimMs * 4,
   );
@@ -340,7 +340,7 @@ async function claimAutomatically({
       heldBadgeCount,
       "renewal preserves the Tasks badge count",
     );
-    await team.getByRole("tab", { name: /^Lanes/ }).click();
+    await team.getByRole("tab", { name: /^Agents/ }).click();
   }
   assertComposerProvenance(
     await composerProvenance(), provenance,
@@ -424,7 +424,7 @@ async function lapseClaimNaturally({
   // Steer prevents the lapsed task from being automatically allocated again.
   // The resident is then stopped across the exact durable deadline, which also
   // proves no browser clock or task-free command manufactured the transition.
-  await team.getByRole("tab", { name: /^Lanes/ }).click();
+  await team.getByRole("tab", { name: /^Agents/ }).click();
   await lifetime.fill("0");
   await team.getByRole("button", { name: "Steer", exact: true }).waitFor();
   await waitForTaskPolicy(fixture, lane, "steer", reply, transitionMs);
@@ -450,7 +450,7 @@ async function lapseClaimNaturally({
     stoppedExpiry + transitionMs,
     () => observeCountdownThroughExpiry(taskAge, stoppedExpiry, transitionMs),
   );
-  await team.getByRole("tab", { name: /^Lanes/ }).first().click();
+  await team.getByRole("tab", { name: /^Agents/ }).first().click();
   const lapsedBadgeCount = await waitForBadgeBelow(
     badge, preExpiryBadgeCount, transitionMs * 4,
   );
@@ -827,20 +827,25 @@ async function captureTicker(ticker) {
 }
 
 async function assertTickerAcrossModes(team, ticker, expected, lane, message) {
-  for (const mode of ["Tasks", "Metrics", "Team", "Lanes"]) {
-    await team.getByRole("tab", { name: new RegExp(`^${mode}`) }).click();
+  for (const [label, mode] of [
+    ["Tasks", "Tasks"],
+    ["Metrics", "Metrics"],
+    ["Team", "Team"],
+    ["Agents", "Lanes"],
+  ]) {
+    await team.getByRole("tab", { name: new RegExp(`^${label}`) }).click();
     const actual = await captureTicker(ticker);
     assert.equal(
       actual.mode,
       mode,
-      `${message}: ${mode} is the active mode`,
+      `${message}: ${label} is the active mode`,
     );
     assertTickerPresentation(
       actual,
       expected,
       lane,
       "prose",
-      `${message}: ${mode}`,
+      `${message}: ${label}`,
     );
   }
 }
@@ -848,7 +853,7 @@ async function assertTickerAcrossModes(team, ticker, expected, lane, message) {
 async function assertModeLabelEllipsis(team, message, screenshot) {
   const label = team.locator(".team-mode-label").first();
   const original = await label.textContent();
-  const long = "Lanes mode label that stays inside its allotted tab without moving controls";
+  const long = "Agents mode label that stays inside its allotted tab without moving controls";
   const before = await label.evaluate(modeLabelGeometry);
   assert.equal(before.title, original, `${message}: short label remains available as a title`);
   try {

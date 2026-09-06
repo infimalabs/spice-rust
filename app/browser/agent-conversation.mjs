@@ -368,7 +368,7 @@ export async function seatLeaseAgent(page, fixture, worktrees) {
     ]);
     await reply(fixture, ["lane", "drain", lane.lane]);
   }
-  await console.getByRole("tab", { name: /^Lanes/ }).click();
+  await console.getByRole("tab", { name: /^Agents/ }).click();
   await console.locator('.team-lifetime input[type="range"]').fill("1");
   await console.getByRole("button", { name: "Drive", exact: true }).waitFor();
   for (const worktree of [expiryWorktree, releaseWorktree]) {
@@ -376,7 +376,7 @@ export async function seatLeaseAgent(page, fixture, worktrees) {
   }
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Lanes");
-  await console.getByRole("tab", { name: /^Lanes/ }).click();
+  await console.getByRole("tab", { name: /^Agents/ }).click();
   for (const lane of seated) {
     await console.locator(`.team-agent[data-agent-lane="${lane.lane}"]`).waitFor();
   }
@@ -474,7 +474,7 @@ async function assertExternalOperatorReplay(page, fixture, console, lane, worktr
 
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Lanes");
-  await console.getByRole("tab", { name: /^Lanes/ }).click();
+  await console.getByRole("tab", { name: /^Agents/ }).click();
   await assertOperatorProseHidden(console, replyText, "pre-acknowledgement replay");
 
   await writeFile(join(worktree, ".spice-ack-trigger"), `${sent.body.key}\n`);
@@ -519,7 +519,7 @@ async function assertExternalOperatorReplay(page, fixture, console, lane, worktr
   assert.equal(await console.locator('[data-card-kind="operator-message"]').count(), 0);
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Lanes");
-  await console.getByRole("tab", { name: /^Lanes/ }).click();
+  await console.getByRole("tab", { name: /^Agents/ }).click();
   await acknowledgedCard.waitFor({ timeout: CONNECT_MS });
   assert.equal(await acknowledgedCard.count(), 1, "bootstrap restores one acknowledged assistant card");
   assert.equal(
@@ -558,7 +558,7 @@ export async function assertAgentConversation(
     teamWorktrees,
   } = team;
 
-  await console.getByRole("tab", { name: /^Lanes/ }).click();
+  await console.getByRole("tab", { name: /^Agents/ }).click();
   await console.locator(".team-agent").nth(3).waitFor();
   assert.equal(await console.locator(".team-surface").count(), 1, "one lineage renders one surface");
   assert.equal(
@@ -944,7 +944,7 @@ export async function assertAgentConversation(
     assert.equal(await console.locator(".team-detail-card").count(), 4, `${mode} reaches all agents`);
   }
   await console.getByText(teamWorktrees[0], { exact: true }).waitFor();
-  await console.getByRole("tab", { name: /^Lanes/ }).click();
+  await console.getByRole("tab", { name: /^Agents/ }).click();
   await assertFourAgentDensity(console);
   await assertAgentWorkspaceGeometry(page, "populated desktop Lanes page");
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });

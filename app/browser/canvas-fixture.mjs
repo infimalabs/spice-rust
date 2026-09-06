@@ -660,6 +660,7 @@ export async function chooseCanvasView(page, name) {
     Magnitude: "Metrics",
     Chronology: "History",
     Topology: "Team",
+    Lanes: "Agents",
   }[name] ?? name;
   const navigation = page.getByRole("navigation", { name: "Canvas views" });
   if (!(await navigation.isVisible())) {
@@ -675,7 +676,7 @@ export async function chooseCanvasView(page, name) {
   }
   // The destination button leaves the DOM when selection closes the disclosure,
   // so observe the durable destination rather than an ephemeral selected pill.
-  const applied = visibleName === "Lanes"
+  const applied = visibleName === "Agents"
     ? page.locator('.mosaic-workspace[data-active="true"]')
     : page.locator(".page-heading h1", { hasText: visibleName });
   await applied.waitFor({ timeout: TRANSITION_MS });
