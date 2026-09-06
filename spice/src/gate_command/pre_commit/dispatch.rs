@@ -6,11 +6,12 @@ pub(super) fn dispatch(
     progress: &mut File,
     started: Instant,
     claim: gate::ClaimCapture,
+    profile: &mut profile::Profile,
 ) -> Result<Report, WorkerFailure> {
     write_phase(progress, &WorkerPhase::Policy).map_err(worker_io_failure)?;
     let dispatch =
         configured::Dispatch::capture_with_claim(claim.clone()).map_err(configured_failure)?;
-    dispatch_captured(Some(progress), started, claim, dispatch)
+    dispatch_captured(Some(progress), started, claim, dispatch, None, profile)
 }
 
 pub(super) fn dispatch_captured(
@@ -18,6 +19,8 @@ pub(super) fn dispatch_captured(
     started: Instant,
     claim: gate::ClaimCapture,
     dispatch: configured::Dispatch,
+    audit: Option<&mut ApplianceGenerationAudit>,
+    profile: &mut profile::Profile,
 ) -> Result<Report, WorkerFailure> {
     let source = dispatch.source().clone();
     let (packaged, admission, mut dispatch) = if dispatch.admission_enabled() {
@@ -25,7 +28,8 @@ pub(super) fn dispatch_captured(
             .require_admission_approved()
             .map_err(configured_failure)?;
         let (handoff, anchor) = dispatch.into_admission().map_err(configured_failure)?;
-        let (admission, staged) = admission::run(claim, anchor)?.into_parts();
+        let (admission, staged) =
+            admission::run(claim, handoff.repository(), anchor, audit, profile)?.into_parts();
         if admission.source() != &source {
             return Err(WorkerFailure {
                 reason: "gate::pre-commit-staged-source-moved".to_owned(),

@@ -325,7 +325,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["gate", "pre-commit"],
-        "gate pre-commit",
+        "gate pre-commit [--profile-output PATH]",
         Local,
         None,
         [],

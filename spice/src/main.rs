@@ -6,8 +6,8 @@ use std::{
     fs,
     io::{self, Write},
     process::ExitStatus,
-    sync::mpsc,
-    time::Duration,
+    sync::{OnceLock, mpsc},
+    time::{Duration, Instant},
 };
 
 use listen::{RetroSelector, StreamOutcome, SurfaceError, Watch};
@@ -142,6 +142,7 @@ fn state_failure(error: &spice::repository::StateError) -> StateFailure {
 }
 
 fn main() {
+    let _ = PROCESS_STARTED.set(Instant::now());
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(code) = resident::supervisor::entry(std::env::args_os()) {
         terminate_code(code);
@@ -242,6 +243,14 @@ fn main() {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+static PROCESS_STARTED: OnceLock<Instant> = OnceLock::new();
+
+#[cfg(not(target_arch = "wasm32"))]
+fn process_started() -> Instant {
+    *PROCESS_STARTED.get_or_init(Instant::now)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 mod main_native_runtime;
 #[cfg(not(target_arch = "wasm32"))]
 use main_native_runtime::{
@@ -267,7 +276,7 @@ fn dispatch_native_gate_queries(contract: &cli::Contract, leaf: &clap::ArgMatche
         ["gate", "camp"] => deliver(&gate_command::camp(), form),
         ["gate", "commit-msg"] => deliver_commit_message(gate_command::commit_message(leaf), form),
         ["gate", "kill"] => deliver(&gate_command::kill(), form),
-        ["gate", "pre-commit"] => deliver_commit_gate(&gate_command::pre_commit(), form),
+        ["gate", "pre-commit"] => deliver_commit_gate(&gate_command::pre_commit(leaf), form),
         ["gate", "selection"] => deliver_commit_gate(&gate_command::selection(), form),
         ["install"] => match install_command::run(leaf) {
             install_command::Answer::Plan(outcome) => deliver(&outcome, form),

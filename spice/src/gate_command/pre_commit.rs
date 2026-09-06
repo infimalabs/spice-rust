@@ -26,6 +26,7 @@ mod admission;
 mod configured;
 mod dispatch;
 mod parent;
+mod profile;
 mod terminal;
 
 use dispatch::{dispatch, dispatch_captured};
@@ -334,22 +335,21 @@ impl Drop for WorkerFiles {
     }
 }
 
+pub(super) fn run(profile_output: Option<PathBuf>) -> Outcome<Report> {
+    let mut profile = profile::Profile::new(profile_output);
+    let outcome = run_profiled(&mut profile);
+    profile.publish();
+    outcome
+}
+
 #[expect(
     clippy::disallowed_methods,
-    reason = "the pre-commit binary rim must reject a recursion marker before launching its worker"
+    reason = "the pre-commit binary rim acquires its explicit hook environment"
 )]
-pub(super) fn run() -> Outcome<Report> {
+fn run_profiled(profile: &mut profile::Profile) -> Outcome<Report> {
     if let Some(source) = env::var_os(configured::SOURCE_VARIABLE) {
         return configured::recursion_refusal(&source);
     }
-    let generation = if env::var_os(spice::install::INSTALLED_PRE_COMMIT_ENVIRONMENT).is_some() {
-        match capture_appliance_generation_fence() {
-            Ok(generation) => generation,
-            Err(failure) => return worker_failure(failure),
-        }
-    } else {
-        ApplianceGenerationFence::unbound()
-    };
     let current = match env::current_dir() {
         Ok(current) => current,
         Err(error) => return fault("gate::pre-commit-working-directory-unavailable", error),
@@ -358,10 +358,21 @@ pub(super) fn run() -> Outcome<Report> {
         Ok(repository) => repository,
         Err(error) => return fault("gate::pre-commit-repository-unresolved", error),
     };
-    let audit = match start_appliance_generation_audit(&repository, &generation) {
+    let capture_started = Instant::now();
+    let generation = if env::var_os(spice::install::INSTALLED_PRE_COMMIT_ENVIRONMENT).is_some() {
+        match capture_appliance_generation_fence(&repository) {
+            Ok(generation) => generation,
+            Err(failure) => return worker_failure(failure),
+        }
+    } else {
+        ApplianceGenerationFence::unbound()
+    };
+    profile.appliance_capture(capture_started.elapsed());
+    let mut audit = match start_appliance_generation_audit(&repository, &generation) {
         Ok(audit) => audit,
         Err(failure) => return worker_failure(failure),
     };
+    let core_started = Instant::now();
     let claim = match capture_gate_claim(&repository) {
         Ok(claim) => claim,
         Err(failure) => return worker_failure(failure),
@@ -370,23 +381,34 @@ pub(super) fn run() -> Outcome<Report> {
         Ok(dispatch) => dispatch,
         Err(outcome) => return outcome,
     };
-    let prepared = configured::Dispatch::capture_with_claim(claim.clone());
-    if let Err(failure) = finish_appliance_generation_audit(audit) {
-        return worker_failure(failure);
-    }
+    let prepared = configured::Dispatch::capture_at_with_claim(repository.clone(), claim.clone());
+    profile.repository_core(core_started.elapsed());
     let prepared = match prepared {
         Ok(prepared) => prepared,
-        Err(error) => return worker_failure(configured_failure(error)),
+        Err(error) => {
+            if let Err(failure) = finish_appliance_generation_audit(&mut audit, profile) {
+                return worker_failure(failure);
+            }
+            return worker_failure(configured_failure(error));
+        }
     };
     if prepared.admission_enabled() && !prepared.has_configured() {
-        return run_admission_inline(claim, prepared);
+        return run_admission_inline(claim, prepared, &mut audit, profile);
+    }
+    if let Err(failure) = finish_appliance_generation_audit(&mut audit, profile) {
+        return worker_failure(failure);
     }
     run_with(|files| supervise(files, &generation, &claim))
 }
 
-fn run_admission_inline(claim: ClaimCapture, dispatch: configured::Dispatch) -> Outcome<Report> {
+fn run_admission_inline(
+    claim: ClaimCapture,
+    dispatch: configured::Dispatch,
+    audit: &mut ApplianceGenerationAudit,
+    profile: &mut profile::Profile,
+) -> Outcome<Report> {
     let started = Instant::now();
-    match dispatch_captured(None, started, claim, dispatch) {
+    match dispatch_captured(None, started, claim, dispatch, Some(audit), profile) {
         Ok(report) if report.admits() => Outcome::Reply(Reply {
             position: ReplyPosition::Direct {},
             body: report,
@@ -607,6 +629,7 @@ fn worker_run(
     let _containment = gate::measure::inherit_process_group().map_err(io::Error::other)?;
     let mut progress = OpenOptions::new().append(true).open(progress_path)?;
     let started = Instant::now();
+    let mut profile = profile::Profile::disabled();
     let result = ApplianceGenerationFence::decode(generation)
         .map_err(|detail| WorkerFailure {
             reason: "gate::pre-commit-generation-fence-invalid".to_owned(),
@@ -621,7 +644,7 @@ fn worker_run(
                 fault: true,
             })?;
             write_phase(&mut progress, &WorkerPhase::Capture).map_err(worker_io_failure)?;
-            dispatch(&mut progress, started, claim)
+            dispatch(&mut progress, started, claim, &mut profile)
         });
     match result {
         Ok(report) => {
@@ -633,19 +656,11 @@ fn worker_run(
     }
 }
 
-fn capture_appliance_generation_fence() -> Result<ApplianceGenerationFence, WorkerFailure> {
-    let current = env::current_dir().map_err(|error| WorkerFailure {
-        reason: "gate::pre-commit-working-directory-unavailable".to_owned(),
-        detail: error.to_string(),
-        fault: true,
-    })?;
-    let repository = Repository::discover(&current).map_err(|error| WorkerFailure {
-        reason: "gate::pre-commit-repository-unresolved".to_owned(),
-        detail: error.to_string(),
-        fault: true,
-    })?;
+fn capture_appliance_generation_fence(
+    repository: &Repository,
+) -> Result<ApplianceGenerationFence, WorkerFailure> {
     let generation =
-        spice::install::capture_generation(&repository).map_err(|error| WorkerFailure {
+        spice::install::capture_generation(repository).map_err(|error| WorkerFailure {
             reason: "gate::pre-commit-appliance-audit-failed".to_owned(),
             detail: error.to_string(),
             fault: true,
@@ -710,25 +725,32 @@ fn start_appliance_generation_audit(
     let generation = generation.clone();
     Ok(ApplianceGenerationAudit {
         handle: Some(thread::spawn(move || {
-            verify_appliance_generation_fence_at(&repository, &generation)
+            let started = Instant::now();
+            (
+                verify_appliance_generation_fence_at(&repository, &generation),
+                started.elapsed(),
+            )
         })),
     })
 }
 
 fn finish_appliance_generation_audit(
-    mut audit: ApplianceGenerationAudit,
+    audit: &mut ApplianceGenerationAudit,
+    profile: &mut profile::Profile,
 ) -> Result<(), WorkerFailure> {
     audit.handle.take().map_or(Ok(()), |audit| {
-        audit.join().map_err(|_| WorkerFailure {
+        let (result, elapsed) = audit.join().map_err(|_| WorkerFailure {
             reason: "gate::pre-commit-appliance-audit-failed".to_owned(),
             detail: "appliance audit thread panicked".to_owned(),
             fault: true,
-        })?
+        })?;
+        profile.installed_appliance_exact_byte_audit(elapsed);
+        result
     })
 }
 
 struct ApplianceGenerationAudit {
-    handle: Option<JoinHandle<Result<(), WorkerFailure>>>,
+    handle: Option<JoinHandle<(Result<(), WorkerFailure>, Duration)>>,
 }
 
 impl Drop for ApplianceGenerationAudit {
