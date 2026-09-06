@@ -73,15 +73,9 @@ pub(super) fn run(
             }
         }
     };
-    let manifest = lookup_manifest(&store, &lookup)?;
+    let resolution = lookup_evidence(&store, &lookup)?;
+    let (manifest, resolved) = resolution.into_parts();
     let preparation = lookup.restore(&manifest).map_err(prove_failure)?;
-    let resolved = match store.lookup_batch_exact(manifest.actions()) {
-        Ok(resolved) => resolved,
-        Err(error) => {
-            let _ = preparation.reject_state();
-            return Err(fingerprint_lookup_failure(&error));
-        }
-    };
     let missing = manifest
         .actions()
         .iter()
@@ -159,12 +153,12 @@ pub(super) fn run(
     })
 }
 
-fn lookup_manifest(
+fn lookup_evidence(
     store: &EvidenceStore,
     lookup: &super::super::prove::AdmissionLookup,
-) -> Result<gate::ActionFingerprintManifest, WorkerFailure> {
-    match store.lookup_action_fingerprints(lookup.authority()) {
-        Ok(Some(manifest)) => Ok(manifest),
+) -> Result<gate::ActionFingerprintResolution, WorkerFailure> {
+    match store.lookup_fingerprint_receipts(lookup.authority()) {
+        Ok(Some(resolution)) => Ok(resolution),
         Ok(None) => {
             let authority = lookup.authority().key().map_err(|error| {
                 let _ = lookup.reject_state();

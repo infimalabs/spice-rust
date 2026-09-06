@@ -10,6 +10,7 @@ use std::time::Instant;
 use serde::Serialize;
 use spice::install::{apply, installed_binary, installed_git_hooks, plan};
 use spice::repository::Repository;
+use wire::{Digest, Domain};
 
 const SAMPLES: usize = 30;
 static BENCHMARK: Mutex<()> = Mutex::new(());
@@ -18,10 +19,12 @@ static BENCHMARK: Mutex<()> = Mutex::new(());
 #[serde(deny_unknown_fields)]
 struct BenchmarkReport {
     version: u64,
-    durations_micros: Vec<u64>,
-    median_micros: u64,
-    p95_micros: u64,
-    maximum_micros: u64,
+    action_count: u64,
+    cold_micros: u64,
+    warm_durations_micros: Vec<u64>,
+    warm_median_micros: u64,
+    warm_p95_micros: u64,
+    warm_maximum_micros: u64,
     budget_met: bool,
     git_version: String,
     filesystem_type: String,
@@ -39,7 +42,9 @@ fn gate_warm_admission_benchmark() {
     let fixture = Fixture::new();
     fixture.seed_proofs();
 
+    let cold_started = Instant::now();
     let warmed = fixture.invoke_hook();
+    let cold_micros = u64::try_from(cold_started.elapsed().as_micros()).unwrap_or(u64::MAX);
     assert!(
         warmed.status.success(),
         "warmup failed: {}",
@@ -61,16 +66,22 @@ fn gate_warm_admission_benchmark() {
 
     let mut ordered = durations.clone();
     ordered.sort_unstable();
-    let (evidence_files, evidence_bytes) = fixture.evidence_read_footprint();
+    let (action_count, evidence_files, evidence_bytes) = fixture.evidence_read_footprint();
+    assert!(
+        action_count < u64::try_from(gate::ActionFingerprintManifest::MAX_ACTIONS).unwrap(),
+        "canonical action inventory must retain manifest-count headroom",
+    );
     let median = midpoint(ordered[14], ordered[15]);
     let p95 = ordered[28];
     let maximum = *ordered.last().expect("benchmark has measured samples");
     let report = BenchmarkReport {
-        version: 1,
-        durations_micros: durations,
-        median_micros: median,
-        p95_micros: p95,
-        maximum_micros: maximum,
+        version: 2,
+        action_count,
+        cold_micros,
+        warm_durations_micros: durations,
+        warm_median_micros: median,
+        warm_p95_micros: p95,
+        warm_maximum_micros: maximum,
         budget_met: median <= 75_000 && p95 <= 150_000 && maximum <= 250_000,
         git_version: command_text("/usr/bin/git", &["--version"], fixture.linked()),
         filesystem_type: filesystem_type(fixture.linked()),
@@ -280,6 +291,57 @@ fn proof_lookup_is_receipt_only_and_bounded_for_every_evidence_state() {
         action,
         streams(&invalid),
     );
+}
+
+#[test]
+fn fingerprint_count_and_read_budget_refuse_without_command_fallback() {
+    let _serial = BENCHMARK.lock().expect("serialize admission benchmarks");
+    let fixture = Fixture::new();
+    fixture.seed_proofs();
+
+    let original = fixture.install_over_count_fingerprint();
+    for (label, output) in [
+        ("bare prove over-count", fixture.invoke_proof(&[])),
+        (
+            "repeated missing prove over-count",
+            fixture.invoke_proof(&["--missing"]),
+        ),
+        ("pre-commit over-count", fixture.invoke_hook()),
+    ] {
+        assert!(!output.status.success(), "{label}: {}", streams(&output));
+        let rendered = streams(&output);
+        assert!(
+            rendered.contains("fingerprint-action-count-invalid"),
+            "{label}: {rendered}"
+        );
+        assert!(
+            rendered.contains("command=`spice gate prove --missing`"),
+            "{label}: {rendered}"
+        );
+    }
+    fixture.restore_fingerprint_index(&original);
+
+    let original = fixture.install_over_budget_fingerprint();
+    for (label, output) in [
+        ("bare prove over-budget", fixture.invoke_proof(&[])),
+        (
+            "repeated missing prove over-budget",
+            fixture.invoke_proof(&["--missing"]),
+        ),
+        ("pre-commit over-budget", fixture.invoke_hook()),
+    ] {
+        assert!(!output.status.success(), "{label}: {}", streams(&output));
+        let rendered = streams(&output);
+        assert!(
+            rendered.contains("fingerprint-read-budget-exceeded"),
+            "{label}: {rendered}"
+        );
+        assert!(
+            rendered.contains("command=`spice gate prove --missing`"),
+            "{label}: {rendered}"
+        );
+    }
+    fixture.restore_fingerprint_index(&original);
 }
 
 struct Fixture {
@@ -553,23 +615,134 @@ impl Fixture {
         name
     }
 
-    fn evidence_read_footprint(&self) -> (u64, u64) {
+    fn install_over_count_fingerprint(&self) -> Vec<u8> {
+        let index = self.fingerprint_path();
+        let original = fs::read(&index).expect("read original fingerprint index");
+        let manifest = self.fingerprint_manifest_bytes(&index);
+        let text = String::from_utf8(manifest).expect("fingerprint manifest is UTF-8");
+        let marker = "\"actions\":[";
+        let start = text.find(marker).expect("fingerprint manifest has actions") + marker.len();
+        let first_end = text[start..].find('}').expect("fingerprint has one action") + start + 1;
+        let suffix = text
+            .rfind("]}")
+            .expect("actions are the final manifest field");
+        let first = &text[start..first_end];
+        let actions = std::iter::repeat_n(first, gate::ActionFingerprintManifest::MAX_ACTIONS + 1)
+            .collect::<Vec<_>>()
+            .join(",");
+        let replaced = format!("{}{actions}{}", &text[..start], &text[suffix..]);
+        self.install_fingerprint_object(&index, &original, replaced.as_bytes());
+        original
+    }
+
+    fn install_over_budget_fingerprint(&self) -> Vec<u8> {
+        const HEADROOM: usize = 512;
+        let index = self.fingerprint_path();
+        let original = fs::read(&index).expect("read original fingerprint index");
+        let manifest = self.fingerprint_manifest_bytes(&index);
+        let document: serde_json::Value =
+            serde_json::from_slice(&manifest).expect("decode fingerprint manifest for padding");
+        let names = document["actions"]
+            .as_array()
+            .expect("fingerprint actions")
+            .iter()
+            .map(|action| action["action"].as_str().expect("fingerprint action name"))
+            .collect::<Vec<_>>();
+        let read_budget = usize::try_from(gate::ActionFingerprintManifest::MAX_READ_BYTES)
+            .expect("fingerprint read budget fits usize");
+        let available = read_budget
+            .checked_sub(manifest.len() + HEADROOM)
+            .expect("canonical fingerprint is below its read budget");
+        let padding = "x".repeat(available / names.len());
+        let mut replaced = String::from_utf8(manifest).expect("fingerprint manifest is UTF-8");
+        for name in names {
+            replaced = replaced.replacen(
+                &format!("\"action\":\"{name}\""),
+                &format!("\"action\":\"{name}{padding}\""),
+                1,
+            );
+        }
+        assert!(
+            replaced.len() < read_budget,
+            "padded manifest remains individually valid"
+        );
+        self.install_fingerprint_object(&index, &original, replaced.as_bytes());
+        original
+    }
+
+    fn install_fingerprint_object(&self, index: &Path, original: &[u8], manifest: &[u8]) {
+        let old: serde_json::Value =
+            serde_json::from_slice(original).expect("decode fingerprint index");
+        let old_id = old["manifest"]
+            .as_str()
+            .expect("fingerprint index manifest id");
+        let mut identity = b"spice.gate.action-fingerprint-manifest.v1\0".to_vec();
+        identity.extend_from_slice(manifest);
+        let id = Digest::compute(Domain::GateInputManifest, &identity);
+        let objects = self
+            .common
+            .join(".spice-rs/gate-evidence/v1/fingerprint-objects");
+        fs::write(objects.join(id.as_str()), manifest)
+            .expect("write replacement fingerprint object");
+        let index_bytes = String::from_utf8(original.to_vec())
+            .expect("fingerprint index is UTF-8")
+            .replacen(old_id, id.as_str(), 1);
+        fs::write(index, index_bytes).expect("point fingerprint index at replacement object");
+    }
+
+    fn restore_fingerprint_index(&self, original: &[u8]) {
+        fs::write(self.fingerprint_path(), original).expect("restore fingerprint index");
+    }
+
+    fn fingerprint_manifest_bytes(&self, index: &Path) -> Vec<u8> {
+        let document: serde_json::Value =
+            serde_json::from_slice(&fs::read(index).expect("read fingerprint index"))
+                .expect("decode fingerprint index");
+        let manifest = document["manifest"]
+            .as_str()
+            .expect("fingerprint index names a manifest object");
+        fs::read(
+            self.common
+                .join(".spice-rs/gate-evidence/v1/fingerprint-objects")
+                .join(manifest),
+        )
+        .expect("read fingerprint manifest")
+    }
+
+    fn evidence_read_footprint(&self) -> (u64, u64, u64) {
+        let index = self.fingerprint_path();
+        let document = self.fingerprint_document(&index);
         let evidence = self.common.join(".spice-rs/gate-evidence/v1");
-        [
-            evidence.join("actions"),
-            evidence.join("fingerprints"),
-            evidence.join("objects"),
-        ]
-        .into_iter()
-        .flat_map(|directory| {
-            fs::read_dir(directory)
-                .expect("read benchmark evidence directory")
-                .map(|entry| entry.expect("read benchmark evidence entry").path())
-        })
-        .fold((0_u64, 0_u64), |(files, bytes), path| {
-            let metadata = fs::metadata(path).expect("measure benchmark evidence file");
-            (files + 1, bytes.saturating_add(metadata.len()))
-        })
+        let manifest = serde_json::from_slice::<serde_json::Value>(
+            &fs::read(&index).expect("read fingerprint index"),
+        )
+        .expect("decode fingerprint index")["manifest"]
+            .as_str()
+            .expect("fingerprint index names manifest")
+            .to_owned();
+        let mut paths = vec![index, evidence.join("fingerprint-objects").join(manifest)];
+        for action in document["actions"].as_array().expect("fingerprint actions") {
+            let key = action["action_key"]
+                .as_str()
+                .expect("fingerprint action key");
+            let action_index = evidence.join("actions").join(key);
+            let index_document: serde_json::Value =
+                serde_json::from_slice(&fs::read(&action_index).expect("read action index"))
+                    .expect("decode action index");
+            let receipt = index_document["receipt"]
+                .as_str()
+                .expect("action index receipt");
+            paths.push(action_index);
+            paths.push(evidence.join("objects").join(receipt));
+        }
+        let action_count = u64::try_from(document["actions"].as_array().unwrap().len()).unwrap();
+        let (files, bytes) = paths
+            .into_iter()
+            .fold((0_u64, 0_u64), |(files, bytes), path| {
+                let metadata = fs::metadata(path).expect("measure benchmark evidence file");
+                (files + 1, bytes.saturating_add(metadata.len()))
+            });
+        (action_count, files, bytes)
     }
 }
 

@@ -17,6 +17,88 @@ const RECORD_LIMIT: u64 = MAX_RECEIPT_BYTES as u64;
 const METADATA_LIMIT: u64 = 64 * 1024;
 const PUBLICATION_LIMIT: u64 = 4 * 1024 * 1024;
 
+pub(super) struct ReadBudget {
+    limit: u64,
+    files: u64,
+    bytes: u64,
+}
+
+impl ReadBudget {
+    pub(super) const fn new(limit: u64) -> Self {
+        Self {
+            limit,
+            files: 0,
+            bytes: 0,
+        }
+    }
+
+    pub(super) const fn files(&self) -> u64 {
+        self.files
+    }
+
+    pub(super) const fn bytes(&self) -> u64 {
+        self.bytes
+    }
+
+    pub(super) fn read_optional(
+        &mut self,
+        path: &Path,
+        file_limit: u64,
+    ) -> Result<Option<Vec<u8>>, EvidenceStoreError> {
+        let Some(bytes) = read_optional_regular(path, file_limit)? else {
+            return Ok(None);
+        };
+        self.observe(path, bytes.len())?;
+        Ok(Some(bytes))
+    }
+
+    fn read_regular(
+        &mut self,
+        path: &Path,
+        file_limit: u64,
+    ) -> Result<Vec<u8>, EvidenceStoreError> {
+        let bytes = read_regular(path, file_limit)?;
+        self.observe(path, bytes.len())?;
+        Ok(bytes)
+    }
+
+    fn observe(&mut self, path: &Path, bytes: usize) -> Result<(), EvidenceStoreError> {
+        let bytes = u64::try_from(bytes).map_err(|_| {
+            EvidenceStoreError::new(
+                "gate-evidence::fingerprint-read-budget-exceeded",
+                format!(
+                    "evidence file {} has an unrepresentable length",
+                    path.display()
+                ),
+            )
+        })?;
+        let total = self.bytes.checked_add(bytes).ok_or_else(|| {
+            EvidenceStoreError::new(
+                "gate-evidence::fingerprint-read-budget-exceeded",
+                "fingerprint evidence read length overflowed",
+            )
+        })?;
+        if total > self.limit {
+            return Err(EvidenceStoreError::new(
+                "gate-evidence::fingerprint-read-budget-exceeded",
+                format!(
+                    "fingerprint evidence reads reached {total} bytes over the {} byte limit at {}",
+                    self.limit,
+                    path.display(),
+                ),
+            ));
+        }
+        self.bytes = total;
+        self.files = self.files.checked_add(1).ok_or_else(|| {
+            EvidenceStoreError::new(
+                "gate-evidence::fingerprint-read-budget-exceeded",
+                "fingerprint evidence file count overflowed",
+            )
+        })?;
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct Layout {
     pub(super) root: PathBuf,
@@ -186,6 +268,60 @@ pub(super) fn read_index(
     }
     read_receipt(layout, &index.receipt, Some(action))?;
     Ok(Some(index))
+}
+
+pub(super) fn read_index_and_receipt_bounded(
+    layout: &Layout,
+    action: &ActionKey,
+    budget: &mut ReadBudget,
+) -> Result<Option<(ActionIndex, PassReceipt)>, EvidenceStoreError> {
+    let path = layout.index_path(action);
+    let Some(bytes) = budget.read_optional(&path, METADATA_LIMIT)? else {
+        return Ok(None);
+    };
+    let index: ActionIndex = decode_canonical(&bytes, "gate-evidence::index-invalid")?;
+    if index.version != EVIDENCE_STORE_VERSION {
+        return Err(EvidenceStoreError::new(
+            "gate-evidence::index-version-unsupported",
+            format!(
+                "index version {} is not {EVIDENCE_STORE_VERSION}",
+                index.version
+            ),
+        ));
+    }
+    if &index.action != action {
+        return Err(EvidenceStoreError::new(
+            "gate-evidence::index-action-mismatch",
+            format!("index path names {action}, body names {}", index.action),
+        ));
+    }
+    let receipt = read_receipt_bounded(layout, &index.receipt, action, budget)?;
+    Ok(Some((index, receipt)))
+}
+
+fn read_receipt_bounded(
+    layout: &Layout,
+    id: &ReceiptId,
+    action: &ActionKey,
+    budget: &mut ReadBudget,
+) -> Result<PassReceipt, EvidenceStoreError> {
+    let path = layout.object_path(id);
+    let bytes = budget.read_regular(&path, RECORD_LIMIT)?;
+    let observed = ReceiptId(Digest::compute(Domain::GatePassReceipt, &bytes));
+    if &observed != id {
+        return Err(EvidenceStoreError::new(
+            "gate-evidence::receipt-digest-mismatch",
+            format!("object path names {id}, bytes identify {observed}"),
+        ));
+    }
+    let receipt = PassReceipt::decode(&bytes)?;
+    if receipt.action() != action {
+        return Err(EvidenceStoreError::new(
+            "gate-evidence::receipt-action-mismatch",
+            format!("index names {action}, receipt names {}", receipt.action()),
+        ));
+    }
+    Ok(receipt)
 }
 
 pub(super) fn read_receipt(

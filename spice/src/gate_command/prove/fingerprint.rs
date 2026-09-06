@@ -150,7 +150,7 @@ pub(super) fn lookup_complete(
 ) -> Result<Option<Vec<ProveActionReport>>, ProveFailure> {
     let Some(resolution) = store
         .lookup_fingerprint_receipts(authority)
-        .map_err(ProveFailure::store)?
+        .map_err(evidence_lookup_failure)?
     else {
         return Ok(None);
     };
@@ -174,4 +174,20 @@ pub(super) fn lookup_complete(
         .collect::<Vec<_>>();
     reports.sort_by(|left, right| proof_action_order(&left.action, &right.action));
     Ok(Some(reports))
+}
+
+fn evidence_lookup_failure(error: gate::EvidenceStoreError) -> ProveFailure {
+    let reason = if error.reason().starts_with("gate-evidence::fingerprint") {
+        "gate::prove-fingerprint-invalid"
+    } else {
+        "gate::prove-receipt-invalid"
+    };
+    ProveFailure::refusal(
+        reason,
+        format!(
+            "reason={}; {}\ncommand=`spice gate prove --missing`",
+            error.reason(),
+            error.detail(),
+        ),
+    )
 }

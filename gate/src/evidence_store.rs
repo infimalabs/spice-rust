@@ -667,11 +667,15 @@ impl EvidenceStore {
         authority: &ActionFingerprintAuthority,
     ) -> Result<Option<ActionFingerprintResolution>, EvidenceStoreError> {
         self.with_lock(|layout| {
-            let Some(manifest) = fingerprint::lookup(layout, authority)? else {
+            let mut budget = ReadBudget::new(ActionFingerprintManifest::MAX_READ_BYTES);
+            let Some(manifest) = fingerprint::lookup_bounded(layout, authority, &mut budget)?
+            else {
                 return Ok(None);
             };
-            let receipts = lookup_batch_exact(layout, manifest.actions())?;
-            Ok(Some(ActionFingerprintResolution::new(manifest, receipts)))
+            let receipts = lookup_batch_exact_bounded(layout, manifest.actions(), &mut budget)?;
+            Ok(Some(ActionFingerprintResolution::new(
+                manifest, receipts, &budget,
+            )))
         })
     }
 
@@ -899,6 +903,40 @@ fn lookup_batch_exact(
                 return Ok(None);
             };
             let receipt = read_receipt(layout, &index.receipt, Some(expected.action_key()))?;
+            if receipt.action_spec() != expected.action_spec()
+                || receipt.input_manifest() != expected.input_manifest()
+            {
+                return Err(EvidenceStoreError::new(
+                    "gate-evidence::receipt-authority-mismatch",
+                    format!(
+                        "action {} expected spec={} manifest={} but receipt {} binds spec={} manifest={}",
+                        expected.action(),
+                        expected.action_spec(),
+                        expected.input_manifest(),
+                        index.receipt,
+                        receipt.action_spec(),
+                        receipt.input_manifest(),
+                    ),
+                ));
+            }
+            Ok(Some(AdmissionAction::resolved(expected, index.receipt)))
+        })
+        .collect()
+}
+
+fn lookup_batch_exact_bounded(
+    layout: &Layout,
+    expected: &[ReceiptExpectation],
+    budget: &mut ReadBudget,
+) -> Result<Vec<Option<AdmissionAction>>, EvidenceStoreError> {
+    expected
+        .iter()
+        .map(|expected| {
+            let Some((index, receipt)) =
+                read_index_and_receipt_bounded(layout, expected.action_key(), budget)?
+            else {
+                return Ok(None);
+            };
             if receipt.action_spec() != expected.action_spec()
                 || receipt.input_manifest() != expected.input_manifest()
             {
