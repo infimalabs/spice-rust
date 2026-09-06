@@ -59,7 +59,7 @@ test binaries; add the intended target selector when narrowing to `--lib`,
 | Parent-launched ignored fixtures | Process death, resource-limit, supervisor, and benchmark children. | Run the named parent; never blanket-run `--ignored`. |
 | Canvas-only WASM typecheck | Rust changes whose dependency reach includes `app`; unrelated native workspace packages and the xtask bootstrap are outside this check. | `spice dev cargo -- canvas-wasm-typecheck`. |
 | Canvas browser guard | App build/resident/socket/browser behavior, shard inventory, timing, and descendant cleanup. | Run `npm run test:canvas` when the changed slice reaches its harness. |
-| Change-local gate, battery, and landing | Staged path-to-test and path-to-policy evidence plus final selected contract admission. | `spice dev cargo -- run --quiet --locked --package spice --bin spice -- gate selection`. |
+| Change-local proof and landing | Trusted receipts for the exact staged action set plus final pre-commit admission. | Inspect with `spice gate prove`; run a named miss with `spice gate prove ACTION` or all current misses with `spice gate prove --missing`, then commit normally. |
 
 Metadata selection is conservative target-root reachability, not line coverage.
 Overlap or an advisory subsumption finding never authorizes deletion; removal
@@ -71,7 +71,7 @@ Run the narrowest falsifier, then widen at a stable checkpoint:
 
 | Surface | Run it when | Command and boundary |
 | --- | --- | --- |
-| Targeted staged gate | The index is ready for a commit, or you need exact change-to-check evidence. | `spice dev cargo -- run --quiet --locked --package spice --bin spice -- gate selection`. Known paths select affected Cargo targets and focused canonical policy arms; known selection, policy, build, and toolchain authority selects explicit exhaustive reach. Unclassified and out-of-workspace Rust/manifest paths refuse. |
+| Staged proof inspection | The index is ready for a commit, or you need the exact owed action set. | `spice gate prove` reads only the current fingerprint and trusted receipts. It executes no miss; use its exact `spice gate prove ACTION` remediation or `spice gate prove --missing`, then let the normal commit hook consume those receipts and run live checks. |
 | Package validation | Work is moving within one crate and needs broader compile/test feedback than an exact test. Add downstream packages when a public seam changes. | `spice dev xtask -- verify --package PACKAGE`. Runs package Clippy, all targets, and doctests, while printing every repository-wide action it intentionally omits. |
 | Repository-wide verifier | Never during routine development, handoff, review, or completion. | The unscoped developer verifier refuses before starting work. Use the staged selector, named package checks, and exact downstream targets instead. |
 | Study | You are explicitly investigating suite architecture, mutation reach, or redundant coverage. These can be expensive and are not ordinary edit feedback. | Use `spice dev xtask -- gate ARM` with `suite-seam`, `mutation-coverage`, or `test-subsumption`. Keep their exhaustive inventories out of the commit common path. |
@@ -84,11 +84,11 @@ Use that boundary in this order:
    an exact test. Add direct downstream packages for public-seam changes.
 3. At a checkpoint, run formatting and `spice dev xtask -- verify --package PACKAGE`.
    Add the owning app, Canvas, proof, or staging command for its seam.
-4. Stage the intended change and run `spice dev cargo -- run --quiet
-   --locked --package spice --bin spice -- gate selection` (the installed
-   dispatcher invokes that same public leaf through tracked policy). Inspect its
-   typed selection, or repair the exact path named by a deterministic
-   classification refusal.
+4. Stage the intended change and run `spice gate prove`. Generate only a named
+   miss with `spice gate prove ACTION`, or every current miss with
+   `spice gate prove --missing`. Treat Cargo, Canvas, and shell transcripts as
+   feedback rather than receipts; only the proof runner publishes reusable
+   evidence. Stop at executable-configuration trust refusal for the operator.
 5. Confirm no owned process remains, inspect the diff, and use the installed
    hooks. File unexpected failures outside the selected slice as separate work;
    do not widen the current run. Commit, hand off, or land according to the
@@ -98,6 +98,11 @@ Use that boundary in this order:
 
 Keep checks scoped while peers compile. The package verifier serializes its
 three one-job Cargo children; do not widen the slice.
+
+Canvas completion is the registry-derived `canvas:build` action plus one
+`canvas:shard:<name>` action per shard. The release 0.31.0 marker and
+`--spice-coverage-receipt` writer are retired and cannot substitute for those
+receipts.
 
 ## Disk budget and safe cleanup
 
