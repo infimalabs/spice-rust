@@ -516,35 +516,6 @@ export async function journalExtent(fixture) {
   };
 }
 
-// Re-declare the vendor section so later launches carry a different identity.
-//
-// `[vendor.claude]` in this fixture names only a binary, so the model and effort
-// a launch records fall to their builtins and every occupant wears one identity.
-// Configuration is resolved per launch rather than held from resident startup --
-// `lane_surface/launch.rs` calls `config::load_repository` on the way in -- so a
-// section rewritten between two launches is what makes the second one differ.
-export async function declareVendorModel(fixture, model) {
-  const path = join(fixture, "spice-rust.toml");
-  const text = await readFile(path, "utf8");
-  const cleared = text.replace(/^model = .*\n/m, "");
-  const declared = cleared.replace(
-    /^\[vendor\.claude\]\n/m,
-    `[vendor.claude]\nmodel = ${JSON.stringify(model)}\n`,
-  );
-  assert.notEqual(declared, cleared, "the fixture's vendor section admits a model");
-  await writeFile(path, declared);
-  // Committed rather than left in the tree, because the phase this rewrite spans
-  // is closed by `task done`, which refuses a dirty worktree with
-  // `git::worktree-dirty`. Leaving the rewrite uncommitted would end the seeding
-  // on that refusal instead of on the identity it exists to move.
-  await execute("git", ["add", "spice-rust.toml"], { cwd: fixture });
-  await execute("git", [
-    "-c", "user.name=Canvas Fixture",
-    "-c", "user.email=canvas@example.invalid",
-    "commit", "--quiet", "-m", `canvas fixture launches ${model}`,
-  ], { cwd: fixture });
-}
-
 // Seed one task tree whose causal root is operator steering.
 //
 // The first task carries the steering root explicitly because the isolated
