@@ -26,6 +26,7 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
   const console_ = page.locator('[data-pane="agent-console"]');
   await console_.getByRole("tab", { name: /^Compose/ }).click();
   const lane = console_.locator(`.team-agent[data-agent-lane="${targetLane}"]`);
+  const ticker = console_.locator(`.ticker[data-agent-lane="${targetLane}"]`);
   const form = lane.locator("xpath=ancestor::form[1]");
   const textbox = lane.locator(".composer-shard--primary").getByRole("textbox");
   const agentCards = console_.locator(
@@ -149,13 +150,50 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
     );
   };
 
+  const assertStatusEmphasis = async (inactive, label) => {
+    const presentation = await ticker.evaluate((node, laneId) => {
+      const surface = node.closest(".team-surface");
+      const agent = surface?.querySelector(`.team-agent[data-agent-lane="${laneId}"]`);
+      const style = getComputedStyle(node);
+      return {
+        agentOpacity: agent ? getComputedStyle(agent).opacity : null,
+        opacity: style.opacity,
+        pointerEvents: style.pointerEvents,
+        status: node.dataset.laneStatus,
+        text: node.textContent?.trim(),
+        visibility: style.visibility,
+      };
+    }, targetLane);
+    assert.equal(
+      ["bound", "unbound"].includes(presentation.status),
+      inactive,
+      `${label}: status follows the live agent state: ${JSON.stringify(presentation)}`,
+    );
+    assert.equal(
+      presentation.opacity,
+      presentation.agentOpacity,
+      `${label}: status and composer share lane emphasis`,
+    );
+    assert.equal(
+      presentation.opacity,
+      inactive ? "0.72" : "1",
+      `${label}: status uses the expected emphasis`,
+    );
+    assert.equal(presentation.visibility, "visible", `${label}: status text remains visible`);
+    assert.notEqual(presentation.pointerEvents, "none", `${label}: pointer affordances remain active`);
+    assert.ok(presentation.text, `${label}: status meaning remains rendered`);
+  };
+
+  await ticker.waitFor({ timeout: WAKE_MS });
   await assertVacantLayout("desktop vacant composer");
+  await assertStatusEmphasis(true, "desktop vacant status");
   const viewport = page.viewportSize();
   assert.ok(viewport, "the vacant composer fixture has a viewport to restore");
   try {
     await page.setViewportSize({ width: 520, height: viewport.height });
     await lane.scrollIntoViewIfNeeded();
     await assertVacantLayout("narrow vacant composer");
+    await assertStatusEmphasis(true, "narrow vacant status");
   } finally {
     await page.setViewportSize(viewport);
   }
@@ -283,6 +321,27 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
     departed.occupant,
     "wake establishes a replacement residency instead of reusing the stale occupant",
   );
+  await waitForPage(
+    page,
+    "woken lane status becomes active",
+    WAKE_MS,
+    (laneId) => {
+      const status = document.querySelector(
+        `.ticker[data-agent-lane="${laneId}"]`,
+      )?.dataset.laneStatus;
+      return status !== undefined && !["bound", "unbound"].includes(status);
+    },
+    targetLane,
+  );
+  await assertStatusEmphasis(false, "desktop woken status");
+  const activeViewport = page.viewportSize();
+  assert.ok(activeViewport, "the active status fixture has a viewport to restore");
+  try {
+    await page.setViewportSize({ width: 520, height: activeViewport.height });
+    await assertStatusEmphasis(false, "narrow woken status");
+  } finally {
+    await page.setViewportSize(activeViewport);
+  }
   const postDirectiveCardKeys = await agentCards.evaluateAll((cards) =>
     cards.map((card) => card.dataset.mosaicCardKey));
   await writeFile(join(resident.worktree, ".spice-prose-trigger"), "emit\n");
