@@ -360,34 +360,7 @@ fn render_empty_toolbar(
                 role="group"
                 aria-label={format!("{} admitted agents", standings.len())}
             ></span>
-            <nav class="team-mode-rail" role="tablist" aria-label="Live team views">
-                {for LineageMode::ALL.map(|candidate| {
-                    let selected = candidate == mode;
-                    let choose = lineage_controls.clone();
-                    let badge = mode_badge(candidate, standings);
-                    html! {
-                        <button
-                            type="button"
-                            role="tab"
-                            class={classes!("team-mode", selected.then_some("selected"))}
-                            aria-selected={selected.to_string()}
-                            onclick={Callback::from(move |_| {
-                                choose.dispatch(LineageControlAction::SetMode {
-                                    lineage: None,
-                                    mode: candidate,
-                                });
-                            })}
-                        >
-                            <span class="team-mode-label" title={candidate.label()}>
-                                {candidate.label()}
-                            </span>
-                            if let Some(badge) = badge {
-                                <span class="team-mode-badge">{badge}</span>
-                            }
-                        </button>
-                    }
-                })}
-            </nav>
+            {render_mode_rail(mode, None, standings, lineage_controls)}
             <button
                 class="team-menu"
                 type="button"
@@ -494,39 +467,54 @@ fn render_lineage_toolbar(
                     </span>
                 })}
             </span>
-            <nav class="team-mode-rail" role="tablist" aria-label="Live team views">
-                {for LineageMode::ALL.map(|candidate| {
-                    let selected = candidate == mode;
-                    let choose = render.lineage_controls.clone();
-                    let lineage = Some(lineage.lane);
-                    let badge = mode_badge(candidate, standings);
-                    html! {
-                        <button
-                            type="button"
-                            role="tab"
-                            class={classes!("team-mode", selected.then_some("selected"))}
-                            aria-selected={selected.to_string()}
-                            onclick={Callback::from(move |_| {
-                                choose.dispatch(LineageControlAction::SetMode {
-                                    lineage,
-                                    mode: candidate,
-                                });
-                            })}
-                        >
-                            <span class="team-mode-label" title={candidate.label()}>
-                                {candidate.label()}
-                            </span>
-                            if let Some(badge) = badge {
-                                <span class="team-mode-badge">{badge}</span>
-                            }
-                        </button>
-                    }
-                })}
-            </nav>
+            {render_mode_rail(
+                mode,
+                Some(lineage.lane),
+                standings,
+                render.lineage_controls,
+            )}
             {lineage_menu::trigger(lineage.lane, &control, render.lineage_controls)}
         </header>
         {lineage_menu::render(lineage, &control, &actions)}
         </>
+    }
+}
+
+fn render_mode_rail(
+    mode: LineageMode,
+    lineage: Option<CanonicalUuid>,
+    standings: &[Standing],
+    lineage_controls: &UseReducerHandle<LineageControls>,
+) -> Html {
+    html! {
+        <nav class="team-mode-rail" role="tablist" aria-label="Live team views">
+            {for LineageMode::ALL.map(|candidate| {
+                let selected = candidate == mode;
+                let choose = lineage_controls.clone();
+                let badge = mode_badge(candidate, standings);
+                html! {
+                    <button
+                        type="button"
+                        role="tab"
+                        class={classes!("team-mode", selected.then_some("selected"))}
+                        aria-selected={selected.to_string()}
+                        onclick={Callback::from(move |_| {
+                            choose.dispatch(LineageControlAction::SetMode {
+                                lineage,
+                                mode: candidate,
+                            });
+                        })}
+                    >
+                        <span class="team-mode-label" title={candidate.label()}>
+                            {candidate.label()}
+                        </span>
+                        if let Some(badge) = badge {
+                            <span class="team-mode-badge">{badge}</span>
+                        }
+                    </button>
+                }
+            })}
+        </nav>
     }
 }
 
