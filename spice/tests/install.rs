@@ -74,6 +74,36 @@ fn obsolete_fold_store_is_deleted_without_payload_retention_or_restoration() {
 }
 
 #[test]
+fn completed_fold_retirement_allows_parent_progress_but_refuses_recreation() {
+    let scratch = Scratch::new("completed-fold-retirement");
+    let repository = scratch.repository();
+    let store = scratch.join(RETIRED_FOLD_STORE);
+    fs::create_dir_all(store.parent().unwrap()).unwrap();
+    fs::write(&store, b"obsolete fold bytes\n").unwrap();
+    let source = Path::new(env!("CARGO_BIN_EXE_spice"));
+    let planned = plan(&repository, Some(source)).unwrap();
+    apply(&repository, Some(source), &planned.digest().unwrap()).unwrap();
+    assert!(!store.exists());
+
+    fs::write(
+        scratch.join(".git/.spice-rs/data/unrelated-progress"),
+        b"unrelated state\n",
+    )
+    .unwrap();
+    let installed = installed_binary(&repository);
+    assert_eq!(
+        audit_appliance(&repository, &installed).unwrap().state(),
+        ApplianceState::Current,
+    );
+
+    fs::write(&store, b"reintroduced fold bytes\n").unwrap();
+    assert_eq!(
+        audit_appliance(&repository, &installed).unwrap().state(),
+        ApplianceState::AssetTampered,
+    );
+}
+
+#[test]
 fn obsolete_fold_store_symlink_and_non_regular_path_are_inert() {
     let linked = Scratch::new("linked-fold-store");
     let repository = linked.repository();
