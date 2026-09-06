@@ -774,19 +774,14 @@ pub fn ticker_line(class: &str, detail: &str, budget: usize) -> String {
 #[must_use]
 pub fn ticker_chunks(class: &str, detail: &str, budget: usize) -> (String, String) {
     let detail = one_line(detail);
-    let (prefix, detail) = if class == "tool" {
-        let detail = detail
-            .strip_prefix("command execution:")
-            .map(str::trim_start)
-            .unwrap_or(&detail);
-        detail
-            .split_once(':')
-            .map(|(identity, operation)| (identity.trim(), operation.trim_start()))
-            .filter(|(identity, _)| !identity.is_empty())
-            .unwrap_or((class, detail))
-    } else {
-        (class, detail.as_str())
-    };
+    if class == "tool" {
+        let line = truncate(&detail, budget);
+        return line.split_once(' ').map_or_else(
+            || (line.clone(), String::new()),
+            |(prefix, detail)| (prefix.to_owned(), detail.to_owned()),
+        );
+    }
+    let (prefix, detail) = (class, detail.as_str());
     let line = ticker_line(prefix, detail, budget);
     let marker = format!("{prefix}:");
     let visible_detail = line
@@ -813,7 +808,7 @@ pub fn truncate(text: &str, budget: usize) -> String {
 mod tests {
     use super::{
         MAX_LINEAGE_VISUAL_WEIGHT, agent_message_attribution, agent_message_label,
-        composer_vendor_icon_class, lineage_visual_weight,
+        composer_vendor_icon_class, lineage_visual_weight, ticker_chunks,
     };
 
     #[test]
@@ -884,5 +879,41 @@ mod tests {
         assert_eq!(lineage_visual_weight(MAX_LINEAGE_VISUAL_WEIGHT), 6);
         assert_eq!(lineage_visual_weight(7), 6);
         assert_eq!(lineage_visual_weight(usize::MAX), 6);
+    }
+
+    #[test]
+    fn tool_ticker_accent_ends_only_at_the_first_whitespace_boundary() {
+        for (detail, prefix, remainder) in [
+            (
+                "cargo test:all --url https://host:443",
+                "cargo",
+                "test:all --url https://host:443",
+            ),
+            ("https://host:443/run now", "https://host:443/run", "now"),
+            ("src/main.rs:42:7 changed", "src/main.rs:42:7", "changed"),
+            (
+                r#"echo "left:right" '{"key":"a:b:c"}'"#,
+                "echo",
+                r#""left:right" '{"key":"a:b:c"}'"#,
+            ),
+            ("single:token", "single:token", ""),
+        ] {
+            assert_eq!(
+                ticker_chunks("tool", detail, 120),
+                (prefix.to_owned(), remainder.to_owned()),
+                "{detail}",
+            );
+        }
+    }
+
+    #[test]
+    fn non_tool_ticker_chunking_keeps_its_existing_colon_contract() {
+        assert_eq!(
+            ticker_chunks("assistant", "working through: details", 120),
+            (
+                "assistant".to_owned(),
+                "working through: details".to_owned()
+            ),
+        );
     }
 }

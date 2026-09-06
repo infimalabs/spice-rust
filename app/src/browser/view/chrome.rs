@@ -328,10 +328,11 @@ fn ticker(
         activity.detail()
     };
     let (prefix, detail) = watchband::ticker_chunks(class, source, TICKER_BUDGET);
+    let separator = if class == "tool" { "" } else { ":" };
     let line = if detail.is_empty() {
-        prefix.clone()
+        format!("{prefix}{separator}")
     } else {
-        format!("{prefix}: {detail}")
+        format!("{prefix}{separator} {detail}")
     };
     html! {
         <div
@@ -348,7 +349,7 @@ fn ticker(
                 title={format!("{} {class}", standing.label)}
             />
             {" "}
-            <strong class="ticker-prefix">{format!("{prefix}:")}</strong>
+            <strong class="ticker-prefix">{format!("{prefix}{separator}")}</strong>
             if !detail.is_empty() {
                 {" "}
                 <span class="ticker-detail">{detail}</span>

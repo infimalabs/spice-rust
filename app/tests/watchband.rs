@@ -897,23 +897,26 @@ fn the_ticker_folds_a_command_onto_one_line_within_its_budget() {
 }
 
 #[test]
-fn tool_ticker_chunks_promote_invocation_and_drop_redundant_taxonomy() {
+fn tool_ticker_chunks_accent_only_the_first_whitespace_delimited_token() {
     assert_eq!(
-        ticker_chunks("tool", "command execution: zsh -lc: cargo test", 80),
-        ("zsh -lc".to_owned(), "cargo test".to_owned()),
+        ticker_chunks("tool", "cargo test:all --url https://host:443", 80),
+        (
+            "cargo".to_owned(),
+            "test:all --url https://host:443".to_owned(),
+        ),
     );
     assert_eq!(
         ticker_chunks("tool", "Read: app/src/lib.rs", 80),
-        ("Read".to_owned(), "app/src/lib.rs".to_owned()),
+        ("Read:".to_owned(), "app/src/lib.rs".to_owned()),
     );
     assert_eq!(
         ticker_chunks("assistant", "concise response", 80),
         ("assistant".to_owned(), "concise response".to_owned()),
     );
     let (prefix, detail) = ticker_chunks("tool", "Bash: a deliberately long command", 18);
-    assert_eq!(prefix, "Bash");
+    assert_eq!(prefix, "Bash:");
     assert!(detail.ends_with('…'));
-    assert!(format!("{prefix}: {detail}").chars().count() <= 18);
+    assert!(format!("{prefix} {detail}").chars().count() <= 18);
 }
 
 /// One team holding several agents, so a join has more than one agent to move.
