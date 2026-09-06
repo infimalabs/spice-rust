@@ -12,7 +12,7 @@ use super::{
 };
 
 const ADMISSION_VERSION: u64 = 1;
-const MAX_ADMISSION_ACTIONS: usize = 256;
+pub(super) const MAX_ADMISSION_ACTIONS: usize = 256;
 
 /// Content identity of one immutable admission bundle.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]

@@ -1098,7 +1098,20 @@ fn fingerprint_index_cannot_substitute_another_valid_manifest_object() {
 
 #[test]
 fn fingerprint_manifest_rejects_action_count_and_canonical_byte_excess() {
+    const CURRENT_WORKSPACE_ACTIONS: usize = 202;
     let authority = fingerprint_authority(b"environment");
+    let current = ActionFingerprintManifest::new(ActionFingerprintManifestFields {
+        authority: authority.clone(),
+        selection: fingerprint_selection(&authority),
+        cargo_tests: false,
+        actions: (0..CURRENT_WORKSPACE_ACTIONS)
+            .map(fingerprint_expectation)
+            .collect(),
+    })
+    .expect("current full-workspace action inventory retains explicit headroom");
+    assert_eq!(current.actions().len(), CURRENT_WORKSPACE_ACTIONS);
+    assert!(current.actions().len() < ActionFingerprintManifest::MAX_ACTIONS);
+
     let actions = (0..=ActionFingerprintManifest::MAX_ACTIONS)
         .map(fingerprint_expectation)
         .collect();

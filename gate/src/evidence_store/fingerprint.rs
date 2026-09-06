@@ -14,7 +14,7 @@ const FINGERPRINT_VERSION: u64 = 3;
 const FINGERPRINT_INDEX_VERSION: u64 = 1;
 const FINGERPRINT_IDENTITY: &[u8] = b"spice.gate.action-fingerprint-manifest.v1\0";
 const FINGERPRINT_INDEX_BYTES: u64 = 64 * 1024;
-const MAX_FINGERPRINT_ACTIONS: usize = 128;
+const MAX_FINGERPRINT_ACTIONS: usize = super::admission::MAX_ADMISSION_ACTIONS;
 const MAX_FINGERPRINT_BYTES: usize = MAX_RECEIPT_BYTES;
 const MAX_FINGERPRINT_READ_BYTES: u64 = 4 * 1024 * 1024;
 
