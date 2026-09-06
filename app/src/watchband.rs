@@ -766,6 +766,32 @@ pub fn ticker_line(class: &str, detail: &str, budget: usize) -> String {
     truncate(&line, budget)
 }
 
+/// Concise identity and detail chunks for one status ticker row.
+#[must_use]
+pub fn ticker_chunks(class: &str, detail: &str, budget: usize) -> (String, String) {
+    let detail = one_line(detail);
+    let (prefix, detail) = if class == "tool" {
+        let detail = detail
+            .strip_prefix("command execution:")
+            .map(str::trim_start)
+            .unwrap_or(&detail);
+        detail
+            .split_once(':')
+            .map(|(identity, operation)| (identity.trim(), operation.trim_start()))
+            .filter(|(identity, _)| !identity.is_empty())
+            .unwrap_or((class, detail))
+    } else {
+        (class, detail.as_str())
+    };
+    let line = ticker_line(prefix, detail, budget);
+    let marker = format!("{prefix}:");
+    let visible_detail = line
+        .strip_prefix(&marker)
+        .map(str::trim_start)
+        .unwrap_or_default();
+    (prefix.to_owned(), visible_detail.to_owned())
+}
+
 /// `text` cut to `budget` characters, ellipsis included in the budget.
 #[must_use]
 pub fn truncate(text: &str, budget: usize) -> String {

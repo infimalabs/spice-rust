@@ -321,18 +321,18 @@ fn ticker(
     standing: &watchband::Standing,
     status: crate::runtime::LaneStatus,
 ) -> Html {
-    let title = activity.title();
-    let detail = if activity.detail().is_empty() {
-        title
+    let class = activity.title();
+    let source = if activity.detail().is_empty() {
+        class
     } else {
         activity.detail()
     };
-    let line = watchband::ticker_line(title, detail, TICKER_BUDGET);
-    let prefix = format!("{title}:");
-    let detail = line
-        .strip_prefix(&prefix)
-        .map(str::trim_start)
-        .unwrap_or_default();
+    let (prefix, detail) = watchband::ticker_chunks(class, source, TICKER_BUDGET);
+    let line = if detail.is_empty() {
+        prefix.clone()
+    } else {
+        format!("{prefix}: {detail}")
+    };
     html! {
         <div
             class={classes!("ticker", activity.class())}
@@ -345,10 +345,10 @@ fn ticker(
             <Age
                 authored={activity.display_millis()}
                 class={classes!("ticker-age", status.key())}
-                title={format!("{} {title}", standing.label)}
+                title={format!("{} {class}", standing.label)}
             />
             {" "}
-            <strong class="ticker-prefix">{prefix}</strong>
+            <strong class="ticker-prefix">{format!("{prefix}:")}</strong>
             if !detail.is_empty() {
                 {" "}
                 <span class="ticker-detail">{detail}</span>
