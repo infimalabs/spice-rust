@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { launchBrowser } from "./headless-launch.mjs";
+import { observeStableRightEdge, settleFleetScroll } from "./lineage-responsive.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const TASK_HANDLES = [
@@ -12,6 +13,51 @@ const TASK_HANDLES = [
   "LEASE-1kShort",
   "MISSING-1kLease",
 ];
+
+test("right-edge settlement rejects predicate-pass followed by geometry drift", () => {
+  const geometry = {
+    clientWidth: 600,
+    newestRight: 600,
+    right: 600,
+    scrollLeft: 40,
+    scrollWidth: 640,
+  };
+  const node = {
+    get clientWidth() { return geometry.clientWidth; },
+    get lastElementChild() {
+      return { getBoundingClientRect: () => ({ right: geometry.newestRight }) };
+    },
+    get scrollLeft() { return geometry.scrollLeft; },
+    get scrollWidth() { return geometry.scrollWidth; },
+    getBoundingClientRect: () => ({ right: geometry.right }),
+  };
+  const witness = { node, state: { previous: null } };
+
+  assert.equal(
+    Math.abs(node.scrollLeft - (node.scrollWidth - node.clientWidth)) <= 1,
+    true,
+    "the former single-sample predicate would accept the first observation",
+  );
+  assert.equal(observeStableRightEdge(witness), false, "one anchored observation cannot settle");
+
+  geometry.scrollWidth = 680;
+  geometry.scrollLeft = 80;
+  geometry.newestRight = 640;
+  assert.equal(
+    Math.abs(node.scrollLeft - (node.scrollWidth - node.clientWidth)) <= 1,
+    true,
+    "the former predicate still accepts after the scroll range changes",
+  );
+  assert.equal(
+    observeStableRightEdge(witness),
+    false,
+    "newest-lane drift clears the witness even while scrollLeft matches overflow",
+  );
+
+  geometry.newestRight = 600;
+  assert.equal(observeStableRightEdge(witness), false, "the first recovered observation rearms it");
+  assert.equal(observeStableRightEdge(witness), true, "two stable anchored observations settle");
+});
 
 async function productionTaskContract() {
   const [model, renderer] = await Promise.all([
@@ -436,8 +482,12 @@ test("lineage minima govern weighted fleet layout in Chromium and Firefox", asyn
         }
 
         await page.locator(".lineage-fleet").focus();
-        await page.keyboard.press("ArrowLeft");
-        await page.waitForTimeout(50);
+        await settleFleetScroll(
+          page,
+          page.locator(".lineage-fleet"),
+          `${engine} keyboard traversal`,
+          () => page.keyboard.press("ArrowLeft"),
+        );
         let traversed = await geometry(page);
         assert.ok(traversed.scrollLeft < traversed.maxScroll, `${engine} keyboard traverses west`);
         await page.locator(".lineage-fleet").evaluate((fleet) => { fleet.scrollLeft = fleet.scrollWidth; });

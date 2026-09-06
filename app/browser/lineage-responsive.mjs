@@ -6,21 +6,65 @@ async function settleLayout(page) {
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve())));
 }
 
+export async function settleFleetScroll(page, fleet, label, action) {
+  const element = await fleet.elementHandle();
+  const witness = await page.evaluateHandle((node) => ({ node, state: { ended: false } }), element);
+  try {
+    await page.evaluate(({ node, state }) => {
+      state.listener = () => { state.ended = true; };
+      node.addEventListener("scrollend", state.listener, { once: true });
+    }, witness);
+    await action();
+    await waitForPageFunction(
+      page,
+      `the fleet ${label} settles`,
+      TRANSITION_MS,
+      ({ state }) => state.ended,
+      witness,
+      { observed: () => fleetGeometry(fleet) },
+    );
+  } finally {
+    await page.evaluate(({ node, state }) => {
+      node.removeEventListener("scrollend", state.listener);
+    }, witness).catch(() => {});
+    await witness.dispose();
+    await element.dispose();
+  }
+}
+
+export function observeStableRightEdge({ node, state }) {
+  const bounds = node.getBoundingClientRect();
+  const newest = node.lastElementChild?.getBoundingClientRect();
+  const current = {
+    overflow: node.scrollWidth - node.clientWidth,
+    scrollLeft: node.scrollLeft,
+    right: bounds.right,
+    newestRight: newest?.right,
+  };
+  const anchored = Number.isFinite(current.newestRight)
+    && Math.abs(current.scrollLeft - current.overflow) <= 1
+    && Math.abs(current.newestRight - current.right) <= 1;
+  const previous = state.previous;
+  state.previous = anchored ? current : null;
+  return previous !== null && Object.keys(current).every((key) => (
+    Math.abs(current[key] - previous[key]) <= 1
+  ));
+}
+
 async function settleRightEdge(page, fleet) {
   const element = await fleet.elementHandle();
+  const witness = await page.evaluateHandle((node) => ({ node, state: { previous: null } }), element);
   try {
     await waitForPageFunction(
       page,
       "the fleet settles at its right edge",
       TRANSITION_MS,
-      (node) => {
-        const overflow = node.scrollWidth - node.clientWidth;
-        return Math.abs(node.scrollLeft - overflow) <= 1;
-      },
-      element,
+      observeStableRightEdge,
+      witness,
       { observed: () => fleetGeometry(fleet) },
     );
   } finally {
+    await witness.dispose();
     await element.dispose();
   }
 }
@@ -123,8 +167,9 @@ export async function assertLineageResponsiveLayout(page, console_) {
     await settleLayout(page);
     assertTrack(await fleetGeometry(fleet), "narrow three-lane track", true);
     await fleet.focus();
-    await page.keyboard.press("ArrowLeft");
-    await page.waitForTimeout(50);
+    await settleFleetScroll(page, fleet, "keyboard traversal", () => (
+      page.keyboard.press("ArrowLeft")
+    ));
     const traversed = await fleetGeometry(fleet);
     assert.ok(traversed.scrollLeft < traversed.overflowX, "keyboard traverses toward older lanes");
     await page.setViewportSize({ width: 600, height: 988 });
