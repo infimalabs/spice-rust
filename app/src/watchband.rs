@@ -54,6 +54,9 @@ pub const SHORT_LEN: usize = 8;
 /// screen, so the width is the band's property rather than the renderer's.
 pub const FIELD_BUDGET: usize = 22;
 
+/// Stable bounded identity when neither configured name nor worktree leaf exists.
+pub const UNKNOWN_AGENT_LABEL: &str = "Unknown agent";
+
 /// Render state for one independently admitted section of the team Tasks view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TeamTaskSectionState {
@@ -386,10 +389,7 @@ pub fn standings(lanes: &[LaneRow], inbox: &[LaneInbox], tasks: &[BoardTask]) ->
                 lineage_id: lineage.lane,
                 name: short(member.lane),
                 worktree: member.worktree.clone(),
-                label: member
-                    .name
-                    .clone()
-                    .unwrap_or_else(|| leaf(&member.worktree).to_owned()),
+                label: agent_message_label(&member.worktree, member.name.as_deref()).to_owned(),
                 vendor: member.vendor.to_string(),
                 model: member.model.clone(),
                 effort: member.effort.clone(),
@@ -504,14 +504,14 @@ pub fn agent_message_attribution(
 /// Compact visible identity beside one agent-authored card's actions.
 ///
 /// The admitted configured name wins. Without one, the admitted worktree's
-/// basename is the only other valid owner. Returning `None` leaves a violated
-/// admission assumption visible to the renderer instead of fabricating a third
-/// label from lane or author identity.
+/// basename is the only other identified owner. When neither exists, one fixed
+/// bounded label keeps the missing identity visible without exposing lane IDs.
 #[must_use]
-pub fn agent_message_label<'a>(worktree: &'a str, name: Option<&'a str>) -> Option<&'a str> {
+pub fn agent_message_label<'a>(worktree: &'a str, name: Option<&'a str>) -> &'a str {
     name.map(str::trim)
         .filter(|name| !name.is_empty())
         .or_else(|| worktree.rsplit('/').find(|part| !part.is_empty()))
+        .unwrap_or(UNKNOWN_AGENT_LABEL)
 }
 
 /// Widest string [`elapsed_label`] can return, counted in characters.
@@ -855,7 +855,7 @@ mod tests {
     fn message_label_prefers_the_configured_agent_name() {
         assert_eq!(
             agent_message_label("/fleet/one/spice-rust-z", Some(" Ash ")),
-            Some("Ash"),
+            "Ash",
         );
     }
 
@@ -863,13 +863,17 @@ mod tests {
     fn unnamed_message_label_uses_the_worktree_basename() {
         assert_eq!(
             agent_message_label("/fleet/one/spice-rust-z/", None),
-            Some("spice-rust-z"),
+            "spice-rust-z",
         );
     }
 
     #[test]
-    fn message_label_refuses_without_a_name_or_worktree_basename() {
-        assert_eq!(agent_message_label("/", Some("  ")), None);
+    fn message_label_names_missing_identity_once() {
+        assert_eq!(
+            agent_message_label("/", Some("  ")),
+            super::UNKNOWN_AGENT_LABEL
+        );
+        assert_eq!(agent_message_label("", None), super::UNKNOWN_AGENT_LABEL);
     }
 
     #[test]
