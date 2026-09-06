@@ -112,7 +112,7 @@ fn validate_retirement_inventory(plan: &InstallPlan, migratable: bool) -> Result
             ));
         }
     } else {
-        let expected = if plan.version == PLAN_VERSION {
+        let expected = if matches!(plan.version, PLAN_VERSION | PREVIOUS_RECORD_VERSION) {
             &[
                 RETIRED_XTASK_PATH,
                 RETIRED_XTASK_GUARD_PATH,
@@ -199,7 +199,7 @@ fn validate_plan_destinations(
         }
     }
     for retirement in &plan.retirements {
-        validate_retirement(retirement)?;
+        validate_retirement(retirement, plan.version)?;
         if !destinations.insert((Location::CommonGit, retirement.destination.clone())) {
             return Err(InstallError::InvalidRecord(
                 "install plan duplicates a retirement destination".to_owned(),
@@ -209,11 +209,22 @@ fn validate_plan_destinations(
     Ok(())
 }
 
-fn validate_retirement(retirement: &Retirement) -> Result<(), InstallError> {
+fn validate_retirement(retirement: &Retirement, plan_version: u16) -> Result<(), InstallError> {
     validate_relative(&retirement.path)?;
     validate_relative(&retirement.destination)?;
     let expected_parent = Path::new(&retirement.parent.ancestor).join(&retirement.parent.missing);
+    let current_discard =
+        plan_version == PLAN_VERSION && retirement.path == RETIRED_FOLD_STORE_PATH;
+    let invalid_discard = if current_discard {
+        !retirement.discard
+            || retirement.previous.is_some()
+            || retirement.observed.is_some()
+            || retirement.rollback.is_some()
+    } else {
+        retirement.discard
+    };
     if Path::new(&retirement.destination).parent() != Some(expected_parent.as_path())
+        || invalid_discard
         || retirement
             .previous
             .as_ref()

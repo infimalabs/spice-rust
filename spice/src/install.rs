@@ -57,23 +57,24 @@ pub use maintenance::{
 pub use model::{Asset, FileImage, GeneratedImage, Location, Operation, Retirement};
 use model::{ObservedFile, ReceiptGeneration, RepositoryIdentity};
 
-const PLAN_VERSION: u16 = 13;
-const RECORD_VERSION: u16 = 13;
+const PLAN_VERSION: u16 = 14;
+const RECORD_VERSION: u16 = 14;
 const RETIREMENT_WITNESS_MISMATCH: &str =
     "migration rollback archive does not match its retirement witnesses";
 const MIGRATABLE_RECORD_VERSION: u16 = 7;
 const FORWARD_MIGRATABLE_RECORD_VERSION: u16 = 8;
 const INLINE_ROLLBACK_RECORD_VERSION: u16 = 9;
-const PREVIOUS_RECORD_VERSION: u16 = 12;
+const PREVIOUS_RECORD_VERSION: u16 = 13;
 /// Environment marker exported only by the installed pre-commit launcher.
 pub const INSTALLED_PRE_COMMIT_ENVIRONMENT: &str = "SPICE_SHELL_HOOK_INSTALLED_APPLIANCE"; // env-policy: allow
-const LEGACY_RECORD_VERSIONS: [(u16, &str); 6] = [
+const LEGACY_RECORD_VERSIONS: [(u16, &str); 7] = [
     (2, "SURFACE-1kJRGpf2"),
     (3, "HOOKS-1kJQnmG8"),
     (4, "INSTALL-1kKQTfBp"),
     (5, "INSTALL-1kLW2GVN"),
     (6, "HOOKS-1kMFzkkc"),
     (10, "WRAPPER-1kNYClbf"),
+    (12, "RETIREM-1kSR91Zl"),
 ];
 const RECORD_NAME: &str = "install.json";
 const RECORD_PATH: &str = ".spice-rs/install.json";
@@ -144,8 +145,8 @@ pub fn publish_test_version_7_receipt(repository: &Repository) -> Result<(), Ins
 /// schema so process tests can exercise the current forward migration.
 #[cfg(debug_assertions)]
 #[doc(hidden)]
-pub fn publish_test_version_12_receipt(repository: &Repository) -> Result<(), InstallError> {
-    record::publish_test_version_12_receipt(repository)
+pub fn publish_test_version_13_receipt(repository: &Repository) -> Result<(), InstallError> {
+    record::publish_test_version_13_receipt(repository)
 }
 
 /// Side-effect-free canonical installation plan.
@@ -685,10 +686,10 @@ fn current_rollback_archive(
     let retirements_unchanged = installed
         .retirements
         .iter()
-        .map(|retirement| retirement.path.as_str())
+        .map(|retirement| (retirement.path.as_str(), retirement.discard))
         .eq(retirements
             .iter()
-            .map(|retirement| retirement.path.as_str()));
+            .map(|retirement| (retirement.path.as_str(), retirement.discard)));
     if operations_unchanged && retirements_unchanged {
         return archive.to_current().map(Some);
     }
@@ -713,6 +714,9 @@ fn current_rollback_archive(
         .iter()
         .zip(observed_retirements)
         .map(|(retirement, observed)| {
+            if retirement.discards_payload() {
+                return None;
+            }
             installed
                 .retirements
                 .iter()
@@ -732,6 +736,23 @@ fn retirement(
     path: &str,
     archiving: bool,
 ) -> Result<(Retirement, Option<FileImage>), InstallError> {
+    if path == RETIRED_FOLD_STORE_PATH {
+        let (bound, observed) =
+            destination_state(repository, Location::CommonGit, RETIRED_FOLD_STORE_PATH)?;
+        return Ok((
+            Retirement {
+                path: path.to_owned(),
+                destination: bound.destination,
+                parent: bound.parent,
+                previous: None,
+                observed: None,
+                superseded: observed.as_ref().map(ObservedFile::generated),
+                rollback: None,
+                discard: true,
+            },
+            None,
+        ));
+    }
     let (bound, observed) = destination_state(repository, Location::CommonGit, path)?;
     let installed = installed.and_then(|plan| {
         plan.retirements
@@ -763,6 +784,7 @@ fn retirement(
             observed: (!compact_new).then_some(observed).flatten(),
             superseded,
             rollback: rollback_witness,
+            discard: false,
         },
         rollback_image,
     ))

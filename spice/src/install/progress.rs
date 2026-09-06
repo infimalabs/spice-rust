@@ -316,6 +316,12 @@ pub(super) fn unapply_with_interruption(
 ) -> Result<InstallReceipt, InstallError> {
     let loaded = read_record(repository)?.ok_or(InstallError::RecordMissing)?;
     let mut record = loaded.record;
+    if record.version != RECORD_VERSION || record.plan.version != PLAN_VERSION {
+        return Err(InstallError::InvalidRecord(format!(
+            "version-{} install from RETIREM-1kSR91Zl must be refreshed to version {RECORD_VERSION} before unapply",
+            record.version,
+        )));
+    }
     let mut record_generation = loaded.generation;
     let _rollback_lock = record.plan.lock_rollback(repository)?;
     let rollback = record.plan.validated_rollback_state(repository)?;
