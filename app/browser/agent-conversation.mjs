@@ -15,6 +15,7 @@ import {
   waitForMosaicReady,
 } from "./agent-conversation-mosaic.mjs";
 import { assertReferenceControlStack } from "./control-stack.mjs";
+import { assertActivityIdentityLabels } from "./activity-identity.mjs";
 import { assertReferenceMessageCard } from "./message-card-reference.mjs";
 import { assertSyntheticComposerObservation } from "./composer-shards.mjs";
 import {
@@ -603,6 +604,13 @@ export async function assertAgentConversation(
     )),
   ]);
   await Promise.all(currentProse);
+  await assertActivityIdentityLabels(
+    page,
+    console,
+    activityReplay,
+    seated[0],
+    seated[3],
+  );
   await assertRosterPips(page, console, seated, artifacts);
   const accessibility = await console.locator(".team-activity-grid").ariaSnapshot();
   for (const name of producerNames) {

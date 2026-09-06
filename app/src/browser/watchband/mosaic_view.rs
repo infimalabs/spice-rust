@@ -1059,9 +1059,8 @@ fn render_lifecycle_boundary(
     key: &str,
     layout: &CardLayout,
 ) -> Html {
-    let attribution = watchband::agent_message_label(&member.worktree, member.name.as_deref())
-        .expect("admitted lifecycle member has a configured name or worktree basename")
-        .to_owned();
+    let attribution =
+        watchband::agent_message_label(&member.worktree, member.name.as_deref()).to_owned();
     let label = format!("{attribution} lifecycle: {}", boundary.cause());
     html! {
         <article

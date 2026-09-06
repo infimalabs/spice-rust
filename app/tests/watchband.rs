@@ -1,10 +1,10 @@
 use app::runtime::{LaneMember, LaneRow};
 use app::watchband::{
     ACCENTS, AGE_LABEL_WIDTH, FIELD_BUDGET, LINEAGE_JOIN_GUTTER, LineageDrop, SHORT_LEN,
-    TeamTaskSectionState, accent, arrangement, badge, elapsed_label, elapsed_label_deadline_millis,
-    first_nonquoted_prose, leaf, one_line, remaining_label, remaining_label_deadline_millis,
-    reported_tasks, response_speech_text, short, split_lineage, standing_title, standings,
-    task_mentions, ticker_chunks, ticker_line, topology, truncate,
+    TeamTaskSectionState, UNKNOWN_AGENT_LABEL, accent, arrangement, badge, elapsed_label,
+    elapsed_label_deadline_millis, first_nonquoted_prose, leaf, one_line, remaining_label,
+    remaining_label_deadline_millis, reported_tasks, response_speech_text, short, split_lineage,
+    standing_title, standings, task_mentions, ticker_chunks, ticker_line, topology, truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -492,15 +492,26 @@ fn a_lane_is_labelled_by_what_separates_it_from_its_fleet() {
 #[test]
 fn a_configured_agent_name_wins_while_an_unconfigured_lane_uses_the_worktree_leaf() {
     let mut configured = lane(LANE_A, "/fleet/one/spice-rust-a");
-    configured.members[0].name = Some("Ava".to_owned());
-    let unconfigured = lane(LANE_B, "/fleet/one/spice-rust-g");
+    configured.members[0].name = Some(" Ava ".to_owned());
+    let unconfigured = lane(
+        LANE_B,
+        "/fleet/one/lane-4-release-observability-and-follow-through",
+    );
+    let unidentified = lane(LANE_C, "/");
 
-    let rows = standings(&[configured, unconfigured], &[], &[]);
+    let rows = standings(&[configured, unconfigured, unidentified], &[], &[]);
 
     assert_eq!(rows[0].label, "Ava");
     assert_eq!(rows[0].worktree, "/fleet/one/spice-rust-a");
-    assert_eq!(rows[1].label, "spice-rust-g");
-    assert_eq!(rows[1].worktree, "/fleet/one/spice-rust-g");
+    assert_eq!(
+        rows[1].label,
+        "lane-4-release-observability-and-follow-through"
+    );
+    assert_eq!(
+        rows[1].worktree,
+        "/fleet/one/lane-4-release-observability-and-follow-through"
+    );
+    assert_eq!(rows[2].label, UNKNOWN_AGENT_LABEL);
     assert_eq!(rows[0].pending, 0, "pending remains an inbox-derived join");
 }
 

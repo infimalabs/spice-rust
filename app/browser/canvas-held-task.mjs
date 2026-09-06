@@ -116,7 +116,13 @@ export async function assertHeldTaskCount(
   // transcript process. Capture then publishes a normal prose stream frame,
   // which is newer than the tool above and must replace it for the whole team.
   await writeFile(join(fixture, ".spice-prose-trigger"), "emit\n");
-  const proseLine = "assistant: newest lane prose witness";
+  const agentLabel = await team
+    .locator(`.team-agent[data-agent-lane="${lanes[0]}"] .agent-action-menu > summary`)
+    .getAttribute("aria-label")
+    .then((label) => label?.replace(/^Actions for /, ""));
+  assert.ok(agentLabel, "the prose ticker resolves the same identity as its composer");
+  const proseLine = `${agentLabel}: newest lane prose witness`;
+  assert.notEqual(agentLabel, "assistant", "the activity prefix is not a taxonomy label");
   await ticker.filter({ hasText: proseLine }).waitFor({ timeout: 15_000 });
   const proseTicker = await captureTicker(ticker);
   assertTickerPresentation(proseTicker, proseLine, lanes[0], "prose", "assistant prose");

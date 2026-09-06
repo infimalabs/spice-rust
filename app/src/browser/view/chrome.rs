@@ -307,12 +307,17 @@ fn ticker(
     status: crate::runtime::LaneStatus,
 ) -> Html {
     let class = activity.title();
-    let source = if activity.detail().is_empty() {
+    let visible_prefix = if activity.class() == "prose" {
+        standing.label.as_str()
+    } else {
         class
+    };
+    let source = if activity.detail().is_empty() {
+        visible_prefix
     } else {
         activity.detail()
     };
-    let (prefix, detail) = watchband::ticker_chunks(class, source, TICKER_BUDGET);
+    let (prefix, detail) = watchband::ticker_chunks(visible_prefix, source, TICKER_BUDGET);
     let separator = if class == "tool" { "" } else { ":" };
     let line = if detail.is_empty() {
         format!("{prefix}{separator}")

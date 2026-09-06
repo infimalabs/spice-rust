@@ -178,8 +178,7 @@ fn render_agent_message_card(
         &member.worktree,
         member.name.as_deref(),
     );
-    let footer_label = watchband::agent_message_label(&member.worktree, member.name.as_deref())
-        .expect("admitted agent message has a configured name or worktree basename");
+    let footer_label = watchband::agent_message_label(&member.worktree, member.name.as_deref());
     let is_compaction = message.activity == wire::AgentActivityKind::Compaction;
     let rendered_markdown = crate::composer_markdown::render_received(&message.text);
     let card_label = match message.activity {

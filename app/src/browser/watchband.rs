@@ -1089,7 +1089,7 @@ fn dismiss_other_agent_action_menus(event: MouseEvent) {
 }
 
 fn composer_placeholder(standing: &Standing, pending: usize) -> String {
-    let branch = watchband::leaf(&standing.worktree);
+    let branch = watchband::agent_message_label(&standing.worktree, None);
     let target = if standing.label == branch {
         standing.label.clone()
     } else {
