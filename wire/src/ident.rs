@@ -33,6 +33,8 @@ use serde::de::{Deserializer, Error as DeError};
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
 
+mod digest;
+
 /// A spelling that WIRE refuses.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum IdentError {
@@ -354,11 +356,7 @@ impl Digest {
     /// produce the same hashed input in the first place.
     #[must_use]
     pub fn compute(domain: Domain, bytes: &[u8]) -> Self {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(domain.tag().as_bytes());
-        hasher.update(&[0]);
-        hasher.update(bytes);
-        Self(hasher.finalize().to_hex().as_str().to_owned())
+        Self(digest::compute(domain, bytes).to_hex().as_str().to_owned())
     }
 
     /// The digest as written.
