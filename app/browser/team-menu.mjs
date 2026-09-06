@@ -102,6 +102,8 @@ export async function assertCursorRelocation(page, artifacts, engine) {
           const box = lane.getBoundingClientRect();
           return {
             height: box.height,
+            left: box.left,
+            right: box.right,
             scrollTop: lane.querySelector(".lane-mosaic-plane")?.scrollTop ?? 0,
             top: box.top,
           };
@@ -332,11 +334,23 @@ export async function assertCursorRelocation(page, artifacts, engine) {
       assert.equal(expandedGeometry.frameContainsNavigation, true, `${label} renders navigation only in the frame`);
       assert.equal(expandedGeometry.frameContainsPanel, true, `${label} keeps context controls in the frame`);
       assert.ok(
-        Math.abs(expandedGeometry.frame.left - expandedGeometry.disclosure.left) <= 0.5
-          && Math.abs(expandedGeometry.frame.right - expandedGeometry.disclosure.right) <= 0.5
-          && expandedGeometry.frame.top <= expandedGeometry.disclosure.bottom + 0.5,
-        `${label} continues one frame directly beneath the trigger row`,
+        Math.abs(expandedGeometry.frame.right - expandedGeometry.disclosure.right) <= 0.5
+          && Math.abs(expandedGeometry.frame.top - expandedGeometry.workspaceTop) <= 0.5,
+        `${label} anchors the menu at the team top below the trigger row`,
       );
+      assert.ok(
+        Math.abs(
+          expandedGeometry.frame.right - expandedGeometry.frame.left
+            - Math.min(360, expandedGeometry.disclosure.right - expandedGeometry.disclosure.left),
+        ) <= 0.5,
+        `${label} uses one responsive mobile-width frame`,
+      );
+      if (viewport.width > 560) {
+        assert.ok(
+          expandedGeometry.frame.left > expandedGeometry.disclosure.left + 1,
+          `${label} does not expand the menu across the desktop canvas`,
+        );
+      }
       assert.ok(
         expandedGeometry.strip.left >= expandedGeometry.disclosure.left - 0.5
           && expandedGeometry.strip.right <= expandedGeometry.summary.left + 0.5
@@ -361,6 +375,20 @@ export async function assertCursorRelocation(page, artifacts, engine) {
           expandedGeometry.summary.bottom - expandedGeometry.summary.top],
         [35, 30],
         `${label} keeps the centered trigger geometry while expanded`,
+      );
+      assert.deepEqual(
+        expandedGeometry.summary,
+        geometry.summary,
+        `${label} leaves the Spice trigger stationary while the menu opens`,
+      );
+      assert.ok(
+        collapsedLanes.some((lane) => (
+          expandedGeometry.frame.left < lane.right
+            && expandedGeometry.frame.right > lane.left
+            && expandedGeometry.frame.top <= lane.top + 0.5
+            && expandedGeometry.frame.bottom > lane.top + 1
+        )),
+        `${label} overlays the lane surface from its top edge`,
       );
       assert.ok(
         expandedGeometry.strip.right - expandedGeometry.strip.left >= 96,
@@ -422,7 +450,7 @@ export async function assertCursorRelocation(page, artifacts, engine) {
         `${label} keeps the Spice menu inside the horizontal viewport`,
       );
       assert.ok(
-        panelGeometry.frameTop <= panelGeometry.summaryBottom + 0.5
+        panelGeometry.frameTop >= panelGeometry.summaryBottom - 0.5
           && panelGeometry.left >= panelGeometry.frameLeft - 0.5
           && panelGeometry.right <= panelGeometry.frameRight + 0.5
           && panelGeometry.bottom <= panelGeometry.frameBottom + 0.5
