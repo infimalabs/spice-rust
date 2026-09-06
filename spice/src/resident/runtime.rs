@@ -911,11 +911,11 @@ pub(super) fn latest_surface_digest(
 mod surface;
 #[cfg(test)]
 pub(super) use surface::announce_canvas;
-#[cfg(test)]
-pub(in crate::resident) use surface::{dispatch_control, publish_ready_surface};
 use surface::run_surface;
 #[cfg(test)]
 use surface::{StartedSurface, drive_surface, start_surface};
+#[cfg(test)]
+pub(in crate::resident) use surface::{dispatch_control, publish_ready_surface};
 
 #[cfg(test)]
 #[path = "tests/judge_liveness.rs"]
