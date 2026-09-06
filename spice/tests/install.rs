@@ -291,6 +291,27 @@ fn installed_skill_makes_task_capture_conditional_without_weakening_guidance() {
 }
 
 #[test]
+fn installed_skill_bounds_the_boarded_red_exception() {
+    let scratch = applied("boarded-red-guidance");
+    let repository = scratch.repository();
+    let skill = fs::read_to_string(installed_skill(&repository)).unwrap();
+    let guidance = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    for required in [
+        "The normal pre-commit gate is the default constitution",
+        "git commit --no-verify` only under that current authorization",
+        "exact evidence as ready critical work",
+        "synthesized merge remains hook-free",
+        "declared cheap integrated-tree admission still applies",
+    ] {
+        assert!(
+            guidance.contains(required),
+            "installed skill omitted {required:?}"
+        );
+    }
+}
+
+#[test]
 fn linked_worktrees_share_one_common_install_and_receipt() {
     let scratch = Scratch::new("linked");
     let common = scratch.join(".git");
