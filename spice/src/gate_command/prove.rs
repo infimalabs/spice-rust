@@ -229,7 +229,14 @@ impl AdmissionPreparation {
         Ok(())
     }
 
-    pub(super) fn verify_current(&self, repository: &Repository) -> Result<(), ProveFailure> {
+    pub(super) fn verify_current(
+        &mut self,
+        repository: &Repository,
+        claim: &gate::ClaimCapture,
+    ) -> Result<(), ProveFailure> {
+        if let Some(staged) = refresh_staged_source(&self.staged, repository, claim)? {
+            self.staged = staged;
+        }
         self.verify_source()?;
         self.verify_fingerprint_authority(repository)
     }
@@ -266,6 +273,52 @@ impl AdmissionPreparation {
 
     pub(super) fn into_staged(self) -> StagedActionSelection {
         self.staged
+    }
+}
+
+fn refresh_staged_source(
+    staged: &StagedActionSelection,
+    repository: &Repository,
+    claim: &gate::ClaimCapture,
+) -> Result<Option<StagedActionSelection>, ProveFailure> {
+    match staged
+        .anchor()
+        .verify_refreshable_source()
+        .map_err(ProveFailure::run)?
+    {
+        gate::tree::RefreshableSourceState::Current => Ok(None),
+        gate::tree::RefreshableSourceState::IndexChanged => {
+            let expected = staged
+                .anchor()
+                .staged_authority()
+                .expect("admission preparation retains staged authority");
+            let anchor = spice::gate::prepare_arm_at_with_claim(
+                repository.worktree_root(),
+                gate::Selector::staged(),
+                GateId::Staging,
+                claim.clone(),
+            )
+            .map_err(ProveFailure::run)?;
+            let observed = anchor
+                .staged_authority()
+                .expect("a recaptured staged anchor retains staged authority");
+            let differences = expected.differences(observed);
+            if !differences.is_empty() {
+                return Err(ProveFailure::refusal(
+                    "gate::source-moved",
+                    format!(
+                        "staged semantic authority changed after evidence lookup: {differences:?}"
+                    ),
+                ));
+            }
+            let restored = spice::change_gate::restore_staged_actions(
+                anchor,
+                staged.selection().clone(),
+                staged.cargo_tests(),
+            )
+            .map_err(ProveFailure::selection)?;
+            Ok(Some(restored))
+        }
     }
 }
 
