@@ -14,6 +14,9 @@ use wire::{
 
 use super::*;
 
+mod deferral_fixture;
+use deferral_fixture::*;
+
 struct Fixture {
     bus: Bus,
     projects: ProjectPolicy,
@@ -411,6 +414,246 @@ fn task_wake_is_an_explicit_timer_event_for_the_selected_lane() {
         Fired::TaskWake(lane)
     );
     drop(timers);
+    bus.shutdown().expect("fixture bus stops");
+}
+
+#[test]
+fn finite_task_deferral_wakes_at_its_live_deadline() {
+    let bus = Bus::start(Journal::in_memory().expect("fixture journal opens"))
+        .expect("fixture bus starts");
+    let task = deferred_task("timer.defer", "1kKRRsDQ");
+    let phase = "todo".parse::<Phase>().expect("fixture phase");
+    let deadline = shifted_millis(
+        Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical"),
+        100,
+    );
+    seed_timer_task(&bus, &task, "timer.defer", Some(deadline), Vec::new());
+    let mut timers =
+        Runtime::start(projects(), steer::Config::default()).expect("timer runtime starts");
+    timers.synchronize(&bus).expect("live task deferral arms");
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("fixture async runtime builds");
+    let event = runtime
+        .block_on(timers.recv())
+        .expect("live task deferral fires");
+    assert_eq!(event.kind(), TimerKind::TaskWake);
+    assert_eq!(event.owner(), task.to_string());
+    assert_eq!(
+        timers.consume(&bus, event).expect("task deferral consumes"),
+        Fired::DeferredTaskWoken(task.clone()),
+    );
+    let heads = timer_task_heads(&bus, &task);
+    assert_eq!(heads.workflow().body().phase, phase);
+    assert_eq!(heads.workflow().body().deferral, None);
+    assert!(heads.statement().body().dependencies.is_empty());
+    let (statement, workflow, claim, lease) = heads.into_bodies();
+    let entry = Entry::new(statement, workflow, claim, lease, &projects())
+        .expect("woken task remains valid");
+    assert!(
+        board::eligible_entry(std::slice::from_ref(&entry), &entry, &Actor::Lane(uuid(49))),
+        "the elapsed deferral becomes allocator-eligible",
+    );
+    assert_eq!(task_woken_count(&bus), 1);
+
+    drop(timers);
+    bus.shutdown().expect("fixture bus stops");
+}
+
+#[test]
+fn startup_catches_up_two_overdue_tasks_but_leaves_future_and_parked_work_waiting() {
+    let bus = Bus::start(Journal::in_memory().expect("fixture journal opens"))
+        .expect("fixture bus starts");
+    let now = Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
+    let anchor = deferred_task("timer.defer", "1kKRRsDR");
+    let first = deferred_task("timer.defer", "1kKRRsDS");
+    let second = deferred_task("timer.defer", "1kKRRsDT");
+    let future = deferred_task("timer.defer", "1kKRRsDV");
+    let parked = deferred_task(".oops.timer", "1kKRRsDW");
+    seed_timer_task(&bus, &anchor, "timer.defer", None, Vec::new());
+    let dependency = vec![anchor.born().expect("anchor has a stamp")];
+    seed_timer_task(
+        &bus,
+        &first,
+        "timer.defer",
+        Some(shifted(now, -2)),
+        dependency.clone(),
+    );
+    seed_timer_task(
+        &bus,
+        &second,
+        "timer.defer",
+        Some(shifted(now, -1)),
+        dependency.clone(),
+    );
+    seed_timer_task(
+        &bus,
+        &future,
+        "timer.defer",
+        Some(shifted(now, 3600)),
+        dependency.clone(),
+    );
+    seed_timer_task(
+        &bus,
+        &parked,
+        ".oops.timer",
+        Some(shifted(now, -1)),
+        dependency.clone(),
+    );
+
+    let mut timers =
+        Runtime::start(projects(), steer::Config::default()).expect("timer runtime starts");
+    timers.synchronize(&bus).expect("startup deferrals arm");
+    assert_eq!(timers.deferrals.len(), 3, "hidden parked work is not armed");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("fixture async runtime builds");
+    let mut woken = std::collections::BTreeSet::new();
+    for _ in 0..2 {
+        let event = runtime
+            .block_on(timers.recv())
+            .expect("overdue task wake fires");
+        let Fired::DeferredTaskWoken(task) =
+            timers.consume(&bus, event).expect("catch-up consumes")
+        else {
+            panic!("overdue deferral did not wake")
+        };
+        woken.insert(task);
+    }
+    assert_eq!(
+        woken,
+        std::collections::BTreeSet::from([first.clone(), second.clone()])
+    );
+    timers
+        .synchronize(&bus)
+        .expect("post-catch-up state synchronizes");
+    assert_eq!(timers.deferrals.keys().collect::<Vec<_>>(), [&future]);
+    for task in [&first, &second, &future, &parked] {
+        let heads = timer_task_heads(&bus, task);
+        assert_eq!(heads.workflow().body().phase.as_str(), "todo");
+        assert_eq!(heads.statement().body().dependencies, dependency);
+    }
+    assert_eq!(
+        timer_task_heads(&bus, &first).workflow().body().deferral,
+        None
+    );
+    assert_eq!(
+        timer_task_heads(&bus, &second).workflow().body().deferral,
+        None
+    );
+    assert_eq!(
+        timer_task_heads(&bus, &future).workflow().body().deferral,
+        Some(shifted(now, 3600)),
+    );
+    assert_eq!(
+        timer_task_heads(&bus, &parked).workflow().body().deferral,
+        Some(shifted(now, -1)),
+    );
+    assert_eq!(task_woken_count(&bus), 2);
+
+    drop(timers);
+    let mut restarted =
+        Runtime::start(projects(), steer::Config::default()).expect("replacement timer starts");
+    restarted
+        .synchronize(&bus)
+        .expect("replacement observes completed catch-up");
+    assert_eq!(restarted.deferrals.keys().collect::<Vec<_>>(), [&future]);
+    assert_eq!(task_woken_count(&bus), 2, "restart adds no duplicate wake");
+    drop(restarted);
+    bus.shutdown().expect("fixture bus stops");
+}
+
+#[test]
+fn resident_replacement_catches_a_deadline_that_passed_while_timers_were_down() {
+    let bus = Bus::start(Journal::in_memory().expect("fixture journal opens"))
+        .expect("fixture bus starts");
+    let task = deferred_task("timer.defer", "1kKRRsDX");
+    let deadline = shifted_millis(
+        Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical"),
+        100,
+    );
+    seed_timer_task(&bus, &task, "timer.defer", Some(deadline), Vec::new());
+    let mut predecessor =
+        Runtime::start(projects(), steer::Config::default()).expect("predecessor timer starts");
+    predecessor
+        .synchronize(&bus)
+        .expect("predecessor arms future deferral");
+    drop(predecessor);
+    std::thread::sleep(std::time::Duration::from_millis(150));
+
+    let mut successor =
+        Runtime::start(projects(), steer::Config::default()).expect("successor timer starts");
+    successor
+        .synchronize(&bus)
+        .expect("successor catches overdue deferral");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("fixture async runtime builds");
+    let event = runtime
+        .block_on(successor.recv())
+        .expect("replacement catch-up fires");
+    assert_eq!(
+        successor
+            .consume(&bus, event)
+            .expect("replacement consumes"),
+        Fired::DeferredTaskWoken(task.clone()),
+    );
+    assert_eq!(
+        timer_task_heads(&bus, &task).workflow().body().deferral,
+        None
+    );
+    assert_eq!(task_woken_count(&bus), 1);
+
+    drop(successor);
+    bus.shutdown().expect("fixture bus stops");
+}
+
+#[test]
+fn duplicate_overdue_catch_up_commits_one_wake_transition() {
+    let bus = Bus::start(Journal::in_memory().expect("fixture journal opens"))
+        .expect("fixture bus starts");
+    let task = deferred_task("timer.defer", "1kKRRsDY");
+    let deadline = shifted(
+        Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical"),
+        -1,
+    );
+    seed_timer_task(&bus, &task, "timer.defer", Some(deadline), Vec::new());
+    let mut first =
+        Runtime::start(projects(), steer::Config::default()).expect("first timer starts");
+    let mut second =
+        Runtime::start(projects(), steer::Config::default()).expect("second timer starts");
+    first.synchronize(&bus).expect("first catch-up arms");
+    second.synchronize(&bus).expect("second catch-up arms");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("fixture async runtime builds");
+    let first_event = runtime
+        .block_on(first.recv())
+        .expect("first catch-up fires");
+    let second_event = runtime
+        .block_on(second.recv())
+        .expect("second catch-up fires");
+    assert_eq!(
+        first
+            .consume(&bus, first_event)
+            .expect("first catch-up consumes"),
+        Fired::DeferredTaskWoken(task.clone()),
+    );
+    assert_eq!(
+        second
+            .consume(&bus, second_event)
+            .expect("duplicate catch-up settles"),
+        Fired::Stale,
+    );
+    assert_eq!(
+        timer_task_heads(&bus, &task).workflow().body().deferral,
+        None
+    );
+    assert_eq!(task_woken_count(&bus), 1);
+
+    drop(first);
+    drop(second);
     bus.shutdown().expect("fixture bus stops");
 }
 

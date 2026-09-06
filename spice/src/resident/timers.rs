@@ -24,6 +24,7 @@ pub(super) struct Runtime {
     forwarder: Option<JoinHandle<()>>,
     projects: ProjectPolicy,
     steering: steer::Config,
+    deferrals: BTreeMap<TaskHandle, ArmedDeferral>,
     claims: BTreeMap<TaskHandle, ArmedClaim>,
     renewals: BTreeMap<TaskHandle, ArmedRenewal>,
     directives: BTreeMap<CanonicalUuid, ArmedDirective>,
@@ -42,6 +43,19 @@ struct TimerSnapshot {
 struct TimerFacts {
     rows: Vec<wire::Envelope<wire::AnyFact>>,
     horizon: Option<wire::Seq>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DeferralAuthority {
+    task: TaskHandle,
+    stamp: wire::TaskStamp,
+    workflow: journal::JournalHead<wire::WorkflowHead>,
+    deadline: Instant,
+}
+
+struct ArmedDeferral {
+    id: TimerId,
+    authority: DeferralAuthority,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -95,6 +109,7 @@ struct ArmedWake {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum Fired {
     Stale,
+    DeferredTaskWoken(TaskHandle),
     ClaimLapse,
     ClaimRenew,
     Steering,
@@ -131,6 +146,7 @@ impl Runtime {
             forwarder: Some(forwarder),
             projects,
             steering,
+            deferrals: BTreeMap::new(),
             claims: BTreeMap::new(),
             renewals: BTreeMap::new(),
             directives: BTreeMap::new(),
@@ -188,6 +204,7 @@ impl Runtime {
     pub(super) fn synchronize(&mut self, bus: &Bus) -> CommandResult<()> {
         let snapshot = timer_snapshot(bus)?;
         self.facts.synchronize(bus, snapshot.horizon)?;
+        let desired_deferrals = desired_deferrals(&snapshot.tasks, &self.projects)?;
         let desired = desired_claims(&snapshot.tasks, snapshot.residency.as_ref())?;
         let desired_renewals = desired_renewals(
             &snapshot.tasks,
@@ -195,6 +212,7 @@ impl Runtime {
             &self.facts.rows,
         )?;
         let desired_directives = desired_directives(&snapshot.steering, &self.steering)?;
+        self.synchronize_deferrals(desired_deferrals)?;
         let stale = self
             .claims
             .iter()
@@ -301,10 +319,52 @@ impl Runtime {
         Ok(())
     }
 
+    fn synchronize_deferrals(
+        &mut self,
+        desired: BTreeMap<TaskHandle, DeferralAuthority>,
+    ) -> CommandResult<()> {
+        let stale = self
+            .deferrals
+            .iter()
+            .filter_map(|(task, armed)| {
+                (desired.get(task) != Some(&armed.authority)).then_some(task.clone())
+            })
+            .collect::<Vec<_>>();
+        for task in stale {
+            let armed = self
+                .deferrals
+                .remove(&task)
+                .expect("stale task came from the deferral map");
+            self.worker()?
+                .cancel(armed.id)
+                .map_err(|error| store_fault("bus::timer-cancel-failed", &error.to_string()))?;
+        }
+        for (task, authority) in desired {
+            if self.deferrals.contains_key(&task) {
+                continue;
+            }
+            let id = self
+                .worker()?
+                .arm(task.to_string(), TimerKind::TaskWake, authority.deadline)
+                .map_err(|error| store_fault("bus::timer-arm-failed", &error.to_string()))?;
+            self.deferrals.insert(task, ArmedDeferral { id, authority });
+        }
+        Ok(())
+    }
+
     /// Consume one fired event using only authority captured when it was armed.
     pub(super) fn consume(&mut self, bus: &Bus, event: TimerEvent) -> CommandResult<Fired> {
         match event.kind() {
-            TimerKind::TaskWake | TimerKind::LaneResume => self.consume_lifecycle(event),
+            TimerKind::TaskWake
+                if self
+                    .wake
+                    .as_ref()
+                    .is_some_and(|armed| armed.id == event.id()) =>
+            {
+                self.consume_lifecycle(event)
+            }
+            TimerKind::TaskWake => self.consume_deferral(bus, event),
+            TimerKind::LaneResume => self.consume_lifecycle(event),
             TimerKind::SteerEscalate | TimerKind::SteerLapse => {
                 self.consume_steering(bus, event).map(|()| Fired::Steering)
             }
@@ -314,6 +374,75 @@ impl Runtime {
                 "bus::timer-kind-unhandled",
                 &format!("production received unarmed timer kind {kind:?}"),
             )),
+        }
+    }
+
+    /// Commit the board's canonical wake transition as the Spice actor.
+    ///
+    /// `TaskWoken` belongs to the command-door fact vocabulary whether a user
+    /// or the resident clears the deferral. The Spice actor and exact captured
+    /// workflow guard distinguish this deadline-driven transition from a
+    /// manual wake while preserving one task history vocabulary.
+    fn consume_deferral(&mut self, bus: &Bus, event: TimerEvent) -> CommandResult<Fired> {
+        let Some(task) = self
+            .deferrals
+            .iter()
+            .find_map(|(task, armed)| (armed.id == event.id()).then_some(task.clone()))
+        else {
+            return Ok(Fired::Stale);
+        };
+        let armed = self
+            .deferrals
+            .remove(&task)
+            .expect("event task came from the deferral map");
+        if event.owner() != armed.authority.task.to_string()
+            || event.deadline() != armed.authority.deadline
+        {
+            return Err(environment_fault(
+                "bus::timer-authority-mismatch",
+                "fired timer identity disagreed with its captured deferral authority",
+            ));
+        }
+        let at = Instant::new(jiff::Timestamp::now())
+            .map_err(|error| environment_fault("bus::timer-clock-invalid", &error.to_string()))?;
+        if at < armed.authority.deadline {
+            return Ok(Fired::Stale);
+        }
+        let authority = armed.authority;
+        let origin = format!("task:{}", authority.stamp)
+            .parse::<wire::Origin>()
+            .map_err(|error| store_fault("task::origin-invalid", &error.to_string()))?;
+        let mut proposal = JournalWrite::new(Actor::Spice, origin, at, Producer::CommandDoor);
+        let guarded = authority.clone();
+        proposal.guard(JournalGuard::new(move |read| {
+            deferral_guard(read, &guarded, at)
+        }));
+        let woken = proposal
+            .fact(
+                wire::body::TaskWoken {
+                    task: authority.stamp.clone(),
+                },
+                FactCause::Root,
+            )
+            .map_err(|error| store_fault("task::deferral-wake-invalid", &error.to_string()))?;
+        let mut workflow = authority.workflow.body().clone();
+        workflow.deferral = None;
+        proposal.workflow_head(authority.stamp, woken, move |_| workflow);
+        match bus
+            .commit(proposal)
+            .map_err(|error| store_fault("bus::commit-failed", &error.to_string()))?
+        {
+            CommitOutcome::Committed(_) => Ok(Fired::DeferredTaskWoken(task)),
+            CommitOutcome::Refused(refusal) if refusal.reason().starts_with("task::deferral-") => {
+                Ok(Fired::Stale)
+            }
+            CommitOutcome::Refused(refusal) => Err(store_fault(
+                "task::deferral-wake-commit-refused",
+                refusal.reason(),
+            )),
+            CommitOutcome::Fault(fault) => {
+                Err(store_fault("journal::commit-failed", fault.detail()))
+            }
         }
     }
 
@@ -564,6 +693,60 @@ impl Drop for Runtime {
             let _ = forwarder.join();
         }
     }
+}
+
+fn desired_deferrals(
+    tasks: &[journal::TaskHeads],
+    projects: &ProjectPolicy,
+) -> CommandResult<BTreeMap<TaskHandle, DeferralAuthority>> {
+    let mut desired = BTreeMap::new();
+    for heads in tasks {
+        let workflow = heads.workflow();
+        let Some(deadline) = workflow.body().deferral else {
+            continue;
+        };
+        if workflow.body().completion.is_some() {
+            continue;
+        }
+        let statement = heads.statement().body();
+        let project = projects.admit(&statement.project).map_err(|error| {
+            store_fault(
+                "bus::timer-project-invalid",
+                &format!("task {} has invalid project: {error}", statement.born),
+            )
+        })?;
+        if project.visibility().is_hidden() {
+            continue;
+        }
+        let task = TaskHandle::for_project(&statement.project, &statement.born);
+        desired.insert(
+            task.clone(),
+            DeferralAuthority {
+                task,
+                stamp: statement.born.clone(),
+                workflow: workflow.clone(),
+                deadline,
+            },
+        );
+    }
+    Ok(desired)
+}
+
+fn deferral_guard(
+    read: &journal::JournalRead<'_>,
+    expected: &DeferralAuthority,
+    at: Instant,
+) -> Result<(), GuardError> {
+    if at < expected.deadline {
+        return Err(GuardError::refused("task::deferral-before-deadline"));
+    }
+    let Some(heads) = read.task_heads_for(&expected.stamp)? else {
+        return Err(GuardError::refused("task::deferral-task-moved"));
+    };
+    if heads.workflow() != &expected.workflow {
+        return Err(GuardError::refused("task::deferral-authority-moved"));
+    }
+    Ok(())
 }
 
 fn desired_claims(
