@@ -509,6 +509,7 @@ export async function configureFixture(
       "Cargo.lock",
       "Cargo.toml",
       "fake-claude",
+      "fake-codex",
       "rust-toolchain.toml",
       "spice-rust.toml",
     ],
