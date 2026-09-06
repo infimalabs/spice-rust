@@ -25,7 +25,7 @@ mod support;
 
 #[cfg(debug_assertions)]
 pub(super) use support::configure_mutation_rendezvous;
-pub(super) use support::temporary_name;
+pub(super) use support::{retirement_temporary_name, temporary_name};
 
 #[cfg(debug_assertions)]
 static MUTATION_RENDEZVOUS: OnceLock<Option<MutationRendezvous>> = OnceLock::new();
@@ -389,6 +389,82 @@ impl AdmittedPath {
         self.remove_with(expected, || mutation_pause("remove", &self.display))
     }
 
+    pub(super) fn retire(
+        &self,
+        expected: Generation,
+        temporary: &OsString,
+    ) -> Result<(), InstallError> {
+        self.require_generation(Some(expected))?;
+        self.verify_named_parent()?;
+        #[cfg(unix)]
+        {
+            changed_on_name_race(
+                rename_noreplace(
+                    self.parent(),
+                    &self.file_name,
+                    self.parent(),
+                    temporary,
+                    &self.display,
+                ),
+                &self.display,
+            )?;
+            let admitted = self
+                .verify_named_parent()
+                .and_then(|()| self.require_named_generation(temporary, expected));
+            if let Err(error) = admitted {
+                rename_noreplace(
+                    self.parent(),
+                    temporary,
+                    self.parent(),
+                    &self.file_name,
+                    &self.display,
+                )?;
+                return Err(error);
+            }
+            mutation_pause("retire-renamed", &self.display)?;
+            self.finish_retirement(expected, temporary)
+        }
+        #[cfg(not(unix))]
+        unreachable!("construction refuses non-Unix filesystems")
+    }
+
+    pub(super) fn resume_retirement(
+        &self,
+        expected: Generation,
+        temporary: &OsString,
+    ) -> Result<(), InstallError> {
+        #[cfg(unix)]
+        {
+            self.require_generation(None)?;
+            self.verify_named_parent()?;
+            self.require_named_generation(temporary, expected)?;
+            self.finish_retirement(expected, temporary)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (expected, temporary);
+            unreachable!("construction refuses non-Unix filesystems")
+        }
+    }
+
+    #[cfg(unix)]
+    fn finish_retirement(
+        &self,
+        expected: Generation,
+        temporary: &OsString,
+    ) -> Result<(), InstallError> {
+        self.require_named_generation(temporary, expected)?;
+        remove_name(self.parent(), temporary, AtFlags::empty(), &self.display)?;
+        self.parent().sync_all().map_err(|source| {
+            InstallError::io(
+                "synchronize admitted destination parent",
+                &self.display,
+                source,
+            )
+        })?;
+        mutation_pause("retire-unlinked", &self.display)
+    }
+
     fn remove_with(
         &self,
         expected: Generation,
@@ -520,7 +596,10 @@ impl AdmittedPath {
     }
 
     #[cfg(unix)]
-    fn observe_named(&self, name: &OsString) -> Result<Option<ObservedFile>, InstallError> {
+    pub(super) fn observe_named(
+        &self,
+        name: &OsString,
+    ) -> Result<Option<ObservedFile>, InstallError> {
         let descriptor = match unix_fs::openat(
             self.parent(),
             name,
@@ -552,6 +631,14 @@ impl AdmittedPath {
             image: FileImage::new(metadata.permissions().mode() & 0o777, bytes),
             generation: Generation::observe(&metadata),
         }))
+    }
+
+    #[cfg(not(unix))]
+    pub(super) fn observe_named(
+        &self,
+        _name: &OsString,
+    ) -> Result<Option<ObservedFile>, InstallError> {
+        unreachable!("construction refuses non-Unix filesystems")
     }
 
     #[cfg(unix)]

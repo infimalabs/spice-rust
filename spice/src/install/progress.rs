@@ -85,7 +85,14 @@ fn apply_retirements(
     while record.completed < record.plan.operations.len() + record.plan.retirements.len() {
         let index = record.completed - record.plan.operations.len();
         let step = record.completed;
-        let parent = retire_path(repository, &record.plan.retirements[index])?;
+        if record.plan.retirements[index].discards_payload()
+            && record.retired_parents[index].is_none()
+        {
+            record.retired_parents[index] =
+                prepare_retirement(repository, &record.plan.retirements[index], index)?;
+            record_generation = write_record(repository, record, record_generation)?;
+        }
+        let parent = retire_path(repository, &record.plan.retirements[index], index)?;
         record.retired_parents[index] = parent;
         record_generation = write_record(repository, record, record_generation)?;
         if interrupt_after_write == Some(step) {

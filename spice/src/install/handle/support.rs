@@ -27,3 +27,8 @@ pub(in super::super) fn temporary_name() -> OsString {
         TEMPORARY_SEQUENCE.fetch_add(1, Ordering::Relaxed)
     ))
 }
+
+/// Name the one recoverable temporary for a retirement plan slot.
+pub(in super::super) fn retirement_temporary_name(index: usize) -> OsString {
+    OsString::from(format!(".spice-install-retirement-{index}.tmp"))
+}
