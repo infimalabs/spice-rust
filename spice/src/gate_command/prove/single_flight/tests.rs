@@ -34,6 +34,28 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn explicit_claim_reuses_an_equivalent_indexed_receipt_before_execution() {
+    let fixture = Fixture::new("equivalent-receipt");
+    let action = derive_action_key(b"canonical action closure");
+    let published = receipt(&action);
+    fixture.store.publish(&published).unwrap();
+
+    let Ok(Claim::Present(report)) = claim(&fixture.store, "explicit", "formatters", &action)
+    else {
+        panic!("explicit proof consumes the equivalent receipt");
+    };
+    assert_eq!(report.action_key, action);
+    assert_eq!(report.receipt, published.id().unwrap());
+    assert!(
+        fs::read_dir(fixture.store.root().join("leases"))
+            .unwrap()
+            .next()
+            .is_none(),
+        "equivalent receipt reuse acquires no execution lease",
+    );
+}
+
+#[test]
 fn waiter_consumes_the_producers_receipt() {
     let fixture = Fixture::new("success");
     let action = derive_action_key(b"shared success");
