@@ -97,6 +97,17 @@ export async function assertCursorRelocation(page, artifacts, engine) {
         node.dataset.menuIdentity = crypto.randomUUID();
         return node.dataset.menuIdentity;
       });
+      const laneGeometry = () => page.locator(".team-surface").evaluateAll((lanes) => (
+        lanes.map((lane) => {
+          const box = lane.getBoundingClientRect();
+          return {
+            height: box.height,
+            scrollTop: lane.querySelector(".lane-mosaic-plane")?.scrollTop ?? 0,
+            top: box.top,
+          };
+        })
+      ));
+      const collapsedLanes = await laneGeometry();
       assert.equal(await cursor.count(), 1, `${label} renders one global cursor while closed`);
       const cursorIdentity = await cursor.evaluate((node) => {
         node.dataset.relocationIdentity = crypto.randomUUID();
@@ -306,6 +317,11 @@ export async function assertCursorRelocation(page, artifacts, engine) {
         geometry.bar,
         `${label} overlays the open frame without resizing the command bar`,
       );
+      assert.deepEqual(
+        await laneGeometry(),
+        collapsedLanes,
+        `${label} overlays without moving or resizing lane surfaces`,
+      );
       assert.equal(
         expandedGeometry.workspaceTop,
         geometry.workspaceTop,
@@ -492,6 +508,11 @@ export async function assertCursorRelocation(page, artifacts, engine) {
       });
       await page.locator(".canvas-menu > summary").click();
       await waitForDisclosure(page, false, `${label} closes after cursor geometry checks`);
+      assert.deepEqual(
+        await laneGeometry(),
+        collapsedLanes,
+        `${label} close preserves lane geometry and scroll offsets`,
+      );
       assert.equal(await cursor.count(), 1, `${label} keeps one global cursor after closing`);
       assert.equal(await cursor.isVisible(), false, `${label} hides the global cursor after closing`);
       assert.equal(
