@@ -26,7 +26,10 @@ const EXPECTED_SCENARIOS = [
   "resident-restart",
 ];
 
-const registry = JSON.parse(readFileSync(new URL("./canvas-shards.json", import.meta.url), "utf8"));
+const selectedShard = process.env.SPICE_CANVAS_SHARD; // env-policy: allow
+const registry = selectedShard === undefined
+  ? JSON.parse(readFileSync(new URL("./canvas-shards.json", import.meta.url), "utf8"))
+  : { version: 1, shards: [JSON.parse(selectedShard)] };
 assert.deepEqual(Object.keys(registry), ["version", "shards"], "Canvas registry has one schema");
 assert.equal(registry.version, 1, "Canvas registry uses the current schema");
 

@@ -226,6 +226,12 @@ impl ChangeSelectionPolicy {
                     GateId::EnvPolicy,
                     GateId::EnvNameLedger,
                 ]);
+                if frontend_path(path) {
+                    gates.insert(GateId::CanvasWebTypecheck);
+                }
+            }
+            "html" | "css" if frontend_path(path) => {
+                gates.insert(GateId::CanvasWebTypecheck);
             }
             "md" => {
                 gates.extend([GateId::Taste, GateId::MarkdownLinks]);
@@ -317,6 +323,9 @@ impl ChangeSelectionPolicy {
                 if self.javascript_project() =>
             {
                 gates.insert(GateId::JavascriptUnused);
+                if matches!(path, "package.json" | "package-lock.json") {
+                    gates.insert(GateId::CanvasWebTypecheck);
+                }
             }
             _ => {}
         }
@@ -360,6 +369,10 @@ impl ChangeSelectionPolicy {
 
 fn compiled_package_source(path: &str) -> bool {
     compiled_package_root(path).is_some()
+}
+
+fn frontend_path(path: &str) -> bool {
+    path.starts_with("app/") || path.starts_with("canvas/")
 }
 
 fn compiled_package_root(path: &str) -> Option<&str> {

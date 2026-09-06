@@ -611,15 +611,14 @@ fn use_canvas_menu_dismissal(open: UseStateHandle<bool>) {
                 let task_pill_focused = document.active_element().is_some_and(|element| {
                     element.closest(".task-pill-strip").ok().flatten().is_some()
                 });
-                if !task_pill_focused {
-                    if let Some(first_destination) = document
+                if !task_pill_focused
+                    && let Some(first_destination) = document
                         .query_selector(".canvas-navigation .axis-button")
                         .ok()
                         .flatten()
                         .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
-                    {
-                        let _ = first_destination.focus();
-                    }
+                {
+                    let _ = first_destination.focus();
                 }
                 let pointer_open = open.clone();
                 let pointer = Closure::<dyn FnMut(web_sys::Event)>::new(move |event| {

@@ -9,11 +9,12 @@ import { launchBrowser } from "./headless-launch.mjs";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 async function triggerDocument() {
-  const [style, mosaic] = await Promise.all([
+  const [style, mosaic, chrome] = await Promise.all([
     readFile(resolve(root, "app/style.css"), "utf8"),
     readFile(resolve(root, "app/mosaic.css"), "utf8"),
+    readFile(resolve(root, "app/chrome.css"), "utf8"),
   ]);
-  return `<!doctype html><style>${style}\n${mosaic}</style>
+  return `<!doctype html><style>${style}\n${mosaic}\n${chrome}</style>
     <header class="commandbar commandbar--mosaic">
       <nav class="task-pill-strip" aria-label="Open task projects">
         <button class="task-pill"><span>canvas</span><span class="task-pill-count">1</span></button>

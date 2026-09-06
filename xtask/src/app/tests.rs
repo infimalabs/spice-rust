@@ -28,6 +28,8 @@ fn write_raw_generation(stage: &Path, label: &str, source_identity: &Digest, val
     fs::write(stage.join("style.css"), format!("style {label}")).expect("write stylesheet");
     fs::write(stage.join("mosaic.css"), format!("mosaic {label}"))
         .expect("write Mosaic stylesheet");
+    fs::write(stage.join("chrome.css"), format!("chrome {label}"))
+        .expect("write chrome stylesheet");
     fs::write(stage.join("composer.css"), format!("composer {label}"))
         .expect("write composer stylesheet");
     fs::write(stage.join("responsive.css"), format!("responsive {label}"))
@@ -40,7 +42,7 @@ fn write_raw_generation(stage: &Path, label: &str, source_identity: &Digest, val
     fs::write(
         stage.join("canvas-app.html"),
         format!(
-            "<link href=\"/style.css\"><link href=\"/mosaic.css\">\
+            "<link href=\"/style.css\"><link href=\"/mosaic.css\"><link href=\"/chrome.css\">\
              <link href=\"/composer.css\"><link href=\"/responsive.css\">\
              <script src=\"/app.js\"></script>\
              <link href=\"/app.js\"><link href=\"/app_bg.wasm\">{second_wasm}\
@@ -340,6 +342,7 @@ fn finalization_produces_the_closed_worktree_stage_inventory() {
             "app.module",
             "app_bg.wasm",
             "canvas-app.html",
+            "chrome.css",
             "composer.css",
             "mosaic.css",
             "responsive.css",

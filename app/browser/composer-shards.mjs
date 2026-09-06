@@ -240,9 +240,8 @@ export async function assertComposerPointerSelection(page, lane, composer) {
     const style = getComputedStyle(node);
     const context = document.createElement("canvas").getContext("2d");
     context.font = style.font;
-    const rect = node.getBoundingClientRect();
-    const origin = rect.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
-    const y = rect.top + parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop)
+    const origin = parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
+    const y = parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop)
       + parseFloat(style.lineHeight) / 2;
     const x = (offset) => origin + context.measureText(node.value.slice(0, offset)).width;
     return { y, alpha: x(2), bravo: x(8), charlie: x(15), end: x(36) };
@@ -286,7 +285,8 @@ export async function assertComposerPointerSelection(page, lane, composer) {
     "keyboard selection retains its native range",
   );
 
-  await page.mouse.click(geometry.alpha, geometry.y);
+  await textarea.evaluate((node) => node.scrollTo({ left: 0 }));
+  await textarea.click({ position: { x: geometry.alpha, y: geometry.y } });
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
     () => requestAnimationFrame(resolve),
   )));
@@ -296,7 +296,7 @@ export async function assertComposerPointerSelection(page, lane, composer) {
     `single click retains an opening caret: ${JSON.stringify(openingClick)}`,
   );
 
-  await page.mouse.click(geometry.charlie, geometry.y);
+  await textarea.click({ position: { x: geometry.charlie, y: geometry.y } });
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
     () => requestAnimationFrame(resolve),
   )));
@@ -319,7 +319,8 @@ export async function assertComposerPointerSelection(page, lane, composer) {
     () => requestAnimationFrame(resolve),
   )));
 
-  await page.mouse.dblclick(geometry.bravo, geometry.y);
+  await textarea.evaluate((node) => node.scrollTo({ left: 0 }));
+  await textarea.dblclick({ position: { x: geometry.bravo, y: geometry.y } });
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
     () => requestAnimationFrame(resolve),
   )));
@@ -329,9 +330,12 @@ export async function assertComposerPointerSelection(page, lane, composer) {
     "double click retains the clicked word selection",
   );
 
-  await page.mouse.move(geometry.alpha, geometry.y);
+  await textarea.evaluate((node) => node.scrollTo({ left: 0 }));
+  const box = await textarea.boundingBox();
+  assert.ok(box, "the composer textbox has pointer geometry");
+  await page.mouse.move(box.x + geometry.alpha, box.y + geometry.y);
   await page.mouse.down();
-  await page.mouse.move(geometry.end, geometry.y, { steps: 12 });
+  await page.mouse.move(box.x + geometry.end, box.y + geometry.y, { steps: 12 });
   await page.mouse.up();
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
     () => requestAnimationFrame(resolve),

@@ -191,6 +191,7 @@ pub(super) struct MissingBinaryOutput<'a> {
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) enum DeclaredPathSourceOrigin {
     FileMacro,
+    IncludedRust,
     Module,
 }
 
@@ -533,8 +534,12 @@ pub(super) fn declared_compile_time_sources(
                 continue;
             }
             for declared in &target.declared_path_sources {
-                if !declared.origins.contains(&DeclaredPathSourceOrigin::Module)
-                    || declared.path.extension() != Some(OsStr::new("rs"))
+                if !declared.origins.iter().any(|origin| {
+                    matches!(
+                        origin,
+                        DeclaredPathSourceOrigin::IncludedRust | DeclaredPathSourceOrigin::Module
+                    )
+                }) || declared.path.extension() != Some(OsStr::new("rs"))
                 {
                     continue;
                 }

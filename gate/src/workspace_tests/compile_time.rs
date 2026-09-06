@@ -233,11 +233,15 @@ fn scan_target(
         &mut scan,
     )?;
     let mut visited = BTreeSet::new();
-    for source in target
-        .declared_path_sources
-        .iter()
-        .filter(|source| source.path.extension() == Some(OsStr::new("rs")))
-    {
+    for source in target.declared_path_sources.iter().filter(|source| {
+        source.path.extension() == Some(OsStr::new("rs"))
+            && source.origins.iter().any(|origin| {
+                matches!(
+                    origin,
+                    DeclaredPathSourceOrigin::IncludedRust | DeclaredPathSourceOrigin::Module
+                )
+            })
+    }) {
         let syntax = parse_compile_time_source(package, &source.path)?;
         for inherited in &source.scopes {
             if visited.insert((source.path.clone(), inherited.clone())) {

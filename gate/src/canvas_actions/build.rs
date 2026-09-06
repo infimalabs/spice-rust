@@ -5,6 +5,7 @@ use std::path::{Component, Path, PathBuf};
 
 use sill::Environment;
 
+use crate::CargoExternalSourceAuthority;
 use crate::structural::scan_javascript_module_dependencies;
 use crate::workspace_tests::cargo_package_input_closure_at;
 
@@ -22,6 +23,7 @@ pub(super) fn authority(
     changed_paths: &[String],
     environment: &Environment,
     cargo: &OsStr,
+    external_source: Option<&CargoExternalSourceAuthority>,
 ) -> BuildAuthority {
     let selected = selected_paths.iter().cloned().collect::<BTreeSet<_>>();
     let mut authority = Authority::default();
@@ -48,6 +50,7 @@ pub(super) fn authority(
         &changed,
         environment,
         cargo,
+        external_source,
         &["xtask", "app"],
     ) {
         Ok(cargo) => {
@@ -565,6 +568,7 @@ mod tests {
             &[],
             &environment,
             OsStr::new("cargo"),
+            None,
             &["xtask", "app"],
         )
         .expect("resolve fixture Cargo closure");
@@ -603,6 +607,7 @@ mod tests {
             &["app/browser/scenario.mjs".to_owned()],
             &environment,
             OsStr::new("cargo"),
+            None,
         );
         assert!(
             build.non_cacheable_reason.is_none(),
@@ -799,6 +804,7 @@ mod tests {
             &[],
             &environment,
             OsStr::new("cargo"),
+            None,
         );
         if let Some(reason) = build.non_cacheable_reason {
             return Err(reason);

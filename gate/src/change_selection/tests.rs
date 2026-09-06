@@ -395,6 +395,30 @@ fn generic_selection_defers_canvas_topology_to_canonical_cargo_reach() {
 }
 
 #[test]
+fn packaged_frontend_sources_select_canvas_without_a_rust_change() {
+    let tracked = strings(&[
+        "app/browser/agent-conversation.mjs",
+        "app/style.css",
+        "package.json",
+        "spice-rust.toml",
+    ]);
+    let suffixes = strings(&[".mjs", ".css"]);
+    let policy = policy(&tracked, true, Some(&suffixes), &[], &[], &[]);
+
+    for path in [
+        "app/browser/agent-conversation.mjs",
+        "app/style.css",
+        "package.json",
+    ] {
+        let report = selection(&[path], &policy);
+        assert!(
+            report.gate_ids().contains(&GateId::CanvasWebTypecheck),
+            "packaged frontend path {path} omitted Canvas proof",
+        );
+    }
+}
+
+#[test]
 fn configured_policy_missing_a_required_language_class_refuses() {
     let tracked = strings(&["spice-rust.toml", "src/lib.rs"]);
     let suffixes = strings(&[".rs"]);

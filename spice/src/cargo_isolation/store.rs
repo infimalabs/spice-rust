@@ -16,7 +16,7 @@ use sill::{
 };
 use wire::CanonicalUuid;
 
-use super::{Host, IsolationError, PreparedHome};
+use super::{Host, IsolationError, PreparedHome, SourceGenerationAuthority};
 
 const SCHEMA: u64 = 2;
 const MARKER: &str = "store.json";
@@ -45,7 +45,10 @@ struct Layout {
 
 impl Layout {
     fn new(host: &Host) -> Self {
-        let root = host.store_root();
+        Self::from_root(host.store_root())
+    }
+
+    fn from_root(root: PathBuf) -> Self {
         Self {
             packages: root.join("packages"),
             generations: root.join("generations"),
@@ -96,7 +99,11 @@ impl Layout {
     }
 
     fn open(host: &Host) -> Result<Self, IsolationError> {
-        let layout = Self::new(host);
+        Self::open_root(host.store_root())
+    }
+
+    fn open_root(root: PathBuf) -> Result<Self, IsolationError> {
+        let layout = Self::from_root(root);
         for directory in [
             &layout.root,
             &layout.packages,
@@ -119,6 +126,51 @@ impl Layout {
         }
         Ok(layout)
     }
+}
+
+pub(super) fn source_generation_authority(
+    home: &Path,
+    lockfile: &[u8],
+) -> Result<SourceGenerationAuthority, IsolationError> {
+    let homes = home
+        .parent()
+        .filter(|path| path.file_name() == Some(OsStr::new("homes")))
+        .ok_or_else(|| {
+            IsolationError::new(
+                "cargo-isolation::home-path-invalid",
+                format!("Cargo home is outside the admitted homes directory: {home:?}"),
+            )
+        })?;
+    let root = homes.parent().ok_or_else(|| {
+        IsolationError::new(
+            "cargo-isolation::home-path-invalid",
+            format!("Cargo home has no source-store root: {home:?}"),
+        )
+    })?;
+    let layout = Layout::open_root(root.to_path_buf())?;
+    let generation = home_generation(home, &layout)?;
+    let expected = generation_digest(lockfile);
+    if generation != expected {
+        return Err(IsolationError::new(
+            "cargo-isolation::generation-lock-mismatch",
+            format!(
+                "Cargo home generation {generation} does not match selected lock generation {expected}"
+            ),
+        ));
+    }
+    validate_generation(&layout, &generation)?;
+    let manifest_path = layout.generations.join(&generation).join(MANIFEST);
+    let manifest = fs::read(&manifest_path).map_err(|error| {
+        IsolationError::io(
+            "cargo-isolation::generation-manifest-unavailable",
+            &manifest_path,
+            error,
+        )
+    })?;
+    Ok(SourceGenerationAuthority {
+        generation,
+        manifest: digest(b"spice-cargo-source-authority-v1", &manifest),
+    })
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

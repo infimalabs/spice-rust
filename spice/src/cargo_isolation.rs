@@ -331,6 +331,25 @@ pub struct PreparedReport {
     reused_generation: bool,
 }
 
+/// Verified immutable external package generation used by one Cargo action.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceGenerationAuthority {
+    generation: String,
+    manifest: String,
+}
+
+impl SourceGenerationAuthority {
+    #[must_use]
+    pub fn generation(&self) -> &str {
+        &self.generation
+    }
+
+    #[must_use]
+    pub fn manifest(&self) -> &str {
+        &self.manifest
+    }
+}
+
 /// Inspectable store inventory and retained uncertainty.
 pub use store::{CleanupReport, Inspection};
 
@@ -362,6 +381,14 @@ fn prepare(
 /// Inspect the owned source store without changing it.
 pub fn inspect(host: &Host) -> Result<Inspection, IsolationError> {
     store::inspect(host)
+}
+
+/// Verify the active private home and immutable source generation for exact lockfile bytes.
+pub fn source_generation_authority(
+    home: &Path,
+    lockfile: &[u8],
+) -> Result<SourceGenerationAuthority, IsolationError> {
+    store::source_generation_authority(home, lockfile)
 }
 
 /// Reclaim only old recognized temporaries and unreferenced generations.

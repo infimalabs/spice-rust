@@ -422,13 +422,15 @@ export async function assertFirefoxRestoredMosaic(
       { width: 1717, height: 1470 },
       "Firefox restored Agents viewport",
     );
+    await page.locator('[data-firefox-quote-fixture="true"]')
+      .evaluate((fixture) => fixture.remove());
+    await imageFixture.evaluate((fixture) => fixture.remove());
     const lane = console.locator(".team-agent").first();
     await assertComposerPointerSelection(
       page,
       lane,
       lane.locator(".composer-shard--primary"),
     );
-    await imageFixture.evaluate((fixture) => fixture.remove());
 
     await page.reload({ waitUntil: "networkidle" });
     await chooseCanvasView(page, "Agents");

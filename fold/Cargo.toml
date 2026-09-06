@@ -27,7 +27,9 @@ calls = [
     "Refusal::new",
     "Self",
     "admission::validate",
+    "admission::validate_registry_source",
     "pattern_matches",
+    "validate",
     "validate_rows",
     "validate_sources",
 ]

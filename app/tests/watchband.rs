@@ -704,7 +704,7 @@ fn the_stylesheet_sizes_the_age_slot_from_the_label_budget() {
 fn the_command_bar_is_not_delineated_from_the_canvas() {
     for (stylesheet, selector) in [
         (include_str!("../style.css"), ".commandbar {"),
-        (include_str!("../mosaic.css"), ".commandbar--mosaic {"),
+        (include_str!("../chrome.css"), ".commandbar--mosaic {"),
         (include_str!("../responsive.css"), ".commandbar {"),
     ] {
         let rule = stylesheet
