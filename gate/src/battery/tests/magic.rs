@@ -1,14 +1,12 @@
 //! The magic-number arm measured against real committed bytes.
 //!
-//! Every assertion here rests on the same repository, because the cases only
-//! mean anything beside each other: one file that was committed with literals
-//! and left alone, one that was committed with literals and given one more, one
-//! that has no committed bytes at all, and one in a source class this build
-//! cannot read. A scan handed no baseline reports the same nonzero count for the
-//! first three, so a test that showed only the third — or only the first — could
-//! not tell a delta from a plain scan. The fourth is what neither of the others
-//! can see: a row where both a missing baseline and an unreadable class are true
-//! at once, which is answered by class and not by count.
+//! Every assertion here rests on a real repository: committed sources prove the
+//! scanner takes a delta, newly added supported sources prove absence means an
+//! explicit empty comparison, and a newly added unreadable class proves parser
+//! refusal still outranks baseline selection. A scan handed no baseline reports
+//! every qualifying literal, so the committed and newly added cases are both
+//! required to distinguish retained literals from regressions introduced with
+//! a new path.
 
 use super::*;
 use crate::metrics::{EvidenceState as MetricState, MetricEvidence, MetricKey, MetricMeasurement};
@@ -175,51 +173,63 @@ fn a_committed_file_regresses_only_by_what_was_added_to_it() {
     );
 }
 
-/// A file with no committed bytes is reported, not scanned against nothing.
-///
-/// The predecessor read a missing baseline as an empty one and counted every
-/// literal in the file, which makes a new file's regression count a property of
-/// how many literals it was born with. The row states the absence instead, and
-/// names the commit it looked in, so the reason distinguishes a path `HEAD` does
-/// not carry from a path nobody read.
-///
-/// The arm still reports for the tree: `src/kept.rs` measures beside this row,
-/// because an inapplicable row may only speak for an arm when it speaks for
-/// every row in it.
+/// A new supported file with no qualifying literal measures zero and passes.
 #[test]
-fn a_path_absent_from_head_states_its_absence_instead_of_a_count() {
+fn a_new_supported_file_uses_an_explicit_empty_baseline_and_can_pass() {
     let fixture = Fixture::new();
     let repository = production_repository(&fixture.root);
-    fs::write(
-        repository.join("src/kept.rs"),
-        comparing_source(&COMMITTED_LITERALS),
-    )
-    .expect("fixture unchanged source");
-    fixture_git(&repository, &["add", "--all"]);
-    fixture_git(&repository, &["commit", "-q", "-m", "literals"]);
-
+    for path in PREDECESSOR_CLASS_SOURCES {
+        fixture_git(&repository, &["rm", "-q", "--cached", path]);
+    }
+    fixture_git(
+        &repository,
+        &["commit", "-q", "-m", "remove predecessor-only classes"],
+    );
     fs::write(
         repository.join("src/born.rs"),
-        comparing_source(&COMMITTED_LITERALS),
+        "pub fn identity(value: usize) -> usize { value }\n",
     )
-    .expect("fixture uncommitted source");
+    .expect("fixture new supported source");
     fixture_git(&repository, &["add", "src/born.rs"]);
-    let head = fixture_git(&repository, &["rev-parse", "HEAD"]);
 
     let report = battery_report(&repository);
 
     let born = magic_row(&report, "src/born.rs");
-    let MetricState::NotApplicable { reason } = born.state() else {
-        panic!("a path with no committed bytes has no delta to take: {born:?}")
-    };
-    assert!(
-        reason.contains("src/born.rs") && reason.contains(&head),
-        "the row names the path and the commit it is absent from: {reason}"
+    assert_eq!(
+        measured(born, "src/born.rs"),
+        0,
+        "an empty committed side yields a measured zero rather than inapplicability"
     );
     assert_eq!(
-        measured(magic_row(&report, "src/kept.rs"), "src/kept.rs"),
-        0,
-        "the paths that do have a baseline still measure beside it"
+        arm_state(&report),
+        BatteryState::Passed,
+        "a new supported file within the zero-regression policy passes"
+    );
+}
+
+/// A new supported file born with qualifying literals names its path and count.
+#[test]
+fn a_new_supported_file_reports_its_exact_regression_count() {
+    let fixture = Fixture::new();
+    let repository = production_repository(&fixture.root);
+    fs::write(
+        repository.join("src/born.rs"),
+        comparing_source(&COMMITTED_LITERALS),
+    )
+    .expect("fixture new source with regressions");
+    fixture_git(&repository, &["add", "src/born.rs"]);
+
+    let report = battery_report(&repository);
+
+    assert_eq!(
+        measured(magic_row(&report, "src/born.rs"), "src/born.rs"),
+        COMMITTED_LITERALS.len() as u64,
+        "the path row counts every qualifying literal introduced with the file"
+    );
+    assert_eq!(
+        arm_state(&report),
+        BatteryState::Failed,
+        "a nonzero new-file regression count fails the zero-tolerance arm"
     );
 }
 
