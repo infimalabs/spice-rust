@@ -37,6 +37,7 @@ import { childExited } from "./canvas-child-state.mjs";
 import { describeConnection, describeResident } from "./canvas-endpoint-probes.mjs";
 import { assertHeldTaskCount as assertHeldTaskCountWith } from "./canvas-held-task.mjs";
 import { describeLoad, LOAD_FIELD } from "./canvas-load.mjs";
+import { sampleResidentUsage } from "./resident-process-usage.mjs";
 
 export { buildResident, describeConnection, describeResident, TOOL_ACTIVITY_TEXT };
 export { monitorPage } from "./canvas-monitor.mjs";
@@ -109,6 +110,37 @@ export async function appendPrimaryEmptyCompactionBoundary(fixture) {
   return appendPrimaryCompactionRecords(fixture, Buffer.alloc(0));
 }
 
+export async function appendSubstantialPrimaryHistory(fixture, bytes = 64 * 1_024 * 1_024) {
+  const transcript = join(
+    fixture,
+    ".git/spice-home/.claude/projects/canvas",
+    `${PRIMARY_FIXTURE_SESSION}.jsonl`,
+  );
+  const record = `${JSON.stringify({
+    timestamp: "2031-05-17T12:00:00.000Z",
+    type: "assistant",
+    message: {
+      type: "message",
+      role: "assistant",
+      content: [{ type: "text", text: `retained ${"x".repeat(4_096)}` }],
+    },
+  })}\n`;
+  const recordsPerBlock = 256;
+  const block = Buffer.from(record.repeat(recordsPerBlock));
+  const file = await open(transcript, "a");
+  let written = 0;
+  try {
+    while (written < bytes) {
+      const result = await file.write(block);
+      written += result.bytesWritten;
+    }
+    await file.sync();
+  } finally {
+    await file.close();
+  }
+  return written;
+}
+
 /// Trigger one exact assistant record through the running fixture vendor.
 export async function triggerPrimaryAgentProse(worktree, text, timestamp = null) {
   const record = {
@@ -179,7 +211,7 @@ function waitForDiscovery(child, canvas, timeout = 30_000) {
   });
 }
 
-export async function startResident(fixture) {
+export async function startResident(fixture, { measure = false } = {}) {
   const canvas = join(fixture, ".git/.spice-rs/canvas");
   await mkdir(dirname(canvas), { recursive: true });
   const child = spawn(binary, ["--json", "up", "--foreground", "--port", "0"], {
@@ -187,6 +219,7 @@ export async function startResident(fixture) {
     env: fixtureCommandEnv(undefined, fixture),
     stdio: ["ignore", "pipe", "pipe"],
   });
+  const finishUsage = measure ? sampleResidentUsage(child) : null;
   let stdout = "";
   let stderr = "";
   child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
@@ -197,8 +230,10 @@ export async function startResident(fixture) {
   try {
     const discovery = await waitForDiscovery(child, canvas);
     await waitForResidentReady(fixture, child);
-    return { child, discovery };
+    const startupUsage = finishUsage ? await finishUsage() : null;
+    return { child, discovery, startupUsage };
   } catch (error) {
+    await finishUsage?.().catch(() => {});
     let residue;
     try {
       residue = await readdir(fixture, { recursive: true });
@@ -874,8 +909,8 @@ export async function assertWaitReportDistinguishesLayout(page, resident, hidden
 /// instrument for the same reason the loss waits do: a bare timeout here says
 /// only that a selector never appeared, and cannot tell a client that rejoined
 /// a stale generation from one that never rejoined at all.
-export async function assertResidentRestart(fixture, page, previous) {
-  const resident = await startResident(fixture);
+export async function assertResidentRestart(fixture, page, previous, options = {}) {
+  const resident = await startResident(fixture, options);
   assert.notEqual(resident.discovery.epoch, previous.epoch, "restart publishes a new generation");
   assert.notEqual(
     resident.discovery.capability,

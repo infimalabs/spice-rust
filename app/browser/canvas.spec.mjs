@@ -94,6 +94,7 @@ import {
   assertResidentRestart,
   assertWaitReportDistinguishesLayout,
   assertWaitReporting,
+  appendSubstantialPrimaryHistory,
   buildResident,
   chooseCanvasView,
   configureFixture,
@@ -118,6 +119,11 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
 const artifacts = join(root, "artifacts/canvas");
 const staleEpoch = "018f9999-9999-7444-8888-999999999999";
+const RETAINED_HISTORY_BYTES = 64 * 1_024 * 1_024;
+const RESTART_READY_MS = 10_000;
+const RESTART_CPU_MS = 10_000;
+const RESTART_RSS_BYTES = 512 * 1_024 * 1_024;
+const SHUTDOWN_MS = 5_000;
 
 async function waitAtFirstSpecCaller(page) {
   return waitForPage(page, "first call-site self-check", WAIT_PROBE_MS, () => false)
@@ -779,10 +785,26 @@ try {
         lightMonitor.expectNetworkInterruption(true);
         await chooseCanvasView(lightPage, "Chronology");
         await assertWaitReportDistinguishesLayout(lightPage, resident, hiddenStatusReport);
+        const shutdownStarted = performance.now();
         await stopResident(fixture, resident);
+        const shutdownMs = performance.now() - shutdownStarted;
+        assert.ok(shutdownMs < SHUTDOWN_MS,
+          `resident semantic shutdown stays bounded: ${JSON.stringify({ shutdownMs })}`);
         await assertResidentLossObserved(lightPage, resident);
+        const retainedBytes = await appendSubstantialPrimaryHistory(fixture);
+        assert.ok(retainedBytes >= RETAINED_HISTORY_BYTES,
+          "restart fixture authors substantial retained history");
         const restart = { epoch: firstEpoch, capability: firstCapability, policy: configuredPolicy };
-        resident = owner.ownResident(await assertResidentRestart(fixture, lightPage, restart));
+        resident = owner.ownResident(
+          await assertResidentRestart(fixture, lightPage, restart, { measure: true }),
+        );
+        const usage = resident.startupUsage;
+        assert.ok(usage.wallMs < RESTART_READY_MS,
+          `resident readiness ignores retained-history size: ${JSON.stringify(usage)}`);
+        assert.ok(usage.cpuMs < RESTART_CPU_MS,
+          `resident startup CPU stays bounded: ${JSON.stringify(usage)}`);
+        assert.ok(usage.peakRssBytes < RESTART_RSS_BYTES,
+          `resident startup RSS stays bounded: ${JSON.stringify(usage)}`);
         lightMonitor.expectNetworkInterruption(false);
         await assertCanvas(lightPage, "light-restarted");
         await chooseCanvasView(lightPage, "Lanes");
