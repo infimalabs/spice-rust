@@ -499,6 +499,116 @@ fn a_review_creates_and_links_its_follow_up_tracking() {
     clean(&root, bus);
 }
 
+/// Review follow-ups do not retroactively become prerequisites of existing dependents.
+/// A caller that needs that ordering must wire the downstream task to the follow-up.
+#[test]
+fn completed_unclean_review_needs_an_explicit_followup_edge_to_block_downstream() {
+    let (root, bus, epoch, seats) = fixture("review-followup-downstream", 2);
+    authorize_lane_creation(&bus, epoch, &seats[1]);
+    let implementer = Actor::Lane(seats[0].lane);
+    let reviewer = Actor::Lane(seats[1].lane);
+    assert_lane_resolution(&bus, epoch, &seats, &implementer);
+    let reviewed = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "TRACK-track004",
+        "Reviewed prerequisite",
+        None,
+    );
+    let downstream = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "TRACK-track005",
+        "Downstream delivery",
+        None,
+    );
+    connect_child(&bus, epoch, &downstream, &reviewed);
+    advance_task_to_review(&bus, epoch, &seats[0], &implementer, &reviewed);
+
+    let reviewable = board(&bus, epoch, reviewer.clone());
+    assert_committed(issue(
+        &bus,
+        epoch,
+        reviewer.clone(),
+        CommandKind::ClaimWin,
+        claim_expected(&reviewable, &reviewed, &seats[1]),
+        &ClaimWin {
+            rule: "next".parse().expect("allocator rule"),
+            recovery: None,
+        },
+    ));
+    let assigned = board(&bus, epoch, reviewer.clone());
+    let mut expected = progress_witnesses(
+        &assigned,
+        at(&assigned, &reviewed),
+        seats[1].lane,
+        seats[1].occupant,
+        true,
+    )
+    .expect("assigned review has exact witnesses");
+    let followup_stamp: wire::TaskStamp = "1kKRRsDS".parse().expect("follow-up stamp");
+    let followup = TaskHandle::for_project("board.test", &followup_stamp);
+    expected.push(Witness::Absence {
+        task: followup_stamp.clone(),
+    });
+    assert_committed(issue(
+        &bus,
+        epoch,
+        reviewer,
+        CommandKind::TaskReview,
+        expected,
+        &TaskReview {
+            task: reviewed.clone(),
+            finding: "downstream needs the reviewed correction".to_owned(),
+            note: None,
+            then: vec![ReviewFollowup {
+                task: followup_stamp,
+                add: TaskAdd {
+                    title: "Correct the reviewed prerequisite".to_owned(),
+                    project: Some("board.test".to_owned()),
+                    description: None,
+                    acceptance: Vec::new(),
+                    origin: None,
+                    flow: None,
+                    depends: Vec::new(),
+                },
+            }],
+            followup: Vec::new(),
+        },
+    ));
+
+    let settled = board(&bus, epoch, implementer.clone());
+    assert_eq!(at(&settled, &reviewed).workflow.body.status, "completed");
+    assert_eq!(
+        at(&settled, &followup).statement.body.dependencies,
+        vec![at(&settled, &reviewed).statement.body.born.clone()],
+    );
+    let entries = actor_entries(&settled).expect("lane projects allocatable entries");
+    let downstream_entry = entries
+        .iter()
+        .find(|entry| entry.handle() == &downstream)
+        .expect("downstream entry is visible");
+    assert!(
+        board::eligible_entry(&entries, downstream_entry, &implementer),
+        "a completed original satisfies downstream even while its sibling follow-up is unresolved",
+    );
+
+    connect_child(&bus, epoch, &downstream, &followup);
+    let explicitly_blocked = board(&bus, epoch, implementer.clone());
+    let entries = actor_entries(&explicitly_blocked).expect("lane projects updated entries");
+    let downstream_entry = entries
+        .iter()
+        .find(|entry| entry.handle() == &downstream)
+        .expect("downstream entry remains visible");
+    assert!(
+        !board::eligible_entry(&entries, downstream_entry, &implementer),
+        "an explicit follow-up dependency blocks downstream without reopening the reviewed task",
+    );
+    clean(&root, bus);
+}
+
 fn assert_review_followup_tracking(
     bus: &Bus,
     epoch: CanonicalUuid,
