@@ -283,7 +283,6 @@ name = "board"
 version = "0.0.0"
 dependencies = [
  "dialect",
- "fold",
  "journal",
  "serde",
  "wire",
@@ -316,7 +315,6 @@ checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 name = "bus"
 version = "0.0.0"
 dependencies = [
- "fold",
  "jiff",
  "journal",
  "tokio",

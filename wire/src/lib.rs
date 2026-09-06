@@ -73,7 +73,9 @@ pub use doctor::{
     DoctorSubsystemDiagnosis, DoctorTarget, DoctorTool, DoctorToolBounds, DoctorToolCancellation,
     DoctorToolMode, DoctorToolNetwork, DoctorToolRequirement, DoctorToolSource, SpiceVariable,
 };
-pub use envelope::{Actor, ActorError, Envelope, Origin, OriginError, Seq, WireVersion};
+pub use envelope::{
+    Actor, ActorError, Envelope, JournalCursor, Origin, OriginError, Seq, WireVersion,
+};
 pub use fact::{AnyFact, Body, Fact, FactKind, Producer};
 pub use head::{
     ClaimCell, ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState,

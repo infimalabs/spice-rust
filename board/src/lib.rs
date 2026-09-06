@@ -51,7 +51,7 @@ pub use urgency::{
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Snapshot {
     schema_version: u32,
-    cursor: fold::Cursor,
+    cursor: wire::JournalCursor,
     entries: Vec<Entry>,
 }
 
@@ -59,7 +59,7 @@ impl Snapshot {
     /// Admit a snapshot only for the journal schema this build owns.
     pub fn new(
         schema_version: u32,
-        cursor: fold::Cursor,
+        cursor: wire::JournalCursor,
         entries: Vec<Entry>,
     ) -> Result<Self, SnapshotRefusal> {
         if schema_version != journal::SCHEMA_VERSION {
@@ -93,7 +93,7 @@ impl Snapshot {
                     .map_err(|source| SnapshotReadError::Task { handle, source })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let cursor = cursor.map_or_else(fold::Cursor::empty, fold::Cursor::at);
+        let cursor = cursor.map_or_else(wire::JournalCursor::empty, wire::JournalCursor::at);
         Ok(Self {
             schema_version: journal::SCHEMA_VERSION,
             cursor,
@@ -109,7 +109,7 @@ impl Snapshot {
 
     /// Greatest journal position covered by this answer.
     #[must_use]
-    pub const fn cursor(&self) -> fold::Cursor {
+    pub const fn cursor(&self) -> wire::JournalCursor {
         self.cursor
     }
 

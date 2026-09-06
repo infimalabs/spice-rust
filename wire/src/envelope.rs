@@ -68,6 +68,29 @@ impl fmt::Display for Seq {
     }
 }
 
+/// Greatest journal position covered by one complete observation.
+///
+/// identity-law: non-crossing - derived from a journal Seq inside board and bus.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct JournalCursor(Option<Seq>);
+
+impl JournalCursor {
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self(None)
+    }
+
+    #[must_use]
+    pub const fn at(position: Seq) -> Self {
+        Self(Some(position))
+    }
+
+    #[must_use]
+    pub const fn position(self) -> Option<Seq> {
+        self.0
+    }
+}
+
 /// The principal that caused an append.
 ///
 /// The resident derives this from the accepted capability; client text cannot
