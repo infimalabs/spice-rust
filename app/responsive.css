@@ -55,14 +55,8 @@
 
 @media (max-width: 560px) {
   .axis-button { min-height: 40px; padding: 0 9px; font-size: .74rem; }
-  .commandbar--mosaic .canvas-menu-panel {
-    max-height: calc(100vh - 46px);
-    max-height: calc(100dvh - 46px);
-  }
   .commandbar--mosaic .canvas-navigation {
-    flex: 0 1 18rem;
-    min-width: 10rem;
-    overflow-x: auto;
+    min-width: 0;
   }
   .commandbar--mosaic .canvas-navigation .axis-button {
     min-height: 26px;
