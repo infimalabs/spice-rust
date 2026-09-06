@@ -1,0 +1,170 @@
+//! Focused reusable gate-action preparation.
+
+use super::*;
+
+pub(super) fn prepare(
+    staged: &StagedActionSelection,
+    manifest: &BatteryManifest,
+    gate_set: &Digest,
+    baseline: Option<&str>,
+    gate_id: GateId,
+) -> Result<PreparedAction, ProveFailure> {
+    let arm = staged
+        .anchor()
+        .derive_reached_arm(staged.selection(), gate_id)
+        .map_err(ProveFailure::run)?;
+    let context = arm.context().map_err(ProveFailure::run)?;
+    let declaration = declaration(manifest, gate_id)?;
+    let reuse = gate::gate_action_reuse_class(gate_id)
+        .expect("requested actions are classified as reusable");
+    let baseline = resolve_baseline(gate_id, reuse, baseline)?;
+    let (tools, action_tool_evidence, tool_authority) = tools::prepare(&arm, &context)?;
+    let action_environment = normalized_action_environment(arm.compiler_environment());
+    let (environment_names, environment) = environment(&action_environment)?;
+    let inventory = inventory(
+        staged,
+        gate_id,
+        declaration,
+        gate_set,
+        &context,
+        &tool_authority,
+        &environment,
+        baseline.as_ref(),
+    )?;
+    let input_manifest = match arm
+        .compile_action_input(staged.selection(), gate_id, inventory)
+        .map_err(ProveFailure::run)?
+    {
+        ActionInputClosure::Reusable(manifest) => manifest,
+        ActionInputClosure::NonCacheable(reason) => {
+            return Err(ProveFailure::refusal(
+                "gate::prove-action-not-reusable",
+                format!("action {gate_id} has no complete reusable closure: {reason:?}"),
+            ));
+        }
+    };
+    let input_manifest = input_manifest
+        .digest()
+        .map_err(ProveFailure::action_input)?;
+    let spec = ActionSpec::new(ActionSpecFields {
+        action_id: format!("gate:{gate_id}"),
+        runner: "spice-focused-gate".to_owned(),
+        runner_version: RUNNER_VERSION,
+        declaration: declaration.to_owned(),
+        argv: vec!["gate".to_owned(), gate_id.to_string()],
+        cwd: ".".to_owned(),
+        environment_names,
+        tools,
+        input_strategy: "selected-reach-v1".to_owned(),
+        reuse,
+    })
+    .map_err(ProveFailure::action_input)?;
+    let action_spec = spec.digest().map_err(ProveFailure::action_input)?;
+    let action_key = gate::derive_authority_bound_action_key(
+        &spec,
+        &ActionKeyAuthority {
+            input_manifest: input_manifest.clone(),
+            policy: context.policy().clone(),
+            gate_set: gate_set.clone(),
+            tools: tool_authority,
+            environment,
+            baseline,
+        },
+    )
+    .map_err(ProveFailure::action_input)?;
+    Ok(PreparedAction {
+        action: gate_id.to_string(),
+        action_key,
+        action_spec,
+        input_manifest,
+        execution: PreparedExecution::Gate {
+            arm: Box::new(arm),
+            tools: action_tool_evidence,
+        },
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn inventory(
+    staged: &StagedActionSelection,
+    gate_id: GateId,
+    declaration: &str,
+    gate_set: &Digest,
+    context: &gate::BatteryContext,
+    tools: &Digest,
+    environment: &Digest,
+    baseline: Option<&Digest>,
+) -> Result<ActionInputInventory, ProveFailure> {
+    let configuration = digest_encoded(Domain::GateConfiguration, &context.configuration())?;
+    let reach = staged
+        .selection()
+        .reach_for(gate_id)
+        .expect("requested actions come from the canonical selection");
+    let inventory = digest_encoded(Domain::GateInventory, reach)?;
+    let mut non_files = vec![
+        non_file(
+            ActionNonFileKind::Declaration,
+            "compiled-declaration",
+            Digest::compute(Domain::GateBatteryManifest, declaration.as_bytes()),
+        )?,
+        non_file(
+            ActionNonFileKind::GateSet,
+            "canonical-gate-set",
+            gate_set.clone(),
+        )?,
+        non_file(
+            ActionNonFileKind::Policy,
+            "compiled-policy",
+            context.policy().clone(),
+        )?,
+        non_file(
+            ActionNonFileKind::Policy,
+            "resolved-configuration",
+            configuration,
+        )?,
+        non_file(
+            ActionNonFileKind::Toolchain,
+            "discovered-tools",
+            tools.clone(),
+        )?,
+        non_file(
+            ActionNonFileKind::Environment,
+            "compiler-environment",
+            environment.clone(),
+        )?,
+        non_file(ActionNonFileKind::Inventory, "selected-reach", inventory)?,
+        non_file(
+            ActionNonFileKind::BoundLedger,
+            "gate-state-ledger",
+            context.state().clone(),
+        )?,
+    ];
+    if let Some(identity) = baseline {
+        non_files.push(non_file(
+            ActionNonFileKind::Baseline,
+            "committed-baseline",
+            identity.clone(),
+        )?);
+    }
+    ActionInputInventory::complete(Vec::new(), non_files).map_err(ProveFailure::action_input)
+}
+
+fn resolve_baseline(
+    gate_id: GateId,
+    reuse: ActionReuseClass,
+    baseline: Option<&str>,
+) -> Result<Option<Digest>, ProveFailure> {
+    match reuse {
+        ActionReuseClass::AncestrySensitive => baseline
+            .map(|identity| Digest::compute(Domain::GateBaseline, identity.as_bytes()))
+            .map(Some)
+            .ok_or_else(|| {
+                ProveFailure::refusal(
+                    "gate::prove-baseline-unavailable",
+                    format!("action {gate_id} requires a committed staged baseline"),
+                )
+            }),
+        ActionReuseClass::Cacheable => Ok(None),
+        ActionReuseClass::LiveOnly => unreachable!("live-only actions were filtered"),
+    }
+}
