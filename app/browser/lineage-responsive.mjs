@@ -4,6 +4,18 @@ async function settleLayout(page) {
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve())));
 }
 
+async function settleRightEdge(page, fleet) {
+  const element = await fleet.elementHandle();
+  try {
+    await page.waitForFunction((node) => {
+      const overflow = node.scrollWidth - node.clientWidth;
+      return Math.abs(node.scrollLeft - overflow) <= 1;
+    }, element, { timeout: 1_000 });
+  } finally {
+    await element.dispose();
+  }
+}
+
 async function fleetGeometry(fleet) {
   return fleet.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
@@ -110,6 +122,7 @@ export async function assertLineageResponsiveLayout(page, console_) {
     cloned = false;
     await page.setViewportSize({ width: 600, height: 988 });
     await settleLayout(page);
+    await settleRightEdge(page, fleet);
     assertTrack(await fleetGeometry(fleet), "600px two-lane floor overflow", true);
 
     const restored = await fleetGeometry(fleet);
