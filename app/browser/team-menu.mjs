@@ -86,7 +86,17 @@ export async function assertCursorRelocation(page, artifacts, engine) {
       const label = `${engine} ${viewportLabel}`;
       await page.setViewportSize(viewport);
       const bar = page.locator(".commandbar--mosaic");
+      const disclosure = page.locator(".canvas-disclosure");
+      const strip = page.locator(".task-pill-strip");
       const cursor = page.locator(".canvas-menu-cursor");
+      const disclosureIdentity = await disclosure.evaluate((node) => {
+        node.dataset.menuIdentity = crypto.randomUUID();
+        return node.dataset.menuIdentity;
+      });
+      const stripIdentity = await strip.evaluate((node) => {
+        node.dataset.menuIdentity = crypto.randomUUID();
+        return node.dataset.menuIdentity;
+      });
       assert.equal(await cursor.count(), 1, `${label} renders one global cursor while closed`);
       const cursorIdentity = await cursor.evaluate((node) => {
         node.dataset.relocationIdentity = crypto.randomUUID();
@@ -113,6 +123,7 @@ export async function assertCursorRelocation(page, artifacts, engine) {
         return {
           viewportWidth: innerWidth,
           bar: box(node),
+          workspaceTop: node.nextElementSibling.getBoundingClientRect().top,
           strip: box(strip),
           summary: box(summary),
           stamp: box(stamp),
@@ -150,20 +161,20 @@ export async function assertCursorRelocation(page, artifacts, engine) {
       assert.equal(geometry.hasTextLabel, false, `${label} keeps the control wordless`);
       assert.deepEqual(
         [geometry.summary.right - geometry.summary.left, geometry.summary.bottom - geometry.summary.top],
-        [43, 30],
-        `${label} preserves the predecessor outer dimensions`,
+        [35, 30],
+        `${label} uses the balanced trigger dimensions`,
       );
       assert.deepEqual(
         [geometry.stamp.right - geometry.stamp.left, geometry.stamp.bottom - geometry.stamp.top],
         [31, 25],
         `${label} preserves the predecessor cut-out stamp`,
       );
-      assert.deepEqual([geometry.summaryPaddingLeft, geometry.summaryPaddingRight], ["2px", "8px"]);
+      assert.deepEqual([geometry.summaryPaddingLeft, geometry.summaryPaddingRight], ["0px", "0px"]);
       const trigger = page.locator(".canvas-menu > summary");
       const stableTriggerBox = async (state) => {
         const box = await trigger.boundingBox();
         assert.ok(box, `${label} ${state} trigger remains visible`);
-        assert.deepEqual([box.width, box.height], [43, 30], `${label} ${state} keeps cut-out geometry`);
+        assert.deepEqual([box.width, box.height], [35, 30], `${label} ${state} keeps centered geometry`);
       };
       await trigger.hover();
       await stableTriggerBox("hover");
@@ -189,7 +200,6 @@ export async function assertCursorRelocation(page, artifacts, engine) {
       );
       assert.equal(geometry.paddingRight, geometry.paddingLeft, `${label} has symmetric inline edges`);
 
-      const strip = page.locator(".task-pill-strip");
       await strip.evaluate((node) => { node.scrollLeft = 0; });
       const first = await strip.locator(".task-pill").first().boundingBox();
       const stripStart = await strip.boundingBox();
@@ -202,6 +212,11 @@ export async function assertCursorRelocation(page, artifacts, engine) {
         `${label} can reveal the complete last task pill`,
       );
       await strip.evaluate((node) => { node.scrollLeft = 0; });
+
+      await page.screenshot({
+        path: join(artifacts, `canvas-menu-collapsed-${engine}-${viewport.width}x${viewport.height}.png`),
+        fullPage: false,
+      });
 
       const panel = await openSpiceMenu(page);
       await page.screenshot({
@@ -252,39 +267,100 @@ export async function assertCursorRelocation(page, artifacts, engine) {
         1,
         `${label} keeps task pills mounted while navigation is open`,
       );
+      assert.equal(await disclosure.getAttribute("data-menu-identity"), disclosureIdentity);
+      assert.equal(await strip.getAttribute("data-menu-identity"), stripIdentity);
       const expandedGeometry = await page.locator(".commandbar--mosaic").evaluate((node) => {
-        const strip = node.querySelector(".task-pill-strip").getBoundingClientRect();
-        const navigation = node.querySelector(".canvas-navigation").getBoundingClientRect();
-        const summary = node.querySelector(".canvas-menu > summary").getBoundingClientRect();
+        const box = (element) => {
+          const rect = element.getBoundingClientRect();
+          return { bottom: rect.bottom, left: rect.left, right: rect.right, top: rect.top };
+        };
+        const disclosure = node.querySelector(".canvas-disclosure");
+        const strip = disclosure.querySelector(".task-pill-strip");
+        const menu = disclosure.querySelector(".canvas-menu");
+        const frame = menu.querySelector(".canvas-menu-frame");
+        const navigation = frame.querySelector(".canvas-navigation");
+        const panel = frame.querySelector(".canvas-menu-panel");
+        const summary = menu.querySelector(":scope > summary");
+        const navigationStyle = getComputedStyle(navigation);
         return {
-          stripRight: strip.right,
-          stripWidth: strip.width,
-          navigationLeft: navigation.left,
-          navigationRight: navigation.right,
-          navigationWidth: navigation.width,
-          summaryLeft: summary.left,
-          summaryWidth: summary.width,
-          summaryHeight: summary.height,
+          bar: box(node),
+          disclosure: box(disclosure),
+          frame: box(frame),
+          navigation: box(navigation),
+          panel: box(panel),
+          strip: box(strip),
+          summary: box(summary),
+          workspaceTop: node.nextElementSibling.getBoundingClientRect().top,
+          frameContainsNavigation: frame.contains(navigation),
+          frameContainsPanel: frame.contains(panel),
+          menuContainsFrame: menu.contains(frame),
+          disclosureContainsAll: [strip, menu, summary, frame, navigation, panel]
+            .every((element) => disclosure.contains(element)),
+          navigationClientWidth: navigation.clientWidth,
+          navigationOverflowX: navigationStyle.overflowX,
+          navigationScrollWidth: navigation.scrollWidth,
         };
       });
+      assert.deepEqual(
+        expandedGeometry.bar,
+        geometry.bar,
+        `${label} overlays the open frame without resizing the command bar`,
+      );
+      assert.equal(
+        expandedGeometry.workspaceTop,
+        geometry.workspaceTop,
+        `${label} overlays Canvas without pushing its workspace`,
+      );
+      assert.equal(expandedGeometry.disclosureContainsAll, true, `${label} has one disclosure owner`);
+      assert.equal(expandedGeometry.menuContainsFrame, true, `${label} nests the frame under the trigger details`);
+      assert.equal(expandedGeometry.frameContainsNavigation, true, `${label} renders navigation only in the frame`);
+      assert.equal(expandedGeometry.frameContainsPanel, true, `${label} keeps context controls in the frame`);
       assert.ok(
-        expandedGeometry.stripRight <= expandedGeometry.navigationLeft + 1,
-        `${label} keeps task pills adjacent to and clear of navigation`,
+        Math.abs(expandedGeometry.frame.left - expandedGeometry.disclosure.left) <= 0.5
+          && Math.abs(expandedGeometry.frame.right - expandedGeometry.disclosure.right) <= 0.5
+          && expandedGeometry.frame.top <= expandedGeometry.disclosure.bottom + 0.5,
+        `${label} continues one frame directly beneath the trigger row`,
       );
       assert.ok(
-        expandedGeometry.navigationRight <= expandedGeometry.summaryLeft + 1,
-        `${label} keeps secondary History adjacent to and clear of the pepper trigger`,
+        expandedGeometry.strip.left >= expandedGeometry.disclosure.left - 0.5
+          && expandedGeometry.strip.right <= expandedGeometry.summary.left + 0.5
+          && expandedGeometry.summary.right <= expandedGeometry.disclosure.right + 0.5,
+        `${label} contains project pills and trigger in the framed top row`,
       );
-      assert.equal(expandedGeometry.summaryWidth, 43, `${label} keeps the cut-out trigger 43px wide`);
-      assert.equal(expandedGeometry.summaryHeight, 30, `${label} keeps the pepper trigger 30px high`);
-      assert.ok(expandedGeometry.stripWidth >= 96, `${label} preserves the 6rem task viewport minimum`);
-      assert.ok(expandedGeometry.navigationWidth >= 160, `${label} preserves the 10rem navigation minimum`);
+      assert.ok(
+        expandedGeometry.navigation.left >= expandedGeometry.frame.left - 0.5
+          && expandedGeometry.navigation.right <= expandedGeometry.frame.right + 0.5
+          && expandedGeometry.panel.left >= expandedGeometry.frame.left - 0.5
+          && expandedGeometry.panel.right <= expandedGeometry.frame.right + 0.5
+          && expandedGeometry.panel.bottom <= expandedGeometry.frame.bottom + 0.5,
+        `${label} contains global and context controls in the lower frame`,
+      );
+      assert.ok(
+        expandedGeometry.navigationScrollWidth <= expandedGeometry.navigationClientWidth + 1
+          && !["auto", "scroll"].includes(expandedGeometry.navigationOverflowX),
+        `${label} wraps navigation without a transient scrollbar`,
+      );
+      assert.deepEqual(
+        [expandedGeometry.summary.right - expandedGeometry.summary.left,
+          expandedGeometry.summary.bottom - expandedGeometry.summary.top],
+        [35, 30],
+        `${label} keeps the centered trigger geometry while expanded`,
+      );
+      assert.ok(
+        expandedGeometry.strip.right - expandedGeometry.strip.left >= 96,
+        `${label} preserves the 6rem task viewport minimum`,
+      );
       if (viewport.width <= 560) {
         await addOverflowControls(panel);
       }
       const panelGeometry = await panel.evaluate((node) => {
         const rect = node.getBoundingClientRect();
-        const summary = node.parentElement.querySelector(":scope > summary").getBoundingClientRect();
+        const frame = node.closest(".canvas-menu-frame").getBoundingClientRect();
+        const summary = node.closest(".canvas-menu").querySelector(":scope > summary")
+          .getBoundingClientRect();
+        const navigation = node.closest(".canvas-menu-frame").querySelector(".canvas-navigation");
+        const navigationStyle = getComputedStyle(navigation);
+        const commandbarStyle = getComputedStyle(node.closest(".commandbar--mosaic"));
         const global = node.querySelector(".canvas-menu-global").getBoundingClientRect();
         const footerNode = node.querySelector(".canvas-menu-footer");
         const footer = footerNode.getBoundingClientRect();
@@ -297,9 +373,18 @@ export async function assertCursorRelocation(page, artifacts, engine) {
           top: rect.top,
           bottom: rect.bottom,
           summaryBottom: summary.bottom,
+          frameBottom: frame.bottom,
+          frameLeft: frame.left,
+          frameRight: frame.right,
+          frameTop: frame.top,
           viewportWidth: innerWidth,
           viewportHeight: innerHeight,
           documentWidth: document.documentElement.scrollWidth,
+          commandbarOverflowX: commandbarStyle.overflowX,
+          commandbarOverflowY: commandbarStyle.overflowY,
+          navigationClientWidth: navigation.clientWidth,
+          navigationOverflowX: navigationStyle.overflowX,
+          navigationScrollWidth: navigation.scrollWidth,
           globalLeft: global.left,
           globalRight: global.right,
           footerLeft: footer.left,
@@ -321,9 +406,19 @@ export async function assertCursorRelocation(page, artifacts, engine) {
         `${label} keeps the Spice menu inside the horizontal viewport`,
       );
       assert.ok(
-        panelGeometry.top >= panelGeometry.summaryBottom + 3.5
-          && panelGeometry.bottom <= panelGeometry.viewportHeight + 0.5,
-        `${label} anchors and bounds the Spice menu below its summary`,
+        panelGeometry.frameTop <= panelGeometry.summaryBottom + 0.5
+          && panelGeometry.left >= panelGeometry.frameLeft - 0.5
+          && panelGeometry.right <= panelGeometry.frameRight + 0.5
+          && panelGeometry.bottom <= panelGeometry.frameBottom + 0.5
+          && panelGeometry.frameBottom <= panelGeometry.viewportHeight + 0.5,
+        `${label} bounds the context panel inside the disclosure frame`,
+      );
+      assert.ok(
+        !["auto", "scroll"].includes(panelGeometry.commandbarOverflowX)
+          && !["auto", "scroll"].includes(panelGeometry.commandbarOverflowY)
+          && !["auto", "scroll"].includes(panelGeometry.navigationOverflowX)
+          && panelGeometry.navigationScrollWidth <= panelGeometry.navigationClientWidth + 1,
+        `${label} avoids command-bar and navigation scrollbars`,
       );
       assert.equal(
         panelGeometry.cursorInFooter && panelGeometry.footerLast,
@@ -507,6 +602,18 @@ async function assertPepperDisclosure(page) {
       lastPill && stripEnd && lastPill.x + lastPill.width <= stripEnd.x + stripEnd.width + 0.5,
       "the retained task strip keeps its last pill visible",
     );
+
+    await trigger.click();
+    await waitForDisclosure(page, true, "the pepper disclosure reopens for project navigation");
+    await retainedPill.click();
+    await waitForDisclosure(page, false, "project navigation dismisses the pepper disclosure");
+    assert.equal(
+      await retainedPill.evaluate((node) => node === document.activeElement),
+      true,
+      "project navigation retains focus on its mounted pill",
+    );
+    await chooseCanvasView(page, "Lanes");
+    await waitForDisclosure(page, false, "project navigation check restores the Lanes workspace");
   } finally {
     await page.setViewportSize(previous);
   }

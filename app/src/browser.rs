@@ -678,7 +678,7 @@ fn canvas_disclosure_contains(event: &web_sys::Event) -> bool {
         .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
         .is_some_and(|target| {
             target
-                .closest(".canvas-navigation, .canvas-menu")
+                .closest(".canvas-disclosure")
                 .ok()
                 .flatten()
                 .is_some()

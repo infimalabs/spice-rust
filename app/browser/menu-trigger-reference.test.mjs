@@ -16,16 +16,18 @@ async function triggerDocument() {
   ]);
   return `<!doctype html><style>${style}\n${mosaic}\n${chrome}</style>
     <header class="commandbar commandbar--mosaic">
-      <nav class="task-pill-strip" aria-label="Open task projects">
-        <button class="task-pill"><span>canvas</span><span class="task-pill-count">1</span></button>
-      </nav>
-      <details class="canvas-menu">
-        <summary aria-label="Open Spice Canvas menu" aria-haspopup="menu" aria-expanded="false"
-          title="Open Spice Canvas menu">
-          <span class="canvas-menu-flame" aria-hidden="true">🔥</span>
-          <span class="canvas-menu-pepper" aria-hidden="true">🌶️</span>
-        </summary>
-      </details>
+      <div class="canvas-disclosure" data-expanded="false">
+        <nav class="task-pill-strip" aria-label="Open task projects">
+          <button class="task-pill"><span>canvas</span><span class="task-pill-count">1</span></button>
+        </nav>
+        <details class="canvas-menu">
+          <summary aria-label="Open Spice Canvas menu" aria-haspopup="menu" aria-expanded="false"
+            title="Open Spice Canvas menu">
+            <span class="canvas-menu-flame" aria-hidden="true">🔥</span>
+            <span class="canvas-menu-pepper" aria-hidden="true">🌶️</span>
+          </summary>
+        </details>
+      </div>
     </header>`;
 }
 
@@ -58,10 +60,12 @@ async function appearance(trigger) {
 }
 
 function assertCutout(observed, label) {
-  assert.deepEqual([observed.trigger.width, observed.trigger.height], [43, 30], `${label} outer size`);
+  assert.deepEqual([observed.trigger.width, observed.trigger.height], [35, 30], `${label} outer size`);
   assert.deepEqual([observed.stamp.width, observed.stamp.height], [31, 25], `${label} stamp size`);
-  assert.deepEqual(observed.padding, ["0px", "8px", "0px", "2px"], `${label} asymmetric inset`);
-  assert.ok(Math.abs(observed.stamp.left - observed.trigger.left - 3) <= 0.5, `${label} cut-out edge`);
+  assert.deepEqual(observed.padding, ["0px", "0px", "0px", "0px"], `${label} balanced padding`);
+  assert.ok(Math.abs(observed.stamp.left - observed.trigger.left - 2) <= 0.5, `${label} left gutter`);
+  assert.ok(Math.abs(observed.trigger.left + observed.trigger.width
+    - observed.stamp.left - observed.stamp.width - 2) <= 0.5, `${label} right gutter`);
   assert.ok(Math.abs(
     observed.pepper.left + observed.pepper.width / 2
       - observed.stamp.left - observed.stamp.width / 2,
@@ -70,7 +74,7 @@ function assertCutout(observed, label) {
   assert.equal(observed.hasTextLabel, false, `${label} remains wordless`);
 }
 
-test("Spice trigger preserves the predecessor cut-out across modes and interaction states", async (t) => {
+test("Spice trigger stays centered across modes and interaction states", async (t) => {
   const document = await triggerDocument();
   for (const engine of ["chromium", "firefox"]) {
     await t.test(engine, async () => {
@@ -113,6 +117,13 @@ test("Spice trigger preserves the predecessor cut-out across modes and interacti
                 [settledInactive.background, settledInactive.border],
               );
               assert.equal(active.flameAnimation, "canvas-fast-mode-pulse");
+
+              await page.emulateMedia({ reducedMotion: "reduce" });
+              const reduced = await appearance(trigger);
+              assertCutout(reduced, `${label} reduced motion`);
+              assert.equal(reduced.flameAnimation, "none");
+              assert.equal(reduced.flameOpacity, "0.82");
+              await page.emulateMedia({ reducedMotion: "no-preference" });
 
               await trigger.evaluate((node) => { node.parentElement.open = true; });
               const pressed = await appearance(trigger);
