@@ -3,6 +3,21 @@ use std::fs;
 use super::fixture::{Fixture, execution_starts, proof_action, streams};
 
 #[test]
+fn not_applicable_canvas_web_proof_does_not_claim_tool_movement() {
+    let fixture = Fixture::new();
+    let output = fixture.prove_action_output(&fixture.older, "canvas-web-typecheck");
+    assert!(
+        output.status.success(),
+        "not-applicable Canvas proof failed: {}",
+        streams(&output)
+    );
+    let action = proof_action(&output);
+    assert_eq!(action["action"], "canvas-web-typecheck");
+    assert_eq!(action["disposition"], "published");
+    assert_eq!(execution_starts(&fixture.executions), 0);
+}
+
+#[test]
 fn changed_tool_bytes_cannot_reuse_a_stale_receipt() {
     let fixture = Fixture::new();
     fixture.release();
