@@ -32,12 +32,19 @@ pub(super) fn authority(
 ) -> Result<ActionFingerprintAuthority, ProveFailure> {
     let gate_environment = normalized_action_environment(anchor.compiler_environment());
     let (_, gate_environment) = environment(&gate_environment)?;
+    let proof_tools = anchor.proof_tool_authority().map_err(ProveFailure::run)?;
     let (tools, canvas_environment) = if canvas_authority_present(anchor, repository) {
         let (tools, environment) =
             canvas::fingerprint_authorities(anchor, context, repository.worktree_root())?;
-        (tools, Some(environment))
+        (
+            digest_encoded(Domain::GateTool, &(tools, &proof_tools))?,
+            Some(environment),
+        )
     } else {
-        (digest_encoded(Domain::GateTool, &context.tools())?, None)
+        (
+            digest_encoded(Domain::GateTool, &(context.tools(), &proof_tools))?,
+            None,
+        )
     };
     let needs_cargo = anchor.root().join("Cargo.lock").is_file();
     let (cargo_environment, cargo_source) = if needs_cargo {

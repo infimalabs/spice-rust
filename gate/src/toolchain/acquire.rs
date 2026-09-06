@@ -400,6 +400,86 @@ pub(crate) fn acquire_toolchain_arm(
     }
 }
 
+/// Probe only the external executables declared by one focused arm.
+///
+/// Reusable proof preparation calls this before deriving an action key and
+/// compares the result with the evidence retained by the executed arm. That
+/// keeps executable bytes inside the reusable authority without running the
+/// arm's analysis twice.
+pub(crate) fn acquire_toolchain_arm_tools(
+    source: &ToolchainSource<'_>,
+    contract: &Contract,
+    gate_id: GateId,
+) -> Result<Vec<ToolEvidence>, ToolchainError> {
+    let Some(declaration) = TOOLCHAIN_ARMS
+        .into_iter()
+        .find(|declaration| declaration.id == gate_id)
+    else {
+        return Ok(Vec::new());
+    };
+    Ok(declaration
+        .tools
+        .iter()
+        .map(|requirement| probe(requirement, source, contract.bounds()))
+        .collect())
+}
+
+/// Digest the complete executable-file closure used by reusable toolchain arms.
+///
+/// Unlike the arm probe this starts no subprocess, so a warm fingerprint lookup
+/// can reject stale tool bytes without paying action-planning cost.
+pub(crate) fn toolchain_executable_authority(
+    source: &ToolchainSource<'_>,
+) -> Result<Digest, String> {
+    let mut requirements = TOOLCHAIN_ARMS
+        .into_iter()
+        .flat_map(|declaration| declaration.tools)
+        .map(|requirement| (requirement.name, requirement.program))
+        .collect::<Vec<_>>();
+    requirements.sort_unstable();
+    requirements.dedup();
+    let records = requirements
+        .into_iter()
+        .map(|(name, program)| executable_authority_record(source, name, program))
+        .collect::<Result<Vec<_>, String>>()?;
+    let bytes =
+        wire::encode(&records).map_err(|error| format!("encode proof tool authority: {error}"))?;
+    Ok(Digest::compute(Domain::GateTool, &bytes))
+}
+
+type ExecutableAuthorityRecord<'a> = (&'a str, &'a str, Option<(String, Digest, bool)>);
+
+fn executable_authority_record<'a>(
+    source: &ToolchainSource<'_>,
+    name: &'a str,
+    program: &'a str,
+) -> Result<ExecutableAuthorityRecord<'a>, String> {
+    let Some(resolved) = resolve(
+        program,
+        source.rim().directory(),
+        source.rim().search_path(),
+    ) else {
+        return Ok((name, program, None));
+    };
+    let bytes = fs::read(&resolved)
+        .map_err(|error| format!("read proof tool {}: {error}", resolved.display()))?;
+    let executable = fs::metadata(&resolved)
+        .map_err(|error| format!("inspect proof tool {}: {error}", resolved.display()))?
+        .permissions()
+        .mode()
+        & 0o111
+        != 0;
+    Ok((
+        name,
+        program,
+        Some((
+            resolved.to_string_lossy().into_owned(),
+            Digest::compute(Domain::GateTool, &bytes),
+            executable,
+        )),
+    ))
+}
+
 fn scoped_declaration(
     mut declaration: ToolchainDeclaration,
     source: &ToolchainSource<'_>,

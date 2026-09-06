@@ -160,6 +160,25 @@ fn corrupt_manifest_refuses_inside_the_hard_bound() {
         elapsed.as_secs_f64() < 2.0,
         "corrupt manifest refusal took {elapsed:?}: {rendered}",
     );
+    assert_eq!(fixture.admission_count(), 0);
+}
+
+#[test]
+fn corrupt_receipt_object_cannot_publish_an_admission() {
+    let _serial = BENCHMARK.lock().expect("serialize admission benchmarks");
+    let fixture = Fixture::new();
+    fixture.seed_proofs();
+    fixture.corrupt_one_receipt();
+
+    let output = fixture.invoke_hook();
+    let rendered = streams(&output);
+
+    assert!(!output.status.success(), "{rendered}");
+    assert!(
+        rendered.contains("gate::pre-commit-proof-invalid"),
+        "{rendered}"
+    );
+    assert_eq!(fixture.admission_count(), 0);
 }
 
 #[test]
@@ -451,6 +470,41 @@ impl Fixture {
         )
         .expect("remove one receipt index");
         name
+    }
+
+    fn corrupt_one_receipt(&self) {
+        let document: serde_json::Value = serde_json::from_slice(
+            &fs::read(self.fingerprint_path()).expect("read fingerprint manifest"),
+        )
+        .expect("decode fingerprint manifest");
+        let key = document["actions"][0]["action_key"]
+            .as_str()
+            .expect("fingerprint action has a key");
+        let index: serde_json::Value = serde_json::from_slice(
+            &fs::read(
+                self.common
+                    .join(".spice-rs/gate-evidence/v1/actions")
+                    .join(key),
+            )
+            .expect("read receipt index"),
+        )
+        .expect("decode receipt index");
+        let receipt = index["receipt"]
+            .as_str()
+            .expect("receipt index names an object");
+        fs::write(
+            self.common
+                .join(".spice-rs/gate-evidence/v1/objects")
+                .join(receipt),
+            b"corrupt receipt",
+        )
+        .expect("corrupt receipt object");
+    }
+
+    fn admission_count(&self) -> usize {
+        fs::read_dir(self.common.join(".spice-rs/gate-evidence/v1/admissions"))
+            .expect("read admission directory")
+            .count()
     }
 
     fn receipt_index(&self, action: &str) -> PathBuf {

@@ -138,6 +138,23 @@ impl PreparedArm<'_> {
             .map_err(|error| RunError::refusal("gate::context-refused", error))
     }
 
+    /// Exact external executable evidence for this focused action.
+    ///
+    /// The probe captures identity only and performs none of the arm's
+    /// analysis. Proof publication compares it with the executed report.
+    pub fn action_tools(&self) -> Result<Vec<::gate::ToolEvidence>, RunError> {
+        self.capture
+            .action_tools(self.gate_id, &self.compiler_environment)
+            .map_err(|error| RunError::refusal("gate::tool-authority-refused", error))
+    }
+
+    /// Complete executable-file authority used by proof fingerprint lookup.
+    pub fn proof_tool_authority(&self) -> Result<Digest, RunError> {
+        self.capture
+            .proof_tool_authority(&self.compiler_environment)
+            .map_err(|error| RunError::refusal("gate::tool-authority-refused", error))
+    }
+
     /// Prove the live selected source has not moved since this preparation.
     ///
     /// # Errors
