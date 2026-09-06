@@ -169,6 +169,19 @@ async function resizeTransitionWitnesses(witnesses, viewport, label) {
   ));
 }
 
+export async function settleAndArmTransitionWitness(witness, operations = {
+  settle: settleMosaicActivity,
+  scroll: scrollMosaicAwayFromTop,
+  arm: armPlacementProbe,
+}) {
+  await operations.settle(witness.page, witness.plane);
+  return {
+    witness,
+    scroll: await operations.scroll(witness.page, witness.plane),
+    armed: await operations.arm(witness.plane),
+  };
+}
+
 async function scrollAndArmTransitionWitnesses(witnesses) {
   return Promise.all(witnesses.map(async (witness) => ({
     witness,
@@ -321,7 +334,9 @@ async function assertSharedProseAppend(
 }
 
 async function assertSharedPrefixBackfill(witnesses, worktree, lane) {
-  const probes = await scrollAndArmTransitionWitnesses(witnesses);
+  const probes = await Promise.all(
+    witnesses.map((witness) => settleAndArmTransitionWitness(witness)),
+  );
   const authored = await triggerPrimaryAgentProse(
     worktree,
     transitionProse("old prefix backfill"),
