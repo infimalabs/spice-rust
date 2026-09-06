@@ -319,11 +319,12 @@ fn ticker(
     } else {
         format!("{prefix}{separator} {detail}")
     };
+    let accessible_line = watchband::ticker_accessible_line(class, &line);
     html! {
         <div
             class={classes!("ticker", activity.class())}
             aria-live="polite"
-            aria-label={format!("{}: {line}", standing.label)}
+            aria-label={format!("{}: {accessible_line}", standing.label)}
             data-agent-lane={activity.lane().to_string()}
             data-accent={standing.accent.to_string()}
             data-lane-status={status.key()}

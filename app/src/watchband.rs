@@ -791,6 +791,16 @@ pub fn ticker_chunks(class: &str, detail: &str, budget: usize) -> (String, Strin
     (prefix.to_owned(), visible_detail.to_owned())
 }
 
+/// Preserve the activity class in assistive text when visual tool taxonomy is suppressed.
+#[must_use]
+pub fn ticker_accessible_line(class: &str, line: &str) -> String {
+    if class == "tool" {
+        format!("tool: {line}")
+    } else {
+        line.to_owned()
+    }
+}
+
 /// `text` cut to `budget` characters, ellipsis included in the budget.
 #[must_use]
 pub fn truncate(text: &str, budget: usize) -> String {
@@ -808,7 +818,7 @@ pub fn truncate(text: &str, budget: usize) -> String {
 mod tests {
     use super::{
         MAX_LINEAGE_VISUAL_WEIGHT, agent_message_attribution, agent_message_label,
-        composer_vendor_icon_class, lineage_visual_weight, ticker_chunks,
+        composer_vendor_icon_class, lineage_visual_weight, ticker_accessible_line, ticker_chunks,
     };
 
     #[test]
@@ -914,6 +924,18 @@ mod tests {
                 "assistant".to_owned(),
                 "working through: details".to_owned()
             ),
+        );
+    }
+
+    #[test]
+    fn tool_ticker_accessibility_retains_the_suppressed_activity_class() {
+        assert_eq!(
+            ticker_accessible_line("tool", "exec completed"),
+            "tool: exec completed"
+        );
+        assert_eq!(
+            ticker_accessible_line("assistant", "assistant: working"),
+            "assistant: working"
         );
     }
 }

@@ -27,7 +27,7 @@ const ARGUMENT_KEYS: [&str; 8] = [
     "command", "cmd", "path", "query", "url", "input", "prompt", "text",
 ];
 
-const COMMAND_EXECUTION_TOOLS: [&str; 3] = ["exec_command", "command_execution", "Bash"];
+const COMMAND_EXECUTION_TOOLS: [&str; 4] = ["exec", "exec_command", "command_execution", "Bash"];
 
 /// Call previews held only while their calls are still outstanding.
 ///
@@ -103,13 +103,18 @@ pub(super) fn message_text(tool: &listen::Tool, activity: String, media: &[wire:
 
 fn activity_preview(name: &str, arguments: &str) -> String {
     if COMMAND_EXECUTION_TOOLS.contains(&name.trim()) {
-        return flatten(&argument_preview(arguments));
+        let arguments = flatten(&argument_preview(arguments));
+        return if arguments.is_empty() {
+            normalized_name(name)
+        } else {
+            arguments
+        };
     }
     call_preview(name, arguments)
 }
 
 pub(super) fn call_preview(name: &str, arguments: &str) -> String {
-    let name = name.trim().replace('_', " ");
+    let name = normalized_name(name);
     let arguments = argument_preview(arguments);
     if name.is_empty() {
         return flatten(&arguments);
@@ -118,6 +123,10 @@ pub(super) fn call_preview(name: &str, arguments: &str) -> String {
         return flatten(&name);
     }
     flatten(&format!("{name}: {arguments}"))
+}
+
+fn normalized_name(name: &str) -> String {
+    flatten(&name.trim().replace('_', " "))
 }
 
 /// The most readable single argument the vendor payload carries.

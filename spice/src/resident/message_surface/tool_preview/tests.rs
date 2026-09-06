@@ -886,6 +886,7 @@ fn a_preview_within_the_bound_is_not_elided() {
 #[test]
 fn only_structured_command_execution_names_suppress_their_taxonomy() {
     for (name, arguments) in [
+        ("exec", r#"{"cmd":"cargo test:all --url https://host:443"}"#),
         (
             "exec_command",
             r#"{"cmd":"cargo test:all --url https://host:443"}"#,
@@ -904,7 +905,7 @@ fn only_structured_command_execution_names_suppress_their_taxonomy() {
             "cargo test:all --url https://host:443",
             "{name}",
         );
-        assert_eq!(activity_preview(name, ""), "", "{name}");
+        assert_eq!(activity_preview(name, ""), normalized_name(name), "{name}");
     }
     assert_eq!(
         activity_preview(
@@ -920,5 +921,28 @@ fn only_structured_command_execution_names_suppress_their_taxonomy() {
     assert_eq!(
         activity_preview("unknown_command", r#"{"command":"cargo test:all"}"#),
         "unknown command: cargo test:all",
+    );
+    assert_eq!(activity_preview("exec", "null"), "exec");
+    assert_eq!(activity_preview("exec_command", "17"), "exec command");
+}
+
+#[test]
+fn empty_current_exec_call_remains_visible_through_its_correlated_result() {
+    let mut previews = CallPreviews::default();
+    assert_eq!(
+        activity(
+            lane(1),
+            &tool("current-exec", call("exec", "")),
+            &mut previews
+        ),
+        "exec",
+    );
+    assert_eq!(
+        activity(
+            lane(1),
+            &tool("current-exec", result(listen::ToolResult::Unreported),),
+            &mut previews,
+        ),
+        "exec completed",
     );
 }

@@ -254,8 +254,8 @@ fn codex_image_tool_capture_reaches_live_reconnect_and_older_history_once() {
     let result = updates.try_recv().expect("tool image result publishes");
     assert_eq!(result.activity, wire::AgentActivityKind::Tool);
     assert!(
-        result.text.starts_with("exec:"),
-        "tool identity is retained: {}",
+        result.text.starts_with("const r = await tools.view_image"),
+        "selected command text is retained without redundant taxonomy: {}",
         result.text
     );
     assert!(
