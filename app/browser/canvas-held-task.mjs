@@ -221,17 +221,25 @@ async function claimAutomatically({
   );
   const cardGeometry = () => taskRow.evaluate((row) => {
     const bounds = row.getBoundingClientRect();
-    const workspace = row.closest(".team-task-workspace").getBoundingClientRect();
+    const workspaceNode = row.closest(".team-task-workspace");
+    const workspace = workspaceNode.getBoundingClientRect();
     const title = row.querySelector(".team-task-title");
     const handle = row.querySelector("code");
     const metadata = row.querySelector(".team-task-row-meta");
     return {
+      box: [bounds.left, bounds.right, bounds.top, bounds.bottom, bounds.width],
       borderRadius: getComputedStyle(row).borderRadius,
+      cardCount: workspaceNode.querySelectorAll(".team-task-row").length,
       contained: bounds.left >= workspace.left && bounds.right <= workspace.right,
+      handle: handle.textContent,
       handleOverflow: handle.scrollWidth - handle.clientWidth,
       listTag: row.parentElement.tagName,
+      member: row.dataset.agentLane,
       metadataOverflow: metadata.scrollWidth - metadata.clientWidth,
+      phase: row.querySelector(".team-task-phase").textContent,
+      title: title.textContent,
       titleWhiteSpace: getComputedStyle(title).whiteSpace,
+      workspaceOverflow: workspaceNode.scrollWidth - workspaceNode.clientWidth,
     };
   });
   const assertCardGeometry = (geometry, viewport) => {
@@ -239,11 +247,16 @@ async function claimAutomatically({
     assert.equal(geometry.titleWhiteSpace, "normal", `${viewport} task title wraps`);
     assert.ok(Number.parseFloat(geometry.borderRadius) > 0, `${viewport} task has a card frame`);
     assert.ok(
-      geometry.contained && geometry.handleOverflow <= 0 && geometry.metadataOverflow <= 0,
+      geometry.cardCount > 0
+        && geometry.contained
+        && geometry.handleOverflow <= 0
+        && geometry.metadataOverflow <= 0
+        && geometry.workspaceOverflow <= 0,
       `${viewport} active task content remains contained: ${JSON.stringify(geometry)}`,
     );
   };
-  assertCardGeometry(await cardGeometry(), "desktop");
+  const originalCardGeometry = await cardGeometry();
+  assertCardGeometry(originalCardGeometry, "desktop");
   const cardViewport = taskRow.page().viewportSize();
   await taskRow.page().setViewportSize({ width: 390, height: cardViewport?.height ?? 844 });
   await taskRow.page().evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
@@ -298,6 +311,30 @@ async function claimAutomatically({
     assert.equal(renewed.title, taskTitle, "renewal preserves the actor-facing title");
     assert.equal(renewed.phase, phase, "renewal preserves the authoritative workflow phase");
     assert.equal(renewed.lane, lane, "renewal preserves the claiming member attribution");
+    const renewedCardGeometry = await cardGeometry();
+    assertCardGeometry(renewedCardGeometry, "renewed desktop");
+    assertRelativeClockBox(
+      renewedCardGeometry.box,
+      originalCardGeometry.box,
+      "authoritative renewal preserves the active task card box",
+    );
+    assert.deepEqual(
+      {
+        cardCount: renewedCardGeometry.cardCount,
+        handle: renewedCardGeometry.handle,
+        member: renewedCardGeometry.member,
+        phase: renewedCardGeometry.phase,
+        title: renewedCardGeometry.title,
+      },
+      {
+        cardCount: originalCardGeometry.cardCount,
+        handle: originalCardGeometry.handle,
+        member: originalCardGeometry.member,
+        phase: originalCardGeometry.phase,
+        title: originalCardGeometry.title,
+      },
+      "authoritative renewal preserves card count and semantic identity",
+    );
     assert.equal(
       Number(await badge.innerText()),
       heldBadgeCount,
