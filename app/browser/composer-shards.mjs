@@ -1118,8 +1118,8 @@ export async function assertComposerShards({
   );
   assert.equal(
     await team.locator(".team-pane").getAttribute("data-team-mode"),
-    "Compose",
-    "the agent drawer does not switch to the team Info panel",
+    "Lanes",
+    "the agent drawer does not switch to the team Team panel",
   );
   assert.equal(await team.locator(".team-detail-pane").count(), 0);
   await drawerToggle.click();

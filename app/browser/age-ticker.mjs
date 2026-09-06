@@ -71,7 +71,7 @@ export async function assertAgesTickWhileTheResidentIsSilent(browser, endpoint, 
   });
 
   await page.goto(endpoint, { waitUntil: "domcontentloaded" });
-  await chooseCanvasView(page, "Agents");
+  await chooseCanvasView(page, "Lanes");
   const card = page
     .locator(
       `.mosaic-message-card[data-card-kind="agent-message"]`

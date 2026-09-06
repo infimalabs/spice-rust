@@ -577,7 +577,7 @@ export async function seedAuthority(fixture) {
 // element is not part of a permanently rendered chrome: `app/src/browser.rs`
 // starts `mosaic` at `true` and `app/src/browser/view.rs` renders the topbar
 // holding `.status` only under `if !**render.mosaic`, so `.status` is absent
-// from the document in the default Agents view. Every `.status` wait in
+// from the document in the default Lanes view. Every `.status` wait in
 // `canvas.spec.mjs` is therefore preceded by a switch to a non-mosaic view,
 // and each one is really waiting on two things: the connection state, and this
 // click having been applied. This function returns once the click is
@@ -585,7 +585,7 @@ export async function seedAuthority(fixture) {
 // times out consequently cannot distinguish "`.status` never carried
 // `offline`" from "`.status` was never in the document at all", and only the
 // second is a view-switch failure. That is demonstrated, not supposed: pointing
-// one such wait at the mosaic "Agents" view instead reproduces the reported
+// one such wait at the mosaic "Lanes" view instead reproduces the reported
 // flake's signature exactly, down to the same bare uncaught TimeoutError on
 // `waiting for locator('.status.offline') to be visible`, from a cause that
 // never involved the connection at all.
@@ -653,12 +653,15 @@ export async function chooseCanvasView(page, name) {
     Flow: "Tasks",
     Magnitude: "Metrics",
     Chronology: "History",
-    Topology: "Teams",
+    Topology: "Team",
   }[name] ?? name;
-  const button = page.getByRole("button", { name: new RegExp(`^${visibleName}(?:\\s|$)`) });
-  if (!(await button.isVisible())) {
+  const navigation = page.getByRole("navigation", { name: "Canvas views" });
+  if (!(await navigation.isVisible())) {
     await page.getByLabel("Open Spice Canvas menu").click();
   }
+  const button = navigation.getByRole("button", {
+    name: new RegExp(`^${visibleName}(?:\\s|$)`),
+  });
   await button.click();
   const openMenu = page.locator(".canvas-menu[open]");
   if (await openMenu.count()) {
@@ -666,7 +669,7 @@ export async function chooseCanvasView(page, name) {
   }
   // The destination button leaves the DOM when selection closes the disclosure,
   // so observe the durable destination rather than an ephemeral selected pill.
-  const applied = visibleName === "Agents"
+  const applied = visibleName === "Lanes"
     ? page.locator('.mosaic-workspace[data-active="true"]')
     : page.locator(".page-heading h1", { hasText: visibleName });
   await applied.waitFor({ timeout: TRANSITION_MS });

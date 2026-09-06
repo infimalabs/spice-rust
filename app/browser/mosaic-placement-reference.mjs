@@ -191,9 +191,9 @@ export function assertMosaicLifecycleAdvanced(before, after, label) {
 
 export async function assertCompactionBoundaryPersistence(page, seeded, boundaryKeys) {
   await page.reload({ waitUntil: "networkidle" });
-  await chooseCanvasView(page, "Agents");
+  await chooseCanvasView(page, "Lanes");
   const restoredTeam = page.locator('[data-pane="agent-console"]');
-  await restoredTeam.getByRole("tab", { name: /^Compose/ }).click();
+  await restoredTeam.getByRole("tab", { name: /^Lanes/ }).click();
   const restoredUnresolved = restoredTeam.locator(
     `[data-mosaic-card-key="${boundaryKeys.unresolved}"]`,
   );
@@ -307,7 +307,7 @@ export async function assertModeSwitchPreservesDeferredMosaic(
   const history = await activityReplay.injectAgentHistory(
     page,
     member.lane,
-    "history response received while Agents is hidden",
+    "history response received while Lanes is hidden",
   );
   const boundary = await activityReplay.injectCompaction(page, member.lane);
   const images = [];
@@ -354,7 +354,7 @@ export async function assertModeSwitchPreservesDeferredMosaic(
     "hidden reduction retains prior cards and materializes every background arrival");
   assert.deepEqual(hidden.writes, [], "the zero-width host performs no card geometry writes");
 
-  await chooseCanvasView(page, "Agents");
+  await chooseCanvasView(page, "Lanes");
   await waitForPage(page, "reveal measures one complete hidden batch", TRANSITION_MS,
     (expected) => {
       const plane = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
@@ -377,7 +377,7 @@ export async function assertModeSwitchPreservesDeferredMosaic(
   await waitForPage(page, "repeated hide returns to zero width", TRANSITION_MS, () => (
     Number(document.querySelector(".mosaic-workspace .lane-mosaic-plane")?.dataset.observedWidth) < 24
   ));
-  await chooseCanvasView(page, "Agents");
+  await chooseCanvasView(page, "Lanes");
   await waitForPage(page, "repeated reveal restores the committed width", TRANSITION_MS,
     (expected) => Number(
       document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane')

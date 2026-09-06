@@ -71,7 +71,7 @@ async function assertChronology(plane, expected, label) {
 }
 
 async function readTeamWorktrees(team) {
-  await team.getByRole("tab", { name: /^Info/ }).click();
+  await team.getByRole("tab", { name: /^Team/ }).click();
   const cards = team.locator(".team-detail-card");
   await cards.nth(3).waitFor();
   const worktrees = await cards.evaluateAll((elements) => elements.map((card) => {
@@ -83,7 +83,7 @@ async function readTeamWorktrees(team) {
   assert.equal(worktrees.length, 4, "the progressive team exposes four fixture worktrees");
   assert.ok(worktrees.every((worktree) => worktree.startsWith("/")),
     "each progressive fixture worktree is an absolute path");
-  await team.getByRole("tab", { name: /^Compose/ }).click();
+  await team.getByRole("tab", { name: /^Lanes/ }).click();
   return worktrees;
 }
 
@@ -259,8 +259,8 @@ export async function assertStagedMosaicHydration(
   const hiddenProbe = await armPlacementProbe(plane);
   await surface.getByRole("tab", { name: /^Tasks/ }).click();
   history.sendLive();
-  await surface.getByRole("tab", { name: /^Compose/ }).click();
-  await waitForCard(page, history.keys.live, "live work received while Compose is hidden appears");
+  await surface.getByRole("tab", { name: /^Lanes/ }).click();
+  await waitForCard(page, history.keys.live, "live work received while Lanes is hidden appears");
   const revealed = await finishPlacementProbe(plane, hiddenProbe);
   assertPlacementStable(hiddenProbe, revealed, "the hidden live append reveal");
 
@@ -340,12 +340,12 @@ export async function assertStagedMosaicHydration(
   await replayPage.reload({ waitUntil: "networkidle" });
   const reloadGeneration = await history.waitForSocketAfter(openedGeneration);
   await history.waitForServerSnapshot(reloadGeneration);
-  await chooseCanvasView(replayPage, "Agents");
+  await chooseCanvasView(replayPage, "Lanes");
   const replayTeam = replayPage.locator('[data-pane="agent-console"]');
   const restoredSurface = replayTeam.locator(
     `.team-surface[data-lineage-id="${lineage}"]`,
   );
-  await restoredSurface.getByRole("tab", { name: /^Compose/ }).click();
+  await restoredSurface.getByRole("tab", { name: /^Lanes/ }).click();
   history.sendHeads("reload", history.lanes, reloadGeneration);
   const reloadRequests = await history.waitForRequests(
     history.lanes, reloadGeneration, reloadRequestStart,

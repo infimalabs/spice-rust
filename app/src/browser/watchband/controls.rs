@@ -113,7 +113,7 @@ pub(super) struct LineageControl {
 impl Default for LineageControl {
     fn default() -> Self {
         Self {
-            mode: LineageMode::Compose,
+            mode: LineageMode::Lanes,
             menu_open: false,
             import_open: false,
             arrangement_open: false,
@@ -426,20 +426,20 @@ impl LineageControls {
         self.closed
             .retain(|lineage| live_lineages.contains(lineage));
 
-        // A seat submitted from the empty Info view must keep that view when
+        // A seat submitted from the empty Team view must keep that view when
         // its first real surface arrives. The resident's authoritative
         // subscription order resolves the transition: its first lineage
         // inherits the empty selection exactly once, and every sibling keeps
-        // the explicit Compose default.
+        // the explicit Lanes default.
         if self.lineages.is_empty()
-            && self.empty_mode != LineageMode::Compose
+            && self.empty_mode != LineageMode::Lanes
             && let Some(subscription) = answer.subscriptions.first()
         {
             self.lineages
                 .entry(subscription.lineage_id)
                 .or_default()
                 .mode = self.empty_mode;
-            self.empty_mode = LineageMode::Compose;
+            self.empty_mode = LineageMode::Lanes;
         }
         for subscription in &answer.subscriptions {
             let lineage = subscription.lineage_id;

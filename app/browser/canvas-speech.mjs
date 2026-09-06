@@ -151,11 +151,11 @@ async function assertAutomaticSpeechEngine(engine, endpoint, fixture, worktree, 
   const monitor = monitorPage(page);
   try {
     await page.goto(endpoint, { waitUntil: "networkidle" });
-    await chooseCanvasView(page, "Agents");
+    await chooseCanvasView(page, "Lanes");
     const surface = page.locator(".team-surface", {
       has: page.locator(`[data-agent-lane="${lane}"]`),
     });
-    await surface.getByRole("tab", { name: /^Compose/ }).click();
+    await surface.getByRole("tab", { name: /^Lanes/ }).click();
     const mode = surface.locator('.team-speech input[type="range"]');
     assert.equal(await mode.inputValue(), "1", `${engine} defaults to Speak`);
     assert.equal(await speechCount(page), 0, `${engine} materialized history stays silent`);
@@ -193,7 +193,7 @@ async function assertAutomaticSpeechEngine(engine, endpoint, fixture, worktree, 
     await assertFinalCardMatrix(page, surface, finalCard, engine, artifacts);
 
     await page.reload({ waitUntil: "networkidle" });
-    await chooseCanvasView(page, "Agents");
+    await chooseCanvasView(page, "Lanes");
     assert.equal(await speechCount(page), 0, `${engine} reload replays no speech`);
     assert.equal(await mode.inputValue(), "1", `${engine} retains default Speak after reload`);
     const replayedFinal = page.locator(
@@ -204,14 +204,14 @@ async function assertAutomaticSpeechEngine(engine, endpoint, fixture, worktree, 
 
     await mode.fill("0");
     await page.reload({ waitUntil: "networkidle" });
-    await chooseCanvasView(page, "Agents");
+    await chooseCanvasView(page, "Lanes");
     assert.equal(await mode.inputValue(), "0", `${engine} persists Quiet`);
     await emitAssistantRecord(worktree, page, lane, `${engine} quiet final`, { final: true });
     assert.equal(await speechCount(page), 0, `${engine} Quiet suppresses a final answer`);
 
     await mode.fill("2");
     await page.reload({ waitUntil: "networkidle" });
-    await chooseCanvasView(page, "Agents");
+    await chooseCanvasView(page, "Lanes");
     assert.equal(await mode.inputValue(), "2", `${engine} persists Narrate`);
     await emitAssistantRecord(worktree, page, lane, `${engine} narrated commentary`);
     await waitForSpeech(page, 1, `${engine} Narrate commentary`);
@@ -403,7 +403,7 @@ export async function assertSpeechVariants(browser, endpoint) {
   await unavailablePage.goto(endpoint, { waitUntil: "networkidle" });
   await chooseCanvasView(unavailablePage, "Chronology");
   await assertOnlineObserved(unavailablePage, "the page loads with speech unavailable", CONNECT_MS);
-  await chooseCanvasView(unavailablePage, "Agents");
+  await chooseCanvasView(unavailablePage, "Lanes");
   const unavailableCard = unavailablePage.locator('[data-card-kind="agent-message"]').first();
   await unavailableCard.waitFor();
   await unavailableCard.getByLabel("Speak this message").click();
@@ -428,7 +428,7 @@ export async function assertSpeechVariants(browser, endpoint) {
   await disabled.goto(endpoint, { waitUntil: "networkidle" });
   await chooseCanvasView(disabled, "Chronology");
   await assertOnlineObserved(disabled, "the page loads with speech disabled", CONNECT_MS);
-  await chooseCanvasView(disabled, "Agents");
+  await chooseCanvasView(disabled, "Lanes");
   const disabledCard = disabled.locator('[data-card-kind="agent-message"]').first();
   await disabledCard.waitFor();
   await disabledCard.getByLabel("Speak this message").click();
@@ -450,7 +450,7 @@ export async function assertSpeechVariants(browser, endpoint) {
   await externalUnavailable.goto(endpoint, { waitUntil: "networkidle" });
   await chooseCanvasView(externalUnavailable, "Chronology");
   await assertOnlineObserved(externalUnavailable, "no external backend is offered", CONNECT_MS);
-  await chooseCanvasView(externalUnavailable, "Agents");
+  await chooseCanvasView(externalUnavailable, "Lanes");
   let unavailableRequests = 0;
   await externalUnavailable.route("**/speech", async (route) => {
     unavailableRequests += 1;
@@ -496,7 +496,7 @@ export async function assertSpeechVariants(browser, endpoint) {
   await external.goto(endpoint, { waitUntil: "networkidle" });
   await chooseCanvasView(external, "Chronology");
   await assertOnlineObserved(external, "the page loads against the external backend", CONNECT_MS);
-  await chooseCanvasView(external, "Agents");
+  await chooseCanvasView(external, "Lanes");
   const card = external.locator('[data-card-kind="agent-message"]').first();
   await card.waitFor();
   const cardKey = await card.getAttribute("data-mosaic-card-key");

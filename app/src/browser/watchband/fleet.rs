@@ -34,22 +34,22 @@ pub(super) fn carries_lineage(transfer: &web_sys::DataTransfer) -> bool {
 /// The four one-click views of one live team.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(in crate::browser) enum LineageMode {
-    #[default]
-    Compose,
-    Tasks,
+    Team,
     Metrics,
-    Info,
+    Tasks,
+    #[default]
+    Lanes,
 }
 
 impl LineageMode {
-    const ALL: [Self; 4] = [Self::Compose, Self::Tasks, Self::Metrics, Self::Info];
+    const ALL: [Self; 4] = [Self::Team, Self::Metrics, Self::Tasks, Self::Lanes];
 
     pub(super) const fn label(self) -> &'static str {
         match self {
-            Self::Compose => "Compose",
-            Self::Tasks => "Tasks",
+            Self::Team => "Team",
             Self::Metrics => "Metrics",
-            Self::Info => "Info",
+            Self::Tasks => "Tasks",
+            Self::Lanes => "Lanes",
         }
     }
 }
@@ -95,11 +95,11 @@ pub(super) fn render_empty_fleet(
                 )}
                 <div class="team-pane" data-team-mode={mode.label()}>
                     {match mode {
-                        LineageMode::Compose => {
-                            empty("No agents are assigned. Open Info to add one.")
+                        LineageMode::Lanes => {
+                            empty("No agents are assigned. Open Team to add one.")
                         }
                         LineageMode::Tasks => render_tasks(runtime, &empty_lineage, &[]),
-                        LineageMode::Metrics | LineageMode::Info => {
+                        LineageMode::Metrics | LineageMode::Team => {
                             render_details(runtime, &empty_lineage, &[], mode, controls)
                         }
                     }}
@@ -160,10 +160,10 @@ pub(super) fn render_populated_fleet(
                         <div class="team-pane" data-team-mode={mode.label()}>
                             <div
                                 class="team-mode-pane"
-                                data-mode="Compose"
-                                data-active={(mode == LineageMode::Compose).to_string()}
-                                aria-hidden={(mode != LineageMode::Compose).to_string()}
-                                inert={(mode != LineageMode::Compose).then_some("true")}
+                                data-mode="Lanes"
+                                data-active={(mode == LineageMode::Lanes).to_string()}
+                                aria-hidden={(mode != LineageMode::Lanes).to_string()}
+                                inert={(mode != LineageMode::Lanes).then_some("true")}
                             >
                                 {render_compose(
                                     render.runtime,
@@ -182,7 +182,7 @@ pub(super) fn render_populated_fleet(
                                     render.controls,
                                 )}
                             </div>
-                            if mode != LineageMode::Compose {
+                            if mode != LineageMode::Lanes {
                                 <div
                                     class="team-mode-pane"
                                     data-mode={mode.label()}
@@ -195,14 +195,14 @@ pub(super) fn render_populated_fleet(
                                             lineage,
                                             &lineage_standings,
                                         ),
-                                        LineageMode::Metrics | LineageMode::Info => render_details(
+                                        LineageMode::Metrics | LineageMode::Team => render_details(
                                             render.runtime,
                                             lineage,
                                             &lineage_standings,
                                             mode,
                                             render.controls,
                                         ),
-                                        LineageMode::Compose => Html::default(),
+                                        LineageMode::Lanes => Html::default(),
                                     }}
                                 </div>
                             }
@@ -398,7 +398,7 @@ fn render_empty_toolbar(
                     Callback::from(move |_| {
                         choose.dispatch(LineageControlAction::SetMode {
                             lineage: None,
-                            mode: LineageMode::Info,
+                            mode: LineageMode::Team,
                         });
                     })
                 }}
@@ -556,7 +556,7 @@ fn lineage_arrangement_key(
 
 fn mode_badge(mode: LineageMode, standings: &[Standing]) -> Option<String> {
     let count = match mode {
-        LineageMode::Compose => standings.iter().map(|standing| standing.pending).sum(),
+        LineageMode::Lanes => standings.iter().map(|standing| standing.pending).sum(),
         LineageMode::Tasks => standings
             .iter()
             .filter(|standing| standing.handle.is_some())
@@ -565,7 +565,7 @@ fn mode_badge(mode: LineageMode, standings: &[Standing]) -> Option<String> {
             .iter()
             .filter(|standing| standing.held_since.is_some())
             .count(),
-        LineageMode::Info => standings.len(),
+        LineageMode::Team => standings.len(),
     };
     watchband::badge(count)
 }

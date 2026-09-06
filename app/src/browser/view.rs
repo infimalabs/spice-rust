@@ -192,7 +192,7 @@ pub(super) const fn axis_label(axis: Axis) -> &'static str {
     match axis {
         Axis::Magnitude => "Metrics",
         Axis::Flow => "Tasks",
-        Axis::Topology => "Teams",
+        Axis::Topology => "Team",
         Axis::Chronology => "History",
     }
 }

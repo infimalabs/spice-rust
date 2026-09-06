@@ -54,9 +54,9 @@ export async function assertPerTeamWatchbands(
   const awakened = await reply(fixture, ["lane", "wake", added.body.lane]);
   assert.equal(awakened.body.to, "occupied", "the secondary team starts a live vendor");
   await page.reload({ waitUntil: "networkidle" });
-  await chooseCanvasView(page, "Agents");
+  await chooseCanvasView(page, "Lanes");
   const console = page.locator('[data-pane="agent-console"]');
-  await console.getByRole("tab", { name: /^Compose/ }).first().click();
+  await console.getByRole("tab", { name: /^Lanes/ }).first().click();
   await waitForElement(page, "second team renders after reload", CONNECT_MS,
     console.locator(".team-surface").nth(1));
 
@@ -69,38 +69,58 @@ export async function assertPerTeamWatchbands(
   const secondarySurface = console.locator(
     `.team-surface[data-lineage-id="${secondary.lineage_id}"]`,
   );
+  for (const [surface, label] of [
+    [primarySurface, "primary"],
+    [secondarySurface, "secondary"],
+  ]) {
+    assert.deepEqual(
+      await surface.getByRole("tab").allTextContents(),
+      ["Team", "Metrics", "Tasks", "Lanes"],
+      `${label} team exposes the mirrored navigation order`,
+    );
+  }
+  const primaryTabs = primarySurface.getByRole("tab");
+  await primaryTabs.first().focus();
+  for (const [index, label] of ["Team", "Metrics", "Tasks", "Lanes"].entries()) {
+    assert.match(
+      (await page.locator(":focus").innerText()).trim(),
+      new RegExp(`^${label}`),
+      `team keyboard traversal follows visible order at ${label}`,
+    );
+    if (index < 3) await page.keyboard.press("Tab");
+  }
   const selectedMode = (surface) => surface.locator(".team-pane").getAttribute("data-team-mode");
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
-    ["Compose", "Compose"],
-    "each newly rendered team begins in Compose",
+    ["Lanes", "Lanes"],
+    "each newly rendered team begins in Lanes",
   );
   await primarySurface.getByRole("tab", { name: /^Metrics/ }).click();
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
-    ["Metrics", "Compose"],
-    "switching the primary team to Metrics leaves its sibling in Compose",
+    ["Metrics", "Lanes"],
+    "switching the primary team to Metrics leaves its sibling in Lanes",
   );
-  await secondarySurface.getByRole("tab", { name: /^Info/ }).click();
+  await secondarySurface.getByRole("tab", { name: /^Team/ }).click();
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
-    ["Metrics", "Info"],
+    ["Metrics", "Team"],
     "two teams retain different selected views simultaneously",
   );
   await primarySurface.getByRole("tab", { name: /^Tasks/ }).click();
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
-    ["Tasks", "Info"],
+    ["Tasks", "Team"],
     "a subsequent primary switch preserves the secondary selection",
   );
   await assertLineageResponsiveLayout(page, console);
-  await secondarySurface.getByRole("tab", { name: /^Compose/ }).click();
+  await secondarySurface.getByRole("tab", { name: /^Lanes/ }).click();
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
-    ["Tasks", "Compose"],
+    ["Tasks", "Lanes"],
     "a subsequent secondary switch preserves the primary selection",
   );
-  await primarySurface.getByRole("tab", { name: /^Compose/ }).click();
+  await primarySurface.getByRole("tab", { name: /^Lanes/ }).click();
   const noCardDestination = await primaryDestination(secondarySurface, secondary.lane);
   assert.equal(
     noCardDestination.rendered.length,
@@ -143,7 +163,7 @@ export async function assertPerTeamWatchbands(
     0,
     "queued direction is not presented as allocator-eligible work",
   );
-  await secondarySurface.getByRole("tab", { name: /^Compose/ }).click();
+  await secondarySurface.getByRole("tab", { name: /^Lanes/ }).click();
   assert.equal(await console.locator(".team-surface").count(), 2);
   assert.equal(await console.locator(".team-speech").count(), 2);
   assert.equal(await console.locator(".team-lifetime").count(), 2);
@@ -333,7 +353,7 @@ export async function assertPerTeamWatchbands(
   });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
-  await primarySurface.getByRole("tab", { name: /^Compose/ }).click();
+  await primarySurface.getByRole("tab", { name: /^Lanes/ }).click();
   assert.equal(
     await secondarySurface.getByRole("button", { name: "Drive", exact: true }).count(),
     1,
@@ -352,8 +372,8 @@ export async function assertPerTeamWatchbands(
   assert.equal(await secondarySpeech.inputValue(), "2");
   assert.equal(await primarySurface.locator(".team-speech span").innerText(), "quiet");
   assert.equal(await secondarySurface.locator(".team-speech span").innerText(), "narrate");
-  await console.getByRole("tab", { name: /^Info/ }).first().click();
-  await console.getByRole("tab", { name: /^Compose/ }).first().click();
+  await console.getByRole("tab", { name: /^Team/ }).first().click();
+  await console.getByRole("tab", { name: /^Lanes/ }).first().click();
   assert.equal(await primarySpeech.inputValue(), "0", "Quiet survives a team redraw");
   assert.equal(await secondarySpeech.inputValue(), "2", "Narrate survives a team redraw");
   assert.equal(await primarySurface.locator(".team-speech span").innerText(), "quiet");
@@ -596,9 +616,9 @@ export async function assertPerTeamWatchbands(
     window.__speechUtterances = [];
   });
   await page.reload({ waitUntil: "networkidle" });
-  await chooseCanvasView(page, "Agents");
+  await chooseCanvasView(page, "Lanes");
   const reconnected = page.locator('[data-pane="agent-console"]');
-  await reconnected.getByRole("tab", { name: /^Compose/ }).first().click();
+  await reconnected.getByRole("tab", { name: /^Lanes/ }).first().click();
   const restoredPrimary = reconnected.locator(
     `.team-surface[data-lineage-id="${primary.lineage_id}"]`,
   );
@@ -607,8 +627,8 @@ export async function assertPerTeamWatchbands(
   );
   await restoredPrimary.locator('.team-speech input[type="range"]').fill("2");
   await restoredSecondary.locator('.team-speech input[type="range"]').fill("2");
-  await reconnected.getByRole("tab", { name: /^Info/ }).first().click();
-  await reconnected.getByRole("tab", { name: /^Compose/ }).first().click();
+  await reconnected.getByRole("tab", { name: /^Team/ }).first().click();
+  await reconnected.getByRole("tab", { name: /^Lanes/ }).first().click();
   await page.evaluate(() => new Promise((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(resolve))));
   assert.deepEqual(
@@ -629,9 +649,9 @@ export async function assertPerTeamWatchbands(
 }
 
 export async function captureReferenceViewport(page, artifacts) {
-  await chooseCanvasView(page, "Agents");
+  await chooseCanvasView(page, "Lanes");
   const team = page.locator('[data-pane="agent-console"]');
-  await team.getByRole("tab", { name: /^Info/ }).click();
+  await team.getByRole("tab", { name: /^Team/ }).click();
   for (const name of agentNames) {
     await team.locator(".team-detail-card").getByText(name, { exact: true }).waitFor();
   }
@@ -641,7 +661,7 @@ export async function captureReferenceViewport(page, artifacts) {
     path: join(artifacts, "canvas-reference-agent-details-dark.png"),
     fullPage: false,
   });
-  await team.getByRole("tab", { name: /^Compose/ }).click();
+  await team.getByRole("tab", { name: /^Lanes/ }).click();
   await team.locator(".mosaic-message-card").nth(3).waitFor({ timeout: 10_000 });
   assert.equal(
     await page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches),

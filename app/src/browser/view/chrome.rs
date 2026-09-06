@@ -79,12 +79,7 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
 }
 
 fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRuntime>) -> Html {
-    let destinations = [
-        Axis::Flow,
-        Axis::Magnitude,
-        Axis::Chronology,
-        Axis::Topology,
-    ];
+    let destinations = [Axis::Topology, Axis::Magnitude, Axis::Flow];
     html! {
         <nav class="canvas-navigation" aria-label="Canvas views">
             {for destinations.map(|candidate| {
@@ -97,6 +92,7 @@ fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunti
                     candidate.question(),
                     !**render.mosaic && candidate == render.active_axis,
                     watchband::badge(axis_count(candidate, runtime)),
+                    false,
                     Callback::from(move |_| {
                         if candidate == Axis::Magnitude {
                             send_action(&sender, ClientAction::Effort);
@@ -108,10 +104,11 @@ fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunti
                 )
             })}
             {render_pill(
-                "Agents",
-                "Converse with seated agents",
+                "Lanes",
+                "Converse across persistent team lanes",
                 **render.mosaic,
                 watchband::badge(waiting_directives(runtime, render.submissions)),
+                false,
                 {
                     let mosaic = render.mosaic.clone();
                     let menu_open = render.menu_open.clone();
@@ -121,6 +118,23 @@ fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunti
                     })
                 },
             )}
+            {{
+                let axis = render.axis.clone();
+                let mosaic = render.mosaic.clone();
+                let menu_open = render.menu_open.clone();
+                render_pill(
+                    super::axis_label(Axis::Chronology),
+                    "Global-only history of facts and command outcomes",
+                    !**render.mosaic && render.active_axis == Axis::Chronology,
+                    watchband::badge(axis_count(Axis::Chronology, runtime)),
+                    true,
+                    Callback::from(move |_| {
+                        axis.set(Axis::Chronology);
+                        mosaic.set(false);
+                        menu_open.set(false);
+                    }),
+                )
+            }}
         </nav>
     }
 }
@@ -219,13 +233,20 @@ fn render_pill(
     question: &str,
     selected: bool,
     badge: Option<String>,
+    secondary: bool,
     choose: Callback<MouseEvent>,
 ) -> Html {
     html! {
         <button
-            class={classes!("axis-button", "pill", selected.then_some("selected"))}
+            class={classes!(
+                "axis-button",
+                "pill",
+                selected.then_some("selected"),
+                secondary.then_some("axis-button--secondary"),
+            )}
             type="button"
             aria-current={selected.then_some("page")}
+            data-navigation-tier={if secondary { "secondary" } else { "primary" }}
             title={question.to_owned()}
             onclick={choose}
         >

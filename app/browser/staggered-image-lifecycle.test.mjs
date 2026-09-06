@@ -105,9 +105,9 @@ test("staggered image outcomes preserve the committed plane", { timeout: 90_000 
     ]);
     const lane = seated.body.lane;
     await reply(fixture, ["lane", "wake", lane]);
-    await chooseCanvasView(page, "Agents");
+    await chooseCanvasView(page, "Lanes");
     const console = page.locator('[data-pane="agent-console"]');
-    await console.getByRole("tab", { name: /^Compose/ }).click();
+    await console.getByRole("tab", { name: /^Lanes/ }).click();
     await console.locator('[data-card-kind="agent-message"]').first().waitFor();
 
     const origin = new URL(page.url()).origin;
