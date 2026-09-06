@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 
-import { reply, TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
+import {
+  chooseCanvasView,
+  reply,
+  replyAsLane,
+  TRANSITION_MS,
+  waitForPageFunction,
+} from "./canvas-fixture.mjs";
 import { assertTeamActions } from "./team-actions.mjs";
 
 const darkPalette = {
@@ -758,7 +764,7 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
     .locator(
       ".composer-shard--primary .agent-action-menu:has(.agent-renew-request:not(:disabled))",
     )
-    .first();
+    .nth(1);
   await menu.waitFor();
   const composer = menu.locator(
     "xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' composer-shard--primary ')][1]",
@@ -852,7 +858,7 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
 
   await trigger.click();
   await renew.waitFor();
-  const siblingEditor = surface.locator(".team-agent").nth(1).getByRole("textbox");
+  const siblingEditor = surface.locator(".team-agent").first().getByRole("textbox");
   await siblingEditor.click();
   assert.equal(
     await menu.getAttribute("open"),
@@ -880,24 +886,28 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
   assert.equal(await renew.getAttribute("aria-pressed"), "false");
   assert.match(await renew.getAttribute("aria-label"), /^Request agent renewal for /);
   assert.doesNotMatch(await renew.getAttribute("title"), /task lease/i);
-  await renew.click();
+  const claim = await claimRenewalWitness(fixture, renewalLane, surface);
+  await installRenewalCommandRecorder(page);
+  await renew.evaluate((button) => {
+    button.click();
+    button.click();
+  });
   assert.equal(await menu.getAttribute("open"), null, "renewing closes the full composer overlay");
   await waitForPageFunction(
     page,
-    "typed agent renewal reaches durable member state",
+    "typed agent renewal reaches requested member state",
     TRANSITION_MS * 4,
     (lane) => document
       .querySelector(`.agent-renew-request[data-renewal-lane="${lane}"]`)
-      ?.dataset.renewalState !== "none",
+      ?.dataset.renewalState === "requested",
     renewalLane,
   );
   const durableState = await surface
     .locator(`.agent-renew-request[data-renewal-lane="${renewalLane}"]`)
     .getAttribute("data-renewal-state");
-  assert.ok(
-    ["requested", "handoff-pending", "successor-started", "launch-refused"].includes(durableState),
-    `typed renewal exposes one durable lifecycle state: ${durableState}`,
-  );
+  assert.equal(durableState, "requested", "typed renewal exposes its requested lifecycle state");
+  await assertRenewalCommand(page, renewalLane, renewalLineage, true);
+  await assertRenewalClaimUnchanged(fixture, renewalLane, surface, claim, "request");
   const renewalInbox = await reply(fixture, ["inbox", renewalLane]);
   assert.equal(
     renewalInbox.body.lanes[0].pending.some(
@@ -906,6 +916,11 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
     false,
     "Renew this agent creates no task-lease steering prose",
   );
+  assert.doesNotMatch(
+    JSON.stringify(renewalInbox.body.lanes[0].pending),
+    /task reclaim|task lease renewed/i,
+    "typed renewal reports no task reclaim or lease-renewal success",
+  );
   assert.equal(
     await surface.locator(`.mosaic-message-card[data-agent-lane="${renewalLane}"]`)
       .filter({ hasText: retiredRenewalRequest }).count(),
@@ -913,6 +928,189 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
     "renewal creates no task-lease sentence in the conversation",
   );
   assert.equal(await renew.isVisible(), false, "renewal hides again when its drawer closes");
+
+  await page.reload({ waitUntil: "networkidle" });
+  await chooseCanvasView(page, "Lanes");
+  await surface.getByRole("tab", { name: /^Lanes/ }).click();
+  const restoredRenew = surface.locator(
+    `.agent-renew-request[data-renewal-lane="${renewalLane}"]`,
+  );
+  await restoredRenew.waitFor({ state: "attached" });
+  assert.equal(await restoredRenew.getAttribute("data-renewal-lane"), renewalLane);
+  assert.equal(await restoredRenew.getAttribute("data-renewal-lineage"), renewalLineage);
+  assert.equal(await restoredRenew.getAttribute("data-renewal-state"), "requested");
+  assert.equal(await restoredRenew.getAttribute("data-renewal-requested"), "true");
+  assert.equal(await restoredRenew.getAttribute("data-renewal-next-requested"), "false");
+  assert.match(await restoredRenew.getAttribute("aria-label"), /^Cancel requested renewal for /);
+  await assertRenewalClaimUnchanged(fixture, renewalLane, surface, claim, "refresh");
+
+  await installRenewalCommandRecorder(page);
+  const restoredMenu = restoredRenew.locator("xpath=ancestor::details[1]");
+  await restoredMenu.locator(":scope > summary").click();
+  await restoredRenew.evaluate((button) => {
+    button.click();
+    button.click();
+  });
+  await waitForPageFunction(
+    page,
+    "typed agent renewal cancellation clears member state",
+    TRANSITION_MS * 4,
+    (lane) => document
+      .querySelector(`.agent-renew-request[data-renewal-lane="${lane}"]`)
+      ?.dataset.renewalState === "none",
+    renewalLane,
+  );
+  await assertRenewalCommand(page, renewalLane, renewalLineage, false);
+  await assertRenewalClaimUnchanged(fixture, renewalLane, surface, claim, "cancel");
+
+  await page.reload({ waitUntil: "networkidle" });
+  await chooseCanvasView(page, "Lanes");
+  await surface.getByRole("tab", { name: /^Lanes/ }).click();
+  const canceledRenew = surface.locator(
+    `.agent-renew-request[data-renewal-lane="${renewalLane}"]`,
+  );
+  await canceledRenew.waitFor({ state: "attached" });
+  assert.equal(await canceledRenew.getAttribute("data-renewal-lane"), renewalLane);
+  assert.equal(await canceledRenew.getAttribute("data-renewal-lineage"), renewalLineage);
+  assert.equal(await canceledRenew.getAttribute("data-renewal-state"), "none");
+  assert.equal(await canceledRenew.getAttribute("data-renewal-requested"), "false");
+  assert.equal(await canceledRenew.getAttribute("data-renewal-next-requested"), "true");
+  assert.match(await canceledRenew.getAttribute("aria-label"), /^Request agent renewal for /);
+  await assertRenewalClaimUnchanged(fixture, renewalLane, surface, claim, "canceled refresh");
+  await replyAsLane(fixture, renewalLane, ["task", "free", claim.handle]);
+}
+
+async function claimRenewalWitness(fixture, lane, surface) {
+  const taskTab = surface.getByRole("tab", { name: /^Tasks/ });
+  const badge = taskTab.locator(".team-mode-badge");
+  const priorCount = await badge.count() === 0 ? 0 : Number(await badge.innerText());
+  assert.ok(Number.isInteger(priorCount), "renewal fixture reads the prior task badge");
+  const added = await replyAsLane(fixture, lane, [
+    "task", "add", "Agent renewal lease witness",
+    "--project", "app.browser",
+    "--acceptance", "typed agent renewal cannot mutate task possession",
+  ]);
+  const handle = added.body.task;
+  assert.match(handle, /^\S+-\S+$/, "renewal fixture creates one task handle");
+  await replyAsLane(fixture, lane, ["task", "modify", handle, "--priority", "critical"]);
+  const claimed = await replyAsLane(fixture, lane, ["task", "next"]);
+  assert.equal(claimed.body.task, handle, "renewal lane claims the critical fixture task");
+  await waitForPageFunction(
+    surface.page(),
+    "the renewal witness increments the exact team task badge",
+    TRANSITION_MS * 4,
+    ({ lineage, expected }) => {
+      const tabs = document.querySelectorAll(
+        `.team-surface[data-lineage-id="${lineage}"] [role="tab"]`,
+      );
+      const tasks = [...tabs].find(
+        (tab) => tab.querySelector(".team-mode-label")?.textContent === "Tasks",
+      );
+      return Number(tasks?.querySelector(".team-mode-badge")?.textContent) === expected;
+    },
+    {
+      lineage: await surface.getAttribute("data-lineage-id"),
+      expected: priorCount + 1,
+    },
+  );
+  const count = Number(await badge.innerText());
+  assert.ok(Number.isInteger(count) && count > 0, "renewal fixture renders an active task badge");
+  return {
+    handle,
+    badge: count,
+    claim: await renewalClaimState(fixture, lane, handle),
+    provenance: await renewalComposerProvenance(surface, lane),
+  };
+}
+
+async function renewalClaimState(fixture, lane, handle) {
+  const shown = await replyAsLane(fixture, lane, ["task", "show", handle]);
+  const lines = shown.body.text.split("\n");
+  const line = (prefix) => lines.find((candidate) => candidate.startsWith(prefix));
+  const phase = line("phase ");
+  const claim = line("claim ");
+  const context = line("claim_context fact=");
+  const sources = lines.filter((candidate) => candidate.startsWith("claim_source "));
+  assert.ok(phase && claim && context && sources.length > 0, shown.body.text);
+  assert.match(claim, new RegExp(`^claim lane:${lane} until `));
+  assert.match(context, new RegExp(` lane=${lane} `));
+  return { phase, claim, context, sources };
+}
+
+async function renewalComposerProvenance(surface, lane) {
+  return surface.locator(
+    `.team-agent[data-agent-lane="${lane}"] .composer-shard--primary .composer-shard-age`,
+  ).evaluate((age) => ({
+    href: age.getAttribute("href"),
+    authored: age.dataset.ageAuthored,
+    clock: age.dataset.ageClock,
+  }));
+}
+
+async function assertRenewalClaimUnchanged(fixture, lane, surface, expected, label) {
+  assert.deepEqual(
+    await renewalClaimState(fixture, lane, expected.handle),
+    expected.claim,
+    `${label} preserves task phase, expiry, claimed fact, and source provenance`,
+  );
+  assert.equal(
+    Number(await surface.getByRole("tab", { name: /^Tasks/ })
+      .locator(".team-mode-badge").innerText()),
+    expected.badge,
+    `${label} preserves the active-task badge count`,
+  );
+  assert.deepEqual(
+    await renewalComposerProvenance(surface, lane),
+    expected.provenance,
+    `${label} preserves composer message provenance`,
+  );
+}
+
+async function installRenewalCommandRecorder(page) {
+  await page.evaluate(() => {
+    window.__renewalCommands = [];
+    const socket = window.__canvasSockets.at(-1);
+    if (!socket) throw new Error("canvas WebSocket was not captured");
+    const send = socket.send.bind(socket);
+    const record = (bytes) => {
+      const command = JSON.parse(new TextDecoder().decode(bytes));
+      if (command.kind === "lane::renewal") window.__renewalCommands.push(command);
+    };
+    socket.send = (data) => {
+      if (typeof data === "string") {
+        record(new TextEncoder().encode(data));
+      } else if (data instanceof Blob) {
+        void data.arrayBuffer().then((buffer) => record(new Uint8Array(buffer)));
+      } else if (ArrayBuffer.isView(data)) {
+        record(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+      } else {
+        record(new Uint8Array(data));
+      }
+      send(data);
+    };
+  });
+}
+
+async function assertRenewalCommand(page, lane, lineage, requested) {
+  await waitForPageFunction(
+    page,
+    `one ${requested ? "request" : "cancel"} renewal command crosses the browser socket`,
+    TRANSITION_MS,
+    () => window.__renewalCommands?.length > 0,
+  );
+  const commands = await page.evaluate(() => window.__renewalCommands);
+  assert.equal(commands.length, 1, "a duplicate click emits one renewal command");
+  assert.ok(
+    Number.isSafeInteger(commands[0].body.topology_revision) &&
+      commands[0].body.topology_revision > 0,
+    "the renewal command carries a positive topology revision",
+  );
+  assert.deepEqual(commands[0].body, {
+    topology_revision: commands[0].body.topology_revision,
+    lineage_id: lineage,
+    lane,
+    requested,
+  });
 }
 
 export async function captureReferenceControls(page, team, artifactPath) {
