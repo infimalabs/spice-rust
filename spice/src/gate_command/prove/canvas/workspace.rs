@@ -1,7 +1,8 @@
 //! Shared Canvas build workspace overlays and deterministic cleanup.
 
+use std::ffi::OsString;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
 use super::*;
@@ -97,41 +98,25 @@ pub(super) fn copy_paths(
     destination: &Path,
     paths: &[String],
 ) -> Result<(), ProveFailure> {
+    let sources = paths
+        .iter()
+        .map(|relative| {
+            let components = relative_components(relative)?;
+            let (source, metadata) = source_file(source, relative, &components)?;
+            Ok((relative.as_str(), components, source, metadata))
+        })
+        .collect::<Result<Vec<_>, ProveFailure>>()?;
     fs::create_dir_all(destination).map_err(|error| {
         ProveFailure::fault(
             "gate::prove-canvas-workspace-unavailable",
             format!("cannot create {}: {error}", destination.display()),
         )
     })?;
-    for relative in paths {
-        let source = source.join(relative);
-        let metadata = fs::symlink_metadata(&source)
-            .map_err(|error| ProveFailure::fault("gate::prove-canvas-source-unreadable", error))?;
-        if !metadata.file_type().is_file() {
-            return Err(ProveFailure::refusal(
-                "gate::prove-canvas-source-refused",
-                format!(
-                    "selected Canvas input {} is not a regular file",
-                    source.display()
-                ),
-            ));
-        }
-        let destination = destination.join(relative);
+    for (relative, components, source, metadata) in sources {
+        let destination = destination_path(destination, relative, &components)?;
         if identical_regular_file(&source, &metadata, &destination, relative)? {
             continue;
         }
-        let parent = destination.parent().ok_or_else(|| {
-            ProveFailure::refusal(
-                "gate::prove-canvas-source-refused",
-                format!("selected Canvas input {relative:?} has no parent"),
-            )
-        })?;
-        fs::create_dir_all(parent).map_err(|error| {
-            ProveFailure::fault(
-                "gate::prove-canvas-workspace-unavailable",
-                format!("cannot create {}: {error}", parent.display()),
-            )
-        })?;
         fs::copy(&source, &destination).map_err(|error| {
             ProveFailure::fault(
                 "gate::prove-canvas-workspace-unavailable",
@@ -144,6 +129,111 @@ pub(super) fn copy_paths(
         })?;
     }
     Ok(())
+}
+
+fn relative_components(relative: &str) -> Result<Vec<OsString>, ProveFailure> {
+    #[cfg(target_family = "windows")]
+    let has_current_component = relative
+        .split(['/', '\\'])
+        .any(|component| component == ".");
+    #[cfg(not(target_family = "windows"))]
+    let has_current_component = relative.split('/').any(|component| component == ".");
+    let components = Path::new(relative)
+        .components()
+        .map(|component| match component {
+            Component::Normal(value) => Ok(value.to_owned()),
+            _ => Err(()),
+        })
+        .collect::<Result<Vec<_>, _>>();
+    match components {
+        Ok(components) if !components.is_empty() && !has_current_component => Ok(components),
+        _ => Err(ProveFailure::refusal(
+            "gate::prove-canvas-source-refused",
+            format!("selected Canvas input {relative:?} is not a clean relative path"),
+        )),
+    }
+}
+
+fn source_file(
+    root: &Path,
+    relative: &str,
+    components: &[OsString],
+) -> Result<(PathBuf, fs::Metadata), ProveFailure> {
+    let mut source = root.to_path_buf();
+    for component in &components[..components.len() - 1] {
+        source.push(component);
+        let metadata = fs::symlink_metadata(&source).map_err(|error| {
+            ProveFailure::fault(
+                "gate::prove-canvas-source-unreadable",
+                format!("cannot inspect {}: {error}", source.display()),
+            )
+        })?;
+        if !metadata.file_type().is_dir() {
+            return Err(ProveFailure::refusal(
+                "gate::prove-canvas-source-refused",
+                format!(
+                    "selected Canvas input {relative:?} crosses non-directory source component {}",
+                    source.display(),
+                ),
+            ));
+        }
+    }
+    source.push(components.last().expect("validated path has a leaf"));
+    let metadata = fs::symlink_metadata(&source).map_err(|error| {
+        ProveFailure::fault(
+            "gate::prove-canvas-source-unreadable",
+            format!("cannot inspect {}: {error}", source.display()),
+        )
+    })?;
+    if !metadata.file_type().is_file() {
+        return Err(ProveFailure::refusal(
+            "gate::prove-canvas-source-refused",
+            format!(
+                "selected Canvas input {} is not a regular file",
+                source.display()
+            ),
+        ));
+    }
+    Ok((source, metadata))
+}
+
+fn destination_path(
+    root: &Path,
+    relative: &str,
+    components: &[OsString],
+) -> Result<PathBuf, ProveFailure> {
+    let mut destination = root.to_path_buf();
+    for component in &components[..components.len() - 1] {
+        destination.push(component);
+        match fs::symlink_metadata(&destination) {
+            Ok(metadata) if metadata.file_type().is_dir() => {}
+            Ok(_) => {
+                return Err(ProveFailure::refusal(
+                    "gate::prove-canvas-input-collision",
+                    format!(
+                        "selected Canvas input {relative:?} crosses non-directory destination component {}",
+                        destination.display(),
+                    ),
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&destination).map_err(|error| {
+                    ProveFailure::fault(
+                        "gate::prove-canvas-workspace-unavailable",
+                        format!("cannot create {}: {error}", destination.display()),
+                    )
+                })?;
+            }
+            Err(error) => {
+                return Err(ProveFailure::fault(
+                    "gate::prove-canvas-workspace-unavailable",
+                    format!("cannot inspect {}: {error}", destination.display()),
+                ));
+            }
+        }
+    }
+    destination.push(components.last().expect("validated path has a leaf"));
+    Ok(destination)
 }
 
 fn identical_regular_file(
@@ -208,7 +298,7 @@ fn executable(metadata: &fs::Metadata) -> bool {
 #[cfg(test)]
 mod tests {
     #[cfg(unix)]
-    use std::os::unix::fs::PermissionsExt as _;
+    use std::os::unix::fs::{PermissionsExt as _, symlink};
 
     use super::*;
 
@@ -228,6 +318,99 @@ mod tests {
                 (reason, detail)
             }
         }
+    }
+
+    #[test]
+    fn overlay_rejects_non_relative_spelling_before_creating_destination() {
+        let source = CanvasWorkspace(success(exclusive_workspace("canvas-path-source")));
+        fs::create_dir(&source.0).expect("create source workspace");
+        fs::write(source.0.join("selected.mjs"), "selected\n").expect("write selected input");
+        let absolute = source.0.join("selected.mjs").to_string_lossy().into_owned();
+        let root = std::path::MAIN_SEPARATOR.to_string();
+
+        for relative in [
+            "",
+            ".",
+            "./selected.mjs",
+            "nested/./selected.mjs",
+            "../outside.mjs",
+            "nested/../../outside.mjs",
+            root.as_str(),
+            absolute.as_str(),
+        ] {
+            let destination =
+                CanvasWorkspace(success(exclusive_workspace("canvas-invalid-destination")));
+            let (reason, detail) = failure(copy_paths(
+                &source.0,
+                &destination.0,
+                &[relative.to_owned()],
+            ));
+            assert_eq!(reason, "gate::prove-canvas-source-refused");
+            assert!(detail.contains(&format!("{relative:?}")), "{detail}");
+            assert!(
+                !destination.0.exists(),
+                "{relative:?} created a destination"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn overlay_refuses_source_intermediate_symlink_without_reading_outside() {
+        let source = CanvasWorkspace(success(exclusive_workspace("canvas-link-source")));
+        let outside = CanvasWorkspace(success(exclusive_workspace("canvas-link-outside")));
+        let destination = CanvasWorkspace(success(exclusive_workspace("canvas-link-destination")));
+        fs::create_dir(&source.0).expect("create source workspace");
+        fs::create_dir(&outside.0).expect("create outside workspace");
+        fs::write(outside.0.join("sentinel.mjs"), "outside\n").expect("write outside sentinel");
+        symlink(&outside.0, source.0.join("redirect")).expect("link source outside root");
+
+        let (reason, detail) = failure(copy_paths(
+            &source.0,
+            &destination.0,
+            &["redirect/sentinel.mjs".to_owned()],
+        ));
+        assert_eq!(reason, "gate::prove-canvas-source-refused");
+        assert!(detail.contains("redirect/sentinel.mjs"), "{detail}");
+        assert_eq!(
+            fs::read_to_string(outside.0.join("sentinel.mjs")).expect("read outside sentinel"),
+            "outside\n",
+        );
+        assert!(!destination.0.exists(), "refusal created a destination");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn overlay_refuses_destination_intermediate_symlink_without_writing_outside() {
+        let source = CanvasWorkspace(success(exclusive_workspace("canvas-link-source")));
+        let outside = CanvasWorkspace(success(exclusive_workspace("canvas-link-outside")));
+        let destination = CanvasWorkspace(success(exclusive_workspace("canvas-link-destination")));
+        fs::create_dir_all(source.0.join("redirect")).expect("create source input parent");
+        fs::write(source.0.join("redirect/selected.mjs"), "selected\n")
+            .expect("write selected input");
+        fs::create_dir(&outside.0).expect("create outside workspace");
+        fs::write(outside.0.join("sentinel.mjs"), "outside\n").expect("write outside sentinel");
+        fs::create_dir(&destination.0).expect("create destination workspace");
+        symlink(&outside.0, destination.0.join("redirect")).expect("link destination outside root");
+
+        let (reason, detail) = failure(copy_paths(
+            &source.0,
+            &destination.0,
+            &["redirect/selected.mjs".to_owned()],
+        ));
+        assert_eq!(reason, "gate::prove-canvas-input-collision");
+        assert!(detail.contains("redirect/selected.mjs"), "{detail}");
+        assert_eq!(
+            fs::read_to_string(outside.0.join("sentinel.mjs")).expect("read outside sentinel"),
+            "outside\n",
+        );
+        assert!(!outside.0.join("selected.mjs").exists());
+        assert!(
+            fs::symlink_metadata(destination.0.join("redirect"))
+                .expect("inspect redirect")
+                .file_type()
+                .is_symlink()
+        );
     }
 
     #[cfg(unix)]
