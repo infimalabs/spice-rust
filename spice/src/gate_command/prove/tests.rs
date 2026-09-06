@@ -194,6 +194,22 @@ fn cargo_environment_omits_worktree_outputs_and_matches_forced_wrappers() {
         ),
         (OsString::from("RUSTC_WRAPPER"), OsString::from("sccache")),
         (
+            OsString::from(wire::SpiceVariable::Lane.as_str()),
+            OsString::from("lane-a"),
+        ),
+        (
+            OsString::from(wire::SpiceVariable::Inbox.as_str()),
+            OsString::from("operator direction"),
+        ),
+        (
+            OsString::from(wire::SpiceVariable::PreCommitSource.as_str()),
+            OsString::from("staged-source-a"),
+        ),
+        (
+            OsString::from(wire::SpiceVariable::WrapperSpice.as_str()),
+            OsString::from("/worktree-a/.spice-install/bin/spice"),
+        ),
+        (
             OsString::from("CARGO_HOME"),
             OsString::from("/worktree-a/private-cargo"),
         ),
@@ -214,9 +230,21 @@ fn cargo_environment_omits_worktree_outputs_and_matches_forced_wrappers() {
                 OsString::from("CARGO_HOME"),
                 OsString::from("/worktree-b/another-private-cargo"),
             ),
+            (
+                OsString::from(wire::SpiceVariable::Lane.as_str()),
+                OsString::from("lane-b"),
+            ),
+            (
+                OsString::from(wire::SpiceVariable::Hooks.as_str()),
+                OsString::from("/worktree-b/.spice-install/hooks"),
+            ),
+            (
+                OsString::from(wire::SpiceVariable::PreCommitPaths.as_str()),
+                OsString::from("[\"different.rs\"]"),
+            ),
             (OsString::from("RUSTFLAGS"), OsString::from("--cfg=proof")),
         ]),
-        "private home locations must not partition shared receipt identity",
+        "private locations and Spice routing must not partition shared receipt identity",
     );
 
     let Ok((_, first)) = environment(&normalized) else {
