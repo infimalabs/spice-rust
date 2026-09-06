@@ -109,15 +109,16 @@ marker and `--spice-coverage-receipt` writer are retired; see
 [Gate evidence](docs/product/planes/gate-evidence.md) for the receipt and cache
 contract.
 
-Native `spice gate pre-commit` resolves tracked policy once in an isolated
-worker, runs the packaged selector, then admitted configured commands in
-authored order. `pre_commit_builtins = false` runs only configured commands and
-refuses an empty battery. Packaged selection, policy, tests, and reporting
-consume one captured source. Configured commands receive its identity and
-selected paths as metadata, run from the live repository root, and must bind
-their own source bytes when required. Every child executes under bounded
-process-group containment; a clean run is silent and a refusal names only
-selected findings plus its private report path.
+Native `spice gate pre-commit` resolves tracked policy and fingerprint authority
+once in an isolated worker, restores the canonical staged selection from the
+manifest, verifies its exact receipts, then runs live and admitted configured
+checks. `pre_commit_builtins = false` runs only configured commands and refuses
+an empty battery. Selection, policy, tests, and reporting consume one captured
+source. Configured commands receive its identity and selected paths as metadata,
+run from the live repository root, and must bind their own source bytes when
+required. Every child executes under bounded process-group containment; a clean
+run is silent and a refusal names only selected findings plus its private report
+path.
 
 [DEVELOPMENT.md](DEVELOPMENT.md) owns crate seams, generated surfaces, the test
 portfolio, feedback tiers, concurrency, and safe cache cleanup.

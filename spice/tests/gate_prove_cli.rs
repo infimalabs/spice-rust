@@ -69,6 +69,7 @@ fn repository_guidance_uses_proof_aware_completion_commands() {
     assert!(evidence.contains("Release 0.31.0"));
     assert!(evidence.contains("--spice-coverage-receipt"));
     assert!(evidence.contains("canvas:shard:<name>"));
+    assert!(include_str!("../../README.md").contains("verifies its exact receipts"));
 }
 
 #[test]
