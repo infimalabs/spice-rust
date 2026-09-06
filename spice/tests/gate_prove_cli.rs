@@ -73,6 +73,29 @@ fn repository_guidance_uses_proof_aware_completion_commands() {
 }
 
 #[test]
+fn cargo_post_execution_rechecks_the_captured_worktree_owner() {
+    let source = include_str!("../src/gate_command/prove/cargo.rs");
+    assert!(source.contains("root: root.to_path_buf(),"));
+    let execution = source
+        .split_once("pub(super) fn execute(execution: Execution)")
+        .expect("Cargo proof exposes one execution boundary")
+        .1;
+    let shard = execution
+        .find("gate::run_cargo_gate_shard_at")
+        .expect("Cargo shard executes");
+    let recheck = execution
+        .find("spice::cargo_isolation::readmit_source_generation")
+        .expect("Cargo source authority rechecks");
+    assert!(shard < recheck, "source recheck must follow successful execution");
+    let recheck = &execution[recheck..];
+    for argument in ["&source.home", "&source.lockfile", "&source.root", "&source.host"] {
+        assert!(recheck.contains(argument), "post-action recheck omitted {argument}");
+    }
+    assert!(recheck.contains("gate::prove-cargo-source-moved"));
+    assert!(recheck.contains("if observed != source.authority"));
+}
+
+#[test]
 fn prove_refuses_unknown_actions_before_repository_access() {
     let unknown = invoke(
         Path::new("."),
