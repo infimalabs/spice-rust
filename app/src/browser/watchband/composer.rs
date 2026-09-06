@@ -182,10 +182,15 @@ fn render_agent_message_card(
         .expect("admitted agent message has a configured name or worktree basename");
     let is_compaction = message.activity == wire::AgentActivityKind::Compaction;
     let rendered_markdown = crate::composer_markdown::render_received(&message.text);
-    let card_label = if is_compaction {
-        format!("Context compacted by {footer_label}")
-    } else {
-        format!("Agent message from {attribution}")
+    let card_label = match message.activity {
+        wire::AgentActivityKind::Compaction => format!("Context compacted by {footer_label}"),
+        wire::AgentActivityKind::Tool if message.text.trim().is_empty() => {
+            format!("Tool result from {attribution}")
+        }
+        wire::AgentActivityKind::Tool => {
+            format!("Tool result from {attribution}: {}", message.text)
+        }
+        wire::AgentActivityKind::Prose => format!("Agent message from {attribution}"),
     };
     let unlinked_media = message
         .media
@@ -381,6 +386,9 @@ fn render_agent_message_footer(
     let copy_author = Callback::from(move |_| view::chrome::copy_text(&author));
     let producer_identity = html! {
         <span class="message-footer-identity">
+            if message.activity == wire::AgentActivityKind::Tool {
+                <span class="message-tool-label">{"Tool"}</span>
+            }
             <button
                 class="message-agent-name"
                 type="button"

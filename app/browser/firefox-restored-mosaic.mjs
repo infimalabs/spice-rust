@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
 
+import { installActivityReplay } from "./activity-replay.mjs";
 import { assertMosaicLattice } from "./agent-conversation.mjs";
 import { installPersistedMosaicImageRoutes } from "./agent-conversation-mosaic.mjs";
 import { chooseCanvasView, CONNECT_MS, monitorPage } from "./canvas-fixture.mjs";
@@ -24,6 +25,7 @@ import {
   assertQuoteBlockDensity,
   captureQuoteBlockDensity,
 } from "./quote-block-density.mjs";
+import { assertRuntimeToolMediaCards } from "./tool-media-reference.mjs";
 
 /// A ready lattice settles layout, not delivery: under verifier load the
 /// initial card stream can still be arriving when measurements first report
@@ -36,15 +38,7 @@ import {
 const ARRIVAL_QUIET_MS = 500;
 const ARRIVAL_DEADLINE_MS = 15_000;
 const ARRIVAL_PROBE_MS = 125;
-const PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const COMPACTED_TOOL_PREVIEW = "Bash: cargo test --locked -p spice";
-const COVER_IMAGE_FIXTURES = Object.freeze([
-  Object.freeze({ name: "portrait", width: 120, height: 240, color: "#d1495b" }),
-  Object.freeze({ name: "landscape", width: 240, height: 120, color: "#00798c" }),
-  Object.freeze({ name: "square", width: 160, height: 160, color: "#edae49" }),
-  Object.freeze({ name: "ultra-wide", width: 400, height: 40, color: "#30638e" }),
-  Object.freeze({ name: "ultra-tall", width: 40, height: 400, color: "#6a994e" }),
-]);
 
 function mosaicCardCount(page) {
   return page.locator('[data-pane="agent-console"] .mosaic-message-card').count();
@@ -66,75 +60,6 @@ async function settledMosaicCards(page, label) {
     count = current;
   }
   return assertMosaicLattice(page, false);
-}
-
-async function installFirefoxImageFixture(page) {
-  await page.evaluate(({ fixtures, pixel }) => {
-    const fixture = document.createElement("section");
-    fixture.className = "team-surface";
-    fixture.dataset.firefoxImageFixture = "true";
-    fixture.style.cssText = [
-      "display: grid",
-      "flex: none",
-      "gap: 12px",
-      "width: min(56rem, calc(100vw - 24px))",
-      "min-height: max-content",
-      "overflow: visible",
-      "padding: 12px",
-    ].join(";");
-    const fixtureSource = ({ width, height, color }) => {
-      const canvas = document.createElement("canvas");
-      canvas.width = width;
-      canvas.height = height;
-      const context = canvas.getContext("2d");
-      context.fillStyle = color;
-      context.fillRect(0, 0, width, height);
-      context.fillStyle = "#f7f7f2";
-      context.fillRect(width * 0.375, height * 0.375, width * 0.25, height * 0.25);
-      return canvas.toDataURL("image/png");
-    };
-    const card = (imageOnly, images) => {
-      const article = document.createElement("article");
-      article.className = "mosaic-message-card";
-      if (imageOnly) article.classList.add("mosaic-message-card--image-only");
-      const body = document.createElement("div");
-      body.className = "message-body markdown-body";
-      const stack = document.createElement("p");
-      stack.className = "message-image-stack";
-      for (const [index, fixtureImage] of images.entries()) {
-        const anchor = document.createElement("a");
-        anchor.className = "message-image message-image--openable";
-        anchor.href = "about:blank";
-        anchor.target = "_blank";
-        anchor.rel = "noopener";
-        anchor.ariaLabel = `Open Firefox fixture ${index + 1} full size`;
-        anchor.title = anchor.ariaLabel;
-        const image = document.createElement("img");
-        image.src = fixtureImage ? fixtureSource(fixtureImage) : `data:image/png;base64,${pixel}`;
-        image.alt = fixtureImage?.name ?? `Firefox fixture ${index + 1}`;
-        image.dataset.mosaicImageState = "loaded";
-        if (fixtureImage) image.dataset.coverFixture = fixtureImage.name;
-        anchor.append(image);
-        stack.append(anchor);
-      }
-      body.append(stack);
-      article.append(body);
-      return article;
-    };
-    fixture.append(card(false, [null]), card(true, fixtures));
-    document.body.append(fixture);
-  }, { fixtures: COVER_IMAGE_FIXTURES, pixel: PIXEL_PNG });
-  const fixture = page.locator('[data-firefox-image-fixture="true"]');
-  await fixture.locator("img").evaluateAll((images) => Promise.all(images.map((image) => {
-    if (image.complete && image.naturalWidth > 0) return undefined;
-    return new Promise((resolve, reject) => {
-      image.addEventListener("load", resolve, { once: true });
-      image.addEventListener("error", () => reject(new Error(`fixture image failed: ${image.alt}`)), {
-        once: true,
-      });
-    });
-  })));
-  return fixture;
 }
 
 // Chromium's rich quote is deliberately client-injected and not replayable.
@@ -177,87 +102,6 @@ async function installFirefoxQuoteFixture(page) {
     document.body.append(fixture);
   });
   return page.locator('[data-firefox-quote-fixture="true"] .mosaic-message-card');
-}
-
-async function assertFirefoxImageFixture(fixture, label) {
-  const observed = await fixture.evaluate((host) => [...host.querySelectorAll("article")].map((card) => ({
-    cardWidth: card.getBoundingClientRect().width,
-    stackWidth: card.querySelector(".message-image-stack").getBoundingClientRect().width,
-    previews: [...card.querySelectorAll(".message-image")].map((preview) => {
-      const image = preview.querySelector("img");
-      const box = preview.getBoundingClientRect();
-      const imageBox = image.getBoundingClientRect();
-      const style = getComputedStyle(image);
-      const contentWidth = imageBox.width
-        - Number.parseFloat(style.borderLeftWidth)
-        - Number.parseFloat(style.borderRightWidth);
-      const contentHeight = imageBox.height
-        - Number.parseFloat(style.borderTopWidth)
-        - Number.parseFloat(style.borderBottomWidth);
-      const scale = Math.max(contentWidth / image.naturalWidth, contentHeight / image.naturalHeight);
-      return {
-        fixture: image.dataset.coverFixture ?? null,
-        top: box.top,
-        right: box.right,
-        width: imageBox.width,
-        height: imageBox.height,
-        naturalWidth: image.naturalWidth,
-        naturalHeight: image.naturalHeight,
-        contentWidth,
-        contentHeight,
-        scaledWidth: image.naturalWidth * scale,
-        scaledHeight: image.naturalHeight * scale,
-        objectFit: style.objectFit,
-        objectPosition: style.objectPosition,
-        target: preview.target,
-        rel: preview.rel,
-      };
-    }),
-  })));
-    assert.ok(Math.abs(observed[0].previews[0].height - 140) <= 1,
-      `${label} bounds an ordinary preview: ${JSON.stringify(observed)}`);
-    assert.ok(Math.abs(observed[0].previews[0].width - 140) <= 1,
-      `${label} reserves an ordinary square: ${JSON.stringify(observed)}`);
-    assert.ok(observed[1].previews.every((preview) => Math.abs(preview.height - 252) <= 1),
-      `${label} bounds image-only previews: ${JSON.stringify(observed)}`);
-    assert.ok(observed[1].previews.every((preview) => Math.abs(preview.width - 252) <= 1),
-      `${label} reserves fixed image-only squares: ${JSON.stringify(observed)}`);
-    assert.ok(observed.flatMap(({ previews }) => previews).every(
-      (preview) => Math.abs(preview.width - preview.height) <= 1,
-    ), `${label} keeps every intrinsic aspect ratio inside square preview geometry`);
-  assert.ok(observed.flatMap(({ previews }) => previews).every((preview) => (
-    preview.width > 2 && preview.contentWidth > 0 && preview.contentHeight > 0
-  )), `${label} gives every preview positive visible area: ${JSON.stringify(observed)}`);
-  assert.deepEqual(
-    observed[1].previews.map(({ fixture: name, naturalWidth: width, naturalHeight: height }) => ({
-      name,
-      width,
-      height,
-    })),
-    COVER_IMAGE_FIXTURES.map(({ name, width, height }) => ({ name, width, height })),
-    `${label} loads every intrinsic aspect-ratio fixture`,
-  );
-  assert.ok(observed.flatMap(({ previews }) => previews).every(
-    (preview) => preview.objectFit === "cover" && preview.objectPosition === "50% 50%",
-  ), `${label} applies a centered cover crop to every preview`);
-  assert.ok(observed[1].previews.every((preview) => (
-    preview.scaledWidth >= preview.contentWidth - 0.5
-      && preview.scaledHeight >= preview.contentHeight - 0.5
-  )), `${label} leaves no empty band inside any preview: ${JSON.stringify(observed[1])}`);
-  assert.ok(observed[1].previews.every((preview) => Math.abs(
-    preview.scaledWidth / preview.scaledHeight
-      - preview.naturalWidth / preview.naturalHeight,
-  ) <= 0.000_001), `${label} preserves every intrinsic aspect ratio while scaling`);
-  assert.ok(observed[1].previews.every((preview) => Math.min(
-    preview.scaledWidth - preview.contentWidth,
-    preview.scaledHeight - preview.contentHeight,
-  ) <= 0.5), `${label} uses the minimum cover scale instead of excess zoom`);
-  assert.ok(observed[1].previews.every((preview) => preview.target === "_blank" && preview.rel === "noopener"),
-    `${label} preserves isolated full-size target semantics`);
-  assert.ok(observed[1].previews.every((preview) => Math.abs(preview.top - observed[1].previews[0].top) <= 1),
-    `${label} keeps multiple images in one bounded row`);
-  assert.ok(observed.every((card) => card.stackWidth <= card.cardWidth),
-    `${label} keeps image stacks inside their cards: ${JSON.stringify(observed)}`);
 }
 
 async function assertFirefoxCompactionBoundaries(
@@ -343,6 +187,10 @@ export async function assertFirefoxRestoredMosaic(
     viewport: { width: 1717, height: 1470 },
   });
   await installPersistedMosaicImageRoutes(context);
+  const activityReplay = await installActivityReplay(context, {
+    retainInjectedSnapshots: true,
+    withholdBootstrap: false,
+  });
   const page = await context.newPage();
   await page.clock.install();
   const monitor = monitorPage(page);
@@ -364,8 +212,19 @@ export async function assertFirefoxRestoredMosaic(
       restoreScheme: "dark",
       variants: ["primary"],
     });
-    const before = await settledMosaicCards(page, "before reload");
-    assert.ok(before.length > 0, "Firefox receives restored Mosaic cards");
+    const initial = await settledMosaicCards(page, "before tool-media delivery");
+    assert.ok(initial.length > 0, "Firefox receives restored Mosaic cards");
+    const toolLane = await console.locator(".team-agent").first().getAttribute("data-agent-lane");
+    assert.ok(toolLane, "Firefox tool-media fixture resolves one runtime agent lane");
+    const toolCards = await assertRuntimeToolMediaCards(
+      page,
+      console,
+      toolLane,
+      activityReplay,
+      "Firefox runtime tool media",
+      { boundary: false, reconnect: true },
+    );
+    const before = await settledMosaicCards(page, "after tool-media reconnect");
     const userQuoteFixture = await installFirefoxQuoteFixture(page);
     const quoteCards = {
       ack: console.locator('[data-card-kind="agent-message"]')
@@ -377,9 +236,9 @@ export async function assertFirefoxRestoredMosaic(
     await assertCandidateMeasurementPaintAtomic(page, "firefox");
     await assertNaturalMessageFooterInsets(console, "Firefox wide restored Mosaic");
     await captureMessageStreamBoundaries(page, console, artifacts, "firefox");
-    const imageFixture = await installFirefoxImageFixture(page);
-    await assertFirefoxImageFixture(imageFixture, "Firefox wide image fixture");
-    await imageFixture.screenshot({ path: join(artifacts, "firefox-image-previews-wide.png") });
+    await console.locator(`[data-mosaic-card-key="${toolCards[2].key}"]`).screenshot({
+      path: join(artifacts, "firefox-image-previews-wide.png"),
+    });
     const boundaries = await assertFirefoxCompactionBoundaries(
       console,
       "Firefox wide",
@@ -399,8 +258,9 @@ export async function assertFirefoxRestoredMosaic(
     await assertNaturalMessageFooterInsets(console, "Firefox narrow restored Mosaic");
     await assertQuoteBlockDensity(quoteCards, "Firefox narrow Mosaic");
     await captureQuoteBlockDensity(page, quoteCards, artifacts, "firefox-quotes-narrow");
-    await assertFirefoxImageFixture(imageFixture, "Firefox narrow image fixture");
-    await imageFixture.screenshot({ path: join(artifacts, "firefox-image-previews-narrow.png") });
+    await console.locator(`[data-mosaic-card-key="${toolCards[2].key}"]`).screenshot({
+      path: join(artifacts, "firefox-image-previews-narrow.png"),
+    });
     await resizeCompactionViewport(
       page,
       boundaries.newest,
@@ -424,7 +284,6 @@ export async function assertFirefoxRestoredMosaic(
     );
     await page.locator('[data-firefox-quote-fixture="true"]')
       .evaluate((fixture) => fixture.remove());
-    await imageFixture.evaluate((fixture) => fixture.remove());
     const lane = console.locator(".team-agent").first();
     await assertComposerPointerSelection(
       page,

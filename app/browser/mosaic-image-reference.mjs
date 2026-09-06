@@ -90,7 +90,7 @@ export async function openAndAssertIsolated(page, preview, label, expectedUrl) {
   const opened = page.waitForEvent("popup");
   await preview.click();
   const popup = await opened;
-  await popup.waitForLoadState("domcontentloaded");
+  await popup.waitForLoadState("commit");
   if (expectedUrl instanceof RegExp) assert.match(popup.url(), expectedUrl, `${label} opens full size`);
   else assert.equal(popup.url(), expectedUrl, `${label} opens full size`);
   assert.equal(await popup.evaluate(() => window.opener), null, `${label} has no opener`);

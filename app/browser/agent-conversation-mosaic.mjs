@@ -28,6 +28,7 @@ import {
   settleMosaicActivity,
   waitForMosaicReady,
 } from "./mosaic-placement-reference.mjs";
+import { assertRuntimeToolMediaCards } from "./tool-media-reference.mjs";
 
 export {
   armPlacementProbe,
@@ -530,5 +531,13 @@ export async function assertPersistentMosaic(
   });
   await page.setViewportSize(originalViewport);
   await waitForMosaicReady(page);
+  await assertRuntimeToolMediaCards(
+    page,
+    console,
+    member.lane,
+    activityReplay,
+    "Chromium runtime tool media",
+    { history: true },
+  );
   await assertMosaicLattice(page, true);
 }

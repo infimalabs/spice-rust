@@ -30,7 +30,10 @@ function compareAgentMessages(left, right) {
 
 /// Forward the production socket unchanged while retaining one real older tool
 /// frame that the assertion can redeliver to the same browser connection.
-export async function installActivityReplay(context) {
+export async function installActivityReplay(
+  context,
+  { retainInjectedSnapshots = false, withholdBootstrap = true } = {},
+) {
   let captured;
   let activeSocket;
   let heldHistoryRequest;
@@ -38,6 +41,7 @@ export async function installActivityReplay(context) {
   let withheldBootstrap = false;
   let injectedEvent = 10_000;
   const knownMessages = new Map();
+  const injectedKeys = new Set();
   const observedProse = [];
   const proseFrames = new Map();
   const proseWaiters = [];
@@ -46,6 +50,18 @@ export async function installActivityReplay(context) {
   let socketGeneration = 0;
   const remember = (messages) => {
     for (const message of messages) knownMessages.set(agentMessageKey(message), message);
+  };
+  const rememberProseSources = (frame, messages) => {
+    for (const message of messages) {
+      if (message.activity === "tool") continue;
+      proseFrames.set(message.lane, {
+        stream: "message",
+        v: frame.v,
+        id: frame.id,
+        epoch: frame.epoch,
+        message,
+      });
+    }
   };
   await context.routeWebSocket(/.*/, (socket) => {
     socketGeneration += 1;
@@ -67,19 +83,30 @@ export async function installActivityReplay(context) {
     server.onMessage((message) => {
       const frame = decodeServerFrame(message);
       if (progressiveHistory?.handleServerFrame(frame, socket, routedGeneration)) return;
-      if (frame.stream === "message") remember([frame.message]);
+      let outbound = message;
+      if (retainInjectedSnapshots && frame.stream === "messages") {
+        const merged = new Map(frame.messages.map((entry) => [agentMessageKey(entry), entry]));
+        for (const key of injectedKeys) merged.set(key, knownMessages.get(key));
+        frame.messages = [...merged.values()].sort(compareAgentMessages);
+        outbound = Buffer.from(JSON.stringify(frame));
+      }
+      if (frame.stream === "message") {
+        remember([frame.message]);
+        rememberProseSources(frame, [frame.message]);
+      }
       if (frame.stream === "messages" || frame.stream === "message-history") {
         remember(frame.messages);
+        rememberProseSources(frame, frame.messages);
       }
       // Exercise the browser's bootstrap boundary with the initial retained
       // message page absent. A live prose frame can still follow on this same
       // socket, and it must remain visible while the capacity announcement is
       // outstanding rather than being truncated against an implicit zero.
-      if (!withheldBootstrap && frame.stream === "messages") {
+      if (withholdBootstrap && !withheldBootstrap && frame.stream === "messages") {
         withheldBootstrap = true;
         return;
       }
-      socket.send(message);
+      socket.send(outbound);
       if (socket === activeSocket
         && frame.stream === "message"
         && frame.message?.activity !== "tool") {
@@ -88,7 +115,6 @@ export async function installActivityReplay(context) {
           author: frame.message?.author,
           text: frame.message?.text,
         });
-        proseFrames.set(frame.message?.lane, frame);
         for (let index = proseWaiters.length - 1; index >= 0; index -= 1) {
           if (proseWaiters[index].lane === frame.message?.lane) {
             proseWaiters.splice(index, 1)[0].resolve(frame.message);
@@ -176,6 +202,7 @@ export async function installActivityReplay(context) {
         messages: [frame.message],
       };
     }
+    injectedKeys.add(expectedKey);
     remember([frame.message]);
     activeSocket.send(Buffer.from(JSON.stringify(delivery)));
     await waitForPageFunction(
@@ -199,7 +226,7 @@ export async function installActivityReplay(context) {
         }),
       },
     );
-    return { key: expectedKey };
+    return { key: expectedKey, message: JSON.parse(JSON.stringify(frame.message)) };
   };
 
   return {
@@ -209,8 +236,25 @@ export async function installActivityReplay(context) {
     injectAgentProse(page, lane, text, media = undefined) {
       return injectAgentMessage(page, lane, text, { media });
     },
-    injectAgentToolMedia(page, lane, media) {
-      return injectAgentMessage(page, lane, "", { activity: "tool", media });
+    injectAgentToolMedia(page, lane, media, text = "") {
+      return injectAgentMessage(page, lane, text, { activity: "tool", media });
+    },
+    injectAgentToolMediaHistory(page, lane, media, text) {
+      return injectAgentMessage(page, lane, text, { activity: "tool", media, history: true });
+    },
+    async replayAgentMessage(page, key) {
+      const current = knownMessages.get(key);
+      assert.ok(current, `the route retained message ${key}`);
+      const source = proseFrames.get(current.lane);
+      assert.ok(source, `the route captured an agent prose frame for ${current.lane}`);
+      assert.ok(activeSocket, "the route retains the current browser WebSocket");
+      const frame = JSON.parse(JSON.stringify(source));
+      frame.message = JSON.parse(JSON.stringify(current));
+      activeSocket.send(Buffer.from(JSON.stringify(frame)));
+      await page.evaluate(() => new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      }));
+      return { key };
     },
     async reviseAgentFinal(page, key) {
       const current = knownMessages.get(key);
