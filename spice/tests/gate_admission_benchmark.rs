@@ -450,11 +450,26 @@ impl Fixture {
         entries
     }
 
-    fn remove_one_receipt_index(&self) -> String {
-        let document: serde_json::Value = serde_json::from_slice(
-            &fs::read(self.fingerprint_path()).expect("read fingerprint manifest"),
+    fn fingerprint_document(&self, index: &Path) -> serde_json::Value {
+        let index: serde_json::Value =
+            serde_json::from_slice(&fs::read(index).expect("read fingerprint index"))
+                .expect("decode fingerprint index");
+        let manifest = index["manifest"]
+            .as_str()
+            .expect("fingerprint index names a manifest object");
+        serde_json::from_slice(
+            &fs::read(
+                self.common
+                    .join(".spice-rs/gate-evidence/v1/fingerprint-objects")
+                    .join(manifest),
+            )
+            .expect("read fingerprint manifest"),
         )
-        .expect("decode fingerprint manifest");
+        .expect("decode fingerprint manifest")
+    }
+
+    fn remove_one_receipt_index(&self) -> String {
+        let document = self.fingerprint_document(&self.fingerprint_path());
         let action = &document["actions"][0];
         let name = action["action"]
             .as_str()
@@ -473,10 +488,7 @@ impl Fixture {
     }
 
     fn corrupt_one_receipt(&self) {
-        let document: serde_json::Value = serde_json::from_slice(
-            &fs::read(self.fingerprint_path()).expect("read fingerprint manifest"),
-        )
-        .expect("decode fingerprint manifest");
+        let document = self.fingerprint_document(&self.fingerprint_path());
         let key = document["actions"][0]["action_key"]
             .as_str()
             .expect("fingerprint action has a key");
@@ -508,10 +520,7 @@ impl Fixture {
     }
 
     fn receipt_index(&self, action: &str) -> PathBuf {
-        let document: serde_json::Value = serde_json::from_slice(
-            &fs::read(self.fingerprint_path()).expect("read fingerprint manifest"),
-        )
-        .expect("decode fingerprint manifest");
+        let document = self.fingerprint_document(&self.fingerprint_path());
         let key = document["actions"]
             .as_array()
             .expect("fingerprint actions")
@@ -525,9 +534,7 @@ impl Fixture {
     }
 
     fn corrupt_one_receipt_index(&self, fingerprint: &Path) -> String {
-        let document: serde_json::Value =
-            serde_json::from_slice(&fs::read(fingerprint).expect("read fingerprint manifest"))
-                .expect("decode fingerprint manifest");
+        let document = self.fingerprint_document(fingerprint);
         let action = &document["actions"][0];
         let name = action["action"]
             .as_str()

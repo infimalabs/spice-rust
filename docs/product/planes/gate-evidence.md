@@ -105,6 +105,8 @@ Evidence lives under the canonical Git common directory:
   admissions/<candidate-tree>/<admission-digest>
   pending/<transaction-id>
   credit/<commit-oid>
+  fingerprints/<authority-key>
+  fingerprint-objects/<manifest-digest>
 ```
 
 Objects are immutable and published by write, file sync, atomic rename, and

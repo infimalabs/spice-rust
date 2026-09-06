@@ -10,7 +10,10 @@ use super::{
     derive_action_key, publish_immutable, read_optional_regular,
 };
 
-const FINGERPRINT_VERSION: u64 = 2;
+const FINGERPRINT_VERSION: u64 = 3;
+const FINGERPRINT_INDEX_VERSION: u64 = 1;
+const FINGERPRINT_IDENTITY: &[u8] = b"spice.gate.action-fingerprint-manifest.v1\0";
+const FINGERPRINT_INDEX_BYTES: u64 = 64 * 1024;
 
 /// Inputs that can be validated without reconstructing Cargo or Canvas plans.
 #[derive(Clone, Debug)]
@@ -130,6 +133,14 @@ pub struct ActionFingerprintResolution {
     receipts: Vec<Option<super::AdmissionAction>>,
 }
 
+#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ActionFingerprintIndex {
+    version: u64,
+    authority: ActionFingerprintAuthority,
+    manifest: Digest,
+}
+
 impl ActionFingerprintResolution {
     pub(super) fn new(
         manifest: ActionFingerprintManifest,
@@ -222,6 +233,11 @@ impl ActionFingerprintManifest {
         Ok(manifest)
     }
 
+    pub(super) fn id(&self) -> Result<Digest, EvidenceStoreError> {
+        let bytes = self.encode()?;
+        Ok(manifest_id(&bytes))
+    }
+
     fn validate(&self) -> Result<(), EvidenceStoreError> {
         if self.version != FINGERPRINT_VERSION {
             return Err(EvidenceStoreError::new(
@@ -266,13 +282,70 @@ impl ActionFingerprintManifest {
     }
 }
 
+impl ActionFingerprintIndex {
+    pub(super) fn new(authority: ActionFingerprintAuthority, manifest: Digest) -> Self {
+        Self {
+            version: FINGERPRINT_INDEX_VERSION,
+            authority,
+            manifest,
+        }
+    }
+
+    pub(super) fn encode(&self) -> Result<Vec<u8>, EvidenceStoreError> {
+        wire::encode(self).map_err(|error| {
+            EvidenceStoreError::new(
+                "gate-evidence::fingerprint-index-invalid",
+                error.to_string(),
+            )
+        })
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, EvidenceStoreError> {
+        let index: Self = wire::decode(bytes).map_err(|error| {
+            EvidenceStoreError::new(
+                "gate-evidence::fingerprint-index-invalid",
+                error.to_string(),
+            )
+        })?;
+        if index.version != FINGERPRINT_INDEX_VERSION {
+            return Err(EvidenceStoreError::new(
+                "gate-evidence::fingerprint-index-version-unsupported",
+                format!(
+                    "fingerprint index version {} is not {FINGERPRINT_INDEX_VERSION}",
+                    index.version
+                ),
+            ));
+        }
+        let canonical = index.encode()?;
+        if canonical != bytes {
+            return Err(EvidenceStoreError::new(
+                "gate-evidence::fingerprint-index-noncanonical",
+                "fingerprint index bytes do not match their canonical encoding",
+            ));
+        }
+        Ok(index)
+    }
+}
+
 pub(super) fn publish(
     layout: &Layout,
     manifest: &ActionFingerprintManifest,
 ) -> Result<ActionKey, EvidenceStoreError> {
+    publish_with(layout, manifest, || Ok(()))
+}
+
+pub(super) fn publish_with(
+    layout: &Layout,
+    manifest: &ActionFingerprintManifest,
+    after_object: impl FnOnce() -> Result<(), EvidenceStoreError>,
+) -> Result<ActionKey, EvidenceStoreError> {
     let bytes = manifest.encode()?;
+    let id = manifest.id()?;
     let key = manifest.authority.key()?;
-    publish_immutable(&layout.fingerprints.join(key.as_str()), &bytes)?;
+    publish_immutable(&layout.fingerprint_objects.join(id.as_str()), &bytes)?;
+    after_object()?;
+    let index = ActionFingerprintIndex::new(manifest.authority.clone(), id).encode()?;
+    publish_immutable(&layout.fingerprints.join(key.as_str()), &index)?;
     Ok(key)
 }
 
@@ -283,17 +356,48 @@ pub(super) fn lookup(
     authority.validate()?;
     let key = authority.key()?;
     let path = layout.fingerprints.join(key.as_str());
-    let Some(bytes) = read_optional_regular(&path, MAX_RECEIPT_BYTES as u64)? else {
+    let Some(bytes) = read_optional_regular(&path, FINGERPRINT_INDEX_BYTES)? else {
         return Ok(None);
     };
-    let manifest = ActionFingerprintManifest::decode(&bytes)?;
-    if manifest.authority() != authority {
+    let index = ActionFingerprintIndex::decode(&bytes)?;
+    if &index.authority != authority {
         return Err(EvidenceStoreError::new(
             "gate-evidence::fingerprint-authority-mismatch",
             format!("fingerprint path names authority {key}, body names another authority"),
         ));
     }
+    let object = layout.fingerprint_objects.join(index.manifest.as_str());
+    let bytes = read_optional_regular(&object, MAX_RECEIPT_BYTES as u64)?.ok_or_else(|| {
+        EvidenceStoreError::new(
+            "gate-evidence::fingerprint-object-missing",
+            format!("fingerprint object {} does not exist", object.display()),
+        )
+    })?;
+    let observed = manifest_id(&bytes);
+    if observed != index.manifest {
+        return Err(EvidenceStoreError::new(
+            "gate-evidence::fingerprint-digest-mismatch",
+            format!(
+                "fingerprint index names {}, object bytes identify {observed}",
+                index.manifest
+            ),
+        ));
+    }
+    let manifest = ActionFingerprintManifest::decode(&bytes)?;
+    if manifest.authority() != authority {
+        return Err(EvidenceStoreError::new(
+            "gate-evidence::fingerprint-authority-mismatch",
+            "fingerprint manifest names another authority",
+        ));
+    }
     Ok(Some(manifest))
+}
+
+fn manifest_id(bytes: &[u8]) -> Digest {
+    let mut identity = Vec::with_capacity(FINGERPRINT_IDENTITY.len() + bytes.len());
+    identity.extend_from_slice(FINGERPRINT_IDENTITY);
+    identity.extend_from_slice(bytes);
+    Digest::compute(wire::Domain::GateInputManifest, &identity)
 }
 
 fn canonical_object_id(value: &str) -> bool {
