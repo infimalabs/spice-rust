@@ -214,6 +214,10 @@ fn cargo_environment_omits_worktree_outputs_and_matches_forced_wrappers() {
             OsString::from("/worktree-a/private-cargo"),
         ),
         (OsString::from("RUSTFLAGS"), OsString::from("--cfg=proof")),
+        (
+            OsString::from(wire::SpiceVariable::NativeCargo.as_str()),
+            OsString::from("/toolchain/cargo"),
+        ),
     ]);
     assert_eq!(
         normalized,
@@ -221,6 +225,10 @@ fn cargo_environment_omits_worktree_outputs_and_matches_forced_wrappers() {
             (OsString::from("RUSTC_WORKSPACE_WRAPPER"), OsString::new()),
             (OsString::from("RUSTC_WRAPPER"), OsString::new()),
             (OsString::from("RUSTFLAGS"), OsString::from("--cfg=proof")),
+            (
+                OsString::from(wire::SpiceVariable::NativeCargo.as_str()),
+                OsString::from("/toolchain/cargo"),
+            ),
         ]
     );
     assert_eq!(
@@ -243,6 +251,10 @@ fn cargo_environment_omits_worktree_outputs_and_matches_forced_wrappers() {
                 OsString::from("[\"different.rs\"]"),
             ),
             (OsString::from("RUSTFLAGS"), OsString::from("--cfg=proof")),
+            (
+                OsString::from(wire::SpiceVariable::NativeCargo.as_str()),
+                OsString::from("/toolchain/cargo"),
+            ),
         ]),
         "private locations and Spice routing must not partition shared receipt identity",
     );

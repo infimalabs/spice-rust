@@ -631,7 +631,7 @@ fn normalized_action_environment(values: &[(OsString, OsString)]) -> Vec<(OsStri
                 && !DISABLED_WRAPPERS
                     .iter()
                     .any(|candidate| name == OsStr::new(candidate))
-                && !name.as_encoded_bytes().starts_with(b"SPICE_RS_")
+                && !spice::gate::operational_routing(name)
         })
         .cloned()
         .collect::<Vec<_>>();

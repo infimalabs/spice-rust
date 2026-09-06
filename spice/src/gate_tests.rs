@@ -94,6 +94,14 @@ fn compiler_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs
             OsString::from("ARBITRARY_BUILD_INPUT"),
             OsString::from("retained"),
         ),
+        (
+            OsString::from(wire::SpiceVariable::Lane.as_str()),
+            OsString::from("producer-lane"),
+        ),
+        (
+            OsString::from(wire::SpiceVariable::NativeCargo.as_str()),
+            OsString::from("/toolchain/cargo"),
+        ),
     ]);
     let consumer = compiler_environment_from([
         (
@@ -109,6 +117,14 @@ fn compiler_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs
             OsString::from("ARBITRARY_BUILD_INPUT"),
             OsString::from("retained"),
         ),
+        (
+            OsString::from(wire::SpiceVariable::Lane.as_str()),
+            OsString::from("consumer-lane"),
+        ),
+        (
+            OsString::from(wire::SpiceVariable::NativeCargo.as_str()),
+            OsString::from("/toolchain/cargo"),
+        ),
         (OsString::from("RUSTFLAGS"), OsString::from("--cfg=bound")),
     ]);
 
@@ -121,6 +137,10 @@ fn compiler_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs
                 OsString::from("retained"),
             ),
             (OsString::from("RUSTFLAGS"), OsString::from("--cfg=bound")),
+            (
+                OsString::from(wire::SpiceVariable::NativeCargo.as_str()),
+                OsString::from("/toolchain/cargo"),
+            ),
         ]
     );
 
