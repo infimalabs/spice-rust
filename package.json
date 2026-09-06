@@ -2,7 +2,9 @@
   "name": "spice-browser-tests",
   "private": true,
   "scripts": {
+    "test": "node --test app/browser/canvas-fast-tests.mjs",
     "test:canvas": "node --test app/browser/canvas-unit-tests.mjs && node app/browser/canvas-coordinator.mjs",
+    "test:slow": "spice dev xtask -- tests --slow canvas:browser-unit canvas:browser",
     "test:canvas-performance": "node app/browser/startup-profile.mjs"
   },
   "devDependencies": {
