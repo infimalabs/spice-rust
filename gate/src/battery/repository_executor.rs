@@ -27,8 +27,8 @@ use crate::metrics::{
 use crate::state::{BoundDecision, LatchEntry, LatchObservation};
 use crate::toolchain::{
     RimCapture, TASTE_EXTENSIONS, TOOLCHAIN_ARMS, ToolchainSource, acquire_toolchain_arm,
-    acquire_toolchain_observed, environment_baseline_suffixes, measure_toolchain,
-    measure_toolchain_arm,
+    acquire_toolchain_arm_tools, acquire_toolchain_observed, environment_baseline_suffixes,
+    measure_toolchain, measure_toolchain_arm, toolchain_executable_authority,
 };
 use crate::tree::{RefreshableSourceState, SelectedTree, Selector, StagedAuthority};
 use crate::{ChangeReachMode, ChangeReachObject, ChangeSelectionReport, GateId};
@@ -416,6 +416,36 @@ impl<'trace> RepositoryExecutor<'trace> {
 
     pub(super) fn compiler_environment(&self) -> &[(OsString, OsString)] {
         &self.compiler_environment
+    }
+
+    pub(super) fn action_tools(
+        &self,
+        gate_id: GateId,
+        compiler_environment: &[(OsString, OsString)],
+    ) -> Result<Vec<crate::ToolEvidence>, BatteryError> {
+        let source = ToolchainSource::capture_with_baselines(
+            &self.tree,
+            self.rim.clone(),
+            &self.baselines,
+            compiler_environment,
+            self.reached_paths.as_deref(),
+        );
+        acquire_toolchain_arm_tools(&source, &self.contract, gate_id)
+            .map_err(|error| BatteryError::new(error.to_string()))
+    }
+
+    pub(super) fn proof_tool_authority(
+        &self,
+        compiler_environment: &[(OsString, OsString)],
+    ) -> Result<Digest, BatteryError> {
+        let source = ToolchainSource::capture_with_baselines(
+            &self.tree,
+            self.rim.clone(),
+            &self.baselines,
+            compiler_environment,
+            self.reached_paths.as_deref(),
+        );
+        toolchain_executable_authority(&source).map_err(BatteryError::new)
     }
 
     /// The tracked contract this capture loaded from the selected tree.

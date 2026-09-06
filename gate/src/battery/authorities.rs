@@ -103,6 +103,30 @@ impl BatteryCapture<'_> {
         self.authorities.inputs()?.snapshot()
     }
 
+    /// Probe the external executables declared by this selected focused arm.
+    ///
+    /// This captures identity only; it does not execute the arm analysis.
+    pub fn action_tools(
+        &self,
+        gate_id: crate::GateId,
+        compiler_environment: &[(OsString, OsString)],
+    ) -> Result<Vec<crate::ToolEvidence>, BatteryError> {
+        if self.selected != Some(gate_id) {
+            return Err(BatteryError::new(format!(
+                "tool authority for {gate_id} requires a capture selected for that arm"
+            )));
+        }
+        self.executor.action_tools(gate_id, compiler_environment)
+    }
+
+    /// Cheap complete executable-file authority for reusable action lookup.
+    pub fn proof_tool_authority(
+        &self,
+        compiler_environment: &[(OsString, OsString)],
+    ) -> Result<Digest, BatteryError> {
+        self.executor.proof_tool_authority(compiler_environment)
+    }
+
     /// Prove the live selector source still names this capture.
     ///
     /// # Errors

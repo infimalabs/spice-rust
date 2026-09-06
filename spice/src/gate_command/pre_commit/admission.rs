@@ -134,14 +134,16 @@ pub(super) fn run(
             }
         },
     };
-    if let Err(error) = preparation.verify_source() {
+    if let Err(error) = preparation.verify_current(&repository) {
         let _ = preparation.reject_state();
         return Err(prove_failure(error));
     }
     if let Err(error) = preparation.accept_state() {
         return Err(prove_failure(error));
     }
-    preparation.verify_source().map_err(prove_failure)?;
+    preparation
+        .verify_current(&repository)
+        .map_err(prove_failure)?;
     let (created_at, expires_at) = admission_window()?;
     let live_check_count = live_checks.len();
     let bundle = AdmissionBundle::new(AdmissionBundleFields {

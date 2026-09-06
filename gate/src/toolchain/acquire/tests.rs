@@ -183,6 +183,38 @@ fn a_relative_search_path_entry_resolves_one_identity_at_the_rim() {
     );
 }
 
+#[test]
+fn proof_tool_authority_moves_with_executable_bytes_without_running_them() {
+    let fixture = ProbeFixture::new("proof-authority");
+    let rustfmt = fixture.rim.join("bin/rustfmt");
+    let executed = fixture.root.join("executed");
+    fixture.script(
+        &rustfmt,
+        &format!("printf ran > '{}'\n", executed.display()),
+    );
+    let source = ToolchainSource {
+        tree: None,
+        root: &fixture.tree,
+        repository: &fixture.root,
+        paths: &[],
+        rim: RimCapture::new(fixture.rim.clone(), Some(OsString::from("bin")), Vec::new())
+            .expect("the fixture rim directory is absolute"),
+        reached_paths: None,
+        baselines: None,
+        compiler_environment: &[],
+    };
+
+    let before = toolchain_executable_authority(&source).expect("digest first tool closure");
+    fixture.script(
+        &rustfmt,
+        &format!("# changed bytes\nprintf ran > '{}'\n", executed.display()),
+    );
+    let after = toolchain_executable_authority(&source).expect("digest changed tool closure");
+
+    assert_ne!(before, after);
+    assert!(!executed.exists(), "fingerprint authority executed a tool");
+}
+
 /// An empty entry is the rim's own directory, never the selected tree's.
 #[test]
 fn an_empty_search_path_entry_resolves_at_the_rim_and_not_the_tree() {

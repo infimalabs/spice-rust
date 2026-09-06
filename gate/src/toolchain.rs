@@ -230,7 +230,10 @@ mod environment;
 #[cfg(not(target_arch = "wasm32"))]
 pub use acquire::{RimCapture, RimDirectoryError, ToolchainSource, acquire_toolchain};
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use acquire::{acquire_toolchain_arm, acquire_toolchain_observed};
+pub(crate) use acquire::{
+    acquire_toolchain_arm, acquire_toolchain_arm_tools, acquire_toolchain_observed,
+    toolchain_executable_authority,
+};
 pub use declarations::*;
 
 /// Stable selected-source and Cargo output roots completed by native analysis.

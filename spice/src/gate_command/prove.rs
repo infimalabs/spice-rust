@@ -9,7 +9,7 @@ use gate::{
     ActionFingerprintAuthority, ActionFingerprintAuthorityFields, ActionFingerprintManifest,
     ActionFingerprintManifestFields, ActionInputClosure, ActionInputInventory, ActionKey,
     ActionKeyAuthority, ActionNonFileInput, ActionNonFileKind, ActionReuseClass, ActionSpec,
-    ActionSpecFields, ActionToolRequirement, ArmDisposition, BatteryManifest, BatteryToolEvidence,
+    ActionSpecFields, ActionToolRequirement, ArmDisposition, BatteryManifest,
     CargoExternalSourceAuthority, CargoGateShard, CargoGateShardKind, CargoGateShardPlanning,
     EvidenceProducerRecord, EvidenceStore, FocusedArmReport, GateId, PassReceipt,
     PassReceiptFields,
@@ -29,8 +29,11 @@ mod cargo_authority_tests;
 mod fingerprint;
 #[path = "prove/single_flight.rs"]
 mod single_flight;
+#[path = "prove/tools.rs"]
+mod tools;
 
 use fingerprint::PreparedActions;
+use tools::action_requirements as action_tools;
 
 const RUNNER_VERSION: u64 = 1;
 
@@ -90,6 +93,7 @@ pub(super) struct AdmissionPreparation {
     selection: Digest,
     policy: Digest,
     gate_set: Digest,
+    authority: ActionFingerprintAuthority,
 }
 
 pub(super) struct AdmissionLookup {
@@ -142,6 +146,7 @@ impl AdmissionLookup {
             selection: selection_digest,
             policy: self.policy,
             gate_set: self.gate_set,
+            authority: self.authority,
         })
     }
 }
@@ -179,6 +184,31 @@ impl AdmissionPreparation {
             .anchor()
             .verify_source()
             .map_err(ProveFailure::run)
+    }
+
+    pub(super) fn verify_fingerprint_authority(
+        &self,
+        repository: &Repository,
+    ) -> Result<(), ProveFailure> {
+        let observed = fingerprint::admission_authority(
+            repository,
+            self.staged.anchor(),
+            &self.candidate_tree,
+            self.policy.clone(),
+            self.gate_set.clone(),
+        )?;
+        if observed != self.authority {
+            return Err(ProveFailure::refusal(
+                "gate::prove-authority-moved",
+                "proof fingerprint authority changed after lookup",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn verify_current(&self, repository: &Repository) -> Result<(), ProveFailure> {
+        self.verify_source()?;
+        self.verify_fingerprint_authority(repository)
     }
 
     pub(super) fn execute_live_checks(
@@ -265,7 +295,10 @@ pub(super) fn prepare_admission_from_anchor(
 }
 
 enum PreparedExecution {
-    Gate(Box<spice::gate::PreparedArm<'static>>),
+    Gate {
+        arm: Box<spice::gate::PreparedArm<'static>>,
+        tools: Vec<gate::ToolEvidence>,
+    },
     Cargo(Box<CargoExecution>),
     Canvas(Box<canvas::CanvasExecution>),
 }
@@ -591,10 +624,9 @@ fn prepare_action(
     let reuse = gate::gate_action_reuse_class(gate_id)
         .expect("requested actions are classified as reusable");
     let baseline = action_baseline(gate_id, reuse, baseline)?;
-    let tools = action_tools(context.tools())?;
+    let (tools, action_tool_evidence, tool_authority) = tools::prepare(&arm, &context)?;
     let action_environment = normalized_action_environment(arm.compiler_environment());
     let (environment_names, environment) = environment(&action_environment)?;
-    let tool_authority = digest_encoded(Domain::GateTool, &context.tools())?;
     let inventory = action_inventory(
         staged,
         gate_id,
@@ -651,7 +683,10 @@ fn prepare_action(
         action_key,
         action_spec,
         input_manifest,
-        execution: PreparedExecution::Gate(Box::new(arm)),
+        execution: PreparedExecution::Gate {
+            arm: Box::new(arm),
+            tools: action_tool_evidence,
+        },
     })
 }
 
@@ -1047,21 +1082,10 @@ fn execute(action: PreparedAction) -> Result<PendingReceipt, ProveFailure> {
     let started_at = now()?;
     let started = MonotonicInstant::now();
     let typed_result = match action.execution {
-        PreparedExecution::Gate(mut arm) => {
-            let report = arm.execute().map_err(ProveFailure::run)?;
-            if !report.admits() {
-                return Err(ProveFailure::refusal(
-                    "gate::prove-action-regressed",
-                    refusal_detail(&report),
-                ));
-            }
-            Digest::compute(
-                Domain::GateFocusedReport,
-                &report.encode().map_err(|error| {
-                    ProveFailure::fault("gate::prove-result-unencodable", error)
-                })?,
-            )
-        }
+        PreparedExecution::Gate {
+            arm,
+            tools: expected_tools,
+        } => tools::execute(*arm, expected_tools)?,
         PreparedExecution::Cargo(execution) => {
             let CargoExecution {
                 shard,
@@ -1226,17 +1250,6 @@ fn declaration(manifest: &BatteryManifest, gate_id: GateId) -> Result<&str, Prov
             format!("canonical manifest has no row for action {gate_id}"),
         )),
     }
-}
-
-fn action_tools(tools: &[BatteryToolEvidence]) -> Result<Vec<ActionToolRequirement>, ProveFailure> {
-    let mut requirements = tools
-        .iter()
-        .map(|tool| ActionToolRequirement::new(tool.name(), tool.program()))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(ProveFailure::action_input)?;
-    requirements.sort();
-    requirements.dedup();
-    Ok(requirements)
 }
 
 fn environment(
