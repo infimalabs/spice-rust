@@ -776,18 +776,20 @@ tbody tr:last-child td { border-bottom: 0; }
   z-index: 0;
 }
 .team-lights {
-  direction: rtl;
-  display: grid;
-  grid-auto-columns: 9px;
-  grid-auto-flow: column dense;
-  grid-template-rows: 9px;
-  gap: 4px 5px;
+  align-items: flex-end;
+  display: flex;
+  gap: 5px;
+  justify-content: center;
   min-width: 18px;
-  place-content: center;
 }
-.team-lights:has(> .team-light:nth-child(2)) { grid-template-rows: repeat(2, 9px); }
-.team-lights:has(> .team-light:nth-child(2)) > .team-light:nth-child(odd) { grid-row: 2; }
-.team-lights > .team-light:nth-child(even) { grid-row: 1; }
+.team-pip-column {
+  display: grid;
+  gap: 4px;
+  grid-template-rows: repeat(2, 9px);
+}
+.team-lights.single .team-pip-column { grid-template-rows: 9px; }
+.team-light[data-pip-row="1"] { grid-row: 1; }
+.team-light[data-pip-row="2"] { grid-row: 2; }
 .team-surface .mosaic-message-card.final {
   background: color-mix(in srgb, var(--accent-1) 8%, var(--panel));
   border-color: var(--accent-1);

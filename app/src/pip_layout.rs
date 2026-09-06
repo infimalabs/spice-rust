@@ -2,13 +2,6 @@
 
 const ROWS: usize = 2;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[cfg(test)]
-pub(crate) struct PipGrid {
-    count: usize,
-    columns: usize,
-}
-
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct PipPosition {
     pub(crate) column: usize,
@@ -16,8 +9,8 @@ pub(crate) struct PipPosition {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[cfg(test)]
 pub(crate) struct PipColumn {
+    pub(crate) column: usize,
     pub(crate) upper: Option<usize>,
     pub(crate) lower: usize,
 }
@@ -27,45 +20,6 @@ pub(crate) struct PipColumn {
 pub(crate) struct PipStack {
     count: usize,
     columns: usize,
-}
-
-#[cfg(test)]
-impl PipGrid {
-    pub(crate) fn new(count: usize) -> Self {
-        Self {
-            count,
-            columns: count / ROWS + count % ROWS,
-        }
-    }
-
-    pub(crate) fn rows(self) -> usize {
-        self.count.min(ROWS)
-    }
-
-    pub(crate) fn position(self, index: usize) -> Option<PipPosition> {
-        (index < self.count).then(|| {
-            if index < self.columns {
-                PipPosition {
-                    column: self.columns - index,
-                    row: self.rows(),
-                }
-            } else {
-                let full_columns = self.count / ROWS;
-                PipPosition {
-                    column: full_columns - (index - self.columns),
-                    row: 1,
-                }
-            }
-        })
-    }
-
-    pub(crate) fn columns_from_left(self) -> impl Iterator<Item = PipColumn> {
-        let full_columns = self.count / ROWS;
-        (1..=self.columns).map(move |column| PipColumn {
-            upper: (column <= full_columns).then_some(self.columns + full_columns - column),
-            lower: self.columns - column,
-        })
-    }
 }
 
 impl PipStack {
@@ -86,6 +40,17 @@ impl PipStack {
             row: self.rows() - index % ROWS,
         })
     }
+
+    pub(crate) fn columns_from_left(self) -> impl Iterator<Item = PipColumn> {
+        (1..=self.columns).map(move |column| {
+            let lower = (self.columns - column) * ROWS;
+            PipColumn {
+                column,
+                upper: (lower + 1 < self.count).then_some(lower + 1),
+                lower,
+            }
+        })
+    }
 }
 
 #[cfg(test)]
@@ -95,43 +60,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fills_bottom_to_top_and_right_to_left_with_a_left_heavy_footprint() {
-        let grid = PipGrid::new(8);
+    fn fills_each_column_bottom_to_top_and_columns_right_to_left() {
+        let stack = PipStack::new(8);
 
-        assert_eq!(grid.rows(), 2);
-        assert_eq!(grid.columns, 4);
+        assert_eq!(stack.rows(), 2);
+        assert_eq!(stack.columns, 4);
         assert_eq!(
             (0..8)
-                .map(|index| grid.position(index).unwrap())
+                .map(|index| stack.position(index).unwrap())
                 .collect::<Vec<_>>(),
             vec![
                 PipPosition { column: 4, row: 2 },
-                PipPosition { column: 3, row: 2 },
-                PipPosition { column: 2, row: 2 },
-                PipPosition { column: 1, row: 2 },
                 PipPosition { column: 4, row: 1 },
+                PipPosition { column: 3, row: 2 },
                 PipPosition { column: 3, row: 1 },
+                PipPosition { column: 2, row: 2 },
                 PipPosition { column: 2, row: 1 },
+                PipPosition { column: 1, row: 2 },
                 PipPosition { column: 1, row: 1 },
             ],
         );
         assert_eq!(
-            grid.columns_from_left().collect::<Vec<_>>(),
+            stack.columns_from_left().collect::<Vec<_>>(),
             vec![
                 PipColumn {
+                    column: 1,
                     upper: Some(7),
-                    lower: 3,
+                    lower: 6,
                 },
                 PipColumn {
-                    upper: Some(6),
+                    column: 2,
+                    upper: Some(5),
+                    lower: 4,
+                },
+                PipColumn {
+                    column: 3,
+                    upper: Some(3),
                     lower: 2,
                 },
                 PipColumn {
-                    upper: Some(5),
-                    lower: 1,
-                },
-                PipColumn {
-                    upper: Some(4),
+                    column: 4,
+                    upper: Some(1),
                     lower: 0,
                 },
             ],
@@ -139,28 +108,30 @@ mod tests {
     }
 
     #[test]
-    fn three_pips_complete_the_left_column_and_support_the_lower_right() {
-        let grid = PipGrid::new(3);
+    fn three_pips_leave_the_lower_left_floating_and_keep_the_first_at_lower_right() {
+        let stack = PipStack::new(3);
 
         assert_eq!(
             (0..3)
-                .map(|index| grid.position(index).unwrap())
+                .map(|index| stack.position(index).unwrap())
                 .collect::<Vec<_>>(),
             vec![
                 PipPosition { column: 2, row: 2 },
+                PipPosition { column: 2, row: 1 },
                 PipPosition { column: 1, row: 2 },
-                PipPosition { column: 1, row: 1 },
             ],
         );
         assert_eq!(
-            grid.columns_from_left().collect::<Vec<_>>(),
+            stack.columns_from_left().collect::<Vec<_>>(),
             vec![
                 PipColumn {
-                    upper: Some(2),
-                    lower: 1,
+                    column: 1,
+                    upper: None,
+                    lower: 2,
                 },
                 PipColumn {
-                    upper: None,
+                    column: 2,
+                    upper: Some(1),
                     lower: 0,
                 },
             ],
@@ -198,62 +169,54 @@ mod tests {
     }
 
     #[test]
-    fn every_partial_grid_has_a_lower_pip_beneath_each_upper_pip() {
+    fn every_partial_stack_has_unique_positions_and_exact_column_membership() {
         for count in 0..=257 {
-            let grid = PipGrid::new(count);
+            let stack = PipStack::new(count);
             let positions = (0..count)
-                .map(|index| grid.position(index).unwrap())
+                .map(|index| stack.position(index).unwrap())
                 .collect::<BTreeSet<_>>();
 
             assert_eq!(positions.len(), count);
-            for position in &positions {
-                if grid.rows() == ROWS && position.row < grid.rows() {
-                    assert!(
-                        positions.contains(&PipPosition {
-                            column: position.column,
-                            row: grid.rows(),
+            assert_eq!(stack.columns_from_left().count(), stack.columns);
+            for column in stack.columns_from_left() {
+                assert_eq!(
+                    stack.position(column.lower),
+                    Some(PipPosition {
+                        column: column.column,
+                        row: stack.rows(),
+                    }),
+                );
+                if let Some(upper) = column.upper {
+                    assert_eq!(
+                        stack.position(upper),
+                        Some(PipPosition {
+                            column: column.column,
+                            row: 1,
                         }),
-                        "count {count} left an upper pip unsupported in column {}",
-                        position.column,
                     );
                 }
-            }
-            for column in 2..=grid.columns {
-                let left_count = positions
-                    .iter()
-                    .filter(|position| position.column == column - 1)
-                    .count();
-                let right_count = positions
-                    .iter()
-                    .filter(|position| position.column == column)
-                    .count();
-                assert!(
-                    left_count >= right_count,
-                    "count {count} put {right_count} pips in column {column} but only \
-                     {left_count} in the column to its left",
-                );
             }
         }
     }
 
     #[test]
     fn placement_has_no_team_size_limit() {
-        let grid = PipGrid::new(10_001);
+        let stack = PipStack::new(10_001);
 
-        assert_eq!(grid.rows(), 2);
-        assert_eq!(grid.columns, 5_001);
+        assert_eq!(stack.rows(), 2);
+        assert_eq!(stack.columns, 5_001);
         assert_eq!(
-            grid.position(0),
+            stack.position(0),
             Some(PipPosition {
                 column: 5_001,
                 row: 2
             })
         );
         assert_eq!(
-            grid.position(10_000),
-            Some(PipPosition { column: 1, row: 1 })
+            stack.position(10_000),
+            Some(PipPosition { column: 1, row: 2 })
         );
-        assert_eq!(grid.position(10_001), None);
-        assert_eq!(grid.columns_from_left().count(), 5_001);
+        assert_eq!(stack.position(10_001), None);
+        assert_eq!(stack.columns_from_left().count(), 5_001);
     }
 }
