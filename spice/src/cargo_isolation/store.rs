@@ -9,11 +9,7 @@ use std::thread;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use sill::{
-    Acquisition, Argv, Cancellation, Completion, Deadlines, Environment, LockFile, LockName,
-    Output, ProcessGroup, Redaction, RestartDisposition, Spec, StdinPolicy, StreamPolicy,
-    WaitPolicy,
-};
+use sill::{Acquisition, LockFile, LockName};
 use wire::CanonicalUuid;
 
 use super::{Host, IsolationError, PreparedHome, SourceGenerationAuthority};
@@ -26,11 +22,6 @@ const MANIFEST: &str = "generation.json";
 const TEMPORARY_PREFIX: &str = ".spice-tmp-";
 const LOCK_WAIT: Duration = Duration::from_secs(25 * 60);
 const LOCK_POLL: Duration = Duration::from_millis(25);
-const SEED_RUNTIME: Duration = Duration::from_secs(20 * 60);
-const SEED_DRAIN: Duration = Duration::from_secs(10);
-const SEED_REAP: Duration = Duration::from_secs(10);
-const SEED_GRACE: Duration = Duration::from_secs(2);
-const SEED_OUTPUT: usize = 16 * 1024 * 1024;
 const RECLAIM_GRACE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 #[derive(Clone, Debug)]
@@ -461,7 +452,7 @@ fn ensure_generation(
     let (source_config, packages) = if locked.is_empty() {
         (empty_source_config(&final_vendor)?, Vec::new())
     } else {
-        let source_config = run_vendor(worktree, &vendor, host)?;
+        let source_config = seed::run_vendor(worktree, &vendor, host)?;
         let packages = publish_packages(layout, &vendor, &locked)?;
         (
             rebind_source_config(source_config, &vendor, &final_vendor)?,
@@ -492,118 +483,6 @@ fn empty_source_config(final_vendor: &Path) -> Result<toml::Value, IsolationErro
     let mut root = toml::Table::new();
     root.insert("source".to_owned(), toml::Value::Table(sources));
     Ok(toml::Value::Table(root))
-}
-
-fn run_vendor(worktree: &Path, vendor: &Path, host: &Host) -> Result<toml::Value, IsolationError> {
-    let mut entries = host
-        .seed_environment()
-        .entries()
-        .iter()
-        .cloned()
-        .collect::<BTreeMap<_, _>>();
-    entries.insert(
-        OsString::from(super::CARGO_HOME_VARIABLE),
-        host.bootstrap_home().as_os_str().to_owned(),
-    );
-    let environment = Environment::new(entries).map_err(|error| {
-        IsolationError::new(
-            "cargo-isolation::seed-environment-invalid",
-            error.to_string(),
-        )
-    })?;
-    let arguments = [
-        OsString::from("vendor"),
-        OsString::from("--locked"),
-        OsString::from("--versioned-dirs"),
-        OsString::from("--manifest-path"),
-        worktree.join("Cargo.toml").into_os_string(),
-        vendor.as_os_str().to_owned(),
-    ];
-    let spec = seed_spec(host.cargo(), arguments, worktree, environment)?;
-    let running = sill::spawn(spec)
-        .map_err(|error| IsolationError::new("cargo-isolation::seed-failed", error.to_string()))?;
-    let outcome = running
-        .wait()
-        .map_err(|error| IsolationError::new("cargo-isolation::seed-failed", error.to_string()))?;
-    classify_seed(&outcome)
-}
-
-fn seed_spec(
-    cargo: &Path,
-    arguments: impl IntoIterator<Item = OsString>,
-    worktree: &Path,
-    environment: Environment,
-) -> Result<Spec, IsolationError> {
-    let deadlines = Deadlines::new(SEED_RUNTIME, SEED_DRAIN, SEED_REAP)
-        .map_err(|error| IsolationError::new("cargo-isolation::seed-invalid", error.to_string()))?;
-    let wait = WaitPolicy::new(
-        "immutable Cargo directory-source seed",
-        Cancellation::Never,
-        RestartDisposition::Never,
-    )
-    .map_err(|error| IsolationError::new("cargo-isolation::seed-invalid", error.to_string()))?;
-    let capture = StreamPolicy::Capture { limit: SEED_OUTPUT };
-    Ok(Spec {
-        argv: Argv::new(cargo, arguments).map_err(|error| {
-            IsolationError::new("cargo-isolation::seed-invalid", error.to_string())
-        })?,
-        cwd: worktree.to_path_buf(),
-        environment,
-        group: ProcessGroup::New,
-        deadlines,
-        wait,
-        output: Output::new(StdinPolicy::Null, capture, capture),
-        redaction: Redaction::All,
-        grace: SEED_GRACE,
-    })
-}
-
-fn classify_seed(outcome: &sill::WaitOutcome) -> Result<toml::Value, IsolationError> {
-    if !outcome.outputs_drained() {
-        return Err(IsolationError::new(
-            "cargo-isolation::seed-cleanup-failed",
-            "cargo vendor output did not drain before its deadline",
-        ));
-    }
-    let stdout = complete_output("stdout", outcome.stdout())?;
-    let stderr = complete_output("stderr", outcome.stderr())?;
-    match outcome.completion() {
-        Completion::Exited(status) if status.success() => {
-            toml::from_str(std::str::from_utf8(stdout).map_err(|error| {
-                IsolationError::new("cargo-isolation::seed-output-invalid", error.to_string())
-            })?)
-            .map_err(|error| {
-                IsolationError::new("cargo-isolation::seed-output-invalid", error.to_string())
-            })
-        }
-        completion => Err(IsolationError::new(
-            "cargo-isolation::seed-failed",
-            format!(
-                "completion={completion:?}; stdout={}; stderr={}",
-                String::from_utf8_lossy(stdout),
-                String::from_utf8_lossy(stderr),
-            ),
-        )),
-    }
-}
-
-fn complete_output<'a>(
-    stream: &str,
-    output: Option<&'a sill::CapturedOutput>,
-) -> Result<&'a [u8], IsolationError> {
-    let output = output.ok_or_else(|| {
-        IsolationError::new(
-            "cargo-isolation::seed-output-invalid",
-            format!("cargo vendor {stream} was not captured"),
-        )
-    })?;
-    if output.truncated() || !output.complete() {
-        return Err(IsolationError::new(
-            "cargo-isolation::seed-output-invalid",
-            format!("cargo vendor {stream} exceeded its complete capture bound"),
-        ));
-    }
-    Ok(output.bytes())
 }
 
 fn locked_packages(bytes: &[u8]) -> Result<Vec<LockedPackage>, IsolationError> {
@@ -1485,6 +1364,7 @@ fn remove_read_only_tree(path: &Path) -> Result<(), IsolationError> {
 
 mod maintenance;
 mod pins;
+mod seed;
 
 pub(super) use pins::GenerationPin;
 
