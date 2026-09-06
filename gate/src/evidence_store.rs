@@ -355,6 +355,9 @@ pub enum LeaseAcquisition {
 pub struct CollectionReport {
     removed_objects: usize,
     removed_leases: usize,
+    removed_admissions: usize,
+    removed_pending_consumptions: usize,
+    removed_admission_credits: usize,
     retained: Vec<String>,
 }
 
@@ -366,6 +369,18 @@ impl CollectionReport {
     #[must_use]
     pub const fn removed_leases(&self) -> usize {
         self.removed_leases
+    }
+    #[must_use]
+    pub const fn removed_admissions(&self) -> usize {
+        self.removed_admissions
+    }
+    #[must_use]
+    pub const fn removed_pending_consumptions(&self) -> usize {
+        self.removed_pending_consumptions
+    }
+    #[must_use]
+    pub const fn removed_admission_credits(&self) -> usize {
+        self.removed_admission_credits
     }
     #[must_use]
     pub fn retained(&self) -> &[String] {
@@ -862,7 +877,10 @@ impl EvidenceStore {
         })
     }
 
-    /// Remove at most `limit` expired leases and old unreferenced receipts.
+    /// Remove at most `limit` old unreachable records and expired leases.
+    ///
+    /// `minimum_age` retains young admissions, pending transactions, credits,
+    /// and receipts. Every retained root keeps its admission and receipt graph.
     pub fn collect(
         &self,
         now: SystemTime,
