@@ -35,14 +35,18 @@ async function snapshot(stack) {
       tabIndex: node.tabIndex,
       toolbarHeight: toolbar?.height,
       railLeft: rail?.left,
-      pips: [...node.querySelectorAll(":scope > .team-light")].map((pip) => {
+      pips: [...node.querySelectorAll(":scope > .team-pip-column > .team-light")].map((pip) => {
         const box = pip.getBoundingClientRect();
+        const style = getComputedStyle(pip);
         return {
           aria: pip.getAttribute("aria-label"),
+          color: style.backgroundColor,
           column: Number(pip.dataset.pipColumn),
           height: box.height,
+          lane: pip.dataset.laneLightTargetId,
           left: box.left,
           row: Number(pip.dataset.pipRow),
+          status: pip.dataset.laneStatus,
           title: pip.getAttribute("title"),
           top: box.top,
           width: box.width,
@@ -50,6 +54,23 @@ async function snapshot(stack) {
       }),
     };
   });
+}
+
+function coordinateRank(values, value) {
+  const distinct = [...values].sort((left, right) => left - right)
+    .filter((candidate, index, sorted) => index === 0 || candidate - sorted[index - 1] > 1);
+  const index = distinct.findIndex((candidate) => Math.abs(candidate - value) <= 1);
+  assert.notEqual(index, -1, `coordinate ${value} belongs to ${JSON.stringify(distinct)}`);
+  return index + 1;
+}
+
+function expectedPositions(count) {
+  const rows = Math.min(2, count);
+  const columns = Math.ceil(count / 2);
+  return Array.from({ length: count }, (_, index) => ({
+    column: columns - Math.floor(index / 2),
+    row: rows - index % 2,
+  })).sort((left, right) => left.column - right.column || left.row - right.row);
 }
 
 function assertStack(actual, single, label, arrangeable) {
@@ -77,15 +98,22 @@ function assertStack(actual, single, label, arrangeable) {
   assert.equal(actual.legacyHandles, 0, `${label}: standalone drag symbol is absent`);
   close(actual.toolbarHeight, single.toolbarHeight, `${label} stack does not inflate toolbar`);
   assert.ok(actual.bounds.right <= actual.railLeft, `${label}: stack does not overlap mode rail`);
+  assert.deepEqual(
+    actual.pips.map(({ column, row }) => ({ column, row }))
+      .sort((left, right) => left.column - right.column || left.row - right.row),
+    expectedPositions(actual.pips.length),
+    `${label}: the rendered slot set is the complete PipStack coordinate set`,
+  );
+  const lefts = actual.pips.map((pip) => pip.left);
+  const tops = actual.pips.map((pip) => pip.top);
   for (const [index, pip] of actual.pips.entries()) {
-    const expected = {
-      column: columns - Math.floor(index / 2),
-      row: rows - index % 2,
-    };
     assert.deepEqual(
+      {
+        column: coordinateRank(lefts, pip.left),
+        row: coordinateRank(tops, pip.top),
+      },
       { column: pip.column, row: pip.row },
-      expected,
-      `${label}: member ${index} fills bottom-to-top then right-to-left`,
+      `${label}: member ${index} physical slot agrees with its Rust coordinate`,
     );
     close(pip.width, 9, `${label} pip ${index} width`);
     close(pip.height, 9, `${label} pip ${index} height`);
@@ -107,8 +135,15 @@ function assertStack(actual, single, label, arrangeable) {
 async function assertSinglePip(stack, label) {
   const actual = await stack.evaluate((node) => {
     const witness = node.cloneNode(true);
-    for (const pip of [...witness.querySelectorAll(":scope > .team-light")].slice(1)) pip.remove();
-    const pip = witness.querySelector(":scope > .team-light");
+    const pips = [...witness.querySelectorAll(":scope > .team-pip-column > .team-light")];
+    for (const pip of pips.slice(1)) pip.remove();
+    for (const column of witness.querySelectorAll(":scope > .team-pip-column")) {
+      if (!column.querySelector(".team-light")) column.remove();
+    }
+    witness.classList.add("single");
+    const pip = witness.querySelector(":scope > .team-pip-column > .team-light");
+    pip.dataset.pipColumn = "1";
+    pip.dataset.pipRow = "1";
     node.replaceWith(witness);
     const stackBox = witness.getBoundingClientRect();
     const pipBox = pip.getBoundingClientRect();
@@ -129,10 +164,68 @@ async function assertSinglePip(stack, label) {
   return actual;
 }
 
+async function assertThreePipTransition(stack, single, label, screenshot) {
+  const before = await snapshot(stack);
+  assert.equal(before.pips.length, 4, `${label}: transition fixture starts with four pips`);
+  await stack.evaluate((node) => {
+    const witness = node.cloneNode(true);
+    witness.setAttribute("data-pip-transition-witness", "three");
+    const removed = witness.querySelector(
+      ':scope > .team-pip-column > .team-light[data-pip-column="1"][data-pip-row="1"]',
+    );
+    if (!removed) throw new Error("four-pip stack has no upper-left transition member");
+    removed.remove();
+    globalThis.__spicePipStackOriginal = node;
+    node.replaceWith(witness);
+  });
+  try {
+    const three = await snapshot(stack);
+    assertStack(three, single, `${label} three-pip transition`, before.dragHandle);
+    assert.deepEqual(
+      three.pips.map(({ lane, status, color, column, row }) => ({
+        lane, status, color, column, row,
+      })),
+      before.pips
+        .filter(({ column, row }) => column !== 1 || row !== 1)
+        .map(({ lane, status, color, column, row }) => ({ lane, status, color, column, row })),
+      `${label}: removing the upper-left member preserves every remaining identity and style`,
+    );
+    assert.deepEqual(
+      three.pips.map(({ column, row }) => [column, row])
+        .sort(([leftColumn, leftRow], [rightColumn, rightRow]) => (
+          leftColumn - rightColumn || leftRow - rightRow
+        )),
+      [[1, 2], [2, 1], [2, 2]],
+      `${label}: three pips occupy lower-left and both right slots`,
+    );
+    const rightEdge = before.pips.find(({ column, row }) => column === 2 && row === 2);
+    const retainedRightEdge = three.pips.find(({ lane }) => lane === rightEdge?.lane);
+    assert.ok(rightEdge?.lane, `${label}: four-pip stack names its lower-right identity`);
+    assert.deepEqual(
+      retainedRightEdge,
+      rightEdge,
+      `${label}: the right-edge identity and status remain at lower-right`,
+    );
+    await stack.locator("xpath=ancestor::header[contains(@class, 'team-toolbar')]")
+      .screenshot({ path: screenshot });
+  } finally {
+    await stack.evaluate((witness) => {
+      const original = globalThis.__spicePipStackOriginal;
+      if (!original) throw new Error("three-pip transition lost its original stack");
+      witness.replaceWith(original);
+      delete globalThis.__spicePipStackOriginal;
+    });
+  }
+  const restored = await snapshot(stack);
+  assert.deepEqual(restored.pips, before.pips, `${label}: adding the fourth pip restores identity`);
+}
+
 export async function assertLaneHeaderPipMatrix(page, scope, artifacts, engine, originalScheme) {
   const originalViewport = page.viewportSize();
   assert.ok(originalViewport, `${engine}: pip matrix requires a fixed viewport`);
-  const stack = scope.locator(".team-lights:has(> .team-light:nth-child(2))").first();
+  const stack = scope
+    .locator(".team-lights:has(> .team-pip-column > .team-light:nth-of-type(2))")
+    .first();
   await stack.waitFor();
   const arrangeable = await scope.locator(".team-surface").count() > 1;
   try {
@@ -144,6 +237,12 @@ export async function assertLaneHeaderPipMatrix(page, scope, artifacts, engine, 
         const label = `${engine} ${scheme} ${viewport}`;
         const single = await assertSinglePip(stack, label);
         assertStack(await snapshot(stack), single, label, arrangeable);
+        await assertThreePipTransition(
+          stack,
+          single,
+          label,
+          join(artifacts, `${engine}-lane-pips-three-${scheme}-${viewport}.png`),
+        );
         await stack.locator("xpath=ancestor::header[contains(@class, 'team-toolbar')]").screenshot({
           path: join(artifacts, `${engine}-lane-pips-${scheme}-${viewport}.png`),
         });

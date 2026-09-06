@@ -441,11 +441,33 @@ fn render_lineage_toolbar(
         lineage_arrangement_click(lineage_id, can_arrange, render.lineage_controls);
     let keyboard_arrangement =
         lineage_arrangement_key(lineage_id, can_arrange, render.lineage_controls);
+    let render_pip = |index: usize| {
+        let member_index = watchband::right_edge_ordinal(standings.len(), index);
+        let standing = &standings[member_index];
+        let member = lineage.member(standing.lane)?;
+        let status = member.status(standing.pending);
+        let position = pip_stack
+            .position(index)
+            .expect("standing index belongs to the lane pip stack");
+        let label = format!("{}: {}", standing.label, status.label());
+        Some(html! {
+            <span
+                class={classes!("team-light", status.key())}
+                role="img"
+                data-lane-light-target-id={member.lane.to_string()}
+                data-lane-status={status.key()}
+                data-pip-column={position.column.to_string()}
+                data-pip-row={position.row.to_string()}
+                aria-label={label.clone()}
+                title={label}
+            ></span>
+        })
+    };
     html! {
         <>
         <header class="team-toolbar">
             <span
-                class="team-lights"
+                class={classes!("team-lights", (pip_stack.rows() == 1).then_some("single"))}
                 role={if can_arrange { "button" } else { "group" }}
                 aria-label={lights_label}
                 aria-haspopup={can_arrange.then_some("menu")}
@@ -465,27 +487,11 @@ fn render_lineage_toolbar(
                         {"Press Enter or Space, or tap, to choose where to move or join this team."}
                     </span>
                 }
-                {for (0..standings.len()).filter_map(|index| {
-                    let member_index = watchband::right_edge_ordinal(standings.len(), index);
-                    let standing = &standings[member_index];
-                    let member = lineage.member(standing.lane)?;
-                    let status = member.status(standing.pending);
-                    let position = pip_stack
-                        .position(index)
-                        .expect("standing index belongs to the lane pip stack");
-                    let label = format!("{}: {}", standing.label, status.label());
-                    Some(html! {
-                        <span
-                            class={classes!("team-light", status.key())}
-                            role="img"
-                            data-lane-light-target-id={member.lane.to_string()}
-                            data-lane-status={status.key()}
-                            data-pip-column={position.column.to_string()}
-                            data-pip-row={position.row.to_string()}
-                            aria-label={label.clone()}
-                            title={label}
-                        ></span>
-                    })
+                {for pip_stack.columns_from_left().map(|column| html! {
+                    <span class="team-pip-column" data-pip-column={column.column.to_string()}>
+                        {column.upper.and_then(&render_pip)}
+                        {render_pip(column.lower)}
+                    </span>
                 })}
             </span>
             <nav class="team-mode-rail" role="tablist" aria-label="Live team views">
