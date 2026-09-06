@@ -247,11 +247,13 @@ fn canvas_plan(
     let cargo_home = super::environment_value(&environment_values, "CARGO_HOME")?;
     let lockfile = fs::read(arm.root().join("Cargo.lock"))
         .map_err(|error| ProveFailure::refusal("gate::prove-cargo-source-unavailable", error))?;
-    let source =
-        spice::cargo_isolation::readmit_source_generation(Path::new(cargo_home), &lockfile, &host)
-            .map_err(|error| {
-                ProveFailure::refusal("gate::prove-cargo-source-unavailable", error)
-            })?;
+    let source = spice::cargo_isolation::readmit_source_generation(
+        Path::new(cargo_home),
+        &lockfile,
+        arm.root(),
+        &host,
+    )
+    .map_err(|error| ProveFailure::refusal("gate::prove-cargo-source-unavailable", error))?;
     let external_source = gate::CargoExternalSourceAuthority::new(
         source.generation().to_owned(),
         source.manifest().to_owned(),

@@ -15,6 +15,7 @@ pub(super) struct Execution {
 pub(super) struct SourceExecution {
     home: PathBuf,
     lockfile: Vec<u8>,
+    root: PathBuf,
     host: spice::cargo_isolation::Host,
     authority: spice::cargo_isolation::SourceGenerationAuthority,
 }
@@ -253,11 +254,13 @@ pub(super) fn source_authority(
     let cargo_home = environment_value(environment, "CARGO_HOME")?;
     let lockfile = fs::read(root.join("Cargo.lock"))
         .map_err(|error| ProveFailure::refusal("gate::prove-cargo-source-unavailable", error))?;
-    let source =
-        spice::cargo_isolation::readmit_source_generation(Path::new(cargo_home), &lockfile, &host)
-            .map_err(|error| {
-                ProveFailure::refusal("gate::prove-cargo-source-unavailable", error)
-            })?;
+    let source = spice::cargo_isolation::readmit_source_generation(
+        Path::new(cargo_home),
+        &lockfile,
+        root,
+        &host,
+    )
+    .map_err(|error| ProveFailure::refusal("gate::prove-cargo-source-unavailable", error))?;
     let external_source = CargoExternalSourceAuthority::new(
         source.generation().to_owned(),
         source.manifest().to_owned(),
@@ -267,6 +270,7 @@ pub(super) fn source_authority(
         SourceExecution {
             home: PathBuf::from(cargo_home),
             lockfile,
+            root: root.to_path_buf(),
             host,
             authority: source,
         },
@@ -334,6 +338,7 @@ pub(super) fn execute(execution: Execution) -> Result<Digest, ProveFailure> {
     let observed = spice::cargo_isolation::readmit_source_generation(
         &source.home,
         &source.lockfile,
+        &source.root,
         &source.host,
     )
     .map_err(|error| ProveFailure::refusal("gate::prove-cargo-source-moved", error))?;

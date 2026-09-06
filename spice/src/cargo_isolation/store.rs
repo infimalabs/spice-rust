@@ -167,6 +167,7 @@ pub(super) fn source_generation_authority(
 pub(super) fn readmit_source_generation(
     home: &Path,
     lockfile: &[u8],
+    current_worktree: &Path,
     host: &Host,
 ) -> Result<SourceGenerationAuthority, IsolationError> {
     let retained_homes = home
@@ -184,9 +185,6 @@ pub(super) fn readmit_source_generation(
             format!("Cargo home has no source-store root: {home:?}"),
         )
     })?;
-    if retained_root == host.store_root() {
-        return source_generation_authority(home, lockfile);
-    }
     let retained = Layout::open_root(retained_root.to_path_buf())?;
     let owner: HomeOwner = read_json(&home.join(OWNER))?;
     let home_id = digest(
@@ -198,6 +196,25 @@ pub(super) fn readmit_source_generation(
             "cargo-isolation::home-owner-mismatch",
             format!("home path does not match observed owner {owner:?}"),
         ));
+    }
+    let current_worktree = fs::canonicalize(current_worktree).map_err(|error| {
+        IsolationError::io(
+            "cargo-isolation::home-owner-mismatch",
+            current_worktree,
+            error,
+        )
+    })?;
+    let expected_worktree = encoded_path(&current_worktree);
+    if owner.worktree != expected_worktree {
+        return Err(IsolationError::new(
+            "cargo-isolation::home-owner-mismatch",
+            format!(
+                "observed home owner {owner:?} does not match current worktree {expected_worktree:?}"
+            ),
+        ));
+    }
+    if retained_root == host.store_root() {
+        return source_generation_authority(home, lockfile);
     }
     let expected = generation_digest(lockfile);
     let current = Layout::open(host)?;
@@ -229,7 +246,10 @@ pub(super) fn readmit_source_generation(
     } else {
         home_generation(home, &retained)?
     };
-    if observed != owner || observed_generation_after_lock != observed_generation {
+    if observed != owner
+        || observed.worktree != expected_worktree
+        || observed_generation_after_lock != observed_generation
+    {
         return Err(IsolationError::new(
             "cargo-isolation::home-owner-mismatch",
             "retained Cargo home changed while re-admission was preparing",
