@@ -664,6 +664,7 @@ fn accept_timer_fired(
             Ok(())
         }
         timers::Fired::Stale
+        | timers::Fired::DeferredTaskWoken(_)
         | timers::Fired::ClaimLapse
         | timers::Fired::ClaimRenew
         | timers::Fired::TaskWake(_) => Ok(()),
