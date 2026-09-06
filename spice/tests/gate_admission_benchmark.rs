@@ -67,7 +67,7 @@ struct InternalAdmissionProfile {
 }
 
 #[test]
-#[ignore = "environmental 30-run measurement of the installed warm pre-commit hook"]
+#[ignore = "slow:gate:installed-hook-benchmark"]
 fn gate_warm_admission_benchmark() {
     let _serial = BENCHMARK.lock().expect("serialize admission benchmarks");
     let fixture = Fixture::new();

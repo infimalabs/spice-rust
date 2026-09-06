@@ -17,7 +17,7 @@ const CONTEXT_WINDOW: u64 = 32_768;
 const AUTO_COMPACT_LIMIT: u64 = 31_129;
 
 #[test]
-#[ignore = "authenticated three-turn Codex proof crosses a real compaction boundary"]
+#[ignore = "slow:vendor:codex-live-compaction"]
 fn headless_codex_compacts_then_resumes_without_an_overflow_loop() {
     assert_eq!(
         codex_auto_compact_token_limit(CONTEXT_WINDOW),

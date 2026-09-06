@@ -602,7 +602,7 @@ fn delayed_task_done_response(delay: Duration) -> (Outcome<CommandAnswer>, bool)
 }
 
 #[test]
-#[ignore = "intentional 25-second wall-clock proof of the temporary Canvas response bound"]
+#[ignore = "slow:spice:canvas-response-bound"]
 fn task_done_admits_a_response_after_three_seconds_and_rejects_one_after_twenty() {
     let (within, delivered) = delayed_task_done_response(Duration::from_secs(4));
     let Outcome::Refusal(refusal) = within else {

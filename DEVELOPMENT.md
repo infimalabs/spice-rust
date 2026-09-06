@@ -53,12 +53,14 @@ test binaries; add the intended target selector when narrowing to `--lib`,
 
 | Portfolio | Purpose and scope | Feedback invocation |
 | --- | --- | --- |
-| Source-local unit tests | Private invariants, parsers, reducers, lock/process state machines. They can observe internals integration tests cannot. | `spice dev cargo -- test --locked -p PACKAGE --lib` or one exact test filter. |
-| Package integration targets | Public seams, CLI behavior, Git/SQLite/process fixtures, policy contracts. | `spice dev cargo -- test --locked -p PACKAGE --all-targets`; normally use the scoped verifier below. |
+| Source-local unit tests | Private invariants, parsers, reducers, lock/process state machines. They can observe internals integration tests cannot. | `spice dev cargo -- test --locked -p PACKAGE --lib` or one exact test filter. For the package-wide default fast suite, use `spice dev xtask -- tests --fast --package PACKAGE`; it excludes only registry-marked slow tests and reports their count plus accumulated runtime. |
+| Package integration targets | Public seams, CLI behavior, Git/SQLite/process fixtures, policy contracts. | `spice dev xtask -- tests --fast --package PACKAGE`; the package verifier uses the same registry-filtered test argv. Run an exact registry ID when the changed slice reaches a slow boundary. |
 | Doctests | Public API examples and compile-time documentation contracts. | `spice dev cargo -- test --locked -p PACKAGE --doc`. |
 | Parent-launched ignored fixtures | Process death, resource-limit, supervisor, and benchmark children. | Run the named parent; never blanket-run `--ignored`. |
+| Classified slow tests | Multi-second boundary, benchmark, live, and browser cases named in `test-classification.json`; the `"class": "slow"` marker is the sole selection inventory. | Inspect with `spice dev xtask -- tests --slow --list`; execute only exact named IDs with `spice dev xtask -- tests --slow ID...`. Each run reports per-test and accumulated wall time. |
 | Canvas-only WASM typecheck | Rust changes whose dependency reach includes `app`; unrelated native workspace packages and the xtask bootstrap are outside this check. | `spice dev cargo -- canvas-wasm-typecheck`. |
-| Canvas browser guard | App build/resident/socket/browser behavior, shard inventory, timing, and descendant cleanup. | Run `npm run test:canvas` when the changed slice reaches its harness. |
+| Canvas fast tests | Parser, registry, selection, and browser-layout unit checks with no resident/browser fixture. | `npm test` is the default JavaScript suite. |
+| Canvas browser guard | App build/resident/socket/browser behavior, shard inventory, timing, and descendant cleanup. It is explicitly classified as `canvas:browser`. | Run `npm run test:canvas` or `npm run test:slow` when the changed slice reaches its harness. Canonical `canvas:shard:<name>` proof actions remain unchanged. |
 | Change-local proof and landing | Trusted receipts for the exact staged action set plus final pre-commit admission. | Inspect with `spice gate prove`; run a named miss with `spice gate prove ACTION` or all current misses with `spice gate prove --missing`, then commit normally. |
 
 Metadata selection is conservative target-root reachability, not line coverage.

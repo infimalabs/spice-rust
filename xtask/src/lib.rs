@@ -1,5 +1,6 @@
 //! Repository-local build, verification, and release commands.
 
+use std::ffi::OsString;
 use std::io::{self, Write};
 
 use sill::CancellationToken;
@@ -10,6 +11,7 @@ mod develop;
 mod gate_command;
 mod proof_image;
 mod release;
+mod test_classification;
 #[cfg(not(target_arch = "wasm32"))]
 mod test_evidence;
 mod verify_error;
@@ -34,6 +36,10 @@ pub use verify_error::{GateArmError, VerifyError};
 pub use develop::refresh_install;
 pub use proof_image::{ProofImageError, build_proof_image, load_proof_image};
 pub use release::{CommandRecord, ReleaseEnvironment, TargetBuild, TargetBuildError, stage_target};
+pub use test_classification::{
+    ClassificationError, list as list_slow_tests, run_fast as run_fast_tests,
+    run_slow as run_slow_tests,
+};
 #[cfg(not(target_arch = "wasm32"))]
 pub use test_evidence::{TestEvidenceRunError, run as run_test_evidence};
 #[cfg(not(target_arch = "wasm32"))]
@@ -173,14 +179,22 @@ impl Runner for SystemRunner {
         cargo_jobs: usize,
     ) -> Result<CommandRun, RunError> {
         let label = command.label(package);
-        verify_execution::run_process(
-            &label,
-            "cargo",
-            command.arguments(package),
-            cancellation,
-            cargo_jobs,
-            &[],
-        )
+        let arguments: Vec<OsString> = match command {
+            ScopedCommand::Test => test_classification::fast_argv(package)
+                .map(|argv| argv.into_iter().skip(1).collect())
+                .map_err(|error| {
+                    RunError::Launch(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        error.to_string(),
+                    ))
+                })?,
+            _ => command
+                .arguments(package)
+                .into_iter()
+                .map(OsString::from)
+                .collect(),
+        };
+        verify_execution::run_process(&label, "cargo", arguments, cancellation, cargo_jobs, &[])
     }
 }
 
