@@ -233,12 +233,17 @@ impl AdmissionPreparation {
         &mut self,
         repository: &Repository,
         claim: &gate::ClaimCapture,
-    ) -> Result<(), ProveFailure> {
-        if let Some(staged) = refresh_staged_source(&self.staged, repository, claim)? {
-            self.staged = staged;
-        }
+    ) -> Result<bool, ProveFailure> {
+        let refreshed =
+            if let Some(staged) = refresh_staged_source(&self.staged, repository, claim)? {
+                self.staged = staged;
+                true
+            } else {
+                false
+            };
         self.verify_source()?;
-        self.verify_fingerprint_authority(repository)
+        self.verify_fingerprint_authority(repository)?;
+        Ok(refreshed)
     }
 
     pub(super) fn execute_live_checks(
@@ -942,7 +947,7 @@ impl ProveFailure {
         matches!(self, Self::Fault { .. })
     }
 
-    fn refusal(reason: impl Into<String>, detail: impl ToString) -> Self {
+    pub(super) fn refusal(reason: impl Into<String>, detail: impl ToString) -> Self {
         Self::Refusal {
             reason: reason.into(),
             detail: detail.to_string(),
