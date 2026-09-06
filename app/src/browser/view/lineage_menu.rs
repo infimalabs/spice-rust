@@ -49,7 +49,7 @@ fn render_axis(
     };
     html! {
         <div class="canvas-menu-page" data-menu-page={axis.as_str()}>
-            {render_global_settings(runtime, cursor, sender)}
+            {render_global_settings(runtime, sender)}
             <section class="canvas-menu-section canvas-menu-context">
                 <h2>{super::axis_label(axis)}</h2>
                 <div class="canvas-menu-setting">
@@ -58,6 +58,7 @@ fn render_axis(
                 </div>
                 <p class="canvas-menu-context-copy">{context}</p>
             </section>
+            {render_version_footer(cursor)}
         </div>
     }
 }
@@ -71,16 +72,18 @@ fn render_agents(
     let Some(runtime) = runtime else {
         return html! {
             <div class="canvas-menu-page" data-menu-page="agents">
-                {render_global_settings(None, cursor, sender)}
+                {render_global_settings(None, sender)}
                 <p>{"Waiting for resident teams…"}</p>
+                {render_version_footer(cursor)}
             </div>
         };
     };
     let Some(lanes) = runtime.lanes() else {
         return html! {
             <div class="canvas-menu-page" data-menu-page="agents">
-                {render_global_settings(Some(runtime), cursor, sender)}
+                {render_global_settings(Some(runtime), sender)}
                 <p>{"Waiting for lane state…"}</p>
+                {render_version_footer(cursor)}
             </div>
         };
     };
@@ -115,7 +118,7 @@ fn render_agents(
     };
     html! {
         <div class="canvas-menu-page" data-menu-page="agents">
-            {render_global_settings(Some(runtime), cursor, sender)}
+            {render_global_settings(Some(runtime), sender)}
             <section class="canvas-menu-section canvas-open-teams">
                 <h2>{"Open Team"}</h2>
                 if grouped_lineages.is_empty() {
@@ -144,15 +147,12 @@ fn render_agents(
                 solo_member_ids,
                 &solo_render,
             )}
+            {render_version_footer(cursor)}
         </div>
     }
 }
 
-fn render_global_settings(
-    runtime: Option<&CanvasRuntime>,
-    cursor: &str,
-    sender: &SenderHandle,
-) -> Html {
+fn render_global_settings(runtime: Option<&CanvasRuntime>, sender: &SenderHandle) -> Html {
     let settings = runtime.and_then(CanvasRuntime::settings);
     let fast_mode = settings.is_some_and(|settings| settings.fast_mode);
     let enabled = settings.is_some()
@@ -166,36 +166,46 @@ fn render_global_settings(
     html! {
         <section class="canvas-menu-section canvas-menu-global">
             <h2>{"Global"}</h2>
-            <div class="canvas-menu-global-row">
-                <span class="bar-meta canvas-menu-cursor" aria-label="Global cursor">
-                    {format!("cursor {cursor}")}
-                </span>
-                <button
-                    class={classes!(
-                        "canvas-menu-setting",
-                        "canvas-menu-setting--action",
-                        fast_mode.then_some("canvas-menu-setting--checked"),
-                    )}
-                    type="button"
-                    role="menuitemcheckbox"
-                    aria-checked={fast_mode.to_string()}
-                    disabled={!enabled}
-                    title={if fast_mode {
-                        "Fast mode is on for supported agents"
-                    } else {
-                        "Fast mode is off for supported agents"
-                    }}
-                    {onclick}
-                >
-                    <strong>{"Fast mode"}</strong>
-                    <span>{if settings.is_some() {
-                        if fast_mode { "on" } else { "off" }
-                    } else {
-                        "loading"
-                    }}</span>
-                </button>
-            </div>
+            <button
+                class={classes!(
+                    "canvas-menu-setting",
+                    "canvas-menu-setting--action",
+                    fast_mode.then_some("canvas-menu-setting--checked"),
+                )}
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={fast_mode.to_string()}
+                disabled={!enabled}
+                title={if fast_mode {
+                    "Fast mode is on for supported agents"
+                } else {
+                    "Fast mode is off for supported agents"
+                }}
+                {onclick}
+            >
+                <strong>{"Fast mode"}</strong>
+                <span>{if settings.is_some() {
+                    if fast_mode { "on" } else { "off" }
+                } else {
+                    "loading"
+                }}</span>
+            </button>
         </section>
+    }
+}
+
+fn render_version_footer(cursor: &str) -> Html {
+    let version = wire::CanvasVersion::CURRENT;
+    html! {
+        <footer class="canvas-menu-footer">
+            <strong
+                class="canvas-menu-version"
+                data-canvas-version={version.to_string()}
+            >{format!("Canvas v{version}")}</strong>
+            <span class="bar-meta canvas-menu-cursor" aria-label="Global cursor">
+                {format!("cursor {cursor}")}
+            </span>
+        </footer>
     }
 }
 

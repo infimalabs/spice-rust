@@ -210,6 +210,24 @@ export async function assertCursorRelocation(page, artifacts, engine) {
       });
       assert.equal(await cursor.count(), 1, `${label} keeps one global cursor while open`);
       assert.equal(await cursor.isVisible(), true, `${label} reveals the global cursor with the open menu`);
+      const version = panel.locator(".canvas-menu-version");
+      const authoritativeVersion = await page.evaluate(async () => {
+        const bootstrap = new URL("/bootstrap", window.location.href);
+        bootstrap.search = window.location.search;
+        const response = await fetch(bootstrap);
+        return response.headers.get("x-spice-canvas-version");
+      });
+      assert.ok(authoritativeVersion, `${label} bootstrap supplies the Canvas version authority`);
+      assert.equal(
+        await version.getAttribute("data-canvas-version"),
+        authoritativeVersion,
+        `${label} footer version matches the live Rust bootstrap authority`,
+      );
+      assert.equal(
+        (await version.innerText()).trim(),
+        `Canvas v${authoritativeVersion}`,
+        `${label} footer renders the authoritative version`,
+      );
       assert.equal(
         await cursor.getAttribute("data-relocation-identity"),
         cursorIdentity,
@@ -260,7 +278,10 @@ export async function assertCursorRelocation(page, artifacts, engine) {
       const panelGeometry = await panel.evaluate((node) => {
         const rect = node.getBoundingClientRect();
         const summary = node.parentElement.querySelector(":scope > summary").getBoundingClientRect();
-        const row = node.querySelector(".canvas-menu-global-row").getBoundingClientRect();
+        const global = node.querySelector(".canvas-menu-global").getBoundingClientRect();
+        const footerNode = node.querySelector(".canvas-menu-footer");
+        const footer = footerNode.getBoundingClientRect();
+        const version = node.querySelector(".canvas-menu-version").getBoundingClientRect();
         const cursor = node.querySelector(".canvas-menu-cursor").getBoundingClientRect();
         const fastMode = node.querySelector('[role="menuitemcheckbox"]').getBoundingClientRect();
         return {
@@ -272,14 +293,20 @@ export async function assertCursorRelocation(page, artifacts, engine) {
           viewportWidth: innerWidth,
           viewportHeight: innerHeight,
           documentWidth: document.documentElement.scrollWidth,
-          rowLeft: row.left,
-          rowRight: row.right,
+          globalLeft: global.left,
+          globalRight: global.right,
+          footerLeft: footer.left,
+          footerRight: footer.right,
+          footerLast: Array.from(footerNode.parentElement.children)
+            .filter((child) => !child.hasAttribute("data-menu-overflow-fixture"))
+            .at(-1) === footerNode,
           cursorLeft: cursor.left,
           cursorRight: cursor.right,
+          versionLeft: version.left,
+          versionRight: version.right,
           fastModeLeft: fastMode.left,
           fastModeRight: fastMode.right,
-          cursorPrecedesFastMode: node.querySelector(".canvas-menu-cursor").nextElementSibling
-            === node.querySelector('[role="menuitemcheckbox"]'),
+          cursorInFooter: node.querySelector(".canvas-menu-cursor").parentElement === footerNode,
         };
       });
       assert.ok(
@@ -292,20 +319,55 @@ export async function assertCursorRelocation(page, artifacts, engine) {
         `${label} anchors and bounds the Spice menu below its summary`,
       );
       assert.equal(
-        panelGeometry.cursorPrecedesFastMode,
+        panelGeometry.cursorInFooter && panelGeometry.footerLast,
         true,
-        `${label} places the global cursor immediately before Fast mode`,
+        `${label} places the global cursor in the final footer row`,
       );
       assert.ok(
-        panelGeometry.cursorLeft >= panelGeometry.rowLeft - 0.5
-          && panelGeometry.cursorRight <= panelGeometry.fastModeLeft + 0.5
-          && panelGeometry.fastModeRight <= panelGeometry.rowRight + 0.5,
-        `${label} keeps the cursor and Fast mode ordered without overlap inside the Global row`,
+        panelGeometry.versionLeft >= panelGeometry.footerLeft - 0.5
+          && panelGeometry.versionRight <= panelGeometry.cursorLeft + 0.5
+          && panelGeometry.cursorRight <= panelGeometry.footerRight + 0.5,
+        `${label} keeps version and cursor ordered without overlap inside the footer`,
       );
       assert.ok(
-        panelGeometry.rowLeft >= panelGeometry.left - 0.5
-          && panelGeometry.rowRight <= panelGeometry.right + 0.5,
-        `${label} keeps the Global row inside the Spice menu`,
+        panelGeometry.globalLeft >= panelGeometry.left - 0.5
+          && panelGeometry.globalRight <= panelGeometry.right + 0.5
+          && panelGeometry.fastModeLeft >= panelGeometry.globalLeft - 0.5
+          && panelGeometry.fastModeRight <= panelGeometry.globalRight + 0.5,
+        `${label} keeps Fast mode alone inside the Global section`,
+      );
+      const longFooter = await panel.locator(".canvas-menu-footer").evaluate((footer) => {
+        const version = footer.querySelector(".canvas-menu-version");
+        const cursor = footer.querySelector(".canvas-menu-cursor");
+        const original = [version.textContent, cursor.textContent];
+        version.textContent = "Canvas version authority with a deliberately long build label";
+        cursor.textContent = `cursor ${"1234567890".repeat(12)}`;
+        const footerBounds = footer.getBoundingClientRect();
+        const versionBounds = version.getBoundingClientRect();
+        const cursorBounds = cursor.getBoundingClientRect();
+        const result = {
+          contained: versionBounds.left >= footerBounds.left - 0.5
+            && cursorBounds.right <= footerBounds.right + 0.5,
+          cursorClipped: cursor.scrollWidth > cursor.clientWidth,
+          cursorOverflow: getComputedStyle(cursor).textOverflow,
+          nonOverlapping: versionBounds.right <= cursorBounds.left + 0.5,
+          versionClipped: version.scrollWidth > version.clientWidth,
+          versionOverflow: getComputedStyle(version).textOverflow,
+        };
+        [version.textContent, cursor.textContent] = original;
+        return result;
+      });
+      assert.deepEqual(
+        longFooter,
+        {
+          contained: true,
+          cursorClipped: true,
+          cursorOverflow: "ellipsis",
+          nonOverlapping: true,
+          versionClipped: true,
+          versionOverflow: "ellipsis",
+        },
+        `${label} ellipsizes long version and cursor labels without overlap`,
       );
       assert.ok(
         panelGeometry.documentWidth <= panelGeometry.viewportWidth,
