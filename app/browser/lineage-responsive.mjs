@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 
+import { TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
+
 async function settleLayout(page) {
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve())));
 }
@@ -7,10 +9,17 @@ async function settleLayout(page) {
 async function settleRightEdge(page, fleet) {
   const element = await fleet.elementHandle();
   try {
-    await page.waitForFunction((node) => {
-      const overflow = node.scrollWidth - node.clientWidth;
-      return Math.abs(node.scrollLeft - overflow) <= 1;
-    }, element, { timeout: 1_000 });
+    await waitForPageFunction(
+      page,
+      "the fleet settles at its right edge",
+      TRANSITION_MS,
+      (node) => {
+        const overflow = node.scrollWidth - node.clientWidth;
+        return Math.abs(node.scrollLeft - overflow) <= 1;
+      },
+      element,
+      { observed: () => fleetGeometry(fleet) },
+    );
   } finally {
     await element.dispose();
   }
@@ -118,9 +127,10 @@ export async function assertLineageResponsiveLayout(page, console_) {
     await page.waitForTimeout(50);
     const traversed = await fleetGeometry(fleet);
     assert.ok(traversed.scrollLeft < traversed.overflowX, "keyboard traverses toward older lanes");
+    await page.setViewportSize({ width: 600, height: 988 });
+    await settleLayout(page);
     await fleet.evaluate((element) => element.lastElementChild.remove());
     cloned = false;
-    await page.setViewportSize({ width: 600, height: 988 });
     await settleLayout(page);
     await settleRightEdge(page, fleet);
     assertTrack(await fleetGeometry(fleet), "600px two-lane floor overflow", true);
