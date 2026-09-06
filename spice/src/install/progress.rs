@@ -615,7 +615,7 @@ fn verify_retirement_progress(
             InstallStatus::Applying if index < applying_completed => absent,
             InstallStatus::Applying if index == applying_completed => planned || absent,
             InstallStatus::Applying => planned,
-            InstallStatus::Complete => absent,
+            InstallStatus::Complete => observed.is_none(),
             InstallStatus::Unapplying => {
                 let reverse = record.plan.retirements.len() - 1 - index;
                 if reverse < reversed {

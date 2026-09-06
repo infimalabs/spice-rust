@@ -102,6 +102,22 @@ fn gate_warm_admission_benchmark() {
 }
 
 #[test]
+fn repeated_installed_hook_survives_retired_fold_parent_progress() {
+    let _serial = BENCHMARK.lock().expect("serialize admission benchmarks");
+    let fixture = Fixture::new();
+    fixture.seed_proofs();
+
+    for invocation in 1..=2 {
+        let output = fixture.invoke_hook();
+        assert!(
+            output.status.success(),
+            "installed hook invocation {invocation} failed: {}",
+            streams(&output)
+        );
+    }
+}
+
+#[test]
 fn linked_worktree_uses_shared_fingerprints_inside_the_hard_bound() {
     let _serial = BENCHMARK.lock().expect("serialize admission benchmarks");
     let fixture = Fixture::new();
