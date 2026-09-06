@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::envelope::Seq;
 
-/// A registered fold name, spelled as a path of single lower-case words.
+/// A derived projection name, spelled as a path of single lower-case words.
 ///
 /// The registry that binds each name to its six trait answers is generated
 /// separately; this type enforces the spelling only.

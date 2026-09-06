@@ -5,16 +5,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::cli::Contract;
 use crate::journal_lock::JournalLock;
-use fold::{
-    FoldId, INVENTORY, Materialization, Source, Store, TaskEffortReducer, select_task_effort,
-    task_effort_answer,
-};
 use spice::repository::{Repository, StateError, StatePaths};
 use wire::manifest::{JOURNAL_BACKUP_VERSION, JournalBackupManifest, JournalBackupMember};
 use wire::{
-    Actor, Digest, Domain, Fault, FaultClass, FoldReport, FoldState, JournalBackup, JournalReindex,
-    JournalReport, JournalVerification, Outcome, Overflow, Packed, Producer, Refusal, Reply,
-    ReplyPosition, Seq, SeqRange, ThreadReport, WireVersion,
+    Actor, Digest, Domain, Fault, FaultClass, JournalBackup, JournalReindex, JournalReport,
+    JournalVerification, Outcome, Overflow, Packed, Producer, Refusal, Reply, ReplyPosition, Seq,
+    SeqRange, ThreadReport, WireVersion,
 };
 
 const AUTHORITY_MEMBER: &str = "spicejournal.sqlite3";
@@ -64,93 +60,6 @@ pub(crate) fn thread(matches: &clap::ArgMatches, contract: &Contract) -> Outcome
         Ok((position, body)) => reply(position, body),
         Err(failure) => failure.outcome(),
     }
-}
-
-pub(crate) fn folds(contract: &Contract) -> Outcome<FoldReport> {
-    match folds_inner(contract) {
-        Ok((position, body)) => reply(position, body),
-        Err(failure) => failure.outcome(),
-    }
-}
-
-pub(crate) fn replay(matches: &clap::ArgMatches, contract: &Contract) -> Outcome<FoldReport> {
-    let selected = matches.get_one::<String>("FOLD");
-    match replay_inner(selected.map(String::as_str), contract) {
-        Ok((position, body)) => reply(position, body),
-        Err(failure) => failure.outcome(),
-    }
-}
-
-pub(crate) fn task_effort(
-    matches: &clap::ArgMatches,
-    contract: &Contract,
-) -> Outcome<wire::intent::EffortAnswer> {
-    let read = wire::intent::EffortRead {
-        task: match matches.get_one::<String>("HANDLE") {
-            Some(handle) => match handle.parse() {
-                Ok(handle) => Some(handle),
-                Err(error) => {
-                    return Failure::refusal(
-                        "task::effort-handle-refused",
-                        "one canonical task handle",
-                        error.to_string(),
-                        "pass HANDLE as <UPPER-STEM>-<key>, or omit it to read every task",
-                    )
-                    .outcome();
-                }
-            },
-            None => None,
-        },
-    };
-    match task_effort_inner(&read, contract) {
-        Ok((position, body)) => reply(position, body),
-        Err(failure) => failure.outcome(),
-    }
-}
-
-fn task_effort_inner(
-    read: &wire::intent::EffortRead,
-    contract: &Contract,
-) -> Result<(ReplyPosition, wire::intent::EffortAnswer), Failure> {
-    let state = state()?;
-    let reader = open_reader(&state)?;
-    let (cursor, snapshot) = read_authenticated(&state, &reader, contract, |read| {
-        read.fact_snapshot().map_err(snapshot_failure)
-    })?;
-    let parent = state
-        .folds()
-        .parent()
-        .expect("folds path has a data parent");
-    fs::create_dir_all(parent).map_err(|error| {
-        Failure::environment(
-            "fold::parent-unavailable",
-            format!("{}: {error}", parent.display()),
-        )
-    })?;
-    let mut store = Store::open(state.folds()).map_err(fold_failure)?;
-    let materialization = store
-        .read_or_rebuild_snapshot(&snapshot, &TaskEffortReducer)
-        .map_err(fold_failure)?
-        .materialization;
-    let answer = task_effort_answer(&materialization)
-        .map_err(|error| Failure::store("fold::payload-invalid", error))?;
-    let materialized_cursor = materialization.cursor.position().ok_or_else(|| {
-        Failure::store(
-            "fold::cursor-missing",
-            "task::effort returned an empty cursor for non-empty authority",
-        )
-    })?;
-    if materialized_cursor != cursor {
-        return Err(Failure::store(
-            "fold::snapshot-mismatch",
-            format!(
-                "task::effort materialization is at {materialized_cursor}, authority snapshot is at {cursor}"
-            ),
-        ));
-    }
-    let selected = select_task_effort(answer, read)
-        .map_err(|error| Failure::store("fold::selection-failed", error))?;
-    Ok((ReplyPosition::Snapshot(materialized_cursor), selected))
 }
 
 fn backup_inner(output: &Path) -> Result<(SeqRange, JournalBackup), Failure> {
@@ -355,152 +264,6 @@ fn thread_inner(
             entries: pack_facts(thread.entries, cursor)?,
         },
     ))
-}
-
-fn folds_inner(contract: &Contract) -> Result<(ReplyPosition, FoldReport), Failure> {
-    let state = state()?;
-    let reader = open_reader(&state)?;
-    let (cursor, ()) = read_authenticated(&state, &reader, contract, |_| Ok(()))?;
-    let path = state.folds();
-    let states = match fs::symlink_metadata(path) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => missing_fold_states(),
-        Err(error) => {
-            return Err(Failure::environment(
-                "fold::store-unavailable",
-                format!("{}: {error}", path.display()),
-            ));
-        }
-        Ok(metadata) if metadata.file_type().is_file() => {
-            let store = Store::open_read_only(path).map_err(fold_failure)?;
-            current_fold_states(&store, cursor)?
-        }
-        Ok(_) => {
-            return Err(Failure::refusal(
-                "fold::store-refused",
-                "a regular disposable folds database",
-                path.display().to_string(),
-                "remove the non-file obstruction and replay the folds",
-            ));
-        }
-    };
-    Ok((
-        ReplyPosition::Snapshot(cursor),
-        FoldReport { folds: states },
-    ))
-}
-
-fn replay_inner(
-    selected: Option<&str>,
-    contract: &Contract,
-) -> Result<(ReplyPosition, FoldReport), Failure> {
-    let state = state()?;
-    let reader = open_reader(&state)?;
-    let (cursor, snapshot) = read_authenticated(&state, &reader, contract, |read| {
-        read.verify().map_err(verify_failure)?;
-        read.fact_snapshot().map_err(snapshot_failure)
-    })?;
-    let selected = selected
-        .map(|name| {
-            name.parse::<FoldId>().map_err(|error| {
-                Failure::repairable(
-                    "fold::selection-refused",
-                    "one fold from the closed inventory",
-                    error.to_string(),
-                    wire::SpiceCommand::new("fold", std::iter::empty::<&str>())
-                        .expect("the static fold recovery command is valid"),
-                )
-            })
-        })
-        .transpose()?;
-    let folds = selected.as_ref().map_or(FoldId::ALL, std::slice::from_ref);
-    let path = state.folds();
-    let parent = path.parent().expect("folds path has a data parent");
-    fs::create_dir_all(parent).map_err(|error| {
-        Failure::environment(
-            "fold::parent-unavailable",
-            format!("{}: {error}", parent.display()),
-        )
-    })?;
-    let mut store = Store::open(path).map_err(fold_failure)?;
-    for fold in folds {
-        rebuild_registered_fold(&mut store, &snapshot, *fold)?;
-    }
-    Ok((
-        ReplyPosition::Snapshot(cursor),
-        FoldReport {
-            folds: current_fold_states(&store, cursor)?,
-        },
-    ))
-}
-
-/// Exhaustive typed replay dispatch for the closed fold inventory.
-///
-/// Adding a registry row without its operational reducer makes this match fail
-/// to compile. There is deliberately no generic fact-bag branch.
-fn rebuild_registered_fold(
-    store: &mut Store,
-    snapshot: &journal::FactSnapshot,
-    fold: FoldId,
-) -> Result<(), Failure> {
-    match fold {
-        FoldId::TaskEffort => {
-            store
-                .read_or_rebuild_snapshot(snapshot, &TaskEffortReducer)
-                .map_err(fold_failure)?;
-        }
-    }
-    Ok(())
-}
-
-fn current_fold_states(store: &Store, authority: Seq) -> Result<Vec<FoldState>, Failure> {
-    store
-        .snapshot()
-        .map_err(fold_failure)?
-        .into_iter()
-        .map(|(fold, current)| {
-            if current
-                .as_ref()
-                .and_then(|state| state.cursor.position())
-                .is_some_and(|cursor| cursor > authority)
-            {
-                return Err(Failure::refusal(
-                    "fold::generation-ahead",
-                    format!("a fold cursor no later than authority snapshot {authority}"),
-                    format!("{fold} materialization is ahead of that snapshot"),
-                    "retry against current resident authority",
-                ));
-            }
-            Ok(fold_state(fold, current.as_ref()))
-        })
-        .collect()
-}
-
-fn missing_fold_states() -> Vec<FoldState> {
-    INVENTORY
-        .definitions()
-        .iter()
-        .map(|definition| fold_state(definition.fold, None))
-        .collect()
-}
-
-fn fold_state(fold: FoldId, materialization: Option<&Materialization>) -> FoldState {
-    let definition = INVENTORY.definition(fold);
-    let recovery = definition.recovery_command();
-    FoldState {
-        fold: fold.as_str().to_owned(),
-        generation: materialization.map(|state| state.generation),
-        reducer_version: materialization.map(|state| state.reducer_version),
-        cursor: materialization.and_then(|state| state.cursor.position()),
-        horizon: materialization.and_then(|state| state.horizon.position()),
-        recovery,
-        sources: definition
-            .sources
-            .iter()
-            .copied()
-            .map(Source::provenance)
-            .collect(),
-        payload: materialization.map(|state| state.payload().clone()),
-    }
 }
 
 fn read_authenticated<T, F>(
@@ -735,21 +498,6 @@ fn commit_failure(error: journal::CommitError) -> Failure {
         journal::CommitError::Fault(_) => {
             Failure::store("journal::recovery-failed", error.to_string())
         }
-    }
-}
-
-fn fold_failure(error: fold::StoreError) -> Failure {
-    match error {
-        fold::StoreError::Corrupt { .. }
-        | fold::StoreError::Refused(_)
-        | fold::StoreError::SchemaVersion { .. } => Failure::repairable(
-            "fold::materialization-refused",
-            "one current deterministic materialization",
-            error.to_string(),
-            wire::SpiceCommand::new("journal", ["replay"])
-                .expect("the static journal replay recovery command is valid"),
-        ),
-        _ => Failure::store("fold::store-failed", error.to_string()),
     }
 }
 
@@ -1042,23 +790,6 @@ enum Failure {
 }
 
 impl Failure {
-    fn repairable(
-        reason: impl Into<String>,
-        expected: impl Into<String>,
-        observed: impl Into<String>,
-        command: wire::SpiceCommand,
-    ) -> Self {
-        Self::Refusal(Refusal::repairable(
-            command,
-            wire::RefusalDiagnostic::new(
-                reason.into(),
-                None,
-                Some(expected.into()),
-                Some(observed.into()),
-            ),
-        ))
-    }
-
     fn refusal(
         reason: impl Into<String>,
         expected: impl Into<String>,

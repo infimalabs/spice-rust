@@ -7,7 +7,6 @@ pub(super) struct RuntimePaths {
     pub(super) runtime: PathBuf,
     pub(super) data: PathBuf,
     pub(super) journal: PathBuf,
-    pub(super) folds: PathBuf,
     pub(super) resident: PathBuf,
     pub(super) canvas: PathBuf,
     pub(super) lane_canvas: PathBuf,
@@ -59,7 +58,7 @@ struct SurfaceLaunch<'a> {
     daemon: Option<ChildStatus>,
 }
 
-// Runtime policy and trust identity are folds of this one captured generation.
+// Runtime policy and trust identity derive from this one captured generation.
 pub(super) struct StartupSurface {
     pub(super) config: SurfaceConfig,
     pub(super) trust: crate::trust_command::Surface,
@@ -124,7 +123,6 @@ impl RuntimePaths {
             runtime: state.runtime().to_path_buf(),
             data: state.data().to_path_buf(),
             journal: state.journal().to_path_buf(),
-            folds: state.folds().to_path_buf(),
             resident: state.resident().to_path_buf(),
             canvas: state.canvas().to_path_buf(),
             lane_canvas: state.lane_canvas().to_path_buf(),

@@ -57,14 +57,14 @@ pub use maintenance::{
 pub use model::{Asset, FileImage, GeneratedImage, Location, Operation, Retirement};
 use model::{ObservedFile, ReceiptGeneration, RepositoryIdentity};
 
-const PLAN_VERSION: u16 = 12;
-const RECORD_VERSION: u16 = 12;
+const PLAN_VERSION: u16 = 13;
+const RECORD_VERSION: u16 = 13;
 const RETIREMENT_WITNESS_MISMATCH: &str =
     "migration rollback archive does not match its retirement witnesses";
 const MIGRATABLE_RECORD_VERSION: u16 = 7;
 const FORWARD_MIGRATABLE_RECORD_VERSION: u16 = 8;
 const INLINE_ROLLBACK_RECORD_VERSION: u16 = 9;
-const PREVIOUS_RECORD_VERSION: u16 = 11;
+const PREVIOUS_RECORD_VERSION: u16 = 12;
 /// Environment marker exported only by the installed pre-commit launcher.
 pub const INSTALLED_PRE_COMMIT_ENVIRONMENT: &str = "SPICE_SHELL_HOOK_INSTALLED_APPLIANCE"; // env-policy: allow
 const LEGACY_RECORD_VERSIONS: [(u16, &str); 6] = [
@@ -98,6 +98,7 @@ const SKILL_PATH: &str = ".spice-install/agents/skills/spice/SKILL.md";
 const BINARY_PATH: &str = ".spice-install/bin/spice";
 const RETIRED_XTASK_PATH: &str = ".spice-install/bin/xtask";
 const RETIRED_XTASK_GUARD_PATH: &str = ".spice-install/bin/xtask.guard";
+const RETIRED_FOLD_STORE_PATH: &str = ".spice-rs/data/spicefolds.sqlite3";
 
 const SKILL: &str = ::std::include_str!("../agent/SKILL.md");
 
@@ -137,6 +138,14 @@ pub fn configure_test_maintenance_now(now: Option<std::ffi::OsString>) {
 #[doc(hidden)]
 pub fn publish_test_version_7_receipt(repository: &Repository) -> Result<(), InstallError> {
     record::publish_test_version_7_receipt(repository)
+}
+
+/// Rewrites one complete debug fixture receipt into the immediately previous
+/// schema so process tests can exercise the current forward migration.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub fn publish_test_version_12_receipt(repository: &Repository) -> Result<(), InstallError> {
+    record::publish_test_version_12_receipt(repository)
 }
 
 /// Side-effect-free canonical installation plan.
@@ -606,10 +615,14 @@ fn build_plan_over(
     }
 
     let record = bind_destination(repository.common_dir(), RECORD_PATH)?;
-    let planned_retirements = [RETIRED_XTASK_PATH, RETIRED_XTASK_GUARD_PATH]
-        .into_iter()
-        .map(|path| retirement(repository, installed, path, compacting))
-        .collect::<Result<Vec<_>, _>>()?;
+    let planned_retirements = [
+        RETIRED_XTASK_PATH,
+        RETIRED_XTASK_GUARD_PATH,
+        RETIRED_FOLD_STORE_PATH,
+    ]
+    .into_iter()
+    .map(|path| retirement(repository, installed, path, archiving))
+    .collect::<Result<Vec<_>, _>>()?;
     let (retirements, rollback_retirements): (Vec<_>, Vec<_>) =
         planned_retirements.into_iter().unzip();
     let hook_activation = spice_binary
@@ -634,6 +647,8 @@ fn build_plan_over(
             installed,
             &operations,
             &observed_operations,
+            &retirements,
+            &rollback_retirements,
         )?,
     };
     let plan = InstallPlan {
@@ -654,25 +669,34 @@ fn current_rollback_archive(
     repository: &Repository,
     installed: Option<&InstallPlan>,
     operations: &[Operation],
-    observed: &[Option<FileImage>],
+    observed_operations: &[Option<FileImage>],
+    retirements: &[Retirement],
+    observed_retirements: &[Option<FileImage>],
 ) -> Result<Option<RollbackArchive>, InstallError> {
     let Some(archive) = archive else {
         return Ok(None);
     };
     let installed = installed.expect("a carried rollback archive belongs to an installed plan");
-    if installed
+    let operations_unchanged = installed
         .operations
         .iter()
         .map(|operation| operation.asset)
-        .eq(operations.iter().map(|operation| operation.asset))
-    {
+        .eq(operations.iter().map(|operation| operation.asset));
+    let retirements_unchanged = installed
+        .retirements
+        .iter()
+        .map(|retirement| retirement.path.as_str())
+        .eq(retirements
+            .iter()
+            .map(|retirement| retirement.path.as_str()));
+    if operations_unchanged && retirements_unchanged {
         return archive.to_current().map(Some);
     }
 
     let mut rollback = archive.decode(repository)?;
     rollback.operations = operations
         .iter()
-        .zip(observed)
+        .zip(observed_operations)
         .map(|(operation, observed)| {
             installed
                 .operations
@@ -684,6 +708,21 @@ fn current_rollback_archive(
                 )
         })
         .collect();
+    let previous_retirements = std::mem::take(&mut rollback.retirements);
+    rollback.retirements = retirements
+        .iter()
+        .zip(observed_retirements)
+        .map(|(retirement, observed)| {
+            installed
+                .retirements
+                .iter()
+                .position(|installed| installed.path == retirement.path)
+                .map_or_else(
+                    || observed.clone(),
+                    |index| previous_retirements[index].clone(),
+                )
+        })
+        .collect();
     RollbackArchive::new(&rollback).map(Some)
 }
 
@@ -691,44 +730,37 @@ fn retirement(
     repository: &Repository,
     installed: Option<&InstallPlan>,
     path: &str,
-    compacting: bool,
+    archiving: bool,
 ) -> Result<(Retirement, Option<FileImage>), InstallError> {
     let (bound, observed) = destination_state(repository, Location::CommonGit, path)?;
-    let previous = installed
-        .and_then(|plan| {
-            plan.retirements
-                .iter()
-                .find(|retirement| retirement.path == path)
-        })
-        .map_or_else(
-            || observed.clone(),
-            |retirement| retirement.previous.clone(),
-        );
-    let rollback_image = compacting
+    let installed = installed.and_then(|plan| {
+        plan.retirements
+            .iter()
+            .find(|retirement| retirement.path == path)
+    });
+    let previous = installed.map_or_else(
+        || observed.clone(),
+        |retirement| retirement.previous.clone(),
+    );
+    let compact_new = archiving && installed.is_none();
+    let rollback_image = compact_new
         .then(|| observed.as_ref().map(|observed| observed.image.clone()))
         .flatten();
-    let superseded = compacting
+    let superseded = compact_new
         .then(|| observed.as_ref().map(ObservedFile::generated))
         .flatten();
-    let rollback_witness = if compacting {
+    let rollback_witness = if compact_new {
         superseded.clone()
     } else {
-        installed
-            .and_then(|plan| {
-                plan.retirements
-                    .iter()
-                    .find(|retirement| retirement.path == path)
-            })
-            .and_then(Retirement::rollback_witness)
-            .cloned()
+        installed.and_then(Retirement::rollback_witness).cloned()
     };
     Ok((
         Retirement {
             path: path.to_owned(),
             destination: bound.destination,
             parent: bound.parent,
-            previous: (!compacting).then_some(previous).flatten(),
-            observed: (!compacting).then_some(observed).flatten(),
+            previous: (!compact_new).then_some(previous).flatten(),
+            observed: (!compact_new).then_some(observed).flatten(),
             superseded,
             rollback: rollback_witness,
         },

@@ -55,7 +55,7 @@ use wire::{
     Derived, Digest, Disposition, DoctorObservation, DoctorSubsystem, DoctorToolBounds,
     DoctorToolCancellation, DoctorToolMode, DoctorToolNetwork, DoctorToolRequirement,
     DoctorToolSource, Domain, DurationWord, Envelope, Fact, FactKind, Fault, FaultClass,
-    FindingHead, FindingState, FoldName, FoldState, Hello, Instant, JournalReport, JournalRestore,
+    FindingHead, FindingState, FoldName, Hello, Instant, JournalReport, JournalRestore,
     LaneResidency, LaneSession, LeaseHead, LineageSubscription, MessageLocus, Name,
     OperatorDirection, Origin, Outcome, Overflow, Packed, Phase, Producer, ProofEvidence,
     Provenance, Refusal, ReleaseNotes, ReleaseNotesEntry, ReleasePlanObservations,

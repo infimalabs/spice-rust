@@ -52,11 +52,10 @@ fn validate_operation_inventory(
         Asset::GitReferenceTransaction,
         Asset::HookEntry,
         Asset::HookStatic,
-        Asset::HookWrapperSpice,
         Asset::Skill,
         Asset::Binary,
     ];
-    let expected = if plan.version != PLAN_VERSION {
+    let expected = if !matches!(plan.version, PLAN_VERSION | PREVIOUS_RECORD_VERSION) {
         let length = previous.len()
             - usize::from(
                 plan.operations
@@ -113,13 +112,21 @@ fn validate_retirement_inventory(plan: &InstallPlan, migratable: bool) -> Result
             ));
         }
     } else {
-        let expected = [RETIRED_XTASK_PATH, RETIRED_XTASK_GUARD_PATH];
+        let expected = if plan.version == PLAN_VERSION {
+            &[
+                RETIRED_XTASK_PATH,
+                RETIRED_XTASK_GUARD_PATH,
+                RETIRED_FOLD_STORE_PATH,
+            ][..]
+        } else {
+            &[RETIRED_XTASK_PATH, RETIRED_XTASK_GUARD_PATH][..]
+        };
         if plan.retirements.len() != expected.len()
             || plan
                 .retirements
                 .iter()
                 .zip(expected)
-                .any(|(retirement, path)| retirement.path != path)
+                .any(|(retirement, path)| retirement.path != *path)
         {
             return Err(InstallError::InvalidRecord(
                 "install retirement inventory is not exact and ordered".to_owned(),

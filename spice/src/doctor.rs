@@ -561,7 +561,6 @@ mod tests {
             concat!("std::", "process"),
             concat!("std::", "net"),
             concat!("journal", "::", "Journal", "::", "open"),
-            concat!("fold", "::", "Store", "::", "open", "("),
             concat!("Command", "::"),
             concat!("Tcp", "Stream"),
             concat!("Udp", "Socket"),

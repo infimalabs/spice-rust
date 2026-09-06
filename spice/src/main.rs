@@ -335,11 +335,8 @@ fn dispatch_native_repository_queries(
 ) {
     match contract.path {
         ["journal"] => deliver(&journal_command::report(contract), form),
-        ["journal", "replay"] => deliver(&journal_command::replay(leaf, contract), form),
         ["journal", "reindex"] => deliver(&journal_command::reindex(), form),
         ["journal", "verify"] => deliver(&journal_command::verify(contract), form),
-        ["fold"] => deliver(&journal_command::folds(contract), form),
-        ["task", "effort"] => deliver(&journal_command::task_effort(leaf, contract), form),
         ["thread"] => deliver(&journal_command::thread(leaf, contract), form),
         ["version"] => deliver(&version_outcome(), form),
         ["release", "notes"] => deliver_release_notes(&release_command::notes(leaf), form),

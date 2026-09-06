@@ -191,7 +191,6 @@ The vocabulary is deliberate. These words carry contracts.
 | **baseline** | the shared line a lane integrates with | an upstream |
 | **battery** | the deterministic ordered selection of verifications admitted for one run | a mutable or implicit selection |
 | **lineage** | one logical thing followed across copies | a log |
-| **fold** | a projection built from a fact source | a cache |
 | **maxim** | a curated near-universal taste rule | a lint rule |
 | **counsel** | taste offered while the agent writes, as steering it may answer either way | enforcement |
 | **oops** | a cheap, private admission of a mistake | a bug report |

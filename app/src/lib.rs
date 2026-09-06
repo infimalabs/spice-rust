@@ -2,7 +2,7 @@
 //!
 //! This crate compiles to wasm and is embedded in the appliance that serves
 //! it. It depends only on `wire`, so the socket is its complete system
-//! boundary: journal, board, fold, lane, and trust machinery are unreachable
+//! boundary: journal, board, lane, and trust machinery are unreachable
 //! from browser code, and a server field the app needs but wire lacks is a
 //! compile-time contract gap rather than an internal import.
 //!
@@ -70,10 +70,9 @@ mod speech;
 
 pub use pane::{Declined, GrantPane, Principal, ReadPane, SteerPane, settled};
 pub use runtime::{
-    BoardView, CanvasRuntime, EffortState, EffortWithheld, FACT_PAGE_LIMIT, FactRow, LaneActivity,
-    LaneMember, LaneRow, LaneStatus, LaneView, RuntimeEvent, Stale, StreamApplication,
-    StreamDirective, StreamTerminal, THREAD_PAGE_LIMIT, effort_identity_tag, effort_is_zero,
-    stale_reads,
+    BoardView, CanvasRuntime, FACT_PAGE_LIMIT, FactRow, LaneActivity, LaneMember, LaneRow,
+    LaneStatus, LaneView, RuntimeEvent, Stale, StreamApplication, StreamDirective, StreamTerminal,
+    THREAD_PAGE_LIMIT, stale_reads,
 };
 pub use socket::{Admitted, Session};
 pub use state::{Answer, Applied, BrowserState, CAUSAL_HEADERS, CausalLink, ChainEnd, ChainWalk};

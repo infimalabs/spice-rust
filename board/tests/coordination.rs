@@ -10,8 +10,8 @@ use board::{
     Active, Entry, Preview, Snapshot, SnapshotReadError, Transition, Urgency, View, apply,
     digest_of, graph, handout,
 };
-use fold::Cursor;
 use journal::{FactCause, Journal, JournalWrite};
+use wire::JournalCursor as Cursor;
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Digest, Domain, Instant, LeaseHead, Origin,
     Phase, Producer, Seq, TaskHandle, TaskHead, TaskStamp, WorkflowHead, body,

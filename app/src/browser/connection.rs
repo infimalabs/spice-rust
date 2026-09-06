@@ -553,7 +553,6 @@ async fn dispatch_action(
             drain_submissions(principal, writer, pending, submissions).await
         }
         ClientAction::Refresh => send_refresh(principal, writer, pending, submissions).await,
-        ClientAction::Effort => send_effort(principal, writer, pending).await,
         ClientAction::FastMode(fast_mode) => {
             send_fast_mode(principal, writer, pending, fast_mode).await
         }
@@ -1193,5 +1192,5 @@ async fn send_stream_request(
 
 mod refresh;
 mod responses;
-use refresh::{send_after_frame, send_effort, send_refresh};
+use refresh::{send_after_frame, send_refresh};
 use responses::handle_incoming;

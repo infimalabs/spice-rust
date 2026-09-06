@@ -146,7 +146,6 @@ fn every_contract_has_an_executable_landing_disposition() {
     assert_eq!(landing(&["task", "list"]), Landing::Landed);
     assert_eq!(landing(&["task", "status"]), Landing::Landed);
     assert_eq!(landing(&["task", "show"]), Landing::Landed);
-    assert_eq!(landing(&["task", "effort"]), Landing::Landed);
     assert_eq!(landing(&["recall"]), Landing::Landed);
     assert_eq!(landing(&["steer"]), Landing::Landed);
     assert_eq!(landing(&["steer", "cancel"]), Landing::Landed);
@@ -169,13 +168,28 @@ fn every_contract_has_an_executable_landing_disposition() {
         &["backup"][..],
         &["restore"][..],
         &["journal"][..],
-        &["journal", "replay"][..],
         &["journal", "reindex"][..],
         &["journal", "verify"][..],
-        &["fold"][..],
         &["thread"][..],
     ] {
         assert_eq!(landing(path), Landing::Landed, "{path:?}");
+    }
+}
+
+#[test]
+fn retired_fold_commands_have_no_parser_contract_or_landing() {
+    for path in [
+        &["task", "effort"][..],
+        &["journal", "replay"][..],
+        &["fold"][..],
+    ] {
+        assert!(contract_at(contracts(), path).is_none(), "{path:?}");
+        assert_eq!(landing(path), Landing::Unaccounted, "{path:?}");
+        let arguments = std::iter::once("spice").chain(path.iter().copied());
+        assert!(
+            command().try_get_matches_from(arguments).is_err(),
+            "{path:?}"
+        );
     }
 }
 

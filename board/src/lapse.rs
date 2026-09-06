@@ -643,6 +643,7 @@ mod tests {
                 manual_projects: Vec::new(),
                 auto_projects: Vec::new(),
             }],
+            renewals: Vec::new(),
         });
         journal.apply(write).expect("seed");
         claim(&mut journal, 31);

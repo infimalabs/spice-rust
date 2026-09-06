@@ -86,7 +86,6 @@ fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunti
                 let axis = render.axis.clone();
                 let mosaic = render.mosaic.clone();
                 let menu_open = render.menu_open.clone();
-                let sender = render.sender.clone();
                 render_pill(
                     super::axis_label(candidate),
                     candidate.question(),
@@ -94,9 +93,6 @@ fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunti
                     watchband::badge(axis_count(candidate, runtime)),
                     false,
                     Callback::from(move |_| {
-                        if candidate == Axis::Magnitude {
-                            send_action(&sender, ClientAction::Effort);
-                        }
                         axis.set(candidate);
                         mosaic.set(false);
                         menu_open.set(false);

@@ -23,7 +23,7 @@ const agentGeometryOwners = Object.freeze({
   plane: ":scope > .lane-mosaic-plane",
 });
 const axisPanes = new Map([
-  ["Metrics", ["Effort", "Pressure", "Residue", "Consent Volume"]],
+  ["Metrics", ["Pressure", "Residue", "Consent Volume"]],
   ["Tasks", ["Tasks", "Claims", "Deferrals", "Reviews"]],
   ["Team", ["Lanes", "Worktrees", "Lineage", "Occupancy", "Residents"]],
   ["History", [

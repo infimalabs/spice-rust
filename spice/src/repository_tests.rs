@@ -45,10 +45,6 @@ fn main_and_nested_repositories_resolve_the_nearest_common_state() {
         state.journal(),
         common.join(".spice-rs/data/spicejournal.sqlite3")
     );
-    assert_eq!(
-        state.folds(),
-        common.join(".spice-rs/data/spicefolds.sqlite3")
-    );
     assert_eq!(state.locks(), common.join(".spice-rs/locks"));
     assert_eq!(state.proof(), common.join(".spice-rs/proof"));
     assert_eq!(state.resident(), common.join(".spice-rs/resident"));
@@ -280,7 +276,6 @@ fn state_admission_refuses_every_link_at_its_exact_component() {
         ("runtime", Path::new("")),
         ("data", Path::new("data")),
         ("journal", Path::new("data/spicejournal.sqlite3")),
-        ("folds", Path::new("data/spicefolds.sqlite3")),
         ("locks", Path::new("locks")),
         ("proof", Path::new("proof")),
         ("resident", Path::new("resident")),
@@ -339,7 +334,6 @@ fn state_admission_refuses_non_directory_parents_and_non_regular_leaves() {
 
     for (label, relative) in [
         ("journal", Path::new("data/spicejournal.sqlite3")),
-        ("folds", Path::new("data/spicefolds.sqlite3")),
         ("resident", Path::new("resident")),
         ("canvas", Path::new("canvas")),
     ] {

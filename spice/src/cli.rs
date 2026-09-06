@@ -158,7 +158,6 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::BoardGraph
         | CommandKind::BoardHandout
         | CommandKind::DocLedger
-        | CommandKind::EffortRead
         | CommandKind::GlobalSettingsRead
         | CommandKind::GlobalSettingsSet
         | CommandKind::TaskAdd
@@ -321,11 +320,8 @@ fn repository_landed(path: &[&str]) -> bool {
             | ["backup"]
             | ["restore"]
             | ["journal"]
-            | ["journal", "replay"]
             | ["journal", "reindex"]
             | ["journal", "verify"]
-            | ["fold"]
-            | ["task", "effort"]
             | ["thread"]
             | ["release", "publish"]
             | ["restore", "verify"]

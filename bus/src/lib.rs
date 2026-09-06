@@ -33,7 +33,7 @@ mod runtime {
     pub struct JournalCommit {
         first: u64,
         last: u64,
-        cursor: fold::Cursor,
+        cursor: journal::crossing::JournalCursor,
     }
 
     impl JournalCommit {
@@ -45,7 +45,7 @@ mod runtime {
             Self {
                 first: first.get(),
                 last: last.get(),
-                cursor: fold::Cursor::at(last),
+                cursor: journal::crossing::JournalCursor::at(last),
             }
         }
 
@@ -61,9 +61,9 @@ mod runtime {
             self.last
         }
 
-        /// Monotone fold cursor made visible by this commit.
+        /// Monotone journal cursor made visible by this commit.
         #[must_use]
-        pub const fn cursor(&self) -> fold::Cursor {
+        pub const fn cursor(&self) -> journal::crossing::JournalCursor {
             self.cursor
         }
     }

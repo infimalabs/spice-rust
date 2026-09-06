@@ -124,8 +124,8 @@ eligibility only through an accepted typed lapse transaction, without rewriting
 claim history. An explicit steal is a separate typed operation: it replaces the
 exact claim named by the command, and a displaced occupant learns through an
 ownership refusal rather than a fabricated inbox message. Claim context remains
-reconstructible through the claim's bounded lease, exact opening and closing
-source boundaries, and verified contiguous effort segments.
+reconstructible through the claim's bounded lease and exact opening and closing
+source boundaries.
 
 **Value:** two agents never hold the same task at once, and the board
 self-heals from crashes without an operator sweep. Independent tasks can still
@@ -216,7 +216,7 @@ no synthetic merge.
 Every such landing carries its task, project, phase, and the agent session that
 did it, while the journal and board retain every transition whether it produced
 a merge or only advanced to an already-containing baseline. That division makes
-release notes, the effort ledger, and fleet forensics queries instead of
+release notes and fleet forensics queries instead of
 archaeology without pretending a clean review changed Git.
 
 ### Every task says where it came from

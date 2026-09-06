@@ -26,7 +26,6 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::BoardGraph
         | CommandKind::BoardHandout
         | CommandKind::DocLedger
-        | CommandKind::EffortRead
         | CommandKind::TaskAdd
         | CommandKind::TaskOopsAdd
         | CommandKind::TasteProposalAdd

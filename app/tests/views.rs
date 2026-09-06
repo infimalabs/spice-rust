@@ -35,8 +35,7 @@ fn descend_axes() -> Vec<Axis> {
 /// Adding a variant to [`Pane`] without adding it here is `E0004`, so this
 /// chain is complete by construction rather than by review.
 fn descend_panes() -> Vec<Pane> {
-    std::iter::successors(Some(Pane::Effort), |pane| match pane {
-        Pane::Effort => Some(Pane::Pressure),
+    std::iter::successors(Some(Pane::Pressure), |pane| match pane {
         Pane::Pressure => Some(Pane::Residue),
         Pane::Residue => Some(Pane::ConsentVolume),
         Pane::ConsentVolume => Some(Pane::Tasks),

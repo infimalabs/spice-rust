@@ -14,8 +14,8 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use wire::body::DirectiveAttachment;
 use wire::intent::{
-    BoardRead, ConsentPolicy, ConsentRead, EffortRead, GlobalSettingsRead, GlobalSettingsSet,
-    LaneAction, LaneArrange, LaneRead, LaneSeat, LaneState, LineageArrange, LineageArrangement,
+    BoardRead, ConsentPolicy, ConsentRead, GlobalSettingsRead, GlobalSettingsSet, LaneAction,
+    LaneArrange, LaneRead, LaneSeat, LaneState, LineageArrange, LineageArrangement,
     LineageConfigure, LineageLife, SteerInbox, SteerSend, TaskAnswer, TaskNote,
 };
 use wire::{
@@ -330,8 +330,6 @@ enum ClientAction {
     /// Wake the connection vendor after a composer synchronously queues work.
     DrainSubmissions,
     Refresh,
-    /// Derive the expensive task-effort answer on explicit Magnitude demand.
-    Effort,
     FastMode(bool),
     /// Fetch the next retained page behind one member's oldest visible card.
     MessageHistory {
@@ -403,7 +401,6 @@ enum PendingKind {
     },
     Consent,
     Policy,
-    Effort,
     Settings,
     LaneSeat,
     /// One member arrangement whose stale refusal must refresh the roster.
@@ -446,7 +443,6 @@ enum CurrentRead {
     Inbox,
     Consent,
     Policy,
-    Effort,
     Settings,
 }
 
@@ -458,7 +454,6 @@ impl PendingKind {
             Self::Inbox { .. } => Some(CurrentRead::Inbox),
             Self::Consent => Some(CurrentRead::Consent),
             Self::Policy => Some(CurrentRead::Policy),
-            Self::Effort => Some(CurrentRead::Effort),
             Self::Settings => Some(CurrentRead::Settings),
             Self::LaneSeat
             | Self::LaneArrange
@@ -767,12 +762,9 @@ fn note_submit_callback(
     })
 }
 
-fn refresh_callback(sender: SenderHandle, axis: UseStateHandle<Axis>) -> Callback<MouseEvent> {
+fn refresh_callback(sender: SenderHandle, _axis: UseStateHandle<Axis>) -> Callback<MouseEvent> {
     Callback::from(move |_| {
         send_action(&sender, ClientAction::Refresh);
-        if *axis == Axis::Magnitude {
-            send_action(&sender, ClientAction::Effort);
-        }
     })
 }
 

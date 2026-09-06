@@ -257,7 +257,6 @@ are path-only.
 flowchart LR
   D["spice doctor"] --> Board["board"]
   D --> Journal["journal"]
-  D --> Fold["fold"]
   D --> Steering["steering"]
   D --> Lane["lane"]
   D --> Transport["transport"]
@@ -265,7 +264,6 @@ flowchart LR
   D --> Release["release"]
   Board --> R["one rollup"]
   Journal --> R
-  Fold --> R
   Steering --> R
   Lane --> R
   Transport --> R
@@ -274,7 +272,7 @@ flowchart LR
 ```
 
 **Invariant —** One top-level rollup aggregates the closed subsystem roster:
-board, journal, fold, steering, lane, transport, installation, and release.
+board, journal, steering, lane, transport, installation, and release.
 "Check everything" is a command, not a checklist in a document.
 
 **Invariant —** Host-probing checks stay **out of hook verdicts**. Diagnosing the

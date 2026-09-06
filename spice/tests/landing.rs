@@ -106,7 +106,6 @@ const CASES: &[Case] = &[
     case("task list", &["task", "list"]),
     case("task status", &["task", "status"]),
     case("task show", &["task", "show", "READY-12345678"]),
-    case("task effort", &["task", "effort"]),
     case("task next", &["task", "next"]),
     case("task recover", &["task", "recover", "READY-12345678"]),
     case("task reclaim", &["task", "reclaim"]),
@@ -200,10 +199,8 @@ const CASES: &[Case] = &[
     case("backup", &["backup", "readiness-backup"]),
     case("restore", &["restore", "missing"]),
     case("journal", &["journal"]),
-    case("journal replay", &["journal", "replay"]),
     case("journal reindex", &["journal", "reindex"]),
     case("journal verify", &["journal", "verify"]),
-    case("fold", &["fold"]),
     case("thread", &["thread", "1"]),
     case("release publish", &["release", "publish"]),
     Case {

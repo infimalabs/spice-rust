@@ -53,35 +53,6 @@ one guarded journal transaction. A pass that does not commit leaves neither;
 the continuation guard refuses gaps, stale heads, and implicit generation
 changes before either value crosses.
 
-### Claim-to-terminal task effort
-
-```mermaid
-flowchart LR
-  C["ClaimWon<br/>opening source boundary"] --> P["one workflow-phase attempt"]
-  T["TaskDone or TaskReviewed<br/>closing source boundary"] --> P
-  J["accounted transcript batches"] --> S["verified source-contiguous segments"]
-  P --> S
-  S --> A{"complete, contiguous,<br/>one exact launch identity?"}
-  A -- yes --> V["available usage + wall time"]
-  A -- no --> U["reason-coded unavailable"]
-  V --> G["aggregate by exact<br/>vendor / model / effort + phase"]
-```
-
-**Invariant —** One phase answer names its opening and closing facts, exact
-recorded source boundaries, renewal count, and every verified segment. Each
-segment retains lane, occupant, lineage, session, source generation, half-open
-positions, launch identity, and usage.
-
-**Invariant —** A missing terminal or source boundary, broken continuity or
-carry, unproved source replacement, attribution disagreement, malformed usage,
-missing or mixed launch identity, interruption, or arithmetic overflow produces
-stable reasons under `Unavailable`. An unavailable phase stays visible but
-enters no numeric aggregate.
-
-**Invariant —** Numeric totals and integer averages partition by exact vendor,
-model, reasoning effort, and workflow phase. Values from different launch
-identities never collapse into one comparable number.
-
 ### Canvas standing metrics
 
 ```mermaid

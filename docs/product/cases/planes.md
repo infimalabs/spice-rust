@@ -46,9 +46,6 @@
 | A decoded record is residue | its batch increments `residue_records` | [Transcript accounting retains typed usage and record counts](../invariants/session.md#metrics-transcript-accounting-retains-typed-usage-and-record-counts) |
 | A transcript is replaced under the same path | ingestion restarts at member 1, offset 0 and names the superseded source generation | [A source head is generation and position, not an offset](../invariants/session.md#metrics-a-source-head-is-generation-and-position-not-an-offset) |
 | Ingestion fails before its journal transaction commits | neither the batch nor the advanced head crosses; the same continuation remains eligible on retry | [An accounted batch and its advanced source head commit together](../invariants/session.md#metrics-an-accounted-batch-and-its-advanced-source-head-commit-together) |
-| A completed phase crosses a renewal or attributed membership cut | verified segments retain their exact occupant, lineage, session, source generation, and half-open positions | [Effort segments retain exact source and attribution](../invariants/session.md#metrics-effort-segments-retain-exact-source-and-attribution) |
-| A phase has no terminal boundary, a broken source chain, or disputed attribution | it remains visible with stable unavailability reasons and contributes to no aggregate | [Unavailable effort is reason-coded and excluded from aggregates](../invariants/session.md#metrics-unavailable-effort-is-reason-coded-and-excluded-from-aggregates) |
-| Available phases have different vendor, model, reasoning effort, or workflow phase | they occupy different aggregate partitions and are never summed as one comparable unit | [Effort aggregates partition by launch identity and phase](../invariants/session.md#metrics-effort-aggregates-partition-by-launch-identity-and-phase) |
 | Canvas Metrics mode is selected for a team | every member shows pending count, claim age, renewal age, and liveness; the badge counts members holding claims | [Canvas Metrics render current member standing](../invariants/session.md#metrics-canvas-metrics-render-current-member-standing) |
 
 ### Task documents
@@ -117,7 +114,7 @@
 | Situation | Expected | Ref |
 | --- | --- | --- |
 | A claim is taken | activity marker and claim metadata are set together | [Claiming is atomic](../invariants/identity.md#work-claiming-is-atomic) |
-| A claim is inspected after the fact | its bounded lease, exact opening and closing source boundaries, and verified contiguous effort segments are reconstructible | [Claims carry a bounded lease and an exact source boundary](../invariants/identity.md#work-claims-carry-a-bounded-lease-and-an-exact-source-boundary) |
+| A claim is inspected after the fact | its bounded lease and exact opening and closing source boundaries are reconstructible | [Claims carry a bounded lease and an exact source boundary](../invariants/identity.md#work-claims-carry-a-bounded-lease-and-an-exact-source-boundary) |
 | Two candidates tie on graph rank | locality breaks the tie, and only then | [Locality is the final tie-break and never overrides the graph](../invariants/identity.md#work-locality-is-the-final-tie-break-and-never-overrides-the-graph) |
 | A task is filed through a conventional authored or typed system route | it retains the corresponding `ack:`, `task:`, `gate:`, or `doc:` origin realm | [Every task names an origin realm](../invariants/identity.md#work-every-task-names-an-origin-realm) |
 | An authored task supplies another nonempty `class:value` origin | the open wire shape is accepted and preserved; no closed realm enum is imposed | [Every task names an origin realm](../invariants/identity.md#work-every-task-names-an-origin-realm) |

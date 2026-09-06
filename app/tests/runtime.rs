@@ -9,8 +9,6 @@ use wire::{
     Response, Seq, StreamFrame, ViewSubject, WireVersion,
 };
 
-#[path = "runtime/effort.rs"]
-mod effort;
 #[path = "runtime/invalidation_and_chronology.rs"]
 mod invalidation_and_chronology;
 #[path = "runtime/lane_authority.rs"]
