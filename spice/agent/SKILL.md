@@ -67,7 +67,11 @@ If continuity is clipped, recover only the detail needed to proceed with
   attribution trailers.
 - The normal pre-commit gate is the default constitution. Invoke it through
   `git commit` or `spice gate pre-commit`, and fix what it reports unless current
-  operator steering explicitly authorizes another path.
+  operator steering explicitly authorizes another path. Use
+  `git commit --no-verify` only under that current authorization and only after every known
+  blocking red is captured with its exact evidence as ready critical work. Task
+  completion's synthesized merge remains hook-free so another lane can take
+  that work, but its declared cheap integrated-tree admission still applies.
 - Complete implementation with `spice task done --validation TEXT`. Complete an
   assigned clean review with
   `spice task review HANDLE --finding clean --note NOTE`. While holding the
