@@ -30,7 +30,6 @@ pub(in crate::browser) use state::{ComposerAction, ComposerDrafts};
 
 const MAX_ATTACHMENTS: usize = wire::media::MAX_MEDIA_ITEMS;
 const MAX_ATTACHMENT_BYTES: f64 = wire::media::MAX_MEDIA_BYTES as f64;
-const RENEWAL_REQUEST: &str = "Renew your current task lease now.";
 const LANE_DRAG_MIME: &str = "application/x-spice-lane";
 
 /// Authority a detached draft may use for its next transition.
@@ -205,10 +204,14 @@ fn render_compose(
                             standing,
                         );
                         render_agent_composer(
+                            lineage.lane,
                             member,
                             standing,
                             epoch,
                             topology_revision,
+                            runtime
+                                .lanes()
+                                .and_then(|lanes| lanes.renewal(lineage.lane, member.lane)),
                             standing.pending,
                             can_send,
                             can_wake,
@@ -658,25 +661,23 @@ fn visible_agent_prose(
 }
 
 fn renewal_callback(
+    topology_revision: u64,
+    lineage: CanonicalUuid,
     lane: CanonicalUuid,
-    occupant: Option<CanonicalUuid>,
-    epoch: CanonicalUuid,
+    requested: bool,
     sender: &SenderHandle,
 ) -> Callback<MouseEvent> {
     let sender = sender.clone();
     Callback::from(move |_| {
-        if let Some(occupant) = occupant {
-            let _sent = send_action(
-                &sender,
-                ClientAction::Steer {
-                    lane,
-                    occupant,
-                    epoch,
-                    message: RENEWAL_REQUEST.to_owned(),
-                    attachments: Vec::new(),
-                },
-            );
-        }
+        let _sent = send_action(
+            &sender,
+            ClientAction::RenewLane {
+                topology_revision,
+                lineage,
+                lane,
+                requested,
+            },
+        );
     })
 }
 
@@ -782,10 +783,12 @@ fn primary_composer_dragging(
     reason = "one member composer needs its standing and shared lineage interaction handles"
 )]
 fn render_agent_composer(
+    lineage: CanonicalUuid,
     member: &crate::runtime::LaneMember,
     standing: &Standing,
     epoch: CanonicalUuid,
     topology_revision: u64,
+    renewal: Option<&wire::LaneRenewalRecord>,
     pending: usize,
     can_send: bool,
     can_wake: bool,
@@ -805,8 +808,15 @@ fn render_agent_composer(
         .filter(|_| can_send)
         .map(|occupant| SubmissionTarget::Resident { occupant, epoch })
         .or_else(|| wake.then_some(SubmissionTarget::Wake));
-    let renew_enabled = can_send && occupant.is_some();
-    let renew = renewal_callback(lane_id, occupant, epoch, sender);
+    let renewal =
+        watchband::agent_renewal_control(&standing.label, occupant.is_some(), can_send, renewal);
+    let renew = renewal_callback(
+        topology_revision,
+        lineage,
+        lane_id,
+        renewal.next_requested,
+        sender,
+    );
     let onkeydown = keyboard_submit(
         lane_id,
         target,
@@ -854,7 +864,7 @@ fn render_agent_composer(
                     pending,
                     drafts,
                     onkeydown.clone(),
-                    renew_enabled,
+                    renewal,
                     renew,
                     stream,
                     prose,
@@ -886,7 +896,7 @@ fn render_composer_body(
     pending: usize,
     drafts: &UseReducerHandle<ComposerDrafts>,
     onkeydown: Callback<KeyboardEvent>,
-    renew_enabled: bool,
+    renewal: watchband::AgentRenewalControl,
     renew: Callback<MouseEvent>,
     stream: ComposerStreamLink,
     prose: String,
@@ -921,7 +931,7 @@ fn render_composer_body(
                 lane_key,
                 standing,
                 status,
-                renew_enabled,
+                renewal,
                 renew,
                 stream,
                 prose,
@@ -957,7 +967,7 @@ fn render_composer_heading(
     lane_key: &str,
     standing: &Standing,
     status: crate::runtime::LaneStatus,
-    renew_enabled: bool,
+    renewal: watchband::AgentRenewalControl,
     renew: Callback<MouseEvent>,
     stream: ComposerStreamLink,
     prose: String,
@@ -1016,12 +1026,20 @@ fn render_composer_heading(
                     <button
                         class="agent-renew-request"
                         type="button"
-                        disabled={!renew_enabled}
-                        title="Ask this agent to renew its current task lease"
+                        disabled={renewal.disabled}
+                        aria-label={renewal.label.clone()}
+                        aria-pressed={renewal.pressed.to_string()}
+                        title={renewal.title.clone()}
+                        data-renewal-state={renewal.state}
+                        data-renewal-lineage={standing.lineage_id.to_string()}
+                        data-renewal-lane={lane.to_string()}
+                        data-renewal-requested={renewal.pressed.to_string()}
+                        data-renewal-next-requested={renewal.next_requested.to_string()}
+                        data-renewal-refusal={renewal.refusal.clone()}
                         onclick={renew}
                     >
-                        <strong>{"Renew this agent"}</strong>
-                        <span>{"request renewal"}</span>
+                        <strong>{renewal.heading}</strong>
+                        <span>{renewal.detail}</span>
                     </button>
                 </div>
             </details>

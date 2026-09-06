@@ -20,6 +20,10 @@ use wire::{CanonicalUuid, TaskHandle};
 
 use crate::runtime::LaneRow;
 
+mod renewal;
+
+pub use renewal::{AgentRenewalControl, agent_renewal_control};
+
 /// Accent slots the band cycles through.
 ///
 /// Slots are dealt from the right control edge, matching the predecessor:

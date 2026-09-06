@@ -11,6 +11,7 @@ use std::rc::Rc;
 use wire::intent::{
     BoardAnswer, BoardTask, ConsentPolicyAnswer, ConsentQueueAnswer, DirectiveAnswer,
     GlobalSettingsAnswer, InboxAnswer, LaneAnswer, LaneChangeAnswer, LaneLiveness,
+    LaneRenewalAnswer,
 };
 use wire::{
     Accepted, Actor, AgentActivityKind, AgentMessage, CanonicalUuid, CommandKind, FactKind,
@@ -94,6 +95,22 @@ pub struct LaneView {
     pub topology_revision: u64,
     /// Safe current lane rows.
     pub lanes: Vec<LaneRow>,
+    /// Durable renewal state keyed by the independently steerable member.
+    renewals: BTreeMap<CanonicalUuid, wire::LaneRenewalRecord>,
+}
+
+impl LaneView {
+    /// Current durable renewal state for one exact team member.
+    #[must_use]
+    pub fn renewal(
+        &self,
+        lineage: CanonicalUuid,
+        lane: CanonicalUuid,
+    ) -> Option<&wire::LaneRenewalRecord> {
+        self.renewals
+            .get(&lane)
+            .filter(|renewal| renewal.lineage_id == lineage)
+    }
 }
 
 /// One Canvas lane: a lineage and every independently steerable member in it.
@@ -221,6 +238,13 @@ impl From<&LaneAnswer> for LaneView {
                 "an admitted lane answer names one policy per lineage"
             );
         }
+        let mut renewals = BTreeMap::new();
+        for renewal in &answer.renewals {
+            assert!(
+                renewals.insert(renewal.lane, renewal.clone()).is_none(),
+                "an admitted lane answer names one renewal state per member"
+            );
+        }
         let mut lineages = Vec::<LaneRow>::new();
         for lane in &answer.lanes {
             let member = LaneMember {
@@ -262,6 +286,7 @@ impl From<&LaneAnswer> for LaneView {
             state: answer.state,
             topology_revision: answer.topology_revision,
             lanes: lineages,
+            renewals,
         }
     }
 }
@@ -818,6 +843,26 @@ impl CanvasRuntime {
                     answer.lane, answer.from, answer.to
                 ),
             )
+        });
+    }
+
+    /// Record one typed agent-renewal mutation without fabricating a lane table.
+    pub fn apply_lane_renewal(&mut self, admitted: &Admitted<Response<LaneRenewalAnswer>>) {
+        self.apply_response(admitted, |_runtime, answer| {
+            let state = answer.renewal.as_ref().map_or_else(
+                || "request cleared".to_owned(),
+                |renewal| match &renewal.state {
+                    wire::LaneRenewalState::Requested { .. } => "successor requested".to_owned(),
+                    wire::LaneRenewalState::HandoffPending { .. } => "handoff pending".to_owned(),
+                    wire::LaneRenewalState::SuccessorStarted { .. } => {
+                        "successor started".to_owned()
+                    }
+                    wire::LaneRenewalState::LaunchRefused { reason, .. } => {
+                        format!("launch refused: {reason}")
+                    }
+                },
+            );
+            (format!("Agent renewal for lane {}", answer.lane), state)
         });
     }
 

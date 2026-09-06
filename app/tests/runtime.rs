@@ -15,6 +15,8 @@ mod invalidation_and_chronology;
 mod lane_authority;
 #[path = "runtime/message_history.rs"]
 mod message_history;
+#[path = "runtime/renewal.rs"]
+mod renewal;
 #[path = "runtime/stream_terminal.rs"]
 mod stream_terminal;
 mod support;
@@ -395,6 +397,13 @@ fn board_response(
 ///
 /// The display session identity crosses; capabilities remain outside this DTO.
 fn lane_response(rows: &[(&str, &str, Option<&str>, bool)]) -> Vec<u8> {
+    lane_response_with_renewals(rows, Vec::new())
+}
+
+fn lane_response_with_renewals(
+    rows: &[(&str, &str, Option<&str>, bool)],
+    renewals: Vec<wire::LaneRenewalRecord>,
+) -> Vec<u8> {
     let subscriptions = rows
         .iter()
         .map(|(_, lineage_id, _, _)| {
@@ -455,7 +464,7 @@ fn lane_response(rows: &[(&str, &str, Option<&str>, bool)]) -> Vec<u8> {
                 topology_revision: 9,
                 lanes,
                 subscriptions,
-                renewals: Vec::new(),
+                renewals,
             },
         }),
     )

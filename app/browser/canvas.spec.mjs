@@ -65,7 +65,10 @@ import {
   assertSevenMemberComposerStrip,
 } from "./canvas-lineage-life.mjs";
 import { assertLineageDrainFailureTeardown } from "./canvas-lineage-teardown.mjs";
-import { assertTaskChipTypographyMatrix } from "./control-reference.mjs";
+import {
+  assertAgentRenewalRequest,
+  assertTaskChipTypographyMatrix,
+} from "./control-reference.mjs";
 import { assertLiveThreadCoalescing } from "./live-thread-coalescing.mjs";
 import { ownFixture, recordedVendorPids } from "./canvas-lifecycle.mjs";
 import { assertBoundaryLoadReading, withLoadReading } from "./canvas-load.mjs";
@@ -910,6 +913,13 @@ try {
           { artifacts, staleEpoch },
         );
         await assertTeamArrangement(lightPage, fixture, worktrees, artifacts);
+        const renewedTeam = lightPage.locator('[data-pane="agent-console"]');
+        await renewedTeam.getByRole("tab", { name: /^Lanes/ }).first().click();
+        await assertAgentRenewalRequest(
+          lightPage,
+          renewedTeam.locator(".team-surface").first(),
+          fixture,
+        );
         lightMonitor.assertClean();
         darkMonitor.assertClean();
         await dark.close();
