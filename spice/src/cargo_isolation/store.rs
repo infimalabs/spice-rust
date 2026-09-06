@@ -173,6 +173,94 @@ pub(super) fn source_generation_authority(
     })
 }
 
+pub(super) fn readmit_source_generation(
+    home: &Path,
+    lockfile: &[u8],
+    host: &Host,
+) -> Result<SourceGenerationAuthority, IsolationError> {
+    let retained_homes = home
+        .parent()
+        .filter(|path| path.file_name() == Some(OsStr::new("homes")))
+        .ok_or_else(|| {
+            IsolationError::new(
+                "cargo-isolation::home-path-invalid",
+                format!("Cargo home is outside the admitted homes directory: {home:?}"),
+            )
+        })?;
+    let retained_root = retained_homes.parent().ok_or_else(|| {
+        IsolationError::new(
+            "cargo-isolation::home-path-invalid",
+            format!("Cargo home has no source-store root: {home:?}"),
+        )
+    })?;
+    if retained_root == host.store_root() {
+        return source_generation_authority(home, lockfile);
+    }
+    let retained = Layout::open_root(retained_root.to_path_buf())?;
+    let owner: HomeOwner = read_json(&home.join(OWNER))?;
+    let home_id = digest(
+        b"spice-cargo-home-v1",
+        &serde_json::to_vec(&owner).expect("home owner is serializable"),
+    );
+    if home.file_name() != Some(OsStr::new(&home_id)) {
+        return Err(IsolationError::new(
+            "cargo-isolation::home-owner-mismatch",
+            format!("home path does not match observed owner {owner:?}"),
+        ));
+    }
+    let expected = generation_digest(lockfile);
+    let current = Layout::open(host)?;
+    let (observed_generation, already_current) = match home_generation(home, &retained) {
+        Ok(generation) => (generation, false),
+        Err(retained_error) => match home_generation(home, &current) {
+            Ok(generation) => (generation, true),
+            Err(_) => return Err(retained_error),
+        },
+    };
+    if observed_generation != expected {
+        return Err(IsolationError::new(
+            "cargo-isolation::generation-lock-mismatch",
+            format!(
+                "retained Cargo home generation {observed_generation} does not match selected lock generation {expected}"
+            ),
+        ));
+    }
+    if already_current {
+        validate_generation(&current, &observed_generation)?;
+    } else {
+        validate_generation(&retained, &observed_generation)?;
+    }
+    let manifest = validate_generation(&current, &expected)?;
+    let _lock = acquire_lock(&retained, &format!("home-{home_id}"))?;
+    let observed: HomeOwner = read_json(&home.join(OWNER))?;
+    let observed_generation_after_lock = if already_current {
+        home_generation(home, &current)?
+    } else {
+        home_generation(home, &retained)?
+    };
+    if observed != owner || observed_generation_after_lock != observed_generation {
+        return Err(IsolationError::new(
+            "cargo-isolation::home-owner-mismatch",
+            "retained Cargo home changed while re-admission was preparing",
+        ));
+    }
+    if !already_current {
+        publish_bytes(&home.join(CONFIG), home_config(&manifest)?.as_bytes())?;
+    }
+    let manifest_path = current.generations.join(&expected).join(MANIFEST);
+    let bytes = fs::read(&manifest_path).map_err(|error| {
+        IsolationError::io(
+            "cargo-isolation::generation-manifest-unavailable",
+            &manifest_path,
+            error,
+        )
+    })?;
+    Ok(SourceGenerationAuthority {
+        generation: expected,
+        manifest: digest(b"spice-cargo-source-authority-v1", &bytes),
+    })
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct StoreMarker {

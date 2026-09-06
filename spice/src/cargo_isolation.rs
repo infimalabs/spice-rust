@@ -391,6 +391,15 @@ pub fn source_generation_authority(
     store::source_generation_authority(home, lockfile)
 }
 
+/// Rebind an owned retained home to the current store for the same lock generation.
+pub fn readmit_source_generation(
+    home: &Path,
+    lockfile: &[u8],
+    host: &Host,
+) -> Result<SourceGenerationAuthority, IsolationError> {
+    store::readmit_source_generation(home, lockfile, host)
+}
+
 /// Reclaim only old recognized temporaries and unreferenced generations.
 pub fn cleanup(host: &Host) -> Result<CleanupReport, IsolationError> {
     store::cleanup(host)
