@@ -102,7 +102,7 @@ body:has(.shell--mosaic),
 @media (prefers-reduced-motion: reduce) { .canvas-menu-trigger--fast .canvas-menu-flame::before { animation: none; opacity: .82; } }
 .canvas-navigation {
   display: flex;
-  flex: 0 1 18rem;
+  flex: 0 1 26rem;
   min-width: 10rem;
   justify-content: safe flex-end;
   gap: 3px;
@@ -114,6 +114,13 @@ body:has(.shell--mosaic),
   border-color: color-mix(in srgb, var(--line) 74%, transparent);
   font-size: .62rem;
 }
+.canvas-navigation .axis-button--secondary {
+  margin-left: 4px;
+  border-style: dashed;
+  color: var(--muted);
+  opacity: .78;
+}
+.canvas-navigation .axis-button--secondary.selected { opacity: 1; }
 .canvas-menu-panel {
   position: absolute;
   top: calc(100% + 4px);

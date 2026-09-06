@@ -72,10 +72,10 @@ async function findSevenMemberComposer(context, endpoint, lineageId) {
   const page = await context.newPage();
   const monitor = monitorPage(page);
   await page.goto(endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(page, "Agents");
+  await chooseCanvasView(page, "Lanes");
   const surface = page.locator(`.team-surface[data-lineage-id="${lineageId}"]`);
   await surface.waitFor();
-  await surface.getByRole("tab", { name: /^Compose/ }).click();
+  await surface.getByRole("tab", { name: /^Lanes/ }).click();
   const strip = surface.locator(":scope > .team-pane .team-composer > .team-agents");
   await strip.locator(":scope > .team-agent").nth(6).waitFor();
   return { monitor, strip };
@@ -262,7 +262,7 @@ export async function assertLineageLifeIsolation(browser) {
     const page = await context.newPage();
     const monitor = monitorPage(page);
     await page.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
-    await chooseCanvasView(page, "Agents");
+    await chooseCanvasView(page, "Lanes");
     const console = page.locator('[data-pane="agent-console"]');
     await console.waitFor();
     const drainSurface = console.locator(

@@ -55,7 +55,7 @@ export async function assertAuthoritySurface(page, seeded) {
 // keep launching stand-ins under later assertions, so it is spelled once here
 // rather than opened and closed by each of them.
 export async function driveTeam(page) {
-  await chooseCanvasView(page, "Agents");
+  await chooseCanvasView(page, "Lanes");
   const team = page.locator('[data-pane="agent-console"]');
   const lifetime = team.locator('.team-lifetime input[type="range"]');
   await lifetime.fill("1");

@@ -237,8 +237,15 @@ export async function assertCursorRelocation(page, artifacts, engine) {
       const navigation = page.locator(".canvas-navigation");
       assert.deepEqual(
         await navigation.locator(".pill-label").allTextContents(),
-        ["Tasks", "Metrics", "History", "Teams", "Agents"],
+        ["Team", "Metrics", "Tasks", "Lanes", "History"],
         `${label} exposes one ordered navigation rail`,
+      );
+      assert.deepEqual(
+        await navigation.locator(".axis-button").evaluateAll(
+          (buttons) => buttons.map((button) => button.dataset.navigationTier),
+        ),
+        ["primary", "primary", "primary", "primary", "secondary"],
+        `${label} keeps History outside the mirrored primary quartet`,
       );
       assert.equal(
         await page.locator(".task-pill-strip").count(),
@@ -266,7 +273,7 @@ export async function assertCursorRelocation(page, artifacts, engine) {
       );
       assert.ok(
         expandedGeometry.navigationRight <= expandedGeometry.summaryLeft + 1,
-        `${label} keeps Agents adjacent to and clear of the pepper trigger`,
+        `${label} keeps secondary History adjacent to and clear of the pepper trigger`,
       );
       assert.equal(expandedGeometry.summaryWidth, 43, `${label} keeps the cut-out trigger 43px wide`);
       assert.equal(expandedGeometry.summaryHeight, 30, `${label} keeps the pepper trigger 30px high`);
@@ -472,6 +479,16 @@ async function assertPepperDisclosure(page) {
 
     await trigger.click();
     await waitForDisclosure(page, true, "the pepper disclosure exposes Canvas destinations");
+    const destinations = navigation.getByRole("button");
+    await destinations.first().focus();
+    for (const [index, label] of ["Team", "Metrics", "Tasks", "Lanes", "History"].entries()) {
+      assert.match(
+        (await page.locator(":focus").innerText()).trim(),
+        new RegExp(`^${label}`),
+        `keyboard traversal follows visible navigation order at ${label}`,
+      );
+      if (index < 4) await page.keyboard.press("Tab");
+    }
     assert.equal(
       await taskStrip.evaluate((node) => node.scrollLeft),
       maximumScroll,
@@ -526,8 +543,8 @@ async function assertPepperDisclosure(page) {
     "the reopened pepper panel belongs to the selected destination",
   );
   await panel.getByRole("heading", { name: "Tasks", exact: true }).waitFor();
-  await chooseCanvasView(page, "Agents");
-  await waitForDisclosure(page, false, "the disclosure check restores the Agents workspace");
+  await chooseCanvasView(page, "Lanes");
+  await waitForDisclosure(page, false, "the disclosure check restores the Lanes workspace");
 }
 
 async function assertAxisMenu(page, view, copy) {
@@ -535,7 +552,7 @@ async function assertAxisMenu(page, view, copy) {
     Flow: "Tasks",
     Magnitude: "Metrics",
     Chronology: "History",
-    Topology: "Teams",
+    Topology: "Team",
   }[view] ?? view;
   await chooseCanvasView(page, view);
   const panel = await openSpiceMenu(page);
@@ -543,7 +560,7 @@ async function assertAxisMenu(page, view, copy) {
   assert.equal(
     await menuPage.getAttribute("data-menu-page"),
     view.toLowerCase(),
-    `${view} opens its own Spice panel rather than the Agents panel`,
+    `${view} opens its own Spice panel rather than the Lanes panel`,
   );
   assert.equal(await panel.locator(".canvas-team").count(), 0, `${view} renders no team manager`);
   await panel.getByRole("heading", { name: visibleView, exact: true }).waitFor();
@@ -580,26 +597,26 @@ async function assertResidentLineage(fixture, lane, lineage, policyLineage, reas
   );
 }
 
-/** Exercise the Agents-page Spice panel, shared navigation, and durable team moves. */
+/** Exercise the Lanes-page Spice panel, shared navigation, and durable team moves. */
 export async function assertTeamMenu(page, fixture, artifacts) {
-  await chooseCanvasView(page, "Agents");
+  await chooseCanvasView(page, "Lanes");
   await assertCursorRelocation(page, artifacts, "chromium");
   await assertPepperDisclosure(page);
   await chooseCanvasView(page, "Topology");
-  await page.getByRole("heading", { name: "Teams", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Team", exact: true }).waitFor();
   await openSpiceMenu(page);
   assert.equal(
     await page.getByRole("navigation", { name: "Canvas views" })
-      .getByRole("button", { name: /^Agents/ }).count(),
+      .getByRole("button", { name: /^Lanes/ }).count(),
     1,
-    "the analytics pages keep the same route back to live Agents",
+    "the analytics pages keep the same route back to live Lanes",
   );
   await assertAxisMenu(page, "Topology", /resident teams, seats, capabilities/i);
   await assertAxisMenu(page, "Chronology", /facts, command outcomes, and their causal thread/i);
-  await chooseCanvasView(page, "Agents");
+  await chooseCanvasView(page, "Lanes");
 
   let panel = await openSpiceMenu(page);
-  assert.equal(await panel.locator(".canvas-menu-page").getAttribute("data-menu-page"), "agents");
+  assert.equal(await panel.locator(".canvas-menu-page").getAttribute("data-menu-page"), "lanes");
   await panel.getByRole("heading", { name: "Global", exact: true }).waitFor();
   const fastMode = panel.getByRole("menuitemcheckbox", { name: /Fast mode/i });
   const trigger = page.locator(".canvas-menu > summary");
@@ -698,7 +715,7 @@ export async function assertTeamMenu(page, fixture, artifacts) {
   );
   assert.match(
     await panel.locator(".canvas-unteamed").innerText(),
-    /Agents Without Team[\s\S]*No unteamed agents/i,
+    /Lanes Without Team[\s\S]*No unteamed agents/i,
   );
 
   const initial = await reply(fixture, ["lane"]);

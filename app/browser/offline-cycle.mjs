@@ -28,9 +28,9 @@
 /// justified against the distribution of the thing it bounds.
 ///
 /// Usage: node app/browser/offline-cycle.mjs [--iterations N] [--bound MS]
-///                                           [--view Agents|Chronology|Flow|Magnitude|Topology]
+///                                           [--view Lanes|Chronology|Flow|Magnitude|Topology]
 ///
-/// Pointing `--view` at Agents reproduces the reported incident, because the
+/// Pointing `--view` at Lanes reproduces the reported incident, because the
 /// mosaic has no status element for the wait to ever see.
 
 import { mkdtemp, mkdir, realpath } from "node:fs/promises";
@@ -55,13 +55,13 @@ import {
 
 /// The views the cycle can be pointed at, which is the whole set the canvas has.
 ///
-/// `Agents` is the mosaic and is the reason this is an option at all: `view.rs`
+/// `Lanes` is the mosaic and is the reason this is an option at all: `view.rs`
 /// renders the topbar carrying `.status` only outside the mosaic, so a cycle
 /// pointed there waits for an element that is not in the document. That is the
 /// configuration that proved the reported failure was a deaf wait rather than a
 /// slow transition, and a harness that cannot be pointed back at it cannot
 /// demonstrate the failure it was built to diagnose.
-const VIEWS = ["Agents", "Chronology", "Flow", "Magnitude", "Topology"];
+const VIEWS = ["Lanes", "Chronology", "Flow", "Magnitude", "Topology"];
 
 function argument(name) {
   const index = process.argv.indexOf(name);
@@ -75,7 +75,7 @@ function refuse(name, raw, expected) {
 
 /// Read a numeric option, refusing anything that would silently measure nothing.
 ///
-/// `Number(undefined)` and `Number("Agents")` are both NaN, and a NaN iteration
+/// `Number(undefined)` and `Number("Lanes")` are both NaN, and a NaN iteration
 /// count makes the loop body unreachable while the closing comparison of zero
 /// passes against zero results still exits 0. A harness whose entire product is
 /// a pass rate must not be able to report success having run no cycles, so an

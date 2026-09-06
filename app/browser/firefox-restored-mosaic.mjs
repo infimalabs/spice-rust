@@ -312,7 +312,7 @@ export async function captureFirefoxAgentPageSpacing(
   const monitor = monitorPage(page);
   try {
     await page.goto(endpoint, { waitUntil: "networkidle" });
-    await chooseCanvasView(page, "Agents");
+    await chooseCanvasView(page, "Lanes");
     const committed = page.locator(
       '.mosaic-message-card[data-layout-phase="committed"]',
     );
@@ -348,10 +348,10 @@ export async function assertFirefoxRestoredMosaic(
   const monitor = monitorPage(page);
   try {
     await page.goto(endpoint, { waitUntil: "networkidle" });
-    await chooseCanvasView(page, "Agents");
+    await chooseCanvasView(page, "Lanes");
     await assertCursorRelocation(page, artifacts, "firefox");
     const console = page.locator('[data-pane="agent-console"]');
-    await console.getByRole("tab", { name: /^Compose/ }).click();
+    await console.getByRole("tab", { name: /^Lanes/ }).click();
     await assertLaneHeaderPipMatrix(page, console, artifacts, "firefox", "dark");
     const linkedComposer = console.locator(".agent-composer-stack").filter({
       has: page.locator(
@@ -412,15 +412,15 @@ export async function assertFirefoxRestoredMosaic(
       page,
       boundaries.newest,
       { width: 480, height: 468 },
-      "Firefox reported Agents viewport",
+      "Firefox reported Lanes viewport",
     );
-    await assertAgentWorkspaceGeometry(page, "Firefox reported Agents viewport");
+    await assertAgentWorkspaceGeometry(page, "Firefox reported Lanes viewport");
     await page.screenshot({ path: join(artifacts, "firefox-agents-reported-480x468.png") });
     await resizeCompactionViewport(
       page,
       boundaries.newest,
       { width: 1717, height: 1470 },
-      "Firefox restored Agents viewport",
+      "Firefox restored Lanes viewport",
     );
     await page.locator('[data-firefox-quote-fixture="true"]')
       .evaluate((fixture) => fixture.remove());
@@ -433,8 +433,8 @@ export async function assertFirefoxRestoredMosaic(
     );
 
     await page.reload({ waitUntil: "networkidle" });
-    await chooseCanvasView(page, "Agents");
-    await console.getByRole("tab", { name: /^Compose/ }).click();
+    await chooseCanvasView(page, "Lanes");
+    await console.getByRole("tab", { name: /^Lanes/ }).click();
     const restored = await settledMosaicCards(page, "after reload");
     assert.equal(restored.length, before.length, "Firefox reload restores every Mosaic card");
     await assertNaturalMessageFooterInsets(console, "Firefox reloaded Mosaic");

@@ -1,4 +1,4 @@
-//! Predecessor-style lane composer rendered inside the Agents surface.
+//! Predecessor-style lane composer rendered inside the Lanes surface.
 
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
@@ -45,7 +45,7 @@ enum SubmissionTarget {
 
 /// Render every live lineage as one packed surface.
 ///
-/// This is the sole Agents conversation path: each lineage owns exactly one
+/// This is the sole Lanes conversation path: each lineage owns exactly one
 /// composer and activity plane, however many independently steerable members
 /// the lineage contains.
 pub(super) fn render_lineage(
@@ -162,7 +162,7 @@ fn render_compose(
     controls: &view::AgentControls,
 ) -> Html {
     if lineage.members.is_empty() {
-        return empty("No agents are assigned. Open Info to add one.");
+        return empty("No agents are assigned. Open Team to add one.");
     }
     let authoritative_life = lineage.subscription;
     let control = lineage_controls.current(lineage.lane, authoritative_life);
@@ -352,14 +352,14 @@ fn render_details(
     html! {
         <div class={classes!(
             "team-detail-pane",
-            (mode == LineageMode::Info).then_some("with-seat")
+            (mode == LineageMode::Team).then_some("with-seat")
         )}>
             <div class="team-detail-grid">
                 {for lineage.members.iter().zip(standings.iter()).map(|(member, standing)| {
                     render_agent_details(member, standing, mode)
                 })}
             </div>
-            if mode == LineageMode::Info {
+            if mode == LineageMode::Team {
                 {view::render_seat_panel(Some(runtime), controls)}
             }
         </div>
@@ -558,7 +558,7 @@ fn render_agent_details(
                         </div>
                     </dl>
                 },
-                LineageMode::Info => html! {
+                LineageMode::Team => html! {
                     <dl>
                         <div><dt>{"Agent channel"}</dt><dd>{standing.lane.to_string()}</dd></div>
                         <div><dt>{"Occupant"}</dt><dd>{occupant}</dd></div>
@@ -577,7 +577,7 @@ fn render_agent_details(
                         </div>
                     </dl>
                 },
-                LineageMode::Compose | LineageMode::Tasks => Html::default(),
+                LineageMode::Lanes | LineageMode::Tasks => Html::default(),
             }}
         </article>
     }

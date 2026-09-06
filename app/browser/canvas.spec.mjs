@@ -510,9 +510,9 @@ table holds ${JSON.stringify(surface.withheld)}`,
 }
 
 async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
-  await chooseCanvasView(page, "Agents");
+  await chooseCanvasView(page, "Lanes");
   const team = page.locator('[data-pane="agent-console"]');
-  await team.getByRole("tab", { name: /^Compose/ }).click();
+  await team.getByRole("tab", { name: /^Lanes/ }).click();
   const lane = page.locator(`.team-agent[data-agent-lane="${seeded.lane}"]`);
   const activity = team.locator(`.mosaic-message-card[data-agent-lane="${seeded.lane}"]`);
   const quoteLane = page.locator(`.team-agent[data-agent-lane="${seeded.quoteLane}"]`);
@@ -951,10 +951,10 @@ try {
         await captureFirefoxAgentPageSpacing(resident.discovery.endpoint, artifacts, {
           file: "firefox-agents-empty-480x468.png",
           populated: false,
-          state: "Firefox empty Agents viewport",
+          state: "Firefox empty Lanes viewport",
         });
         const team = await seatAgentTeam(lightPage, fixture, worktrees);
-        await team.console.getByRole("tab", { name: /^Compose/ }).click();
+        await team.console.getByRole("tab", { name: /^Lanes/ }).click();
         const surface = team.console.locator(
           `.team-surface[data-lineage-id="${team.host.lineage_id}"]`,
         );
@@ -966,7 +966,7 @@ try {
         await captureFirefoxAgentPageSpacing(resident.discovery.endpoint, artifacts, {
           file: "firefox-agents-short-480x468.png",
           populated: true,
-          state: "Firefox short Agents viewport",
+          state: "Firefox short Lanes viewport",
         });
         lightMonitor.assertClean();
         await light.close();
@@ -1075,7 +1075,7 @@ try {
             resident = owner.ownResident(await startResident(fixture));
             await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
             lightMonitor.expectNetworkInterruption(false);
-            await chooseCanvasView(lightPage, "Agents");
+            await chooseCanvasView(lightPage, "Lanes");
           },
           artifacts,
         );
@@ -1100,7 +1100,7 @@ try {
         quoteProse: team.quoteProse,
         primaryHeadings: team.primaryHeadings,
       });
-      await team.console.getByRole("tab", { name: /^Compose/ }).first().click();
+      await team.console.getByRole("tab", { name: /^Lanes/ }).first().click();
       const primary = team.console.locator(
         `.team-surface[data-lineage-id="${team.host.lineage_id}"]`,
       );
@@ -1118,7 +1118,7 @@ try {
       await run.scenario("resident-restart", async () => {
         const firstEpoch = resident.discovery.epoch;
         const firstCapability = resident.discovery.capability;
-        await chooseCanvasView(lightPage, "Agents");
+        await chooseCanvasView(lightPage, "Lanes");
         const settingsMenu = lightPage.locator(".canvas-menu");
         if ((await settingsMenu.getAttribute("open")) === null) {
           await settingsMenu.locator(":scope > summary").click();
@@ -1142,7 +1142,7 @@ try {
         resident = owner.ownResident(await assertResidentRestart(fixture, lightPage, restart));
         lightMonitor.expectNetworkInterruption(false);
         await assertCanvas(lightPage, "light-restarted");
-        await chooseCanvasView(lightPage, "Agents");
+        await chooseCanvasView(lightPage, "Lanes");
         if ((await settingsMenu.getAttribute("open")) === null) {
           await settingsMenu.locator(":scope > summary").click();
         }
@@ -1155,7 +1155,7 @@ try {
         );
         await assertAgentSpacingRejectsFallbackOnlyMarkup(
           lightPage,
-          "light-restarted Agents spacing",
+          "light-restarted Lanes spacing",
         );
         await chooseCanvasView(lightPage, "Chronology");
         assert.equal(await lightPage.getByText(/Note appended to/).count(), 0,
@@ -1177,8 +1177,8 @@ try {
         await assertNoCredentialOrLandingGap(
           lightPage, [firstCapability, resident.discovery.capability],
         );
-        await chooseCanvasView(lightPage, "Agents");
-        await captureReportedAgentPage(lightPage, "restored short-content Agents page");
+        await chooseCanvasView(lightPage, "Lanes");
+        await captureReportedAgentPage(lightPage, "restored short-content Lanes page");
         lightMonitor.assertClean();
         await light.close();
       });

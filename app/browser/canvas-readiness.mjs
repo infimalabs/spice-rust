@@ -12,12 +12,12 @@ import {
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const artifacts = join(root, "artifacts/canvas");
 const agentGeometryOwners = Object.freeze({
-  activity: ':scope > .team-pane[data-team-mode="Compose"] '
-    + '> .team-mode-pane[data-mode="Compose"] > .team-compose > .team-activity-grid',
+  activity: ':scope > .team-pane[data-team-mode="Lanes"] '
+    + '> .team-mode-pane[data-mode="Lanes"] > .team-compose > .team-activity-grid',
   committedCard: ':scope > .lane-mosaic-plane > .lane-mosaic-track '
     + '> .mosaic-message-card[data-layout-phase="committed"]',
   emptyActivity: ":scope > .mosaic-message-empty",
-  emptyFleet: ':scope > .team-pane[data-team-mode="Compose"] > .empty',
+  emptyFleet: ':scope > .team-pane[data-team-mode="Lanes"] > .empty',
   measuringCard: ':scope > .lane-mosaic-plane > .lane-mosaic-track '
     + '> .mosaic-message-card[data-layout-phase="measuring"]',
   plane: ":scope > .lane-mosaic-plane",
@@ -25,7 +25,7 @@ const agentGeometryOwners = Object.freeze({
 const axisPanes = new Map([
   ["Metrics", ["Effort", "Pressure", "Residue", "Consent Volume"]],
   ["Tasks", ["Tasks", "Claims", "Deferrals", "Reviews"]],
-  ["Teams", ["Lanes", "Worktrees", "Lineage", "Occupancy", "Residents"]],
+  ["Team", ["Lanes", "Worktrees", "Lineage", "Occupancy", "Residents"]],
   ["History", [
     "Compaction",
     "Queues",
@@ -312,9 +312,9 @@ export async function assertAgentWorkspaceGeometry(page, state) {
     assert.equal(surface.pane.display, "flex", `${state} team pane participates in flex sizing`);
     assert.equal(surface.pane.minHeight, "0px", `${state} team pane releases its automatic minimum`);
     if (surface.compose) {
-      assert.equal(surface.compose.display, "flex", `${state} Compose participates in flex sizing`);
-      assert.equal(surface.compose.minHeight, "0px", `${state} Compose releases its automatic minimum`);
-      assert.equal(surface.compose.overflowY, "hidden", `${state} Compose does not duplicate scrolling`);
+      assert.equal(surface.compose.display, "flex", `${state} Lanes participates in flex sizing`);
+      assert.equal(surface.compose.minHeight, "0px", `${state} Lanes releases its automatic minimum`);
+      assert.equal(surface.compose.overflowY, "hidden", `${state} Lanes does not duplicate scrolling`);
       assert.equal(surface.activity.display, "flex", `${state} activity participates in flex sizing`);
       assert.equal(surface.activity.minHeight, "0px", `${state} activity releases its automatic minimum`);
       assert.ok(
@@ -336,10 +336,10 @@ export async function assertAgentSpacingRejectsFallbackOnlyMarkup(page, state) {
     surface.dataset.fallbackSpacingOwner = fallbackMarker;
     const pane = document.createElement("div");
     pane.className = "team-pane";
-    pane.dataset.teamMode = "Compose";
+    pane.dataset.teamMode = "Lanes";
     const mode = document.createElement("div");
     mode.className = "team-mode-pane";
-    mode.dataset.mode = "Compose";
+    mode.dataset.mode = "Lanes";
     const compose = document.createElement("div");
     compose.className = "team-compose";
     const activity = document.createElement("div");
@@ -435,9 +435,9 @@ export async function assertCanvas(page, scheme) {
   assert.equal(await page.locator(".canvas-navigation").count(), 0, "navigation stays collapsed");
   await page.getByLabel("Open Spice Canvas menu").click();
   assert.equal(
-    await page.locator(".canvas-navigation button.axis-button", { hasText: /^Agents/ }).count(),
+    await page.locator(".canvas-navigation button.axis-button", { hasText: /^Lanes/ }).count(),
     1,
-    "one disclosed Agents entry reaches the one conversation surface",
+    "one disclosed Lanes entry reaches the one conversation surface",
   );
   await page.getByLabel("Open Spice Canvas menu").click();
   const pixels = await page.evaluate(() => {
@@ -490,8 +490,8 @@ export async function assertCanvas(page, scheme) {
     assert.ok(await page.getByRole("button", { name: "Add note" }).isVisible());
     await workspace.evaluate((element) => element.scrollTo(0, 0));
   }
-  await chooseCanvasView(page, "Agents");
+  await chooseCanvasView(page, "Lanes");
   await page.locator('[data-pane="agent-console"]').waitFor();
-  await assertAgentWorkspaceGeometry(page, `${scheme} Agents page`);
+  await assertAgentWorkspaceGeometry(page, `${scheme} Lanes page`);
   await page.screenshot({ path: join(artifacts, `canvas-${scheme}.png`), fullPage: true });
 }

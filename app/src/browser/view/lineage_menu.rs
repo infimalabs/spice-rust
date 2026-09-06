@@ -1,4 +1,4 @@
-//! Agents-page lineage content for the global Spice menu.
+//! Lanes-page lineage content for the global Spice menu.
 
 use web_sys::DragEvent;
 
@@ -19,7 +19,7 @@ pub(super) fn render(
     if !mosaic {
         return render_axis(active_axis, axis_count, runtime, cursor, sender);
     }
-    render_agents(runtime, cursor, sender, lineage_controls)
+    render_lanes(runtime, cursor, sender, lineage_controls)
 }
 
 fn render_axis(
@@ -40,7 +40,7 @@ fn render_axis(
         ),
         Axis::Topology => (
             "lineages",
-            "Teams connects resident teams, seats, capabilities, and current ownership.",
+            "Team connects resident teams, seats, capabilities, and current ownership.",
         ),
         Axis::Chronology => (
             "events",
@@ -63,7 +63,7 @@ fn render_axis(
     }
 }
 
-fn render_agents(
+fn render_lanes(
     runtime: Option<&CanvasRuntime>,
     cursor: &str,
     sender: &SenderHandle,
@@ -71,7 +71,7 @@ fn render_agents(
 ) -> Html {
     let Some(runtime) = runtime else {
         return html! {
-            <div class="canvas-menu-page" data-menu-page="agents">
+            <div class="canvas-menu-page" data-menu-page="lanes">
                 {render_global_settings(None, sender)}
                 <p>{"Waiting for resident teams…"}</p>
                 {render_version_footer(cursor)}
@@ -80,7 +80,7 @@ fn render_agents(
     };
     let Some(lanes) = runtime.lanes() else {
         return html! {
-            <div class="canvas-menu-page" data-menu-page="agents">
+            <div class="canvas-menu-page" data-menu-page="lanes">
                 {render_global_settings(Some(runtime), sender)}
                 <p>{"Waiting for lane state…"}</p>
                 {render_version_footer(cursor)}
@@ -117,7 +117,7 @@ fn render_agents(
         lineage_controls,
     };
     html! {
-        <div class="canvas-menu-page" data-menu-page="agents">
+        <div class="canvas-menu-page" data-menu-page="lanes">
             {render_global_settings(Some(runtime), sender)}
             <section class="canvas-menu-section canvas-open-teams">
                 <h2>{"Open Team"}</h2>
@@ -379,7 +379,7 @@ fn render_solo_members_drop(
     html! {
         <section class="canvas-menu-section canvas-unteamed" {ondragover} {ondrop}>
             <header>
-                <h2>{"Agents Without Team"}</h2>
+                <h2>{"Lanes Without Team"}</h2>
                 <span>{"drop here to remove from team"}</span>
             </header>
             <div class="canvas-team-members" data-team-drop="unteamed">
