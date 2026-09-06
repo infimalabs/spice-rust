@@ -881,6 +881,7 @@ where
         topology_revision,
         lanes,
         subscriptions,
+        renewals: Vec::new(),
     });
     let committed = commit(bus, write)?;
     Ok(StartupCommit {

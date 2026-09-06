@@ -669,6 +669,7 @@ fn seat_backlog_residency(
             })
             .collect(),
         subscriptions: Vec::new(),
+        renewals: Vec::new(),
     });
     bus.commit(write).expect("residency seeds");
 }

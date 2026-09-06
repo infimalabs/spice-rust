@@ -76,10 +76,11 @@ pub use doctor::{
 pub use envelope::{Actor, ActorError, Envelope, Origin, OriginError, Seq, WireVersion};
 pub use fact::{AnyFact, Body, Fact, FactKind, Producer};
 pub use head::{
-    ClaimCell, ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState, LaneResidency,
-    LaneSession, LeaseHead, LineageSubscription, ResidencyHead, ResidentState, SteeringHead,
-    TapeLocus, TaskHead, TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState,
-    WitnessClass, WitnessHead, WorkflowHead,
+    ClaimCell, ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState,
+    LaneRenewalRecord, LaneRenewalState, LaneResidency, LaneSession, LeaseHead,
+    LineageSubscription, RenewalIdentity, ResidencyHead, ResidentState, SteeringHead, TapeLocus,
+    TaskHead, TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState, WitnessClass,
+    WitnessHead, WorkflowHead,
 };
 pub use hello::{
     Accepted, CanvasBootstrap, CanvasVersion, Hello, Rejected, SpeechPlayback, SpeechRequest,

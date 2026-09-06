@@ -44,6 +44,7 @@ fn head(rows: &[(u8, u8)]) -> wire::ResidencyHead {
                 auto_projects: vec![format!("team.{lineage}")],
             })
             .collect(),
+        renewals: Vec::new(),
     }
 }
 

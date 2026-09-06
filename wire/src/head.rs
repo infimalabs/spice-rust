@@ -521,6 +521,70 @@ impl From<LaneSession> for LaneSessionWire {
     }
 }
 
+/// Capability-free identity retained across one agent succession.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RenewalIdentity {
+    /// Occupant identity assigned by the resident.
+    pub occupant: CanonicalUuid,
+    /// Exact resumable vendor session identity.
+    pub session: String,
+    /// Selected transcript thread or stream identity.
+    pub thread: String,
+}
+
+/// Closed durable stages of one agent renewal handoff.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum LaneRenewalState {
+    /// The operator requested renewal but the predecessor is still running.
+    Requested {
+        /// Current occupant being replaced.
+        predecessor: RenewalIdentity,
+        /// Original member position inside the Canvas lineage.
+        team_slot: u64,
+    },
+    /// The predecessor reached its stopping boundary and succession owns the slot.
+    HandoffPending {
+        /// Stopped occupant whose context the successor receives.
+        predecessor: RenewalIdentity,
+        /// Original member position inside the Canvas lineage.
+        team_slot: u64,
+    },
+    /// A fresh successor started and replaced the predecessor in the same slot.
+    SuccessorStarted {
+        /// Occupant that handed off the lane.
+        predecessor: RenewalIdentity,
+        /// Fresh occupant now owning the lane.
+        successor: RenewalIdentity,
+        /// Original member position inside the Canvas lineage.
+        team_slot: u64,
+    },
+    /// Successor launch refused after the predecessor reached handoff.
+    LaunchRefused {
+        /// Occupant whose handoff remains pending repair.
+        predecessor: RenewalIdentity,
+        /// Original member position inside the Canvas lineage.
+        team_slot: u64,
+        /// Exact actionable launch refusal.
+        reason: String,
+    },
+}
+
+/// Current durable renewal state for one independently steerable lane member.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaneRenewalRecord {
+    /// Canvas lineage retaining the original team slot.
+    pub lineage_id: CanonicalUuid,
+    /// Independently steerable member undergoing succession.
+    pub lane: CanonicalUuid,
+    /// Topology revision that established this state.
+    pub revision: u64,
+    /// Current closed handoff stage and its stage-specific identity evidence.
+    pub state: LaneRenewalState,
+}
+
 /// One lane's current place in the resident generation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -638,6 +702,9 @@ pub struct ResidencyHead {
     /// until its next seating or configuration transaction persists it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subscriptions: Vec<LineageSubscription>,
+    /// Current agent-renewal handoffs, sorted by lineage and member identity.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub renewals: Vec<LaneRenewalRecord>,
 }
 
 /// Current journal and wake positions.

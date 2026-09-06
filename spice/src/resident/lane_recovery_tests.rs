@@ -112,6 +112,7 @@ fn seed_residency(fixture: &Fixture, seed: &mut JournalWrite, lanes: Vec<wire::L
         topology_revision: 0,
         lanes,
         subscriptions: Vec::new(),
+        renewals: Vec::new(),
     });
 }
 
@@ -474,6 +475,7 @@ fn admit_row_reason(
         topology_revision: 0,
         lanes: lanes.to_vec(),
         subscriptions: Vec::new(),
+        renewals: Vec::new(),
     };
     refusal_reason(admit_row(&paths, &Seats::new(), &residency, row, worktree))
 }
@@ -639,6 +641,7 @@ fn import_refuses_a_vacant_row_whose_lane_seat_is_still_live() {
         topology_revision: 0,
         lanes: vec![row.clone()],
         subscriptions: Vec::new(),
+        renewals: Vec::new(),
     };
     let mut seats = Seats::new();
     seats
@@ -671,6 +674,7 @@ fn explicit_import_admits_an_already_seated_drain_lane() {
         topology_revision: 0,
         lanes: vec![row.clone()],
         subscriptions: Vec::new(),
+        renewals: Vec::new(),
     };
 
     admit_row(&paths, &Seats::new(), &residency, &row, &successor)
@@ -695,6 +699,7 @@ fn watchband_drain_does_not_end_a_drive_lanes_import_life() {
             manual_projects: Vec::new(),
             auto_projects: Vec::new(),
         }],
+        renewals: Vec::new(),
     };
 
     admit_row(&paths, &Seats::new(), &residency, &row, &successor)

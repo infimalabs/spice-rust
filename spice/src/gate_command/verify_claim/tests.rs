@@ -100,6 +100,7 @@ impl Fixture {
                 disposition: "occupied".to_owned(),
             }],
             subscriptions: Vec::new(),
+            renewals: Vec::new(),
         };
         Self {
             lane,

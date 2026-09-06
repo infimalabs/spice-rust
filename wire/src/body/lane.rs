@@ -569,6 +569,63 @@ pub struct LaneRenewed {
     pub group: u32,
 }
 
+/// One durable agent-renewal state transition or pre-handoff cancellation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "LaneRenewalChangedWire", into = "LaneRenewalChangedWire")]
+pub struct LaneRenewalChanged {
+    /// Canvas lineage whose member retains its original slot.
+    pub lineage_id: CanonicalUuid,
+    /// Independently steerable member whose renewal state changed.
+    pub lane: CanonicalUuid,
+    /// Current state, absent only when a requested intent was cleared.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub renewal: Option<crate::LaneRenewalRecord>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LaneRenewalChangedWire {
+    lineage_id: CanonicalUuid,
+    lane: CanonicalUuid,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    renewal: Option<crate::LaneRenewalRecord>,
+}
+
+impl TryFrom<LaneRenewalChangedWire> for LaneRenewalChanged {
+    type Error = &'static str;
+
+    fn try_from(wire: LaneRenewalChangedWire) -> Result<Self, Self::Error> {
+        if wire.renewal.as_ref().is_some_and(|renewal| {
+            renewal.lineage_id != wire.lineage_id || renewal.lane != wire.lane
+        }) {
+            return Err("renewal state does not match the addressed lineage member");
+        }
+        Ok(Self {
+            lineage_id: wire.lineage_id,
+            lane: wire.lane,
+            renewal: wire.renewal,
+        })
+    }
+}
+
+impl From<LaneRenewalChanged> for LaneRenewalChangedWire {
+    fn from(changed: LaneRenewalChanged) -> Self {
+        Self {
+            lineage_id: changed.lineage_id,
+            lane: changed.lane,
+            renewal: changed.renewal,
+        }
+    }
+}
+
 /// A graceful occupant end completed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaneDrained {

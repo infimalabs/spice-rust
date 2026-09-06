@@ -161,6 +161,7 @@ fn seed_recall_authority(path: &Path, thread: &str) {
         topology_revision: 0,
         lanes,
         subscriptions: Vec::new(),
+        renewals: Vec::new(),
     });
     task_added(
         &mut write,

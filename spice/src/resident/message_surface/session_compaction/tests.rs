@@ -1418,6 +1418,7 @@ fn session_residency_for(
             disposition: "occupied".to_owned(),
         }],
         subscriptions: Vec::new(),
+        renewals: Vec::new(),
     }
 }
 

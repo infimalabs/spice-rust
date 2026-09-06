@@ -66,6 +66,7 @@ impl Fixture {
             topology_revision: 0,
             lanes: Vec::new(),
             subscriptions: Vec::new(),
+            renewals: Vec::new(),
         });
         commit(&bus, startup).expect("startup commits");
 
@@ -123,6 +124,7 @@ impl Fixture {
                 manual_projects: Vec::new(),
                 auto_projects: Vec::new(),
             }],
+            renewals: Vec::new(),
         });
         let committed = commit(&bus, lane_start).expect("lane commits");
         let anchor = Seq::new(committed.last()).expect("nonzero anchor");

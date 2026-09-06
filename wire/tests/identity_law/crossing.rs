@@ -619,6 +619,7 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
                 topology_revision: 2,
                 lanes: vec![occupied],
                 subscriptions: vec![drive],
+                renewals: Vec::new(),
             },
             ResidencyHead {
                 epoch: second_uuid,
@@ -626,6 +627,7 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
                 topology_revision: 7,
                 lanes: vec![empty],
                 subscriptions: vec![steer],
+                renewals: Vec::new(),
             },
         ],
     );

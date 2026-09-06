@@ -716,6 +716,7 @@ fn seed_capture_residency(
             disposition: "occupied".to_owned(),
         }],
         subscriptions: Vec::new(),
+        renewals: Vec::new(),
     });
     bus.commit(write).expect("residency seeds");
 }
@@ -1096,6 +1097,7 @@ fn seat_ingestion_residency(bus: &Bus, lane: CanonicalUuid, epoch: CanonicalUuid
             disposition: "occupied".to_owned(),
         }],
         subscriptions: Vec::new(),
+        renewals: Vec::new(),
     });
     bus.commit(write).expect("residency seeds");
 }

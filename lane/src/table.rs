@@ -421,6 +421,7 @@ impl Table {
             topology_revision: 0,
             lanes: self.seats.values().map(Seat::residency).collect(),
             subscriptions: Vec::new(),
+            renewals: Vec::new(),
         }
     }
 
