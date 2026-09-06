@@ -191,6 +191,35 @@ fn corrupt_manifest_refuses_inside_the_hard_bound() {
 }
 
 #[test]
+fn version_two_fingerprint_refuses_without_command_fallback() {
+    let _serial = BENCHMARK.lock().expect("serialize admission benchmarks");
+    let fixture = Fixture::new();
+    fixture.seed_proofs();
+    fixture.install_version_two_fingerprint();
+
+    for (label, output) in [
+        ("bare prove", fixture.invoke_proof(&[])),
+        (
+            "repeated missing prove",
+            fixture.invoke_proof(&["--missing"]),
+        ),
+        ("pre-commit", fixture.invoke_hook()),
+    ] {
+        assert!(!output.status.success(), "{label}: {}", streams(&output));
+        let rendered = streams(&output);
+        assert!(
+            rendered.contains("fingerprint-version-unsupported"),
+            "{label}: {rendered}"
+        );
+        assert!(
+            rendered.contains("command=`spice gate prove --missing`"),
+            "{label}: {rendered}"
+        );
+    }
+    assert_eq!(fixture.admission_count(), 0);
+}
+
+#[test]
 fn corrupt_receipt_object_cannot_publish_an_admission() {
     let _serial = BENCHMARK.lock().expect("serialize admission benchmarks");
     let fixture = Fixture::new();
@@ -649,6 +678,14 @@ impl Fixture {
         let replaced = format!("{}{actions}{}", &text[..start], &text[suffix..]);
         self.install_fingerprint_object(&index, &original, replaced.as_bytes());
         original
+    }
+
+    fn install_version_two_fingerprint(&self) {
+        let index = self.fingerprint_path();
+        let manifest = self.fingerprint_manifest_bytes(&index);
+        let current = String::from_utf8(manifest).expect("fingerprint manifest is UTF-8");
+        let version_two = current.replacen("\"version\":3", "\"version\":2", 1);
+        fs::write(index, version_two).expect("install Version-2 fingerprint body");
     }
 
     fn install_over_budget_fingerprint(&self) -> Vec<u8> {

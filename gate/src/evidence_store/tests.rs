@@ -977,6 +977,37 @@ fn corrupt_fingerprint_index_refuses_without_another_lookup_path() {
 }
 
 #[test]
+fn version_two_authority_key_is_stable_and_direct_manifest_refuses() {
+    let fixture = Fixture::new("fingerprint-v2-refusal");
+    let store = fixture.store();
+    let authority = fingerprint_authority(b"environment");
+    let manifest = ActionFingerprintManifest::new(ActionFingerprintManifestFields {
+        authority: authority.clone(),
+        selection: fingerprint_selection(&authority),
+        cargo_tests: false,
+        actions: Vec::new(),
+    })
+    .unwrap();
+    let key = authority.key().unwrap();
+    let authority_bytes = wire::encode(&authority).unwrap();
+    assert!(authority_bytes.starts_with(br#"{"version":2,"candidate_tree":"#));
+    assert_eq!(
+        key.as_str(),
+        "781323747a963a75ede73ff3f03812c4c7ef622593455be550aed2babd036d91"
+    );
+
+    let current = String::from_utf8(manifest.encode().unwrap()).unwrap();
+    let version_two = current.replacen("\"version\":3", "\"version\":2", 1);
+    fs::write(store.layout.fingerprints.join(key.as_str()), version_two).unwrap();
+    let error = store.lookup_action_fingerprints(&authority).unwrap_err();
+    assert_eq!(
+        error.reason(),
+        "gate-evidence::fingerprint-version-unsupported"
+    );
+    assert!(error.detail().contains("spice gate prove --missing"));
+}
+
+#[test]
 fn interrupted_fingerprint_publication_leaves_only_an_idempotent_object() {
     let fixture = Fixture::new("fingerprint-interrupted");
     let store = fixture.store();
