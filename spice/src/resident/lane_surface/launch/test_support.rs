@@ -72,32 +72,7 @@ impl AdvisoryRtkFixture {
         let occupant_environment = root.join("occupant-environment");
         let launch_log = root.join("occupant-launches");
         let vendor = root.join("fake-claude");
-        fs::write(
-            &vendor,
-            format!(
-                concat!(
-                    "#!/bin/sh\n",
-                    "set -eu\n",
-                    "printf 'LAUNCH:%s\\n' \"$*\" >> '{}'\n",
-                    "if [ \"${{SPICE_RS_RTK_EXECUTABLE+x}}\" = x ] || ",
-                    "[ \"${{RTK_DB_PATH+x}}\" = x ]; then\n",
-                    "  printf '%s\\n' present > '{}'\n",
-                    "else\n",
-                    "  printf '%s\\n' absent > '{}'\n",
-                    "  exit 92\n",
-                    "fi\n",
-                    "printf '%s\\n' '",
-                    "{{\"type\":\"system\",\"subtype\":\"init\",",
-                    "\"session_id\":\"{}\"}}'\n",
-                ),
-                launch_log.display(),
-                occupant_environment.display(),
-                occupant_environment.display(),
-                SESSION,
-            ),
-        )
-        .expect("fixture vendor writes");
-        executable(&vendor);
+        write_vendor(&vendor, &launch_log, &occupant_environment, SESSION);
         fs::write(
             root.join("spice-rust.toml"),
             format!(
@@ -185,6 +160,15 @@ impl AdvisoryRtkFixture {
             .filter_map(|line| line.strip_prefix("LAUNCH:").map(str::to_owned))
             .collect()
     }
+
+    pub(in crate::resident) fn set_next_session(&self, session: &str) {
+        write_vendor(
+            &self.root.join("fake-claude"),
+            &self.launch_log,
+            &self.occupant_environment,
+            session,
+        );
+    }
 }
 
 impl Drop for AdvisoryRtkFixture {
@@ -209,6 +193,35 @@ fn executable(path: &Path) {
         .expect("fixture executable mode installs");
     #[cfg(not(unix))]
     let _ = path;
+}
+
+fn write_vendor(path: &Path, launch_log: &Path, environment: &Path, session: &str) {
+    fs::write(
+        path,
+        format!(
+            concat!(
+                "#!/bin/sh\n",
+                "set -eu\n",
+                "printf 'LAUNCH:%s\\n' \"$*\" >> '{}'\n",
+                "if [ \"${{SPICE_RS_RTK_EXECUTABLE+x}}\" = x ] || ",
+                "[ \"${{RTK_DB_PATH+x}}\" = x ]; then\n",
+                "  printf '%s\\n' present > '{}'\n",
+                "else\n",
+                "  printf '%s\\n' absent > '{}'\n",
+                "  exit 92\n",
+                "fi\n",
+                "printf '%s\\n' '",
+                "{{\"type\":\"system\",\"subtype\":\"init\",",
+                "\"session_id\":\"{}\"}}'\n",
+            ),
+            launch_log.display(),
+            environment.display(),
+            environment.display(),
+            session,
+        ),
+    )
+    .expect("fixture vendor writes");
+    executable(path);
 }
 
 fn uuid(value: u64) -> CanonicalUuid {
