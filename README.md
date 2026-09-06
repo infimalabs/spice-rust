@@ -90,18 +90,24 @@ spice dev cargo -- fmt --all -- --check
 spice dev xtask -- verify --package gate
 ```
 
-At the commit boundary, stage the exact change and run the selected gate:
+At the commit boundary, stage the exact change and inspect its proof receipts:
 
 ```sh
-spice dev cargo -- run --quiet --locked --package spice --bin spice -- \
-  gate selection
+spice gate prove
 ```
 
-The gate captures the index once and runs the affected Cargo targets and
-canonical policy arms. Known selection, policy, build, and toolchain authority
-selects explicit exhaustive reach. Unknown paths and out-of-workspace
-Rust/manifest paths refuse instead of guessing coverage. The unscoped verifier
-likewise refuses before launching work.
+Inspection never runs missing work. Follow its exact remediation with
+`spice gate prove ACTION`, or generate all current misses with
+`spice gate prove --missing`, then use the normal `git commit` path. Only the
+proof runner publishes trusted receipts; ad hoc Cargo, Canvas, or shell output
+is useful feedback but is not reusable commit evidence. A trust refusal remains
+an operator boundary and is never bypassed by proof generation.
+
+Canvas proof is `canvas:build` plus one `canvas:shard:<name>` receipt per current
+registry shard. Release 0.31.0's `BROWSER-1kKSWhZk browser coverage complete`
+marker and `--spice-coverage-receipt` writer are retired; see
+[Gate evidence](docs/product/planes/gate-evidence.md) for the receipt and cache
+contract.
 
 Native `spice gate pre-commit` resolves tracked policy once in an isolated
 worker, runs the packaged selector, then admitted configured commands in

@@ -65,6 +65,10 @@ If continuity is clipped, recover only the detail needed to proceed with
   claim. Git synchronization belongs to allocation and completion boundaries;
   do not pull or push during implementation, and do not alter harness-added
   attribution trailers.
+- After staging the exact change, run `spice gate prove`. This inspection reads
+  only the current fingerprint and trusted receipts. Follow a named miss with
+  `spice gate prove ACTION`, or generate every current miss with
+  `spice gate prove --missing`; ad hoc command output is not proof.
 - The normal pre-commit gate is the default constitution. Invoke it through
   `git commit` or `spice gate pre-commit`, and fix what it reports unless current
   operator steering explicitly authorizes another path. Use

@@ -51,6 +51,27 @@ fn prove_help_and_extra_operands_follow_the_generated_contract() {
 }
 
 #[test]
+fn repository_guidance_uses_proof_aware_completion_commands() {
+    for (path, guidance) in [
+        ("README.md", include_str!("../../README.md")),
+        ("DEVELOPMENT.md", include_str!("../../DEVELOPMENT.md")),
+        ("spice/agent/SKILL.md", include_str!("../agent/SKILL.md")),
+    ] {
+        for command in [
+            "spice gate prove",
+            "spice gate prove ACTION",
+            "spice gate prove --missing",
+        ] {
+            assert!(guidance.contains(command), "{path} omitted {command}");
+        }
+    }
+    let evidence = include_str!("../../docs/product/planes/gate-evidence.md");
+    assert!(evidence.contains("Release 0.31.0"));
+    assert!(evidence.contains("--spice-coverage-receipt"));
+    assert!(evidence.contains("canvas:shard:<name>"));
+}
+
+#[test]
 fn prove_refuses_unknown_actions_before_repository_access() {
     let unknown = invoke(
         Path::new("."),
