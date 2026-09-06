@@ -34,8 +34,9 @@ use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
-use std::os::unix::fs::PermissionsExt as _;
+use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 
 use sill::{Argv, Completion, spawn};
@@ -449,6 +450,23 @@ pub(crate) fn toolchain_executable_authority(
 
 type ExecutableAuthorityRecord<'a> = (&'a str, &'a str, Option<(String, Digest, bool)>);
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct ExecutableStamp {
+    device: u64,
+    inode: u64,
+    length: u64,
+    mode: u32,
+    modified_seconds: i64,
+    modified_nanoseconds: i64,
+    changed_seconds: i64,
+    changed_nanoseconds: i64,
+}
+
+type ExecutableDigestCache = BTreeMap<PathBuf, (ExecutableStamp, Digest, bool)>;
+// Metadata is only a process-local rehash trigger; canonical authority remains
+// the exact byte digest and executable bit returned below.
+static EXECUTABLE_DIGEST_CACHE: OnceLock<Mutex<ExecutableDigestCache>> = OnceLock::new();
+
 fn executable_authority_record<'a>(
     source: &ToolchainSource<'_>,
     name: &'a str,
@@ -461,23 +479,64 @@ fn executable_authority_record<'a>(
     ) else {
         return Ok((name, program, None));
     };
+    let metadata = fs::metadata(&resolved)
+        .map_err(|error| format!("inspect proof tool {}: {error}", resolved.display()))?;
+    let stamp = executable_stamp(&metadata);
+    if let Some((_, digest, executable)) = executable_digest_cache()
+        .lock()
+        .expect("executable digest cache is not poisoned")
+        .get(&resolved)
+        .filter(|(cached, _, _)| cached == &stamp)
+    {
+        return Ok((
+            name,
+            program,
+            Some((
+                resolved.to_string_lossy().into_owned(),
+                digest.clone(),
+                *executable,
+            )),
+        ));
+    }
     let bytes = fs::read(&resolved)
         .map_err(|error| format!("read proof tool {}: {error}", resolved.display()))?;
-    let executable = fs::metadata(&resolved)
-        .map_err(|error| format!("inspect proof tool {}: {error}", resolved.display()))?
-        .permissions()
-        .mode()
-        & 0o111
-        != 0;
+    let observed = fs::metadata(&resolved)
+        .map_err(|error| format!("inspect proof tool {}: {error}", resolved.display()))?;
+    let observed_stamp = executable_stamp(&observed);
+    if observed_stamp != stamp {
+        return Err(format!(
+            "proof tool {} changed while its authority was read",
+            resolved.display(),
+        ));
+    }
+    let executable = observed.permissions().mode() & 0o111 != 0;
+    let digest = Digest::compute(Domain::GateTool, &bytes);
+    executable_digest_cache()
+        .lock()
+        .expect("executable digest cache is not poisoned")
+        .insert(resolved.clone(), (stamp, digest.clone(), executable));
     Ok((
         name,
         program,
-        Some((
-            resolved.to_string_lossy().into_owned(),
-            Digest::compute(Domain::GateTool, &bytes),
-            executable,
-        )),
+        Some((resolved.to_string_lossy().into_owned(), digest, executable)),
     ))
+}
+
+fn executable_digest_cache() -> &'static Mutex<ExecutableDigestCache> {
+    EXECUTABLE_DIGEST_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn executable_stamp(metadata: &fs::Metadata) -> ExecutableStamp {
+    ExecutableStamp {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+        length: metadata.len(),
+        mode: metadata.mode(),
+        modified_seconds: metadata.mtime(),
+        modified_nanoseconds: metadata.mtime_nsec(),
+        changed_seconds: metadata.ctime(),
+        changed_nanoseconds: metadata.ctime_nsec(),
+    }
 }
 
 fn scoped_declaration(

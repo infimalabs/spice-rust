@@ -433,6 +433,22 @@ fn the_domain_framing_separates_the_tag_from_the_bytes() {
 }
 
 #[test]
+fn large_executable_inputs_keep_the_canonical_domain_framing() {
+    let bytes = vec![0x5a; 4 * 1024 * 1024];
+    for domain in [Domain::InstallArtifact, Domain::GateTool] {
+        let mut expected = blake3::Hasher::new();
+        expected.update(domain.tag().as_bytes());
+        expected.update(&[0]);
+        expected.update(&bytes);
+
+        assert_eq!(
+            Digest::compute(domain, &bytes).as_str(),
+            expected.finalize().to_hex().as_str(),
+        );
+    }
+}
+
+#[test]
 fn only_the_canonical_digest_spelling_is_admitted() {
     let canonical = Digest::compute(Domain::DistPins, b"pins")
         .as_str()

@@ -20,6 +20,7 @@
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::thread;
 
 use serde::{Deserialize, Serialize};
 use sill::{Argv, Completion, Environment, spawn};
@@ -313,10 +314,26 @@ struct GitObservations {
 
 impl GitObservations {
     fn capture(repository: &Path, bounds: &Bounds) -> Self {
+        let ((merge_integrity, staging), clean_merge_tree) = thread::scope(|scope| {
+            let merge_integrity = scope.spawn(|| merge_integrity(repository, bounds));
+            let staging = scope.spawn(|| staging(repository, bounds));
+            let clean_merge_tree = clean_merge_tree(repository, bounds);
+            (
+                (
+                    merge_integrity
+                        .join()
+                        .expect("scoped merge-integrity observation completes"),
+                    staging
+                        .join()
+                        .expect("scoped staging observation completes"),
+                ),
+                clean_merge_tree,
+            )
+        });
         Self {
-            merge_integrity: Some(merge_integrity(repository, bounds)),
-            staging: Some(staging(repository, bounds)),
-            clean_merge_tree: clean_merge_tree(repository, bounds),
+            merge_integrity: Some(merge_integrity),
+            staging: Some(staging),
+            clean_merge_tree,
         }
     }
 }

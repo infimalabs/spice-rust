@@ -40,7 +40,9 @@ all = "deny"
 disallowed_methods = "deny"
 
 # Keep line-level diagnostics while avoiding full variable debug information in
-# the repeatedly rebuilt development binaries and test executables.
+# ordinary development artifacts. The repeatedly executed self-hosted Spice
+# binary is optimized and stripped because every installed hook authenticates
+# its complete bytes; gate and wire retain their normal diagnostic artifacts.
 [profile.dev]
 debug = 1
 
@@ -50,6 +52,16 @@ opt-level = 3
 [profile.dev.package.sha1]
 opt-level = 3
 
+[profile.dev.package.wire]
+opt-level = 3
+
+[profile.dev.package.gate]
+opt-level = 3
+
+[profile.dev.package.spice]
+opt-level = 3
+strip = "symbols"
+
 [profile.test]
 debug = 1
 
@@ -58,3 +70,13 @@ opt-level = 3
 
 [profile.test.package.sha1]
 opt-level = 3
+
+[profile.test.package.wire]
+opt-level = 3
+
+[profile.test.package.gate]
+opt-level = 3
+
+[profile.test.package.spice]
+opt-level = 3
+strip = "symbols"
