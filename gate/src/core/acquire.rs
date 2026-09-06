@@ -6,11 +6,12 @@
 //! an explicit non-completion state carrying its own recovery, so a missing
 //! provider is visible in the report instead of being an omitted row.
 //!
-//! Two arms declare exact `git` argument vectors. They run once, while the
-//! source is captured, under the contract's process bounds, and every process
-//! failure becomes typed evidence rather than an acquisition error. The only
-//! failures that refuse outright are the ones that would leave the battery
-//! incomplete: an unreadable selected tree and a malformed arm.
+//! Two arms declare exact `git` argument vectors. Acquisition avoids them only
+//! when captured repository state proves the same clean result; otherwise they
+//! run while the source is captured under the contract's process bounds, and
+//! every process failure becomes typed evidence rather than an acquisition
+//! error. The only failures that refuse outright are the ones that would leave
+//! the battery incomplete: an unreadable selected tree and a malformed arm.
 //!
 //! Acquisition is handed no repository. Every arm reads either the immutable
 //! selected tree or an observation the capture already took, so a repository
@@ -20,6 +21,7 @@
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 
 use serde::{Deserialize, Serialize};
@@ -56,6 +58,16 @@ use crate::tree::SelectedTree;
 /// ambient search path and two machines cannot silently observe two different
 /// programs. A build without it starts nothing and says so.
 const GIT: &str = "/usr/bin/git";
+static GIT_SUBPROCESSES: AtomicU64 = AtomicU64::new(0);
+
+/// Number of Git subprocess launches attempted by this process.
+///
+/// This is diagnostic observation only. It does not participate in gate
+/// identity or decisions.
+#[must_use]
+pub fn git_subprocess_count() -> u64 {
+    GIT_SUBPROCESSES.load(Ordering::Relaxed)
+}
 
 /// The board head captured with the source, before acquisition begins.
 ///
@@ -226,7 +238,7 @@ impl CoreSource {
         // Taken before the walk because it is the only subject here that can
         // still move: the selected tree was sealed at materialization, while
         // the repository stays live and writable underneath the run.
-        let git = GitObservations::capture(tree.repository(), contract.bounds());
+        let git = GitObservations::capture(tree, contract.bounds());
         let jurisdiction = Jurisdiction::walk(tree.root(), contract.policy().ignore())
             .map_err(|error| CoreInputError::new(format!("core source jurisdiction: {error}")))?;
         let digest = jurisdiction
@@ -313,10 +325,11 @@ struct GitObservations {
 }
 
 impl GitObservations {
-    fn capture(repository: &Path, bounds: &Bounds) -> Self {
+    fn capture(tree: &SelectedTree, bounds: &Bounds) -> Self {
+        let repository = tree.repository();
         let ((merge_integrity, staging), clean_merge_tree) = thread::scope(|scope| {
             let merge_integrity = scope.spawn(|| merge_integrity(repository, bounds));
-            let staging = scope.spawn(|| staging(repository, bounds));
+            let staging = scope.spawn(|| staging(tree, bounds));
             let clean_merge_tree = clean_merge_tree(repository, bounds);
             (
                 (
@@ -637,19 +650,14 @@ fn plan_phase(claim: &ClaimCapture) -> CoreObservation {
 }
 
 fn merge_integrity(repository: &Path, bounds: &Bounds) -> CoreObservation {
-    let merge_head = match git(
-        repository,
-        bounds,
-        &["rev-parse", "--git-path", "MERGE_HEAD"],
-        &[0],
-    ) {
-        Ok((_, output)) => output,
+    match merge_head_path(repository) {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return measured(CoreEvidence::MergeIntegrity(
+                MergeIntegrityEvidence::NoMerge,
+            ));
+        }
         Err(refusal) => return refusal.into_observation(),
-    };
-    if !repository.join(merge_head.trim()).exists() {
-        return measured(CoreEvidence::MergeIntegrity(
-            MergeIntegrityEvidence::NoMerge,
-        ));
     }
 
     let staged_tree = match git_tree(repository, bounds, &["write-tree"]) {
@@ -708,14 +716,8 @@ fn merge_integrity(repository: &Path, bounds: &Bounds) -> CoreObservation {
 /// A conflict, multiple merge heads, unreadable state, or process failure is a
 /// conservative absence: structural arms keep measuring the staged bytes.
 fn clean_merge_tree(repository: &Path, bounds: &Bounds) -> Option<CleanMergeTree> {
-    let (_, merge_head_path) = git(
-        repository,
-        bounds,
-        &["rev-parse", "--git-path", "MERGE_HEAD"],
-        &[0],
-    )
-    .ok()?;
-    let merge_heads = fs::read_to_string(repository.join(merge_head_path.trim())).ok()?;
+    let merge_head_path = merge_head_path(repository).ok()??;
+    let merge_heads = fs::read_to_string(merge_head_path).ok()?;
     let mut merge_heads = merge_heads
         .lines()
         .map(str::trim)
@@ -786,7 +788,33 @@ fn git_tree(repository: &Path, bounds: &Bounds, arguments: &[&str]) -> Result<St
     Ok(tree)
 }
 
-fn staging(repository: &Path, bounds: &Bounds) -> CoreObservation {
+fn merge_head_path(repository: &Path) -> Result<Option<PathBuf>, GitRefusal> {
+    let repository = crate::tree::open_repository(repository).map_err(|error| {
+        GitRefusal::Unmeasured(format!("resolve Git directory for MERGE_HEAD: {error}"))
+    })?;
+    let path = repository.git_dir().join("MERGE_HEAD");
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_file() => Ok(Some(path)),
+        Ok(_) => Err(GitRefusal::Unmeasured(format!(
+            "Git MERGE_HEAD is not a regular file: {}",
+            path.display()
+        ))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(GitRefusal::Unmeasured(format!(
+            "inspect Git MERGE_HEAD {}: {error}",
+            path.display()
+        ))),
+    }
+}
+
+fn staging(tree: &SelectedTree, bounds: &Bounds) -> CoreObservation {
+    if staging_worktree_matches(tree) {
+        return measured(CoreEvidence::Staging(
+            StagingEvidence::new(std::iter::empty::<&str>())
+                .expect("an empty staging intersection is valid"),
+        ));
+    }
+    let repository = tree.repository();
     let arguments = &["diff", "--cached", "--name-only", "--diff-filter=ACMR"];
     let staged = match git(repository, bounds, arguments, &[0]) {
         Ok((_, output)) => output,
@@ -807,6 +835,53 @@ fn staging(repository: &Path, bounds: &Bounds) -> CoreObservation {
             reason: format!("git named an unusable path: {error}"),
         },
     }
+}
+
+/// Prove the staged paths cannot intersect Git's unstaged path set.
+///
+/// A selected path whose exact bytes and executable mode still match the
+/// materialized index cannot be an unstaged edit. Deleted staged paths are not
+/// members of the declared `ACMR` observation. Any uncertainty returns false
+/// and leaves the existing Git-backed observation authoritative.
+fn staging_worktree_matches(tree: &SelectedTree) -> bool {
+    let Some(changes) = tree.staged_changes() else {
+        return false;
+    };
+    changes.iter().all(|path| {
+        let selected = tree.root().join(path);
+        let Ok(selected_metadata) = fs::symlink_metadata(&selected) else {
+            return true;
+        };
+        if !selected_metadata.file_type().is_file() {
+            return false;
+        }
+        let worktree = tree.repository().join(path);
+        let Ok(worktree_metadata) = fs::symlink_metadata(&worktree) else {
+            return false;
+        };
+        if !worktree_metadata.file_type().is_file()
+            || !worktree_mode_matches(tree, path, &worktree_metadata)
+        {
+            return false;
+        }
+        fs::read(&selected)
+            .and_then(|selected| fs::read(&worktree).map(|worktree| selected == worktree))
+            .unwrap_or(false)
+    })
+}
+
+#[cfg(target_family = "unix")]
+fn worktree_mode_matches(tree: &SelectedTree, path: &str, metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let executable = metadata.permissions().mode() & 0o111 != 0;
+    tree.mode(path)
+        .is_some_and(|mode| executable == matches!(mode, crate::tree::SelectedFileMode::Executable))
+}
+
+#[cfg(not(target_family = "unix"))]
+fn worktree_mode_matches(_tree: &SelectedTree, _path: &str, _metadata: &fs::Metadata) -> bool {
+    false
 }
 
 const fn measured(evidence: CoreEvidence) -> CoreObservation {
@@ -846,6 +921,7 @@ fn git(
     let mut spec = bounds.spec(argv, repository);
     spec.environment = Environment::new([("GIT_OPTIONAL_LOCKS", "0")])
         .map_err(|error| GitRefusal::Unmeasured(format!("git environment: {error}")))?;
+    GIT_SUBPROCESSES.fetch_add(1, Ordering::Relaxed);
     let outcome = spawn(spec)
         .map_err(|error| GitRefusal::Unavailable(format!("git did not start: {error}")))?
         .wait()
@@ -881,4 +957,89 @@ fn git(
         )));
     }
     Ok((code, String::from_utf8_lossy(captured.bytes()).into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct RepositoryFixture {
+        root: PathBuf,
+    }
+
+    impl RepositoryFixture {
+        fn new(label: &str) -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "gate-core-acquire-{label}-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&root).expect("create core acquisition fixture");
+            crate::test_repository::initialize(&root);
+            Self { root }
+        }
+    }
+
+    impl Drop for RepositoryFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn exact_staged_bytes_prove_clean_until_the_worktree_moves() {
+        let fixture = RepositoryFixture::new("staging");
+        let root = &fixture.root;
+        fs::write(root.join("tracked.txt"), "committed\n").expect("write committed file");
+        crate::test_repository::stage_all(root);
+        crate::test_repository::commit(root, "initial");
+
+        fs::write(root.join("tracked.txt"), "staged\n").expect("write staged file");
+        crate::test_repository::stage(root, &["tracked.txt"]);
+        let tree = crate::Selector::staged()
+            .materialize(root)
+            .expect("materialize staged source");
+        assert!(staging_worktree_matches(&tree));
+
+        fs::write(root.join("tracked.txt"), "unstaged\n").expect("dirty staged file");
+        assert!(!staging_worktree_matches(&tree));
+        let deadlines = sill::Deadlines::new(
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_secs(1),
+            std::time::Duration::from_secs(1),
+        )
+        .expect("valid fallback deadlines");
+        let bounds = Bounds::new(
+            "staging fallback test",
+            deadlines,
+            std::time::Duration::from_millis(50),
+            16 * 1024,
+        )
+        .expect("valid fallback bounds");
+        assert_eq!(
+            staging(&tree, &bounds),
+            CoreObservation::Measured {
+                evidence: CoreEvidence::Staging(
+                    StagingEvidence::new(["tracked.txt"]).expect("valid partial staging path")
+                )
+            }
+        );
+    }
+
+    #[test]
+    fn merge_head_resolves_from_the_repository_git_directory() {
+        let fixture = RepositoryFixture::new("merge");
+        let root = &fixture.root;
+        let clean = merge_head_path(root).unwrap_or_else(|_| panic!("inspect clean repository"));
+        assert_eq!(clean, None);
+
+        let expected = root.join(".git/MERGE_HEAD");
+        fs::write(&expected, "0000000000000000000000000000000000000000\n")
+            .expect("write merge head");
+        assert_eq!(
+            merge_head_path(root).unwrap_or_else(|_| panic!("inspect active merge")),
+            Some(expected)
+        );
+    }
 }

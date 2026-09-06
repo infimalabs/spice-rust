@@ -559,7 +559,7 @@ impl Dispatch {
         Self::capture_at_with_claim(repository, claim)
     }
 
-    fn capture_at_with_claim(
+    pub(super) fn capture_at_with_claim(
         repository: Repository,
         claim: gate::ClaimCapture,
     ) -> Result<Self, ConfiguredFailure> {
@@ -790,6 +790,10 @@ impl Dispatch {
 }
 
 impl AdmissionDispatch {
+    pub(super) const fn repository(&self) -> &Repository {
+        &self.repository
+    }
+
     pub(super) fn resume(
         self,
         staged: spice::change_gate::StagedActionSelection,

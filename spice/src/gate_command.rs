@@ -119,8 +119,12 @@ fn run_report(result: Result<GateReport, gate::RunError>) -> Outcome<GateReport>
 }
 
 /// Run the release-scoped native staged-change gate without command recursion.
-pub(crate) fn pre_commit() -> Outcome<pre_commit::Report> {
-    pre_commit::run()
+pub(crate) fn pre_commit(matches: &clap::ArgMatches) -> Outcome<pre_commit::Report> {
+    pre_commit::run(
+        matches
+            .get_one::<String>("profile-output")
+            .map(std::path::PathBuf::from),
+    )
 }
 
 /// Run the current source repository's strict ordinary change selection.

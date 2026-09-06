@@ -42,17 +42,11 @@ impl AdmissionRun {
 
 pub(super) fn run(
     claim: gate::ClaimCapture,
+    repository: &Repository,
     anchor: spice::gate::PreparedArm<'static>,
+    audit: Option<&mut super::ApplianceGenerationAudit>,
+    profile: &mut super::profile::Profile,
 ) -> Result<AdmissionRun, WorkerFailure> {
-    let current = std::env::current_dir().map_err(|error| {
-        failure(
-            "gate::pre-commit-working-directory-unavailable",
-            error,
-            true,
-        )
-    })?;
-    let repository = Repository::discover(&current)
-        .map_err(|error| failure("gate::pre-commit-repository-unresolved", error, true))?;
     let store =
         EvidenceStore::open(repository.common_dir()).map_err(|error| evidence_failure(&error))?;
     let receipt_first = matches!(claim, gate::ClaimCapture::Idle);
@@ -61,8 +55,10 @@ pub(super) fn run(
         &wire::encode(&claim)
             .map_err(|error| failure("gate::pre-commit-claim-capture-invalid", error, true))?,
     );
-    let lookup = super::super::prove::prepare_admission_from_anchor(&repository, anchor)
+    let tool_started = std::time::Instant::now();
+    let lookup = super::super::prove::prepare_admission_from_anchor(repository, anchor)
         .map_err(prove_failure)?;
+    profile.tool_authority(tool_started.elapsed());
     let early_live_checks = if receipt_first {
         None
     } else {
@@ -74,7 +70,13 @@ pub(super) fn run(
             }
         }
     };
+    let evidence_started = std::time::Instant::now();
     let resolution = lookup_evidence(&store, &lookup)?;
+    profile.fingerprint_index_receipt_reads(evidence_started.elapsed());
+    if let Some(audit) = audit {
+        super::finish_appliance_generation_audit(audit, profile)?;
+    }
+    let remaining_started = std::time::Instant::now();
     let (manifest, resolved) = resolution.into_parts();
     let mut preparation = lookup.restore(&manifest).map_err(prove_failure)?;
     let missing = manifest
@@ -95,7 +97,7 @@ pub(super) fn run(
         .into_iter()
         .map(|action| action.expect("missing receipts were handled above"))
         .collect::<Vec<_>>();
-    let branch = match branch(&repository) {
+    let branch = match branch(repository) {
         Ok(branch) => branch,
         Err(error) => {
             let _ = preparation.reject_state();
@@ -103,7 +105,7 @@ pub(super) fn run(
         }
     };
     let live_checks =
-        match settle_admission_state(&mut preparation, &repository, &claim, early_live_checks) {
+        match settle_admission_state(&mut preparation, repository, &claim, early_live_checks) {
             Ok(checks) => checks,
             Err(error) => {
                 let _ = preparation.reject_state();
@@ -136,6 +138,7 @@ pub(super) fn run(
         actions: manifest.actions().len(),
         live_checks: live_check_count,
     };
+    profile.remaining_admission(remaining_started.elapsed());
     Ok(AdmissionRun {
         report,
         staged: preparation.into_staged(),

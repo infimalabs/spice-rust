@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use spice::install::{apply, installed_binary, installed_git_hooks, plan};
 use spice::repository::Repository;
 use wire::{Digest, Domain};
@@ -33,6 +33,37 @@ struct BenchmarkReport {
     git_subprocesses_per_run: u64,
     evidence_bytes_read_per_run: u64,
     evidence_files_opened_per_run: u64,
+    cold_profile: AdmissionProfile,
+    warm_profiles: Vec<AdmissionProfile>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct AdmissionProfile {
+    version: u64,
+    fresh_process_launch_micros: u64,
+    internal_total_micros: u64,
+    appliance_capture_micros: u64,
+    installed_appliance_exact_byte_audit_micros: u64,
+    repository_core_micros: u64,
+    tool_authority_micros: u64,
+    fingerprint_index_receipt_reads_micros: u64,
+    remaining_admission_micros: u64,
+    git_subprocesses: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InternalAdmissionProfile {
+    version: u64,
+    internal_total_micros: u64,
+    appliance_capture_micros: u64,
+    installed_appliance_exact_byte_audit_micros: u64,
+    repository_core_micros: u64,
+    tool_authority_micros: u64,
+    fingerprint_index_receipt_reads_micros: u64,
+    remaining_admission_micros: u64,
+    git_subprocesses: u64,
 }
 
 #[test]
@@ -43,25 +74,31 @@ fn gate_warm_admission_benchmark() {
     fixture.seed_proofs();
 
     let cold_started = Instant::now();
-    let warmed = fixture.invoke_hook();
+    let warmed = fixture.invoke_profiled_hook();
     let cold_micros = u64::try_from(cold_started.elapsed().as_micros()).unwrap_or(u64::MAX);
     assert!(
         warmed.status.success(),
         "warmup failed: {}",
         streams(&warmed)
     );
+    assert!(warmed.stdout.is_empty() && warmed.stderr.is_empty());
+    let cold_profile = fixture.read_profile(cold_micros);
 
     let mut durations = Vec::with_capacity(SAMPLES);
+    let mut profiles = Vec::with_capacity(SAMPLES);
     for _ in 0..SAMPLES {
         let started = Instant::now();
-        let output = fixture.invoke_hook();
+        let output = fixture.invoke_profiled_hook();
         let elapsed = started.elapsed();
         assert!(
             output.status.success(),
             "measured hook failed: {}",
             streams(&output)
         );
-        durations.push(u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX));
+        assert!(output.stdout.is_empty() && output.stderr.is_empty());
+        let elapsed = u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX);
+        durations.push(elapsed);
+        profiles.push(fixture.read_profile(elapsed));
     }
 
     let mut ordered = durations.clone();
@@ -74,8 +111,13 @@ fn gate_warm_admission_benchmark() {
     let median = midpoint(ordered[14], ordered[15]);
     let p95 = ordered[28];
     let maximum = *ordered.last().expect("benchmark has measured samples");
+    let git_subprocesses_per_run = std::iter::once(&cold_profile)
+        .chain(&profiles)
+        .map(|profile| profile.git_subprocesses)
+        .max()
+        .unwrap_or(0);
     let report = BenchmarkReport {
-        version: 2,
+        version: 3,
         action_count,
         cold_micros,
         warm_durations_micros: durations,
@@ -89,12 +131,18 @@ fn gate_warm_admission_benchmark() {
         executable_bytes: fs::metadata(&fixture.binary)
             .expect("measure installed benchmark executable")
             .len(),
-        git_subprocesses_per_run: 0,
+        git_subprocesses_per_run,
         evidence_bytes_read_per_run: evidence_bytes,
         evidence_files_opened_per_run: evidence_files,
+        cold_profile,
+        warm_profiles: profiles,
     };
     let report_json = serde_json::to_string(&report).expect("benchmark report encodes");
     println!("{report_json}");
+    assert_eq!(
+        git_subprocesses_per_run, 0,
+        "warm installed admission launched Git subprocesses: {report_json}"
+    );
     assert!(
         report.budget_met,
         "installed warm admission exceeded its latency budget: {report_json}"
@@ -396,6 +444,7 @@ struct Fixture {
     hook: PathBuf,
     binary: PathBuf,
     common: PathBuf,
+    profile: PathBuf,
 }
 
 impl Fixture {
@@ -459,6 +508,7 @@ impl Fixture {
         let hook = installed_git_hooks(&repository).join("pre-commit");
         let binary = installed_binary(&repository);
         let common = repository.common_dir().to_path_buf();
+        let profile = root.join("admission-profile.json");
         Self {
             root,
             linked,
@@ -466,6 +516,7 @@ impl Fixture {
             hook,
             binary,
             common,
+            profile,
         }
     }
 
@@ -475,14 +526,14 @@ impl Fixture {
 
     fn seed_proofs(&self) -> PathBuf {
         let before = self.fingerprint_paths();
-        let output = Command::new(&self.binary)
+        let mut command = Command::new(&self.binary);
+        command
             .args(["gate", "prove", "--missing"])
             .current_dir(&self.linked)
             .env_remove(wire::SpiceVariable::Lane.as_str())
             .env_remove(wire::SpiceVariable::PreCommitSource.as_str())
-            .env_remove(spice::install::INSTALLED_PRE_COMMIT_ENVIRONMENT)
-            .output()
-            .expect("seed benchmark proof receipts");
+            .env_remove(spice::install::INSTALLED_PRE_COMMIT_ENVIRONMENT);
+        let output = command.output().expect("seed benchmark proof receipts");
         assert!(
             output.status.success(),
             "proof seed failed: {}",
@@ -504,6 +555,37 @@ impl Fixture {
 
     fn invoke_hook(&self) -> Output {
         self.invoke_hook_at(&self.linked)
+    }
+
+    fn invoke_profiled_hook(&self) -> Output {
+        Command::new(&self.hook)
+            .args(["--profile-output"])
+            .arg(&self.profile)
+            .current_dir(&self.linked)
+            .env_remove(wire::SpiceVariable::Lane.as_str())
+            .env_remove(wire::SpiceVariable::PreCommitSource.as_str())
+            .output()
+            .expect("run profiled installed benchmark hook")
+    }
+
+    fn read_profile(&self, elapsed_micros: u64) -> AdmissionProfile {
+        let profile: InternalAdmissionProfile =
+            serde_json::from_slice(&fs::read(&self.profile).expect("read admission profile"))
+                .expect("decode admission profile");
+        AdmissionProfile {
+            version: profile.version,
+            fresh_process_launch_micros: elapsed_micros
+                .saturating_sub(profile.internal_total_micros),
+            internal_total_micros: profile.internal_total_micros,
+            appliance_capture_micros: profile.appliance_capture_micros,
+            installed_appliance_exact_byte_audit_micros: profile
+                .installed_appliance_exact_byte_audit_micros,
+            repository_core_micros: profile.repository_core_micros,
+            tool_authority_micros: profile.tool_authority_micros,
+            fingerprint_index_receipt_reads_micros: profile.fingerprint_index_receipt_reads_micros,
+            remaining_admission_micros: profile.remaining_admission_micros,
+            git_subprocesses: profile.git_subprocesses,
+        }
     }
 
     fn invoke_peer_hook(&self) -> Output {
