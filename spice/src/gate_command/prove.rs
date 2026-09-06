@@ -21,17 +21,14 @@ use wire::{Digest, Domain, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosi
 use spice::change_gate::{ChangeGateError, StagedActionSelection};
 use spice::repository::Repository;
 
-#[path = "prove/action.rs"]
 mod action;
 mod canvas;
-#[path = "prove/cargo.rs"]
 mod cargo;
 #[cfg(test)]
 #[path = "prove/cargo_authority_tests.rs"]
 mod cargo_authority_tests;
 #[path = "prove/fingerprint.rs"]
 mod fingerprint;
-#[path = "prove/inspect.rs"]
 mod inspect;
 #[path = "prove/single_flight.rs"]
 mod single_flight;
