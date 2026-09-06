@@ -7,10 +7,12 @@ fn parser_ignores_blank_lines_and_preserves_each_update() {
         updates,
         [
             RefUpdate {
+                old: "old",
                 new: "new",
                 reference: "refs/heads/main",
             },
             RefUpdate {
+                old: "zero",
                 new: "tip",
                 reference: "refs/tags/v1",
             },
@@ -19,10 +21,18 @@ fn parser_ignores_blank_lines_and_preserves_each_update() {
 }
 
 #[test]
-fn the_declared_old_value_does_not_survive_parsing() {
+fn the_declared_old_value_is_retained_only_for_transaction_correlation() {
     let real = format!("{:040} new refs/heads/main\n", 1);
     let zero = format!("{:040} new refs/heads/main\n", 0);
-    assert_eq!(parse_updates(&real).unwrap(), parse_updates(&zero).unwrap());
+    let real = parse_updates(&real).unwrap();
+    let zero = parse_updates(&zero).unwrap();
+    assert_ne!(real, zero);
+    assert_ne!(
+        transaction_id(TransactionState::Prepared, &real).unwrap(),
+        transaction_id(TransactionState::Prepared, &zero).unwrap()
+    );
+    assert_eq!(real[0].new, zero[0].new);
+    assert_eq!(real[0].reference, zero[0].reference);
 }
 
 #[test]
@@ -122,13 +132,11 @@ fn an_untouched_worktree_is_never_reported_as_rewritten() {
 }
 
 #[test]
-fn non_prepared_states_are_inert_before_input_or_repository_access() {
-    for state in ["committed", "aborted"] {
-        apply(
-            Path::new("repository-does-not-exist"),
-            OsStr::new(state),
-            "malformed",
-        )
-        .unwrap();
-    }
+fn preparing_is_inert_before_input_or_repository_access() {
+    apply(
+        Path::new("repository-does-not-exist"),
+        OsStr::new("preparing"),
+        "malformed",
+    )
+    .unwrap();
 }

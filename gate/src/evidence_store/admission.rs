@@ -7,10 +7,12 @@ use std::fmt;
 use wire::{Digest, Domain, Instant};
 
 use super::{
-    ActionKey, EvidenceStoreError, Layout, ReceiptId, create_directory, publish_immutable,
+    ActionKey, EvidenceStoreError, Layout, MAX_RECEIPT_BYTES, ReceiptId, create_directory,
+    publish_immutable, publish_json, read_optional_regular,
 };
 
 const ADMISSION_VERSION: u64 = 1;
+const MAX_ADMISSION_ACTIONS: usize = 256;
 
 /// Content identity of one immutable admission bundle.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -248,6 +250,26 @@ impl AdmissionBundle {
     }
 
     #[must_use]
+    pub fn branch(&self) -> &str {
+        &self.branch
+    }
+
+    #[must_use]
+    pub fn head(&self) -> Option<&str> {
+        self.head.as_deref()
+    }
+
+    #[must_use]
+    pub const fn created_at(&self) -> Instant {
+        self.created_at
+    }
+
+    #[must_use]
+    pub const fn expires_at(&self) -> Instant {
+        self.expires_at
+    }
+
+    #[must_use]
     pub fn actions(&self) -> &[AdmissionAction] {
         &self.actions
     }
@@ -321,6 +343,12 @@ impl AdmissionBundle {
         }
         let mut names = BTreeSet::new();
         let mut keys = BTreeSet::new();
+        if self.actions.len() > MAX_ADMISSION_ACTIONS {
+            return Err(EvidenceStoreError::new(
+                "gate-evidence::admission-actions-invalid",
+                format!("admission has more than {MAX_ADMISSION_ACTIONS} actions"),
+            ));
+        }
         for action in &self.actions {
             action.validate()?;
             if !names.insert(action.action()) || !keys.insert(action.action_key()) {
@@ -372,17 +400,153 @@ pub(super) fn publish(
     let candidate = layout.admissions.join(bundle.candidate_tree());
     create_directory(&candidate)?;
     publish_immutable(&candidate.join(id.as_str()), &bytes)?;
+    publish_index(layout, bundle, &id)?;
     Ok(id)
 }
 
-fn canonical_object_id(value: &str) -> bool {
+#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct AdmissionIndex {
+    version: u64,
+    candidate_tree: String,
+    branch: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    head: Option<String>,
+    admission: AdmissionId,
+    created_at: Instant,
+    expires_at: Instant,
+}
+
+fn publish_index(
+    layout: &Layout,
+    bundle: &AdmissionBundle,
+    admission: &AdmissionId,
+) -> Result<(), EvidenceStoreError> {
+    let key = index_key(bundle.candidate_tree(), bundle.branch(), bundle.head())?;
+    let path = layout.admission_index_path(&key);
+    let next = AdmissionIndex {
+        version: ADMISSION_VERSION,
+        candidate_tree: bundle.candidate_tree.clone(),
+        branch: bundle.branch.clone(),
+        head: bundle.head.clone(),
+        admission: admission.clone(),
+        created_at: bundle.created_at,
+        expires_at: bundle.expires_at,
+    };
+    let current = read_index(&path)?;
+    let replace = current.as_ref().is_none_or(|current| {
+        next.created_at > current.created_at
+            || (next.created_at == current.created_at && next.admission < current.admission)
+    });
+    if replace {
+        publish_json(&path, &next)?;
+    }
+    Ok(())
+}
+
+pub(super) fn lookup_current(
+    layout: &Layout,
+    candidate_tree: &str,
+    branch: &str,
+    head: Option<&str>,
+) -> Result<Option<(AdmissionId, AdmissionBundle)>, EvidenceStoreError> {
+    let key = index_key(candidate_tree, branch, head)?;
+    let Some(index) = read_index(&layout.admission_index_path(&key))? else {
+        return Ok(None);
+    };
+    if index.candidate_tree != candidate_tree
+        || index.branch != branch
+        || index.head.as_deref() != head
+    {
+        return Err(EvidenceStoreError::new(
+            "gate-evidence::admission-index-authority-mismatch",
+            "candidate admission index does not match its requested authority",
+        ));
+    }
+    let path = layout
+        .admissions
+        .join(candidate_tree)
+        .join(index.admission.as_str());
+    let bytes = read_optional_regular(&path, MAX_RECEIPT_BYTES as u64)?.ok_or_else(|| {
+        EvidenceStoreError::new(
+            "gate-evidence::admission-index-dangling",
+            format!(
+                "candidate admission index points to missing {}",
+                path.display()
+            ),
+        )
+    })?;
+    let bundle = AdmissionBundle::decode(&bytes)?;
+    if bundle.id()? != index.admission
+        || bundle.candidate_tree() != candidate_tree
+        || bundle.branch() != branch
+        || bundle.head() != head
+        || bundle.created_at() != index.created_at
+        || bundle.expires_at() != index.expires_at
+    {
+        return Err(EvidenceStoreError::new(
+            "gate-evidence::admission-index-authority-mismatch",
+            "candidate admission index disagrees with its immutable bundle",
+        ));
+    }
+    Ok(Some((index.admission, bundle)))
+}
+
+fn index_key(
+    candidate_tree: &str,
+    branch: &str,
+    head: Option<&str>,
+) -> Result<Digest, EvidenceStoreError> {
+    if !canonical_object_id(candidate_tree)
+        || !canonical_reference(branch)
+        || head.is_some_and(|head| !canonical_object_id(head))
+    {
+        return Err(EvidenceStoreError::new(
+            "gate-evidence::admission-index-authority-invalid",
+            "candidate admission index authority is not canonical",
+        ));
+    }
+    let bytes = wire::encode(&(candidate_tree, branch, head)).map_err(|error| {
+        EvidenceStoreError::new("gate-evidence::admission-index-invalid", error.to_string())
+    })?;
+    let mut framed = b"candidate-admission-index-v1\0".to_vec();
+    framed.extend_from_slice(&bytes);
+    Ok(Digest::compute(Domain::GateAdmission, &framed))
+}
+
+fn read_index(path: &std::path::Path) -> Result<Option<AdmissionIndex>, EvidenceStoreError> {
+    let Some(bytes) = read_optional_regular(path, MAX_RECEIPT_BYTES as u64)? else {
+        return Ok(None);
+    };
+    let index: AdmissionIndex = wire::decode(&bytes).map_err(|error| {
+        EvidenceStoreError::new("gate-evidence::admission-index-invalid", error.to_string())
+    })?;
+    if index.version != ADMISSION_VERSION {
+        return Err(EvidenceStoreError::new(
+            "gate-evidence::admission-index-version-unsupported",
+            format!("admission index version {} is unsupported", index.version),
+        ));
+    }
+    let canonical = wire::encode(&index).map_err(|error| {
+        EvidenceStoreError::new("gate-evidence::admission-index-invalid", error.to_string())
+    })?;
+    if canonical != bytes {
+        return Err(EvidenceStoreError::new(
+            "gate-evidence::admission-index-noncanonical",
+            "admission index bytes are not canonical",
+        ));
+    }
+    Ok(Some(index))
+}
+
+pub(super) fn canonical_object_id(value: &str) -> bool {
     matches!(value.len(), 40 | 64)
         && value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
-fn canonical_reference(value: &str) -> bool {
+pub(super) fn canonical_reference(value: &str) -> bool {
     value.starts_with("refs/heads/")
         && gix::validate::reference::branch_name(value.as_bytes().as_bstr()).is_ok()
 }

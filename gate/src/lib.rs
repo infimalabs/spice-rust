@@ -116,9 +116,10 @@ pub use core::{
 pub use evidence_store::{
     ActionFingerprintAuthority, ActionFingerprintAuthorityFields, ActionFingerprintManifest,
     ActionFingerprintManifestFields, ActionFingerprintResolution, ActionKey, AdmissionAction,
-    AdmissionBundle, AdmissionBundleFields, AdmissionId, AdmissionLiveCheck,
-    CollectionReport as EvidenceCollectionReport, EvidenceLease, EvidenceStore, EvidenceStoreError,
-    LeaseAcquisition, PassReceipt, PassReceiptFields, ProducerRecord as EvidenceProducerRecord,
+    AdmissionBundle, AdmissionBundleFields, AdmissionCandidate, AdmissionConsumption, AdmissionId,
+    AdmissionLiveCheck, AdmissionTransactionId, CollectionReport as EvidenceCollectionReport,
+    EvidenceLease, EvidenceStore, EvidenceStoreError, LeaseAcquisition, PassReceipt,
+    PassReceiptFields, ProducerRecord as EvidenceProducerRecord,
     Publication as EvidencePublication, ReceiptExpectation, ReceiptId, derive_action_key,
 };
 pub use hygiene::{

@@ -126,13 +126,17 @@ pub fn apply(
     state: &OsStr,
     input: &str,
 ) -> Result<(), ReferenceTransactionError> {
-    if state != OsStr::new(PREPARED) {
+    let state = TransactionState::parse(state).unwrap_or(TransactionState::Preparing);
+    if state == TransactionState::Preparing {
         return Ok(());
     }
-
     let updates = parse_updates(input)?;
     if !requires_repository(&updates) {
         return Ok(());
+    }
+
+    if state != TransactionState::Prepared {
+        return finish_consumption(repository, state, &updates);
     }
 
     let Some(current_ref) = git_read(repository, &["symbolic-ref", "--quiet", "HEAD"])? else {
@@ -146,7 +150,8 @@ pub fn apply(
         Publication::Published(baseline) => {
             refuse_abandoning_rewind(repository, &current_ref, &baseline, &updates)
         }
-    }
+    }?;
+    prepare_consumption(repository, &updates)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -213,7 +218,7 @@ pub(super) fn entry(mut arguments: impl Iterator<Item = OsString>) -> Option<i32
 }
 
 fn run(state: TransactionState) -> Result<(), Box<dyn Error>> {
-    if state != TransactionState::Prepared {
+    if state == TransactionState::Preparing {
         return Ok(());
     }
     let mut input = String::new();
@@ -430,15 +435,16 @@ fn declared_upstream_reference(
     Ok(Some(format!("{REMOTE_PREFIX}{remote}/{name}")))
 }
 
-/// One line of the hook's queue. The reported old value is deliberately absent.
+/// One line of the hook's queue.
 ///
 /// Git names three fields and [`parse_updates`] still requires all three, but
-/// the first is whatever the caller *declared*, not what the reference holds.
-/// `git update-ref <ref> <new>` declares nothing, so it arrives as the zero OID
-/// and a genuine rewind reads as a branch creation. Carrying the field would
-/// only invite reading it again; the tip is read from the reference instead.
+/// The first field remains untrusted for history judgement: the guard still
+/// reads the held reference itself. It is retained only to correlate Git's
+/// prepared callback with the matching committed or aborted callback without
+/// reading refs after they have moved.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RefUpdate<'a> {
+    old: &'a str,
     new: &'a str,
     reference: &'a str,
 }
@@ -454,11 +460,106 @@ fn parse_updates(input: &str) -> Result<Vec<RefUpdate<'_>>, ReferenceTransaction
             return Err(ReferenceTransactionError::MalformedInput { line: index + 1 });
         }
         updates.push(RefUpdate {
+            old: fields[0],
             new: fields[1],
             reference: fields[2],
         });
     }
     Ok(updates)
+}
+
+fn transaction_id(
+    state: TransactionState,
+    updates: &[RefUpdate<'_>],
+) -> Result<gate::AdmissionTransactionId, ReferenceTransactionError> {
+    let mut rows = updates
+        .iter()
+        .map(|update| (update.reference, update.old, update.new))
+        .collect::<Vec<_>>();
+    rows.sort_unstable();
+    let bytes = wire::encode(&rows).map_err(|error| ReferenceTransactionError::Evidence {
+        state: state.as_str(),
+        reason: "gate-evidence::admission-consumption-invalid".to_owned(),
+        detail: error.to_string(),
+    })?;
+    Ok(gate::AdmissionTransactionId::derive(&bytes))
+}
+
+fn prepare_consumption(
+    repository: &Path,
+    updates: &[RefUpdate<'_>],
+) -> Result<(), ReferenceTransactionError> {
+    let transaction = transaction_id(TransactionState::Prepared, updates)?;
+    let mut candidates = Vec::new();
+    for update in updates
+        .iter()
+        .filter(|update| update.reference.starts_with(LOCAL_PREFIX) && !is_zero_oid(update.new))
+    {
+        let Some(commit) = commit_oid(repository, update.new)? else {
+            continue;
+        };
+        let Some(tree) = git_read(repository, &["rev-parse", &format!("{commit}^{{tree}}")])?
+        else {
+            continue;
+        };
+        let head = commit_oid(repository, update.reference)?;
+        candidates.push(
+            gate::AdmissionCandidate::new(update.reference, head, commit, tree)
+                .map_err(|error| evidence_error(TransactionState::Prepared, error))?,
+        );
+    }
+    let store = evidence_store(repository, TransactionState::Prepared)?;
+    let now = wire::Instant::new(jiff::Timestamp::now()).map_err(|error| {
+        ReferenceTransactionError::Evidence {
+            state: TransactionState::Prepared.as_str(),
+            reason: "gate-evidence::admission-consumption-clock-invalid".to_owned(),
+            detail: error.to_string(),
+        }
+    })?;
+    store
+        .prepare_admission_consumption(&transaction, &candidates, now)
+        .map(|_| ())
+        .map_err(|error| evidence_error(TransactionState::Prepared, error))
+}
+
+fn finish_consumption(
+    repository: &Path,
+    state: TransactionState,
+    updates: &[RefUpdate<'_>],
+) -> Result<(), ReferenceTransactionError> {
+    let transaction = transaction_id(state, updates)?;
+    let store = evidence_store(repository, state)?;
+    match state {
+        TransactionState::Committed => store.commit_admission_consumption(&transaction).map(|_| ()),
+        TransactionState::Aborted => store.abort_admission_consumption(&transaction).map(|_| ()),
+        TransactionState::Preparing | TransactionState::Prepared => unreachable!(),
+    }
+    .map_err(|error| evidence_error(state, error))
+}
+
+fn evidence_store(
+    repository: &Path,
+    state: TransactionState,
+) -> Result<gate::EvidenceStore, ReferenceTransactionError> {
+    let repository = spice::repository::Repository::discover(repository).map_err(|error| {
+        ReferenceTransactionError::Evidence {
+            state: state.as_str(),
+            reason: "gate-evidence::repository-unresolved".to_owned(),
+            detail: error.to_string(),
+        }
+    })?;
+    gate::EvidenceStore::open(repository.common_dir()).map_err(|error| evidence_error(state, error))
+}
+
+fn evidence_error(
+    state: TransactionState,
+    error: gate::EvidenceStoreError,
+) -> ReferenceTransactionError {
+    ReferenceTransactionError::Evidence {
+        state: state.as_str(),
+        reason: error.reason().to_owned(),
+        detail: error.detail().to_owned(),
+    }
 }
 
 fn requires_repository(updates: &[RefUpdate<'_>]) -> bool {
@@ -691,6 +792,11 @@ pub enum ReferenceTransactionError {
     NonUtf8Output {
         arguments: Vec<String>,
     },
+    Evidence {
+        state: &'static str,
+        reason: String,
+        detail: String,
+    },
     ProtectedHistory {
         reference: String,
         commits: String,
@@ -732,6 +838,23 @@ impl fmt::Display for ReferenceTransactionError {
                     arguments.join(" ")
                 )?;
                 formatter.write_str(OPERATIONAL_RECOVERY)
+            }
+            Self::Evidence {
+                state,
+                reason,
+                detail,
+            } => {
+                write!(
+                    formatter,
+                    "reference-transaction {state} evidence failed: {reason}; {detail}"
+                )?;
+                if *state == PREPARED {
+                    formatter.write_str(OPERATIONAL_RECOVERY)
+                } else {
+                    formatter.write_str(
+                        ". No gate action or test was executed; retry this exact hook state after correcting the evidence store.",
+                    )
+                }
             }
             Self::ProtectedHistory {
                 reference,
@@ -810,6 +933,7 @@ impl Error for ReferenceTransactionError {
             Self::GitLaunch { source, .. } => Some(source),
             Self::MalformedInput { .. }
             | Self::NonUtf8Output { .. }
+            | Self::Evidence { .. }
             | Self::ProtectedHistory { .. }
             | Self::UnjudgeableUpstream { .. } => None,
         }

@@ -24,6 +24,9 @@ pub(super) struct Layout {
     pub(super) actions: PathBuf,
     pub(super) leases: PathBuf,
     pub(super) admissions: PathBuf,
+    pub(super) admission_indexes: PathBuf,
+    pub(super) pending_admissions: PathBuf,
+    pub(super) admission_credits: PathBuf,
     pub(super) fingerprints: PathBuf,
     pub(super) locks: PathBuf,
 }
@@ -41,6 +44,9 @@ impl Layout {
             actions: root.join("actions"),
             leases: root.join("leases"),
             admissions: root.join("admissions"),
+            admission_indexes: root.join("admission-indexes"),
+            pending_admissions: root.join("pending-admissions"),
+            admission_credits: root.join("admission-credits"),
             fingerprints: root.join("fingerprints"),
             locks: root.join("locks"),
             root,
@@ -50,6 +56,9 @@ impl Layout {
             &layout.actions,
             &layout.leases,
             &layout.admissions,
+            &layout.admission_indexes,
+            &layout.pending_admissions,
+            &layout.admission_credits,
             &layout.fingerprints,
             &layout.locks,
         ] {
@@ -86,6 +95,9 @@ impl Layout {
             &self.actions,
             &self.leases,
             &self.admissions,
+            &self.admission_indexes,
+            &self.pending_admissions,
+            &self.admission_credits,
             &self.fingerprints,
             &self.locks,
         ] {
@@ -105,6 +117,21 @@ impl Layout {
     }
     pub(super) fn publication_path(&self) -> PathBuf {
         self.root.join(PUBLICATION_FILE)
+    }
+    pub(super) fn pending_admission_path(
+        &self,
+        transaction: &super::AdmissionTransactionId,
+    ) -> PathBuf {
+        self.pending_admissions.join(transaction.as_str())
+    }
+    pub(super) fn admission_index_path(&self, key: &wire::Digest) -> PathBuf {
+        self.admission_indexes.join(key.as_str())
+    }
+    pub(super) fn admission_credit_path(
+        &self,
+        transaction: &super::AdmissionTransactionId,
+    ) -> PathBuf {
+        self.admission_credits.join(transaction.as_str())
     }
 }
 
