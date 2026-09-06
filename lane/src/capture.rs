@@ -570,6 +570,7 @@ mod tests {
             effort: Effort::High,
             personality: None,
             fast_mode: Some(false),
+            model_context_window: Some(1_050_000),
             attribution: Attribution::Harness,
             hook: SteeringHook {
                 command: "true".to_owned(),

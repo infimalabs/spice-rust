@@ -123,6 +123,10 @@ fn reads_name_the_current_effective_tree_and_provenance() {
         serde_json::json!([])
     );
     assert_eq!(json["effective"]["vendor"]["codex"]["model"], "lane-model");
+    assert_eq!(
+        json["effective"]["vendor"]["codex"]["model_context_window"],
+        vendor::DEFAULT_CODEX_MODEL_CONTEXT_WINDOW
+    );
     assert!(!fixture.local().exists());
 
     let selected = reply_body(fixture.invoke(&["config", "lock.busy", "--json"]));
@@ -132,6 +136,13 @@ fn reads_name_the_current_effective_tree_and_provenance() {
     let selected = reply_body(fixture.invoke(&["config", "vendor.codex.model", "--json"]));
     assert_eq!(selected["selected"]["value"], "lane-model");
     assert_eq!(selected["selected"]["source"], "worktree");
+    let selected =
+        reply_body(fixture.invoke(&["config", "vendor.codex.model_context_window", "--json"]));
+    assert_eq!(
+        selected["selected"]["value"],
+        vendor::DEFAULT_CODEX_MODEL_CONTEXT_WINDOW
+    );
+    assert_eq!(selected["selected"]["source"], "builtin");
     fixture.assert_tracked_unchanged();
 }
 

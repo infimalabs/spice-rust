@@ -704,6 +704,15 @@ configuration_registry! {
         class: WorktreeLocal,
         flag: None,
     }
+    fixed "vendor.codex.model_context_window" {
+        kind: UnsignedInteger,
+        builtin: Some(Builtin::UnsignedInteger(
+            vendor::DEFAULT_CODEX_MODEL_CONTEXT_WINDOW,
+        )),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
     fixed "vendor.codex.personality" {
         kind: String,
         builtin: Some(Builtin::Absent),

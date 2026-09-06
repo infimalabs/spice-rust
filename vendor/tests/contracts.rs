@@ -25,6 +25,7 @@ const HOOK_COMMAND: &str = "/usr/bin/spice agent post-tool-hook --repo-root /wor
 const STEERING_TOKEN: &str = "1kJHh5bb";
 const CLAUDE_MODEL: &str = "claude-opus-5";
 const CODEX_MODEL: &str = "gpt-5-codex";
+const CODEX_CONTEXT_WINDOW: u64 = 1_050_000;
 const MCP_COMMAND: &str = "npx";
 const MCP_ARGS: [&str; 3] = ["@playwright/mcp@latest", "--isolated", "--headless"];
 
@@ -117,6 +118,10 @@ fn codex_carries_every_launch_knob_and_resumes_after_its_flags() {
             "--config",
             r#"model_reasoning_effort="high""#,
             "--config",
+            "model_context_window=1050000",
+            "--config",
+            "model_auto_compact_token_limit=997500",
+            "--config",
             CODEX_MCP_COMMAND_OVERRIDE,
             "--config",
             CODEX_MCP_ARGS_OVERRIDE,
@@ -155,6 +160,10 @@ fn codex_carries_every_launch_knob_and_resumes_after_its_flags() {
             CODEX_HOOK_OVERRIDE,
             "--config",
             r#"model_reasoning_effort="high""#,
+            "--config",
+            "model_context_window=1050000",
+            "--config",
+            "model_auto_compact_token_limit=997500",
             "--config",
             CODEX_MCP_COMMAND_OVERRIDE,
             "--config",
@@ -288,12 +297,31 @@ fn vendor_specific_knobs_refuse_instead_of_being_silently_ignored() {
         }
     );
 
+    claude_launch.fast_mode = None;
+    claude_launch.model_context_window = Some(CODEX_CONTEXT_WINDOW);
+    assert_eq!(
+        claude::record("/opt/claude", &claude_launch).expect_err("context window refuses"),
+        ContractError::Unsupported {
+            path: "vendor.claude.model_context_window",
+            vendor: "Claude",
+        }
+    );
+
     let mut codex_launch = fixture(CODEX_MODEL, Resume::Fresh);
     codex_launch.fast_mode = None;
     assert_eq!(
         codex::record("/opt/codex", &codex_launch).expect_err("omitted fast mode refuses"),
         ContractError::Missing {
             path: "vendor.codex.fast_mode",
+        }
+    );
+
+    codex_launch.fast_mode = Some(false);
+    codex_launch.model_context_window = None;
+    assert_eq!(
+        codex::record("/opt/codex", &codex_launch).expect_err("context window is required"),
+        ContractError::Missing {
+            path: "vendor.codex.model_context_window",
         }
     );
 }
@@ -447,6 +475,7 @@ fn fixture(model: &str, resume: Resume) -> Launch {
         effort: Effort::High,
         personality: None,
         fast_mode: (model == CODEX_MODEL).then_some(false),
+        model_context_window: (model == CODEX_MODEL).then_some(CODEX_CONTEXT_WINDOW),
         attribution: Attribution::Harness,
         hook: SteeringHook {
             command: HOOK_COMMAND.to_owned(),

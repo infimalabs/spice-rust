@@ -476,6 +476,7 @@ fn codex_configuration(root: &crate::config::Root) -> vendor::LaunchValues<'_> {
         effort: configured.effort(),
         personality: configured.personality(),
         fast_mode: Some(configured.fast_mode()),
+        model_context_window: Some(configured.model_context_window()),
         auto_compact_window_tokens: None,
     }
 }
@@ -488,6 +489,7 @@ fn claude_configuration(root: &crate::config::Root) -> vendor::LaunchValues<'_> 
         effort: configured.effort(),
         personality: None,
         fast_mode: None,
+        model_context_window: None,
         auto_compact_window_tokens: Some(configured.auto_compact_window_tokens()),
     }
 }

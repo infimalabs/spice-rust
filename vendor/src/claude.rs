@@ -63,6 +63,12 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
             vendor: "Claude",
         });
     }
+    if launch.model_context_window.is_some() {
+        return Err(ContractError::Unsupported {
+            path: "vendor.claude.model_context_window",
+            vendor: "Claude",
+        });
+    }
     let system_prompt = system_prompt(launch);
     let mut arguments = vec![
         OsString::from("--print"),
