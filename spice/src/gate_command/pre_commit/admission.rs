@@ -75,7 +75,7 @@ pub(super) fn run(
     };
     let resolution = lookup_evidence(&store, &lookup)?;
     let (manifest, resolved) = resolution.into_parts();
-    let preparation = lookup.restore(&manifest).map_err(prove_failure)?;
+    let mut preparation = lookup.restore(&manifest).map_err(prove_failure)?;
     let missing = manifest
         .actions()
         .iter()
@@ -111,7 +111,7 @@ pub(super) fn run(
             }
         },
     };
-    if let Err(error) = preparation.verify_current(&repository) {
+    if let Err(error) = preparation.verify_current(&repository, &claim) {
         let _ = preparation.reject_state();
         return Err(prove_failure(error));
     }
@@ -119,7 +119,7 @@ pub(super) fn run(
         return Err(prove_failure(error));
     }
     preparation
-        .verify_current(&repository)
+        .verify_current(&repository, &claim)
         .map_err(prove_failure)?;
     let (created_at, expires_at) = admission_window()?;
     let live_check_count = live_checks.len();
