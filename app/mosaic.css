@@ -256,6 +256,7 @@
 }
 
 .team-surface {
+  --inactive-lane-opacity: .72;
   --mosaic-card: color-mix(in srgb, var(--panel) 95%, var(--accent));
   /* Match the predecessor's weighted swimlanes: each lineage receives one
      share per member, up to the six-member visual contract, while the fleet
@@ -377,6 +378,7 @@
   font-size: 1rem;
 }
 .team-surface > .ticker { flex: 0 0 auto; min-height: 26px; padding-block: 6px; padding-inline: 6px 10px; border-bottom: 1px solid var(--control-line-soft); background: var(--panel); font-size: .65rem; }
+.team-surface > .ticker:is([data-lane-status="bound"], [data-lane-status="unbound"]) { opacity: var(--inactive-lane-opacity); }
 .team-surface .ticker-age { display: inline-block; width: 3ch; margin-right: 5px; color: var(--accent); text-align: right; }
 .team-surface .ticker-age.queued { color: var(--warning); } .team-surface .ticker-age.bound, .team-surface .ticker-age.unbound { color: var(--muted); opacity: .7; }
 .team-surface .ticker-prefix { color: color-mix(in srgb, var(--accent-slot, var(--muted)) 70%, var(--ink)); font-weight: 700; }
@@ -458,7 +460,7 @@
   box-shadow: none;
 }
 .team-surface .team-agent:focus-within { border-color: var(--control-line-soft); }
-.team-surface .team-agent--vacant { opacity: .72; }
+.team-surface .team-agent--vacant { opacity: var(--inactive-lane-opacity); }
 
 .agent-composer-stack {
   --composer-shard-block-size: var(--team-composer-block-size);
