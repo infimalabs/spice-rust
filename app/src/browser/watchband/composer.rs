@@ -128,12 +128,22 @@ pub(super) fn agent_message_card(props: &AgentMessageCardProps) -> Html {
         let lane = props.lane.to_string();
         let message_key = agent_message_source_id(&props.message);
         let speech_queue = props.speech_queue.clone();
-        Callback::from(move |text: String| {
-            speech_queue.emit(SpeechRequest::message(
-                lane.clone(),
-                message_key.clone(),
-                text,
-            ));
+        let response = watchband::response_speech_text(
+            &props.message.text,
+            props
+                .message
+                .automatic_speech
+                .as_ref()
+                .map(|speech| speech.text.as_str()),
+        );
+        Callback::from(move |_: String| {
+            if let Some(text) = response.clone() {
+                speech_queue.emit(SpeechRequest::message(
+                    lane.clone(),
+                    message_key.clone(),
+                    text,
+                ));
+            }
         })
     };
     let correspondent = agent_message_correspondent(

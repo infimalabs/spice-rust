@@ -163,6 +163,18 @@ async function assertAutomaticSpeechEngine(engine, endpoint, fixture, worktree, 
     await emitAssistantRecord(worktree, page, lane, `${engine} ordinary progress`);
     assert.equal(await speechCount(page), 0, `${engine} Speak ignores commentary`);
 
+    const quoted = await emitAssistantRecord(
+      worktree,
+      page,
+      lane,
+      `> borrowed context\n> > nested borrowed context\n\n${engine} agent response`,
+    );
+    await quoted.getByLabel("Speak this message").click();
+    await waitForSpeech(page, 1, `${engine} response-only manual playback`);
+    assert.equal(await latestSpeechText(page), `${engine} agent response`);
+    await settleLatestSpeech(page);
+    await resetSpeech(page);
+
     const acked = await reply(fixture, ["steer", lane, `${engine} acknowledged direction`]);
     await emitAssistantRecord(worktree, page, lane, `ACK ${acked.body.key}: applied ${engine}`);
     await waitForSpeech(page, 1, `${engine} canonical ACK`);

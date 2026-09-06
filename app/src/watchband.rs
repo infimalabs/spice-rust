@@ -664,6 +664,21 @@ pub fn first_nonquoted_prose(text: &str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+/// Agent-authored response offered to manual message playback.
+#[must_use]
+pub fn response_speech_text(text: &str, prepared: Option<&str>) -> Option<String> {
+    if let Some(prepared) = prepared.map(str::trim).filter(|text| !text.is_empty()) {
+        return Some(prepared.to_owned());
+    }
+    let response = text
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('>'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let response = response.trim();
+    (!response.is_empty()).then(|| response.to_owned())
+}
+
 /// The count a navigation pill wears, or nothing.
 ///
 /// Zero is absence rather than a badge reading `0`: the badge exists to draw
