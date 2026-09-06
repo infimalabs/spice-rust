@@ -266,14 +266,25 @@ fn retained_owned_home_rebinds_only_to_the_current_store_for_the_same_lock() {
     let current_home = store::prepare(&current.repository, None, &current.host())
         .expect("prepare current source generation");
 
-    let authority = readmit_source_generation(retained_home.home(), &lock_bytes, &current.host())
-        .expect("re-admit retained owned home");
+    let authority = readmit_source_generation(
+        retained_home.home(),
+        &lock_bytes,
+        &retained.repository,
+        &current.host(),
+    )
+    .expect("re-admit retained owned home");
     assert_eq!(authority.generation(), current_home.generation());
     let config = fs::read_to_string(retained_home.home().join("config.toml")).unwrap();
     assert!(config.contains(&current.host().store_root().display().to_string()));
     assert!(!config.contains(&retained.host().store_root().display().to_string()));
     assert_eq!(
-        readmit_source_generation(retained_home.home(), &lock_bytes, &current.host()).unwrap(),
+        readmit_source_generation(
+            retained_home.home(),
+            &lock_bytes,
+            &retained.repository,
+            &current.host(),
+        )
+        .unwrap(),
         authority,
         "current re-admission is idempotent",
     );
@@ -281,10 +292,27 @@ fn retained_owned_home_rebinds_only_to_the_current_store_for_the_same_lock() {
     let error = readmit_source_generation(
         retained_home.home(),
         lockfile("different").as_bytes(),
+        &retained.repository,
         &current.host(),
     )
     .expect_err("changed lock bytes cannot rebind a retained home");
     assert_eq!(error.reason(), "cargo-isolation::generation-lock-mismatch");
+
+    let config = fs::read(retained_home.home().join("config.toml")).unwrap();
+    for host in [&current.host(), &retained.host()] {
+        let error = readmit_source_generation(
+            retained_home.home(),
+            &lock_bytes,
+            &current.repository,
+            host,
+        )
+        .expect_err("foreign worktree cannot adopt retained home");
+        assert_eq!(error.reason(), "cargo-isolation::home-owner-mismatch");
+        assert_eq!(
+            fs::read(retained_home.home().join("config.toml")).unwrap(),
+            config,
+        );
+    }
 }
 
 #[test]

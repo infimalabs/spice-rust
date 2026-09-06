@@ -395,9 +395,10 @@ pub fn source_generation_authority(
 pub fn readmit_source_generation(
     home: &Path,
     lockfile: &[u8],
+    current_worktree: &Path,
     host: &Host,
 ) -> Result<SourceGenerationAuthority, IsolationError> {
-    store::readmit_source_generation(home, lockfile, host)
+    store::readmit_source_generation(home, lockfile, current_worktree, host)
 }
 
 /// Reclaim only old recognized temporaries and unreferenced generations.
