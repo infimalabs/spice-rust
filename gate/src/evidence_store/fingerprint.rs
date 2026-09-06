@@ -10,7 +10,8 @@ use super::{
     derive_action_key, publish_immutable,
 };
 
-const FINGERPRINT_VERSION: u64 = 3;
+const FINGERPRINT_AUTHORITY_VERSION: u64 = 2;
+const FINGERPRINT_MANIFEST_VERSION: u64 = 3;
 const FINGERPRINT_INDEX_VERSION: u64 = 1;
 const FINGERPRINT_IDENTITY: &[u8] = b"spice.gate.action-fingerprint-manifest.v1\0";
 const FINGERPRINT_INDEX_BYTES: u64 = 64 * 1024;
@@ -51,7 +52,7 @@ pub struct ActionFingerprintAuthority {
 impl ActionFingerprintAuthority {
     pub fn new(fields: ActionFingerprintAuthorityFields) -> Result<Self, EvidenceStoreError> {
         let authority = Self {
-            version: FINGERPRINT_VERSION,
+            version: FINGERPRINT_AUTHORITY_VERSION,
             candidate_tree: fields.candidate_tree,
             baseline: fields.baseline,
             source: fields.source,
@@ -86,11 +87,11 @@ impl ActionFingerprintAuthority {
     }
 
     fn validate(&self) -> Result<(), EvidenceStoreError> {
-        if self.version != FINGERPRINT_VERSION {
+        if self.version != FINGERPRINT_AUTHORITY_VERSION {
             return Err(EvidenceStoreError::new(
                 "gate-evidence::fingerprint-version-unsupported",
                 format!(
-                    "fingerprint authority version {} is not {FINGERPRINT_VERSION}",
+                    "fingerprint authority version {} is not {FINGERPRINT_AUTHORITY_VERSION}",
                     self.version
                 ),
             ));
@@ -146,6 +147,11 @@ pub(super) struct ActionFingerprintIndex {
     manifest: Digest,
 }
 
+#[derive(Deserialize)]
+struct FingerprintVersion {
+    version: u64,
+}
+
 impl ActionFingerprintResolution {
     pub(super) fn new(
         manifest: ActionFingerprintManifest,
@@ -191,7 +197,7 @@ impl ActionFingerprintManifest {
 
     pub fn new(fields: ActionFingerprintManifestFields) -> Result<Self, EvidenceStoreError> {
         let manifest = Self {
-            version: FINGERPRINT_VERSION,
+            version: FINGERPRINT_MANIFEST_VERSION,
             authority: fields.authority,
             selection: fields.selection,
             cargo_tests: fields.cargo_tests,
@@ -267,11 +273,11 @@ impl ActionFingerprintManifest {
     }
 
     fn validate(&self) -> Result<(), EvidenceStoreError> {
-        if self.version != FINGERPRINT_VERSION {
+        if self.version != FINGERPRINT_MANIFEST_VERSION {
             return Err(EvidenceStoreError::new(
                 "gate-evidence::fingerprint-version-unsupported",
                 format!(
-                    "fingerprint version {} is not {FINGERPRINT_VERSION}",
+                    "fingerprint version {} is not {FINGERPRINT_MANIFEST_VERSION}",
                     self.version
                 ),
             ));
@@ -339,6 +345,14 @@ impl ActionFingerprintIndex {
     }
 
     fn decode(bytes: &[u8]) -> Result<Self, EvidenceStoreError> {
+        if wire::decode::<FingerprintVersion>(bytes)
+            .is_ok_and(|document| document.version == FINGERPRINT_AUTHORITY_VERSION)
+        {
+            return Err(EvidenceStoreError::new(
+                "gate-evidence::fingerprint-version-unsupported",
+                "authority-keyed fingerprint manifest version 2 requires `spice gate prove --missing` regeneration",
+            ));
+        }
         let index: Self = wire::decode(bytes).map_err(|error| {
             EvidenceStoreError::new(
                 "gate-evidence::fingerprint-index-invalid",
