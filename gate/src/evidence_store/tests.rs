@@ -906,6 +906,15 @@ fn shared_fingerprint_manifest_round_trips_and_authority_drift_misses() {
 
     let published = producer.publish_action_fingerprints(&manifest).unwrap();
     assert_eq!(published, authority.key().unwrap());
+    let object = producer
+        .layout
+        .fingerprint_objects
+        .join(manifest.id().unwrap().as_str());
+    assert_eq!(fs::read(&object).unwrap(), manifest.encode().unwrap());
+    assert_ne!(
+        fs::read(producer.layout.fingerprints.join(published.as_str())).unwrap(),
+        manifest.encode().unwrap(),
+    );
     assert_eq!(
         consumer.lookup_action_fingerprints(&authority).unwrap(),
         Some(manifest.clone())
@@ -928,7 +937,7 @@ fn shared_fingerprint_manifest_round_trips_and_authority_drift_misses() {
 }
 
 #[test]
-fn corrupt_fingerprint_manifest_refuses_without_another_lookup_path() {
+fn corrupt_fingerprint_index_refuses_without_another_lookup_path() {
     let fixture = Fixture::new("fingerprint-corrupt");
     let store = fixture.store();
     let authority = fingerprint_authority(b"environment");
@@ -947,7 +956,127 @@ fn corrupt_fingerprint_manifest_refuses_without_another_lookup_path() {
     .unwrap();
 
     let error = store.lookup_action_fingerprints(&authority).unwrap_err();
-    assert_eq!(error.reason(), "gate-evidence::fingerprint-invalid");
+    assert_eq!(error.reason(), "gate-evidence::fingerprint-index-invalid");
+}
+
+#[test]
+fn interrupted_fingerprint_publication_leaves_only_an_idempotent_object() {
+    let fixture = Fixture::new("fingerprint-interrupted");
+    let store = fixture.store();
+    let authority = fingerprint_authority(b"environment");
+    let manifest = ActionFingerprintManifest::new(ActionFingerprintManifestFields {
+        authority: authority.clone(),
+        selection: fingerprint_selection(&authority),
+        cargo_tests: false,
+        actions: Vec::new(),
+    })
+    .unwrap();
+
+    let error = store
+        .with_lock(|layout| {
+            fingerprint::publish_with(layout, &manifest, || {
+                Err(EvidenceStoreError::new(
+                    "gate-evidence::fingerprint-test-interrupted",
+                    "stop after object publication",
+                ))
+            })
+        })
+        .unwrap_err();
+    assert_eq!(
+        error.reason(),
+        "gate-evidence::fingerprint-test-interrupted"
+    );
+    assert!(
+        fs::read_dir(&store.layout.fingerprints)
+            .unwrap()
+            .next()
+            .is_none()
+    );
+    assert_eq!(
+        fs::read_dir(&store.layout.fingerprint_objects)
+            .unwrap()
+            .count(),
+        1,
+    );
+
+    store.publish_action_fingerprints(&manifest).unwrap();
+    assert_eq!(
+        store.lookup_action_fingerprints(&authority).unwrap(),
+        Some(manifest),
+    );
+}
+
+#[test]
+fn missing_or_changed_fingerprint_object_refuses_by_digest() {
+    let fixture = Fixture::new("fingerprint-object-drift");
+    let store = fixture.store();
+    let authority = fingerprint_authority(b"environment");
+    let manifest = ActionFingerprintManifest::new(ActionFingerprintManifestFields {
+        authority: authority.clone(),
+        selection: fingerprint_selection(&authority),
+        cargo_tests: false,
+        actions: Vec::new(),
+    })
+    .unwrap();
+    store.publish_action_fingerprints(&manifest).unwrap();
+    let object = store
+        .layout
+        .fingerprint_objects
+        .join(manifest.id().unwrap().as_str());
+
+    fs::remove_file(&object).unwrap();
+    let missing = store.lookup_action_fingerprints(&authority).unwrap_err();
+    assert_eq!(
+        missing.reason(),
+        "gate-evidence::fingerprint-object-missing"
+    );
+
+    fs::write(&object, b"changed fingerprint bytes").unwrap();
+    let changed = store.lookup_action_fingerprints(&authority).unwrap_err();
+    assert_eq!(
+        changed.reason(),
+        "gate-evidence::fingerprint-digest-mismatch"
+    );
+}
+
+#[test]
+fn fingerprint_index_cannot_substitute_another_valid_manifest_object() {
+    let fixture = Fixture::new("fingerprint-object-swap");
+    let store = fixture.store();
+    let first_authority = fingerprint_authority(b"environment-a");
+    let second_authority = fingerprint_authority(b"environment-b");
+    let manifest = |authority: &ActionFingerprintAuthority| {
+        ActionFingerprintManifest::new(ActionFingerprintManifestFields {
+            authority: authority.clone(),
+            selection: fingerprint_selection(authority),
+            cargo_tests: false,
+            actions: Vec::new(),
+        })
+        .unwrap()
+    };
+    let first = manifest(&first_authority);
+    let second = manifest(&second_authority);
+    store.publish_action_fingerprints(&first).unwrap();
+    store.publish_action_fingerprints(&second).unwrap();
+    let first_index = store
+        .layout
+        .fingerprints
+        .join(first_authority.key().unwrap().as_str());
+    fs::write(
+        first_index,
+        fingerprint::ActionFingerprintIndex::new(first_authority.clone(), second.id().unwrap())
+            .encode()
+            .unwrap(),
+    )
+    .unwrap();
+
+    let error = store
+        .lookup_action_fingerprints(&first_authority)
+        .unwrap_err();
+    assert_eq!(
+        error.reason(),
+        "gate-evidence::fingerprint-authority-mismatch"
+    );
 }
 
 fn fingerprint_authority(environment: &[u8]) -> ActionFingerprintAuthority {

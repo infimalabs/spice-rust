@@ -28,6 +28,7 @@ pub(super) struct Layout {
     pub(super) pending_admissions: PathBuf,
     pub(super) admission_credits: PathBuf,
     pub(super) fingerprints: PathBuf,
+    pub(super) fingerprint_objects: PathBuf,
     pub(super) locks: PathBuf,
 }
 
@@ -48,6 +49,7 @@ impl Layout {
             pending_admissions: root.join("pending-admissions"),
             admission_credits: root.join("admission-credits"),
             fingerprints: root.join("fingerprints"),
+            fingerprint_objects: root.join("fingerprint-objects"),
             locks: root.join("locks"),
             root,
         };
@@ -60,6 +62,7 @@ impl Layout {
             &layout.pending_admissions,
             &layout.admission_credits,
             &layout.fingerprints,
+            &layout.fingerprint_objects,
             &layout.locks,
         ] {
             create_directory(path)?;
@@ -99,6 +102,7 @@ impl Layout {
             &self.pending_admissions,
             &self.admission_credits,
             &self.fingerprints,
+            &self.fingerprint_objects,
             &self.locks,
         ] {
             require_directory(path)?;
