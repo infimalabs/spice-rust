@@ -251,11 +251,16 @@ fn canvas_plan(
 ) -> Result<(CanvasActionPlan, Vec<(OsString, OsString)>), ProveFailure> {
     let cargo = super::cargo_authority(arm.root(), arm.compiler_environment())?;
     let environment_values = normalized_environment(cargo.execution_environment.iter().cloned());
+    let host = spice::cargo_isolation::Host::from_environment(
+        arm.root(),
+        environment_values.iter().cloned(),
+    )
+    .map_err(ProveFailure::cargo_isolation)?;
     let cargo_home = super::environment_value(&environment_values, "CARGO_HOME")?;
     let lockfile = fs::read(arm.root().join("Cargo.lock"))
         .map_err(|error| ProveFailure::refusal("gate::prove-cargo-source-unavailable", error))?;
     let source =
-        spice::cargo_isolation::source_generation_authority(Path::new(cargo_home), &lockfile)
+        spice::cargo_isolation::readmit_source_generation(Path::new(cargo_home), &lockfile, &host)
             .map_err(|error| {
                 ProveFailure::refusal("gate::prove-cargo-source-unavailable", error)
             })?;

@@ -283,6 +283,7 @@ struct CargoExecution {
 struct CargoSourceExecution {
     home: PathBuf,
     lockfile: Vec<u8>,
+    host: spice::cargo_isolation::Host,
     authority: spice::cargo_isolation::SourceGenerationAuthority,
 }
 
@@ -876,11 +877,13 @@ fn cargo_source_authority(
     root: &Path,
     environment: &[(OsString, OsString)],
 ) -> Result<(CargoSourceExecution, CargoExternalSourceAuthority), ProveFailure> {
+    let host = spice::cargo_isolation::Host::from_environment(root, environment.iter().cloned())
+        .map_err(ProveFailure::cargo_isolation)?;
     let cargo_home = environment_value(environment, "CARGO_HOME")?;
     let lockfile = fs::read(root.join("Cargo.lock"))
         .map_err(|error| ProveFailure::refusal("gate::prove-cargo-source-unavailable", error))?;
     let source =
-        spice::cargo_isolation::source_generation_authority(Path::new(cargo_home), &lockfile)
+        spice::cargo_isolation::readmit_source_generation(Path::new(cargo_home), &lockfile, &host)
             .map_err(|error| {
                 ProveFailure::refusal("gate::prove-cargo-source-unavailable", error)
             })?;
@@ -893,6 +896,7 @@ fn cargo_source_authority(
         CargoSourceExecution {
             home: PathBuf::from(cargo_home),
             lockfile,
+            host,
             authority: source,
         },
         external_source,
@@ -1076,11 +1080,12 @@ fn execute(action: PreparedAction) -> Result<PendingReceipt, ProveFailure> {
                 &mut std::io::stderr(),
             )
             .map_err(ProveFailure::cargo)?;
-            let observed =
-                spice::cargo_isolation::source_generation_authority(&source.home, &source.lockfile)
-                    .map_err(|error| {
-                        ProveFailure::refusal("gate::prove-cargo-source-moved", error)
-                    })?;
+            let observed = spice::cargo_isolation::readmit_source_generation(
+                &source.home,
+                &source.lockfile,
+                &source.host,
+            )
+            .map_err(|error| ProveFailure::refusal("gate::prove-cargo-source-moved", error))?;
             if observed != source.authority {
                 return Err(ProveFailure::refusal(
                     "gate::prove-cargo-source-moved",
