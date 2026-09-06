@@ -121,11 +121,13 @@ inspection and refuse them.
 Pre-commit captures one index authority, computes `candidate_tree`, resolves
 the owed action set, verifies all receipts in one read phase, runs live-only
 checks, revalidates the index authority, and atomically publishes one admission
-bundle. A miss performs no expensive action. It names each action and reason,
-then prints the exact `spice gate prove ACTION` command plus one
-`spice gate prove --missing` aggregate command. Staged content is the
-unconditional source for both forms; `spice gate prove ACTION --missing`
-reuses an already-current receipt.
+bundle. Bare `spice gate prove` reads that same current fingerprint and its exact
+receipt indexes without restoring selection or preparing an action. Neither path
+executes a missing proof: a miss names each action and the explicit
+`spice gate prove ACTION` command plus one `spice gate prove --missing`
+aggregate command. Staged content is the unconditional source for inspection
+and generation; `spice gate prove ACTION --missing` reuses an already-current
+receipt.
 
 A candidate-tree directory may contain more than one immutable admission. This
 is required when two branches or linked worktrees produce equal tree content

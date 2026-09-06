@@ -162,6 +162,107 @@ fn corrupt_manifest_refuses_inside_the_hard_bound() {
     );
 }
 
+#[test]
+fn proof_lookup_is_receipt_only_and_bounded_for_every_evidence_state() {
+    let _serial = BENCHMARK.lock().expect("serialize admission benchmarks");
+    let fixture = Fixture::new();
+
+    let cold = fixture.invoke_proof(&[]);
+    assert_reason(&cold, "gate::prove-fingerprint-missing");
+    let started = Instant::now();
+    let missing_fingerprint = fixture.invoke_proof(&[]);
+    assert_bounded(started, &missing_fingerprint, "missing fingerprint");
+    assert_reason(&missing_fingerprint, "gate::prove-fingerprint-missing");
+    assert!(
+        streams(&missing_fingerprint).contains("command=`spice gate prove --missing`"),
+        "{}",
+        streams(&missing_fingerprint),
+    );
+    assert!(
+        fixture.fingerprint_paths().is_empty(),
+        "bare lookup published a fingerprint through a hidden planning fallback"
+    );
+
+    fixture.seed_proofs();
+    let started = Instant::now();
+    let present = fixture.invoke_proof(&[]);
+    assert_bounded(started, &present, "present receipts");
+    assert!(present.status.success(), "{}", streams(&present));
+    let report: serde_json::Value = wire::decode(&present.stdout).expect("decode proof inspection");
+    assert!(
+        report["body"]["actions"]
+            .as_array()
+            .is_some_and(|actions| !actions.is_empty())
+    );
+    assert!(
+        report["body"]["actions"]
+            .as_array()
+            .expect("inspection actions")
+            .iter()
+            .all(|action| action["disposition"] == "present")
+    );
+
+    let action = fixture.remove_one_receipt_index();
+    let started = Instant::now();
+    let missing_receipt = fixture.invoke_proof(&[]);
+    assert_bounded(started, &missing_receipt, "missing receipt");
+    assert_reason(&missing_receipt, "gate::prove-receipt-missing");
+    assert!(
+        streams(&missing_receipt).contains(&format!("command=`spice gate prove {action}`")),
+        "{}",
+        streams(&missing_receipt),
+    );
+    assert!(
+        !fixture.receipt_index(&action).exists(),
+        "receipt lookup silently regenerated the missing action"
+    );
+
+    fixture.seed_proofs();
+    fs::write(fixture.linked.join("candidate.txt"), "moved candidate\n")
+        .expect("move staged proof source");
+    git(&fixture.linked, &["add", "--all"]);
+    let started = Instant::now();
+    let stale = fixture.invoke_proof(&[]);
+    assert_bounded(started, &stale, "stale fingerprint");
+    assert_reason(&stale, "gate::prove-fingerprint-missing");
+    assert!(
+        streams(&stale).contains("command=`spice gate prove --missing`"),
+        "{}",
+        streams(&stale),
+    );
+    assert_eq!(
+        fixture.fingerprint_paths().len(),
+        1,
+        "stale lookup published a replacement fingerprint through a hidden fallback"
+    );
+
+    let fingerprint_path = fixture.seed_proofs();
+    let fingerprint = fs::read(&fingerprint_path).expect("read current fingerprint fixture");
+    fs::write(&fingerprint_path, b"not canonical").expect("corrupt fingerprint fixture");
+    let started = Instant::now();
+    let invalid = fixture.invoke_proof(&[]);
+    assert_bounded(started, &invalid, "invalid fingerprint");
+    assert_reason(&invalid, "gate::prove-fingerprint-invalid");
+    assert!(
+        streams(&invalid).contains("command=`spice gate prove --missing`"),
+        "{}",
+        streams(&invalid),
+    );
+    fs::write(&fingerprint_path, fingerprint).expect("restore fingerprint fixture");
+
+    let action = fixture.corrupt_one_receipt_index(&fingerprint_path);
+    let started = Instant::now();
+    let invalid = fixture.invoke_proof(&[]);
+    assert_bounded(started, &invalid, "invalid receipt");
+    assert_reason(&invalid, "gate::prove-receipt-invalid");
+    assert!(
+        streams(&invalid).contains("command=`spice gate prove --missing`"),
+        "{}: {}",
+        action,
+        streams(&invalid),
+    );
+}
+
 struct Fixture {
     root: PathBuf,
     linked: PathBuf,
@@ -246,7 +347,8 @@ impl Fixture {
         &self.linked
     }
 
-    fn seed_proofs(&self) {
+    fn seed_proofs(&self) -> PathBuf {
+        let before = self.fingerprint_paths();
         let output = Command::new(&self.binary)
             .args(["gate", "prove", "--missing"])
             .current_dir(&self.linked)
@@ -260,6 +362,18 @@ impl Fixture {
             "proof seed failed: {}",
             streams(&output)
         );
+        let after = self.fingerprint_paths();
+        let created = after
+            .iter()
+            .filter(|path| !before.contains(path))
+            .collect::<Vec<_>>();
+        match created.as_slice() {
+            [path] => (*path).clone(),
+            [] if after.len() == 1 => after[0].clone(),
+            _ => panic!(
+                "proof seed did not select one fingerprint: before={before:?} after={after:?}"
+            ),
+        }
     }
 
     fn invoke_hook(&self) -> Output {
@@ -279,17 +393,42 @@ impl Fixture {
             .expect("run installed benchmark hook")
     }
 
+    fn invoke_proof(&self, arguments: &[&str]) -> Output {
+        Command::new(&self.binary)
+            .arg("--json")
+            .args(["gate", "prove"])
+            .args(arguments)
+            .current_dir(&self.linked)
+            .env_remove(wire::SpiceVariable::Lane.as_str())
+            .env_remove(wire::SpiceVariable::PreCommitSource.as_str())
+            .env_remove(spice::install::INSTALLED_PRE_COMMIT_ENVIRONMENT)
+            .output()
+            .expect("inspect benchmark proof receipts")
+    }
+
     fn fingerprint_path(&self) -> PathBuf {
-        let fingerprints = self.common.join(".spice-rs/gate-evidence/v1/fingerprints");
-        let mut entries = fs::read_dir(fingerprints)
-            .expect("read fingerprint directory")
-            .map(|entry| entry.expect("read fingerprint entry").path())
-            .collect::<Vec<_>>();
-        entries.sort();
+        let entries = self.fingerprint_paths();
         let [fingerprint] = entries.as_slice() else {
             panic!("fixture must publish exactly one fingerprint: {entries:?}");
         };
         fingerprint.clone()
+    }
+
+    fn fingerprint_paths(&self) -> Vec<PathBuf> {
+        let fingerprints = self.common.join(".spice-rs/gate-evidence/v1/fingerprints");
+        let entries = match fs::read_dir(&fingerprints) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+            Err(error) => panic!(
+                "read fingerprint directory {}: {error}",
+                fingerprints.display()
+            ),
+        };
+        let mut entries = entries
+            .map(|entry| entry.expect("read fingerprint entry").path())
+            .collect::<Vec<_>>();
+        entries.sort();
+        entries
     }
 
     fn remove_one_receipt_index(&self) -> String {
@@ -311,6 +450,45 @@ impl Fixture {
                 .join(key),
         )
         .expect("remove one receipt index");
+        name
+    }
+
+    fn receipt_index(&self, action: &str) -> PathBuf {
+        let document: serde_json::Value = serde_json::from_slice(
+            &fs::read(self.fingerprint_path()).expect("read fingerprint manifest"),
+        )
+        .expect("decode fingerprint manifest");
+        let key = document["actions"]
+            .as_array()
+            .expect("fingerprint actions")
+            .iter()
+            .find(|entry| entry["action"] == action)
+            .and_then(|entry| entry["action_key"].as_str())
+            .expect("fingerprint contains selected action");
+        self.common
+            .join(".spice-rs/gate-evidence/v1/actions")
+            .join(key)
+    }
+
+    fn corrupt_one_receipt_index(&self, fingerprint: &Path) -> String {
+        let document: serde_json::Value =
+            serde_json::from_slice(&fs::read(fingerprint).expect("read fingerprint manifest"))
+                .expect("decode fingerprint manifest");
+        let action = &document["actions"][0];
+        let name = action["action"]
+            .as_str()
+            .expect("fingerprint action has a name")
+            .to_owned();
+        let key = action["action_key"]
+            .as_str()
+            .expect("fingerprint action has a key");
+        fs::write(
+            self.common
+                .join(".spice-rs/gate-evidence/v1/actions")
+                .join(key),
+            b"not canonical",
+        )
+        .expect("corrupt one receipt index");
         name
     }
 
@@ -368,6 +546,25 @@ fn command_text(program: &str, arguments: &[&str], root: &Path) -> String {
 
 fn midpoint(left: u64, right: u64) -> u64 {
     left / 2 + right / 2 + (left % 2 + right % 2) / 2
+}
+
+fn assert_bounded(started: Instant, output: &Output, label: &str) {
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed.as_secs_f64() < 2.0,
+        "{label} lookup took {elapsed:?}: {}",
+        streams(output),
+    );
+}
+
+fn assert_reason(output: &Output, expected: &str) {
+    assert!(!output.status.success(), "{}", streams(output));
+    let outcome: wire::Outcome<serde_json::Value> =
+        wire::decode(&output.stderr).expect("decode proof lookup refusal");
+    let wire::Outcome::Refusal(refusal) = outcome else {
+        panic!("proof lookup did not refuse: {outcome:?}");
+    };
+    assert_eq!(refusal.reason(), expected);
 }
 
 fn filesystem_type(root: &Path) -> String {
