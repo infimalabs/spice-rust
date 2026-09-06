@@ -862,7 +862,16 @@
 }
 .team-surface .message-footer-identity {
   display: inline-flex; flex: 1 1 auto; align-items: flex-end;
-  min-width: 0;
+  min-width: 0; gap: 6px;
+}
+.team-surface .message-tool-label {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  text-transform: uppercase;
 }
 .team-surface .message-age {
   display: block;

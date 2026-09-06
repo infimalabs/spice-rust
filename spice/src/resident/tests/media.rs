@@ -253,7 +253,20 @@ fn codex_image_tool_capture_reaches_live_reconnect_and_older_history_once() {
     assert!(call.media.is_empty());
     let result = updates.try_recv().expect("tool image result publishes");
     assert_eq!(result.activity, wire::AgentActivityKind::Tool);
-    assert!(result.text.is_empty());
+    assert!(
+        result.text.starts_with("exec:"),
+        "tool identity is retained: {}",
+        result.text
+    );
+    assert!(
+        result.text.ends_with(" completed"),
+        "tool outcome is retained: {}",
+        result.text
+    );
+    assert!(
+        result.text.chars().count() <= message_surface::TOOL_PREVIEW_MAX_CHARS,
+        "tool result preview stays bounded"
+    );
     let [media] = result.media.as_slice() else {
         panic!("one captured image reaches the live result");
     };

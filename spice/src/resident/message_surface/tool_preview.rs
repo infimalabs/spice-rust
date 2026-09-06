@@ -15,7 +15,7 @@ use wire::CanonicalUuid;
 mod tests;
 
 /// Longest preview one strip line carries before it is elided.
-const MAX_CHARS: usize = 120;
+pub(in crate::resident) const MAX_CHARS: usize = 120;
 
 /// Argument fields worth showing, most recognizable first.
 ///
@@ -84,6 +84,20 @@ pub(super) fn activity(
                 |preview| flatten(&format!("{preview} {outcome}")),
             )
         }
+    }
+}
+
+pub(super) fn message_text(tool: &listen::Tool, activity: String, media: &[wire::Media]) -> String {
+    if media.is_empty()
+        || matches!(
+            &tool.moment,
+            listen::ToolMoment::Result(outcome)
+                if outcome.output.as_deref().is_some_and(|text| !text.trim().is_empty())
+        )
+    {
+        activity
+    } else {
+        String::new()
     }
 }
 
