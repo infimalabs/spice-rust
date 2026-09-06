@@ -254,6 +254,19 @@ impl PreparedArm<'_> {
             .map_err(|error| RunError::refusal("gate::capture-refused", error))
     }
 
+    /// Derive one live-only arm from this preparation without packaged selection.
+    pub fn derive_live_arm(&self, gate_id: GateId) -> Result<PreparedArm<'static>, RunError> {
+        self.capture
+            .derive_live_arm_in_state(gate_id)
+            .map(|capture| PreparedArm {
+                capture,
+                gate_id,
+                compiler_environment: self.compiler_environment.clone(),
+                cargo_jobs: self.cargo_jobs,
+            })
+            .map_err(|error| RunError::refusal("gate::capture-refused", error))
+    }
+
     /// Shared state transaction for additional focused captures in this run.
     #[must_use]
     pub fn state_run(&self) -> ::gate::BatteryStateRun {

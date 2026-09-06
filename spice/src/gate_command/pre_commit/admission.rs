@@ -40,7 +40,7 @@ impl AdmissionRun {
 
 pub(super) fn run(
     claim: gate::ClaimCapture,
-    staged: spice::change_gate::StagedActionSelection,
+    anchor: spice::gate::PreparedArm<'static>,
 ) -> Result<AdmissionRun, WorkerFailure> {
     let current = std::env::current_dir().map_err(|error| {
         failure(
@@ -53,40 +53,53 @@ pub(super) fn run(
         .map_err(|error| failure("gate::pre-commit-repository-unresolved", error, true))?;
     let store =
         EvidenceStore::open(repository.common_dir()).map_err(|error| evidence_failure(&error))?;
+    let receipt_first = matches!(claim, gate::ClaimCapture::Idle);
     let claim_digest = Digest::compute(
         Domain::GateRepositoryAuthority,
         &wire::encode(&claim)
             .map_err(|error| failure("gate::pre-commit-claim-capture-invalid", error, true))?,
     );
-    let preparation =
-        super::super::prove::prepare_admission_from_staged(&repository, &store, staged)
-            .map_err(prove_failure)?;
-    let branch = match branch(&repository) {
-        Ok(branch) => branch,
-        Err(error) => {
-            let _ = preparation.reject_state();
-            return Err(error);
+    let lookup = super::super::prove::prepare_admission_from_anchor(&repository, anchor)
+        .map_err(prove_failure)?;
+    let early_live_checks = if receipt_first {
+        None
+    } else {
+        match lookup.execute_live_checks() {
+            Ok(checks) => Some(checks),
+            Err(error) => {
+                let _ = lookup.reject_state();
+                return Err(prove_failure(error));
+            }
         }
     };
-    let live_checks = match preparation.execute_live_checks() {
-        Ok(checks) => checks,
+    let manifest = match store.lookup_action_fingerprints(lookup.authority()) {
+        Ok(Some(manifest)) => manifest,
+        Ok(None) => {
+            let authority = lookup.authority().key().map_err(|error| {
+                let _ = lookup.reject_state();
+                fingerprint_lookup_failure(&error)
+            })?;
+            let _ = lookup.reject_state();
+            return Err(WorkerFailure {
+                reason: "gate::pre-commit-fingerprint-missing".to_owned(),
+                detail: fingerprint_generation_detail(&authority),
+                fault: false,
+            });
+        }
         Err(error) => {
-            let _ = preparation.reject_state();
-            return Err(prove_failure(error));
+            let _ = lookup.reject_state();
+            return Err(fingerprint_lookup_failure(&error));
         }
     };
-    if let Err(error) = preparation.verify_source() {
-        let _ = preparation.reject_state();
-        return Err(prove_failure(error));
-    }
-    let resolved = match store.lookup_batch_exact(preparation.actions()) {
+    let preparation = lookup.restore(&manifest).map_err(prove_failure)?;
+    let resolved = match store.lookup_batch_exact(manifest.actions()) {
         Ok(resolved) => resolved,
         Err(error) => {
             let _ = preparation.reject_state();
-            return Err(evidence_failure(&error));
+            return Err(fingerprint_lookup_failure(&error));
         }
     };
-    let missing = preparation
+    let missing = manifest
         .actions()
         .iter()
         .zip(&resolved)
@@ -104,6 +117,27 @@ pub(super) fn run(
         .into_iter()
         .map(|action| action.expect("missing receipts were handled above"))
         .collect::<Vec<_>>();
+    let branch = match branch(&repository) {
+        Ok(branch) => branch,
+        Err(error) => {
+            let _ = preparation.reject_state();
+            return Err(error);
+        }
+    };
+    let live_checks = match early_live_checks {
+        Some(checks) => checks,
+        None => match preparation.execute_live_checks() {
+            Ok(checks) => checks,
+            Err(error) => {
+                let _ = preparation.reject_state();
+                return Err(prove_failure(error));
+            }
+        },
+    };
+    if let Err(error) = preparation.verify_source() {
+        let _ = preparation.reject_state();
+        return Err(prove_failure(error));
+    }
     if let Err(error) = preparation.accept_state() {
         return Err(prove_failure(error));
     }
@@ -131,7 +165,7 @@ pub(super) fn run(
         source: preparation.source().clone(),
         candidate_tree: preparation.candidate_tree().to_string(),
         admission,
-        actions: preparation.actions().len(),
+        actions: manifest.actions().len(),
         live_checks: live_check_count,
     };
     Ok(AdmissionRun {
@@ -176,6 +210,27 @@ fn missing_proof_detail(actions: &[&str]) -> String {
     }
     detail.push_str("aggregate-command=`spice gate prove --missing`");
     detail
+}
+
+fn fingerprint_generation_detail(authority: &gate::ActionKey) -> String {
+    format!("reason=missing-fingerprint authority={authority} command=`spice gate prove --missing`")
+}
+
+fn fingerprint_lookup_failure(error: &gate::EvidenceStoreError) -> WorkerFailure {
+    let reason = if error.reason().starts_with("gate-evidence::fingerprint") {
+        "gate::pre-commit-fingerprint-invalid"
+    } else {
+        "gate::pre-commit-proof-invalid"
+    };
+    WorkerFailure {
+        reason: reason.to_owned(),
+        detail: format!(
+            "reason={}; {}\ncommand=`spice gate prove --missing`",
+            error.reason(),
+            error.detail(),
+        ),
+        fault: false,
+    }
 }
 
 fn admission_window() -> Result<(wire::Instant, wire::Instant), WorkerFailure> {

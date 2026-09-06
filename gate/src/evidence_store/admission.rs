@@ -31,7 +31,8 @@ impl fmt::Display for AdmissionId {
 }
 
 /// Transient complete authority expected from one reusable receipt.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReceiptExpectation {
     action: String,
     action_key: ActionKey,

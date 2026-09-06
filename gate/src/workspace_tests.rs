@@ -49,6 +49,9 @@ pub use proof::{
 use selection::{package_inventory, selection_plan};
 use source_reach::{FileMacroCrateContext, declared_path_sources};
 
+/// Debug-build marker written immediately before a Cargo metadata process is launched.
+pub const TEST_CARGO_METADATA_MARKER: &str = "SPICE_GATE_TEST_CARGO_METADATA_MARKER"; // env-policy: allow
+
 /// Whether the compiled Cargo workspace engine applies to this selected tree.
 ///
 /// This predicate runs before metadata or tool discovery, so an undeclared or

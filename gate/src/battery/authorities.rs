@@ -832,6 +832,29 @@ impl<'trace> BatteryCapture<'trace> {
         )
     }
 
+    /// Derive one live-only arm without constructing packaged selection.
+    ///
+    /// # Errors
+    ///
+    /// Refuses every arm whose result can be reused or whose reach requires selection.
+    pub fn derive_live_arm_in_state(
+        &self,
+        gate_id: crate::GateId,
+    ) -> Result<BatteryCapture<'static>, BatteryError> {
+        if crate::gate_action_reuse_class(gate_id) != Some(crate::ActionReuseClass::LiveOnly) {
+            return Err(BatteryError::new(
+                format!("arm {gate_id} is not live-only",),
+            ));
+        }
+        BatteryCapture::<'static>::capture_from_source(
+            self.source_capture.clone(),
+            Some(gate_id),
+            None,
+            self.state_run.clone(),
+            None,
+        )
+    }
+
     /// Identity of the selected bytes this capture owns.
     #[must_use]
     pub const fn source(&self) -> &Digest {

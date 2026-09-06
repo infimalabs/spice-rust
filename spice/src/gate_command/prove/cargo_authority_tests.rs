@@ -56,7 +56,7 @@ fn cargo_authority_binds_absolute_tools_before_planning() {
     };
     assert_eq!(authority.cargo, fs::canonicalize(&cargo).unwrap());
     let entries = authority
-        .environment
+        .execution_environment
         .iter()
         .cloned()
         .collect::<std::collections::BTreeMap<_, _>>();
@@ -69,6 +69,12 @@ fn cargo_authority_binds_absolute_tools_before_planning() {
         authority.cargo
     );
     assert_eq!(entries[OsStr::new("PATH")], OsString::new());
+    assert!(
+        authority
+            .action_environment
+            .iter()
+            .all(|(name, _)| name != OsStr::new(spice::cargo_isolation::CARGO_HOME_VARIABLE))
+    );
 
     fs::remove_file(&cargo).expect("remove admitted Cargo fixture");
     let error = cargo_authority(&root, &environment)

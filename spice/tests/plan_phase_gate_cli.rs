@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant as MonotonicInstant};
 
 use gix::bstr::BStr;
 use gix::object::tree::EntryKind;
@@ -19,6 +20,7 @@ mod git_repository;
 
 struct Fixture {
     root: PathBuf,
+    cargo_metadata_marker: PathBuf,
     lane: CanonicalUuid,
     task: TaskHandle,
     opening: String,
@@ -54,6 +56,7 @@ impl Fixture {
             .expect("write implementation fixture");
 
         let opening = commit_all(&root);
+        let cargo_metadata_marker = root.join("cargo-metadata-launched");
 
         let repository =
             spice::repository::Repository::discover(&root).expect("discover plan hook fixture");
@@ -63,6 +66,7 @@ impl Fixture {
         let task = seed_plan_claim(state.journal(), lane);
         Self {
             root,
+            cargo_metadata_marker,
             lane,
             task,
             opening,
@@ -70,31 +74,69 @@ impl Fixture {
     }
 
     fn run_pre_commit(&self) -> Output {
+        self.stage_implementation();
+        self.pre_commit_command(Some(&self.lane))
+    }
+
+    fn stage_implementation(&self) {
         fs::write(self.root.join("implementation.txt"), "implementation\n")
             .expect("write attempted implementation");
         stage_all(&self.root);
-        Command::new(env!("CARGO_BIN_EXE_spice"))
-            .args(["gate", "pre-commit"])
-            .current_dir(&self.root)
-            .env(wire::SpiceVariable::Lane.as_str(), self.lane.to_string())
+    }
+
+    fn pre_commit_command(&self, lane: Option<&CanonicalUuid>) -> Output {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
+        command.args(["gate", "pre-commit"]).current_dir(&self.root);
+        match lane {
+            Some(lane) => {
+                command.env(wire::SpiceVariable::Lane.as_str(), lane.to_string());
+            }
+            None => {
+                command.env_remove(wire::SpiceVariable::Lane.as_str());
+            }
+        }
+        command
+            .env(
+                gate::TEST_CARGO_METADATA_MARKER,
+                &self.cargo_metadata_marker,
+            )
             .env_remove(wire::SpiceVariable::PreCommitSource.as_str())
             .env_remove(spice::install::INSTALLED_PRE_COMMIT_ENVIRONMENT)
             .output()
-            .expect("run plan-phase pre-commit gate")
+            .expect("run pre-commit admission")
     }
 
-    fn run_idle_pre_commit(&self) -> Output {
-        fs::write(self.root.join("implementation.txt"), "implementation\n")
-            .expect("write attempted implementation");
-        stage_all(&self.root);
+    fn prove_missing(&self) -> Output {
         Command::new(env!("CARGO_BIN_EXE_spice"))
-            .args(["gate", "pre-commit"])
+            .args(["gate", "prove", "--missing"])
             .current_dir(&self.root)
             .env_remove(wire::SpiceVariable::Lane.as_str())
             .env_remove(wire::SpiceVariable::PreCommitSource.as_str())
             .env_remove(spice::install::INSTALLED_PRE_COMMIT_ENVIRONMENT)
             .output()
-            .expect("run idle pre-commit admission")
+            .expect("run missing-proof generation")
+    }
+
+    fn prove_missing_observed(&self) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_spice"))
+            .args(["gate", "prove", "--missing"])
+            .current_dir(&self.root)
+            .env(
+                gate::TEST_CARGO_METADATA_MARKER,
+                &self.cargo_metadata_marker,
+            )
+            .env_remove(wire::SpiceVariable::Lane.as_str())
+            .env_remove(wire::SpiceVariable::PreCommitSource.as_str())
+            .env_remove(spice::install::INSTALLED_PRE_COMMIT_ENVIRONMENT)
+            .output()
+            .expect("run observed missing-proof lookup")
+    }
+
+    fn assert_no_cargo_metadata(&self) {
+        assert!(
+            !self.cargo_metadata_marker.exists(),
+            "pre-commit launched Cargo metadata"
+        );
     }
 }
 
@@ -108,6 +150,7 @@ impl Drop for Fixture {
 fn pre_commit_gate_captures_the_plan_claim_and_preserves_the_staged_attempt() {
     let fixture = Fixture::new();
     let output = fixture.run_pre_commit();
+    fixture.assert_no_cargo_metadata();
     let rendered = streams(&output);
     assert!(
         !output.status.success(),
@@ -124,23 +167,57 @@ fn pre_commit_gate_captures_the_plan_claim_and_preserves_the_staged_attempt() {
 }
 
 #[test]
-fn pre_commit_cache_miss_prints_exact_individual_and_aggregate_proof_commands() {
+fn pre_commit_fingerprint_miss_is_bounded_and_names_explicit_generation() {
     let fixture = Fixture::new();
-    let output = fixture.run_idle_pre_commit();
+    fixture.stage_implementation();
+    let started = MonotonicInstant::now();
+    let output = fixture.pre_commit_command(None);
+    fixture.assert_no_cargo_metadata();
+    let elapsed = started.elapsed();
     let rendered = streams(&output);
 
     assert!(!output.status.success(), "{rendered}");
     assert!(
-        rendered.contains("gate::pre-commit-proof-missing"),
+        rendered.contains("gate::pre-commit-fingerprint-missing"),
         "{rendered}"
     );
     assert!(
-        rendered.contains("command=`spice gate prove "),
+        rendered.contains("command=`spice gate prove --missing`"),
         "{rendered}"
     );
     assert!(
-        rendered.contains("aggregate-command=`spice gate prove --missing`"),
-        "{rendered}"
+        elapsed < Duration::from_secs(3),
+        "elapsed={elapsed:?}; {rendered}"
+    );
+}
+
+#[test]
+fn repeated_proof_and_pre_commit_use_the_bounded_manifest_path() {
+    let fixture = Fixture::new();
+    fixture.stage_implementation();
+    let generated = fixture.prove_missing();
+    assert!(generated.status.success(), "{}", streams(&generated));
+
+    let lookup_started = MonotonicInstant::now();
+    let lookup = fixture.prove_missing_observed();
+    let lookup_elapsed = lookup_started.elapsed();
+    fixture.assert_no_cargo_metadata();
+    assert!(lookup.status.success(), "{}", streams(&lookup));
+    assert!(
+        lookup_elapsed < Duration::from_secs(2),
+        "repeated lookup elapsed={lookup_elapsed:?}; {}",
+        streams(&lookup),
+    );
+
+    let admission_started = MonotonicInstant::now();
+    let admission = fixture.pre_commit_command(None);
+    fixture.assert_no_cargo_metadata();
+    let admission_elapsed = admission_started.elapsed();
+    assert!(admission.status.success(), "{}", streams(&admission));
+    assert!(
+        admission_elapsed < Duration::from_secs(2),
+        "pre-commit elapsed={admission_elapsed:?}; {}",
+        streams(&admission),
     );
 }
 

@@ -3,6 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
@@ -11,6 +12,7 @@ use spice::install::{apply, installed_binary, installed_git_hooks, plan};
 use spice::repository::Repository;
 
 const SAMPLES: usize = 30;
+static BENCHMARK: Mutex<()> = Mutex::new(());
 
 #[derive(Serialize)]
 #[serde(deny_unknown_fields)]
@@ -33,6 +35,7 @@ struct BenchmarkReport {
 #[test]
 #[ignore = "environmental 30-run measurement of the installed warm pre-commit hook"]
 fn gate_warm_admission_benchmark() {
+    let _serial = BENCHMARK.lock().expect("serialize admission benchmarks");
     let fixture = Fixture::new();
     fixture.seed_proofs();
 
@@ -87,9 +90,82 @@ fn gate_warm_admission_benchmark() {
     );
 }
 
+#[test]
+fn linked_worktree_uses_shared_fingerprints_inside_the_hard_bound() {
+    let _serial = BENCHMARK.lock().expect("serialize admission benchmarks");
+    let fixture = Fixture::new();
+    fixture.seed_proofs();
+
+    let started = Instant::now();
+    let output = fixture.invoke_peer_hook();
+    let elapsed = started.elapsed();
+
+    assert!(output.status.success(), "{}", streams(&output));
+    assert!(
+        elapsed.as_secs_f64() < 2.0,
+        "linked-worktree admission took {elapsed:?}: {}",
+        streams(&output),
+    );
+}
+
+#[test]
+fn current_manifest_receipt_miss_refuses_inside_the_hard_bound() {
+    let _serial = BENCHMARK.lock().expect("serialize admission benchmarks");
+    let fixture = Fixture::new();
+    fixture.seed_proofs();
+    let action = fixture.remove_one_receipt_index();
+
+    let started = Instant::now();
+    let output = fixture.invoke_hook();
+    let elapsed = started.elapsed();
+    let rendered = streams(&output);
+
+    assert!(!output.status.success(), "{rendered}");
+    assert!(
+        rendered.contains("gate::pre-commit-proof-missing"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains(&format!("command=`spice gate prove {action}`")),
+        "{rendered}",
+    );
+    assert!(
+        elapsed.as_secs_f64() < 2.0,
+        "receipt miss took {elapsed:?}: {rendered}",
+    );
+}
+
+#[test]
+fn corrupt_manifest_refuses_inside_the_hard_bound() {
+    let _serial = BENCHMARK.lock().expect("serialize admission benchmarks");
+    let fixture = Fixture::new();
+    fixture.seed_proofs();
+    fs::write(fixture.fingerprint_path(), b"not canonical").expect("corrupt fingerprint fixture");
+
+    let started = Instant::now();
+    let output = fixture.invoke_hook();
+    let elapsed = started.elapsed();
+    let rendered = streams(&output);
+
+    assert!(!output.status.success(), "{rendered}");
+    assert!(
+        rendered.contains("gate::pre-commit-fingerprint-invalid"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("command=`spice gate prove --missing`"),
+        "{rendered}"
+    );
+    assert!(
+        elapsed.as_secs_f64() < 2.0,
+        "corrupt manifest refusal took {elapsed:?}: {rendered}",
+    );
+}
+
 struct Fixture {
     root: PathBuf,
     linked: PathBuf,
+    peer: PathBuf,
     hook: PathBuf,
     binary: PathBuf,
     common: PathBuf,
@@ -105,6 +181,7 @@ impl Fixture {
         ));
         let main = root.join("main");
         let linked = root.join("linked");
+        let peer = root.join("peer");
         fs::create_dir_all(&main).expect("create benchmark repository");
         git(&main, &["init", "--initial-branch=main"]);
         git(&main, &["config", "user.name", "Spice Benchmark"]);
@@ -126,8 +203,22 @@ impl Fixture {
                 "main",
             ],
         );
-        fs::write(linked.join("candidate.txt"), "candidate\n").expect("write benchmark candidate");
-        git(&linked, &["add", "--all"]);
+        git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "benchmark-peer",
+                peer.to_str().expect("peer path is UTF-8"),
+                "main",
+            ],
+        );
+        for worktree in [&linked, &peer] {
+            fs::write(worktree.join("candidate.txt"), "candidate\n")
+                .expect("write benchmark candidate");
+            git(worktree, &["add", "--all"]);
+        }
 
         let source = Path::new(env!("CARGO_BIN_EXE_spice"));
         let repository = Repository::discover(&linked).expect("discover benchmark worktree");
@@ -144,6 +235,7 @@ impl Fixture {
         Self {
             root,
             linked,
+            peer,
             hook,
             binary,
             common,
@@ -171,27 +263,74 @@ impl Fixture {
     }
 
     fn invoke_hook(&self) -> Output {
+        self.invoke_hook_at(&self.linked)
+    }
+
+    fn invoke_peer_hook(&self) -> Output {
+        self.invoke_hook_at(&self.peer)
+    }
+
+    fn invoke_hook_at(&self, worktree: &Path) -> Output {
         Command::new(&self.hook)
-            .current_dir(&self.linked)
+            .current_dir(worktree)
             .env_remove(wire::SpiceVariable::Lane.as_str())
             .env_remove(wire::SpiceVariable::PreCommitSource.as_str())
             .output()
             .expect("run installed benchmark hook")
     }
 
+    fn fingerprint_path(&self) -> PathBuf {
+        let fingerprints = self.common.join(".spice-rs/gate-evidence/v1/fingerprints");
+        let mut entries = fs::read_dir(fingerprints)
+            .expect("read fingerprint directory")
+            .map(|entry| entry.expect("read fingerprint entry").path())
+            .collect::<Vec<_>>();
+        entries.sort();
+        let [fingerprint] = entries.as_slice() else {
+            panic!("fixture must publish exactly one fingerprint: {entries:?}");
+        };
+        fingerprint.clone()
+    }
+
+    fn remove_one_receipt_index(&self) -> String {
+        let document: serde_json::Value = serde_json::from_slice(
+            &fs::read(self.fingerprint_path()).expect("read fingerprint manifest"),
+        )
+        .expect("decode fingerprint manifest");
+        let action = &document["actions"][0];
+        let name = action["action"]
+            .as_str()
+            .expect("fingerprint action has a name")
+            .to_owned();
+        let key = action["action_key"]
+            .as_str()
+            .expect("fingerprint action has a key");
+        fs::remove_file(
+            self.common
+                .join(".spice-rs/gate-evidence/v1/actions")
+                .join(key),
+        )
+        .expect("remove one receipt index");
+        name
+    }
+
     fn evidence_read_footprint(&self) -> (u64, u64) {
         let evidence = self.common.join(".spice-rs/gate-evidence/v1");
-        [evidence.join("actions"), evidence.join("objects")]
-            .into_iter()
-            .flat_map(|directory| {
-                fs::read_dir(directory)
-                    .expect("read benchmark evidence directory")
-                    .map(|entry| entry.expect("read benchmark evidence entry").path())
-            })
-            .fold((0_u64, 0_u64), |(files, bytes), path| {
-                let metadata = fs::metadata(path).expect("measure benchmark evidence file");
-                (files + 1, bytes.saturating_add(metadata.len()))
-            })
+        [
+            evidence.join("actions"),
+            evidence.join("fingerprints"),
+            evidence.join("objects"),
+        ]
+        .into_iter()
+        .flat_map(|directory| {
+            fs::read_dir(directory)
+                .expect("read benchmark evidence directory")
+                .map(|entry| entry.expect("read benchmark evidence entry").path())
+        })
+        .fold((0_u64, 0_u64), |(files, bytes), path| {
+            let metadata = fs::metadata(path).expect("measure benchmark evidence file");
+            (files + 1, bytes.saturating_add(metadata.len()))
+        })
     }
 }
 

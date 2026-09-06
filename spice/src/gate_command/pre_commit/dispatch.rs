@@ -24,8 +24,8 @@ pub(super) fn dispatch_captured(
         dispatch
             .require_admission_approved()
             .map_err(configured_failure)?;
-        let (handoff, staged) = dispatch.into_admission().map_err(configured_failure)?;
-        let (admission, staged) = admission::run(claim, staged)?.into_parts();
+        let (handoff, anchor) = dispatch.into_admission().map_err(configured_failure)?;
+        let (admission, staged) = admission::run(claim, anchor)?.into_parts();
         if admission.source() != &source {
             return Err(WorkerFailure {
                 reason: "gate::pre-commit-staged-source-moved".to_owned(),
