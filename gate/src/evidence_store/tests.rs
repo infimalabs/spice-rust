@@ -891,7 +891,7 @@ fn shared_fingerprint_manifest_round_trips_and_authority_drift_misses() {
     producer.publish(&receipt).unwrap();
     let expected = ReceiptExpectation::new(
         "cargo:typecheck:fixture::lib:fixture",
-        action,
+        action.clone(),
         receipt.action_spec().clone(),
         receipt.input_manifest().clone(),
     )
@@ -919,6 +919,21 @@ fn shared_fingerprint_manifest_round_trips_and_authority_drift_misses() {
         consumer.lookup_action_fingerprints(&authority).unwrap(),
         Some(manifest.clone())
     );
+    let resolution = consumer
+        .lookup_fingerprint_receipts(&authority)
+        .unwrap()
+        .unwrap();
+    let expected_bytes = [
+        producer.layout.fingerprints.join(published.as_str()),
+        object,
+        producer.layout.index_path(&action),
+        producer.layout.object_path(&receipt.id().unwrap()),
+    ]
+    .into_iter()
+    .map(|path| fs::metadata(path).unwrap().len())
+    .sum::<u64>();
+    assert_eq!(resolution.files_read(), 4);
+    assert_eq!(resolution.bytes_read(), expected_bytes);
     assert_eq!(
         consumer
             .lookup_batch_exact(manifest.actions())
@@ -1079,6 +1094,110 @@ fn fingerprint_index_cannot_substitute_another_valid_manifest_object() {
     );
 }
 
+#[test]
+fn fingerprint_manifest_rejects_action_count_and_canonical_byte_excess() {
+    let authority = fingerprint_authority(b"environment");
+    let actions = (0..=ActionFingerprintManifest::MAX_ACTIONS)
+        .map(fingerprint_expectation)
+        .collect();
+    let count_error = ActionFingerprintManifest::new(ActionFingerprintManifestFields {
+        authority: authority.clone(),
+        selection: fingerprint_selection(&authority),
+        cargo_tests: false,
+        actions,
+    })
+    .unwrap_err();
+    assert_eq!(
+        count_error.reason(),
+        "gate-evidence::fingerprint-action-count-invalid"
+    );
+
+    let oversized = ReceiptExpectation::new(
+        "x".repeat(ActionFingerprintManifest::MAX_BYTES),
+        derive_action_key(b"oversized fingerprint action"),
+        Digest::compute(Domain::GatePolicy, b"oversized action spec"),
+        Digest::compute(Domain::GateInputManifest, b"oversized input manifest"),
+    )
+    .unwrap();
+    let size_error = ActionFingerprintManifest::new(ActionFingerprintManifestFields {
+        authority: authority.clone(),
+        selection: fingerprint_selection(&authority),
+        cargo_tests: false,
+        actions: vec![oversized],
+    })
+    .unwrap_err();
+    assert_eq!(
+        size_error.reason(),
+        "gate-evidence::fingerprint-size-invalid"
+    );
+}
+
+#[test]
+fn fingerprint_receipt_resolution_refuses_before_returning_a_partial_vector() {
+    let fixture = Fixture::new("fingerprint-read-budget");
+    let store = fixture.store();
+    let authority = fingerprint_authority(b"environment");
+    let actions = [
+        derive_action_key(b"budget action zero"),
+        derive_action_key(b"budget action one"),
+    ];
+    let receipts = [
+        pass_receipt(&actions[0], b"budget result zero"),
+        pass_receipt(&actions[1], b"budget result one"),
+    ];
+    store.publish_batch(&receipts).unwrap();
+    let expectations = actions
+        .iter()
+        .zip(&receipts)
+        .enumerate()
+        .map(|(index, (action, receipt))| {
+            ReceiptExpectation::new(
+                format!("action-{index:03}"),
+                action.clone(),
+                receipt.action_spec().clone(),
+                receipt.input_manifest().clone(),
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let manifest = ActionFingerprintManifest::new(ActionFingerprintManifestFields {
+        authority: authority.clone(),
+        selection: fingerprint_selection(&authority),
+        cargo_tests: false,
+        actions: expectations,
+    })
+    .unwrap();
+    store.publish_action_fingerprints(&manifest).unwrap();
+    let first_read_bytes = [
+        store
+            .layout
+            .fingerprints
+            .join(authority.key().unwrap().as_str()),
+        store
+            .layout
+            .fingerprint_objects
+            .join(manifest.id().unwrap().as_str()),
+        store.layout.index_path(&actions[0]),
+        store.layout.object_path(&receipts[0].id().unwrap()),
+    ]
+    .into_iter()
+    .map(|path| fs::metadata(path).unwrap().len())
+    .sum::<u64>();
+
+    let error = store
+        .with_lock(|layout| {
+            let mut budget = ReadBudget::new(first_read_bytes);
+            let manifest = fingerprint::lookup_bounded(layout, &authority, &mut budget)?
+                .expect("bounded fixture has a fingerprint");
+            lookup_batch_exact_bounded(layout, manifest.actions(), &mut budget)
+        })
+        .unwrap_err();
+    assert_eq!(
+        error.reason(),
+        "gate-evidence::fingerprint-read-budget-exceeded"
+    );
+}
+
 fn fingerprint_authority(environment: &[u8]) -> ActionFingerprintAuthority {
     ActionFingerprintAuthority::new(ActionFingerprintAuthorityFields {
         candidate_tree: "0123456789abcdef0123456789abcdef01234567".to_owned(),
@@ -1114,6 +1233,22 @@ fn fingerprint_selection(authority: &ActionFingerprintAuthority) -> ChangeSelect
     .expect("compile fingerprint fixture policy");
     select_change_gates(authority.source().clone(), &tracked, &policy)
         .expect("select fingerprint fixture gates")
+}
+
+fn fingerprint_expectation(index: usize) -> ReceiptExpectation {
+    ReceiptExpectation::new(
+        format!("action-{index:03}"),
+        derive_action_key(format!("fingerprint action {index}").as_bytes()),
+        Digest::compute(
+            Domain::GatePolicy,
+            format!("action spec {index}").as_bytes(),
+        ),
+        Digest::compute(
+            Domain::GateInputManifest,
+            format!("input manifest {index}").as_bytes(),
+        ),
+    )
+    .unwrap()
 }
 
 fn pass_receipt(action: &ActionKey, result: &[u8]) -> PassReceipt {

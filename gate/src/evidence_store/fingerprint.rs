@@ -7,13 +7,16 @@ use crate::ChangeSelectionReport;
 
 use super::{
     ActionKey, EvidenceStoreError, Layout, MAX_RECEIPT_BYTES, ReceiptExpectation,
-    derive_action_key, publish_immutable, read_optional_regular,
+    derive_action_key, publish_immutable,
 };
 
 const FINGERPRINT_VERSION: u64 = 3;
 const FINGERPRINT_INDEX_VERSION: u64 = 1;
 const FINGERPRINT_IDENTITY: &[u8] = b"spice.gate.action-fingerprint-manifest.v1\0";
 const FINGERPRINT_INDEX_BYTES: u64 = 64 * 1024;
+const MAX_FINGERPRINT_ACTIONS: usize = 128;
+const MAX_FINGERPRINT_BYTES: usize = MAX_RECEIPT_BYTES;
+const MAX_FINGERPRINT_READ_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Inputs that can be validated without reconstructing Cargo or Canvas plans.
 #[derive(Clone, Debug)]
@@ -131,6 +134,8 @@ pub struct ActionFingerprintManifest {
 pub struct ActionFingerprintResolution {
     manifest: ActionFingerprintManifest,
     receipts: Vec<Option<super::AdmissionAction>>,
+    files_read: u64,
+    bytes_read: u64,
 }
 
 #[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -145,8 +150,14 @@ impl ActionFingerprintResolution {
     pub(super) fn new(
         manifest: ActionFingerprintManifest,
         receipts: Vec<Option<super::AdmissionAction>>,
+        budget: &super::ReadBudget,
     ) -> Self {
-        Self { manifest, receipts }
+        Self {
+            manifest,
+            receipts,
+            files_read: budget.files(),
+            bytes_read: budget.bytes(),
+        }
     }
 
     #[must_use]
@@ -158,9 +169,26 @@ impl ActionFingerprintResolution {
     ) {
         (self.manifest, self.receipts)
     }
+
+    #[must_use]
+    pub const fn files_read(&self) -> u64 {
+        self.files_read
+    }
+
+    #[must_use]
+    pub const fn bytes_read(&self) -> u64 {
+        self.bytes_read
+    }
 }
 
 impl ActionFingerprintManifest {
+    /// Maximum reusable actions admitted by one fingerprint manifest.
+    pub const MAX_ACTIONS: usize = MAX_FINGERPRINT_ACTIONS;
+    /// Maximum canonical bytes admitted by one fingerprint manifest.
+    pub const MAX_BYTES: usize = MAX_FINGERPRINT_BYTES;
+    /// Maximum aggregate bytes read while resolving a fingerprint and its receipts.
+    pub const MAX_READ_BYTES: u64 = MAX_FINGERPRINT_READ_BYTES;
+
     pub fn new(fields: ActionFingerprintManifestFields) -> Result<Self, EvidenceStoreError> {
         let manifest = Self {
             version: FINGERPRINT_VERSION,
@@ -169,7 +197,7 @@ impl ActionFingerprintManifest {
             cargo_tests: fields.cargo_tests,
             actions: fields.actions,
         };
-        manifest.validate()?;
+        manifest.encode()?;
         Ok(manifest)
     }
 
@@ -198,7 +226,7 @@ impl ActionFingerprintManifest {
         let bytes = wire::encode(self).map_err(|error| {
             EvidenceStoreError::new("gate-evidence::fingerprint-invalid", error.to_string())
         })?;
-        if bytes.len() > MAX_RECEIPT_BYTES {
+        if bytes.len() > MAX_FINGERPRINT_BYTES {
             return Err(EvidenceStoreError::new(
                 "gate-evidence::fingerprint-size-invalid",
                 format!(
@@ -211,7 +239,7 @@ impl ActionFingerprintManifest {
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, EvidenceStoreError> {
-        if bytes.len() > MAX_RECEIPT_BYTES {
+        if bytes.len() > MAX_FINGERPRINT_BYTES {
             return Err(EvidenceStoreError::new(
                 "gate-evidence::fingerprint-size-invalid",
                 format!(
@@ -249,6 +277,16 @@ impl ActionFingerprintManifest {
             ));
         }
         self.authority.validate()?;
+        if self.actions.len() > Self::MAX_ACTIONS {
+            return Err(EvidenceStoreError::new(
+                "gate-evidence::fingerprint-action-count-invalid",
+                format!(
+                    "fingerprint manifest has {} actions over the {} action limit",
+                    self.actions.len(),
+                    Self::MAX_ACTIONS,
+                ),
+            ));
+        }
         let selection = self.selection.encode().map_err(|error| {
             EvidenceStoreError::new(
                 "gate-evidence::fingerprint-selection-invalid",
@@ -353,10 +391,19 @@ pub(super) fn lookup(
     layout: &Layout,
     authority: &ActionFingerprintAuthority,
 ) -> Result<Option<ActionFingerprintManifest>, EvidenceStoreError> {
+    let mut budget = super::ReadBudget::new(MAX_FINGERPRINT_READ_BYTES);
+    lookup_bounded(layout, authority, &mut budget)
+}
+
+pub(super) fn lookup_bounded(
+    layout: &Layout,
+    authority: &ActionFingerprintAuthority,
+    budget: &mut super::ReadBudget,
+) -> Result<Option<ActionFingerprintManifest>, EvidenceStoreError> {
     authority.validate()?;
     let key = authority.key()?;
     let path = layout.fingerprints.join(key.as_str());
-    let Some(bytes) = read_optional_regular(&path, FINGERPRINT_INDEX_BYTES)? else {
+    let Some(bytes) = budget.read_optional(&path, FINGERPRINT_INDEX_BYTES)? else {
         return Ok(None);
     };
     let index = ActionFingerprintIndex::decode(&bytes)?;
@@ -367,12 +414,14 @@ pub(super) fn lookup(
         ));
     }
     let object = layout.fingerprint_objects.join(index.manifest.as_str());
-    let bytes = read_optional_regular(&object, MAX_RECEIPT_BYTES as u64)?.ok_or_else(|| {
-        EvidenceStoreError::new(
-            "gate-evidence::fingerprint-object-missing",
-            format!("fingerprint object {} does not exist", object.display()),
-        )
-    })?;
+    let bytes = budget
+        .read_optional(&object, MAX_FINGERPRINT_BYTES as u64)?
+        .ok_or_else(|| {
+            EvidenceStoreError::new(
+                "gate-evidence::fingerprint-object-missing",
+                format!("fingerprint object {} does not exist", object.display()),
+            )
+        })?;
     let observed = manifest_id(&bytes);
     if observed != index.manifest {
         return Err(EvidenceStoreError::new(
