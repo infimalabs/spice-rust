@@ -170,6 +170,72 @@ pub(super) fn readmit_source_generation(
     current_worktree: &Path,
     host: &Host,
 ) -> Result<SourceGenerationAuthority, IsolationError> {
+    let ReadmissionHome {
+        retained,
+        retained_root,
+        owner,
+        home_id,
+        expected_worktree,
+    } = readmission_home(home, current_worktree)?;
+    if retained_root == host.store_root() {
+        return source_generation_authority(home, lockfile);
+    }
+    let expected = generation_digest(lockfile);
+    let current = Layout::open(host)?;
+    let (observed_generation, already_current) = readmission_generation(home, &retained, &current)?;
+    if observed_generation != expected {
+        return Err(IsolationError::new(
+            "cargo-isolation::generation-lock-mismatch",
+            format!(
+                "retained Cargo home generation {observed_generation} does not match selected lock generation {expected}"
+            ),
+        ));
+    }
+    if already_current {
+        validate_generation(&current, &observed_generation)?;
+    } else {
+        validate_generation(&retained, &observed_generation)?;
+    }
+    let manifest = validate_generation(&current, &expected)?;
+    let _lock = acquire_lock(&retained, &format!("home-{home_id}"))?;
+    revalidate_readmission(
+        home,
+        &retained,
+        &current,
+        already_current,
+        &owner,
+        &expected_worktree,
+        &observed_generation,
+    )?;
+    if !already_current {
+        publish_bytes(&home.join(CONFIG), home_config(&manifest)?.as_bytes())?;
+    }
+    let manifest_path = current.generations.join(&expected).join(MANIFEST);
+    let bytes = fs::read(&manifest_path).map_err(|error| {
+        IsolationError::io(
+            "cargo-isolation::generation-manifest-unavailable",
+            &manifest_path,
+            error,
+        )
+    })?;
+    Ok(SourceGenerationAuthority {
+        generation: expected,
+        manifest: digest(b"spice-cargo-source-authority-v1", &bytes),
+    })
+}
+
+struct ReadmissionHome {
+    retained: Layout,
+    retained_root: PathBuf,
+    owner: HomeOwner,
+    home_id: String,
+    expected_worktree: String,
+}
+
+fn readmission_home(
+    home: &Path,
+    current_worktree: &Path,
+) -> Result<ReadmissionHome, IsolationError> {
     let retained_homes = home
         .parent()
         .filter(|path| path.file_name() == Some(OsStr::new("homes")))
@@ -185,7 +251,8 @@ pub(super) fn readmit_source_generation(
             format!("Cargo home has no source-store root: {home:?}"),
         )
     })?;
-    let retained = Layout::open_root(retained_root.to_path_buf())?;
+    let retained_root = retained_root.to_path_buf();
+    let retained = Layout::open_root(retained_root.clone())?;
     let owner: HomeOwner = read_json(&home.join(OWNER))?;
     let home_id = digest(
         b"spice-cargo-home-v1",
@@ -213,40 +280,31 @@ pub(super) fn readmit_source_generation(
             ),
         ));
     }
-    if retained_root == host.store_root() {
-        return source_generation_authority(home, lockfile);
-    }
-    let expected = generation_digest(lockfile);
-    let current = Layout::open(host)?;
-    let (observed_generation, already_current) = match home_generation(home, &retained) {
-        Ok(generation) => (generation, false),
-        Err(retained_error) => match home_generation(home, &current) {
-            Ok(generation) => (generation, true),
-            Err(_) => return Err(retained_error),
-        },
-    };
-    if observed_generation != expected {
-        return Err(IsolationError::new(
-            "cargo-isolation::generation-lock-mismatch",
-            format!(
-                "retained Cargo home generation {observed_generation} does not match selected lock generation {expected}"
-            ),
-        ));
-    }
-    if already_current {
-        validate_generation(&current, &observed_generation)?;
-    } else {
-        validate_generation(&retained, &observed_generation)?;
-    }
-    let manifest = validate_generation(&current, &expected)?;
-    let _lock = acquire_lock(&retained, &format!("home-{home_id}"))?;
+    Ok(ReadmissionHome {
+        retained,
+        retained_root,
+        owner,
+        home_id,
+        expected_worktree,
+    })
+}
+
+fn revalidate_readmission(
+    home: &Path,
+    retained: &Layout,
+    current: &Layout,
+    already_current: bool,
+    owner: &HomeOwner,
+    expected_worktree: &str,
+    observed_generation: &str,
+) -> Result<(), IsolationError> {
     let observed: HomeOwner = read_json(&home.join(OWNER))?;
     let observed_generation_after_lock = if already_current {
-        home_generation(home, &current)?
+        home_generation(home, current)?
     } else {
-        home_generation(home, &retained)?
+        home_generation(home, retained)?
     };
-    if observed != owner
+    if &observed != owner
         || observed.worktree != expected_worktree
         || observed_generation_after_lock != observed_generation
     {
@@ -255,21 +313,21 @@ pub(super) fn readmit_source_generation(
             "retained Cargo home changed while re-admission was preparing",
         ));
     }
-    if !already_current {
-        publish_bytes(&home.join(CONFIG), home_config(&manifest)?.as_bytes())?;
+    Ok(())
+}
+
+fn readmission_generation(
+    home: &Path,
+    retained: &Layout,
+    current: &Layout,
+) -> Result<(String, bool), IsolationError> {
+    match home_generation(home, retained) {
+        Ok(generation) => Ok((generation, false)),
+        Err(retained_error) => match home_generation(home, current) {
+            Ok(generation) => Ok((generation, true)),
+            Err(_) => Err(retained_error),
+        },
     }
-    let manifest_path = current.generations.join(&expected).join(MANIFEST);
-    let bytes = fs::read(&manifest_path).map_err(|error| {
-        IsolationError::io(
-            "cargo-isolation::generation-manifest-unavailable",
-            &manifest_path,
-            error,
-        )
-    })?;
-    Ok(SourceGenerationAuthority {
-        generation: expected,
-        manifest: digest(b"spice-cargo-source-authority-v1", &bytes),
-    })
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
