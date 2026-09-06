@@ -104,6 +104,7 @@ auto_compact_window_tokens = 123456
 binary = "/opt/codex"
 model = "gpt-current"
 effort = "max"
+model_context_window = 1234567
 personality = "pragmatic"
 fast_mode = true
 
@@ -588,6 +589,7 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "vendor.codex.binary",
     "vendor.codex.model",
     "vendor.codex.effort",
+    "vendor.codex.model_context_window",
     "vendor.codex.personality",
     "vendor.codex.fast_mode",
     "listen.window",

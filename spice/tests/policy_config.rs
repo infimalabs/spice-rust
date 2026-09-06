@@ -55,6 +55,7 @@ auto_compact_window_tokens = 123456
 binary = "/opt/codex"
 model = "gpt-codex"
 effort = "max"
+model_context_window = 1234567
 personality = "pragmatic"
 fast_mode = true
 
@@ -134,6 +135,11 @@ fn every_policy_shape_round_trips_without_losing_order_or_templates() {
     assert_eq!(decoded.vendor().codex().binary().as_str(), "/opt/codex");
     assert_eq!(decoded.vendor().codex().model(), "gpt-codex");
     assert_eq!(decoded.vendor().codex().effort(), vendor::Effort::Max);
+    assert_eq!(decoded.vendor().codex().model_context_window(), 1_234_567);
+    assert_eq!(
+        decoded.vendor().codex().model_auto_compact_token_limit(),
+        1_172_838
+    );
     assert_eq!(decoded.vendor().codex().personality(), Some("pragmatic"));
     assert!(decoded.vendor().codex().fast_mode());
     assert_eq!(
@@ -178,6 +184,14 @@ fn an_empty_tree_is_the_complete_compiled_policy() {
     assert_eq!(root.vendor().codex().binary().as_str(), "codex");
     assert_eq!(root.vendor().codex().model(), vendor::DEFAULT_CODEX_MODEL);
     assert_eq!(root.vendor().codex().effort(), vendor::Effort::High);
+    assert_eq!(
+        root.vendor().codex().model_context_window(),
+        vendor::DEFAULT_CODEX_MODEL_CONTEXT_WINDOW
+    );
+    assert_eq!(
+        root.vendor().codex().model_auto_compact_token_limit(),
+        997_500
+    );
     assert_eq!(root.vendor().codex().personality(), None);
     assert!(!root.vendor().codex().fast_mode());
     assert_eq!(root.proof().image().as_str(), proof::DEFAULT_IMAGE);
@@ -256,6 +270,26 @@ fn malformed_policy_values_are_refused_under_their_domain_paths() {
         (
             "[vendor.codex]\nauto_compact_window_tokens = 100\n",
             "vendor.codex.auto_compact_window_tokens",
+        ),
+        (
+            "[vendor.codex]\nmodel_context_window = 'large'\n",
+            "vendor.codex.model_context_window",
+        ),
+        (
+            "[vendor.codex]\nmodel_context_window = 0\n",
+            "vendor.codex.model_context_window",
+        ),
+        (
+            "[vendor.codex]\nmodel_context_window = 1\n",
+            "vendor.codex.model_context_window",
+        ),
+        (
+            "[vendor.codex]\nmodel_context_window = 9223372036854775808\n",
+            "vendor.codex.model_context_window",
+        ),
+        (
+            "[vendor.codex]\nmodel_context_window = 18446744073709551616\n",
+            "vendor.codex.model_context_window",
         ),
         (
             "[policy]\ntest_engines = [\"unknown-engine\"]\n",

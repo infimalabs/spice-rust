@@ -168,6 +168,7 @@ fn codex_plan_renders_admitted_model_personality_and_explicit_fast_mode() {
 binary = "/opt/codex"
 model = "gpt-6-astra"
 effort = "max"
+model_context_window = 1234567
 personality = "pragmatic"
 fast_mode = true
 "#,
@@ -183,6 +184,7 @@ fast_mode = true
     assert_eq!(plan.launch().model, "gpt-6-astra");
     assert_eq!(plan.launch().personality.as_deref(), Some("pragmatic"));
     assert_eq!(plan.launch().fast_mode, Some(true));
+    assert_eq!(plan.launch().model_context_window, Some(1_234_567));
     assert_eq!(
         rendered
             .windows(2)
@@ -208,6 +210,11 @@ fast_mode = true
     assert_eq!(
         environment_value(plan.environment(), CLAUDE_AUTO_COMPACT_WINDOW),
         None
+    );
+    assert_eq!(config_integer(&rendered, "model_context_window"), 1_234_567);
+    assert_eq!(
+        config_integer(&rendered, "model_auto_compact_token_limit"),
+        1_172_838
     );
 }
 
@@ -244,6 +251,10 @@ fast_mode = false
     assert_eq!(resumed.launch().personality, fresh.launch().personality);
     assert_eq!(resumed.launch().fast_mode, fresh.launch().fast_mode);
     assert_eq!(
+        resumed.launch().model_context_window,
+        fresh.launch().model_context_window
+    );
+    assert_eq!(
         resumed.launch().fast_mode,
         Some(true),
         "fresh and resumed Codex launches use the authoritative global value"
@@ -251,6 +262,26 @@ fast_mode = false
     assert_eq!(resumed.launch().hook, fresh.launch().hook);
     assert_eq!(resumed.launch().mcp, fresh.launch().mcp);
     assert_eq!(resumed.launch().steering_key, fresh.launch().steering_key);
+}
+
+fn config_integer(arguments: &[String], key: &str) -> i64 {
+    let prefix = format!("{key}=");
+    let values = arguments
+        .windows(2)
+        .filter_map(|pair| {
+            (pair[0] == "--config")
+                .then(|| pair[1].strip_prefix(&prefix))
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(values.len(), 1, "{key} must be configured exactly once");
+    let document = format!("value = {}", values[0]);
+    let parsed = document
+        .parse::<toml::Table>()
+        .expect("Codex override value is valid TOML");
+    parsed["value"]
+        .as_integer()
+        .expect("Codex window override is a TOML integer")
 }
 
 #[test]

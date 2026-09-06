@@ -14,6 +14,7 @@ struct BoundaryCase {
     summary_after: &'static str,
     intent: &'static str,
     user_after: &'static str,
+    model_context_window: Option<u64>,
 }
 
 #[test]
@@ -122,6 +123,18 @@ fn assert_one_boundary(transcript: &Path, case: &BoundaryCase) {
         Some(1)
     );
     assert_eq!(sweep["windows"][0]["compactions"][0]["ts"], case.marker_ts);
+
+    let tokens = reply_forms(
+        &strings(&["session", "tokens", &file, "--by-file"]),
+        &[],
+        "tokens",
+    );
+    assert_eq!(
+        tokens["usage"][0]["model_context_window"],
+        case.model_context_window.map_or(Value::Null, Value::from),
+        "{} metering must retain the observed full context window",
+        case.label
+    );
 }
 
 fn assert_summary(actual: &Value, expected: &str) {
@@ -196,6 +209,7 @@ fn codex_current_case() -> BoundaryCase {
         summary_after: "",
         intent: "[unparseable compaction-summary intent]",
         user_after: "Continue after the advertised boundary.",
+        model_context_window: Some(vendor::DEFAULT_CODEX_MODEL_CONTEXT_WINDOW),
     }
 }
 
@@ -216,6 +230,7 @@ fn codex_legacy_case() -> BoundaryCase {
         summary_after: "",
         intent: "[unparseable compaction-summary intent]",
         user_after: "Continue after the advertised boundary.",
+        model_context_window: Some(vendor::DEFAULT_CODEX_MODEL_CONTEXT_WINDOW),
     }
 }
 
@@ -238,8 +253,8 @@ fn codex_before_rows() -> Vec<Value> {
             json!({
                 "type": "token_count",
                 "info": {
-                    "last_token_usage": {"input_tokens": 199_000, "total_tokens": 199_000},
-                    "model_context_window": 200_000,
+                    "last_token_usage": {"input_tokens": 997_499, "total_tokens": 997_499},
+                    "model_context_window": vendor::DEFAULT_CODEX_MODEL_CONTEXT_WINDOW,
                 },
             }),
         ),
@@ -335,6 +350,7 @@ fn claude_current_case() -> BoundaryCase {
         summary_after: CLAUDE_REHYDRATION,
         intent: "Preserve the continuation context.",
         user_after: "Continue after the advertised boundary.",
+        model_context_window: None,
     }
 }
 
@@ -368,6 +384,7 @@ fn claude_legacy_case() -> BoundaryCase {
         summary_after: SUMMARY,
         intent: "Preserve the legacy continuation.",
         user_after: "Continue after the advertised boundary.",
+        model_context_window: None,
     }
 }
 

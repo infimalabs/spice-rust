@@ -10,6 +10,10 @@ use crate::Effort;
 pub const DEFAULT_CLAUDE_MODEL: &str = "claude-opus-5";
 /// Codex's compiled model selection.
 pub const DEFAULT_CODEX_MODEL: &str = "gpt-5.6-sol";
+/// GPT-5.6 Sol's documented full 1,050,000-token context window.
+///
+/// <https://developers.openai.com/api/docs/models/gpt-5.6-sol>
+pub const DEFAULT_CODEX_MODEL_CONTEXT_WINDOW: u64 = 1_050_000;
 /// Claude's compiled auto-compaction window.
 pub const DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW_TOKENS: u64 = 200_000;
 
@@ -158,6 +162,8 @@ pub struct CodexConfig {
     binary: Binary,
     model: LaunchValue,
     effort: Effort,
+    #[serde(deserialize_with = "codex_context_window")]
+    model_context_window: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     personality: Option<LaunchValue>,
     fast_mode: bool,
@@ -169,6 +175,7 @@ impl Default for CodexConfig {
             binary: Binary::new("codex"),
             model: LaunchValue::new(DEFAULT_CODEX_MODEL),
             effort: Effort::High,
+            model_context_window: DEFAULT_CODEX_MODEL_CONTEXT_WINDOW,
             personality: None,
             fast_mode: false,
         }
@@ -192,6 +199,21 @@ impl CodexConfig {
     #[must_use]
     pub const fn effort(&self) -> Effort {
         self.effort
+    }
+
+    /// Full context window stated on every supervised Codex launch.
+    #[must_use]
+    pub const fn model_context_window(&self) -> u64 {
+        self.model_context_window
+    }
+
+    /// Automatic compaction threshold derived from the full context window.
+    ///
+    /// Dividing before multiplying makes `floor(window * 95 / 100)` exact
+    /// without allowing an admitted signed-64-bit Codex value to overflow.
+    #[must_use]
+    pub const fn model_auto_compact_token_limit(&self) -> u64 {
+        codex_auto_compact_token_limit(self.model_context_window)
     }
 
     /// Optional Codex personality spelling.
@@ -237,5 +259,58 @@ fn positive_window<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D:
         ))
     } else {
         Ok(value)
+    }
+}
+
+fn codex_context_window<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
+    let value = u64::deserialize(deserializer)?;
+    if value == 0 {
+        return Err(D::Error::custom(
+            "Codex model context window must be positive",
+        ));
+    }
+    if value > i64::MAX as u64 {
+        return Err(D::Error::custom(
+            "Codex model context window must fit Codex's signed 64-bit configuration",
+        ));
+    }
+    if codex_auto_compact_token_limit(value) == 0 {
+        return Err(D::Error::custom(
+            "Codex model context window must yield a positive 95% auto-compaction limit",
+        ));
+    }
+    Ok(value)
+}
+
+/// Derive Codex's automatic compaction threshold without overflowing.
+#[must_use]
+pub const fn codex_auto_compact_token_limit(context_window: u64) -> u64 {
+    let hundreds = context_window / 100;
+    let remainder = context_window % 100;
+    hundreds * 95 + remainder * 95 / 100
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn codex(model_context_window: u64) -> CodexConfig {
+        serde_json::from_value(serde_json::json!({
+            "model_context_window": model_context_window,
+        }))
+        .expect("Codex configuration admits")
+    }
+
+    #[test]
+    fn codex_compaction_limit_is_exact_for_non_round_and_boundary_windows() {
+        let non_round = codex(101);
+        assert_eq!(non_round.model_auto_compact_token_limit(), 95);
+
+        let boundary = codex(i64::MAX as u64);
+        assert_eq!(
+            boundary.model_auto_compact_token_limit(),
+            8_762_203_435_012_037_016
+        );
+        assert!(boundary.model_auto_compact_token_limit() < boundary.model_context_window());
     }
 }

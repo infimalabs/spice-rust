@@ -81,6 +81,8 @@ pub struct LaunchValues<'a> {
     pub personality: Option<&'a str>,
     /// Optional fast-mode disposition supported by this vendor.
     pub fast_mode: Option<bool>,
+    /// Optional full model context window supported by this vendor.
+    pub model_context_window: Option<u64>,
     /// Optional child auto-compaction window.
     pub auto_compact_window_tokens: Option<u64>,
 }

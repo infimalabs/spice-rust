@@ -175,6 +175,7 @@ mod extension_tests {
             effort: configured.effort(),
             personality: configured.personality(),
             fast_mode: Some(configured.fast_mode()),
+            model_context_window: Some(configured.model_context_window()),
             auto_compact_window_tokens: None,
         }
     }

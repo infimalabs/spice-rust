@@ -133,7 +133,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert!(missing.root().policy().test_engines().is_empty());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 57);
+    assert_eq!(missing.provenance().len(), 58);
     assert!(
         missing
             .provenance()
@@ -793,6 +793,7 @@ auto_compact_window_tokens = 123456
 binary = "/opt/codex"
 model = "gpt-current"
 effort = "max"
+model_context_window = 1234567
 personality = "pragmatic"
 fast_mode = true
 

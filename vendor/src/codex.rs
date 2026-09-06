@@ -112,12 +112,18 @@ pub fn decode_rtk_pre_tool_output(bytes: &[u8]) -> Result<RtkPreToolDecision, St
 ///
 /// # Errors
 ///
-/// Returns a path-specific refusal when fast mode is not explicit, or the
-/// common argument-vector refusal when the binary is empty.
+/// Returns a path-specific refusal when fast mode or the model context window
+/// is not explicit, or the common argument-vector refusal when the binary is
+/// empty.
 pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, ContractError> {
     let fast_mode = launch.fast_mode.ok_or(ContractError::Missing {
         path: "vendor.codex.fast_mode",
     })?;
+    if launch.model_context_window.is_none() {
+        return Err(ContractError::Missing {
+            path: "vendor.codex.model_context_window",
+        });
+    }
     let mut arguments = vec![
         OsString::from("exec"),
         OsString::from("--cd"),
@@ -171,6 +177,15 @@ pub fn config_overrides(launch: &Launch) -> Vec<String> {
         post_tool_hook_override(&launch.hook),
         format!("model_reasoning_effort=\"{}\"", launch.effort.as_str()),
     ];
+    if let Some(context_window) = launch.model_context_window {
+        overrides.extend([
+            format!("model_context_window={context_window}"),
+            format!(
+                "model_auto_compact_token_limit={}",
+                crate::codex_auto_compact_token_limit(context_window)
+            ),
+        ]);
+    }
     if let Some(server) = &launch.mcp {
         overrides.extend(mcp_overrides(server));
     }

@@ -99,6 +99,7 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("vendor.codex.binary", TRACKED),
     ConfigKeyDeclaration::new("vendor.codex.model", TRACKED_WORKTREE),
     ConfigKeyDeclaration::new("vendor.codex.effort", TRACKED_WORKTREE),
+    ConfigKeyDeclaration::new("vendor.codex.model_context_window", TRACKED),
     ConfigKeyDeclaration::new("vendor.codex.personality", TRACKED),
     ConfigKeyDeclaration::new("vendor.codex.fast_mode", TRACKED),
     ConfigKeyDeclaration::new("listen.window", TRACKED_LOCAL),

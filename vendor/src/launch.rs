@@ -140,6 +140,8 @@ pub struct Launch {
     pub personality: Option<String>,
     /// Explicit fast-mode disposition, or no request for a dialect without it.
     pub fast_mode: Option<bool>,
+    /// Full model context window, for a dialect with an explicit config seam.
+    pub model_context_window: Option<u64>,
     /// Caller-resolved disposition for Claude's native commit attribution.
     ///
     /// The repository-policy read stays outside this I/O-free crate. Codex has
