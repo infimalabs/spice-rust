@@ -912,7 +912,7 @@ mod surface;
 #[cfg(test)]
 pub(super) use surface::announce_canvas;
 #[cfg(test)]
-pub(in crate::resident) use surface::dispatch_control;
+pub(in crate::resident) use surface::{dispatch_control, publish_ready_surface};
 use surface::run_surface;
 #[cfg(test)]
 use surface::{StartedSurface, drive_surface, start_surface};

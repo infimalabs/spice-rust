@@ -13,7 +13,7 @@ pub(super) struct StartedSurface<'a> {
     pub(super) progress: &'a mut dyn io::Write,
 }
 
-pub(super) struct SurfacePublication<'a> {
+pub(in crate::resident) struct SurfacePublication<'a> {
     discovery: canvas::Discovery,
     published: PublishedDiscovery,
     app_description: String,
@@ -21,6 +21,11 @@ pub(super) struct SurfacePublication<'a> {
     open: bool,
     endpoint: &'a mut dyn io::Write,
     daemon: Option<ChildStatus>,
+}
+
+struct MessageStartup {
+    reader: message_surface::BacklogReader,
+    diagnostic: Vec<u8>,
 }
 
 impl SurfacePublication<'_> {
@@ -158,8 +163,8 @@ pub(super) async fn run_surface(
 ) -> CommandResult<()> {
     let residency = current_residency(bus, epoch)?;
     let timer_commits = bus.reader().subscribe();
-    let timers = timers::Runtime::start(config.projects.clone(), config.steering.clone())?;
-    let lifecycle = lifecycle::Runtime::new(&config.lane);
+    let mut timers = timers::Runtime::start(config.projects.clone(), config.steering.clone())?;
+    let mut lifecycle = lifecycle::Runtime::new(&config.lane);
     let mut taste_adjudication = if config.judge_enabled {
         Some(taste_surface::start_adjudication()?)
     } else {
@@ -169,10 +174,10 @@ pub(super) async fn run_surface(
     let StartedSurface {
         capabilities,
         discovery,
-        control,
-        publication,
+        mut control,
+        mut publication,
         shutdown,
-        server_task,
+        mut server_task,
         message_publisher,
         progress,
     } = started;
@@ -185,31 +190,7 @@ pub(super) async fn run_surface(
     let supervisor_reports = capture::SupervisorReports::bind(paths)?;
     lane_surface::restore_seats(bus, paths, epoch, seats, &reporter)?;
     ingest_transcripts(bus, paths, None, progress)?;
-    let residency = current_residency(bus, epoch)?;
-    let message_snapshot = bus
-        .fact_snapshot()
-        .map_err(|error| store_fault("canvas::message-time-unavailable", &error.to_string()))?;
-    let mut message_reader = message_surface::BacklogReader::from_snapshot(&message_snapshot)?;
-    message_surface::restore_agent_messages(
-        paths,
-        residency.body(),
-        &message_publisher,
-        &mut message_reader,
-        progress,
-    )?;
-    let mut session_compactions =
-        message_surface::SessionCompactions::new(crate::session_environment());
-    session_compactions.synchronize(
-        bus,
-        epoch,
-        residency.body(),
-        &message_publisher,
-        message_reader.state_mut(),
-        progress,
-    )?;
-    message_publisher
-        .bound_initial_history()
-        .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
+    let mut message_startup = launch_message_startup(bus, paths, epoch, &message_publisher)?;
     let reads = read_materializations::CurrentReads::start(bus, paths, &config.consent)
         .map_err(|error| store_fault("resident::read-materialization-failed", &error))?;
     let command_surface = command_surface::Surface::new(
@@ -230,6 +211,36 @@ pub(super) async fn run_surface(
         .map_or((None, None), |(submitter, completions)| {
             (Some(submitter), Some(completions))
         });
+    publish_ready_surface(
+        bus,
+        epoch,
+        &command_surface,
+        seats,
+        progress,
+        &mut timers,
+        &mut lifecycle,
+        &mut publication,
+    )
+    .await?;
+    let Some(message_startup) = await_message_startup(
+        &mut message_startup,
+        bus,
+        &command_surface,
+        seats,
+        &mut lifecycle,
+        &mut timers,
+        &mut control,
+        &mut server_task,
+        progress,
+    )
+    .await?
+    else {
+        return stop_surface(publication, shutdown, server_task).await;
+    };
+    let _ = progress.write_all(&message_startup.diagnostic);
+    let message_state = message_startup.reader.into_state();
+    let session_compactions =
+        message_surface::SessionCompactions::new(crate::session_environment());
     drive_surface(
         bus,
         epoch,
@@ -240,7 +251,7 @@ pub(super) async fn run_surface(
         shutdown,
         server_task,
         message_publisher,
-        message_reader.into_state(),
+        message_state,
         session_compactions,
         taste_submitter,
         taste_completions,
@@ -255,6 +266,116 @@ pub(super) async fn run_surface(
     )
     .await
 }
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "readiness joins the resident's command, timer, lifecycle, and publication owners"
+)]
+pub(in crate::resident) async fn publish_ready_surface(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    command_surface: &command_surface::Surface<'_>,
+    seats: &mut Seats,
+    diagnostic: &mut dyn io::Write,
+    timers: &mut timers::Runtime,
+    lifecycle: &mut lifecycle::Runtime,
+    publication: &mut SurfacePublication<'_>,
+) -> CommandResult<()> {
+    reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle)?;
+    command_surface.synchronize_reads_before_publish()?;
+    let residency = current_residency(bus, epoch)?;
+    tokio::task::yield_now().await;
+    publication.publish(bus, command_surface.paths, residency.body(), diagnostic)
+}
+
+fn launch_message_startup(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    publisher: &canvas::stream::MessagePublisher,
+) -> CommandResult<oneshot::Receiver<CommandResult<MessageStartup>>> {
+    let residency = current_residency(bus, epoch)?;
+    let snapshot = bus
+        .fact_snapshot()
+        .map_err(|error| store_fault("canvas::message-time-unavailable", &error.to_string()))?;
+    start_message_startup(paths, residency.body(), publisher, snapshot)
+}
+
+fn start_message_startup(
+    paths: &RuntimePaths,
+    residency: &wire::ResidencyHead,
+    publisher: &canvas::stream::MessagePublisher,
+    snapshot: journal::FactSnapshot,
+) -> CommandResult<oneshot::Receiver<CommandResult<MessageStartup>>> {
+    let paths = paths.clone();
+    let residency = residency.clone();
+    let publisher = publisher.clone();
+    let (finished, receiver) = oneshot::channel();
+    std::thread::Builder::new()
+        .name("spice-message-startup".to_owned())
+        .spawn(move || {
+            let mut diagnostic = Vec::new();
+            let result =
+                message_surface::BacklogReader::from_snapshot(&snapshot).and_then(|mut reader| {
+                    message_surface::restore_agent_messages(
+                        &paths,
+                        &residency,
+                        &publisher,
+                        &mut reader,
+                        &mut diagnostic,
+                    )?;
+                    Ok(MessageStartup { reader, diagnostic })
+                });
+            let _ = finished.send(result);
+        })
+        .map_err(|error| {
+            environment_fault("canvas::message-startup-unavailable", &error.to_string())
+        })?;
+    Ok(receiver)
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "startup admission services the live command and server boundaries"
+)]
+async fn await_message_startup(
+    startup: &mut oneshot::Receiver<CommandResult<MessageStartup>>,
+    bus: &Bus,
+    command_surface: &command_surface::Surface<'_>,
+    seats: &mut Seats,
+    lifecycle: &mut lifecycle::Runtime,
+    timers: &mut timers::Runtime,
+    control: &mut canvas::axum::Control,
+    server_task: &mut tokio::task::JoinHandle<Result<(), io::Error>>,
+    diagnostic: &mut dyn io::Write,
+) -> CommandResult<Option<MessageStartup>> {
+    loop {
+        tokio::select! {
+            result = &mut *startup => {
+                let ready = result.map_err(|_| environment_fault(
+                    "canvas::message-startup-closed",
+                    "the message startup worker ended without its terminal result",
+                ))?;
+                return ready.map(Some);
+            }
+            request = control.recv() => {
+                let dispatched = dispatch_control(
+                    command_surface, seats, lifecycle, control, request,
+                ).await?;
+                if dispatched.reached_dark {
+                    return Ok(None);
+                }
+                if dispatched.lifecycle_released {
+                    reconcile_wakes(
+                        bus, command_surface, seats, diagnostic, timers, lifecycle,
+                    )?;
+                }
+            }
+            ending = &mut *server_task => return Err(server_outcome(ending)),
+        }
+    }
+}
+
 /// Announce the app this start serves, and dial it when asked to.
 ///
 /// The endpoint is read back out of the discovery file the resident has just
@@ -345,7 +466,7 @@ pub(super) async fn drive_surface(
     seats: &mut Seats,
     command_surface: &command_surface::Surface<'_>,
     mut control: canvas::axum::Control,
-    mut publication: SurfacePublication<'_>,
+    publication: SurfacePublication<'_>,
     shutdown: oneshot::Sender<()>,
     mut server_task: tokio::task::JoinHandle<Result<(), io::Error>>,
     message_publisher: canvas::stream::MessagePublisher,
@@ -362,24 +483,12 @@ pub(super) async fn drive_surface(
     mut timer_commits: bus::BroadcastSubscriber,
     mut lifecycle: lifecycle::Runtime,
 ) -> CommandResult<()> {
-    let mut session_compaction_poll =
-        tokio::time::interval(message_surface::SESSION_COMPACTION_POLL_INTERVAL);
+    let compaction_interval = message_surface::SESSION_COMPACTION_POLL_INTERVAL;
+    let mut session_compaction_poll = tokio::time::interval_at(
+        tokio::time::Instant::now() + compaction_interval,
+        compaction_interval,
+    );
     session_compaction_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    reconcile_wakes(
-        bus,
-        command_surface,
-        seats,
-        diagnostic,
-        &mut timers,
-        &mut lifecycle,
-    )?;
-    command_surface.synchronize_reads_before_publish()?;
-    let residency = current_residency(bus, epoch)?;
-    // Discovery is a serving contract, not just a bound-socket record. This
-    // resident runs on a current-thread runtime, so give the spawned server task
-    // one turn before clients can observe the discovery file.
-    tokio::task::yield_now().await;
-    publication.publish(bus, command_surface.paths, residency.body(), diagnostic)?;
     loop {
         tokio::select! {
             request = control.recv() => {

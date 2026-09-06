@@ -31,9 +31,9 @@ fn real_judge_does_not_block_the_current_thread_resident_surface() {
         let lanes = setup.lanes;
         let timer_commits = bus.reader().subscribe();
         let proof_commits = bus.reader().subscribe();
-        let timers = timers::Runtime::start(config.projects.clone(), config.steering.clone())
+        let mut timers = timers::Runtime::start(config.projects.clone(), config.steering.clone())
             .expect("timer authority starts");
-        let lifecycle = lifecycle::Runtime::new(&config.lane);
+        let mut lifecycle = lifecycle::Runtime::new(&config.lane);
         let mut progress = Vec::new();
         let mut endpoint = Vec::new();
         let started = start_surface(
@@ -59,7 +59,7 @@ fn real_judge_does_not_block_the_current_thread_resident_surface() {
             capabilities,
             discovery,
             control,
-            publication,
+            mut publication,
             shutdown,
             server_task,
             message_publisher,
@@ -87,6 +87,18 @@ fn real_judge_does_not_block_the_current_thread_resident_surface() {
             config,
             &reads,
         );
+        publish_ready_surface(
+            bus,
+            epoch,
+            &command_surface,
+            &mut setup.seats,
+            progress,
+            &mut timers,
+            &mut lifecycle,
+            &mut publication,
+        )
+        .await
+        .expect("live surface publishes before the liveness exercise");
         let pending_events = setup.adjudication.observe_pending();
         let (submitter, completions) = setup.adjudication.parts();
         let entered_path = setup.judge.entered.clone();
