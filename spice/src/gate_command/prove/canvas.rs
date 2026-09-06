@@ -30,8 +30,10 @@ type SharedCanvasBuild = Arc<Mutex<Option<Result<Arc<CanvasBuild>, String>>>>;
 
 mod packages;
 mod process;
+mod workspace;
 
 use packages::PlaywrightSnapshot;
+use workspace::{CanvasBuild, CanvasWorkspace, copy_paths};
 
 #[derive(Clone)]
 pub(super) struct CanvasExecution {
@@ -43,20 +45,6 @@ pub(super) struct CanvasExecution {
     shard: Option<CanvasShard>,
     build: SharedCanvasBuild,
     playwright: Arc<PlaywrightSnapshot>,
-}
-
-struct CanvasBuild {
-    _workspace: CanvasWorkspace,
-    root: PathBuf,
-    binary: PathBuf,
-}
-
-struct CanvasWorkspace(PathBuf);
-
-impl Drop for CanvasWorkspace {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -645,7 +633,7 @@ fn runtime_authority_at(
 pub(super) fn execute(execution: CanvasExecution, action: &str) -> Result<Digest, ProveFailure> {
     let build = ensure_build(&execution)?;
     if let Some(shard) = execution.shard {
-        copy_paths(&execution.root, &build.root, &execution.shard_inputs)?;
+        build.materialize_shard_inputs(&execution.root, &execution.shard_inputs)?;
         let encoded_shard = serde_json::to_string(&shard)
             .map_err(|error| ProveFailure::fault("gate::prove-canvas-shard-unencodable", error))?;
         let mut environment = execution
@@ -740,11 +728,7 @@ fn run_build(execution: &CanvasExecution) -> Result<Arc<CanvasBuild>, ProveFailu
             ),
         ));
     }
-    Ok(Arc::new(CanvasBuild {
-        _workspace: workspace,
-        root,
-        binary,
-    }))
+    Ok(Arc::new(CanvasBuild::new(workspace, root, binary)))
 }
 
 fn exclusive_workspace(prefix: &str) -> Result<PathBuf, ProveFailure> {
@@ -789,35 +773,22 @@ fn initialize_git_index(root: &Path) -> Result<(), ProveFailure> {
     Ok(())
 }
 
-fn copy_paths(source: &Path, destination: &Path, paths: &[String]) -> Result<(), ProveFailure> {
-    fs::create_dir_all(destination)
-        .map_err(|error| ProveFailure::fault("gate::prove-canvas-workspace-unavailable", error))?;
-    for relative in paths {
-        let source = source.join(relative);
-        let metadata = fs::symlink_metadata(&source)
-            .map_err(|error| ProveFailure::fault("gate::prove-canvas-source-unreadable", error))?;
-        if !metadata.file_type().is_file() {
-            return Err(ProveFailure::refusal(
-                "gate::prove-canvas-source-refused",
-                format!(
-                    "selected Canvas input {} is not a regular file",
-                    source.display()
-                ),
-            ));
-        }
-        let destination = destination.join(relative);
-        let parent = destination.parent().ok_or_else(|| {
-            ProveFailure::refusal(
-                "gate::prove-canvas-source-refused",
-                format!("selected Canvas input {relative:?} has no parent"),
-            )
-        })?;
-        fs::create_dir_all(parent).map_err(|error| {
-            ProveFailure::fault("gate::prove-canvas-workspace-unavailable", error)
-        })?;
-        fs::copy(&source, &destination).map_err(|error| {
-            ProveFailure::fault("gate::prove-canvas-workspace-unavailable", error)
-        })?;
+fn index_paths(root: &Path, paths: &[String]) -> Result<(), ProveFailure> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let output = Command::new("/usr/bin/git")
+        .arg("add")
+        .arg("--")
+        .args(paths)
+        .current_dir(root)
+        .output()
+        .map_err(|error| ProveFailure::fault("gate::prove-canvas-git-unavailable", error))?;
+    if !output.status.success() {
+        return Err(ProveFailure::refusal(
+            "gate::prove-canvas-git-refused",
+            process_failure(&output),
+        ));
     }
     Ok(())
 }
