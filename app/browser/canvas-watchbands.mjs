@@ -166,6 +166,25 @@ export async function assertPerTeamWatchbands(
     0,
     "queued direction is not presented as allocator-eligible work",
   );
+  const secondaryTaskSections = secondarySurface.locator(
+    ".team-task-workspace > .team-task-section",
+  );
+  assert.deepEqual(
+    await secondaryTaskSections.getByRole("heading", { level: 3 }).allTextContents(),
+    ["Active tasks", "Direction queue"],
+    "active ownership remains ahead of queued direction",
+  );
+  const emptyActive = secondaryTaskSections.first().locator(".team-task-empty");
+  assert.equal(
+    (await emptyActive.innerText()).trim(),
+    "No active tasks for this team.",
+    "the production empty active state remains explicit",
+  );
+  assert.equal(
+    await emptyActive.getAttribute("role"),
+    null,
+    "ordinary emptiness is not announced as an unavailable snapshot",
+  );
   await secondarySurface.getByRole("tab", { name: /^Lanes/ }).click();
   assert.equal(await console.locator(".team-surface").count(), 2);
   assert.equal(await console.locator(".team-speech").count(), 2);

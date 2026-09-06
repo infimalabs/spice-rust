@@ -7,8 +7,39 @@ import { fileURLToPath } from "node:url";
 import { launchBrowser } from "./headless-launch.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const TASK_HANDLES = [
+  "EXTRAORDINARILYLONGTASKSTEM-1kKbC3j4",
+  "LEASE-1kShort",
+  "MISSING-1kLease",
+];
 
-async function responsiveDocument() {
+async function productionTaskContract() {
+  const [model, renderer] = await Promise.all([
+    readFile(resolve(root, "app/src/watchband.rs"), "utf8"),
+    readFile(resolve(root, "app/src/browser/watchband.rs"), "utf8"),
+  ]);
+  const copy = (variant) => {
+    const match = model.match(new RegExp(`Self::${variant} => Some\\("([^"]+)"\\)`));
+    assert.ok(match, `production task state exposes ${variant}`);
+    return match[1];
+  };
+  const missingLease = renderer.match(
+    /lease_countdown\(standing\.expires_at, "team-task-age", "([^"]+)"\)/,
+  );
+  assert.ok(missingLease, "production task card exposes missing-lease copy");
+  assert.match(
+    renderer,
+    /role=\{active_state\.unavailable\(\)\.then_some\("status"\)\}/,
+    "production unavailable task state owns its status role",
+  );
+  return {
+    empty: copy("NoActiveTasks"),
+    missingLease: missingLease[1],
+    unavailable: copy("TaskSnapshotUnavailable"),
+  };
+}
+
+async function responsiveDocument(taskContract) {
   const [style, mosaic, responsive] = await Promise.all([
     readFile(resolve(root, "app/style.css"), "utf8"),
     readFile(resolve(root, "app/mosaic.css"), "utf8"),
@@ -20,11 +51,11 @@ async function responsiveDocument() {
     .mosaic-workspace .content { padding: 0; }
     .lineage-fleet { height: 600px; }
   </style><main class="mosaic-workspace"><div class="content">
-    <div class="lineage-fleet" tabindex="0" aria-label="Lineage lanes">${surface(1)}${surface(4)}</div>
+    <div class="lineage-fleet" tabindex="0" aria-label="Lineage lanes">${surface(1, taskContract)}${surface(4, taskContract)}</div>
   </div></main>`;
 }
 
-function surface(weight) {
+function surface(weight, taskContract) {
   return `<section class="team-surface" data-lineage-weight="${weight}">
     <header class="team-toolbar">
       <span class="team-lights"><span class="team-light"></span></span>
@@ -37,13 +68,11 @@ function surface(weight) {
     </header>
     <main class="team-task-workspace" aria-label="Team tasks">
       <section class="team-task-section"><header><h3>Active tasks</h3></header>
-        <ol class="team-task-list"><li class="team-task-row" data-accent="0">
-          <div class="team-task-row-main"><code>EXTRAORDINARILYLONGTASKSTEM-1kKbC3j4</code>
-            <strong class="team-task-title">A long active task title wraps without hiding its operational meaning</strong></div>
-          <div class="team-task-row-meta"><span class="team-task-member">
-            <span class="agent-presence"></span><span class="team-task-member-name">Extraordinarily long agent identity</span></span>
-            <span class="team-task-phase">review</span><span class="team-task-renewed">expires <span class="team-task-age">19m</span></span></div>
-        </li></ol>
+        <ol class="team-task-list">
+          ${taskCard(TASK_HANDLES[0], "A long active task title wraps without hiding its operational meaning", "Extraordinarily long agent identity", "review", "19m")}
+          ${taskCard(TASK_HANDLES[1], "Renewal countdown geometry", "Agent two", "todo", "999d+", "expiring")}
+          ${taskCard(TASK_HANDLES[2], "Missing lease remains explicit", "Agent three", "plan", taskContract.missingLease, "missing")}
+        </ol>
       </section><section class="team-task-section"><header><h3>Direction queue</h3></header>
         <p class="team-task-empty">No queued direction.</p></section>
     </main>
@@ -54,6 +83,16 @@ function surface(weight) {
     </div>
     <textarea>draft</textarea><table><tbody><tr><td>Shared evidence</td><td>Readable value</td></tr></tbody></table>
   </section>`;
+}
+
+function taskCard(handle, title, agent, phase, lease, state = "ordinary") {
+  return `<li class="team-task-row" data-accent="0" data-task-handle="${handle}">
+    <div class="team-task-row-main"><code>${handle}</code>
+      <strong class="team-task-title">${title}</strong></div>
+    <div class="team-task-row-meta"><span class="team-task-member">
+      <span class="agent-presence"></span><span class="team-task-member-name">${agent}</span></span>
+      <span class="team-task-phase">${phase}</span><span class="team-task-renewed">expires <span class="team-task-age" data-test-lease="${state}">${lease}</span></span></div>
+  </li>`;
 }
 
 async function setWidth(page, width) {
@@ -73,8 +112,30 @@ async function geometry(page) {
       const surfaceStyle = getComputedStyle(surface);
       const toolbar = surface.querySelector(".team-toolbar");
       const identity = surface.querySelector(".composer-shard-heading strong");
-      const task = surface.querySelector(".team-task-row");
-      const taskBounds = task.getBoundingClientRect();
+      const workspace = surface.querySelector(".team-task-workspace");
+      const workspaceBounds = workspace.getBoundingClientRect();
+      const taskRows = [...surface.querySelectorAll(".team-task-row")];
+      const tasks = taskRows.map((task) => {
+        const taskBounds = task.getBoundingClientRect();
+        const age = task.querySelector(".team-task-age");
+        const metadata = task.querySelector(".team-task-row-meta");
+        const title = task.querySelector(".team-task-title");
+        return {
+          bottom: taskBounds.bottom,
+          ageOverflow: age.scrollWidth - age.clientWidth,
+          handle: task.dataset.taskHandle,
+          left: taskBounds.left,
+          metadataOverflow: metadata.scrollWidth - metadata.clientWidth,
+          overflow: task.scrollWidth - task.clientWidth,
+          right: taskBounds.right,
+          titleText: title.textContent,
+          titleWhiteSpace: getComputedStyle(title).whiteSpace,
+          top: taskBounds.top,
+          width: taskBounds.width,
+          withinWorkspace: taskBounds.left >= workspaceBounds.left
+            && taskBounds.right <= workspaceBounds.right,
+        };
+      });
       const clipped = [...surface.querySelectorAll("button, textarea, table")].some((control) => {
         const controlRect = control.getBoundingClientRect();
         return controlRect.left < rect.left - 1 || controlRect.right > rect.right + 1;
@@ -110,12 +171,12 @@ async function geometry(page) {
           textOverflow: getComputedStyle(label).textOverflow,
           whiteSpace: getComputedStyle(label).whiteSpace,
         })),
-        task: {
-          borderRadius: getComputedStyle(task).borderRadius,
-          listTag: task.parentElement.tagName,
-          overflow: task.scrollWidth - task.clientWidth,
-          titleWhiteSpace: getComputedStyle(task.querySelector(".team-task-title")).whiteSpace,
-          withinSurface: taskBounds.left >= rect.left && taskBounds.right <= rect.right,
+        tasks: {
+          borderRadius: getComputedStyle(taskRows[0]).borderRadius,
+          handles: tasks.map(({ handle }) => handle),
+          listTag: surface.querySelector(".team-task-list")?.tagName,
+          rows: tasks,
+          workspaceOverflow: workspace.scrollWidth - workspace.clientWidth,
         },
       };
     });
@@ -183,15 +244,27 @@ function assertTrack(layout, label, overflow) {
       `${label} long identity owns controlled truncation`,
     );
     assert.deepEqual(
-      [surface.task.listTag, surface.task.titleWhiteSpace],
-      ["OL", "normal"],
-      `${label} active task retains semantic wrapping`,
+      [surface.tasks.listTag, surface.tasks.handles],
+      ["OL", TASK_HANDLES],
+      `${label} active tasks retain semantic source order`,
     );
+    const widths = new Set(surface.tasks.rows.map(({ width }) => Math.round(width * 2) / 2));
     assert.ok(
-      Number.parseFloat(surface.task.borderRadius) > 0
-        && surface.task.overflow <= 1
-        && surface.task.withinSurface,
-      `${label} active task card remains framed and contained: ${JSON.stringify(surface.task)}`,
+      Number.parseFloat(surface.tasks.borderRadius) > 0
+        && surface.tasks.rows.length === 3
+        && widths.size === 1
+        && surface.tasks.workspaceOverflow <= 1
+        && surface.tasks.rows.every((task, taskIndex, tasks) => (
+          task.width > 0
+            && task.ageOverflow <= 1
+            && task.overflow <= 1
+            && task.metadataOverflow <= 1
+            && task.titleText.length > 0
+            && task.titleWhiteSpace === "normal"
+            && task.withinWorkspace
+            && (taskIndex === 0 || tasks[taskIndex - 1].bottom < task.top)
+        )),
+      `${label} active task cards remain framed and contained: ${JSON.stringify(surface.tasks)}`,
     );
     if (surface.width <= surface.minWidth + 1) {
       assert.ok(surface.identity.scrollWidth > surface.identity.clientWidth, `${label} identity truncates at floor`);
@@ -232,6 +305,68 @@ async function setWeights(page, weights) {
   await page.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(resolveFrame)));
 }
 
+function taskBoxes(layout) {
+  return layout.surfaces[0].tasks.rows.map(({ bottom, left, right, top, width }) => (
+    [left, right, top, bottom, width].map((value) => Math.round(value * 2) / 2)
+  ));
+}
+
+async function assertTaskCardMatrix(page, engine, width, taskContract) {
+  await page.setViewportSize({ width, height: 900 });
+  await setWeights(page, [1]);
+  await setWidth(page, width);
+  const label = `${engine} ${width}px three-card matrix`;
+  const before = await geometry(page);
+  assertTrack(before, label, false);
+  const surface = page.locator(".team-surface").first();
+  assert.equal(
+    (await surface.locator('[data-test-lease="missing"]').innerText()).trim(),
+    taskContract.missingLease,
+    `${label} names its missing lease`,
+  );
+
+  await surface.locator('[data-test-lease="expiring"]').evaluate((age) => {
+    age.textContent = "now";
+  });
+  await page.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(resolveFrame)));
+  const after = await geometry(page);
+  assertTrack(after, `${label} after countdown update`, false);
+  assert.deepEqual(
+    taskBoxes(after),
+    taskBoxes(before),
+    `${label} countdown text cannot move or resize cards`,
+  );
+}
+
+async function assertTaskSectionStates(page, engine, taskContract) {
+  const workspace = page.locator(".team-task-workspace").first();
+  const active = workspace.locator(":scope > .team-task-section").first();
+  const original = await active.innerHTML();
+  assert.deepEqual(
+    await workspace.locator(":scope > .team-task-section h3").allTextContents(),
+    ["Active tasks", "Direction queue"],
+    `${engine} keeps active ownership before queued direction`,
+  );
+  for (const state of [
+    { copy: taskContract.empty, role: null },
+    { copy: taskContract.unavailable, role: "status" },
+  ]) {
+    await active.evaluate((section, next) => {
+      section.innerHTML = `<header><h3>Active tasks</h3></header><p class="team-task-empty"${
+        next.role ? ` role="${next.role}"` : ""
+      }>${next.copy}</p>`;
+    }, state);
+    const message = active.locator(".team-task-empty");
+    assert.equal((await message.innerText()).trim(), state.copy);
+    assert.equal(await message.getAttribute("role"), state.role);
+    assert.ok(
+      await workspace.evaluate((node) => node.scrollWidth <= node.clientWidth),
+      `${engine} ${state.copy} remains contained`,
+    );
+  }
+  await active.evaluate((section, markup) => { section.innerHTML = markup; }, original);
+}
+
 function assertRatio(layout, expected, label) {
   const ratio = layout.surfaces[1].width / layout.surfaces[0].width;
   assert.ok(
@@ -242,7 +377,8 @@ function assertRatio(layout, expected, label) {
 }
 
 test("lineage minima govern weighted fleet layout in Chromium and Firefox", async (t) => {
-  const document = await responsiveDocument();
+  const taskContract = await productionTaskContract();
+  const document = await responsiveDocument(taskContract);
   for (const engine of ["chromium", "firefox"]) {
     await t.test(engine, async () => {
       const browser = await launchBrowser(engine);
@@ -250,6 +386,11 @@ test("lineage minima govern weighted fleet layout in Chromium and Firefox", asyn
       const page = await context.newPage();
       try {
         await page.setContent(document);
+        for (const width of [932, 390]) {
+          await assertTaskCardMatrix(page, engine, width, taskContract);
+        }
+        await assertTaskSectionStates(page, engine, taskContract);
+        await page.setViewportSize({ width: 4000, height: 700 });
         await setWidth(page, 2560);
         for (const [weights, expected] of [[[1, 1], 1], [[1, 2], 2], [[1, 6], 6]]) {
           await setWeights(page, weights);
