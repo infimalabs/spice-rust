@@ -129,7 +129,7 @@ fn write_progress(stage: &str, report: &ProveActionReport) -> Result<(), ProveFa
 
 enum Claim {
     Present(ProveActionReport),
-    Lease(LeaseGuard),
+    Lease(Box<LeaseGuard>),
 }
 
 fn claim(
@@ -256,7 +256,11 @@ fn acquired(
             format!("action {action} was released without a receipt"),
         ));
     }
-    Ok(Claim::Lease(LeaseGuard::new(store.clone(), lease, timing)))
+    Ok(Claim::Lease(Box::new(LeaseGuard::new(
+        store.clone(),
+        lease,
+        timing,
+    ))))
 }
 
 fn shared_failure(reason: String, detail: String, fault: bool) -> ProveFailure {
