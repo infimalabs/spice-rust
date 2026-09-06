@@ -51,6 +51,7 @@ import {
 } from "./canvas-watchbands.mjs";
 import { assertMotionPreference } from "./mosaic-motion.mjs";
 import { assertIntegratedMosaicProof } from "./mosaic-integrated-proof.mjs";
+import { assertBidirectionalMediaExchange } from "./media-exchange.mjs";
 import { assertTeamArrangement } from "./team-arrangement.mjs";
 import { assertTeamMenu } from "./team-menu.mjs";
 import { assertTaskNotes } from "./task-notes.mjs";
@@ -700,6 +701,20 @@ try {
           seeded.lane,
           artifacts,
         );
+      });
+      await run.scenario("media-exchange", async () => {
+        const media = await browser.newContext({
+          colorScheme: "light",
+          viewport: { width: 1000, height: 720 },
+        });
+        await installSocketControl(media);
+        const page = await media.newPage();
+        const monitor = monitorPage(page);
+        await page.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
+        await assertCanvas(page, "media-exchange");
+        await assertBidirectionalMediaExchange(page, fixture, worktrees[4]);
+        monitor.assertClean();
+        await media.close();
       });
     } else if (run.owns("lease")) {
       light = await browser.newContext({ colorScheme: "light", viewport: { width: 1440, height: 900 } });

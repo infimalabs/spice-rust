@@ -432,6 +432,33 @@ export async function configureFixture(
     "",
   ].join("\n"));
   await chmod(vendor, 0o700);
+  const codexVendor = join(fixture, "fake-codex");
+  await writeFile(codexVendor, [
+    "#!/bin/sh",
+    "trap 'exit 0' TERM INT",
+    "vendors=${0%/*}/" + VENDOR_PID_LEDGER,
+    'printf \'%s\\n\' "$$" >> "$vendors"',
+    "name=${PWD##*/}",
+    'case "$name" in',
+    '  lane-*) ordinal=${name#lane-}; ordinal=${ordinal%%-*}; thread_id=$(printf \'018f7777777774448888%012d\' "$ordinal") ;;',
+    "  *) thread_id=018f7777777774448888999999999999 ;;",
+    "esac",
+    'printf \'{"type":"thread.started","thread_id":"%s"}\\n\' "$thread_id"',
+    "while :; do",
+    "  if [ -f .spice-codex-read-trigger ]; then",
+    "    path=$(cat .spice-codex-read-trigger)",
+    "    rm -f .spice-codex-read-trigger",
+    '    if [ -f "$path" ]; then cp "$path" .spice-codex-read-result; fi',
+    "  fi",
+    "  if [ -f .spice-codex-records-trigger ]; then",
+    "    cat .spice-codex-records-trigger",
+    "    rm -f .spice-codex-records-trigger",
+    "  fi",
+    "  sleep 1",
+    "done",
+    "",
+  ].join("\n"));
+  await chmod(codexVendor, 0o700);
   await writeFile(join(fixture, "spice-rust.toml"), [
     "[consent]",
     'posture = "queue"',
@@ -452,6 +479,9 @@ export async function configureFixture(
     "[vendor.claude]",
     `binary = ${JSON.stringify(vendor)}`,
     "",
+    "[vendor.codex]",
+    `binary = ${JSON.stringify(codexVendor)}`,
+    "",
     "[canvas.pack]",
     "rows = 2",
     "",
@@ -464,6 +494,9 @@ export async function configureFixture(
       ".spice-prose-trigger",
       ".spice-authored-prose-trigger",
       ".spice-ack-trigger",
+      ".spice-codex-read-trigger",
+      ".spice-codex-read-result",
+      ".spice-codex-records-trigger",
       VENDOR_PID_LEDGER,
       "",
     ].join("\n"),
