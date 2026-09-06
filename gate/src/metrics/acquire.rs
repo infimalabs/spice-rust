@@ -864,13 +864,11 @@ fn not_applicable_magic() -> Result<Vec<MetricEvidence>, MetricAcquisitionError>
 /// mint skip provenance over it. Of the two, only the class refusal outranks a
 /// measurement.
 ///
-/// A path no parent or pending merge base carries is then reported inapplicable
-/// rather than scanned against nothing. A regression is a literal this file did
-/// not have before, so a file that did not exist before has no delta to take:
-/// scanning it against an empty baseline would count every literal it was born
-/// with, and the count would be a property of the file's size rather than of any
-/// change to it. The fold lets a measurement outrank inapplicability, so the
-/// paths that do have a baseline still speak for the arm.
+/// A path no parent or pending merge base carries is measured against explicit
+/// empty text. That is the only committed content a newly added file can have
+/// replaced, and it keeps new supported sources inside the same zero-regression
+/// policy as changed sources: a file born without comparison-adjacent literals
+/// passes, while one born with them reports its exact path and count.
 ///
 /// The current text is read before the baseline is asked for, because which
 /// parent answers depends on it: a merge is measured against the parent holding
@@ -888,16 +886,7 @@ fn magic_state(source: &MetricSource<'_>, path: &str, baselines: &CommittedTexts
             };
         }
     };
-    let Some(baseline) = baselines.baseline(path, current.as_bytes()) else {
-        let reason = match baselines.commit() {
-            Some(commit) => format!(
-                "{path:?} is absent from every committed baseline rooted at {commit}, so it has \
-                 no baseline to regress from"
-            ),
-            None => format!("{path:?} has no baseline: this repository has no commit yet"),
-        };
-        return EvidenceState::NotApplicable { reason };
-    };
+    let baseline = baselines.baseline(path, current.as_bytes()).unwrap_or("");
     let resolved = match resolve_magic_metric(
         source.contract.rule_policy(),
         &PolicyContext::new().with_path(path),
