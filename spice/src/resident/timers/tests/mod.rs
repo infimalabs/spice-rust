@@ -962,6 +962,7 @@ fn attach_heads(
         topology_revision: 1,
         lanes,
         subscriptions,
+        renewals: Vec::new(),
     });
 }
 

@@ -210,6 +210,7 @@ fn startup_seating_carries_claim_without_an_observable_epoch_gap() {
         topology_revision: 1,
         lanes: vec![row],
         subscriptions: Vec::new(),
+        renewals: Vec::new(),
     });
     assert!(matches!(
         bus.commit(startup).expect("atomic startup commits"),
@@ -395,6 +396,7 @@ fn seed_restart_residency(
         topology_revision: 1,
         lanes: vec![row],
         subscriptions: Vec::new(),
+        renewals: Vec::new(),
     });
     assert!(matches!(
         bus.commit(resident).expect("fixture residency commits"),

@@ -737,6 +737,7 @@ mod tests {
                 manual_projects: Vec::new(),
                 auto_projects: Vec::new(),
             }],
+            renewals: Vec::new(),
         });
         commit(bus, write).expect("fixture residency commits");
     }

@@ -102,6 +102,7 @@ const PINNED: &[(&str, &str)] = &[
     ("LaneSignalled", "lane::signalled"),
     ("LaneCompacted", "lane::compacted"),
     ("LaneRenewed", "lane::renewed"),
+    ("LaneRenewalChanged", "lane::renewal"),
     ("LaneDrained", "lane::drained"),
     ("LaneKilled", "lane::killed"),
     ("LaneDegraded", "lane::degraded"),
@@ -189,6 +190,7 @@ fn plane(kind: FactKind) -> &'static str {
         | FactKind::LaneSignalled
         | FactKind::LaneCompacted
         | FactKind::LaneRenewed
+        | FactKind::LaneRenewalChanged
         | FactKind::LaneDrained
         | FactKind::LaneKilled
         | FactKind::LaneDegraded

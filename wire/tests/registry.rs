@@ -73,6 +73,7 @@ fn every_command_names_the_witnesses_it_requires() {
             kind,
             CommandKind::LaneSeat
                 | CommandKind::LaneState
+                | CommandKind::LaneRenewal
                 | CommandKind::LaneArrange
                 | CommandKind::LineageConfigure
                 | CommandKind::LineageArrange

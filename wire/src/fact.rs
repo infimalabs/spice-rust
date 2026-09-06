@@ -257,6 +257,8 @@ vocabulary! {
     LaneCompacted = "lane::compacted" by ResidentRecognition;
     /// A successor occupant was seated with its ancestor named.
     LaneRenewed = "lane::renewed" by ResidentRecognition;
+    /// Agent renewal intent or handoff state changed for one lane member.
+    LaneRenewalChanged = "lane::renewal" by ResidentRecognition;
     /// A graceful occupant end completed.
     LaneDrained = "lane::drained" by ResidentRecognition;
     /// A signal this resident sent ended an occupant.

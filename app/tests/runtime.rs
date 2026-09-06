@@ -375,6 +375,7 @@ fn board_response(
                 topology_revision: 0,
                 lanes: Vec::new(),
                 subscriptions: Vec::new(),
+                renewals: Vec::new(),
             },
         },
     };
@@ -456,6 +457,7 @@ fn lane_response(rows: &[(&str, &str, Option<&str>, bool)]) -> Vec<u8> {
                 topology_revision: 9,
                 lanes,
                 subscriptions,
+                renewals: Vec::new(),
             },
         }),
     )

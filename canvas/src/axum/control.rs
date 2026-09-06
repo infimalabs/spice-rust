@@ -62,6 +62,7 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::TrustRevoke
         | CommandKind::LaneRead
         | CommandKind::LaneState
+        | CommandKind::LaneRenewal
         | CommandKind::LaneRecall
         | CommandKind::TasteRecord
         | CommandKind::CanaryRecognize

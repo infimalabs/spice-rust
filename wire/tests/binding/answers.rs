@@ -408,6 +408,28 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
 }"#,
     ),
     (
+        AnswerShape::LaneRenewal,
+        r#"{
+  "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "lane": "018f82d4-6f59-7d06-92e3-bce9131163c3",
+  "topology_revision": 9,
+  "renewal": {
+    "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+    "lane": "018f82d4-6f59-7d06-92e3-bce9131163c3",
+    "revision": 9,
+    "state": {
+      "state": "requested",
+      "predecessor": {
+        "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c4",
+        "session": "session-old",
+        "thread": "thread-old"
+      },
+      "team_slot": 2
+    }
+  }
+}"#,
+    ),
+    (
         AnswerShape::State,
         r#"{ "from": "seated", "to": "quiescing" }"#,
     ),

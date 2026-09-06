@@ -362,6 +362,20 @@ pub struct LaneState {
     pub worktree: Option<String>,
 }
 
+/// Request or clear agent succession for one exact Canvas lineage member.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaneRenewal {
+    /// Topology revision observed before this intent was requested.
+    pub topology_revision: u64,
+    /// Canvas lineage whose member retains its original team slot.
+    pub lineage_id: CanonicalUuid,
+    /// Independently steerable member whose occupant is renewed.
+    pub lane: CanonicalUuid,
+    /// True requests succession; false clears only a pre-handoff request.
+    pub requested: bool,
+}
+
 /// Select one lane's continuity account, or the operator-wide account.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -802,6 +816,73 @@ pub struct LaneAnswer {
     pub lanes: Vec<LaneAnswerRow>,
     /// One authoritative task-subscription policy per returned lineage.
     pub subscriptions: Vec<crate::LineageSubscription>,
+    /// Current capability-free agent renewal state in lineage/member order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub renewals: Vec<crate::LaneRenewalRecord>,
+}
+
+/// The answer returned after setting one lane member's renewal intent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "LaneRenewalAnswerWire", into = "LaneRenewalAnswerWire")]
+pub struct LaneRenewalAnswer {
+    /// Canvas lineage whose member was addressed.
+    pub lineage_id: CanonicalUuid,
+    /// Independently steerable member whose intent was set.
+    pub lane: CanonicalUuid,
+    /// Topology authority after the transaction committed.
+    pub topology_revision: u64,
+    /// Current state, absent after a pre-handoff request is cleared.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub renewal: Option<crate::LaneRenewalRecord>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LaneRenewalAnswerWire {
+    lineage_id: CanonicalUuid,
+    lane: CanonicalUuid,
+    topology_revision: u64,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    renewal: Option<crate::LaneRenewalRecord>,
+}
+
+impl TryFrom<LaneRenewalAnswerWire> for LaneRenewalAnswer {
+    type Error = &'static str;
+
+    fn try_from(wire: LaneRenewalAnswerWire) -> Result<Self, Self::Error> {
+        if wire.renewal.as_ref().is_some_and(|renewal| {
+            renewal.lineage_id != wire.lineage_id
+                || renewal.lane != wire.lane
+                || renewal.revision != wire.topology_revision
+        }) {
+            return Err("renewal state does not match the addressed topology revision");
+        }
+        Ok(Self {
+            lineage_id: wire.lineage_id,
+            lane: wire.lane,
+            topology_revision: wire.topology_revision,
+            renewal: wire.renewal,
+        })
+    }
+}
+
+impl From<LaneRenewalAnswer> for LaneRenewalAnswerWire {
+    fn from(answer: LaneRenewalAnswer) -> Self {
+        Self {
+            lineage_id: answer.lineage_id,
+            lane: answer.lane,
+            topology_revision: answer.topology_revision,
+            renewal: answer.renewal,
+        }
+    }
 }
 
 /// The answer a lane seating or lifecycle command returns.

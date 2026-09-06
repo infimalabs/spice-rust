@@ -443,6 +443,7 @@ fn seed_write_with_policy(policy: wire::intent::LineageLife, terminal: bool) -> 
             manual_projects: Vec::new(),
             auto_projects: Vec::new(),
         }],
+        renewals: Vec::new(),
     });
     write
 }

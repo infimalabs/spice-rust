@@ -206,6 +206,15 @@ const BODIES: &[(CommandKind, &str)] = &[
 }"#,
     ),
     (
+        CommandKind::LaneRenewal,
+        r#"{
+  "topology_revision": 9,
+  "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "lane": "018f82d4-6f59-7d06-92e3-bce9131163c3",
+  "requested": true
+}"#,
+    ),
+    (
         CommandKind::LaneArrange,
         r#"{
   "topology_revision": 9,
@@ -803,6 +812,7 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::LaneRead,
     BodyShape::LaneSeat,
     BodyShape::LaneState,
+    BodyShape::LaneRenewal,
     BodyShape::LaneArrange,
     BodyShape::LineageConfigure,
     BodyShape::LineageArrange,
@@ -831,6 +841,7 @@ const ALL_ANSWERS: &[AnswerShape] = &[
     AnswerShape::Trust,
     AnswerShape::Lane,
     AnswerShape::LaneChange,
+    AnswerShape::LaneRenewal,
     AnswerShape::State,
     AnswerShape::Recall,
     AnswerShape::Taste,

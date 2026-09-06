@@ -31,6 +31,7 @@ mod lane_compaction;
 mod lineage_migration;
 mod read;
 mod release_notes_migration;
+mod renewal;
 mod schema;
 mod steering_index;
 mod steering_verification;
@@ -1171,6 +1172,7 @@ fn residency_head() -> ResidencyHead {
             manual_projects: Vec::new(),
             auto_projects: Vec::new(),
         }],
+        renewals: Vec::new(),
     }
 }
 

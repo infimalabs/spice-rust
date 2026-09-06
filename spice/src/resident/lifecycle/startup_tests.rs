@@ -382,6 +382,7 @@ fn seed_vacant_team_members(
             manual_projects: Vec::new(),
             auto_projects: Vec::new(),
         }],
+        renewals: Vec::new(),
     });
     commit(bus, proposal).expect("fixture residency commits");
 }

@@ -791,6 +791,7 @@ fn seed_lanes(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
                 manual_projects: Vec::new(),
                 auto_projects: Vec::new(),
             }],
+            renewals: Vec::new(),
         },
     );
     journal.apply(write).map_err(commit_failure)?;

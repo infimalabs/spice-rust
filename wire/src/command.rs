@@ -120,6 +120,8 @@ pub enum CommandKind {
     LaneArrange,
     /// Change a seated lane's state.
     LaneState,
+    /// Request or clear agent succession for one exact lane member.
+    LaneRenewal,
     /// Change the shared task-subscription life of one Canvas lineage.
     LineageConfigure,
     /// Rearrange the order of every Canvas lineage and the lanes each holds.
@@ -588,6 +590,7 @@ impl CommandKind {
         Self::LaneSeat,
         Self::LaneArrange,
         Self::LaneState,
+        Self::LaneRenewal,
         Self::LineageConfigure,
         Self::LineageArrange,
         Self::LaneRecall,
@@ -650,6 +653,7 @@ impl CommandKind {
             | Self::LaneSeat
             | Self::LaneArrange
             | Self::LaneState
+            | Self::LaneRenewal
             | Self::LineageConfigure
             | Self::LineageArrange
             | Self::LaneRecall
@@ -721,6 +725,7 @@ impl CommandKind {
             Self::LaneSeat => "lane::seat",
             Self::LaneArrange => "lane::arrange",
             Self::LaneState => "lane::state",
+            Self::LaneRenewal => "lane::renewal",
             Self::LineageConfigure => "lineage::configure",
             Self::LineageArrange => "lineage::arrange",
             Self::LaneRecall => "lane::recall",
@@ -833,6 +838,7 @@ impl CommandKind {
             Self::LaneSeat
             | Self::LaneArrange
             | Self::LaneState
+            | Self::LaneRenewal
             | Self::LineageConfigure
             | Self::LineageArrange => Law::LANE,
             Self::LaneRecall => Law::LANE_RECALL,

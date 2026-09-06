@@ -276,6 +276,7 @@ fn a_pre_clock_lane_decoder_reproduces_the_topology_revision_failure() {
                 topology_revision: 7,
                 lanes: Vec::new(),
                 subscriptions: Vec::new(),
+                renewals: Vec::new(),
             },
         }),
     );

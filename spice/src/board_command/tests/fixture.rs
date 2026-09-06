@@ -83,6 +83,7 @@ pub(super) fn fixture(name: &str, lane_count: usize) -> (PathBuf, Bus, Canonical
         topology_revision: 0,
         lanes,
         subscriptions,
+        renewals: Vec::new(),
     });
     match bus.commit(write).expect("fixture seating reaches writer") {
         CommitOutcome::Committed(_) => {}

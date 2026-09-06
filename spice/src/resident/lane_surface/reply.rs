@@ -106,6 +106,7 @@ fn answer_at(
         topology_revision: head.topology_revision,
         lanes,
         subscriptions,
+        renewals: head.renewals.clone(),
     })
 }
 
@@ -575,6 +576,22 @@ mod tests {
         }]
     }
 
+    fn renewal() -> wire::LaneRenewalRecord {
+        wire::LaneRenewalRecord {
+            lineage_id: uuid(1),
+            lane: uuid(1),
+            revision: 7,
+            state: wire::LaneRenewalState::HandoffPending {
+                predecessor: wire::RenewalIdentity {
+                    occupant: uuid(2),
+                    session: "private-session".to_owned(),
+                    thread: "thread-predecessor".to_owned(),
+                },
+                team_slot: 0,
+            },
+        }
+    }
+
     #[test]
     fn the_same_occupied_lane_turns_quiet_at_the_exact_sixty_second_boundary() {
         let row = occupied();
@@ -584,6 +601,7 @@ mod tests {
             topology_revision: 7,
             lanes: vec![row.clone()],
             subscriptions: subscriptions(),
+            renewals: Vec::new(),
         };
         let unchanged = head.clone();
         let observed = Monotonic::now();
@@ -622,12 +640,14 @@ mod tests {
     fn lane_reads_expose_display_identity_without_capabilities() {
         let row = occupied();
         let capability = row.capabilities[0].to_string();
+        let renewal = renewal();
         let head = wire::ResidencyHead {
             epoch: uuid(4),
             state: ResidentState::Seated,
             topology_revision: 7,
             lanes: vec![row],
             subscriptions: subscriptions(),
+            renewals: vec![renewal.clone()],
         };
         let observed = Monotonic::now();
         let answer = answer_at(&head, None, observed, |_| {
@@ -650,6 +670,7 @@ mod tests {
         assert_eq!(rtk.version(), Some("0.45.0"));
         assert_eq!(rtk.detail(), "fixture active");
         assert_eq!(answer.lanes[0].session.as_deref(), Some("private-session"));
+        assert_eq!(answer.renewals, vec![renewal]);
         assert!(!encoded.contains(&capability));
         assert!(!encoded.contains("capabilities"));
         assert!(encoded.contains("private-session"));
@@ -665,6 +686,7 @@ mod tests {
             topology_revision: 7,
             lanes: vec![row],
             subscriptions: subscriptions(),
+            renewals: Vec::new(),
         };
         let observed = Monotonic::now();
 
@@ -688,6 +710,7 @@ mod tests {
             topology_revision: 7,
             lanes: vec![occupied()],
             subscriptions: subscriptions(),
+            renewals: Vec::new(),
         };
         let error = answer_at(&head, None, Monotonic::now(), |_| None)
             .expect_err("unobserved occupancy must fail loudly");
@@ -705,6 +728,7 @@ mod tests {
             topology_revision: 7,
             lanes: vec![simulated()],
             subscriptions: subscriptions(),
+            renewals: Vec::new(),
         };
 
         let answer = answer_at(&head, None, Monotonic::now(), |_| None)
@@ -735,6 +759,7 @@ mod tests {
             topology_revision: 7,
             lanes: vec![row],
             subscriptions: subscriptions(),
+            renewals: Vec::new(),
         };
         let error = answer_at(&head, None, Monotonic::now(), |_| {
             Some(lane::occupant::Activity::new(occupant, Monotonic::now()))

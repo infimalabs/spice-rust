@@ -153,6 +153,7 @@ fn reseat(bus: &Bus, epoch: CanonicalUuid, seats: &[Seat]) {
         topology_revision: 0,
         lanes,
         subscriptions,
+        renewals: Vec::new(),
     });
     match bus.commit(write).expect("reseat reaches writer") {
         CommitOutcome::Committed(_) => {}
