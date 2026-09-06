@@ -1,10 +1,12 @@
 use super::*;
 
 const TASK: &str = "1kQpV9Gt";
+const SUCCESSOR_SESSION: &str = "018f8888-8888-7444-8888-999999999999";
 
 #[test]
 fn renewal_carries_one_claim_through_the_same_team_slot() {
     let fixture = AdvisoryRtkFixture::new();
+    fixture.set_next_session(SUCCESSOR_SESSION);
     let seeded = seed_claimed_team(&fixture);
     let discovery = publish_surface(&fixture);
     let repository = Repository::discover(&fixture.root).expect("fixture repository resolves");
@@ -26,6 +28,7 @@ fn renewal_carries_one_claim_through_the_same_team_slot() {
     );
     let successor = assert_carried(&seeded, &fixture);
     assert_eq!(fixture.launches().len(), 1);
+    assert_successor_observations(&seeded, &fixture, &surface, &mut seats, successor);
 
     reconcile(
         &mut lifecycle,
@@ -60,6 +63,13 @@ fn renewal_carries_one_claim_through_the_same_team_slot() {
             .occupant,
         Some(successor),
     );
+    assert_successor_command(&seeded, &fixture, &surface, &seats, successor);
+    assert_eq!(fixture.launches().len(), 1);
+    assert_eq!(claim_carries(&seeded.bus).len(), 1);
+    assert_eq!(
+        fact_bodies(&seeded.bus, wire::FactKind::LaneStarted).len(),
+        1,
+    );
 
     stop_lane(&mut seats, fixture.lane);
     super::super::super::super::steering::remove_lane_surface(
@@ -70,6 +80,148 @@ fn renewal_carries_one_claim_through_the_same_team_slot() {
     drop(discovery);
     seeded.bus.verify().expect("claim carry authority verifies");
     seeded.bus.shutdown().expect("claim carry bus stops");
+}
+
+fn assert_successor_observations(
+    seeded: &SeededTeam,
+    fixture: &AdvisoryRtkFixture,
+    surface: &super::super::super::super::StartupSurface,
+    seats: &mut Seats,
+    successor: CanonicalUuid,
+) {
+    let lane = fixture.lane;
+    let pending = seeded
+        .bus
+        .read(move |read| read.pending_steering(Some(lane)))
+        .expect("successor steering reads");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(
+        pending[0].body().control.as_deref(),
+        Some(context_control(&handoff(fixture)).as_str()),
+    );
+    assert_ne!(
+        pending[0].body().control.as_deref(),
+        Some(handoff_control(&handoff(fixture)).as_str()),
+        "the predecessor handoff control is retired",
+    );
+
+    let source = canvas::stream::Source::new(seeded.bus.reader(), fixture_uuid(107), 8);
+    let publisher = source.message_publisher();
+    let mut messages = source.subscribe_messages();
+    let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");
+    let surfaces = super::super::super::super::message_surface::CaptureSurfaces::new(
+        &fixture.paths,
+        &tastes,
+        &surface.config.steering,
+        &publisher,
+    );
+    let mut state = super::super::super::super::message_surface::MessageState::default();
+    let mut diagnostic = Vec::new();
+    for (occupant, text) in [
+        (fixture.occupant, "stale predecessor message"),
+        (successor, "successor message"),
+    ] {
+        super::super::super::super::message_surface::accept_capture_record(
+            &seeded.bus,
+            fixture.epoch,
+            seats,
+            &surfaces,
+            None,
+            &prose_record(fixture, occupant, text),
+            super::super::super::super::message_surface::CaptureViews::new(
+                &mut state,
+                &mut diagnostic,
+            ),
+        )
+        .expect("post-renewal capture record is classified");
+    }
+    let message = messages.try_recv().expect("successor message publishes");
+    assert_eq!(message.author, successor);
+    assert_eq!(message.text, "successor message");
+    assert!(
+        messages.try_recv().is_err(),
+        "the predecessor published no message"
+    );
+
+    let residency =
+        current_residency(&seeded.bus, fixture.epoch).expect("successor metrics authority reads");
+    let answer = super::super::super::reply::answer(residency.body(), Some(fixture.lane), seats)
+        .expect("successor metrics projection succeeds");
+    let [row] = answer.lanes.as_slice() else {
+        panic!("selected successor has one metrics row: {:?}", answer.lanes)
+    };
+    assert_eq!(row.occupant, Some(successor));
+    assert_eq!(row.session.as_deref(), Some(SUCCESSOR_SESSION));
+    assert_eq!(row.liveness, wire::intent::LaneLiveness::Running);
+}
+
+fn assert_successor_command(
+    seeded: &SeededTeam,
+    fixture: &AdvisoryRtkFixture,
+    surface: &super::super::super::super::StartupSurface,
+    seats: &Seats,
+    successor: CanonicalUuid,
+) {
+    let again = request(fixture, true);
+    assert!(matches!(
+        set(
+            &seeded.bus,
+            &fixture.paths,
+            fixture.epoch,
+            seats,
+            &surface.config.steering,
+            &command(fixture, 55, &again),
+            &again,
+        ),
+        Outcome::Reply(_)
+    ));
+    let current =
+        current_residency(&seeded.bus, fixture.epoch).expect("successor renewal command reads");
+    let wire::LaneRenewalState::Requested { predecessor, .. } = &current.body().renewals[0].state
+    else {
+        panic!("second renewal is requested")
+    };
+    assert_eq!(predecessor.occupant, successor);
+    assert_eq!(predecessor.session, SUCCESSOR_SESSION);
+    assert_eq!(predecessor.thread, SUCCESSOR_SESSION);
+    let lane = fixture.lane;
+    let controls = seeded
+        .bus
+        .read(move |read| read.pending_steering(Some(lane)))
+        .expect("successor controls read");
+    assert!(controls.iter().any(|head| {
+        head.body().control.as_deref()
+            == Some(handoff_control(&current.body().renewals[0]).as_str())
+    }));
+    assert!(controls.iter().all(|head| {
+        head.body().control.as_deref() != Some(handoff_control(&handoff(fixture)).as_str())
+    }));
+}
+
+fn prose_record(
+    fixture: &AdvisoryRtkFixture,
+    occupant: CanonicalUuid,
+    text: &str,
+) -> lane::capture::CaptureRecord {
+    let locus = listen::Locus::new(1, 0, text.len() as u64);
+    lane::capture::CaptureRecord {
+        lane: fixture.lane,
+        occupant,
+        stream: vendor::RecordStream::Stdout,
+        boundary: sill::RecordBoundary::Complete,
+        locus,
+        declaration: None,
+        decoded: listen::Decoded::Events {
+            context: listen::RecordContext::default(),
+            events: vec![listen::Event::Prose(listen::Prose {
+                role: listen::ProseRole::Assistant,
+                text: text.to_owned(),
+                phase: None,
+                media: Vec::new(),
+                locus,
+            })],
+        },
+    }
 }
 
 fn reconcile(
