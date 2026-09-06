@@ -13,7 +13,7 @@ const REPRESENTATIVE_CHANGES: [&str; 5] = [
     clippy::disallowed_methods,
     reason = "the focused Cargo inventory test captures its process environment once"
 )]
-fn declared_fold_build_module_selects_owner_and_dependent_checks() {
+fn retired_fold_build_module_has_no_current_cargo_owner_or_checks() {
     let root = workspace_root();
     let environment = Environment::new(std::env::vars_os()).expect("capture test environment");
     let environment = without_pre_commit_dispatch(environment).expect("sanitize test environment");
@@ -21,17 +21,15 @@ fn declared_fold_build_module_selects_owner_and_dependent_checks() {
         .expect("acquire repository Cargo inventory");
     let changed = "fold/build/admission.rs";
     let claims = source_claims(&inventory, changed, &root.join(changed));
-    assert!(
-        claims
-            .iter()
-            .flat_map(|claim| &claim.targets)
-            .any(|target| { target.kind.split('+').any(|kind| kind == "custom-build") })
-    );
+    assert!(claims.is_empty());
 
-    let checks = cargo_check_selections(&inventory, &root, &[changed.to_owned()])
-        .expect("select declared build module checks");
-    assert!(checks.iter().any(|check| check.name == "fold"));
-    assert!(checks.iter().any(|check| check.name == "spice"));
+    let error = cargo_check_selections(&inventory, &root, &[changed.to_owned()])
+        .expect_err("retired build module must remain outside every Cargo package");
+    assert!(
+        error
+            .to_string()
+            .contains("is outside every Cargo package")
+    );
 }
 
 #[test]
