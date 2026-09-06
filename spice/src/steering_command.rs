@@ -302,10 +302,10 @@ fn filter_hook_lane(
             lane.lane
         )
     })?;
-    let (row, mut changed) = delivery_row(state, lane.lane, occupant, compaction, existing);
-    if compaction < row.compaction {
-        return Ok((None, changed));
+    if existing.is_some_and(|index| compaction < state.lanes[index].compaction) {
+        return Ok((None, false));
     }
+    let (row, mut changed) = delivery_row(state, lane.lane, occupant, compaction, existing);
     let before = row.projections.clone();
     let projections = media_projection::reconcile(
         lane.lane,

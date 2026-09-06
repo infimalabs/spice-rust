@@ -352,7 +352,7 @@ fn a_delayed_pre_compaction_snapshot_cannot_reopen_an_older_epoch() {
         &[("1kOlder1", "published", "keep this monotone")],
     );
     let after = inbox_answer(
-        OCCUPANT,
+        OTHER_OCCUPANT,
         51,
         &[("1kNewer1", "published", "keep this monotone")],
     );
@@ -361,6 +361,53 @@ fn a_delayed_pre_compaction_snapshot_cannot_reopen_an_older_epoch() {
     assert!(deliver(&scratch, &after).is_some());
     assert_eq!(deliver(&scratch, &before), None);
     assert_eq!(deliver(&scratch, &after), None);
+}
+
+#[test]
+fn a_delayed_predecessor_cannot_mutate_current_media_delivery() {
+    let scratch = HookScratch::new();
+    let predecessor = media_inbox_answer(
+        OCCUPANT,
+        50,
+        "inspect the predecessor capture",
+        &[("predecessor.png", PNG_DATA_URL)],
+    );
+    let current = media_inbox_answer(
+        OTHER_OCCUPANT,
+        51,
+        "inspect the current capture",
+        &[("current.png", SECOND_PNG_DATA_URL)],
+    );
+
+    let predecessor_document =
+        deliver(&scratch, &predecessor).expect("predecessor media publishes");
+    let predecessor_path = projection_path_from_document(&predecessor_document);
+    let current_document = deliver(&scratch, &current).expect("current media publishes");
+    let current_path = projection_path_from_document(&current_document);
+    assert!(
+        !predecessor_path.exists(),
+        "current media retires predecessor projection"
+    );
+    let state = fs::read(&scratch.state).expect("current delivery state is readable");
+    let bytes = fs::read(&current_path).expect("current projection is readable");
+
+    assert_eq!(deliver(&scratch, &predecessor), None);
+    assert_eq!(
+        fs::read(&scratch.state).expect("state remains readable"),
+        state,
+        "a stale predecessor leaves serialized delivery authority unchanged",
+    );
+    assert_eq!(
+        fs::read(&current_path).expect("current projection remains readable"),
+        bytes,
+        "a stale predecessor leaves current projection bytes unchanged",
+    );
+    assert!(!predecessor_path.exists(), "stale media stays retired");
+    assert_eq!(
+        deliver(&scratch, &current),
+        None,
+        "stale predecessor input cannot reopen current media delivery",
+    );
 }
 
 #[test]
@@ -613,6 +660,23 @@ fn media_projections(context: &str) -> Vec<serde_json::Value> {
         .filter_map(|line| line.strip_prefix("media-projection="))
         .map(|encoded| serde_json::from_str(encoded).expect("hook media projection decodes"))
         .collect()
+}
+
+fn projection_path_from_document(document: &[u8]) -> PathBuf {
+    let mut projections = media_projections(&additional_context(document));
+    assert_eq!(
+        projections.len(),
+        1,
+        "fixture publishes one media projection"
+    );
+    PathBuf::from(
+        projections
+            .pop()
+            .expect("one projection")
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .expect("projection has a path"),
+    )
 }
 
 struct HookScratch {
