@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
-static APP_ASSETS: [AppAsset; 7] = [
+static APP_ASSETS: [AppAsset; 8] = [
     AppAsset::new("/", "canvas-app.html", "text/html; charset=utf-8"),
     AppAsset::new(
         "/app.module",
@@ -17,6 +17,7 @@ static APP_ASSETS: [AppAsset; 7] = [
     ),
     AppAsset::new("/style.css", "style.css", "text/css; charset=utf-8"),
     AppAsset::new("/mosaic.css", "mosaic.css", "text/css; charset=utf-8"),
+    AppAsset::new("/chrome.css", "chrome.css", "text/css; charset=utf-8"),
     AppAsset::new("/composer.css", "composer.css", "text/css; charset=utf-8"),
     AppAsset::new(
         "/responsive.css",
@@ -691,6 +692,7 @@ mod tests {
                 ("/app.module", "text/javascript; charset=utf-8"),
                 ("/style.css", "text/css; charset=utf-8"),
                 ("/mosaic.css", "text/css; charset=utf-8"),
+                ("/chrome.css", "text/css; charset=utf-8"),
                 ("/composer.css", "text/css; charset=utf-8"),
                 ("/responsive.css", "text/css; charset=utf-8"),
                 ("/app_bg.wasm", "application/wasm"),
@@ -838,6 +840,7 @@ mod tests {
             missing,
             &[
                 "app_bg.wasm",
+                "chrome.css",
                 "composer.css",
                 "mosaic.css",
                 "responsive.css",
@@ -847,6 +850,7 @@ mod tests {
         let message = error.to_string();
         assert!(
             message.contains("style.css")
+                && message.contains("chrome.css")
                 && message.contains("composer.css")
                 && message.contains("mosaic.css")
                 && message.contains("responsive.css")

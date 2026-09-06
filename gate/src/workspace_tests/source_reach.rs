@@ -791,6 +791,7 @@ impl SourceGraph {
         self.record_file_macro(
             included.clone(),
             walk.reach,
+            reference.kind,
             reference.scope.clone(),
             reference.crate_root,
         );
@@ -824,14 +825,21 @@ impl SourceGraph {
         &mut self,
         source: PathBuf,
         reach: DeclaredReach,
+        kind: FileMacroKind,
         scope: FileMacroScope,
         crate_root: bool,
     ) {
+        let origin = match kind {
+            FileMacroKind::Include => DeclaredPathSourceOrigin::IncludedRust,
+            FileMacroKind::IncludeStr | FileMacroKind::IncludeBytes => {
+                DeclaredPathSourceOrigin::FileMacro
+            }
+        };
         record_declared_source(
             &mut self.declared,
             source,
             reach,
-            DeclaredPathSourceOrigin::FileMacro,
+            origin,
             SourceMacroScope { scope, crate_root },
         );
     }

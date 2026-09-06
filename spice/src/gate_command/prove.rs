@@ -1,15 +1,16 @@
 //! Proof-aware execution of selected reusable gate actions.
 
 use std::ffi::{OsStr, OsString};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant as MonotonicInstant;
 
 use gate::{
     ActionInputClosure, ActionInputInventory, ActionKey, ActionKeyAuthority, ActionNonFileInput,
     ActionNonFileKind, ActionReuseClass, ActionSpec, ActionSpecFields, ActionToolRequirement,
-    ArmDisposition, BatteryManifest, BatteryToolEvidence, CargoGateShard, CargoGateShardKind,
-    CargoGateShardPlanning, EvidenceProducerRecord, EvidenceStore, FocusedArmReport, GateId,
-    PassReceipt, PassReceiptFields,
+    ArmDisposition, BatteryManifest, BatteryToolEvidence, CargoExternalSourceAuthority,
+    CargoGateShard, CargoGateShardKind, CargoGateShardPlanning, EvidenceProducerRecord,
+    EvidenceStore, FocusedArmReport, GateId, PassReceipt, PassReceiptFields,
 };
 use serde::Serialize;
 use sill::Environment;
@@ -224,6 +225,14 @@ struct CargoExecution {
     writable_root: PathBuf,
     environment: Environment,
     cargo: PathBuf,
+    source: CargoSourceExecution,
+}
+
+#[derive(Clone)]
+struct CargoSourceExecution {
+    home: PathBuf,
+    lockfile: Vec<u8>,
+    authority: spice::cargo_isolation::SourceGenerationAuthority,
 }
 
 #[derive(Debug)]
@@ -553,6 +562,24 @@ fn prepare_cargo_actions(
     let context = arm.context().map_err(ProveFailure::run)?;
     let authority = cargo_authority(arm.root(), arm.compiler_environment())?;
     let cargo_environment = authority.environment;
+    let cargo_home = environment_value(&cargo_environment, "CARGO_HOME")?;
+    let lockfile = fs::read(arm.root().join("Cargo.lock"))
+        .map_err(|error| ProveFailure::refusal("gate::prove-cargo-source-unavailable", error))?;
+    let source =
+        spice::cargo_isolation::source_generation_authority(Path::new(cargo_home), &lockfile)
+            .map_err(|error| {
+                ProveFailure::refusal("gate::prove-cargo-source-unavailable", error)
+            })?;
+    let external_source = CargoExternalSourceAuthority::new(
+        source.generation().to_owned(),
+        source.manifest().to_owned(),
+    )
+    .map_err(ProveFailure::cargo)?;
+    let source_execution = CargoSourceExecution {
+        home: PathBuf::from(cargo_home),
+        lockfile,
+        authority: source,
+    };
     let environment = Environment::new(cargo_environment.iter().cloned())
         .map_err(|error| ProveFailure::refusal("gate::prove-cargo-environment-refused", error))?;
     let base = arm.materialize_staged_base().map_err(ProveFailure::run)?;
@@ -564,6 +591,7 @@ fn prepare_cargo_actions(
         selected_paths: arm.paths(),
         environment: environment.clone(),
         cargo: authority.cargo.as_os_str(),
+        external_source: Some(external_source),
         include_tests: staged.cargo_tests(),
     })
     .map_err(ProveFailure::cargo)?;
@@ -586,6 +614,7 @@ fn prepare_cargo_actions(
                 &cargo_environment,
                 environment.clone(),
                 &authority.cargo,
+                source_execution.clone(),
                 shard.clone(),
             )
         })
@@ -625,6 +654,7 @@ fn prepare_cargo_action(
     cargo_environment: &[(OsString, OsString)],
     execution_environment: Environment,
     cargo: &Path,
+    source: CargoSourceExecution,
     shard: CargoGateShard,
 ) -> Result<PreparedAction, ProveFailure> {
     require_reusable_cargo_shard(&shard)?;
@@ -716,6 +746,7 @@ fn prepare_cargo_action(
             writable_root: writable_root.to_path_buf(),
             environment: execution_environment,
             cargo: cargo.to_path_buf(),
+            source,
         })),
     })
 }
@@ -734,6 +765,22 @@ fn cargo_authority(
         cargo: host.cargo().to_path_buf(),
         environment: normalized_cargo_environment(environment.entries()),
     })
+}
+
+fn environment_value<'a>(
+    environment: &'a [(OsString, OsString)],
+    name: &str,
+) -> Result<&'a OsStr, ProveFailure> {
+    environment
+        .iter()
+        .find(|(candidate, _)| candidate == OsStr::new(name))
+        .map(|(_, value)| value.as_os_str())
+        .ok_or_else(|| {
+            ProveFailure::refusal(
+                "gate::prove-cargo-source-unavailable",
+                format!("captured compiler environment has no {name}"),
+            )
+        })
 }
 
 fn require_reusable_cargo_shard(shard: &CargoGateShard) -> Result<(), ProveFailure> {
@@ -880,6 +927,7 @@ fn execute(action: PreparedAction) -> Result<PendingReceipt, ProveFailure> {
                 writable_root,
                 environment,
                 cargo,
+                source,
             } = *execution;
             let result = gate::run_cargo_gate_shard_at(
                 &root,
@@ -890,6 +938,23 @@ fn execute(action: PreparedAction) -> Result<PendingReceipt, ProveFailure> {
                 &mut std::io::stderr(),
             )
             .map_err(ProveFailure::cargo)?;
+            let observed =
+                spice::cargo_isolation::source_generation_authority(&source.home, &source.lockfile)
+                    .map_err(|error| {
+                        ProveFailure::refusal("gate::prove-cargo-source-moved", error)
+                    })?;
+            if observed != source.authority {
+                return Err(ProveFailure::refusal(
+                    "gate::prove-cargo-source-moved",
+                    format!(
+                        "expected generation={} manifest={}, observed generation={} manifest={}",
+                        source.authority.generation(),
+                        source.authority.manifest(),
+                        observed.generation(),
+                        observed.manifest(),
+                    ),
+                ));
+            }
             Digest::compute(
                 Domain::GateFocusedReport,
                 &wire::encode(&result).map_err(|error| {
@@ -1221,256 +1286,4 @@ impl ProveFailure {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::cell::RefCell;
-    use std::fs;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    use super::*;
-
-    #[test]
-    fn registered_gate_lookup_is_exact() {
-        assert_eq!(gate_id("formatters"), Some(GateId::Formatters));
-        assert_eq!(gate_id("Formatters"), None);
-        assert_eq!(gate_id("formatters "), None);
-    }
-
-    #[test]
-    fn missing_filters_only_an_action_with_a_current_receipt() {
-        assert!(action_needed(false, false));
-        assert!(action_needed(false, true));
-        assert!(action_needed(true, false));
-        assert!(!action_needed(true, true));
-    }
-
-    #[test]
-    fn cargo_selectors_are_explicit_and_keep_canonical_report_order() {
-        assert!(cargo_request(Request {
-            action: Some("rust-typecheck"),
-            missing: false,
-        }));
-        assert!(cargo_request(Request {
-            action: Some("cargo:test:fixture::lib:fixture"),
-            missing: false,
-        }));
-        assert!(!cargo_request(Request {
-            action: Some("formatters"),
-            missing: true,
-        }));
-        assert_eq!(
-            proof_action_order("taste", "cargo:typecheck:fixture::lib:fixture"),
-            std::cmp::Ordering::Less
-        );
-        assert_eq!(
-            proof_action_order(
-                "cargo:typecheck:fixture::lib:fixture",
-                "canvas-web-typecheck"
-            ),
-            std::cmp::Ordering::Less
-        );
-        assert_eq!(
-            proof_action_order("private-internals", "cargo:test:fixture::lib:fixture"),
-            std::cmp::Ordering::Less
-        );
-    }
-
-    #[test]
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the Cargo planning fixture captures its own test environment"
-    )]
-    fn non_reusable_cargo_shard_is_refused_before_action_identity_preparation() {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "spice-prove-non-reusable-cargo-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed),
-        ));
-        fs::create_dir_all(root.join("src")).expect("create Cargo fixture source");
-        fs::write(
-            root.join("Cargo.toml"),
-            concat!(
-                "[package]\n",
-                "name = \"fixture\"\n",
-                "version = \"0.1.0\"\n",
-                "edition = \"2024\"\n",
-                "build = \"build.rs\"\n\n",
-                "[package.metadata.spice.cargo-proof]\n",
-                "version = 1\n",
-                "complete = true\n",
-            ),
-        )
-        .expect("write Cargo fixture manifest");
-        fs::write(
-            root.join("Cargo.lock"),
-            concat!(
-                "# This file is automatically @generated by Cargo.\n",
-                "version = 4\n\n",
-                "[[package]]\n",
-                "name = \"fixture\"\n",
-                "version = \"0.1.0\"\n",
-            ),
-        )
-        .expect("write Cargo fixture lockfile");
-        fs::write(
-            root.join("build.rs"),
-            "fn main() { println!(\"{}\", \"cargo::rerun-if-changed=../authority.txt\"); }\n",
-        )
-        .expect("write Cargo fixture build script");
-        fs::write(root.join("src/lib.rs"), "pub const VALUE: u8 = 1;\n")
-            .expect("write Cargo fixture library");
-        let environment =
-            Environment::new(std::env::vars_os()).expect("ambient test environment is valid");
-        let plan = gate::plan_cargo_gate_shards_at(CargoGateShardPlanning {
-            root: &root,
-            base: None,
-            source: Digest::compute(Domain::GateTree, b"fixture"),
-            changed_sources: &["src/lib.rs".to_owned()],
-            selected_paths: &[
-                "Cargo.lock".to_owned(),
-                "Cargo.toml".to_owned(),
-                "build.rs".to_owned(),
-                "src/lib.rs".to_owned(),
-            ],
-            environment,
-            cargo: OsStr::new("cargo"),
-            include_tests: false,
-        })
-        .expect("plan non-reusable Cargo fixture");
-        let shard = plan
-            .typechecks()
-            .first()
-            .expect("fixture has a typecheck shard");
-
-        let Err(ProveFailure::Refusal { reason, detail }) = require_reusable_cargo_shard(shard)
-        else {
-            panic!("non-reusable shard must be refused before identity preparation");
-        };
-        assert_eq!(reason, "gate::prove-cargo-action-not-reusable");
-        assert!(detail.contains("computed or interpolated compile-time output"));
-        fs::remove_dir_all(root).expect("remove Cargo planning fixture");
-    }
-
-    #[test]
-    fn cargo_environment_omits_worktree_outputs_and_matches_forced_wrappers() {
-        let normalized = normalized_cargo_environment(&[
-            (OsString::from("PWD"), OsString::from("/worktree-a")),
-            (
-                OsString::from("CARGO_TARGET_DIR"),
-                OsString::from("/worktree-a/target"),
-            ),
-            (
-                OsString::from("CARGO_BUILD_BUILD_DIR"),
-                OsString::from("/worktree-a/build"),
-            ),
-            (OsString::from("RUSTC_WRAPPER"), OsString::from("sccache")),
-            (OsString::from("RUSTFLAGS"), OsString::from("--cfg=proof")),
-        ]);
-        assert_eq!(
-            normalized,
-            [
-                (OsString::from("RUSTC_WORKSPACE_WRAPPER"), OsString::new()),
-                (OsString::from("RUSTC_WRAPPER"), OsString::new()),
-                (OsString::from("RUSTFLAGS"), OsString::from("--cfg=proof")),
-            ]
-        );
-
-        let Ok((_, first)) = environment(&normalized) else {
-            panic!("digest first Cargo environment");
-        };
-        let drifted = normalized_cargo_environment(&[
-            (
-                OsString::from("FIXTURE_BUILD_INPUT"),
-                OsString::from("changed"),
-            ),
-            (OsString::from("RUSTFLAGS"), OsString::from("--cfg=proof")),
-        ]);
-        let Ok((_, second)) = environment(&drifted) else {
-            panic!("digest drifted Cargo environment");
-        };
-        assert_ne!(first, second);
-    }
-
-    #[test]
-    fn interrupted_execution_cleans_up_without_reaching_publication() {
-        let events = RefCell::new(Vec::new());
-        let result: Result<Vec<u8>, &str> = complete_transaction(
-            vec![1_u8, 2, 3],
-            |action| {
-                events.borrow_mut().push(format!("execute-{action}"));
-                if action == 2 {
-                    Err("interrupted")
-                } else {
-                    Ok(action)
-                }
-            },
-            || {
-                events.borrow_mut().push("validate".to_owned());
-                Ok(())
-            },
-            || {
-                events.borrow_mut().push("cleanup".to_owned());
-                Ok(())
-            },
-            |receipts| {
-                events.borrow_mut().push("publish".to_owned());
-                Ok(receipts)
-            },
-        );
-
-        assert_eq!(result, Err("interrupted"));
-        assert_eq!(events.into_inner(), ["execute-1", "execute-2", "cleanup"]);
-    }
-
-    #[test]
-    fn source_validation_precedes_cleanup_and_publication() {
-        let events = RefCell::new(Vec::new());
-        let result = complete_transaction(
-            vec![1_u8, 2],
-            |action| {
-                events.borrow_mut().push(format!("execute-{action}"));
-                Ok::<_, &str>(action)
-            },
-            || {
-                events.borrow_mut().push("validate".to_owned());
-                Ok(())
-            },
-            || {
-                events.borrow_mut().push("cleanup".to_owned());
-                Ok(())
-            },
-            |receipts| {
-                events.borrow_mut().push(format!("publish-{receipts:?}"));
-                Ok(receipts)
-            },
-        );
-
-        assert_eq!(result, Ok(vec![1, 2]));
-        assert_eq!(
-            events.into_inner(),
-            [
-                "execute-1",
-                "execute-2",
-                "validate",
-                "cleanup",
-                "publish-[1, 2]",
-            ]
-        );
-    }
-
-    #[test]
-    fn aggregate_publication_failure_returns_no_partial_reports() {
-        let result: Result<Vec<u8>, &str> = complete_transaction(
-            vec![1_u8, 2],
-            Ok::<_, &str>,
-            || Ok(()),
-            || Ok(()),
-            |receipts| {
-                assert_eq!(receipts, [1, 2]);
-                Err("later publication failed")
-            },
-        );
-
-        assert_eq!(result, Err("later publication failed"));
-    }
-}
+mod tests;

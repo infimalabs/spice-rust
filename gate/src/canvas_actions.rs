@@ -70,6 +70,7 @@ pub struct CanvasActionPlanning<'a> {
     pub changed_paths: &'a [String],
     pub environment: &'a Environment,
     pub cargo: &'a OsStr,
+    pub external_source: Option<&'a crate::CargoExternalSourceAuthority>,
 }
 
 impl CanvasActionPlan {
@@ -80,6 +81,7 @@ impl CanvasActionPlan {
             changed_paths,
             environment,
             cargo,
+            external_source,
         } = planning;
         let registry_path = root.join(CANVAS_ACTION_REGISTRY);
         let registry = fs::read(&registry_path).map_err(|error| {
@@ -92,7 +94,14 @@ impl CanvasActionPlan {
             CanvasActionError::new(format!("Canvas action registry is invalid: {error}"))
         })?;
         validate_registry(&decoded)?;
-        let build = build::authority(root, paths, changed_paths, environment, cargo);
+        let build = build::authority(
+            root,
+            paths,
+            changed_paths,
+            environment,
+            cargo,
+            external_source,
+        );
         let shard_inputs = selected_inputs(paths, changed_paths, shard_input);
         if build.input_paths.is_empty() || shard_inputs.is_empty() {
             return Err(CanvasActionError::new(
@@ -280,6 +289,7 @@ mod tests {
             changed_paths: &changed,
             environment: &environment,
             cargo: OsStr::new("cargo"),
+            external_source: None,
         })
         .expect("repository registry is canonical");
         assert_eq!(

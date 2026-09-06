@@ -27,16 +27,14 @@ impl Fixture {
             .join(spice::canvas::APP_STAGE_GENERATIONS)
             .join(GENERATION);
         fs::create_dir_all(&app).expect("fixture app generation");
-        fs::write(app.join("app_bg.wasm"), TEST_WASM).expect("write lane-built Wasm");
-        fs::write(app.join("canvas-app.html"), TEST_HTML).expect("write lane-built shell");
-        fs::write(app.join("app.module"), b"lane-built module").expect("write lane module");
-        fs::write(app.join("style.css"), b"lane-built style").expect("write lane style");
-        fs::write(app.join("mosaic.css"), b"lane-built Mosaic style")
-            .expect("write lane Mosaic style");
-        fs::write(app.join("composer.css"), b"lane-built composer style")
-            .expect("write lane composer style");
-        fs::write(app.join("responsive.css"), b"lane-built responsive style")
-            .expect("write lane responsive style");
+        for asset in spice::canvas::APP.assets() {
+            let contents = match asset.file() {
+                "app_bg.wasm" => TEST_WASM,
+                "canvas-app.html" => TEST_HTML,
+                _ => b"lane-built app asset",
+            };
+            fs::write(app.join(asset.file()), contents).expect("write lane-built app asset");
+        }
         fs::write(
             root.join(spice::canvas::APP_STAGE)
                 .join(spice::canvas::APP_STAGE_CURRENT),

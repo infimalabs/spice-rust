@@ -17,6 +17,7 @@ const BUILD_DECLARATION: &str = "gate::canvas::build-action-v3";
 const SHARD_DECLARATION: &str = "gate::canvas::browser-shard-action-v1";
 const CANVAS_RUNNER_VERSION: u64 = 3;
 const CANVAS_BINARY_VARIABLE: &str = "SPICE_CANVAS_BINARY"; // env-policy: allow
+const CANVAS_SHARD_VARIABLE: &str = "SPICE_CANVAS_SHARD"; // env-policy: allow
 const NODE_PROBE: &str = concat!(
     "const {createRequire}=await import('node:module');",
     "const require=createRequire(import.meta.url);",
@@ -38,6 +39,7 @@ pub(super) struct CanvasExecution {
     common: PathBuf,
     environment: Vec<(OsString, OsString)>,
     build_inputs: Vec<String>,
+    shard_inputs: Vec<String>,
     shard: Option<CanvasShard>,
     build: SharedCanvasBuild,
     playwright: Arc<PlaywrightSnapshot>,
@@ -141,8 +143,7 @@ pub(super) fn prepare(
         .derive_reached_arm(staged.selection(), GateId::CanvasWebTypecheck)
         .map_err(ProveFailure::run)?;
     let context = arm.context().map_err(ProveFailure::run)?;
-    let environment_values = normalized_environment(arm.compiler_environment().iter().cloned());
-    let plan = canvas_plan(&arm, &environment_values)?;
+    let (plan, environment_values) = canvas_plan(&arm)?;
     let (environment_names, environment) = environment(&environment_values)?;
     let playwright = Arc::new(PlaywrightSnapshot::capture(arm.root(), repository)?);
     let runtime = runtime_authority(&environment_values, &playwright)?;
@@ -228,8 +229,22 @@ pub(super) fn prepare(
 
 fn canvas_plan(
     arm: &spice::gate::PreparedArm<'_>,
-    environment_values: &[(OsString, OsString)],
-) -> Result<CanvasActionPlan, ProveFailure> {
+) -> Result<(CanvasActionPlan, Vec<(OsString, OsString)>), ProveFailure> {
+    let cargo = super::cargo_authority(arm.root(), arm.compiler_environment())?;
+    let environment_values = normalized_environment(cargo.environment.iter().cloned());
+    let cargo_home = super::environment_value(&environment_values, "CARGO_HOME")?;
+    let lockfile = fs::read(arm.root().join("Cargo.lock"))
+        .map_err(|error| ProveFailure::refusal("gate::prove-cargo-source-unavailable", error))?;
+    let source =
+        spice::cargo_isolation::source_generation_authority(Path::new(cargo_home), &lockfile)
+            .map_err(|error| {
+                ProveFailure::refusal("gate::prove-cargo-source-unavailable", error)
+            })?;
+    let external_source = gate::CargoExternalSourceAuthority::new(
+        source.generation().to_owned(),
+        source.manifest().to_owned(),
+    )
+    .map_err(ProveFailure::cargo)?;
     let environment = Environment::new(environment_values.iter().cloned())
         .map_err(|error| ProveFailure::refusal("gate::prove-canvas-environment-refused", error))?;
     let plan = CanvasActionPlan::load(CanvasActionPlanning {
@@ -237,11 +252,12 @@ fn canvas_plan(
         paths: arm.paths(),
         changed_paths: arm.changes(),
         environment: &environment,
-        cargo: OsStr::new("cargo"),
+        cargo: cargo.cargo.as_os_str(),
+        external_source: Some(&external_source),
     })
     .map_err(ProveFailure::canvas)?;
     require_reusable_build(&plan)?;
-    Ok(plan)
+    Ok((plan, environment_values))
 }
 
 fn selected_shards<'a>(plan: &'a CanvasActionPlan, request: Request<'_>) -> Vec<&'a CanvasShard> {
@@ -299,7 +315,8 @@ fn prepare_build(
             root: arm.root().to_path_buf(),
             common: common.to_path_buf(),
             environment: environment_values.to_vec(),
-            build_inputs: present_build_inputs(plan.build_inputs(), arm.paths()),
+            build_inputs: present_inputs(plan.build_inputs(), arm.paths()),
+            shard_inputs: Vec::new(),
             shard: None,
             build,
             playwright,
@@ -367,7 +384,12 @@ fn prepare_shard(
             root: arm.root().to_path_buf(),
             common: common.to_path_buf(),
             environment: environment_values.to_vec(),
-            build_inputs: present_build_inputs(plan.build_inputs(), arm.paths()),
+            build_inputs: present_inputs(plan.build_inputs(), arm.paths()),
+            shard_inputs: present_inputs_except(
+                plan.shard_inputs(),
+                plan.build_inputs(),
+                arm.paths(),
+            ),
             shard: Some(shard.clone()),
             build,
             playwright,
@@ -385,12 +407,24 @@ fn require_reusable_build(plan: &CanvasActionPlan) -> Result<(), ProveFailure> {
     Ok(())
 }
 
-fn present_build_inputs(build_inputs: &[String], selected_paths: &[String]) -> Vec<String> {
+fn present_inputs(inputs: &[String], selected_paths: &[String]) -> Vec<String> {
     let selected = selected_paths.iter().collect::<BTreeSet<_>>();
-    build_inputs
+    inputs
         .iter()
         .filter(|path| selected.contains(path))
         .cloned()
+        .collect()
+}
+
+fn present_inputs_except(
+    inputs: &[String],
+    excluded: &[String],
+    selected_paths: &[String],
+) -> Vec<String> {
+    let excluded = excluded.iter().collect::<BTreeSet<_>>();
+    present_inputs(inputs, selected_paths)
+        .into_iter()
+        .filter(|path| !excluded.contains(path))
         .collect()
 }
 
@@ -481,7 +515,7 @@ fn canvas_non_files(
 fn normalized_environment(
     values: impl Iterator<Item = (OsString, OsString)>,
 ) -> Vec<(OsString, OsString)> {
-    const OMIT: [&str; 9] = [
+    const OMIT: [&str; 11] = [
         "PWD",
         "OLDPWD",
         "SHLVL",
@@ -491,6 +525,8 @@ fn normalized_environment(
         "CARGO_BUILD_BUILD_DIR",
         "RUSTC_WORKSPACE_WRAPPER",
         "RUSTC_WRAPPER",
+        CANVAS_BINARY_VARIABLE,
+        CANVAS_SHARD_VARIABLE,
     ];
     let mut values = values
         .filter(|(name, _)| !OMIT.iter().any(|omit| name == OsStr::new(omit)))
@@ -604,15 +640,25 @@ fn runtime_authority(
 pub(super) fn execute(execution: CanvasExecution, action: &str) -> Result<Digest, ProveFailure> {
     let build = ensure_build(&execution)?;
     if let Some(shard) = execution.shard {
+        copy_paths(&execution.root, &build.root, &execution.shard_inputs)?;
+        let encoded_shard = serde_json::to_string(&shard)
+            .map_err(|error| ProveFailure::fault("gate::prove-canvas-shard-unencodable", error))?;
         let mut environment = execution
             .environment
             .iter()
-            .filter(|(name, _)| name != OsStr::new(CANVAS_BINARY_VARIABLE))
+            .filter(|(name, _)| {
+                name != OsStr::new(CANVAS_BINARY_VARIABLE)
+                    && name != OsStr::new(CANVAS_SHARD_VARIABLE)
+            })
             .cloned()
             .collect::<Vec<_>>();
         environment.push((
             OsString::from(CANVAS_BINARY_VARIABLE),
             build.binary.as_os_str().to_owned(),
+        ));
+        environment.push((
+            OsString::from(CANVAS_SHARD_VARIABLE),
+            OsString::from(encoded_shard),
         ));
         let environment = sill::Environment::new(environment).map_err(|error| {
             ProveFailure::fault("gate::prove-canvas-shard-environment-invalid", error)
@@ -739,7 +785,7 @@ fn initialize_git_index(root: &Path) -> Result<(), ProveFailure> {
 }
 
 fn copy_paths(source: &Path, destination: &Path, paths: &[String]) -> Result<(), ProveFailure> {
-    fs::create_dir(destination)
+    fs::create_dir_all(destination)
         .map_err(|error| ProveFailure::fault("gate::prove-canvas-workspace-unavailable", error))?;
     for relative in paths {
         let source = source.join(relative);
@@ -872,21 +918,40 @@ mod tests {
             [
                 (OsString::from("PWD"), OsString::from("/first")),
                 (OsString::from("HOME"), OsString::from("/home")),
+                (
+                    OsString::from(CANVAS_BINARY_VARIABLE),
+                    OsString::from("/ambient/spice"),
+                ),
+                (
+                    OsString::from(CANVAS_SHARD_VARIABLE),
+                    OsString::from("ambient-shard"),
+                ),
             ]
             .into_iter(),
         );
         assert!(values.contains(&(OsString::from("HOME"), OsString::from("/home"))));
         assert!(values.iter().any(|(name, _)| name == OsStr::new("PATH")));
         assert!(!values.iter().any(|(name, _)| name == OsStr::new("PWD")));
+        assert!(
+            !values
+                .iter()
+                .any(|(name, _)| name == OsStr::new(CANVAS_BINARY_VARIABLE))
+        );
+        assert!(
+            !values
+                .iter()
+                .any(|(name, _)| name == OsStr::new(CANVAS_SHARD_VARIABLE))
+        );
         assert!(values.contains(&(OsString::from("RUSTC_WORKSPACE_WRAPPER"), OsString::new(),)));
     }
 
     #[test]
-    fn canvas_workspace_materializes_only_admitted_build_inputs() {
+    fn canvas_workspace_materializes_only_admitted_inputs_across_build_and_shard_overlays() {
         let source = CanvasWorkspace(success(exclusive_workspace("canvas-copy-source")));
         let destination = CanvasWorkspace(success(exclusive_workspace("canvas-copy-destination")));
         fs::create_dir(&source.0).expect("create source workspace");
         fs::write(source.0.join("kept.txt"), "kept\n").expect("write admitted source");
+        fs::write(source.0.join("shard.mjs"), "shard\n").expect("write admitted shard source");
         fs::write(source.0.join("browser-only.mjs"), "ignored\n").expect("write unadmitted source");
 
         success(copy_paths(
@@ -894,10 +959,19 @@ mod tests {
             &destination.0,
             &["kept.txt".to_owned()],
         ));
+        success(copy_paths(
+            &source.0,
+            &destination.0,
+            &["shard.mjs".to_owned()],
+        ));
 
         assert_eq!(
             fs::read_to_string(destination.0.join("kept.txt")).expect("read admitted copy"),
             "kept\n"
+        );
+        assert_eq!(
+            fs::read_to_string(destination.0.join("shard.mjs")).expect("read admitted shard copy"),
+            "shard\n"
         );
         assert!(!destination.0.join("browser-only.mjs").exists());
     }
@@ -905,11 +979,19 @@ mod tests {
     #[test]
     fn canvas_workspace_omits_deleted_manifest_inputs() {
         assert_eq!(
-            present_build_inputs(
+            present_inputs(
                 &["present.txt".to_owned(), "removed.txt".to_owned()],
                 &["present.txt".to_owned()],
             ),
             ["present.txt"]
+        );
+        assert_eq!(
+            present_inputs_except(
+                &["build.mjs".to_owned(), "shard.mjs".to_owned()],
+                &["build.mjs".to_owned()],
+                &["build.mjs".to_owned(), "shard.mjs".to_owned()],
+            ),
+            ["shard.mjs"]
         );
     }
 
@@ -974,6 +1056,7 @@ mod tests {
                 "Cargo.lock".to_owned(),
                 "app/browser/canvas-proof-build.mjs".to_owned(),
             ],
+            shard_inputs: Vec::new(),
             shard: None,
             build: Arc::new(Mutex::new(None)),
             playwright: Arc::new(PlaywrightSnapshot::empty()),

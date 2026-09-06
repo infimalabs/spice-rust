@@ -405,6 +405,7 @@ impl OutputMacroFixture {
             ],
             environment,
             cargo: OsStr::new("cargo"),
+            external_source: None,
             include_tests: false,
         })
         .expect("plan output-macro fixture")
@@ -413,7 +414,7 @@ impl OutputMacroFixture {
     fn non_cacheable_reason(&self, build_script: &str) -> String {
         fixture_shard(&self.plan(build_script))
             .non_cacheable_reason()
-            .expect("ambiguous output macro is non-cacheable")
+            .unwrap_or_else(|| panic!("ambiguous output macro is non-cacheable: {build_script}"))
             .to_owned()
     }
 

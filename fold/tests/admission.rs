@@ -30,6 +30,14 @@ fn assert_refusal(folds: &[FoldRegistration], expected: &str) {
 #[test]
 fn the_shipped_registry_is_admitted() {
     admission::validate(FactKind::ALL, registry::FOLDS).expect("shipped registry");
+    admission::validate_registry_source(FactKind::ALL, include_str!("../src/registry.rs"))
+        .expect("shared registry source");
+    let refusal = admission::validate_registry_source(FactKind::ALL, "fold_registry! {}\n")
+        .expect_err("changed registry source must be refused");
+    assert_eq!(
+        refusal.to_string(),
+        "fold registry source differs from its build admission contract",
+    );
 }
 
 #[test]

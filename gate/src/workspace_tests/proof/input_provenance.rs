@@ -74,13 +74,21 @@ pub(super) fn selected_package_input_paths(
                 })?;
                 let relative = path_text(relative)?;
                 inputs.paths.insert(relative.clone());
-                if declared.origins.contains(&DeclaredPathSourceOrigin::Module) {
+                if declared.origins.iter().any(|origin| {
+                    matches!(
+                        origin,
+                        DeclaredPathSourceOrigin::IncludedRust | DeclaredPathSourceOrigin::Module
+                    )
+                }) {
                     inputs.target_sources.insert(relative.clone());
                 }
-                if declared
-                    .origins
-                    .contains(&DeclaredPathSourceOrigin::FileMacro)
-                {
+                if declared.origins.iter().any(|origin| {
+                    matches!(
+                        origin,
+                        DeclaredPathSourceOrigin::FileMacro
+                            | DeclaredPathSourceOrigin::IncludedRust
+                    )
+                }) {
                     inputs.file_macros.insert(relative);
                 }
             }

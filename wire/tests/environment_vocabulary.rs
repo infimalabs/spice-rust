@@ -47,9 +47,9 @@ struct EnvironmentPolicy {
 /// contributes its private appliance marker. Those references oblige the ledger
 /// to account all twenty-three original names. Compiler-receipt admission also
 /// observes six operational launcher and fixture names which remain outside the
-/// typed product-variable vocabulary. RTK's upstream history override is the
-/// thirty-first foreign name. The Bash and zsh startup selectors are the final
-/// two foreign names. All are named here rather than added to
+/// typed product-variable vocabulary. RTK's upstream history override and the
+/// Canvas proof runner's injected shard selector are also foreign. The Bash and
+/// zsh startup selectors complete the class. All are named here rather than added to
 /// [`SpiceVariable`],
 /// because Doctor reports the variables Spice owns and a row for one of these
 /// would claim ownership Spice does not have.
@@ -68,6 +68,7 @@ const FOREIGN_TRACKED_NAMES: &[&str] = &[
     "GIT_WORK_TREE",                                // env-policy: allow
     "RTK_DB_PATH",                                  // env-policy: allow
     "SPICE_CANVAS_BINARY",                          // env-policy: allow
+    "SPICE_CANVAS_SHARD",                           // env-policy: allow
     "SPICE_COMMAND_PLAN_EXECUTION_DIGEST",          // env-policy: allow
     "SPICE_FIXTURE_RERUN",                          // env-policy: allow
     "SPICE_HOOKS",                                  // env-policy: allow
