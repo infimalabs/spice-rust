@@ -312,10 +312,14 @@ export async function assertPerTeamWatchbands(
     const rows = [...workspace.querySelectorAll(".team-task-row, .team-direction-row")]
       .map((row) => {
         const rect = row.getBoundingClientRect();
+        const title = row.querySelector(".team-task-title");
         return {
+          card: row.classList.contains("team-task-row"),
+          borderRadius: getComputedStyle(row).borderRadius,
           left: rect.left,
           right: rect.right,
           width: rect.width,
+          titleWhiteSpace: title ? getComputedStyle(title).whiteSpace : null,
           textOverflow: row.scrollWidth - row.clientWidth,
         };
       });
@@ -325,6 +329,10 @@ export async function assertPerTeamWatchbands(
       left: bounds.left,
       right: bounds.right,
       rows,
+      lists: [...workspace.querySelectorAll(".team-task-list, .team-direction-list")]
+        .map((list) => ({ className: list.className, tagName: list.tagName })),
+      sections: [...workspace.querySelectorAll(":scope > .team-task-section h3")]
+        .map((heading) => heading.textContent),
     };
   });
   const assertTaskGeometry = (geometry, viewport) => {
@@ -340,6 +348,17 @@ export async function assertPerTeamWatchbands(
         && row.right <= geometry.right
         && row.textOverflow <= 0),
       `${viewport} task and direction rows stay inside the workspace: ${JSON.stringify(geometry)}`,
+    );
+    assert.deepEqual(geometry.sections, ["Active tasks", "Direction queue"]);
+    assert.ok(
+      geometry.lists.length > 0 && geometry.lists.every((list) => list.tagName === "OL"),
+      `${viewport} populated sections retain ordered lists: ${JSON.stringify(geometry)}`,
+    );
+    assert.ok(
+      geometry.rows.filter((row) => row.card).every((row) => (
+        row.titleWhiteSpace === "normal" && Number.parseFloat(row.borderRadius) > 0
+      )),
+      `${viewport} active tasks retain wrapped semantic cards: ${JSON.stringify(geometry)}`,
     );
   };
   assertTaskGeometry(await taskGeometry(), "desktop");

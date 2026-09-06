@@ -35,6 +35,18 @@ function surface(weight) {
       </nav>
       <button class="team-menu" aria-label="Team details">•••</button>
     </header>
+    <main class="team-task-workspace" aria-label="Team tasks">
+      <section class="team-task-section"><header><h3>Active tasks</h3></header>
+        <ol class="team-task-list"><li class="team-task-row" data-accent="0">
+          <div class="team-task-row-main"><code>EXTRAORDINARILYLONGTASKSTEM-1kKbC3j4</code>
+            <strong class="team-task-title">A long active task title wraps without hiding its operational meaning</strong></div>
+          <div class="team-task-row-meta"><span class="team-task-member">
+            <span class="agent-presence"></span><span class="team-task-member-name">Extraordinarily long agent identity</span></span>
+            <span class="team-task-phase">review</span><span class="team-task-renewed">expires <span class="team-task-age">19m</span></span></div>
+        </li></ol>
+      </section><section class="team-task-section"><header><h3>Direction queue</h3></header>
+        <p class="team-task-empty">No queued direction.</p></section>
+    </main>
     <div class="composer-shard-heading">
       <span class="composer-shard-link">48m</span>
       <strong>Extraordinarily long configured agent identity on a long worktree branch</strong>
@@ -61,6 +73,8 @@ async function geometry(page) {
       const surfaceStyle = getComputedStyle(surface);
       const toolbar = surface.querySelector(".team-toolbar");
       const identity = surface.querySelector(".composer-shard-heading strong");
+      const task = surface.querySelector(".team-task-row");
+      const taskBounds = task.getBoundingClientRect();
       const clipped = [...surface.querySelectorAll("button, textarea, table")].some((control) => {
         const controlRect = control.getBoundingClientRect();
         return controlRect.left < rect.left - 1 || controlRect.right > rect.right + 1;
@@ -96,6 +110,13 @@ async function geometry(page) {
           textOverflow: getComputedStyle(label).textOverflow,
           whiteSpace: getComputedStyle(label).whiteSpace,
         })),
+        task: {
+          borderRadius: getComputedStyle(task).borderRadius,
+          listTag: task.parentElement.tagName,
+          overflow: task.scrollWidth - task.clientWidth,
+          titleWhiteSpace: getComputedStyle(task.querySelector(".team-task-title")).whiteSpace,
+          withinSurface: taskBounds.left >= rect.left && taskBounds.right <= rect.right,
+        },
       };
     });
     return {
@@ -160,6 +181,17 @@ function assertTrack(layout, label, overflow) {
       [surface.identity.overflow, surface.identity.textOverflow, surface.identity.whiteSpace],
       ["hidden", "ellipsis", "nowrap"],
       `${label} long identity owns controlled truncation`,
+    );
+    assert.deepEqual(
+      [surface.task.listTag, surface.task.titleWhiteSpace],
+      ["OL", "normal"],
+      `${label} active task retains semantic wrapping`,
+    );
+    assert.ok(
+      Number.parseFloat(surface.task.borderRadius) > 0
+        && surface.task.overflow <= 1
+        && surface.task.withinSurface,
+      `${label} active task card remains framed and contained: ${JSON.stringify(surface.task)}`,
     );
     if (surface.width <= surface.minWidth + 1) {
       assert.ok(surface.identity.scrollWidth > surface.identity.clientWidth, `${label} identity truncates at floor`);

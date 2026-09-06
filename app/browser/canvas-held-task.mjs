@@ -219,6 +219,36 @@ async function claimAutomatically({
     lane,
     "the team task row remains attributed to the claiming member",
   );
+  const cardGeometry = () => taskRow.evaluate((row) => {
+    const bounds = row.getBoundingClientRect();
+    const workspace = row.closest(".team-task-workspace").getBoundingClientRect();
+    const title = row.querySelector(".team-task-title");
+    const handle = row.querySelector("code");
+    const metadata = row.querySelector(".team-task-row-meta");
+    return {
+      borderRadius: getComputedStyle(row).borderRadius,
+      contained: bounds.left >= workspace.left && bounds.right <= workspace.right,
+      handleOverflow: handle.scrollWidth - handle.clientWidth,
+      listTag: row.parentElement.tagName,
+      metadataOverflow: metadata.scrollWidth - metadata.clientWidth,
+      titleWhiteSpace: getComputedStyle(title).whiteSpace,
+    };
+  });
+  const assertCardGeometry = (geometry, viewport) => {
+    assert.equal(geometry.listTag, "OL", `${viewport} active task remains a semantic list item`);
+    assert.equal(geometry.titleWhiteSpace, "normal", `${viewport} task title wraps`);
+    assert.ok(Number.parseFloat(geometry.borderRadius) > 0, `${viewport} task has a card frame`);
+    assert.ok(
+      geometry.contained && geometry.handleOverflow <= 0 && geometry.metadataOverflow <= 0,
+      `${viewport} active task content remains contained: ${JSON.stringify(geometry)}`,
+    );
+  };
+  assertCardGeometry(await cardGeometry(), "desktop");
+  const cardViewport = taskRow.page().viewportSize();
+  await taskRow.page().setViewportSize({ width: 390, height: cardViewport?.height ?? 844 });
+  await taskRow.page().evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+  assertCardGeometry(await cardGeometry(), "narrow");
+  if (cardViewport) await taskRow.page().setViewportSize(cardViewport);
   const taskTitle = (await taskRow.locator(".team-task-title").innerText()).trim();
   const taskAge = taskRow.locator(".team-task-age");
   const taskCountdown = await captureRelativeClock(taskAge);
