@@ -40,6 +40,16 @@ struct Request<'a> {
     missing: bool,
 }
 
+impl Request<'_> {
+    const fn inspect(self) -> bool {
+        self.action.is_none() && !self.missing
+    }
+
+    const fn uses_fingerprint(self) -> bool {
+        self.action.is_none()
+    }
+}
+
 #[derive(Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ProveReport {
@@ -305,12 +315,6 @@ pub(crate) fn prove(matches: &clap::ArgMatches) -> Outcome<ProveReport> {
         action: matches.get_one::<String>("ACTION").map(String::as_str),
         missing: matches.get_flag("missing"),
     };
-    if request.action.is_none() && !request.missing {
-        return refusal(
-            "gate::prove-action-required",
-            "name one ACTION to force, or use --missing to prove every selected reusable action without a current receipt",
-        );
-    }
     if let Some(action) = request.action
         && !registered_request(action)
     {
@@ -337,9 +341,21 @@ fn run(request: Request<'_>) -> Result<ProveReport, ProveFailure> {
         spice::gate::capture_candidate_tree(&repository).map_err(ProveFailure::run)?;
     let anchor = spice::change_gate::prepare_staged_anchor().map_err(ProveFailure::selection)?;
     let store = EvidenceStore::open(repository.common_dir()).map_err(ProveFailure::store)?;
-    let fingerprint = (request.missing && request.action.is_none())
+    let fingerprint = request
+        .uses_fingerprint()
         .then(|| fingerprint::current_authority(&repository, &anchor, &candidate_tree))
         .transpose()?;
+    if request.inspect() {
+        return inspect_current(
+            &repository,
+            &store,
+            &candidate_tree,
+            &anchor,
+            fingerprint
+                .as_ref()
+                .expect("inspection always derives fingerprint authority"),
+        );
+    }
     let staged = if let Some(authority) = fingerprint.as_ref() {
         match fingerprint::lookup_complete(&store, authority) {
             Ok(Some(actions)) => {
@@ -422,6 +438,107 @@ fn run(request: Request<'_>) -> Result<ProveReport, ProveFailure> {
         source: staged.selection().source().clone(),
         actions,
     })
+}
+
+fn inspect_current(
+    repository: &Repository,
+    store: &EvidenceStore,
+    candidate_tree: &spice::gate::CandidateTree,
+    anchor: &spice::gate::PreparedArm<'_>,
+    authority: &ActionFingerprintAuthority,
+) -> Result<ProveReport, ProveFailure> {
+    let resolution = match store.lookup_fingerprint_receipts(authority) {
+        Ok(Some(resolution)) => resolution,
+        Ok(None) => {
+            let key = match authority.key() {
+                Ok(key) => key,
+                Err(error) => {
+                    let _ = anchor.reject_state();
+                    return Err(inspection_failure(error));
+                }
+            };
+            let _ = anchor.reject_state();
+            return Err(ProveFailure::refusal(
+                "gate::prove-fingerprint-missing",
+                fingerprint_generation_detail(&key),
+            ));
+        }
+        Err(error) => {
+            let _ = anchor.reject_state();
+            return Err(inspection_failure(error));
+        }
+    };
+    let (manifest, resolved) = resolution.into_parts();
+    let missing = manifest
+        .actions()
+        .iter()
+        .zip(&resolved)
+        .filter_map(|(expected, observed)| observed.is_none().then_some(expected.action()))
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        let _ = anchor.reject_state();
+        return Err(ProveFailure::refusal(
+            "gate::prove-receipt-missing",
+            missing_proof_detail(&missing),
+        ));
+    }
+    let mut actions = manifest
+        .actions()
+        .iter()
+        .zip(resolved)
+        .map(|(expected, observed)| {
+            let observed = observed.expect("missing inspection receipts were handled above");
+            ProveActionReport {
+                action: expected.action().to_owned(),
+                action_key: expected.action_key().clone(),
+                disposition: ProveDisposition::Present,
+                receipt: observed.receipt().clone(),
+            }
+        })
+        .collect::<Vec<_>>();
+    actions.sort_by(|left, right| proof_action_order(&left.action, &right.action));
+    if let Err(error) = validate_source(repository, anchor, candidate_tree) {
+        let _ = anchor.reject_state();
+        return Err(error);
+    }
+    anchor.reject_state().map_err(ProveFailure::run)?;
+    Ok(ProveReport {
+        candidate_tree: candidate_tree.to_string(),
+        source: authority.source().clone(),
+        actions,
+    })
+}
+
+pub(super) fn missing_proof_detail(actions: &[&str]) -> String {
+    let mut detail = actions
+        .iter()
+        .map(|action| {
+            format!("action={action} reason=missing-proof command=`spice gate prove {action}`")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    detail.push_str("\naggregate-command=`spice gate prove --missing`");
+    detail
+}
+
+pub(super) fn fingerprint_generation_detail(authority: &ActionKey) -> String {
+    format!("reason=missing-fingerprint authority={authority} command=`spice gate prove --missing`")
+}
+
+fn inspection_failure(error: gate::EvidenceStoreError) -> ProveFailure {
+    let reason = if error.reason().starts_with("gate-evidence::fingerprint") {
+        "gate::prove-fingerprint-invalid"
+    } else {
+        "gate::prove-receipt-invalid"
+    };
+    ProveFailure::refusal(
+        reason,
+        format!(
+            "reason={}; {}\ncommand=`spice gate prove --missing`",
+            error.reason(),
+            error.detail(),
+        ),
+    )
 }
 
 #[cfg(test)]

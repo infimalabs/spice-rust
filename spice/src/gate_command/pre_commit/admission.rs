@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use spice::repository::Repository;
 use wire::{Digest, Domain};
 
+use super::super::prove::{fingerprint_generation_detail, missing_proof_detail};
 use super::WorkerFailure;
 
 const ADMISSION_LIFETIME_SECONDS: i64 = 600;
@@ -199,21 +200,6 @@ fn branch(repository: &Repository) -> Result<String, WorkerFailure> {
         });
     }
     Ok(branch.to_owned())
-}
-
-fn missing_proof_detail(actions: &[&str]) -> String {
-    let mut detail = String::new();
-    for action in actions {
-        detail.push_str(&format!(
-            "action={action} reason=missing-proof command=`spice gate prove {action}`\n"
-        ));
-    }
-    detail.push_str("aggregate-command=`spice gate prove --missing`");
-    detail
-}
-
-fn fingerprint_generation_detail(authority: &gate::ActionKey) -> String {
-    format!("reason=missing-fingerprint authority={authority} command=`spice gate prove --missing`")
 }
 
 fn fingerprint_lookup_failure(error: &gate::EvidenceStoreError) -> WorkerFailure {

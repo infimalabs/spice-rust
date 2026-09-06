@@ -12,6 +12,7 @@ fn prove_contract_uses_positional_action_and_unconditional_staged_source() {
     assert!(!contract.syntax.contains("--action"));
 
     for arguments in [
+        ["spice", "gate", "prove"].as_slice(),
         ["spice", "gate", "prove", "formatters", "--missing"].as_slice(),
         ["spice", "gate", "prove", "--missing"].as_slice(),
         ["spice", "gate", "prove", "taste"].as_slice(),
@@ -50,16 +51,7 @@ fn prove_help_and_extra_operands_follow_the_generated_contract() {
 }
 
 #[test]
-fn prove_requires_a_mode_and_refuses_unknown_actions_before_repository_access() {
-    let missing_mode = invoke(Path::new("."), &["--json", "gate", "prove"]);
-    assert_eq!(
-        missing_mode.status.code(),
-        Some(2),
-        "{}",
-        streams(&missing_mode)
-    );
-    assert_reason(&missing_mode, "gate::prove-action-required");
-
+fn prove_refuses_unknown_actions_before_repository_access() {
     let unknown = invoke(
         Path::new("."),
         &["--json", "gate", "prove", "not-a-gate", "--missing"],
