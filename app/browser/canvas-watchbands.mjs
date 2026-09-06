@@ -10,7 +10,10 @@ import {
 } from "./agent-conversation.mjs";
 import { primaryDestination } from "./composer-shards.mjs";
 import { assertPrimaryComposerDragging } from "./composer-dragging.mjs";
-import { assertAgentRenewalRequest, captureReferenceControls } from "./control-reference.mjs";
+import {
+  assertReferenceTeamActions,
+  captureReferenceControls,
+} from "./control-reference.mjs";
 import { assertLineageResponsiveLayout } from "./lineage-responsive.mjs";
 import {
   chooseCanvasView,
@@ -457,8 +460,7 @@ export async function assertPerTeamWatchbands(
     "two stale entries from one queued lineage coalesce to one successor",
   );
   await primarySpeech.fill("0");
-
-  await assertAgentRenewalRequest(page, primarySurface, fixture);
+  await assertReferenceTeamActions(page, primarySurface);
 
   const policyMessage = "drain lifetime is task policy, not occupant teardown";
   await primarySurface.locator(".team-agent").first().getByRole("textbox").fill(policyMessage);

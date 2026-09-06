@@ -15,7 +15,7 @@ use wasm_bindgen_futures::spawn_local;
 use wire::body::DirectiveAttachment;
 use wire::intent::{
     BoardRead, ConsentPolicy, ConsentRead, GlobalSettingsRead, GlobalSettingsSet, LaneAction,
-    LaneArrange, LaneRead, LaneSeat, LaneState, LineageArrange, LineageArrangement,
+    LaneArrange, LaneRead, LaneRenewal, LaneSeat, LaneState, LineageArrange, LineageArrangement,
     LineageConfigure, LineageLife, SteerInbox, SteerSend, TaskAnswer, TaskNote,
 };
 use wire::{
@@ -349,6 +349,12 @@ enum ClientAction {
         lane: CanonicalUuid,
         before: CanonicalUuid,
     },
+    RenewLane {
+        topology_revision: u64,
+        lineage: CanonicalUuid,
+        lane: CanonicalUuid,
+        requested: bool,
+    },
     ConfigureLineage {
         topology_revision: u64,
         lineage: CanonicalUuid,
@@ -405,6 +411,12 @@ enum PendingKind {
     LaneSeat,
     /// One member arrangement whose stale refusal must refresh the roster.
     LaneArrange,
+    /// One typed agent-succession request or pre-handoff cancellation.
+    LaneRenewal {
+        lineage: CanonicalUuid,
+        lane: CanonicalUuid,
+        requested: bool,
+    },
     WakeSubmission {
         lane: CanonicalUuid,
         submission: CanonicalUuid,
@@ -457,6 +469,7 @@ impl PendingKind {
             Self::Settings => Some(CurrentRead::Settings),
             Self::LaneSeat
             | Self::LaneArrange
+            | Self::LaneRenewal { .. }
             | Self::WakeSubmission { .. }
             | Self::LineageConfigure { .. }
             | Self::LineageArrange

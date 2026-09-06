@@ -85,6 +85,15 @@
   border-color: color-mix(in srgb, var(--accent-slot, var(--accent)) 58%, var(--line));
   background: color-mix(in srgb, var(--accent-slot, var(--accent)) 8%, var(--panel));
 }
+.agent-renew-request[aria-pressed="true"] {
+  border-color: var(--accent-slot, var(--accent));
+  background: color-mix(in srgb, var(--accent-slot, var(--accent)) 18%, var(--panel));
+  color: var(--accent-slot, var(--accent));
+}
+.agent-renew-request[data-renewal-state="launch-refused"] {
+  border-color: var(--danger);
+  color: var(--danger);
+}
 .agent-action-drawer button strong {
   overflow: hidden;
   max-width: 100%;

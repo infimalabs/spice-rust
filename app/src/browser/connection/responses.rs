@@ -145,10 +145,10 @@ fn apply_command_response(
     bytes: &[u8],
 ) -> Result<CommandApplication, String> {
     Ok(match kind {
-        PendingKind::Board => {
-            runtime.apply_board(&admit_response(session, bytes)?);
-            CommandApplication::ordinary(false)
-        }
+        kind @ (PendingKind::Board
+        | PendingKind::Consent
+        | PendingKind::Policy
+        | PendingKind::Settings) => apply_scalar_response(session, runtime, kind, bytes)?,
         // A read of the lane table and an arrangement of it answer with the
         // same authoritative table, so successful replies apply identically.
         // Teams move only when that answer lands. A refused mutation differs:
@@ -170,18 +170,14 @@ fn apply_command_response(
                 lane_authority: applied,
             }
         }
+        PendingKind::LaneRenewal {
+            lineage,
+            lane,
+            requested,
+        } => apply_lane_renewal_response(session, runtime, lineage, lane, requested, bytes)?,
         PendingKind::Inbox { covered } => CommandApplication::ordinary(apply_inbox_response(
             session, handles, runtime, &covered, bytes,
         )?),
-        PendingKind::Consent => {
-            runtime.apply_consent(&admit_response(session, bytes)?);
-            CommandApplication::ordinary(false)
-        }
-        PendingKind::Policy => {
-            runtime.apply_policy(&admit_response(session, bytes)?);
-            CommandApplication::ordinary(false)
-        }
-        kind @ PendingKind::Settings => apply_scalar_response(session, runtime, kind, bytes)?,
         PendingKind::LaneSeat => {
             let admitted: crate::Admitted<Response<wire::intent::LaneChangeAnswer>> =
                 admit_response(session, bytes)?;
@@ -235,6 +231,9 @@ fn apply_scalar_response(
     bytes: &[u8],
 ) -> Result<CommandApplication, String> {
     match kind {
+        PendingKind::Board => runtime.apply_board(&admit_response(session, bytes)?),
+        PendingKind::Consent => runtime.apply_consent(&admit_response(session, bytes)?),
+        PendingKind::Policy => runtime.apply_policy(&admit_response(session, bytes)?),
         PendingKind::Settings => runtime.apply_settings(&admit_response(session, bytes)?),
         _ => unreachable!("scalar response partition is closed"),
     }
@@ -306,6 +305,33 @@ fn apply_lane_response(
     }
     let refresh = refresh_on_failure && topology_mutation_requires_refresh(&admitted.get().outcome);
     Ok((refresh, applied))
+}
+
+fn apply_lane_renewal_response(
+    session: &Session,
+    runtime: &mut CanvasRuntime,
+    lineage: CanonicalUuid,
+    lane: CanonicalUuid,
+    requested: bool,
+    bytes: &[u8],
+) -> Result<CommandApplication, String> {
+    let admitted: crate::Admitted<Response<wire::intent::LaneRenewalAnswer>> =
+        admit_response(session, bytes)?;
+    if let wire::Outcome::Reply(reply) = &admitted.get().outcome {
+        if reply.body.lineage_id != lineage || reply.body.lane != lane {
+            return Err(format!(
+                "agent renewal response named {}/{}; expected {lineage}/{lane}",
+                reply.body.lineage_id, reply.body.lane,
+            ));
+        }
+        if requested != reply.body.renewal.is_some() {
+            return Err(format!(
+                "agent renewal response for {lineage}/{lane} did not settle requested={requested}",
+            ));
+        }
+    }
+    runtime.apply_lane_renewal(&admitted);
+    Ok(CommandApplication::ordinary(true))
 }
 
 fn apply_inbox_response(

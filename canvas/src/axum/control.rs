@@ -18,6 +18,7 @@ pub(super) const fn class(kind: CommandKind) -> Class {
     match kind {
         CommandKind::LaneSeat
         | CommandKind::LaneArrange
+        | CommandKind::LaneRenewal
         | CommandKind::LineageConfigure
         | CommandKind::LineageArrange => Class::Demand,
         CommandKind::BoardRead
@@ -61,7 +62,6 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::TrustRevoke
         | CommandKind::LaneRead
         | CommandKind::LaneState
-        | CommandKind::LaneRenewal
         | CommandKind::LaneRecall
         | CommandKind::TasteRecord
         | CommandKind::CanaryRecognize
@@ -257,6 +257,7 @@ mod tests {
             vec![
                 CommandKind::LaneSeat,
                 CommandKind::LaneArrange,
+                CommandKind::LaneRenewal,
                 CommandKind::LineageConfigure,
                 CommandKind::LineageArrange,
             ]

@@ -259,6 +259,7 @@ const fn is_demand(action: &ClientAction) -> bool {
         action,
         ClientAction::Seat { .. }
             | ClientAction::ArrangeLane { .. }
+            | ClientAction::RenewLane { .. }
             | ClientAction::ConfigureLineage { .. }
             | ClientAction::ArrangeLineages { .. }
     )
@@ -305,6 +306,9 @@ impl ClientAction {
             | Self::ArrangeLane {
                 topology_revision, ..
             }
+            | Self::RenewLane {
+                topology_revision, ..
+            }
             | Self::ConfigureLineage {
                 topology_revision, ..
             }
@@ -312,6 +316,23 @@ impl ClientAction {
                 topology_revision, ..
             } => *topology_revision = revision,
             _ => {}
+        }
+    }
+
+    fn renewal_request(&self) -> Option<RenewalRequest> {
+        match self {
+            Self::RenewLane {
+                topology_revision,
+                lineage,
+                lane,
+                requested,
+            } => Some(RenewalRequest::new(
+                *topology_revision,
+                *lineage,
+                *lane,
+                *requested,
+            )),
+            _ => None,
         }
     }
 }
@@ -364,6 +385,21 @@ async fn send_demand_as(
                     lane,
                     before,
                 },
+            )
+            .await
+        }
+        ClientAction::RenewLane {
+            topology_revision,
+            lineage,
+            lane,
+            requested,
+        } => {
+            send_lane_renewal_as(
+                principal,
+                writer,
+                pending,
+                id,
+                RenewalRequest::new(topology_revision, lineage, lane, requested),
             )
             .await
         }
@@ -548,6 +584,9 @@ async fn dispatch_action(
     submissions: &SubmissionHandle,
     action: ClientAction,
 ) -> Result<(), String> {
+    if let Some(request) = action.renewal_request() {
+        return send_lane_renewal(principal, writer, pending, request).await;
+    }
     match action {
         ClientAction::DrainSubmissions => {
             drain_submissions(principal, writer, pending, submissions).await
@@ -600,6 +639,7 @@ async fn dispatch_action(
             )
             .await
         }
+        ClientAction::RenewLane { .. } => unreachable!("renewal dispatch is partitioned"),
         ClientAction::ArrangeLineages {
             topology_revision,
             lineages,
@@ -1191,6 +1231,8 @@ async fn send_stream_request(
 }
 
 mod refresh;
+mod renewal;
 mod responses;
 use refresh::{send_after_frame, send_refresh};
+use renewal::{RenewalRequest, send_lane_renewal, send_lane_renewal_as};
 use responses::handle_incoming;

@@ -734,7 +734,7 @@ export async function assertTaskChipTypographyMatrix(page, surface, artifactPath
 /// The operator agent card carries its own control: renewing this agent has to
 /// name both the action and the request it sends, stay on the exact agent lane
 /// it was drawn for, and reach the resident rather than only the message list.
-export async function assertAgentRenewalRequest(page, surface, fixture) {
+export async function assertReferenceTeamActions(page, surface) {
   const surfaces = page.locator('[data-pane="agent-console"] .team-surface');
   if ((await surfaces.count()) === 2) {
     const primaryLineage = await surface.getAttribute("data-lineage-id");
@@ -750,7 +750,10 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
     );
     await assertTeamActions(page, surface, secondary, primaryLineage);
   }
-  const renewalRequest = "Renew your current task lease now.";
+}
+
+export async function assertAgentRenewalRequest(page, surface, fixture) {
+  const retiredRenewalRequest = "Renew your current task lease now.";
   const menu = surface
     .locator(
       ".composer-shard--primary .agent-action-menu:has(.agent-renew-request:not(:disabled))",
@@ -860,27 +863,54 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
   await renew.waitFor();
   assert.equal(
     (await renew.innerText()).replaceAll("\n", " "),
-    "Renew this agent request renewal",
+    "Renew this agent request successor",
     "the renewal action names both the command and its request",
   );
   const renewalLane = await renew.evaluate(
     (button) => button.closest(".team-agent")?.dataset.agentLane,
   );
   assert.ok(renewalLane, "the renewal control retains its exact agent lane");
+  const renewalLineage = await surface.getAttribute("data-lineage-id");
+  assert.ok(renewalLineage, "the renewal control surface retains its exact lineage");
+  assert.equal(await renew.getAttribute("data-renewal-lane"), renewalLane);
+  assert.equal(await renew.getAttribute("data-renewal-lineage"), renewalLineage);
+  assert.equal(await renew.getAttribute("data-renewal-state"), "none");
+  assert.equal(await renew.getAttribute("data-renewal-requested"), "false");
+  assert.equal(await renew.getAttribute("data-renewal-next-requested"), "true");
+  assert.equal(await renew.getAttribute("aria-pressed"), "false");
+  assert.match(await renew.getAttribute("aria-label"), /^Request agent renewal for /);
+  assert.doesNotMatch(await renew.getAttribute("title"), /task lease/i);
   await renew.click();
   assert.equal(await menu.getAttribute("open"), null, "renewing closes the full composer overlay");
-  const renewalInbox = await reply(fixture, ["inbox", renewalLane]);
+  await waitForPageFunction(
+    page,
+    "typed agent renewal reaches durable member state",
+    TRANSITION_MS * 4,
+    (lane) => document
+      .querySelector(`.agent-renew-request[data-renewal-lane="${lane}"]`)
+      ?.dataset.renewalState !== "none",
+    renewalLane,
+  );
+  const durableState = await surface
+    .locator(`.agent-renew-request[data-renewal-lane="${renewalLane}"]`)
+    .getAttribute("data-renewal-state");
   assert.ok(
+    ["requested", "handoff-pending", "successor-started", "launch-refused"].includes(durableState),
+    `typed renewal exposes one durable lifecycle state: ${durableState}`,
+  );
+  const renewalInbox = await reply(fixture, ["inbox", renewalLane]);
+  assert.equal(
     renewalInbox.body.lanes[0].pending.some(
-      (directive) => directive.text === renewalRequest,
+      (directive) => directive.text === retiredRenewalRequest,
     ),
-    "Renew this agent routes a residency-witnessed renewal request through the resident",
+    false,
+    "Renew this agent creates no task-lease steering prose",
   );
   assert.equal(
     await surface.locator(`.mosaic-message-card[data-agent-lane="${renewalLane}"]`)
-      .filter({ hasText: renewalRequest }).count(),
+      .filter({ hasText: retiredRenewalRequest }).count(),
     0,
-    "an unacknowledged renewal request is absent from the conversation",
+    "renewal creates no task-lease sentence in the conversation",
   );
   assert.equal(await renew.isVisible(), false, "renewal hides again when its drawer closes");
 }
