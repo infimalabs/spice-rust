@@ -111,6 +111,7 @@ pub(super) fn propose_drain(
         &evidence,
         FactCause::Existing(observed.position()),
     )?;
+    let fact = super::renewal::advance_exit(&mut write, &mut next, request.lane, occupant, fact)?;
     write.residency_head(fact, move |_| next);
     command_result(&mut write, command, request.clone(), epoch, answer)?;
     Ok(write)

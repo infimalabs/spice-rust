@@ -499,7 +499,9 @@ fn accept_supervisor_report(
         failure,
     } = notice
     {
-        command_surface.observe_lifecycle_death(lifecycle, seats, lane, occupant)?;
+        if !lane_surface::renewal_requested_exit(bus, epoch, lane, occupant)? {
+            command_surface.observe_lifecycle_death(lifecycle, seats, lane, occupant)?;
+        }
         if seats
             .occupant(lane)
             .is_some_and(|sitting| sitting.occupant() == occupant)
@@ -636,7 +638,14 @@ fn accept_failure(
             "lane capture failure receiver closed",
         )
     })?;
-    command_surface.observe_lifecycle_death(lifecycle, seats, failure.lane, failure.occupant)?;
+    if !lane_surface::renewal_requested_exit(bus, epoch, failure.lane, failure.occupant)? {
+        command_surface.observe_lifecycle_death(
+            lifecycle,
+            seats,
+            failure.lane,
+            failure.occupant,
+        )?;
+    }
     lane_surface::capture_failed(bus, epoch, seats, &failure)
 }
 
@@ -654,7 +663,9 @@ fn accept_exit(
             "lane process exit receiver closed",
         )
     })?;
-    command_surface.observe_lifecycle_death(lifecycle, seats, exit.lane, exit.occupant)?;
+    if !lane_surface::renewal_requested_exit(bus, epoch, exit.lane, exit.occupant)? {
+        command_surface.observe_lifecycle_death(lifecycle, seats, exit.lane, exit.occupant)?;
+    }
     lane_surface::occupant_exited(bus, epoch, seats, exit)
 }
 

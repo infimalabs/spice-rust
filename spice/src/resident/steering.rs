@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use bus::Bus;
-use journal::{FactCause, GuardError, JournalGuard, JournalWrite};
+use journal::{FactCause, GuardError, JournalGuard, JournalWrite, PendingFact};
 use steer::{Miss, Outcome as ScanOutcome};
 use wire::body::TranscriptLocus;
 use wire::intent::{
@@ -33,6 +33,133 @@ use preview::directive_preview;
 use transcript::transcript_recognition;
 use transitions::evidence_refusal;
 pub(super) use transitions::{cancel, dispose, recover, resend, send};
+
+pub(super) struct InternalDirective {
+    pub(super) directive: CanonicalUuid,
+    pub(super) lane: CanonicalUuid,
+    pub(super) text: String,
+    pub(super) control: String,
+    pub(super) lifetime: std::time::Duration,
+    pub(super) cause: FactCause,
+    pub(super) published: Instant,
+}
+
+pub(super) fn internal_write(epoch: CanonicalUuid) -> CommandResult<(JournalWrite, Instant)> {
+    let at = current_instant().map_err(unit_outcome)?;
+    Ok((
+        JournalWrite::new(
+            Actor::Spice,
+            resident_origin(epoch)?,
+            at,
+            Producer::CommandDoor,
+        ),
+        at,
+    ))
+}
+
+/// Append one resident-authored control directive to an existing transaction.
+pub(super) fn append_internal_directive(
+    bus: &Bus,
+    proposal: &mut JournalWrite,
+    epoch: CanonicalUuid,
+    internal: InternalDirective,
+) -> CommandResult<PendingFact> {
+    let directive = internal.directive;
+    let (existing, minted_millis) = keyspace(bus, directive).map_err(unit_outcome)?;
+    if existing.is_some() {
+        return Err(store_fault(
+            "steer::identity-taken",
+            "a newly minted internal directive identity already exists",
+        ));
+    }
+    let at = internal.published;
+    let key = mint_key(minted_millis, at).map_err(unit_outcome)?;
+    let expires = expiry(at, internal.lifetime).map_err(unit_outcome)?;
+    let sent = wire::body::SteerSent {
+        directive,
+        fanout: None,
+        key: key.to_string(),
+        lane: internal.lane,
+        text: internal.text,
+        control: Some(internal.control),
+        attachments: Vec::new(),
+        expires,
+    };
+    let origin = resident_origin(epoch)?;
+    proposal.guard(internal_send_guard(directive, key));
+    let pending = proposal
+        .fact(sent.clone(), internal.cause)
+        .map_err(|error| store_fault("steer::fact-invalid", &error.to_string()))?;
+    proposal.steering_head(pending, move |seq| {
+        steer::Ledger::sent_head(&sent, origin, at, seq)
+            .expect("the internal steering body is admitted before publication")
+    });
+    Ok(pending)
+}
+
+/// Current indexed standing for one deterministic resident directive.
+pub(super) fn control_standing(
+    bus: &Bus,
+    directive: CanonicalUuid,
+    lane: CanonicalUuid,
+    control: &str,
+) -> CommandResult<Option<Disposition>> {
+    let Some(head) = bus
+        .read(move |read| read.steering_head(directive))
+        .map_err(|error| store_fault("steer::index-unreadable", &error.to_string()))?
+    else {
+        return Ok(None);
+    };
+    if head.body().lane != lane || head.body().control.as_deref() != Some(control) {
+        return Err(store_fault(
+            "steer::control-mismatched",
+            "the deterministic resident directive identifies another lane or control",
+        ));
+    }
+    Ok(Some(head.body().disposition))
+}
+
+/// Cancel the one live resident control directive, if it has not retired.
+pub(super) fn append_control_cancellation(
+    bus: &Bus,
+    proposal: &mut JournalWrite,
+    directive: CanonicalUuid,
+    lane: CanonicalUuid,
+    control: &str,
+    published: Instant,
+) -> CommandResult<Option<PendingFact>> {
+    let Some(head) = bus
+        .read(move |read| read.steering_head(directive))
+        .map_err(|error| store_fault("steer::index-unreadable", &error.to_string()))?
+    else {
+        return Ok(None);
+    };
+    if head.body().lane != lane || head.body().control.as_deref() != Some(control) {
+        return Err(store_fault(
+            "steer::control-mismatched",
+            "the deterministic resident directive identifies another lane or control",
+        ));
+    }
+    if head.body().disposition != Disposition::Live {
+        return Ok(None);
+    }
+    proposal.guard(live_guard(head.body().directive, head.position()));
+    let canceled = wire::body::SteerCanceled {
+        key: head.body().key.clone(),
+        lane,
+    };
+    let pending = proposal
+        .fact(canceled.clone(), FactCause::Existing(head.body().created))
+        .map_err(|error| store_fault("steer::fact-invalid", &error.to_string()))?;
+    let next = steer::Ledger::transition_head(
+        head.body(),
+        steer::Steering::Canceled(&canceled),
+        published,
+    )
+    .map_err(|error| store_fault("steer::index-invalid", &error.to_string()))?;
+    proposal.steering_head(pending, move |_| next);
+    Ok(Some(pending))
+}
 
 /// Admit or rebuild the bounded steering authority before the bus accepts work.
 pub(super) fn admit_index(journal: &mut journal::Journal) -> CommandResult<()> {
@@ -924,6 +1051,24 @@ fn send_guard(
         }
         Ok(())
     })
+}
+
+fn internal_send_guard(directive: CanonicalUuid, key: steer::Key) -> JournalGuard {
+    JournalGuard::new(move |read| {
+        if read.steering_head(directive)?.is_some() || read.steering_key(key.as_str())?.is_some() {
+            Err(GuardError::refused("steer::identity-taken"))
+        } else {
+            Ok(())
+        }
+    })
+}
+
+fn unit_outcome(outcome: Outcome<CommandAnswer>) -> Outcome<()> {
+    match outcome {
+        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
+        Outcome::Fault(fault) => Outcome::Fault(fault),
+        Outcome::Reply(_) => unreachable!("a steering helper failure returned a reply"),
+    }
 }
 
 fn live_guard(directive: CanonicalUuid, position: Seq) -> JournalGuard {

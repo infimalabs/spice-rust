@@ -27,6 +27,7 @@ mod ending;
 mod launch;
 mod lineage;
 mod propose;
+mod renewal;
 mod reply;
 mod restart_claim;
 mod session;
@@ -41,6 +42,7 @@ pub(super) use lineage::{arrange as arrange_lineages, configure};
 use propose::{
     commit_adopted, commit_restored, propose_drain, propose_remove, propose_seat, propose_wake,
 };
+pub(super) use renewal::{reconcile as reconcile_renewal, set as renew};
 use reply::{
     answer, authority_refusal, command_result, committed_lane_reply, fact_lane, lane_refusal,
     missing_lane, next_topology_revision, recall_provenance, relevant, typed_environment_fault,
@@ -972,6 +974,15 @@ fn degrade_occupant(
             FactCause::Existing(observed.position()),
         )
         .map_err(|error| store_fault("lane::capture-fact-invalid", &error.to_string()))?;
+    let fact = observed
+        .body()
+        .lanes
+        .iter()
+        .find(|row| row.lane == lane)
+        .and_then(|row| row.occupant)
+        .map_or(Ok(fact), |occupant| {
+            renewal::advance_exit(&mut write, &mut next, lane, occupant, fact)
+        })?;
     write.residency_head(fact, move |_| next);
     commit(bus, write).map(|_| ())
 }
@@ -1021,8 +1032,18 @@ pub(super) fn occupant_exited(
         &evidence,
         FactCause::Existing(observed.position()),
     )?;
+    let fact = renewal::advance_exit(&mut write, &mut next, exit.lane, exit.occupant, fact)?;
     write.residency_head(fact, move |_| next);
     commit(bus, write).map(|_| ())
+}
+
+pub(super) fn renewal_requested_exit(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+) -> CommandResult<bool> {
+    current_residency(bus, epoch).map(|head| renewal::requested_exit(head.body(), lane, occupant))
 }
 
 /// Build a bounded continuity account under the authenticated principal.

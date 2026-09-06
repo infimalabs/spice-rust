@@ -161,6 +161,15 @@ impl<'a> Surface<'a> {
             (CommandKind::LaneState, Intent::LaneState(state)) => Some(lane_surface::state(
                 self.bus, self.paths, self.epoch, seats, &self.lane, command, state,
             )),
+            (CommandKind::LaneRenewal, Intent::LaneRenewal(renewal)) => Some(lane_surface::renew(
+                self.bus,
+                self.paths,
+                self.epoch,
+                seats,
+                &self.config.steering,
+                command,
+                renewal,
+            )),
             (CommandKind::LineageArrange, Intent::LineageArrange(arrange)) => Some(
                 lane_surface::arrange_lineages(self.bus, self.epoch, seats, command, arrange),
             ),
@@ -318,6 +327,10 @@ impl<'a> Surface<'a> {
             && state.worktree.is_none()
         {
             lifecycle.operator_wake(self.bus, self.epoch, state.lane)?;
+            released = true;
+        }
+        if matches!(command.body(), Intent::LaneRenewal(_)) {
+            lifecycle.release_all();
             released = true;
         }
         Ok(released)
