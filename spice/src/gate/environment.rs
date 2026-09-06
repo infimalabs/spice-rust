@@ -12,6 +12,15 @@ const CARGO_HOME: &str = "CARGO_HOME";
 const RUSTUP_HOME: &str = "RUSTUP_HOME";
 pub(super) const SHELL_HOOK_PREFIX: &[u8] = b"SPICE_SHELL_HOOK_"; // env-policy: allow
 
+const OPERATIONAL_ROUTING: [&str; 6] = [
+    wire::SpiceVariable::Hooks.as_str(),
+    wire::SpiceVariable::Inbox.as_str(),
+    wire::SpiceVariable::Lane.as_str(),
+    wire::SpiceVariable::PreCommitPaths.as_str(),
+    wire::SpiceVariable::PreCommitSource.as_str(),
+    wire::SpiceVariable::WrapperSpice.as_str(),
+];
+
 const GIT_LOCAL_ENVIRONMENT: [&str; 15] = [
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_CONFIG",
@@ -83,7 +92,16 @@ fn retained(name: &OsStr) -> bool {
         && bytes != b"GIT_COMMITTER_NAME"
         && bytes != b"GIT_EDITOR"
         && bytes != b"GIT_EXEC_PATH"
+        && !operational_routing(name)
         && !git_local_environment(name)
+}
+
+/// Whether one environment name carries only Spice command routing state.
+#[must_use]
+pub fn operational_routing(name: &OsStr) -> bool {
+    OPERATIONAL_ROUTING
+        .iter()
+        .any(|candidate| name == OsStr::new(candidate))
 }
 
 /// Whether Git declares an environment entry local to one repository command.

@@ -34,6 +34,7 @@ enum InputMode {
 mod candidate_tree;
 mod capture;
 mod environment;
+pub use environment::operational_routing;
 mod finding_source;
 
 use environment::compiler_environment;
