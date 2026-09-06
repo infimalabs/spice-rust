@@ -35,11 +35,16 @@ fn main_and_nested_repositories_resolve_the_nearest_common_state() {
         state.steering_delivery_lock(),
         common.join(".spice-rs/locks/steering-delivery")
     );
+    assert_eq!(
+        state.steering_media(),
+        common.join(".spice-rs/steering-media")
+    );
     let delivery = repository
         .admit_steering_delivery()
         .expect("admit absent hook delivery state");
     assert_eq!(delivery.state(), state.steering_delivery());
     assert_eq!(delivery.lock(), state.steering_delivery_lock());
+    assert_eq!(delivery.projections(), state.steering_media());
     assert_eq!(state.data(), common.join(".spice-rs/data"));
     assert_eq!(
         state.journal(),
@@ -202,6 +207,7 @@ fn hook_delivery_admission_does_not_depend_on_disposable_inbox_shape() {
         .expect("hook delivery state admits independently");
     assert_eq!(delivery.state(), runtime.join("steering-delivery.json"));
     assert_eq!(delivery.lock(), runtime.join("locks/steering-delivery"));
+    assert_eq!(delivery.projections(), runtime.join("steering-media"));
     assert!(repository.admit_state().is_err());
 }
 

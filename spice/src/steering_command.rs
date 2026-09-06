@@ -13,6 +13,7 @@ use wire::{CanonicalUuid, Disposition, Fault, FaultClass, Outcome, Refusal};
 use crate::command_client::{SelectedCommand, execute_steering};
 
 mod codex_hook;
+mod media_projection;
 #[cfg(test)]
 mod tests;
 
@@ -53,7 +54,7 @@ struct HookDirectiveGroup {
     identity: String,
     stage: String,
     text: Option<String>,
-    media: Vec<wire::AgentMediaReference>,
+    media: Vec<media_projection::Projection>,
     keys: Vec<String>,
 }
 
@@ -92,6 +93,8 @@ struct LaneDeliveryState {
     contents: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     delivered_keys: Vec<DeliveredKey>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    projections: Vec<media_projection::Record>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -106,12 +109,9 @@ pub(crate) fn hook_document(
     harness: &str,
 ) -> Result<Option<Vec<u8>>, String> {
     validate_hook_answer(answer, harness)?;
-    let CommandAnswer::Inbox(inbox) = answer else {
+    let CommandAnswer::Inbox(_) = answer else {
         unreachable!("validated hook answer is an inbox");
     };
-    if inbox.lanes.iter().all(|lane| lane.pending.is_empty()) {
-        return Ok(None);
-    }
     let current = std::env::current_dir()
         .map_err(|error| format!("inbox hook working directory unavailable: {error}"))?;
     let repository = Repository::discover(&current)
@@ -125,7 +125,13 @@ pub(crate) fn hook_document(
         .expect("the admitted hook lock has a parent");
     fs::create_dir_all(lock_parent)
         .map_err(|error| format!("inbox hook lock directory unavailable: {error}"))?;
-    hook_document_at(answer, harness, delivery.state(), delivery.lock())
+    hook_document_at(
+        answer,
+        harness,
+        delivery.state(),
+        delivery.lock(),
+        delivery.projections(),
+    )
 }
 
 fn hook_document_at(
@@ -133,20 +139,18 @@ fn hook_document_at(
     harness: &str,
     state_path: &Path,
     lock_path: &Path,
+    projection_root: &Path,
 ) -> Result<Option<Vec<u8>>, String> {
     validate_hook_answer(answer, harness)?;
     let CommandAnswer::Inbox(inbox) = answer else {
         unreachable!("validated hook answer is an inbox");
     };
-    if inbox.lanes.iter().all(|lane| lane.pending.is_empty()) {
-        return Ok(None);
-    }
     let name = sill::LockName::new(HOOK_DELIVERY_LOCK).expect("fixed hook lock name is valid");
     let _possession = sill::LockFile::new(name, lock_path)
         .acquire()
         .map_err(|error| format!("inbox hook delivery lock unavailable: {error}"))?;
     let mut state = read_hook_delivery_state(state_path)?;
-    let (filtered, changed) = filter_hook_inbox(inbox, &mut state)?;
+    let (filtered, changed) = filter_hook_inbox(inbox, &mut state, projection_root)?;
     let document = filtered
         .as_ref()
         .map(render_hook_document)
@@ -207,12 +211,19 @@ fn render_hook_document(publication: &HookPublication) -> Result<Option<Vec<u8>>
                      Acknowledge every newly listed key without replaying the directive text.",
                 ),
             }
-            for reference in &group.media {
-                let reference = wire::encode(reference).map_err(|error| error.to_string())?;
+            for projection in &group.media {
+                let reference =
+                    wire::encode(projection.reference()).map_err(|error| error.to_string())?;
                 context.push_str("\nmedia-reference=");
                 context.push_str(
                     std::str::from_utf8(&reference)
                         .expect("an encoded media reference is UTF-8 JSON"),
+                );
+                let projection = projection.encoded()?;
+                context.push_str("\nmedia-projection=");
+                context.push_str(
+                    std::str::from_utf8(&projection)
+                        .expect("an encoded media projection is UTF-8 JSON"),
                 );
             }
             for key in &group.keys {
@@ -255,103 +266,158 @@ fn write_hook_delivery_state(path: &Path, state: &HookDeliveryState) -> Result<(
 fn filter_hook_inbox(
     inbox: &InboxAnswer,
     state: &mut HookDeliveryState,
+    projection_root: &Path,
 ) -> Result<(Option<HookPublication>, bool), String> {
     let mut changed = false;
     let mut lanes = Vec::new();
     for lane in &inbox.lanes {
-        if lane.pending.is_empty() {
-            continue;
-        }
-        let occupant = lane.occupant.ok_or_else(|| {
-            format!(
-                "inbox hook lane {} has pending steering without an occupant",
-                lane.lane
-            )
-        })?;
-        let compaction = lane.compaction.ok_or_else(|| {
-            format!(
-                "inbox hook lane {} has pending steering without a compaction anchor",
-                lane.lane
-            )
-        })?;
-        let row = match state.lanes.iter().position(|row| row.lane == lane.lane) {
-            Some(index) => &mut state.lanes[index],
-            None => {
-                state.lanes.push(LaneDeliveryState {
-                    lane: lane.lane,
-                    occupant,
-                    compaction,
-                    contents: Vec::new(),
-                    delivered_keys: Vec::new(),
-                });
-                changed = true;
-                state.lanes.last_mut().expect("the lane row was appended")
-            }
-        };
-        if compaction < row.compaction {
-            continue;
-        }
-        if row.occupant != occupant || row.compaction < compaction {
-            row.occupant = occupant;
-            row.compaction = compaction;
-            row.contents.clear();
-            row.delivered_keys.clear();
-            changed = true;
-        }
-        let mut filtered = HookLanePublication {
-            lane: lane.lane,
-            groups: Vec::new(),
-        };
-        for directive in &lane.pending {
-            let media =
-                wire::media::agent_media_references(directive.directive, &directive.attachments)
-                    .map_err(|error| {
-                        format!(
-                            "inbox hook directive {} has invalid media authority: {error}",
-                            directive.directive,
-                        )
-                    })?;
-            let text = wire::media::without_media_payloads(&directive.text, &directive.attachments);
-            let identity = rendered_content_identity(
-                lane.lane, occupant, compaction, directive, &text, &media,
-            )?;
-            if row
-                .delivered_keys
-                .iter()
-                .any(|delivered| delivered.content == identity && delivered.key == directive.key)
-            {
-                continue;
-            }
-            let content_was_delivered = row.contents.contains(&identity);
-            match filtered
-                .groups
-                .iter_mut()
-                .find(|group| group.identity == identity)
-            {
-                Some(group) => group.keys.push(directive.key.clone()),
-                None => filtered.groups.push(HookDirectiveGroup {
-                    identity: identity.clone(),
-                    stage: directive.stage.to_string(),
-                    text: (!content_was_delivered).then_some(text),
-                    media,
-                    keys: vec![directive.key.clone()],
-                }),
-            }
-            if !content_was_delivered {
-                row.contents.push(identity.clone());
-            }
-            row.delivered_keys.push(DeliveredKey {
-                content: identity,
-                key: directive.key.clone(),
-            });
-            changed = true;
-        }
-        if !filtered.groups.is_empty() {
+        let (filtered, lane_changed) = filter_hook_lane(lane, state, projection_root)?;
+        changed |= lane_changed;
+        if let Some(filtered) = filtered {
             lanes.push(filtered);
         }
     }
     let filtered = (!lanes.is_empty()).then_some(HookPublication { lanes });
     Ok((filtered, changed))
+}
+
+fn filter_hook_lane(
+    lane: &wire::intent::LaneInbox,
+    state: &mut HookDeliveryState,
+    projection_root: &Path,
+) -> Result<(Option<HookLanePublication>, bool), String> {
+    let existing = state.lanes.iter().position(|row| row.lane == lane.lane);
+    if lane.pending.is_empty() && existing.is_none() {
+        return Ok((None, false));
+    }
+    let occupant = lane.occupant.ok_or_else(|| {
+        format!(
+            "inbox hook lane {} has pending steering without an occupant",
+            lane.lane
+        )
+    })?;
+    let compaction = lane.compaction.ok_or_else(|| {
+        format!(
+            "inbox hook lane {} has pending steering without a compaction anchor",
+            lane.lane
+        )
+    })?;
+    let (row, mut changed) = delivery_row(state, lane.lane, occupant, compaction, existing);
+    if compaction < row.compaction {
+        return Ok((None, changed));
+    }
+    let before = row.projections.clone();
+    let projections = media_projection::reconcile(
+        lane.lane,
+        &lane.pending,
+        &mut row.projections,
+        projection_root,
+    )?;
+    changed |= before != row.projections;
+    let (filtered, directives_changed) =
+        filter_hook_directives(lane, occupant, compaction, row, &projections)?;
+    Ok((filtered, changed || directives_changed))
+}
+
+fn delivery_row(
+    state: &mut HookDeliveryState,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    compaction: u64,
+    existing: Option<usize>,
+) -> (&mut LaneDeliveryState, bool) {
+    let mut changed = false;
+    let row = match existing {
+        Some(index) => &mut state.lanes[index],
+        None => {
+            state.lanes.push(LaneDeliveryState {
+                lane,
+                occupant,
+                compaction,
+                contents: Vec::new(),
+                delivered_keys: Vec::new(),
+                projections: Vec::new(),
+            });
+            changed = true;
+            state.lanes.last_mut().expect("the lane row was appended")
+        }
+    };
+    if row.occupant != occupant || row.compaction < compaction {
+        row.occupant = occupant;
+        row.compaction = compaction;
+        row.contents.clear();
+        row.delivered_keys.clear();
+        changed = true;
+    }
+    (row, changed)
+}
+
+fn filter_hook_directives(
+    lane: &wire::intent::LaneInbox,
+    occupant: CanonicalUuid,
+    compaction: u64,
+    row: &mut LaneDeliveryState,
+    projections: &std::collections::BTreeMap<CanonicalUuid, Vec<media_projection::Projection>>,
+) -> Result<(Option<HookLanePublication>, bool), String> {
+    let mut changed = false;
+    let mut filtered = HookLanePublication {
+        lane: lane.lane,
+        groups: Vec::new(),
+    };
+    for directive in &lane.pending {
+        let references =
+            wire::media::agent_media_references(directive.directive, &directive.attachments)
+                .map_err(|error| {
+                    format!(
+                        "inbox hook directive {} has invalid media authority: {error}",
+                        directive.directive,
+                    )
+                })?;
+        let media = projections
+            .get(&directive.directive)
+            .cloned()
+            .unwrap_or_default();
+        let text = wire::media::without_media_payloads(&directive.text, &directive.attachments);
+        let identity = rendered_content_identity(
+            lane.lane,
+            occupant,
+            compaction,
+            directive,
+            &text,
+            &references,
+        )?;
+        if row
+            .delivered_keys
+            .iter()
+            .any(|delivered| delivered.content == identity && delivered.key == directive.key)
+        {
+            continue;
+        }
+        let content_was_delivered = row.contents.contains(&identity);
+        match filtered
+            .groups
+            .iter_mut()
+            .find(|group| group.identity == identity)
+        {
+            Some(group) => group.keys.push(directive.key.clone()),
+            None => filtered.groups.push(HookDirectiveGroup {
+                identity: identity.clone(),
+                stage: directive.stage.to_string(),
+                text: (!content_was_delivered).then_some(text),
+                media,
+                keys: vec![directive.key.clone()],
+            }),
+        }
+        if !content_was_delivered {
+            row.contents.push(identity.clone());
+        }
+        row.delivered_keys.push(DeliveredKey {
+            content: identity,
+            key: directive.key.clone(),
+        });
+        changed = true;
+    }
+    Ok(((!filtered.groups.is_empty()).then_some(filtered), changed))
 }
 
 fn rendered_content_identity(

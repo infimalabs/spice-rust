@@ -1001,5 +1001,6 @@ fn direct_input_cannot_ack(fixture: &Fixture, lane: wire::CanonicalUuid) {
 
 #[path = "steering/flows.rs"]
 mod flows;
+mod steering_media;
 
 use flows::{assert_refusal, assert_text_refusal, directive_authored, instant, uuid};

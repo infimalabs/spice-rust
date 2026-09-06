@@ -107,6 +107,7 @@ pub struct StatePaths {
     worktree_locks: PathBuf,
     steering_delivery: PathBuf,
     steering_delivery_lock: PathBuf,
+    steering_media: PathBuf,
     data: PathBuf,
     journal: PathBuf,
     gate_state: PathBuf,
@@ -133,6 +134,7 @@ pub struct StatePaths {
 pub struct SteeringDeliveryPaths {
     state: PathBuf,
     lock: PathBuf,
+    projections: PathBuf,
 }
 
 impl SteeringDeliveryPaths {
@@ -146,6 +148,12 @@ impl SteeringDeliveryPaths {
     #[must_use]
     pub fn lock(&self) -> &Path {
         &self.lock
+    }
+
+    /// Disposable lane-private media projections for agent hooks.
+    #[must_use]
+    pub fn projections(&self) -> &Path {
+        &self.projections
     }
 }
 
@@ -173,6 +181,7 @@ impl StatePaths {
             inbox: worktree_runtime.join("inbox"),
             steering_delivery: worktree_runtime.join("steering-delivery.json"),
             steering_delivery_lock: worktree_locks.join("steering-delivery"),
+            steering_media: worktree_runtime.join("steering-media"),
             install_rollback_blobs: runtime.join("install-rollback"),
             artifact_data,
             runtime,
@@ -210,6 +219,12 @@ impl StatePaths {
     #[must_use]
     pub fn steering_delivery_lock(&self) -> &Path {
         &self.steering_delivery_lock
+    }
+
+    /// Worktree-local root for disposable steering media projections.
+    #[must_use]
+    pub fn steering_media(&self) -> &Path {
+        &self.steering_media
     }
 
     /// Repository-common content-addressed install rollback bodies.
@@ -359,7 +374,12 @@ impl StatePaths {
             self.artifacts(),
             self.install_rollback_blobs(),
         ];
-        for path in [self.worktree_runtime(), self.worktree_locks(), self.inbox()] {
+        for path in [
+            self.worktree_runtime(),
+            self.worktree_locks(),
+            self.inbox(),
+            self.steering_media(),
+        ] {
             if !paths.contains(&path) {
                 paths.push(path);
             }
@@ -599,10 +619,12 @@ impl Repository {
         for path in [paths.worktree_runtime(), paths.worktree_locks()] {
             admit(path, StateShape::Directory)?;
         }
+        admit(paths.steering_media(), StateShape::Directory)?;
         admit(paths.steering_delivery(), StateShape::RegularFile)?;
         Ok(SteeringDeliveryPaths {
             state: paths.steering_delivery().to_path_buf(),
             lock: paths.steering_delivery_lock().to_path_buf(),
+            projections: paths.steering_media().to_path_buf(),
         })
     }
 
