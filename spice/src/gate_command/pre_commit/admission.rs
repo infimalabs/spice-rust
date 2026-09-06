@@ -73,25 +73,7 @@ pub(super) fn run(
             }
         }
     };
-    let manifest = match store.lookup_action_fingerprints(lookup.authority()) {
-        Ok(Some(manifest)) => manifest,
-        Ok(None) => {
-            let authority = lookup.authority().key().map_err(|error| {
-                let _ = lookup.reject_state();
-                fingerprint_lookup_failure(&error)
-            })?;
-            let _ = lookup.reject_state();
-            return Err(WorkerFailure {
-                reason: "gate::pre-commit-fingerprint-missing".to_owned(),
-                detail: fingerprint_generation_detail(&authority),
-                fault: false,
-            });
-        }
-        Err(error) => {
-            let _ = lookup.reject_state();
-            return Err(fingerprint_lookup_failure(&error));
-        }
-    };
+    let manifest = lookup_manifest(&store, &lookup)?;
     let preparation = lookup.restore(&manifest).map_err(prove_failure)?;
     let resolved = match store.lookup_batch_exact(manifest.actions()) {
         Ok(resolved) => resolved,
@@ -175,6 +157,31 @@ pub(super) fn run(
         report,
         staged: preparation.into_staged(),
     })
+}
+
+fn lookup_manifest(
+    store: &EvidenceStore,
+    lookup: &super::super::prove::AdmissionLookup,
+) -> Result<gate::ActionFingerprintManifest, WorkerFailure> {
+    match store.lookup_action_fingerprints(lookup.authority()) {
+        Ok(Some(manifest)) => Ok(manifest),
+        Ok(None) => {
+            let authority = lookup.authority().key().map_err(|error| {
+                let _ = lookup.reject_state();
+                fingerprint_lookup_failure(&error)
+            })?;
+            let _ = lookup.reject_state();
+            Err(WorkerFailure {
+                reason: "gate::pre-commit-fingerprint-missing".to_owned(),
+                detail: fingerprint_generation_detail(&authority),
+                fault: false,
+            })
+        }
+        Err(error) => {
+            let _ = lookup.reject_state();
+            Err(fingerprint_lookup_failure(&error))
+        }
+    }
 }
 
 fn branch(repository: &Repository) -> Result<String, WorkerFailure> {
