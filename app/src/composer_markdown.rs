@@ -17,7 +17,13 @@ pub(crate) struct RenderedMarkdown {
 }
 
 /// Render received text through the one sanitized Markdown path used by cards.
+#[cfg(test)]
 pub(crate) fn render_received(markdown: &str) -> RenderedMarkdown {
+    render_received_with_tastes(markdown, 0)
+}
+
+/// Render received text and replace authenticated quoted taste markers inline.
+pub(crate) fn render_received_with_tastes(markdown: &str, tastes: u32) -> RenderedMarkdown {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
         | Options::ENABLE_STRIKETHROUGH
@@ -28,25 +34,79 @@ pub(crate) fn render_received(markdown: &str) -> RenderedMarkdown {
     let events = Parser::new_ext(markdown, options)
         .map(sanitize_markdown_event)
         .collect::<Vec<_>>();
+    let events = coalesce_text_events(events);
     let image_only = markdown_is_image_only(&events);
     let mut code_block = false;
+    let mut block_quote_depth = 0usize;
+    let mut remaining_tastes = usize::try_from(tastes).unwrap_or(usize::MAX);
     let events = decorate_markdown_images(events, image_only)
         .into_iter()
         .flat_map(|event| {
             match &event {
                 MarkdownEvent::Start(Tag::CodeBlock(_)) => code_block = true,
                 MarkdownEvent::End(TagEnd::CodeBlock) => code_block = false,
+                MarkdownEvent::Start(Tag::BlockQuote(_)) => block_quote_depth += 1,
+                MarkdownEvent::End(TagEnd::BlockQuote(_)) => {
+                    block_quote_depth = block_quote_depth.saturating_sub(1);
+                }
                 _ => {}
             }
             if code_block {
                 vec![event]
             } else {
-                inline_task_chips(event)
+                let events = if block_quote_depth > 0 && remaining_tastes > 0 {
+                    inline_taste_marker(event, &mut remaining_tastes)
+                } else {
+                    vec![event]
+                };
+                events.into_iter().flat_map(inline_task_chips).collect()
             }
         });
     let mut html = String::new();
     pulldown_cmark::html::push_html(&mut html, events);
     RenderedMarkdown { html, image_only }
+}
+
+fn coalesce_text_events(events: Vec<MarkdownEvent<'_>>) -> Vec<MarkdownEvent<'_>> {
+    let mut coalesced = Vec::with_capacity(events.len());
+    for event in events {
+        if let (Some(MarkdownEvent::Text(previous)), MarkdownEvent::Text(next)) =
+            (coalesced.last_mut(), &event)
+        {
+            let mut joined = previous.to_string();
+            joined.push_str(next);
+            *previous = joined.into();
+        } else {
+            coalesced.push(event);
+        }
+    }
+    coalesced
+}
+
+fn inline_taste_marker<'a>(
+    event: MarkdownEvent<'a>,
+    remaining: &mut usize,
+) -> Vec<MarkdownEvent<'a>> {
+    let MarkdownEvent::Text(text) = event else {
+        return vec![event];
+    };
+    const MARKER: &str = "[TASTE]";
+    let Some(suffix) = text
+        .strip_prefix(MARKER)
+        .filter(|suffix| suffix.starts_with(char::is_whitespace))
+    else {
+        return vec![MarkdownEvent::Text(text)];
+    };
+    *remaining -= 1;
+    vec![
+        MarkdownEvent::InlineHtml(taste_pill_html().into()),
+        MarkdownEvent::Text(suffix.to_owned().into()),
+    ]
+}
+
+fn taste_pill_html() -> &'static str {
+    "<span class=\"message-taste-pill\" data-message-classification=\"taste\" \
+     aria-label=\"Taste classification\">TASTE</span>"
 }
 
 fn markdown_is_image_only(events: &[MarkdownEvent<'_>]) -> bool {
@@ -646,6 +706,70 @@ mod tests {
             "the authored occurrence follows the quoted context: {}",
             rendered.html,
         );
+    }
+
+    #[test]
+    fn authenticated_quoted_tastes_become_one_inline_pill_each() {
+        let rendered = render_received_with_tastes(
+            "> [TASTE] compatibility: Keep one tested path.\n\n\
+             > [TASTE] polling: Wait for completion.\n\n\
+             ACK: ordinary [TASTE] prose stays text.",
+            2,
+        );
+
+        assert_eq!(
+            rendered
+                .html
+                .matches("class=\"message-taste-pill\"")
+                .count(),
+            2,
+            "{}",
+            rendered.html,
+        );
+        assert_eq!(
+            rendered
+                .html
+                .matches("aria-label=\"Taste classification\">TASTE</span>")
+                .count(),
+            2,
+        );
+        assert!(
+            rendered
+                .html
+                .contains("ACK: ordinary [TASTE] prose stays text.")
+        );
+    }
+
+    #[test]
+    fn taste_metadata_neither_overreaches_nor_decorates_code() {
+        let one = render_received_with_tastes(
+            "> `[TASTE]` remains code.\n\n\
+             > [TASTE] first.\n\n\
+             > [TASTE] second remains literal.",
+            1,
+        );
+        assert_eq!(one.html.matches("class=\"message-taste-pill\"").count(), 1);
+        assert!(one.html.contains("<code>[TASTE]</code>"));
+        assert!(one.html.contains("[TASTE] second remains literal."));
+
+        let none = render_received_with_tastes("> [TASTE] untouched.", 0);
+        assert!(!none.html.contains("message-taste-pill"));
+        assert!(none.html.contains("[TASTE] untouched."));
+
+        let token = render_received_with_tastes("> [TASTE]ful is not a marker.", 1);
+        assert!(!token.html.contains("message-taste-pill"));
+        assert!(token.html.contains("[TASTE]ful is not a marker."));
+
+        let prefixed =
+            render_received_with_tastes("> prefix[TASTE] stays text.\n\n> [TASTE] actual.", 1);
+        assert_eq!(
+            prefixed
+                .html
+                .matches("class=\"message-taste-pill\"")
+                .count(),
+            1,
+        );
+        assert!(prefixed.html.contains("prefix[TASTE] stays text."));
     }
 
     #[test]
