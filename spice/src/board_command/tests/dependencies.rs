@@ -259,6 +259,57 @@ fn dependency_cycle_refuses_the_whole_requested_edit() {
 }
 
 #[test]
+fn omitted_intermediate_witness_refuses_after_the_graph_moves_toward_a_cycle() {
+    let (root, bus, epoch, _) = fixture("dependency-omitted-intermediate", 1);
+    let target = todo_task(&bus, epoch, "MISS-target001", "Target");
+    let direct = todo_task(&bus, epoch, "MISS-direct001", "Direct prerequisite");
+    let intermediate = todo_task(&bus, epoch, "MISS-middle001", "Intermediate prerequisite");
+    connect_child(&bus, epoch, &direct, &intermediate);
+    let stale = board(&bus, epoch, Actor::Operator);
+    let intermediate_stamp = at(&stale, &intermediate).statement.body.born.clone();
+    let mut witnesses = dependency_witnesses(&stale, &target, &[&direct], None, false);
+    witnesses.retain(
+        |witness| !matches!(witness, Witness::Task { task, .. } if task == &intermediate_stamp),
+    );
+    let intent = TaskDepends {
+        task: target.clone(),
+        after: vec![direct],
+    };
+    let command = fixture_command(
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskDepends,
+        witnesses,
+        &intent,
+    );
+
+    let outcome = task_depends_with(
+        &bus,
+        &command,
+        &intent,
+        &guard_projects(),
+        &board::NextConfig::default(),
+        || connect_child(&bus, epoch, &intermediate, &target),
+    );
+    assert!(
+        matches!(outcome, Outcome::Refusal(ref refusal)
+            if refusal.reason() == "task::dependency-witness-missing"),
+        "an omitted reachable statement must refuse: {outcome:?}",
+    );
+    let current = board(&bus, epoch, Actor::Operator);
+    assert!(
+        at(&current, &target).statement.body.dependencies.is_empty(),
+        "the outer dependency edit remains zero-write",
+    );
+    assert_eq!(
+        at(&current, &intermediate).statement.body.dependencies,
+        [at(&current, &target).statement.body.born.clone()],
+        "the adversarial return edge landed after validation",
+    );
+    clean(&root, bus);
+}
+
+#[test]
 fn foreign_claim_authority_refuses_without_an_edge() {
     let (root, bus, epoch, seats) = fixture("dependency-authority", 2);
     let owner = Actor::Lane(seats[0].lane);
