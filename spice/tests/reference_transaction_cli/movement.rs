@@ -72,6 +72,206 @@ impl Movement {
 }
 
 #[test]
+fn task_done_lands_an_admitted_divergent_agent_commit_and_refusal_is_atomic() {
+    exercise_task_done("worktree-alpha", "agent-one", true);
+    exercise_task_done("worktree-beta", "nested/agent-two", true);
+    exercise_task_done("worktree-mismatch", "mismatched-agent", false);
+}
+
+fn exercise_task_done(worktree_label: &str, branch: &str, admitted: bool) {
+    let scratch = completion_repository(worktree_label);
+    let root = scratch.path();
+    let base = git(root, &["rev-parse", "HEAD"]);
+    git(root, &["checkout", "-b", "published-upstream"]);
+    fs::write(scratch.join("upstream"), "upstream\n").unwrap();
+    git(root, &["add", "upstream"]);
+    git(root, &["commit", "-m", "upstream"]);
+    let upstream = git(root, &["rev-parse", "HEAD"]);
+    git(root, &["tag", "published-upstream"]);
+    git(root, &["checkout", "-b", branch, &base]);
+    git(root, &["remote", "add", "origin", root.to_str().unwrap()]);
+    git(
+        root,
+        &["config", &format!("branch.{branch}.remote"), "origin"],
+    );
+    git(
+        root,
+        &[
+            "config",
+            &format!("branch.{branch}.merge"),
+            "refs/heads/main",
+        ],
+    );
+    fs::write(scratch.join("agent"), "agent\n").unwrap();
+    git(root, &["add", "agent"]);
+    git(root, &["commit", "-m", "agent"]);
+    let agent = git(root, &["rev-parse", "HEAD"]);
+    let integrated_tree = git(
+        root,
+        &[
+            "merge-tree",
+            "--write-tree",
+            "--no-messages",
+            &agent,
+            &upstream,
+        ],
+    );
+
+    publish_admission(
+        root,
+        &integrated_tree,
+        branch,
+        Some(if admitted { &upstream } else { &base }),
+    );
+    staged_app::seed(root);
+    let resident = Resident::start(root);
+    let lane = command_body(&spice_run(
+        root,
+        &["lane", "add", root.to_str().unwrap(), "--vendor", "claude"],
+        None,
+    ))["lane"]
+        .as_str()
+        .expect("lane add returns identity")
+        .to_owned();
+    command_body(&spice_run(root, &["lane", "wake", &lane], None));
+    install_reference_hook(&scratch);
+    let task = command_body(&spice_run(
+        root,
+        &[
+            "task",
+            "add",
+            "Completion fixture",
+            "--project",
+            "task.git",
+            "--acceptance",
+            "the divergent agent commit lands without bypassing the reference hook",
+            "--origin",
+            "fixture:reference-transaction-cli",
+        ],
+        None,
+    ))["task"]
+        .as_str()
+        .expect("task add returns handle")
+        .to_owned();
+    command_body(&spice_run(root, &["task", "capture", &task], Some(&lane)));
+    git(root, &["update-ref", "refs/heads/main", &upstream, &base]);
+    git(root, &["fetch", "origin"]);
+
+    let before = repository_state(root, &task, &lane);
+    let done = spice_run(
+        root,
+        &["task", "done", "--validation", "fixture completion"],
+        Some(&lane),
+    );
+    if admitted {
+        assert_success(&done, "task completion");
+        let landing = git(root, &["rev-parse", "HEAD"]);
+        assert_ne!(landing, agent);
+        assert_eq!(
+            git(root, &["rev-list", "--parents", "-n", "1", &landing]),
+            format!("{landing} {upstream} {agent}")
+        );
+        assert_eq!(git(root, &["status", "--porcelain"]), "");
+        let shown = task_text(root, &task, &lane);
+        assert!(shown.contains("phase review"), "{shown}");
+    } else {
+        assert_eq!(done.status.code(), Some(2), "{}", streams(&done));
+        assert!(
+            String::from_utf8_lossy(&done.stderr)
+                .contains("gate-evidence::admission-candidate-mismatch"),
+            "{}",
+            streams(&done),
+        );
+        assert_eq!(repository_state(root, &task, &lane), before);
+    }
+    resident.stop(root);
+}
+
+fn completion_repository(label: &str) -> Scratch {
+    let scratch = Scratch::repository(label);
+    configure_identity(scratch.path());
+    let skill = scratch.join(".git/.spice-install/agents/skills/spice/SKILL.md");
+    fs::create_dir_all(skill.parent().expect("fixture skill parent"))
+        .expect("fixture skill parent creates");
+    fs::write(&skill, ::std::include_bytes!("../../agent/SKILL.md"))
+        .expect("fixture installs appliance skill");
+    scratch.executable(
+        "fake-claude",
+        concat!(
+            "#!/bin/sh\n",
+            "printf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",",
+            "\"session_id\":\"018f7777-7777-7444-8888-999999999999\"}'\n",
+            "while [ -d .git ]; do sleep 1; done\n",
+        )
+        .as_bytes(),
+    );
+    fs::write(
+        scratch.join("spice-rust.toml"),
+        format!(
+            "[tasks]\nstems = [\"task\"]\n\n[vendor.claude]\nbinary = {:?}\n",
+            scratch.join("fake-claude").display().to_string()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        scratch.join("Cargo.toml"),
+        "[package]\nname='completion-fixture'\nversion='0.0.0'\nedition='2024'\n",
+    )
+    .unwrap();
+    fs::write(
+        scratch.join("Cargo.lock"),
+        "version = 4\n\n[[package]]\nname = \"completion-fixture\"\nversion = \"0.0.0\"\n",
+    )
+    .unwrap();
+    fs::write(scratch.join(".gitignore"), "dist/\nfixture-cargo-home/\n").unwrap();
+    fs::write(scratch.join("tracked"), "base\n").unwrap();
+    git(scratch.path(), &["add", "."]);
+    git(scratch.path(), &["commit", "-m", "base"]);
+    scratch
+}
+
+fn install_reference_hook(scratch: &Scratch) {
+    scratch.executable(
+        ".git/hooks/reference-transaction",
+        format!(
+            "#!/bin/sh\nexec '{}' gate reference-transaction \"$@\"\n",
+            spice()
+        )
+        .as_bytes(),
+    );
+    git(
+        scratch.path(),
+        &[
+            "config",
+            "core.hooksPath",
+            scratch.join(".git/hooks").to_str().unwrap(),
+        ],
+    );
+}
+
+fn command_body(output: &Output) -> serde_json::Value {
+    assert_success(output, "spice command");
+    serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()["body"].clone()
+}
+
+fn task_text(root: &Path, task: &str, lane: &str) -> String {
+    command_body(&spice_run(root, &["task", "show", task], Some(lane)))["text"]
+        .as_str()
+        .expect("task show returns text")
+        .to_owned()
+}
+
+fn repository_state(root: &Path, task: &str, lane: &str) -> Vec<String> {
+    vec![
+        git(root, &["rev-parse", "HEAD"]),
+        git(root, &["write-tree"]),
+        git(root, &["status", "--porcelain"]),
+        git(root, &["rev-parse", "refs/remotes/origin/main"]),
+        task_text(root, task, lane),
+    ]
+}
+
+#[test]
 fn reset_to_head_uses_the_held_ref_even_when_git_queues_zero_as_old() {
     let fixture = Movement::new("reset-held-ref");
     fixture.admit("refs/heads/main");

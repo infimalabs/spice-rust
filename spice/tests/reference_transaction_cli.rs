@@ -4,7 +4,7 @@ use std::fs;
 use std::io::Write as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use spice::install::{apply, installed_git_hooks, plan};
@@ -13,6 +13,10 @@ use wire::{Actor, Digest, Domain};
 
 #[path = "support/git_repository.rs"]
 mod git_repository;
+#[path = "support/readiness.rs"]
+mod readiness;
+#[path = "support/staged_app.rs"]
+mod staged_app;
 
 #[path = "reference_transaction_cli/movement.rs"]
 mod movement;
@@ -467,6 +471,93 @@ fn spice() -> &'static str {
     env!("CARGO_BIN_EXE_spice")
 }
 
+struct Resident(Option<Child>);
+
+impl Resident {
+    fn start(root: &Path) -> Self {
+        let cargo_home = root.join("fixture-cargo-home");
+        fs::create_dir_all(&cargo_home).expect("fixture Cargo home");
+        let child = Command::new(spice())
+            .args(["--json", "up", "--foreground", "--port", "0"])
+            .current_dir(root)
+            .env(spice::cargo_isolation::BOOTSTRAP_HOME_VARIABLE, cargo_home)
+            .env(
+                spice::cargo_isolation::NATIVE_CARGO_VARIABLE,
+                native_tool("cargo"),
+            )
+            .env(
+                spice::cargo_isolation::NATIVE_RUSTC_VARIABLE,
+                native_tool("rustc"),
+            )
+            .env(
+                spice::cargo_isolation::NATIVE_RUSTDOC_VARIABLE,
+                native_tool("rustdoc"),
+            )
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("fixture resident launches");
+        let mut resident = Self(Some(child));
+        let runtime = root.join(".git/.spice-rs");
+        fs::create_dir_all(&runtime).expect("fixture runtime");
+        match readiness::wait_until_ready(
+            resident.0.as_mut().expect("resident child"),
+            &runtime,
+            readiness::ARRIVAL_HORIZON,
+            "reference fixture resident",
+            || runtime.join("canvas").is_file(),
+        ) {
+            readiness::Readiness::Ready => resident,
+            readiness::Readiness::Exited => panic!("reference fixture resident exited early"),
+        }
+    }
+
+    fn stop(mut self, root: &Path) {
+        assert_success(&spice_run(root, &["down"], None), "resident down");
+        let output = self
+            .0
+            .take()
+            .expect("resident child")
+            .wait_with_output()
+            .expect("resident exits");
+        assert_success(&output, "foreground resident");
+    }
+}
+
+impl Drop for Resident {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+fn native_tool(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO"))
+        .parent()
+        .expect("Cargo has a toolchain directory")
+        .join(name)
+}
+
+fn spice_run(root: &Path, arguments: &[&str], lane: Option<&str>) -> Output {
+    let mut command = Command::new(spice());
+    command
+        .arg("--json")
+        .args(arguments)
+        .current_dir(root)
+        .env_remove(steer::hook::LANE)
+        .env_remove(vendor::CLAUDE.thread_id_environment())
+        .env_remove(vendor::CODEX.thread_id_environment());
+    if let Some(lane) = lane {
+        command.env(steer::hook::LANE, lane).env(
+            vendor::CLAUDE.thread_id_environment(),
+            "018f7777-7777-7444-8888-999999999999",
+        );
+    }
+    command.output().expect("fixture spice command launches")
+}
+
 fn assert_success(output: &Output, label: &str) {
     assert!(output.status.success(), "{label}: {}", streams(output));
 }
@@ -530,6 +621,24 @@ impl Scratch {
 
 impl Drop for Scratch {
     fn drop(&mut self) {
+        make_scratch_writable(&self.0);
         fs::remove_dir_all(&self.0).expect("remove scratch directory");
+    }
+}
+
+fn make_scratch_writable(path: &Path) {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return;
+    };
+    if metadata.file_type().is_symlink() {
+        return;
+    }
+    let mode = if metadata.is_dir() { 0o700 } else { 0o600 };
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))
+        .expect("scratch path becomes writable");
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            make_scratch_writable(&entry.path());
+        }
     }
 }
