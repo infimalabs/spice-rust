@@ -1228,3 +1228,60 @@ fn set_owner_writable(path: &Path, metadata: &fs::Metadata) {
         let _ = fs::set_permissions(path, permissions);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_repository;
+
+    #[test]
+    fn byte_identical_index_replacement_refuses_the_captured_source() {
+        let fixture = test_repository::Fixture::repository("tree-index-replacement");
+        fixture.write("selected.txt", b"selected\n");
+        test_repository::stage_all(fixture.path());
+        let index = fixture.join(".git/index");
+
+        let error = Selector::staged()
+            .materialize_with(fixture.path(), |_| {
+                let replacement = fixture.join(".git/index.replacement");
+                fs::copy(&index, &replacement).expect("copy identical index bytes");
+                fs::rename(replacement, &index).expect("replace captured index");
+            })
+            .expect_err("index write-restore must move source identity");
+
+        assert!(matches!(error, TreeError::IndexChanged { .. }));
+    }
+
+    #[test]
+    fn linked_worktree_ref_movement_preserves_staged_source_authority() {
+        let fixture = test_repository::Fixture::repository("tree-linked-movement");
+        fixture.write("selected.txt", b"base\n");
+        test_repository::stage_all(fixture.path());
+        test_repository::commit(fixture.path(), "base");
+        let linked = fixture.path().with_extension("linked");
+        test_repository::create_linked_worktree(fixture.path(), &linked, "peer");
+        fixture.write("selected.txt", b"staged\n");
+        test_repository::stage(fixture.path(), &["selected.txt"]);
+
+        let selected = Selector::staged()
+            .materialize_with(fixture.path(), |_| {
+                fs::write(linked.join("peer.txt"), b"first\n").unwrap();
+                test_repository::stage(&linked, &["peer.txt"]);
+                test_repository::commit(&linked, "peer movement during capture");
+            })
+            .expect("linked ref movement is outside staged source authority");
+        assert_eq!(
+            fs::read(selected.root().join("selected.txt")).unwrap(),
+            b"staged\n"
+        );
+
+        fs::write(linked.join("peer.txt"), b"second\n").unwrap();
+        test_repository::stage(&linked, &["peer.txt"]);
+        test_repository::commit(&linked, "peer movement during verification");
+        selected
+            .verify_source()
+            .expect("linked ref movement is outside retained source authority");
+        drop(selected);
+        test_repository::remove_linked_worktree(fixture.path(), &linked);
+    }
+}

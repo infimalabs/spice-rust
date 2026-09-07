@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use gix::bstr::BStr;
 use gix::index::entry::{Flags, Mode, Stat};
@@ -9,6 +10,45 @@ use gix::object::tree::EntryKind;
 
 const MAIN_BRANCH: &str = "refs/heads/main";
 const FIXTURE_STAMP: &str = "1700000000 +0000";
+static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+
+pub(crate) struct Fixture {
+    root: PathBuf,
+}
+
+impl Fixture {
+    pub(crate) fn repository(label: &str) -> Self {
+        let root = std::env::temp_dir().join(format!(
+            "gate-{label}-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed),
+        ));
+        fs::create_dir(&root).expect("create Gate test fixture");
+        initialize(&root);
+        Self { root }
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.root
+    }
+
+    pub(crate) fn join(&self, relative: impl AsRef<Path>) -> PathBuf {
+        self.root.join(relative)
+    }
+
+    pub(crate) fn write(&self, relative: &str, bytes: impl AsRef<[u8]>) {
+        let path = self.join(relative);
+        fs::create_dir_all(path.parent().expect("fixture path has a parent"))
+            .expect("create fixture path parent");
+        fs::write(path, bytes).expect("write fixture path");
+    }
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        fs::remove_dir_all(&self.root).expect("remove Gate test fixture");
+    }
+}
 
 pub(crate) fn initialize(root: &Path) {
     gix::ThreadSafeRepository::init_opts(

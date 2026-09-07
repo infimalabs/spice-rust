@@ -1036,3 +1036,54 @@ fn version_output(
     }
     Ok(printed)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new() -> Self {
+            let root = crate::toolchain::exclusive_scratch_root("gate-tool-byte-authority");
+            fs::create_dir_all(root.join("rim/bin")).expect("create authority rim");
+            fs::create_dir(root.join("tree")).expect("create authority tree");
+            Self(root)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).expect("remove authority fixture");
+        }
+    }
+
+    #[test]
+    fn executable_authority_moves_with_exact_bytes_without_launching() {
+        let fixture = Scratch::new();
+        let executable = fixture.0.join("rim/bin/rustfmt");
+        let tree = fixture.0.join("tree");
+        fs::write(&executable, b"first executable authority").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        let source = ToolchainSource {
+            tree: None,
+            root: &tree,
+            repository: &fixture.0,
+            paths: &[],
+            rim: RimCapture::new(
+                fixture.0.join("rim"),
+                Some(OsString::from("bin")),
+                Vec::new(),
+            )
+            .unwrap(),
+            reached_paths: None,
+            baselines: None,
+            compiler_environment: &[],
+        };
+        let before = toolchain_executable_authority(&source).unwrap();
+        fs::write(&executable, b"second and longer executable authority").unwrap();
+        let after = toolchain_executable_authority(&source).unwrap();
+
+        assert_ne!(before, after);
+    }
+}

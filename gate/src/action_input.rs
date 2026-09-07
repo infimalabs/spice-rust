@@ -522,3 +522,48 @@ impl fmt::Display for ActionInputError {
 }
 
 impl Error for ActionInputError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Selector, test_repository};
+
+    #[test]
+    fn explicit_manifest_reads_only_exact_staged_bytes() {
+        let fixture = test_repository::Fixture::repository("action-input-closure");
+        fixture.write("selected.rs", "pub const VALUE: u8 = 1;\n");
+        fixture.write("unrelated.rs", "pub const OTHER: u8 = 1;\n");
+        test_repository::stage_all(fixture.path());
+        let tree = Selector::staged()
+            .materialize(fixture.path())
+            .expect("materialize staged closure");
+        let manifest =
+            compile_explicit_action_input(&tree, vec!["selected.rs".to_owned()], Vec::new())
+                .expect("compile exact staged closure");
+        let expected = manifest.digest().expect("digest staged closure");
+        assert_eq!(
+            manifest
+                .entries()
+                .iter()
+                .map(ActionInputManifestEntry::path)
+                .collect::<Vec<_>>(),
+            ["selected.rs"],
+        );
+
+        fixture.write("selected.rs", "pub const VALUE: u8 = 2;\n");
+        fixture.write("unrelated.rs", "pub const OTHER: u8 = 2;\n");
+        let unchanged =
+            compile_explicit_action_input(&tree, vec!["selected.rs".to_owned()], Vec::new())
+                .expect("recompile retained staged closure");
+        assert_eq!(unchanged.digest().unwrap(), expected);
+
+        test_repository::stage(fixture.path(), &["selected.rs"]);
+        let moved = Selector::staged()
+            .materialize(fixture.path())
+            .expect("materialize moved staged closure");
+        let moved =
+            compile_explicit_action_input(&moved, vec!["selected.rs".to_owned()], Vec::new())
+                .expect("compile moved staged closure");
+        assert_ne!(moved.digest().unwrap(), expected);
+    }
+}

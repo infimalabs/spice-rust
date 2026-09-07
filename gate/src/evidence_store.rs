@@ -1181,3 +1181,144 @@ fn require_lease(
     }
     Ok(record)
 }
+
+#[cfg(test)]
+mod invariant_fixture {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    pub(super) struct Fixture(PathBuf);
+
+    impl Fixture {
+        pub(super) fn new(label: &str) -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "gate-evidence-{label}-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed),
+            ));
+            fs::create_dir(&root).expect("create evidence fixture");
+            Self(root)
+        }
+
+        pub(super) fn store(&self) -> EvidenceStore {
+            EvidenceStore::open(&self.0).expect("open evidence fixture")
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).expect("remove evidence fixture");
+        }
+    }
+
+    pub(super) fn receipt(action: &ActionKey, result: &[u8]) -> PassReceipt {
+        PassReceipt::new(PassReceiptFields {
+            action_key: action.clone(),
+            action_spec: Digest::compute(Domain::GatePolicy, b"action spec"),
+            input_manifest: Digest::compute(Domain::GateInventory, b"input manifest"),
+            typed_result: Digest::compute(Domain::GateMeasurement, result),
+            started_at: "2026-09-04T12:00:00.000Z".parse().unwrap(),
+            finished_at: "2026-09-04T12:00:00.100Z".parse().unwrap(),
+            duration_millis: 100,
+            artifacts: Vec::new(),
+            producer: ProducerRecord::new(None, None, None, Some(Actor::Spice), None),
+        })
+        .expect("construct evidence fixture receipt")
+    }
+
+    pub(super) fn admission(
+        tree: &str,
+        parent: Option<&str>,
+        identity: &[u8],
+        created_at: &str,
+        expires_at: &str,
+    ) -> AdmissionBundle {
+        AdmissionBundle::new(AdmissionBundleFields {
+            candidate_tree: tree.to_owned(),
+            parent: parent.map(str::to_owned),
+            selection: Digest::compute(Domain::GateSelection, identity),
+            policy: Digest::compute(Domain::GatePolicy, b"policy"),
+            gate_set: Digest::compute(Domain::GateSet, b"gate set"),
+            actions: Vec::new(),
+            live_checks: Vec::new(),
+            claim: Digest::compute(Domain::GateRepositoryAuthority, identity),
+            created_at: created_at.parse().unwrap(),
+            expires_at: expires_at.parse().unwrap(),
+        })
+        .expect("construct evidence fixture admission")
+    }
+}
+
+#[cfg(test)]
+mod invariant_tests {
+    use super::invariant_fixture::{Fixture, receipt};
+    use super::*;
+    use std::sync::{Arc, Barrier};
+
+    #[test]
+    fn receipt_publication_converges_and_rolls_back_as_one_batch() {
+        let fixture = Fixture::new("receipt-atomicity");
+        let action = derive_action_key(b"concurrent action");
+        let receipts = [receipt(&action, b"a"), receipt(&action, b"b")];
+        assert_eq!(
+            PassReceipt::decode(&receipts[0].encode().unwrap()).unwrap(),
+            receipts[0],
+        );
+        let expected = receipts
+            .iter()
+            .map(PassReceipt::id)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .into_iter()
+            .min()
+            .unwrap();
+        let barrier = Arc::new(Barrier::new(4));
+        let workers = (0..4)
+            .map(|index| {
+                let store = fixture.store();
+                let receipt = receipts[index % receipts.len()].clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    store.publish(&receipt).unwrap();
+                })
+            })
+            .collect::<Vec<_>>();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        assert_eq!(
+            fixture
+                .store()
+                .lookup(&action)
+                .unwrap()
+                .unwrap()
+                .id()
+                .unwrap(),
+            expected,
+        );
+
+        let actions = [derive_action_key(b"batch-a"), derive_action_key(b"batch-b")];
+        let batch = [
+            receipt(&actions[0], b"batch-a"),
+            receipt(&actions[1], b"batch-b"),
+        ];
+        let store = fixture.store();
+        let error = store
+            .publish_batch_with(&batch, |boundary| {
+                (boundary != PublicationBoundary::Index(0))
+                    .then_some(())
+                    .ok_or_else(|| EvidenceStoreError::new("fixture::stop", "after first index"))
+            })
+            .unwrap_err();
+        assert_eq!(error.reason(), "fixture::stop");
+        for (action, receipt) in actions.iter().zip(batch) {
+            assert!(store.lookup(action).unwrap().is_none());
+            assert!(!store.layout.object_path(&receipt.id().unwrap()).exists());
+        }
+    }
+}
