@@ -1,7 +1,6 @@
 //! Cancellable session-meter refresh around one supervised child command.
 
 use std::io::{self, Write as _};
-use std::path::Path;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
 
@@ -13,11 +12,8 @@ pub(super) struct Runtime {
 }
 
 impl Runtime {
-    pub(super) fn start(
-        root: &Path,
-        identities: Vec<(&'static spice::extension::Vendor, Option<String>)>,
-    ) -> Self {
-        let Ok(meter) = LiveMeter::open(root, identities) else {
+    pub(super) fn start(meter: Option<LiveMeter>) -> Self {
+        let Some(meter) = meter else {
             return Self::empty();
         };
         let Ok(decision) = meter.evaluate() else {
