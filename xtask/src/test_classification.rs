@@ -324,7 +324,7 @@ mod tests {
     #[test]
     fn registry_is_unique_and_every_selector_is_exact() {
         let registry = registry().expect("classification registry is valid");
-        assert_eq!(registry.tests.len(), 7);
+        assert_eq!(registry.tests.len(), 9);
         assert!(
             registry
                 .tests
