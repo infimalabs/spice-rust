@@ -44,6 +44,9 @@ pub(super) fn reconcile(
                 continue;
             };
             admit_notice(&edited, envelope.seq, notice)?;
+            if collapsed_notice(notice) {
+                continue;
+            }
             if !current_claim_matches(observed, &edited.task, notice) {
                 continue;
             }
@@ -143,6 +146,13 @@ fn admit_notice(
         previous = Some(position);
     }
     Ok(())
+}
+
+fn collapsed_notice(notice: &wire::body::TaskEditNotice) -> bool {
+    notice
+        .changes
+        .iter()
+        .all(|change| change.before == change.after)
 }
 
 fn current_claim_matches(
@@ -289,26 +299,85 @@ mod tests {
     }
 
     #[test]
-    fn legacy_collapsed_field_summaries_are_admitted() {
+    fn startup_reconciliation_skips_collapsed_notice_without_a_journal_write() {
+        let fixture = AdvisoryRtkFixture::new();
+        let (bus, task) = claimed_fixture(&fixture);
+        append_edit_with_summaries(
+            &bus,
+            &task,
+            "updated contract",
+            fixture.lane,
+            Some(("the collapsed summary", "the collapsed summary")),
+        );
+        let before = bus.cursor().expect("pre-reconciliation cursor reads");
+        let snapshot = bus.task_snapshot().expect("collapsed snapshot reads");
+
+        assert!(
+            !reconcile(
+                &bus,
+                &fixture.paths,
+                fixture.epoch,
+                &snapshot,
+                None,
+                Duration::from_secs(3_600),
+            )
+            .expect("collapsed startup notice is migration residue")
+        );
+        assert_eq!(
+            bus.cursor().expect("post-reconciliation cursor reads"),
+            before
+        );
+        let facts = bus.fact_snapshot().expect("collapsed facts read");
+        let ledger = steer::Ledger::from_snapshot(&facts).expect("collapsed facts replay");
+        assert!(ledger.pending(fixture.lane).is_empty());
+        bus.verify().expect("collapsed recovery authority verifies");
+        bus.shutdown().expect("collapsed recovery bus stops");
+    }
+
+    #[test]
+    fn malformed_notice_shapes_still_fault() {
         let task: TaskStamp = "1kKRRsDP".parse().expect("task stamp");
-        let notice = wire::body::TaskEditNotice {
+        let edited = wire::body::TaskEdited {
+            task: task.clone(),
+            revision: 2,
+            notice: None,
+        };
+        let valid_change = wire::body::TaskFieldEdit {
+            field: "description".to_owned(),
+            before: "before".to_owned(),
+            after: "after".to_owned(),
+        };
+        let valid = wire::body::TaskEditNotice {
             handle: TaskHandle::for_project("board.test", &task),
             lane: CanonicalUuid::new(uuid::Uuid::from_u128(1)),
             claim: Seq::new(1).expect("claim position"),
             previous: Seq::new(1).expect("previous position"),
-            changes: vec![wire::body::TaskFieldEdit {
-                field: "description".to_owned(),
-                before: "the normalized summary".to_owned(),
-                after: "the normalized summary".to_owned(),
-            }],
+            changes: vec![valid_change.clone()],
         };
-        let edited = wire::body::TaskEdited {
-            task,
-            revision: 2,
-            notice: None,
-        };
+        let mut empty = valid.clone();
+        empty.changes.clear();
+        let mut unknown = valid.clone();
+        unknown.changes[0].field = "unknown".to_owned();
+        let mut unordered = valid.clone();
+        unordered.changes = vec![
+            valid_change,
+            wire::body::TaskFieldEdit {
+                field: "title".to_owned(),
+                before: "before".to_owned(),
+                after: "after".to_owned(),
+            },
+        ];
+        let mut over_bound = valid;
+        over_bound.changes[0].after = "x".repeat(wire::body::TASK_EDIT_FIELD_SUMMARY_CHARS + 1);
 
-        assert!(admit_notice(&edited, Seq::new(2).expect("edit position"), &notice).is_ok());
+        for notice in [empty, unknown, unordered, over_bound] {
+            let Err(Outcome::Fault(fault)) =
+                admit_notice(&edited, Seq::new(2).expect("edit position"), &notice)
+            else {
+                panic!("malformed notice did not fault: {notice:?}");
+            };
+            assert_eq!(fault.reason, "task-contract::edit-invalid");
+        }
     }
 
     #[test]
@@ -553,6 +622,16 @@ mod tests {
     }
 
     fn append_edit(bus: &Bus, task: &TaskStamp, title: &str, lane: CanonicalUuid) {
+        append_edit_with_summaries(bus, task, title, lane, None);
+    }
+
+    fn append_edit_with_summaries(
+        bus: &Bus,
+        task: &TaskStamp,
+        title: &str,
+        lane: CanonicalUuid,
+        summaries: Option<(&str, &str)>,
+    ) {
         let snapshot = bus.task_snapshot().expect("pre-edit snapshot reads");
         let heads = &snapshot.tasks()[0];
         let previous = heads.statement().body().clone();
@@ -564,6 +643,10 @@ mod tests {
             .unwrap_or(u32::MAX)
             .saturating_add(1);
         let origin: Origin = format!("task:{task}").parse().expect("task origin");
+        let (before, after) = summaries.map_or_else(
+            || (previous.title.clone(), title.to_owned()),
+            |(before, after)| (before.to_owned(), after.to_owned()),
+        );
         let mut write = JournalWrite::new(Actor::Operator, origin, now(), Producer::CommandDoor);
         let edited = write
             .fact(
@@ -577,8 +660,8 @@ mod tests {
                         previous: previous.revision,
                         changes: vec![wire::body::TaskFieldEdit {
                             field: "title".to_owned(),
-                            before: previous.title,
-                            after: title.to_owned(),
+                            before,
+                            after,
                         }],
                     }),
                 },
