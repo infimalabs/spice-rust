@@ -420,7 +420,17 @@ async function assertExternalOperatorReplay(page, fixture, console, lane, worktr
   const acknowledgedCard = console.locator(
     `[data-card-kind="agent-message"][data-agent-lane="${lane}"]`,
   ).filter({ hasText: replyText });
-  await acknowledgedCard.waitFor({ timeout: CONNECT_MS });
+  await waitForPage(page, "acknowledgement evidence reaches its assistant card", CONNECT_MS,
+    ({ lane, replyText }) => [...document.querySelectorAll(
+      `[data-card-kind="agent-message"][data-agent-lane="${lane}"]`,
+    )].some((card) => (
+      card.textContent?.includes(replyText)
+        && card.dataset.messageRole === "agent"
+        && card.dataset.messageAckCount === "1"
+        && card.dataset.messageTasteCount === "0"
+        && [...card.querySelectorAll(".message-badge")]
+          .map((badge) => badge.textContent).join(",") === "ACK1"
+    )), { lane, replyText });
   assert.equal(await acknowledgedCard.count(), 1, "acknowledgement renders one assistant card");
   assert.equal(await acknowledgedCard.getAttribute("data-message-role"), "agent");
   assert.equal(await acknowledgedCard.getAttribute("data-message-ack-count"), "1");
