@@ -300,13 +300,9 @@ fn retained_owned_home_rebinds_only_to_the_current_store_for_the_same_lock() {
 
     let config = fs::read(retained_home.home().join("config.toml")).unwrap();
     for host in [&current.host(), &retained.host()] {
-        let error = readmit_source_generation(
-            retained_home.home(),
-            &lock_bytes,
-            &current.repository,
-            host,
-        )
-        .expect_err("foreign worktree cannot adopt retained home");
+        let error =
+            readmit_source_generation(retained_home.home(), &lock_bytes, &current.repository, host)
+                .expect_err("foreign worktree cannot adopt retained home");
         assert_eq!(error.reason(), "cargo-isolation::home-owner-mismatch");
         assert_eq!(
             fs::read(retained_home.home().join("config.toml")).unwrap(),
