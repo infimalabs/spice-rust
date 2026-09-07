@@ -1,6 +1,7 @@
 use super::*;
 
 mod guard;
+pub(super) use guard::dependency_claim_authority;
 use guard::{refuse_active_claim_conflict, witnesses_hold};
 
 pub(super) fn phase(name: &str) -> wire::Phase {

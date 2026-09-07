@@ -1005,6 +1005,7 @@ use edit::*;
 // Claimed dependency edits carry possession through one atomic statement-head
 // replacement and keep the complete graph acyclic.
 mod dependencies;
+use dependencies::{dependency_witnesses, todo_task};
 
 // Withdrawal, its refusals, and what a withdrawn row releases are one
 // bounded scenario seam, kept beside the correction seam for the same
