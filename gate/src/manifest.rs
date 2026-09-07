@@ -237,11 +237,6 @@ impl GateId {
                 | Self::TestSubsumption
         )
     }
-
-    #[cfg(test)]
-    const fn predecessor_str(self) -> &'static str {
-        self.predecessor_name()
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1431,6 +1426,3 @@ fn display_path(path: &[String]) -> String {
         .collect::<Vec<_>>()
         .join(".")
 }
-
-#[cfg(test)]
-mod fixtures;

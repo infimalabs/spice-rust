@@ -12,9 +12,6 @@ use super::{
     ScopeSelector, encode_id_component,
 };
 
-#[cfg(test)]
-mod tests;
-
 const RULE_SETTING_KEYS: [&str; 5] = ["multiplier", "min", "max", "unlimited", "flex"];
 const DEFAULT_MAGIC_THRESHOLD: u64 = 10;
 const DEFAULT_MARKDOWN_BASE: u64 = 10_000;

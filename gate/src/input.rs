@@ -749,4 +749,3 @@ fn identify_tool(
 
 mod errors;
 pub use errors::*;
-mod fixtures;

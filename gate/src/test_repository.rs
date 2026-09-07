@@ -1,10 +1,10 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use gix::bstr::BStr;
-use gix::index::entry::{Flags, Mode, Stage, Stat};
+use gix::index::entry::{Flags, Mode, Stat};
 use gix::object::tree::EntryKind;
 
 const MAIN_BRANCH: &str = "refs/heads/main";
@@ -89,65 +89,6 @@ pub(crate) fn commit(root: &Path, message: &str) -> String {
     commit.to_string()
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) enum MergeOutcome {
-    Clean,
-    Conflicted(Vec<String>),
-}
-
-pub(crate) fn checkout(root: &Path, branch: &str, create: bool) {
-    checkout_from(root, branch, create, None);
-}
-
-pub(crate) fn checkout_from(root: &Path, branch: &str, create: bool, start: Option<&str>) {
-    let current = start.map_or_else(|| head(root), str::to_owned);
-    let reference = format!("refs/heads/{branch}");
-    let reference_path = root.join(".git").join(&reference);
-    if create {
-        if let Some(parent) = reference_path.parent() {
-            fs::create_dir_all(parent).expect("create fixture branch directory");
-        }
-        fs::write(&reference_path, format!("{current}\n")).expect("create fixture branch");
-    }
-    let target = read_object_id(&reference_path);
-    fs::write(root.join(".git/HEAD"), format!("ref: {reference}\n"))
-        .expect("select fixture branch");
-    materialize_commit(root, target);
-}
-
-pub(crate) fn set_ref(root: &Path, reference: &str, id: &str) {
-    let path = root.join(".git").join(reference);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("create fixture reference directory");
-    }
-    fs::write(path, format!("{id}\n")).expect("write fixture reference");
-}
-
-pub(crate) fn create_branch(root: &Path, branch: &str) {
-    set_ref(root, &format!("refs/heads/{branch}"), &head(root));
-}
-
-pub(crate) fn set_symbolic_head(root: &Path, reference: &str) {
-    fs::write(root.join(".git/HEAD"), format!("ref: {reference}\n"))
-        .expect("write fixture symbolic HEAD");
-}
-
-pub(crate) fn pack_refs(root: &Path, prune: bool) {
-    let heads = root.join(".git/refs/heads");
-    let mut references = Vec::new();
-    collect_loose_refs(&heads, &heads, &mut references);
-    references.sort_by(|left, right| left.0.cmp(&right.0));
-    let mut encoded = String::from("# pack-refs with: peeled fully-peeled sorted\n");
-    for (name, id) in &references {
-        encoded.push_str(&format!("{id} refs/heads/{name}\n"));
-    }
-    fs::write(root.join(".git/packed-refs"), encoded).expect("write fixture packed refs");
-    if prune && heads.exists() {
-        fs::remove_dir_all(&heads).expect("prune fixture loose refs");
-        fs::create_dir_all(heads).expect("restore fixture heads directory");
-    }
-}
-
 pub(crate) fn create_linked_worktree(root: &Path, linked: &Path, branch: &str) {
     let id = linked
         .file_name()
@@ -194,224 +135,24 @@ pub(crate) fn remove_linked_worktree(root: &Path, linked: &Path) {
         .expect("remove linked fixture administration");
 }
 
-pub(crate) fn split_index(root: &Path) {
-    let index_path = root.join(".git/index");
-    let shared = fs::read(&index_path).expect("read fixture index for splitting");
-    let checksum = shared
-        .get(shared.len().saturating_sub(20)..)
-        .expect("fixture index carries a SHA-1 checksum");
-    let checksum_id = gix::ObjectId::from_bytes_or_panic(checksum);
-    fs::write(
-        root.join(".git").join(format!("sharedindex.{checksum_id}")),
-        &shared,
-    )
-    .expect("write fixture shared index");
-
-    let mut split = Vec::new();
-    split.extend_from_slice(b"DIRC");
-    split.extend_from_slice(&2_u32.to_be_bytes());
-    split.extend_from_slice(&0_u32.to_be_bytes());
-    split.extend_from_slice(b"link");
-    const EMPTY_BITMAP: [u8; 20] = [
-        0, 0, 0, 0, // zero represented bits
-        0, 0, 0, 1, // one run-length word
-        0, 0, 0, 0, 0, 0, 0, 0, // empty run-length word
-        0, 0, 0, 0, // run-length word offset
-    ];
-    split.extend_from_slice(&60_u32.to_be_bytes());
-    split.extend_from_slice(checksum);
-    split.extend_from_slice(&EMPTY_BITMAP);
-    split.extend_from_slice(&EMPTY_BITMAP);
-    let mut hasher = gix::hash::hasher(gix::hash::Kind::Sha1);
-    hasher.update(&split);
-    split.extend_from_slice(
-        hasher
-            .try_finalize()
-            .expect("hash fixture split index")
-            .as_slice(),
-    );
-    fs::write(index_path, split).expect("write fixture split index");
+fn set_ref(root: &Path, reference: &str, id: &str) {
+    let path = root.join(".git").join(reference);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("create fixture reference directory");
+    }
+    fs::write(path, format!("{id}\n")).expect("write fixture reference");
 }
 
-pub(crate) fn merge(root: &Path, branch: &str) -> MergeOutcome {
-    let repository = open(root);
-    let ours = repository
-        .head_id()
-        .expect("fixture HEAD resolves")
-        .detach();
-    let theirs_path = root.join(".git/refs/heads").join(branch);
-    let theirs = read_object_id(&theirs_path);
-    let base = merge_base(&repository, ours, theirs);
-    let base_entries = commit_entries(&repository, base);
-    let ours_entries = commit_entries(&repository, ours);
-    let theirs_entries = commit_entries(&repository, theirs);
-    let paths = base_entries
-        .keys()
-        .chain(ours_entries.keys())
-        .chain(theirs_entries.keys())
-        .cloned()
-        .collect::<BTreeSet<_>>();
-
-    let mut merged = BTreeMap::new();
-    let mut conflicts = Vec::new();
-    for path in paths {
-        let base_entry = base_entries.get(&path);
-        let ours_entry = ours_entries.get(&path);
-        let theirs_entry = theirs_entries.get(&path);
-        if ours_entry == theirs_entry {
-            if let Some(entry) = ours_entry {
-                merged.insert(path, entry.clone());
-            }
-            continue;
-        }
-        if ours_entry == base_entry {
-            if let Some(entry) = theirs_entry {
-                merged.insert(path, entry.clone());
-            }
-            continue;
-        }
-        if theirs_entry == base_entry {
-            if let Some(entry) = ours_entry {
-                merged.insert(path, entry.clone());
-            }
-            continue;
-        }
-        match merge_disjoint_text(&repository, base_entry, ours_entry, theirs_entry) {
-            Some(entry) => {
-                merged.insert(path, entry);
-            }
-            None => conflicts.push(path),
-        }
-    }
-
-    let ours_tree = repository
-        .find_commit(ours)
-        .expect("find fixture HEAD commit")
-        .tree_id()
-        .expect("find fixture HEAD tree");
-    let mut index = repository
-        .index_from_tree(&ours_tree)
-        .expect("expand fixture HEAD tree");
-    index.remove_entries(|_, _, _| true);
-    for (path, entry) in &merged {
-        push_index_entry(&mut index, path, entry, Stage::Unconflicted);
-    }
-    for path in &conflicts {
-        if let Some(entry) = base_entries.get(path) {
-            push_index_entry(&mut index, path, entry, Stage::Base);
-        }
-        if let Some(entry) = ours_entries.get(path) {
-            push_index_entry(&mut index, path, entry, Stage::Ours);
-        }
-        if let Some(entry) = theirs_entries.get(path) {
-            push_index_entry(&mut index, path, entry, Stage::Theirs);
-        }
-    }
-    persist_index(&mut index);
-
-    let mut worktree = merged;
-    for path in &conflicts {
-        if let Some(entry) = ours_entries.get(path) {
-            worktree.insert(path.clone(), entry.clone());
-        }
-    }
-    materialize_entries(root, &repository, &worktree);
-    fs::write(root.join(".git/MERGE_HEAD"), format!("{theirs}\n"))
-        .expect("write fixture MERGE_HEAD");
-
-    if conflicts.is_empty() {
-        MergeOutcome::Clean
-    } else {
-        MergeOutcome::Conflicted(conflicts)
-    }
+fn create_branch(root: &Path, branch: &str) {
+    set_ref(root, &format!("refs/heads/{branch}"), &head(root));
 }
 
-pub(crate) fn head(root: &Path) -> String {
+fn head(root: &Path) -> String {
     open(root)
         .head_id()
         .expect("fixture HEAD resolves")
         .detach()
         .to_string()
-}
-
-pub(crate) fn head_tree(root: &Path) -> String {
-    open(root)
-        .head_commit()
-        .expect("fixture HEAD commit resolves")
-        .tree_id()
-        .expect("fixture HEAD tree resolves")
-        .detach()
-        .to_string()
-}
-
-pub(crate) fn remove_from_index(root: &Path, paths: &[&str]) {
-    let repository = open(root);
-    let mut index = repository
-        .index_or_load_from_head_or_empty()
-        .expect("load fixture index")
-        .into_owned();
-    index.remove_entries(|_, candidate, _| paths.iter().any(|path| candidate == path.as_bytes()));
-    persist_index(&mut index);
-}
-
-pub(crate) fn remove(root: &Path, paths: &[&str]) {
-    for path in paths {
-        let target = root.join(path);
-        if target.is_dir() {
-            fs::remove_dir_all(target).expect("remove fixture directory");
-        } else if target.exists() {
-            fs::remove_file(target).expect("remove fixture file");
-        }
-    }
-    remove_from_index(root, paths);
-}
-
-pub(crate) fn move_path(root: &Path, source: &str, destination: &str) {
-    let destination_path = root.join(destination);
-    if let Some(parent) = destination_path.parent() {
-        fs::create_dir_all(parent).expect("create fixture rename parent");
-    }
-    fs::rename(root.join(source), destination_path).expect("rename fixture path");
-    stage(root, &[source, destination]);
-}
-
-pub(crate) fn staged_changes(root: &Path) -> String {
-    let repository = open(root);
-    let head = repository
-        .head_commit()
-        .expect("fixture HEAD commit resolves")
-        .tree_id()
-        .expect("fixture HEAD tree resolves");
-    let before = repository
-        .index_from_tree(&head)
-        .expect("expand fixture HEAD tree");
-    let after = repository.index().expect("open fixture index");
-    changed_paths(&before, &after).join("\n")
-}
-
-pub(crate) fn worktree_changes(root: &Path) -> String {
-    let repository = open(root);
-    let index = repository.index().expect("open fixture index");
-    let mut changed = Vec::new();
-    for entry in index.entries() {
-        let relative = entry.path(&index).to_string();
-        let path = root.join(&relative);
-        let differs = match fs::read(path) {
-            Ok(bytes) => {
-                repository
-                    .write_blob(bytes)
-                    .expect("hash fixture worktree blob")
-                    .detach()
-                    != entry.id
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
-            Err(error) => panic!("read fixture worktree path {relative}: {error}"),
-        };
-        if differs {
-            changed.push(relative);
-        }
-    }
-    changed.join("\n")
 }
 
 fn open(root: &Path) -> gix::Repository {
@@ -454,69 +195,6 @@ fn append_head_reflog(
     .expect("append fixture HEAD reflog");
 }
 
-fn collect_loose_refs(root: &Path, directory: &Path, references: &mut Vec<(String, String)>) {
-    if !directory.exists() {
-        return;
-    }
-    for entry in fs::read_dir(directory).expect("read fixture loose refs") {
-        let entry = entry.expect("read fixture loose ref");
-        if entry
-            .file_type()
-            .expect("read fixture loose ref kind")
-            .is_dir()
-        {
-            collect_loose_refs(root, &entry.path(), references);
-        } else {
-            let name = entry
-                .path()
-                .strip_prefix(root)
-                .expect("fixture ref is below heads")
-                .to_string_lossy()
-                .replace(std::path::MAIN_SEPARATOR, "/");
-            let id = fs::read_to_string(entry.path())
-                .expect("read fixture loose ref value")
-                .trim()
-                .to_owned();
-            references.push((name, id));
-        }
-    }
-}
-
-fn read_object_id(path: &Path) -> gix::ObjectId {
-    let encoded = fs::read_to_string(path).expect("read fixture reference");
-    gix::ObjectId::from_hex(encoded.trim().as_bytes()).expect("parse fixture object id")
-}
-
-fn merge_base(
-    repository: &gix::Repository,
-    ours: gix::ObjectId,
-    theirs: gix::ObjectId,
-) -> gix::ObjectId {
-    let mut ours_ancestors = BTreeSet::new();
-    let mut cursor = Some(ours);
-    while let Some(id) = cursor {
-        ours_ancestors.insert(id);
-        cursor = first_parent(repository, id);
-    }
-    let mut cursor = Some(theirs);
-    while let Some(id) = cursor {
-        if ours_ancestors.contains(&id) {
-            return id;
-        }
-        cursor = first_parent(repository, id);
-    }
-    panic!("fixture branches have no common ancestor")
-}
-
-fn first_parent(repository: &gix::Repository, id: gix::ObjectId) -> Option<gix::ObjectId> {
-    repository
-        .find_commit(id)
-        .expect("find fixture commit")
-        .parent_ids()
-        .next()
-        .map(gix::Id::detach)
-}
-
 fn commit_entries(
     repository: &gix::Repository,
     commit: gix::ObjectId,
@@ -544,74 +222,12 @@ fn commit_entries(
         .collect()
 }
 
-fn merge_disjoint_text(
-    repository: &gix::Repository,
-    base: Option<&IndexEntry>,
-    ours: Option<&IndexEntry>,
-    theirs: Option<&IndexEntry>,
-) -> Option<IndexEntry> {
-    let (Some(base), Some(ours), Some(theirs)) = (base, ours, theirs) else {
-        return None;
-    };
-    if base.mode != ours.mode || base.mode != theirs.mode {
-        return None;
-    }
-    let base_bytes = blob(repository, base.id);
-    let ours_bytes = blob(repository, ours.id);
-    let theirs_bytes = blob(repository, theirs.id);
-    let bytes = if let (Some(ours_prefix), Some(theirs_suffix)) = (
-        ours_bytes.strip_suffix(base_bytes.as_slice()),
-        theirs_bytes.strip_prefix(base_bytes.as_slice()),
-    ) {
-        [ours_prefix, &base_bytes, theirs_suffix].concat()
-    } else if let (Some(theirs_prefix), Some(ours_suffix)) = (
-        theirs_bytes.strip_suffix(base_bytes.as_slice()),
-        ours_bytes.strip_prefix(base_bytes.as_slice()),
-    ) {
-        [theirs_prefix, &base_bytes, ours_suffix].concat()
-    } else {
-        return None;
-    };
-    Some(IndexEntry {
-        id: repository
-            .write_blob(bytes)
-            .expect("write fixture merged blob")
-            .detach(),
-        mode: base.mode,
-    })
-}
-
 fn blob(repository: &gix::Repository, id: gix::ObjectId) -> Vec<u8> {
     repository
         .find_blob(id)
         .expect("find fixture blob")
         .data
         .to_vec()
-}
-
-fn push_index_entry(index: &mut gix::index::File, path: &str, entry: &IndexEntry, stage: Stage) {
-    index.dangerously_push_entry(
-        Stat::default(),
-        entry.id,
-        Flags::from_stage(stage),
-        entry.mode,
-        BStr::new(path.as_bytes()),
-    );
-}
-
-fn materialize_commit(root: &Path, commit: gix::ObjectId) {
-    let repository = open(root);
-    let entries = commit_entries(&repository, commit);
-    let tree = repository
-        .find_commit(commit)
-        .expect("find fixture checkout commit")
-        .tree_id()
-        .expect("find fixture checkout tree");
-    let mut index = repository
-        .index_from_tree(&tree)
-        .expect("expand fixture checkout tree");
-    persist_index(&mut index);
-    materialize_entries(root, &repository, &entries);
 }
 
 fn materialize_entries(
@@ -658,27 +274,6 @@ fn persist_index(index: &mut gix::index::File) {
     index
         .write(gix::index::write::Options::default())
         .expect("write fixture index");
-}
-
-fn changed_paths(before: &gix::index::File, after: &gix::index::File) -> Vec<String> {
-    let before = index_entries(before);
-    let after = index_entries(after);
-    before
-        .keys()
-        .chain(after.keys())
-        .cloned()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .filter(|path| before.get(path) != after.get(path))
-        .collect()
-}
-
-fn index_entries(index: &gix::index::File) -> BTreeMap<String, (gix::ObjectId, Mode)> {
-    index
-        .entries()
-        .iter()
-        .map(|entry| (entry.path(index).to_string(), (entry.id, entry.mode)))
-        .collect()
 }
 
 fn push_worktree_entry(

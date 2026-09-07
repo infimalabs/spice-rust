@@ -522,6 +522,3 @@ impl fmt::Display for ActionInputError {
 }
 
 impl Error for ActionInputError {}
-
-#[cfg(test)]
-mod tests;

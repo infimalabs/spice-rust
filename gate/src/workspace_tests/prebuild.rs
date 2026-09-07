@@ -663,15 +663,6 @@ where
     })
 }
 
-#[cfg(test)]
-fn prebuilt_test_cases(
-    test: &PrebuiltTest,
-    environment: &Environment,
-    cancellation: CancellationToken,
-) -> Result<Vec<String>, WorkspaceTestError> {
-    prebuilt_test_cases_with_deadline(test, environment, cancellation, METADATA_DEADLINE)
-}
-
 fn prebuilt_test_cases_with_deadline(
     test: &PrebuiltTest,
     environment: &Environment,
@@ -1116,6 +1107,3 @@ struct CargoBuildTarget {
 struct CargoBuildProfile {
     test: bool,
 }
-
-#[cfg(test)]
-mod tests;

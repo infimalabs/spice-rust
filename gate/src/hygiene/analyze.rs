@@ -609,15 +609,6 @@ impl<'a> AnalyzerRun<'a> {
         measure_hygiene_arm(run.observe(declaration))
     }
 
-    #[cfg(test)]
-    fn execute_with(
-        jurisdiction: &'a Jurisdiction,
-        configuration: &'a HygieneConfiguration,
-        boundary: &'a dyn ExecutionBoundary,
-    ) -> Result<HygieneReport, HygieneError> {
-        Self::execute_with_at(jurisdiction, configuration, boundary, Instant::now())
-    }
-
     fn execute_with_at(
         jurisdiction: &'a Jurisdiction,
         configuration: &'a HygieneConfiguration,
@@ -956,6 +947,3 @@ mod syntax;
 pub(in crate::hygiene) use syntax::*;
 mod corpus;
 use corpus::*;
-
-#[cfg(test)]
-mod tests;

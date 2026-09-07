@@ -1329,9 +1329,6 @@ mod predecessor;
 pub use predecessor::*;
 
 #[cfg(test)]
-mod fixtures;
-
-#[cfg(test)]
 mod scratch;
 #[cfg(test)]
 use scratch::*;

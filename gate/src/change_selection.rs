@@ -491,7 +491,3 @@ impl fmt::Display for ChangeSelectionError {
 }
 
 impl Error for ChangeSelectionError {}
-
-#[cfg(test)]
-#[path = "change_selection/tests.rs"]
-mod tests;

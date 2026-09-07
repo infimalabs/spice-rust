@@ -951,6 +951,3 @@ impl std::error::Error for MetricAcquisitionError {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

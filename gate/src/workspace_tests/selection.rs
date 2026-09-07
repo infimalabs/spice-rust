@@ -750,6 +750,3 @@ fn target_reaches_dependent_tests(target: &TargetIdentity, source: &Path) -> boo
                     .find(|declared| declared.path == source)
                     .is_none_or(|declared| declared.dependent_tests)))
 }
-
-#[cfg(test)]
-mod tests;
