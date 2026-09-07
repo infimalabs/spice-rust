@@ -19,15 +19,16 @@ pub(super) fn compute(domain: Domain, bytes: &[u8]) -> Hash {
     {
         return sequential(domain, bytes);
     }
-    let tag = domain.tag().as_bytes();
-    let mut framed = Vec::with_capacity(tag.len() + 1 + bytes.len());
-    framed.extend_from_slice(tag);
-    framed.push(0);
-    framed.extend_from_slice(bytes);
+    let mut prefix = domain.tag().as_bytes().to_vec();
+    prefix.push(0);
+    let framed = FramedInput {
+        prefix: &prefix,
+        payload: bytes,
+    };
     let workers = thread::available_parallelism()
         .map_or(1, std::num::NonZero::get)
         .min(MAX_HASH_WORKERS);
-    parallel_root(&framed, workers)
+    parallel_root(framed, workers)
 }
 
 fn sequential(domain: Domain, bytes: &[u8]) -> Hash {
@@ -38,33 +39,76 @@ fn sequential(domain: Domain, bytes: &[u8]) -> Hash {
     hasher.finalize()
 }
 
-fn parallel_root(input: &[u8], workers: usize) -> Hash {
+#[derive(Clone, Copy)]
+struct FramedInput<'a> {
+    prefix: &'a [u8],
+    payload: &'a [u8],
+}
+
+impl FramedInput<'_> {
+    fn len(self) -> usize {
+        self.prefix.len() + self.payload.len()
+    }
+
+    fn update(self, hasher: &mut Hasher, start: usize, length: usize) {
+        let end = start + length;
+        if start < self.prefix.len() {
+            hasher.update(&self.prefix[start..end.min(self.prefix.len())]);
+        }
+        if end > self.prefix.len() {
+            let payload_start = start.saturating_sub(self.prefix.len());
+            let payload_end = end - self.prefix.len();
+            hasher.update(&self.payload[payload_start..payload_end]);
+        }
+    }
+}
+
+fn parallel_root(input: FramedInput<'_>, workers: usize) -> Hash {
     if workers <= 1 || input.len() <= CHUNK_LEN {
-        return blake3::hash(input);
+        let mut hasher = Hasher::new();
+        input.update(&mut hasher, 0, input.len());
+        return hasher.finalize();
     }
     let left_len = left_subtree_len(input.len() as u64) as usize;
-    let (left, right) = input.split_at(left_len);
     let (left_workers, right_workers) = divide_workers(workers);
     let (left, right) = thread::scope(|scope| {
-        let left = scope.spawn(|| subtree(left, 0, left_workers));
-        let right = subtree(right, left_len as u64, right_workers);
+        let left = scope.spawn(|| subtree(input, 0, left_len, 0, left_workers));
+        let right = subtree(
+            input,
+            left_len,
+            input.len() - left_len,
+            left_len as u64,
+            right_workers,
+        );
         (left.join().expect("scoped digest worker completes"), right)
     });
     merge_subtrees_root(&left, &right, Mode::Hash)
 }
 
-fn subtree(input: &[u8], offset: u64, workers: usize) -> ChainingValue {
-    if workers <= 1 || input.len() <= CHUNK_LEN {
+fn subtree(
+    input: FramedInput<'_>,
+    start: usize,
+    length: usize,
+    offset: u64,
+    workers: usize,
+) -> ChainingValue {
+    if workers <= 1 || length <= CHUNK_LEN {
         let mut hasher = Hasher::new();
-        hasher.set_input_offset(offset).update(input);
+        hasher.set_input_offset(offset);
+        input.update(&mut hasher, start, length);
         return hasher.finalize_non_root();
     }
-    let left_len = left_subtree_len(input.len() as u64) as usize;
-    let (left, right) = input.split_at(left_len);
+    let left_len = left_subtree_len(length as u64) as usize;
     let (left_workers, right_workers) = divide_workers(workers);
     let (left, right) = thread::scope(|scope| {
-        let left = scope.spawn(|| subtree(left, offset, left_workers));
-        let right = subtree(right, offset + left_len as u64, right_workers);
+        let left = scope.spawn(|| subtree(input, start, left_len, offset, left_workers));
+        let right = subtree(
+            input,
+            start + left_len,
+            length - left_len,
+            offset + left_len as u64,
+            right_workers,
+        );
         (left.join().expect("scoped digest worker completes"), right)
     });
     merge_subtrees_non_root(&left, &right, Mode::Hash)
@@ -92,8 +136,12 @@ mod tests {
         ] {
             let input = vec![0x5a; length];
             for workers in 1..=MAX_HASH_WORKERS {
+                let framed = FramedInput {
+                    prefix: &input[..17.min(input.len())],
+                    payload: &input[17.min(input.len())..],
+                };
                 assert_eq!(
-                    parallel_root(&input, workers),
+                    parallel_root(framed, workers),
                     blake3::hash(&input),
                     "length={length} workers={workers}",
                 );
