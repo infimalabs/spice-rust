@@ -32,6 +32,10 @@ import { assertCandidateMeasurementPaintAtomic } from "./mosaic-candidate-paint.
 import { assertLaneHeaderPipMatrix } from "./lane-header-pips.mjs";
 import { captureMessageStreamBoundaries } from "./message-stream-boundaries.mjs";
 import {
+  assertGlobalHistoryNavigation,
+  assertTeamNavigation,
+} from "./team-navigation.mjs";
+import {
   assertQuoteBlockDensity,
   captureQuoteBlockDensity,
 } from "./quote-block-density.mjs";
@@ -212,6 +216,13 @@ export async function seatAgentTeam(
     "Lanes",
     "the empty team begins in the right-edge Lanes mode",
   );
+  await page.getByLabel("Open Spice Canvas menu").click();
+  await assertGlobalHistoryNavigation(page, "the empty fleet");
+  await page.getByRole("navigation", { name: "Canvas views" })
+    .getByRole("button", { name: /^History(?:\s|$)/ }).click();
+  await page.getByRole("heading", { name: "History", exact: true }).waitFor();
+  await chooseCanvasView(page, "Lanes");
+  await assertTeamNavigation(console, "the empty fleet");
   await console.getByRole("tab", { name: /^Team/ }).click();
   await console.getByLabel("Name").fill(agentNames[0]);
   await console.getByLabel("Worktree").fill(teamWorktrees[0]);

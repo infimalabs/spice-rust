@@ -96,8 +96,6 @@ pub(super) fn render_lineage(
             lanes.epoch,
             lineage_fleet,
             lineage_controls,
-            &controls.navigation.axis,
-            &controls.navigation.mosaic,
             controls,
         );
     }
@@ -115,8 +113,6 @@ pub(super) fn render_lineage(
         drafts,
         submissions,
         lineage_controls,
-        axis: &controls.navigation.axis,
-        mosaic: &controls.navigation.mosaic,
         controls,
     };
     render_populated_fleet(&lanes.lanes, &standings, lineage_fleet, &render)

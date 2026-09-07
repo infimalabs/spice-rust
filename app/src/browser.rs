@@ -34,7 +34,7 @@ use crate::speech_queue::{
 use crate::thread_refresh::ThreadRefresh;
 use crate::{
     Axis, CanvasDestination, CanvasRuntime, ChainEnd, Pane, Principal, Session, SteerPane,
-    StreamDirective, stale_reads,
+    StreamDirective, TeamDestination, stale_reads,
 };
 
 mod clock;
@@ -552,15 +552,7 @@ fn canvas_app() -> Html {
     let narration_cursors = use_mut_ref(load_narration_cursors);
     let agent_speech =
         use_agent_speech_controls(current_speech_runtime, narration_cursors, speech_message);
-    let agents = use_agent_controls(
-        sender.clone(),
-        surface.clone(),
-        view::CanvasNavigation {
-            axis: axis.clone(),
-            mosaic: mosaic.clone(),
-        },
-        agent_speech,
-    );
+    let agents = use_agent_controls(sender.clone(), surface.clone(), agent_speech);
     let unsafe_intent = use_unsafe_intent(&composer_drafts, &submission_status);
     use_surface_connection(
         sender.clone(),
@@ -927,7 +919,6 @@ fn use_mosaic_root_scroll(mosaic: bool) {
 fn use_agent_controls(
     sender: SenderHandle,
     surface: UseStateHandle<SurfaceData>,
-    navigation: view::CanvasNavigation,
     speech: AgentSpeechControls,
 ) -> view::AgentControls {
     let seat_name = use_state(String::new);
@@ -936,7 +927,6 @@ fn use_agent_controls(
     let seat_life = use_state(|| "steer".to_owned());
     let seat_notice = use_state(Notice::none);
     view::AgentControls {
-        navigation,
         submit_seat: seat_submit(
             sender,
             surface,

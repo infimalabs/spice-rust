@@ -22,6 +22,10 @@ import { captureMessageStreamBoundaries } from "./message-stream-boundaries.mjs"
 import { assertCandidateMeasurementPaintAtomic } from "./mosaic-candidate-paint.mjs";
 import { assertCursorRelocation } from "./team-menu.mjs";
 import {
+  assertGlobalHistoryNavigation,
+  assertTeamNavigation,
+} from "./team-navigation.mjs";
+import {
   assertQuoteBlockDensity,
   captureQuoteBlockDensity,
 } from "./quote-block-density.mjs";
@@ -157,6 +161,11 @@ export async function captureFirefoxAgentPageSpacing(
   try {
     await page.goto(endpoint, { waitUntil: "networkidle" });
     await chooseCanvasView(page, "Lanes");
+    const console = page.locator('[data-pane="agent-console"]');
+    await assertTeamNavigation(console, state);
+    await page.getByLabel("Open Spice Canvas menu").click();
+    await assertGlobalHistoryNavigation(page, state);
+    await page.getByLabel("Open Spice Canvas menu").click();
     const committed = page.locator(
       '.mosaic-message-card[data-layout-phase="committed"]',
     );
@@ -199,6 +208,7 @@ export async function assertFirefoxRestoredMosaic(
     await chooseCanvasView(page, "Lanes");
     await assertCursorRelocation(page, artifacts, "firefox");
     const console = page.locator('[data-pane="agent-console"]');
+    await assertTeamNavigation(console, "Firefox restored populated fleet");
     await console.getByRole("tab", { name: /^Agents/ }).click();
     await assertLaneHeaderPipMatrix(page, console, artifacts, "firefox", "dark");
     const linkedComposer = console.locator(".agent-composer-stack").filter({
@@ -293,6 +303,7 @@ export async function assertFirefoxRestoredMosaic(
 
     await page.reload({ waitUntil: "networkidle" });
     await chooseCanvasView(page, "Lanes");
+    await assertTeamNavigation(console, "Firefox reloaded populated fleet");
     await console.getByRole("tab", { name: /^Agents/ }).click();
     const restored = await settledMosaicCards(page, "after reload");
     assert.equal(restored.length, before.length, "Firefox reload restores every Mosaic card");
