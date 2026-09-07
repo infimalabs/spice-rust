@@ -108,6 +108,12 @@ const OPERATIONAL_RECOVERY: &str = concat!(
     "inspect them and, if this was a destructive rewind, restore the kept ",
     "commit with `git reset --hard HEAD`."
 );
+const EVIDENCE_RECOVERY: &str = concat!(
+    ". This error aborts the reference transaction, so HEAD is not moved, but ",
+    "the command may already have materialized index or worktree bytes. Inspect ",
+    "`git status`, `git diff`, and `git diff --cached`; do not use a destructive ",
+    "reset based only on this diagnostic."
+);
 
 /// Refuse a queued update that would abandon published history on this branch.
 ///
@@ -498,16 +504,19 @@ fn prepare_consumption(
         let Some(commit) = commit_oid(repository, update.new)? else {
             continue;
         };
-        let head = commit_oid(repository, update.reference)?;
-        if head.as_deref() == Some(commit.as_str()) || reachable_from_ref(repository, &commit)? {
+        let branch_tip = commit_oid(repository, update.reference)?;
+        if branch_tip.as_deref() == Some(commit.as_str())
+            || reachable_from_ref(repository, &commit)?
+        {
             continue;
         }
         let Some(tree) = git_read(repository, &["rev-parse", &format!("{commit}^{{tree}}")])?
         else {
             continue;
         };
+        let parent = commit_first_parent(repository, &commit)?;
         candidates.push(
-            gate::AdmissionCandidate::new(update.reference, head, commit, tree)
+            gate::AdmissionCandidate::new(update.reference, parent, commit, tree)
                 .map_err(|error| evidence_error(TransactionState::Prepared, error))?,
         );
     }
@@ -529,9 +538,9 @@ fn prepare_consumption(
 }
 
 /// Moving a ref within existing history does not author a prospective commit.
-/// Admissions bind the branch and prior tip at authoring time, so another lane's
-/// fast-forward must not consume them again. Compare commit reachability, never
-/// tree equality: a new commit with identical content still needs its admission.
+/// Admissions bind the prospective commit's first parent at authoring time.
+/// Compare commit reachability, never tree equality: a new commit with identical
+/// content and different ancestry still needs its own admission.
 /// History protection runs before this check and continues to reject rewinds.
 fn reachable_from_ref(repository: &Path, commit: &str) -> Result<bool, ReferenceTransactionError> {
     let output = git(
@@ -555,6 +564,16 @@ fn reachable_from_ref(repository: &Path, commit: &str) -> Result<bool, Reference
         });
     }
     Ok(!output.stdout.is_empty())
+}
+
+fn commit_first_parent(
+    repository: &Path,
+    commit: &str,
+) -> Result<Option<String>, ReferenceTransactionError> {
+    Ok(
+        git_read(repository, &["show", "-s", "--format=%P", commit])?
+            .and_then(|parents| parents.split_whitespace().next().map(str::to_owned)),
+    )
 }
 
 fn finish_consumption(
@@ -884,7 +903,7 @@ impl fmt::Display for ReferenceTransactionError {
                     "reference-transaction {state} evidence failed: {reason}; {detail}"
                 )?;
                 if *state == PREPARED {
-                    formatter.write_str(OPERATIONAL_RECOVERY)
+                    formatter.write_str(EVIDENCE_RECOVERY)
                 } else {
                     formatter.write_str(
                         ". No gate action or test was executed; retry this exact hook state after correcting the evidence store.",

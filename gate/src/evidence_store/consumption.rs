@@ -11,7 +11,7 @@ use super::{
     read_optional_regular, read_receipt, remove_optional_file,
 };
 
-const CONSUMPTION_VERSION: u64 = 1;
+const CONSUMPTION_VERSION: u64 = 2;
 
 /// Stable identity of the complete queued reference update set.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -25,7 +25,7 @@ impl AdmissionTransactionId {
 
     #[must_use]
     pub fn derive(canonical_updates: &[u8]) -> Self {
-        let mut framed = b"reference-transaction-consumption-v1\0".to_vec();
+        let mut framed = b"reference-transaction-consumption-v2\0".to_vec();
         framed.extend_from_slice(canonical_updates);
         Self(Digest::compute(Domain::GateAdmission, &framed))
     }
@@ -40,7 +40,7 @@ impl AdmissionTransactionId {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdmissionCandidate {
     branch: String,
-    head: Option<String>,
+    parent: Option<String>,
     commit: String,
     tree: String,
 }
@@ -48,13 +48,13 @@ pub struct AdmissionCandidate {
 impl AdmissionCandidate {
     pub fn new(
         branch: impl Into<String>,
-        head: Option<String>,
+        parent: Option<String>,
         commit: impl Into<String>,
         tree: impl Into<String>,
     ) -> Result<Self, EvidenceStoreError> {
         let value = Self {
             branch: branch.into(),
-            head,
+            parent,
             commit: commit.into(),
             tree: tree.into(),
         };
@@ -68,13 +68,13 @@ fn validate_candidate(candidate: &AdmissionCandidate) -> Result<(), EvidenceStor
         || !canonical_object_id(&candidate.commit)
         || !canonical_object_id(&candidate.tree)
         || candidate
-            .head
+            .parent
             .as_deref()
-            .is_some_and(|head| !canonical_object_id(head))
+            .is_some_and(|parent| !canonical_object_id(parent))
     {
         return Err(EvidenceStoreError::new(
             "gate-evidence::admission-consumption-candidate-invalid",
-            "admission consumption candidate has a noncanonical branch, head, commit, or tree",
+            "admission consumption candidate has a noncanonical branch, parent, commit, or tree",
         ));
     }
     Ok(())
@@ -124,7 +124,7 @@ impl AdmissionConsumption {
 #[serde(deny_unknown_fields)]
 struct ConsumptionEntry {
     branch: String,
-    head: Option<String>,
+    parent: Option<String>,
     commit: String,
     tree: String,
     admission: AdmissionId,
@@ -157,7 +157,7 @@ pub(super) fn prepare(
         }
         entries.push(ConsumptionEntry {
             branch: candidate.branch.clone(),
-            head: candidate.head.clone(),
+            parent: candidate.parent.clone(),
             commit: candidate.commit.clone(),
             tree: candidate.tree.clone(),
             admission,
@@ -240,12 +240,8 @@ fn matching_admission(
     candidate: &AdmissionCandidate,
     now: Instant,
 ) -> Result<Option<(AdmissionId, AdmissionBundle)>, EvidenceStoreError> {
-    let Some((id, bundle)) = super::admission::lookup_current(
-        layout,
-        &candidate.tree,
-        &candidate.branch,
-        candidate.head.as_deref(),
-    )?
+    let Some((id, bundle)) =
+        super::admission::lookup_current(layout, &candidate.tree, candidate.parent.as_deref())?
     else {
         let directory = layout.admissions.join(&candidate.tree);
         return match fs::symlink_metadata(&directory) {
@@ -253,7 +249,10 @@ fn matching_admission(
             Ok(metadata) if metadata.is_dir() => Err(EvidenceStoreError::new(
                 "gate-evidence::admission-candidate-mismatch",
                 format!(
-                    "candidate {} has admissions, but none match {} at its current head",
+                    concat!(
+                        "candidate {} has admissions, but none match {} at its first parent; ",
+                        "pre-v2 branch-bound admission evidence is retained but not executable"
+                    ),
                     candidate.commit, candidate.branch
                 ),
             )),
@@ -322,7 +321,7 @@ fn validate(record: &AdmissionConsumption) -> Result<(), EvidenceStoreError> {
     for entry in &record.entries {
         validate_candidate(&AdmissionCandidate {
             branch: entry.branch.clone(),
-            head: entry.head.clone(),
+            parent: entry.parent.clone(),
             commit: entry.commit.clone(),
             tree: entry.tree.clone(),
         })?;

@@ -1,7 +1,6 @@
 //! Evidence admission for one exact staged candidate.
 
 use gate::{AdmissionBundle, AdmissionBundleFields, EvidenceStore};
-use gix::bstr::ByteSlice as _;
 use serde::{Deserialize, Serialize};
 use spice::repository::Repository;
 use wire::{Digest, Domain};
@@ -97,13 +96,6 @@ pub(super) fn run(
         .into_iter()
         .map(|action| action.expect("missing receipts were handled above"))
         .collect::<Vec<_>>();
-    let branch = match branch(repository) {
-        Ok(branch) => branch,
-        Err(error) => {
-            let _ = preparation.reject_state();
-            return Err(error);
-        }
-    };
     let live_checks =
         match settle_admission_state(&mut preparation, repository, &claim, early_live_checks) {
             Ok(checks) => checks,
@@ -116,8 +108,7 @@ pub(super) fn run(
     let live_check_count = live_checks.len();
     let bundle = AdmissionBundle::new(AdmissionBundleFields {
         candidate_tree: preparation.candidate_tree().to_string(),
-        branch,
-        head: preparation.head(),
+        parent: preparation.head(),
         selection: preparation.selection().clone(),
         policy: preparation.policy().clone(),
         gate_set: preparation.gate_set().clone(),
@@ -196,33 +187,6 @@ fn lookup_evidence(
             Err(fingerprint_lookup_failure(&error))
         }
     }
-}
-
-fn branch(repository: &Repository) -> Result<String, WorkerFailure> {
-    let repository = gix::open(repository.worktree_root())
-        .map_err(|error| failure("gate::pre-commit-branch-unavailable", error, false))?;
-    let head = repository
-        .head()
-        .map_err(|error| failure("gate::pre-commit-branch-unavailable", error, false))?;
-    let branch = head.referent_name().ok_or_else(|| WorkerFailure {
-        reason: "gate::pre-commit-branch-unavailable".to_owned(),
-        detail: "HEAD is detached and names no local branch".to_owned(),
-        fault: false,
-    })?;
-    let branch = branch
-        .as_bstr()
-        .to_str()
-        .map_err(|error| failure("gate::pre-commit-branch-unavailable", error, false))?;
-    if !branch.starts_with("refs/heads/")
-        || gix::validate::reference::branch_name(branch.as_bytes().as_bstr()).is_err()
-    {
-        return Err(WorkerFailure {
-            reason: "gate::pre-commit-branch-unavailable".to_owned(),
-            detail: format!("HEAD returned invalid branch {branch:?}"),
-            fault: false,
-        });
-    }
-    Ok(branch.to_owned())
 }
 
 fn fingerprint_lookup_failure(error: &gate::EvidenceStoreError) -> WorkerFailure {

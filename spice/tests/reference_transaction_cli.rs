@@ -403,9 +403,9 @@ fn evidence_store(root: &Path) -> gate::EvidenceStore {
     gate::EvidenceStore::open(repository.common_dir()).expect("open shared evidence store")
 }
 
-fn publish_admission(root: &Path, tree: &str, branch: &str, head: Option<&str>) {
+fn publish_admission(root: &Path, tree: &str, _branch: &str, head: Option<&str>) {
     let store = evidence_store(root);
-    let action_key = gate::derive_action_key(branch.as_bytes());
+    let action_key = gate::derive_action_key(b"reference transaction action");
     let now = jiff::Timestamp::now();
     let started_at = wire::Instant::new(
         now.checked_sub(jiff::SignedDuration::from_secs(60))
@@ -440,8 +440,7 @@ fn publish_admission(root: &Path, tree: &str, branch: &str, head: Option<&str>) 
         .unwrap();
     let bundle = gate::AdmissionBundle::new(gate::AdmissionBundleFields {
         candidate_tree: tree.to_owned(),
-        branch: branch.to_owned(),
-        head: head.map(str::to_owned),
+        parent: head.map(str::to_owned),
         selection: Digest::compute(Domain::GateSelection, b"selection"),
         policy: Digest::compute(Domain::GatePolicy, b"policy"),
         gate_set: Digest::compute(Domain::GateSet, b"gate set"),
