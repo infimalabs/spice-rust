@@ -1127,6 +1127,7 @@ fn write_gate_finding_update(
             body::TaskEdited {
                 task: task.clone(),
                 revision,
+                notice: None,
             },
             FactCause::Pending(cause),
         )

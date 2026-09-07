@@ -385,12 +385,50 @@ pub struct TaskWoken {
 }
 
 /// An unsettled task statement changed.
+pub const TASK_EDIT_FIELD_SUMMARY_CHARS: usize = 160;
+
+/// One bounded changed field carried for claimant notification.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskFieldEdit {
+    /// Contract field whose value changed.
+    pub field: String,
+    /// Bounded presentation of the value the claimant accepted.
+    pub before: String,
+    /// Bounded presentation of the replacement value.
+    pub after: String,
+}
+
+/// Claim-bound delivery authority captured by one task edit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskEditNotice {
+    /// Public handle produced by this exact statement revision.
+    pub handle: crate::TaskHandle,
+    /// Lane possessing the task when it changed.
+    pub lane: CanonicalUuid,
+    /// Fact that established the claim generation, stable across renewal carry.
+    pub claim: Seq,
+    /// Statement head the editor replaced.
+    pub previous: Seq,
+    /// Bounded changed fields in their stable presentation order.
+    pub changes: Vec<TaskFieldEdit>,
+}
+
+/// An unsettled task statement changed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskEdited {
     /// Edited task.
     pub task: TaskStamp,
     /// Statement revision the edit produced.
     pub revision: u32,
+    /// Mandatory claimant notice authority, absent without a live claim.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub notice: Option<TaskEditNotice>,
 }
 
 /// A task was withdrawn from the board with a recorded reason.

@@ -22,6 +22,7 @@ use super::{CommandResult, RuntimePaths, SurfaceConfig, commit, new_uuid, store_
 
 mod materialization;
 use materialization::Projection;
+mod contract_edits;
 #[cfg(test)]
 mod startup_tests;
 
@@ -218,10 +219,23 @@ impl Runtime {
                 kind: WakeKind::Hold,
             }));
         }
-        let snapshot = bus
+        let mut snapshot = bus
             .task_snapshot()
             .map_err(|error| store_fault("lifecycle::snapshot-unreadable", &error.to_string()))?;
         self.synchronize_holds(&snapshot, self.projection.cursor())?;
+        if contract_edits::reconcile(
+            bus,
+            paths,
+            epoch,
+            &snapshot,
+            self.projection.cursor(),
+            config.steering.expiry().get(),
+        )? {
+            snapshot = bus.task_snapshot().map_err(|error| {
+                store_fault("lifecycle::snapshot-unreadable", &error.to_string())
+            })?;
+            self.synchronize_holds(&snapshot, self.projection.cursor())?;
+        }
         self.projection.advance(&snapshot, &config.projects)?;
         let targets = project_targets(
             &snapshot,

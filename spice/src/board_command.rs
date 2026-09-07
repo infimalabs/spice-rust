@@ -107,6 +107,8 @@ mod client;
 pub(super) use client::*;
 mod client_document;
 use client_document::*;
+mod contract_notice;
+use contract_notice::*;
 mod followup;
 use followup::*;
 mod next_action;

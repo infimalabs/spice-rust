@@ -59,6 +59,21 @@ fn edit_facts(bus: &Bus, task: &TaskHandle) -> Vec<(Actor, u64)> {
         .collect()
 }
 
+fn edit_bodies(bus: &Bus, task: &TaskHandle) -> Vec<(Actor, Seq, body::TaskEdited)> {
+    let born = task.born().expect("fixture handle carries a birth stamp");
+    bus.fact_snapshot()
+        .expect("edit facts read")
+        .facts()
+        .iter()
+        .filter_map(|fact| {
+            fact.fact
+                .read::<body::TaskEdited>()
+                .filter(|edited| edited.task == born)
+                .map(|edited| (fact.actor.clone(), fact.seq, edited))
+        })
+        .collect()
+}
+
 /// Shape CASE 146 / INVARIANTS ID-01: re-homing changes only the derived name.
 #[test]
 fn rehoming_rerenders_the_handle_without_migrating_identity() {
@@ -213,6 +228,122 @@ fn a_correction_publishes_a_new_revision_and_names_each_editor() {
         editors[0].1 < editors[1].1,
         "the recorded revision advances with each correction: {editors:?}",
     );
+}
+
+#[test]
+fn a_live_claimed_correction_carries_bounded_contract_changes_without_moving_ownership() {
+    let (_root, bus, epoch, seats) = fixture("task-edit-claim-notice", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let task = add_project_with_acceptance(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "EDITED-1kKfYW11",
+        "Original title",
+        "board.test",
+        Some("todo"),
+        &["original acceptance"],
+    );
+    claim_task(&bus, epoch, &seats[0], &lane, &task);
+    let held = board(&bus, epoch, Actor::Operator);
+    let before = at(&held, &task).clone();
+
+    assert_eq!(
+        edited_status(correct(
+            &bus,
+            epoch,
+            lane.clone(),
+            &TaskEdit {
+                task: task.clone(),
+                title: Some("Corrected title".to_owned()),
+                description: Some("Corrected description".to_owned()),
+                acceptance: vec!["corrected acceptance".to_owned()],
+                priority: Some("high".to_owned()),
+                project: Some("board.identity".to_owned()),
+            },
+        )),
+        "edited",
+    );
+
+    let edits = edit_bodies(&bus, &task);
+    let [(editor, edit, edited)] = edits.as_slice() else {
+        panic!("one typed edit fact is retained");
+    };
+    assert_eq!(
+        editor, &lane,
+        "a claimant can receive its own contract edit"
+    );
+    let notice = edited
+        .notice
+        .as_ref()
+        .expect("a live claim receives notice authority");
+    assert_eq!(notice.lane, seats[0].lane);
+    assert_eq!(notice.previous, before.statement.position);
+    assert_eq!(
+        notice.claim,
+        before.claim.as_ref().expect("claim head").body.claimed
+    );
+    assert_eq!(
+        notice.handle,
+        TaskHandle::for_project("board.identity", &task.born().expect("task stamp")),
+    );
+    assert_eq!(
+        notice
+            .changes
+            .iter()
+            .map(|change| change.field.as_str())
+            .collect::<Vec<_>>(),
+        ["title", "description", "acceptance", "priority", "project"],
+    );
+    assert_eq!(notice.changes[0].before, "Original title");
+    assert_eq!(notice.changes[0].after, "Corrected title");
+    assert_eq!(notice.changes[3].before, "none");
+    assert_eq!(notice.changes[3].after, "high");
+    assert!(
+        notice.previous < *edit,
+        "the exact statement revision advances"
+    );
+
+    let corrected = board(&bus, epoch, Actor::Operator);
+    let moved = at(&corrected, &notice.handle);
+    assert_eq!(
+        moved.claim, before.claim,
+        "the edit preserves the claim head"
+    );
+    assert_eq!(
+        moved.lease, before.lease,
+        "the edit preserves the lease head"
+    );
+}
+
+#[test]
+fn a_preclaim_correction_establishes_the_future_claimants_baseline() {
+    let (_root, bus, epoch, _seats) = fixture("task-edit-before-claim", 1);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "EDITED-1kKfYW12",
+        "Original title",
+        Some("todo"),
+    );
+    assert_eq!(
+        edited_status(correct(
+            &bus,
+            epoch,
+            Actor::Operator,
+            &TaskEdit {
+                title: Some("Claimant baseline".to_owned()),
+                ..only(&task)
+            },
+        )),
+        "edited",
+    );
+    let edits = edit_bodies(&bus, &task);
+    let [(_, _, edited)] = edits.as_slice() else {
+        panic!("one baseline edit fact is retained");
+    };
+    assert_eq!(edited.notice, None);
 }
 
 /// A settled statement is history, so correcting it is refused.

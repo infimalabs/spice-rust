@@ -600,10 +600,12 @@ fn promote_oops(
     let revision = u32::try_from(entry.statement().revision.get())
         .unwrap_or(u32::MAX)
         .saturating_add(1);
+    let notice = task_edit_notice(entry, &statement);
     let edited = match write.fact(
         body::TaskEdited {
             task: entry.born().clone(),
             revision,
+            notice,
         },
         FactCause::Pending(woken),
     ) {
@@ -968,10 +970,12 @@ pub(super) fn task_depends(
     let revision = u32::try_from(entry.statement().revision.get())
         .unwrap_or(u32::MAX)
         .saturating_add(1);
+    let notice = task_edit_notice(entry, &statement);
     let edited = match write.fact(
         body::TaskEdited {
             task: entry.born().clone(),
             revision,
+            notice,
         },
         FactCause::Root,
     ) {
@@ -1138,15 +1142,13 @@ pub(super) fn task_edit(
     // was, so the next action is whatever it already was, derived from the
     // corrected statement rather than restated here.
     let next = next_action(&snapshot, &post, false);
-    let revision = u32::try_from(entry.statement().revision.get())
-        .unwrap_or(u32::MAX)
-        .saturating_add(1);
+    let notice = task_edit_notice(entry, &statement);
     publish_correction(
         bus,
         command,
         edit,
         statement,
-        revision,
+        notice,
         next,
         taste_review
             .as_ref()
@@ -1304,7 +1306,7 @@ fn publish_correction(
     command: &wire::AdmittedCommand,
     edit: &TaskEdit,
     statement: TaskHead,
-    revision: u32,
+    notice: Option<body::TaskEditNotice>,
     next: Option<Box<str>>,
     taste_review: Option<&TasteReview>,
 ) -> Outcome<CommandAnswer> {
@@ -1312,6 +1314,9 @@ fn publish_correction(
         Ok(at) => at,
         Err(outcome) => return outcome,
     };
+    let revision = u32::try_from(statement.revision.get())
+        .unwrap_or(u32::MAX)
+        .saturating_add(1);
     let origin = match task_origin(&statement.born) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
@@ -1322,6 +1327,7 @@ fn publish_correction(
         body::TaskEdited {
             task: statement.born.clone(),
             revision,
+            notice,
         },
         FactCause::Root,
     ) {
