@@ -548,7 +548,10 @@ pub(super) fn canonical_reference(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::canonical_reference;
+    use super::*;
+    use crate::evidence_store::invariant_fixture::{Fixture, admission};
+    use std::fs;
+    use std::sync::{Arc, Barrier};
 
     #[test]
     fn admission_branch_uses_the_complete_git_reference_contract() {
@@ -562,5 +565,56 @@ mod tests {
         ] {
             assert!(!canonical_reference(invalid), "admitted {invalid:?}");
         }
+    }
+
+    #[test]
+    fn immutable_admission_round_trips_and_concurrent_publishers_converge() {
+        let fixture = Fixture::new("admission-concurrency");
+        let store = fixture.store();
+        let tree = "0123456789abcdef0123456789abcdef01234567";
+        let parent = "89abcdef0123456789abcdef0123456789abcdef";
+        let bundle = admission(
+            tree,
+            Some(parent),
+            b"same immutable admission",
+            "2026-09-04T12:00:00.000Z",
+            "2026-09-04T12:10:00.000Z",
+        );
+        let expected = bundle.id().unwrap();
+        assert_eq!(
+            AdmissionBundle::decode(&bundle.encode().unwrap()).unwrap(),
+            bundle
+        );
+        let barrier = Arc::new(Barrier::new(4));
+        let workers = (0..4)
+            .map(|_| {
+                let store = store.clone();
+                let bundle = bundle.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    store.publish_admission(&bundle).unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+        for worker in workers {
+            assert_eq!(worker.join().unwrap(), expected);
+        }
+        assert_eq!(
+            fs::read(store.layout.admissions.join(tree).join(expected.as_str())).unwrap(),
+            bundle.encode().unwrap(),
+        );
+        assert_ne!(
+            admission(
+                tree,
+                Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+                b"same immutable admission",
+                "2026-09-04T12:00:00.000Z",
+                "2026-09-04T12:10:00.000Z",
+            )
+            .id()
+            .unwrap(),
+            expected,
+        );
     }
 }

@@ -341,6 +341,7 @@ fn validate(record: &AdmissionConsumption) -> Result<(), EvidenceStoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::evidence_store::invariant_fixture::{Fixture, admission};
 
     #[test]
     fn transaction_identity_is_stable_and_order_sensitive() {
@@ -365,5 +366,153 @@ mod tests {
                 "gate-evidence::admission-consumption-candidate-invalid"
             );
         }
+    }
+
+    #[test]
+    fn mismatched_immutable_parent_refuses_before_pending_publication() {
+        let fixture = Fixture::new("admission-mismatch");
+        let store = fixture.store();
+        let tree = "0123456789abcdef0123456789abcdef01234567";
+        store
+            .publish_admission(&admission(
+                tree,
+                Some("89abcdef0123456789abcdef0123456789abcdef"),
+                b"parent authority",
+                "2026-09-04T12:00:00.000Z",
+                "2026-09-04T12:10:00.000Z",
+            ))
+            .unwrap();
+        let transaction = AdmissionTransactionId::derive(b"mismatched transaction");
+        let candidate = AdmissionCandidate::new(
+            "refs/heads/main",
+            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned()),
+            "1111111111111111111111111111111111111111",
+            tree,
+        )
+        .unwrap();
+        let error = store
+            .prepare_admission_consumption(
+                &transaction,
+                &[candidate],
+                "2026-09-04T12:05:00.000Z".parse().unwrap(),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.reason(),
+            "gate-evidence::admission-candidate-mismatch"
+        );
+        assert!(
+            store
+                .commit_admission_consumption(&transaction)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn current_admission_index_ignores_accumulated_history() {
+        let fixture = Fixture::new("admission-current-index");
+        let store = fixture.store();
+        let tree = "0123456789abcdef0123456789abcdef01234567";
+        let older = store
+            .publish_admission(&admission(
+                tree,
+                None,
+                b"older",
+                "2026-09-04T12:00:00.000Z",
+                "2026-09-04T12:20:00.000Z",
+            ))
+            .unwrap();
+        let newer = store
+            .publish_admission(&admission(
+                tree,
+                None,
+                b"newer",
+                "2026-09-04T12:05:00.000Z",
+                "2026-09-04T12:15:00.000Z",
+            ))
+            .unwrap();
+        assert_ne!(older, newer);
+        for index in 0..16 {
+            fs::write(
+                store
+                    .layout
+                    .admissions
+                    .join(tree)
+                    .join(format!("old-{index}")),
+                b"malformed history",
+            )
+            .unwrap();
+        }
+        let transaction = AdmissionTransactionId::derive(b"indexed transaction");
+        let candidate = AdmissionCandidate::new(
+            "refs/heads/renamed",
+            None,
+            "1111111111111111111111111111111111111111",
+            tree,
+        )
+        .unwrap();
+        store
+            .prepare_admission_consumption(
+                &transaction,
+                &[candidate],
+                "2026-09-04T12:06:00.000Z".parse().unwrap(),
+            )
+            .unwrap();
+        let credit = store
+            .commit_admission_consumption(&transaction)
+            .unwrap()
+            .unwrap();
+        assert_eq!(credit.admissions().collect::<Vec<_>>(), [&newer]);
+    }
+
+    #[test]
+    fn interrupted_commit_replays_retained_pending_credit() {
+        let fixture = Fixture::new("admission-credit-recovery");
+        let store = fixture.store();
+        let tree = "0123456789abcdef0123456789abcdef01234567";
+        store
+            .publish_admission(&admission(
+                tree,
+                None,
+                b"credit recovery",
+                "2026-09-04T12:00:00.000Z",
+                "2026-09-04T12:10:00.000Z",
+            ))
+            .unwrap();
+        let transaction = AdmissionTransactionId::derive(b"credit recovery transaction");
+        let candidate = AdmissionCandidate::new(
+            "refs/heads/main",
+            None,
+            "1111111111111111111111111111111111111111",
+            tree,
+        )
+        .unwrap();
+        store
+            .prepare_admission_consumption(
+                &transaction,
+                &[candidate],
+                "2026-09-04T12:05:00.000Z".parse().unwrap(),
+            )
+            .unwrap();
+        let error = store
+            .with_lock(|layout| {
+                commit_with(layout, &transaction, || {
+                    Err(EvidenceStoreError::new(
+                        "fixture::interrupted",
+                        "stop after durable credit",
+                    ))
+                })
+            })
+            .unwrap_err();
+        assert_eq!(error.reason(), "fixture::interrupted");
+        assert!(store.admission_credit(&transaction).unwrap().is_some());
+        assert!(
+            store
+                .commit_admission_consumption(&transaction)
+                .unwrap()
+                .is_some()
+        );
+        assert!(!store.abort_admission_consumption(&transaction).unwrap());
     }
 }

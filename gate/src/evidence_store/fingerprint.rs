@@ -469,3 +469,131 @@ fn canonical_object_id(value: &str) -> bool {
             .bytes()
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::evidence_store::invariant_fixture::{Fixture, receipt};
+    use crate::{ChangeSelectionPolicy, ChangeSelectionPolicyInputs, select_change_gates};
+
+    #[test]
+    fn fingerprint_publication_recovers_after_object_write_and_authority_drift_misses() {
+        let fixture = Fixture::new("fingerprint-recovery");
+        let store = fixture.store();
+        let first = authority(b"environment-a");
+        let action = derive_action_key(b"fingerprinted action");
+        let pass = receipt(&action, b"fingerprinted result");
+        store.publish(&pass).unwrap();
+        let expectation = ReceiptExpectation::new(
+            "cargo:typecheck:fixture::lib:fixture",
+            action,
+            pass.action_spec().clone(),
+            pass.input_manifest().clone(),
+        )
+        .unwrap();
+        let first_manifest = manifest(first.clone(), false, vec![expectation]);
+        store.publish_action_fingerprints(&first_manifest).unwrap();
+        assert_eq!(
+            store.lookup_action_fingerprints(&first).unwrap(),
+            Some(first_manifest),
+        );
+        let (_, receipts) = store
+            .lookup_fingerprint_receipts(&first)
+            .unwrap()
+            .unwrap()
+            .into_parts();
+        assert_eq!(receipts.len(), 1);
+        assert!(receipts[0].is_some());
+        assert!(
+            store
+                .lookup_action_fingerprints(&authority(b"environment-b"))
+                .unwrap()
+                .is_none()
+        );
+
+        let interrupted_authority = authority(b"environment-interrupted");
+        let interrupted = manifest(interrupted_authority.clone(), true, Vec::new());
+        let error = store
+            .with_lock(|layout| {
+                publish_with(layout, &interrupted, || {
+                    Err(EvidenceStoreError::new(
+                        "fixture::interrupted",
+                        "stop after fingerprint object",
+                    ))
+                })
+            })
+            .unwrap_err();
+        assert_eq!(error.reason(), "fixture::interrupted");
+        assert!(
+            store
+                .lookup_action_fingerprints(&interrupted_authority)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .layout
+                .fingerprint_objects
+                .join(interrupted.id().unwrap().as_str())
+                .is_file()
+        );
+        store.publish_action_fingerprints(&interrupted).unwrap();
+        assert_eq!(
+            store
+                .lookup_action_fingerprints(&interrupted_authority)
+                .unwrap(),
+            Some(interrupted),
+        );
+    }
+
+    fn authority(environment: &[u8]) -> ActionFingerprintAuthority {
+        ActionFingerprintAuthority::new(ActionFingerprintAuthorityFields {
+            candidate_tree: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+            baseline: Some("89abcdef0123456789abcdef0123456789abcdef".to_owned()),
+            source: Digest::compute(wire::Domain::GateTree, b"source"),
+            policy: Digest::compute(wire::Domain::GatePolicy, b"policy"),
+            gate_set: Digest::compute(wire::Domain::GateSet, b"gate set"),
+            tools: Digest::compute(wire::Domain::GateTool, b"tools"),
+            environment: Digest::compute(wire::Domain::GateConfiguration, environment),
+            cargo_source: Some(Digest::compute(
+                wire::Domain::GateInventory,
+                b"cargo source",
+            )),
+        })
+        .unwrap()
+    }
+
+    fn manifest(
+        authority: ActionFingerprintAuthority,
+        cargo_tests: bool,
+        actions: Vec<ReceiptExpectation>,
+    ) -> ActionFingerprintManifest {
+        ActionFingerprintManifest::new(ActionFingerprintManifestFields {
+            selection: selection(&authority),
+            authority,
+            cargo_tests,
+            actions,
+        })
+        .unwrap()
+    }
+
+    fn selection(authority: &ActionFingerprintAuthority) -> ChangeSelectionReport {
+        let tracked = vec!["spice-rust.toml".to_owned()];
+        let suffixes = vec![".rs".to_owned()];
+        let policy = ChangeSelectionPolicy::new(ChangeSelectionPolicyInputs {
+            tracked_sources: &tracked,
+            policy_authorities: &tracked,
+            configured: true,
+            repository_documents: Some(&[]),
+            file_shape_suffixes: Some(&suffixes),
+            complexity_suffixes: Some(&suffixes),
+            magic_suffixes: Some(&suffixes),
+            package_roots: &[],
+            declared_rust_sources: &[],
+            generated_paths: &[],
+            test_paths: &["tests".to_owned()],
+        })
+        .unwrap();
+        select_change_gates(authority.source().clone(), &tracked, &policy).unwrap()
+    }
+}
