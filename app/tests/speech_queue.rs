@@ -1,6 +1,6 @@
 use app::speech_queue::{
     Advance, Enqueue, ExternalPause, MAX_NARRATION_CURSORS, NarrationCursors, NarrationMessage,
-    SpeechQueue, SpeechRequest,
+    SpeechQueue, SpeechRequest, SuppressAutomatic,
 };
 
 fn narration(lane: &str, text: &str) -> SpeechRequest {
@@ -107,6 +107,43 @@ fn an_external_pause_stops_manual_speech_but_advances_automatic_narration() {
         other => panic!("paused narration did not advance its queue: {other:?}"),
     };
     assert_eq!(successor.text(), "successor");
+}
+
+#[test]
+fn quiet_stops_active_and_queued_automatic_speech_but_preserves_manual_work() {
+    let mut queue = SpeechQueue::default();
+    let automatic = started(queue.enqueue(narration("lineage-a", "automatic head")));
+    assert_eq!(
+        queue.enqueue(narration("lineage-b", "automatic tail")),
+        Enqueue::Queued
+    );
+    assert_eq!(queue.suppress_automatic(), SuppressAutomatic::Idle);
+    assert!(!queue.active());
+    assert_eq!(queue.pending(), 0);
+    assert_eq!(queue.finish(automatic.id()), Advance::Ignored);
+
+    assert_eq!(queue.suppress_automatic(), SuppressAutomatic::Preserved);
+    let manual_head = started(queue.enqueue(manual("lineage-a", "manual", "explicit playback")));
+    assert_eq!(
+        queue.enqueue(narration("lineage-b", "discarded tail")),
+        Enqueue::Queued
+    );
+    assert_eq!(queue.suppress_automatic(), SuppressAutomatic::Preserved);
+    assert!(queue.is_active(manual_head.id()));
+    assert_eq!(queue.pending(), 0);
+
+    queue.stop();
+    let automatic = started(queue.enqueue(narration("lineage-a", "automatic head")));
+    assert_eq!(
+        queue.enqueue(manual("lineage-b", "manual", "queued explicit playback")),
+        Enqueue::Queued
+    );
+    let promoted = match queue.suppress_automatic() {
+        SuppressAutomatic::Start(entry) => entry,
+        other => panic!("quiet did not preserve the queued manual successor: {other:?}"),
+    };
+    assert_eq!(promoted.message_key(), Some("manual"));
+    assert_eq!(queue.finish(automatic.id()), Advance::Ignored);
 }
 
 #[test]

@@ -489,12 +489,14 @@ pub(super) fn render_lineage_controls(
     topology_revision: u64,
     control: &LineageControl,
     lineage_controls: &UseReducerHandle<LineageControls>,
+    suppress_automatic_speech: &Callback<()>,
     sender: &SenderHandle,
     can_configure: bool,
     ready: bool,
 ) -> Html {
     let speech = control.speech;
     let update_speech = lineage_controls.clone();
+    let suppress_automatic_speech = suppress_automatic_speech.clone();
     let selected = control.life;
     let update_life = lineage_controls.clone();
     let life_sender = sender.clone();
@@ -521,10 +523,14 @@ pub(super) fn render_lineage_controls(
                     oninput={Callback::from(move |event: InputEvent| {
                         let input: HtmlInputElement = event.target_unchecked_into();
                         let index = input.value().parse::<usize>().unwrap_or(1).min(2);
+                        let speech = LineageSpeech::ALL[index];
+                        if speech == LineageSpeech::Quiet {
+                            suppress_automatic_speech.emit(());
+                        }
                         update_speech.dispatch(LineageControlAction::SetSpeech {
                             lineage,
                             authoritative_life,
-                            speech: LineageSpeech::ALL[index],
+                            speech,
                         });
                     })}
                 />

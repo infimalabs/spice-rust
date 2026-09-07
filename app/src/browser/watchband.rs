@@ -234,6 +234,7 @@ fn render_compose(
                     topology_revision,
                     &control,
                     lineage_controls,
+                    &controls.suppress_automatic_speech,
                     sender,
                     can_configure,
                     ready,
