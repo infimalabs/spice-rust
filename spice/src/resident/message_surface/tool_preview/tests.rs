@@ -941,6 +941,15 @@ fn only_structured_command_execution_names_suppress_their_taxonomy() {
     );
     assert_eq!(activity_preview("exec", "null"), "exec");
     assert_eq!(activity_preview("exec_command", "17"), "exec command");
+    assert_eq!(activity_preview("exec", "{malformed"), "exec");
+    assert_eq!(
+        activity_preview("exec_command", "{malformed"),
+        "exec command"
+    );
+    assert_eq!(
+        activity_preview("command_execution", "cargo test --locked"),
+        "cargo test --locked"
+    );
 }
 
 #[test]

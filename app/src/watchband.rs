@@ -791,14 +791,15 @@ pub fn ticker_chunks(class: &str, detail: &str, budget: usize) -> (String, Strin
     (prefix.to_owned(), visible_detail.to_owned())
 }
 
-/// Preserve the activity class in assistive text when visual tool taxonomy is suppressed.
+/// Preserve standing and activity identity inside one bounded assistive label.
 #[must_use]
-pub fn ticker_accessible_line(class: &str, line: &str) -> String {
-    if class == "tool" {
+pub fn ticker_accessible_label(label: &str, class: &str, line: &str, budget: usize) -> String {
+    let line = if class == "tool" {
         format!("tool: {line}")
     } else {
         line.to_owned()
-    }
+    };
+    ticker_line(label, &line, budget)
 }
 
 /// `text` cut to `budget` characters, ellipsis included in the budget.
@@ -818,7 +819,7 @@ pub fn truncate(text: &str, budget: usize) -> String {
 mod tests {
     use super::{
         MAX_LINEAGE_VISUAL_WEIGHT, agent_message_attribution, agent_message_label,
-        composer_vendor_icon_class, lineage_visual_weight, ticker_accessible_line, ticker_chunks,
+        composer_vendor_icon_class, lineage_visual_weight, ticker_accessible_label, ticker_chunks,
     };
 
     #[test]
@@ -934,12 +935,16 @@ mod tests {
     #[test]
     fn tool_ticker_accessibility_retains_the_suppressed_activity_class() {
         assert_eq!(
-            ticker_accessible_line("tool", "exec completed"),
-            "tool: exec completed"
+            ticker_accessible_label("Agent", "tool", "exec completed", 120),
+            "Agent: tool: exec completed"
         );
         assert_eq!(
-            ticker_accessible_line("assistant", "assistant: working"),
-            "assistant: working"
+            ticker_accessible_label("Agent", "assistant", "assistant: working", 120),
+            "Agent: assistant: working"
         );
+        let bounded = ticker_accessible_label("Agent", "tool", &"é".repeat(120), 120);
+        assert_eq!(bounded.chars().count(), 120);
+        assert!(bounded.starts_with("Agent: tool: "));
+        assert!(bounded.ends_with('…'));
     }
 }
