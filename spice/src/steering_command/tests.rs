@@ -366,6 +366,35 @@ fn ordinary_working_state_is_change_only_hook_status_without_lease_urgency() {
 }
 
 #[test]
+fn authored_steering_owns_inbox_context_while_other_status_stays_change_only() {
+    let scratch = HookScratch::new();
+    let answer = inbox_answer(
+        OCCUPANT,
+        14,
+        &[("1kFirst1", "published", "Inspect the authored request.")],
+    );
+    let state = spice::session_meter::WorkingState {
+        pending_inbox_count: 1,
+        drain_queue: true,
+        claim: None,
+        last_taste: "polling".to_owned(),
+    };
+
+    let first = deliver_status(&scratch, &answer, &state).expect("mixed status publishes");
+    let context = additional_context(&first);
+    assert!(context.contains("Inspect the authored request."));
+    assert!(context.contains("DRAIN QUEUE ASAP: spice task next"));
+    assert!(context.contains("last taste polling"));
+    assert!(!context.contains("pending inbox"));
+    assert!(!context.contains("handle operator direction first"));
+    assert_eq!(
+        context.matches("Rust Spice steering is pending.").count(),
+        1
+    );
+    assert_eq!(deliver_status(&scratch, &answer, &state), None);
+}
+
+#[test]
 fn a_new_compaction_epoch_reopens_identical_content_for_the_same_agent() {
     let scratch = HookScratch::new();
     let first = inbox_answer(
