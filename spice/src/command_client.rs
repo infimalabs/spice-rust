@@ -154,7 +154,7 @@ fn execute_mapped_with(
     contract: &Contract,
     connection: Connection,
     mapped: ClientResult<MappedCommand>,
-    after_transient: impl FnMut(&Fault),
+    mut after_transient: impl FnMut(&Fault),
 ) -> Outcome<CommandAnswer> {
     let mapped = match mapped {
         Ok(mapped) => mapped,
@@ -162,17 +162,44 @@ fn execute_mapped_with(
     };
     let discovery_path = selected_discovery_path(operator_discovery, connection);
     let bound = answer_bound(mapped.kind, &discovery_path);
-    let session = match acquire_session_with(
+    let deadline = Instant::now() + bound;
+    let resident_lock = resident_lock_path(operator_discovery);
+    let session = match acquire_session_until(
         contract,
         &discovery_path,
-        &resident_lock_path(operator_discovery),
+        &resident_lock,
+        deadline,
         bound,
-        after_transient,
+        false,
+        &mut after_transient,
     ) {
         Ok(session) => session,
         Err(outcome) => return outcome,
     };
-    submit(contract, mapped, session)
+    let outcome = submit(contract, &mapped, session);
+    let Some(fault) = interrupted_submission(&outcome) else {
+        return outcome;
+    };
+    after_transient(fault);
+
+    // The resident may have committed before its socket disappeared. Present
+    // the exact command identity again: a replacement generation reconciles a
+    // durable receipt, while moved authority is returned as its current
+    // refusal. Both attempts share one client bound, and a second transport
+    // interruption is terminal rather than an unbounded replay loop.
+    let session = match acquire_session_until(
+        contract,
+        &discovery_path,
+        &resident_lock,
+        deadline,
+        bound,
+        true,
+        &mut after_transient,
+    ) {
+        Ok(session) => session,
+        Err(outcome) => return outcome,
+    };
+    submit(contract, &mapped, session)
 }
 
 /// Prove the selected read contract through the resident's sole authenticated
@@ -630,11 +657,31 @@ fn acquire_session_with(
     mut after_transient: impl FnMut(&Fault),
 ) -> ClientResult<AuthenticatedSession> {
     let deadline = Instant::now() + bound;
+    acquire_session_until(
+        contract,
+        discovery_path,
+        resident_lock,
+        deadline,
+        bound,
+        false,
+        &mut after_transient,
+    )
+}
+
+fn acquire_session_until(
+    contract: &Contract,
+    discovery_path: &Path,
+    resident_lock: &Path,
+    deadline: Instant,
+    bound: Duration,
+    recovering_submission: bool,
+    after_transient: &mut impl FnMut(&Fault),
+) -> ClientResult<AuthenticatedSession> {
     let attempt = acquire_session_attempt(contract, discovery_path, resident_lock, deadline, bound);
     let Err(outcome) = attempt else {
         return attempt;
     };
-    let Some(fault) = replacement_fault(&outcome, resident_lock) else {
+    let Some(fault) = refreshable_fault(&outcome, resident_lock, recovering_submission) else {
         return Err(outcome);
     };
     after_transient(fault);
@@ -645,7 +692,7 @@ fn acquire_session_with(
     let Err(outcome) = retry else {
         return retry;
     };
-    if replacement_fault(&outcome, resident_lock).is_none() {
+    if refreshable_fault(&outcome, resident_lock, recovering_submission).is_none() {
         return Err(outcome);
     }
     let Some(observer) = DiscoveryObserver::arm(resident_lock) else {
@@ -659,7 +706,7 @@ fn acquire_session_with(
         let Err(outcome) = attempt else {
             return attempt;
         };
-        let Some(fault) = replacement_fault(&outcome, resident_lock) else {
+        let Some(fault) = refreshable_fault(&outcome, resident_lock, recovering_submission) else {
             return Err(outcome);
         };
         match observer.wait(deadline) {
@@ -686,9 +733,10 @@ fn acquire_session_attempt(
     })
 }
 
-fn replacement_fault<'a>(
+fn refreshable_fault<'a>(
     outcome: &'a Outcome<CommandAnswer>,
     resident_lock: &Path,
+    recovering_submission: bool,
 ) -> Option<&'a Fault> {
     let Outcome::Fault(fault) = outcome else {
         return None;
@@ -700,8 +748,30 @@ fn replacement_fault<'a>(
         {
             Some(fault)
         }
+        "canvas::publisher-gone"
+        | "canvas::connect-failed"
+        | "canvas::opening-failed"
+        | "canvas::send-failed"
+        | "canvas::receive-failed"
+        | "canvas::discovery-unavailable"
+        | "canvas::discovery-replaced"
+            if recovering_submission =>
+        {
+            Some(fault)
+        }
         _ => None,
     }
+}
+
+fn interrupted_submission(outcome: &Outcome<CommandAnswer>) -> Option<&Fault> {
+    let Outcome::Fault(fault) = outcome else {
+        return None;
+    };
+    matches!(
+        fault.reason.as_str(),
+        "canvas::send-failed" | "canvas::receive-failed" | "canvas::closed-without-answer"
+    )
+    .then_some(fault)
 }
 
 fn publisher_is_held(resident_lock: &Path) -> bool {
@@ -732,12 +802,12 @@ fn request(
         Ok(session) => session,
         Err(outcome) => return outcome,
     };
-    submit(contract, mapped, session)
+    submit(contract, &mapped, session)
 }
 
 fn submit(
     contract: &Contract,
-    mapped: MappedCommand,
+    mapped: &MappedCommand,
     mut session: AuthenticatedSession,
 ) -> Outcome<CommandAnswer> {
     let command = mapped.envelope(session.discovery.value.epoch);
