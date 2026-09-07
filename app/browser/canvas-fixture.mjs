@@ -164,6 +164,19 @@ export async function triggerPrimaryAgentProse(worktree, text, timestamp = null)
   return { text, timestamp: record.timestamp };
 }
 
+/// Stream one exact assistant message through the primary fixture vendor.
+///
+/// Browser scenarios that author several sequential records can use the
+/// vendor's blocking pipe instead of waiting for its test-control-file poll
+/// between every record.
+export async function streamPrimaryAssistantMessage(worktree, message, timestamp = null) {
+  await writeFile(join(worktree, ".spice-authored-prose-pipe"), `${JSON.stringify({
+    timestamp: timestamp ?? new Date().toISOString(),
+    type: "assistant",
+    message,
+  })}\n`);
+}
+
 function waitForDiscovery(child, canvas, timeout = 30_000) {
   return new Promise((resolveDiscovery, rejectDiscovery) => {
     let settled = false;
@@ -378,6 +391,10 @@ export async function configureFixture(
     // this script, derived from $0 so it can never enrol in another one.
     "vendors=${0%/*}/" + VENDOR_PID_LEDGER,
     'printf \'%s\\n\' "$$" >> "$vendors"',
+    "authored_pipe=.spice-authored-prose-pipe",
+    'rm -f "$authored_pipe"',
+    'mkfifo "$authored_pipe"',
+    'while :; do cat "$authored_pipe"; done &',
     "name=${PWD##*/}",
     'case "$name" in',
     '  lane-*) ordinal=${name#lane-}; ordinal=${ordinal%%-*}; session_id=$(printf \'018f7777-7777-7444-8888-%012d\' "$ordinal") ;;',
@@ -481,6 +498,7 @@ export async function configureFixture(
       ".spice-tool-trigger",
       ".spice-prose-trigger",
       ".spice-authored-prose-trigger",
+      ".spice-authored-prose-pipe",
       ".spice-ack-trigger",
       ".spice-codex-read-trigger",
       ".spice-codex-read-result",

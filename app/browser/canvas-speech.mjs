@@ -1,6 +1,5 @@
 // Speech installation and backend scenarios for the Canvas browser suite.
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -10,6 +9,7 @@ import {
   CONNECT_MS,
   monitorPage,
   reply,
+  streamPrimaryAssistantMessage,
   TRANSITION_MS,
   waitForPageFunction as waitForPage,
 } from "./canvas-fixture.mjs";
@@ -137,13 +137,13 @@ export async function installSocketControl(context) {
   });
 }
 
-export async function assertAutomaticSpeechEngines(endpoint, fixture, worktree, lane, artifacts) {
+export async function assertAutomaticSpeechEngines(endpoint, fixture, lane, artifacts) {
   for (const engine of ["chromium", "firefox"]) {
-    await assertAutomaticSpeechEngine(engine, endpoint, fixture, worktree, lane, artifacts);
+    await assertAutomaticSpeechEngine(engine, endpoint, fixture, lane, artifacts);
   }
 }
 
-async function assertAutomaticSpeechEngine(engine, endpoint, fixture, worktree, lane, artifacts) {
+async function assertAutomaticSpeechEngine(engine, endpoint, fixture, lane, artifacts) {
   const browser = await launchBrowser(engine);
   const context = await browser.newContext({ viewport: { width: 1000, height: 720 } });
   await installBrowserSpeech(context);
@@ -160,11 +160,11 @@ async function assertAutomaticSpeechEngine(engine, endpoint, fixture, worktree, 
     assert.equal(await mode.inputValue(), "1", `${engine} defaults to Speak`);
     assert.equal(await speechCount(page), 0, `${engine} materialized history stays silent`);
 
-    await emitAssistantRecord(worktree, page, lane, `${engine} ordinary progress`);
+    await emitAssistantRecord(fixture, page, lane, `${engine} ordinary progress`);
     assert.equal(await speechCount(page), 0, `${engine} Speak ignores commentary`);
 
     const quoted = await emitAssistantRecord(
-      worktree,
+      fixture,
       page,
       lane,
       `> borrowed context\n> > nested borrowed context\n\n${engine} agent response`,
@@ -176,16 +176,16 @@ async function assertAutomaticSpeechEngine(engine, endpoint, fixture, worktree, 
     await resetSpeech(page);
 
     const acked = await reply(fixture, ["steer", lane, `${engine} acknowledged direction`]);
-    await emitAssistantRecord(worktree, page, lane, `ACK ${acked.body.key}: applied ${engine}`);
+    await emitAssistantRecord(fixture, page, lane, `ACK ${acked.body.key}: applied ${engine}`);
     await waitForSpeech(page, 1, `${engine} canonical ACK`);
     assert.equal(await latestSpeechText(page), `applied ${engine}`);
     await settleLatestSpeech(page);
 
     await resetSpeech(page);
-    await emitAssistantRecord(worktree, page, lane, "ACK not-a-key: malformed");
+    await emitAssistantRecord(fixture, page, lane, "ACK not-a-key: malformed");
     assert.equal(await speechCount(page), 0, `${engine} malformed ACK stays silent`);
     const declined = await reply(fixture, ["steer", lane, `${engine} declined direction`]);
-    await emitAssistantRecord(worktree, page, lane, `NACK ${declined.body.key}: unsafe`);
+    await emitAssistantRecord(fixture, page, lane, `NACK ${declined.body.key}: unsafe`);
     assert.equal(await speechCount(page), 0, `${engine} NACK-only prose stays silent`);
 
     const marker = engine === "chromium" ? "C" : "F";
@@ -194,7 +194,7 @@ async function assertAutomaticSpeechEngine(engine, endpoint, fixture, worktree, 
       "middle stays silent",
       "Landed 7a12bc99.",
     ].join("\n\n");
-    const finalCard = await emitAssistantRecord(worktree, page, lane, finalText, { final: true });
+    const finalCard = await emitAssistantRecord(fixture, page, lane, finalText, { final: true });
     await waitForSpeech(page, 1, `${engine} final answer`);
     assert.equal(
       await latestSpeechText(page),
@@ -218,7 +218,7 @@ async function assertAutomaticSpeechEngine(engine, endpoint, fixture, worktree, 
     await page.reload({ waitUntil: "networkidle" });
     await chooseCanvasView(page, "Lanes");
     assert.equal(await mode.inputValue(), "0", `${engine} persists Quiet`);
-    await emitAssistantRecord(worktree, page, lane, `${engine} quiet final`, { final: true });
+    await emitAssistantRecord(fixture, page, lane, `${engine} quiet final`, { final: true });
     assert.equal(await speechCount(page), 0, `${engine} Quiet suppresses a final answer`);
 
     await mode.fill("2");
@@ -226,7 +226,7 @@ async function assertAutomaticSpeechEngine(engine, endpoint, fixture, worktree, 
     await chooseCanvasView(page, "Lanes");
     assert.equal(await mode.inputValue(), "2", `${engine} persists Narrate`);
     const narrated = await emitAssistantRecord(
-      worktree,
+      fixture,
       page,
       lane,
       `${engine} narrated commentary`,
@@ -234,7 +234,7 @@ async function assertAutomaticSpeechEngine(engine, endpoint, fixture, worktree, 
     await waitForSpeech(page, 1, `${engine} Narrate commentary`);
     assert.equal(await latestSpeechText(page), `${engine} narrated commentary`);
     const queued = await emitAssistantRecord(
-      worktree,
+      fixture,
       page,
       lane,
       `${engine} queued narration`,
@@ -280,7 +280,7 @@ async function assertAutomaticSpeechEngine(engine, endpoint, fixture, worktree, 
   }
 }
 
-async function emitAssistantRecord(worktree, page, lane, text, { final = false } = {}) {
+async function emitAssistantRecord(fixture, page, lane, text, { final = false } = {}) {
   const cards = page.locator(
     `[data-card-kind="agent-message"][data-agent-lane="${lane}"]`,
   );
@@ -297,11 +297,7 @@ async function emitAssistantRecord(worktree, page, lane, text, { final = false }
     },
   };
   if (final) message.stop_reason = "end_turn";
-  await writeFile(join(worktree, ".spice-authored-prose-trigger"), `${JSON.stringify({
-    timestamp: new Date().toISOString(),
-    type: "assistant",
-    message,
-  })}\n`);
+  await streamPrimaryAssistantMessage(fixture, message);
   await cards.nth(before).waitFor({ timeout: CONNECT_MS });
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
     () => requestAnimationFrame(resolve),
