@@ -35,7 +35,7 @@ const INTERMEDIATE_PARENT = `
   import { spawn } from "node:child_process";
   const harness = spawn(process.execPath, [process.argv[1], process.argv[2]], {
     cwd: process.cwd(),
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
   });
   harness.stdout.pipe(process.stdout);
   harness.stderr.pipe(process.stderr);
@@ -89,7 +89,7 @@ async function launchHarness(mode, throughIntermediate = false) {
     : [harness, mode];
   const child = spawn(process.execPath, args, {
     cwd: root,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
   });
   let diagnostics = "";
   child.stderr.on("data", (chunk) => { diagnostics += chunk.toString(); });

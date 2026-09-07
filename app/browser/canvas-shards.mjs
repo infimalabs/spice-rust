@@ -99,7 +99,18 @@ export function descendantPids(ancestor = process.pid) {
       }
     }
   }
-  return descendants;
+  // The synchronous `ps` invocation is itself a child of this process and can
+  // therefore appear in the table it prints. It has exited by the time
+  // `execFileSync` returns, so retain only descendants the kernel still names
+  // at the completed snapshot boundary.
+  return descendants.filter((pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      return error.code === "EPERM";
+    }
+  });
 }
 
 /// Bind one worker invocation to the registry and account every scenario.
