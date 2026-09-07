@@ -614,6 +614,7 @@ pub(super) fn add_dependency(
         vec![
             statement_witness(alpha_heads),
             workflow_witness(alpha_heads),
+            claim_witness(alpha_heads),
             statement_witness(beta_heads),
             workflow_witness(beta_heads),
             Witness::Edge {

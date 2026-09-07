@@ -911,30 +911,16 @@ pub(super) fn task_depends(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    let parked = referenced_oops(
-        &snapshot.entries,
-        std::iter::once(&depends.task).chain(depends.after.iter()),
-    );
-    if !parked.is_empty() {
-        return oops_dependency_refusal(&parked);
-    }
-    let Some(entry) = snapshot
-        .entries
-        .iter()
-        .find(|entry| entry.handle() == &depends.task)
-    else {
-        return refusal(
-            "task::unknown",
-            Some(depends.task.to_string()),
-            "read board and name one current task handle",
-        );
+    let entry = match dependency_entry(&snapshot, depends) {
+        Ok(entry) => entry,
+        Err(outcome) => return outcome,
     };
-    if entry.workflow().status == "completed" {
-        return refusal(
-            "task::settled",
-            Some(depends.task.to_string()),
-            "edit dependencies only while the task is pending",
-        );
+    let at = match current_instant() {
+        Ok(at) => at,
+        Err(outcome) => return outcome,
+    };
+    if let Err(outcome) = dependency_claim_authority(&snapshot, entry, command, at) {
+        return outcome;
     }
     let statement = match dependency_statement(&snapshot.entries, entry, depends) {
         Ok(statement) => statement,
@@ -957,10 +943,50 @@ pub(super) fn task_depends(
         }
     };
     let next = next_action(&snapshot, &post, false);
-    let at = match current_instant() {
-        Ok(at) => at,
-        Err(outcome) => return outcome,
+    commit_dependency_edit(bus, command, depends, entry, statement, next, at)
+}
+
+fn dependency_entry<'a>(
+    snapshot: &'a ValidatedSnapshot,
+    depends: &TaskDepends,
+) -> Result<&'a Entry, Outcome<CommandAnswer>> {
+    let parked = referenced_oops(
+        &snapshot.entries,
+        std::iter::once(&depends.task).chain(depends.after.iter()),
+    );
+    if !parked.is_empty() {
+        return Err(oops_dependency_refusal(&parked));
+    }
+    let Some(entry) = snapshot
+        .entries
+        .iter()
+        .find(|entry| entry.handle() == &depends.task)
+    else {
+        return Err(refusal(
+            "task::unknown",
+            Some(depends.task.to_string()),
+            "read board and name one current task handle",
+        ));
     };
+    if entry.workflow().status == "completed" {
+        return Err(refusal(
+            "task::settled",
+            Some(depends.task.to_string()),
+            "edit dependencies only while the task is pending",
+        ));
+    }
+    Ok(entry)
+}
+
+fn commit_dependency_edit(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    depends: &TaskDepends,
+    entry: &Entry,
+    statement: TaskHead,
+    next: Option<Box<str>>,
+    at: Instant,
+) -> Outcome<CommandAnswer> {
     let origin = match task_origin(entry.born()) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
@@ -987,7 +1013,7 @@ pub(super) fn task_depends(
         ..statement
     });
     let answer = wire::intent::TaskAnswer {
-        task: depends.task.clone(),
+        task: entry.handle().clone(),
         status: "edited".to_owned(),
         guidance: None,
         completion: None,
@@ -1026,19 +1052,121 @@ fn dependency_statement(
         resolved.push(prerequisite);
     }
     let mut statement = entry.statement().clone();
+    let mut added = Vec::new();
     for (after, prerequisite) in depends.after.iter().zip(resolved) {
-        if prerequisite.born() == entry.born()
-            || statement.dependencies.contains(prerequisite.born())
-        {
+        if prerequisite.born() == entry.born() {
             return Err(refusal(
                 "task::dependency-refused",
                 Some(format!("{} after {after}", depends.task)),
-                "name a distinct dependency edge that is not already present",
+                "a task cannot depend on itself",
+            ));
+        }
+        if statement.dependencies.contains(prerequisite.born())
+            || added.contains(prerequisite.born())
+        {
+            continue;
+        }
+        if dependency_reaches(entries, prerequisite.born(), entry.born()) {
+            return Err(refusal(
+                "task::dependency-refused",
+                Some(format!("{} after {after}", depends.task)),
+                "name dependencies that keep the complete task graph acyclic",
             ));
         }
         statement.dependencies.push(prerequisite.born().clone());
+        added.push(prerequisite.born().clone());
     }
     Ok(statement)
+}
+
+fn dependency_reaches(entries: &[Entry], start: &TaskStamp, target: &TaskStamp) -> bool {
+    let mut pending = vec![start.clone()];
+    let mut visited = Vec::new();
+    while let Some(current) = pending.pop() {
+        if &current == target {
+            return true;
+        }
+        if visited.contains(&current) {
+            continue;
+        }
+        visited.push(current.clone());
+        if let Some(entry) = entries.iter().find(|entry| entry.born() == &current) {
+            pending.extend(entry.statement().dependencies.iter().cloned());
+        }
+    }
+    false
+}
+
+fn dependency_claim_authority(
+    snapshot: &ValidatedSnapshot,
+    entry: &Entry,
+    command: &wire::AdmittedCommand,
+    at: Instant,
+) -> Result<(), Outcome<CommandAnswer>> {
+    let Some(claim) = entry
+        .claim()
+        .filter(|claim| claim.disposition == ClaimDisposition::Active)
+    else {
+        return Ok(());
+    };
+    let Actor::Lane(lane) = command.actor() else {
+        return Err(refusal(
+            "claim::lane-required",
+            Some(command.actor().to_string()),
+            "append dependencies through the lane capability that owns the active claim",
+        ));
+    };
+    if claim.actor != *command.actor() || claim.lane != *lane {
+        return Err(refusal(
+            "claim::ownership-refused",
+            Some(claim.actor.to_string()),
+            "append dependencies through the lane capability that owns the active claim",
+        ));
+    }
+    board::Active::admit(entry, command.actor(), at).map_err(|error| {
+        refusal(
+            "claim::active-refused",
+            Some(error.to_string()),
+            "reclaim the current active task before editing its dependencies",
+        )
+    })?;
+    let has_lease = command
+        .expected()
+        .iter()
+        .any(|witness| matches!(witness, Witness::Lease { task, .. } if task == entry.born()));
+    let has_residency = command.expected().iter().any(|witness| {
+        matches!(witness, Witness::Residency { lane: witnessed, .. } if witnessed == lane)
+    });
+    let has_assignment = command
+        .expected()
+        .iter()
+        .any(|witness| matches!(witness, Witness::Assignment { task, .. } if task == entry.born()));
+    if !has_lease
+        || !has_residency
+        || (entry.workflow().phase.as_str() == "review" && !has_assignment)
+    {
+        return Err(protocol_fault(
+            "task::dependency-claim-witness-missing",
+            "an active claimed dependency edit must bind lease, residency, and review assignment authority",
+        ));
+    }
+    let residency = &snapshot.answer.residency.body;
+    let occupant = residency
+        .lanes
+        .iter()
+        .find(|seat| seat.lane == *lane && seat.disposition == "occupied")
+        .and_then(|seat| seat.occupant);
+    if residency.epoch != command.epoch()
+        || claim.epoch != command.epoch()
+        || occupant != Some(claim.occupant)
+    {
+        return Err(refusal(
+            "claim::residency-moved",
+            Some(entry.handle().to_string()),
+            "reclaim the task under the current lane occupant before editing dependencies",
+        ));
+    }
+    Ok(())
 }
 
 /// Replace an unsettled task statement in place, at a fresh revision.

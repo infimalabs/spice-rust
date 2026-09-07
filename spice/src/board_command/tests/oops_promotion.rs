@@ -31,7 +31,25 @@ fn dependency_witnesses(
     after: &[TaskHandle],
 ) -> Vec<Witness> {
     let heads = at(answer, task);
-    let mut expected = vec![statement_witness(heads), workflow_witness(heads)];
+    let mut expected = if heads.claim.as_ref().is_some_and(|claim| {
+        claim.body.actor == answer.principal && claim.body.disposition == ClaimDisposition::Active
+    }) {
+        let (lane, occupant) = actor_seat(answer).expect("claimant has one occupied seat");
+        progress_witnesses(
+            answer,
+            heads,
+            lane,
+            occupant,
+            heads.workflow.body.phase.as_str() == "review",
+        )
+        .expect("claimant dependency witnesses")
+    } else {
+        vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+        ]
+    };
     for dependency in after {
         let prerequisite = at(answer, dependency);
         expected.push(statement_witness(prerequisite));

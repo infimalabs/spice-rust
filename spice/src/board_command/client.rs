@@ -559,15 +559,45 @@ fn client_depends(
             .map(|value| value.parse::<TaskHandle>())
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| refusal("task::dependency-invalid", None, &error.to_string()))?;
-        let mut expected = vec![statement_witness(heads), workflow_witness(heads)];
+        let mut expected = vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+        ];
+        if let Some(claim) = heads
+            .claim
+            .as_ref()
+            .filter(|claim| claim.body.disposition == ClaimDisposition::Active)
+        {
+            if claim.body.actor != board.principal {
+                return Err(refusal(
+                    "claim::ownership-refused",
+                    Some(claim.body.actor.to_string()),
+                    "append dependencies through the lane capability that owns the active claim",
+                ));
+            }
+            let (lane, occupant) = actor_seat(board)?;
+            expected = progress_witnesses(
+                board,
+                heads,
+                lane,
+                occupant,
+                heads.workflow.body.phase.as_str() == "review",
+            )?;
+        }
+        let mut new_edges = Vec::new();
         for dependency in &after {
             let dependency_heads = task_heads(board, dependency)?;
             expected.push(statement_witness(dependency_heads));
             expected.push(workflow_witness(dependency_heads));
-            expected.push(Witness::Edge {
-                task: heads.statement.body.born.clone(),
-                after: dependency_heads.statement.body.born.clone(),
-            });
+            let born = &dependency_heads.statement.body.born;
+            if !heads.statement.body.dependencies.contains(born) && !new_edges.contains(born) {
+                expected.push(Witness::Edge {
+                    task: heads.statement.body.born.clone(),
+                    after: born.clone(),
+                });
+                new_edges.push(born.clone());
+            }
         }
         Ok((
             CommandKind::TaskDepends,
