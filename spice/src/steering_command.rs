@@ -179,7 +179,12 @@ fn hook_document_at(
         .acquire()
         .map_err(|error| format!("inbox hook delivery lock unavailable: {error}"))?;
     let mut state = read_hook_delivery_state(state_path)?;
-    let working_status = working_state.and_then(spice::session_meter::ordinary_status);
+    let authored_steering = inbox
+        .lanes
+        .first()
+        .is_some_and(|lane| !lane.pending.is_empty());
+    let working_status = working_state
+        .and_then(|state| spice::session_meter::ordinary_status(state, authored_steering));
     let (filtered, changed) = filter_hook_inbox(
         inbox,
         &mut state,

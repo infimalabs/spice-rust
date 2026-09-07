@@ -773,8 +773,9 @@ fn acknowledgment_paths(
     let additional_context = hook["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .expect("hook context is text");
-    assert!(additional_context.starts_with("Rust Spice system status."));
-    assert!(additional_context.contains("Working state: 1 pending inbox."));
+    assert!(additional_context.starts_with("Rust Spice steering is pending."));
+    assert!(!additional_context.contains("Working state:"));
+    assert!(!additional_context.contains("pending inbox"));
     assert!(additional_context.contains(&sent.key));
     assert!(additional_context.contains("stage=published"));
     assert!(additional_context.contains(direction));

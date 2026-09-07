@@ -461,19 +461,22 @@ struct StoredState {
 fn render(snapshot: &WorkingState) -> String {
     format!(
         "🌶️ Working state: {}.",
-        render_parts(snapshot, true).join("; ")
+        render_parts(snapshot, true, true).join("; ")
     )
 }
 
-/// Render ordinary state for post-tool system status, excluding lease urgency.
-pub fn ordinary_status(snapshot: &WorkingState) -> Option<String> {
-    let parts = render_parts(snapshot, false);
+/// Render ordinary post-tool status without repeating authored steering.
+///
+/// When no authored directive section owns the pending rows, their count stays
+/// visible here as the hook's sole inbox representation.
+pub fn ordinary_status(snapshot: &WorkingState, authored_steering: bool) -> Option<String> {
+    let parts = render_parts(snapshot, false, !authored_steering);
     (!parts.is_empty()).then(|| format!("Working state: {}.", parts.join("; ")))
 }
 
-fn render_parts(snapshot: &WorkingState, include_lease: bool) -> Vec<String> {
+fn render_parts(snapshot: &WorkingState, include_lease: bool, include_inbox: bool) -> Vec<String> {
     let mut parts = Vec::new();
-    if snapshot.pending_inbox_count > 0 {
+    if include_inbox && snapshot.pending_inbox_count > 0 {
         let noun = if snapshot.pending_inbox_count == 1 {
             "inbox"
         } else {
@@ -482,7 +485,7 @@ fn render_parts(snapshot: &WorkingState, include_lease: bool) -> Vec<String> {
         parts.push(format!("{} pending {noun}", snapshot.pending_inbox_count));
     }
     if snapshot.drain_queue && snapshot.claim.is_none() {
-        let direction = if snapshot.pending_inbox_count > 0 {
+        let direction = if include_inbox && snapshot.pending_inbox_count > 0 {
             "handle operator direction first, then DRAIN QUEUE ASAP: spice task next"
         } else {
             "DRAIN QUEUE ASAP: spice task next"
@@ -644,7 +647,7 @@ mod tests {
 
     #[test]
     fn ordinary_hook_status_keeps_state_but_omits_elapsed_and_lease_urgency() {
-        let status = ordinary_status(&state(Some(59))).expect("ordinary state renders");
+        let status = ordinary_status(&state(Some(59)), false).expect("ordinary state renders");
         assert!(status.contains("1 pending inbox"));
         assert!(status.contains("claim METER-00000001 todo"));
         assert!(status.contains("last taste fallbacks"));
@@ -656,10 +659,10 @@ mod tests {
             drain_queue: true,
             ..WorkingState::default()
         };
-        let status = ordinary_status(&drain).expect("drain state renders");
+        let status = ordinary_status(&drain, false).expect("drain state renders");
         assert!(status.contains("handle operator direction first"));
         assert!(status.contains("DRAIN QUEUE ASAP: spice task next"));
-        assert_eq!(ordinary_status(&WorkingState::default()), None);
+        assert_eq!(ordinary_status(&WorkingState::default(), false), None);
     }
 
     #[test]
