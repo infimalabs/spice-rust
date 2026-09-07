@@ -248,6 +248,7 @@ pub(super) fn find_thread(
     vendor: &'static spice::extension::Vendor,
     environment: &Environment,
 ) -> Result<Vec<PathBuf>, String> {
+    let lookup = thread.replace('-', "");
     let vendor_environment = environment
         .vendors
         .iter()
@@ -264,7 +265,7 @@ pub(super) fn find_thread(
     if let Some(vendor::TranscriptIndex::CodexStateV5 { file }) = layout.state_index {
         let state = root.join(file);
         if state.is_file() {
-            match codex_state_paths(&state, thread) {
+            match codex_state_paths(&state, &lookup) {
                 Ok(indexed) => {
                     indexed_paths.extend(indexed.into_iter().filter(|path| path.is_file()));
                 }
@@ -278,7 +279,7 @@ pub(super) fn find_thread(
             ));
         }
     }
-    let discovered = match find_named_transcript(&root.join(layout.sessions_directory), thread) {
+    let discovered = match find_named_transcript(&root.join(layout.sessions_directory), &lookup) {
         Ok(matches) => matches,
         Err(_) if !indexed_paths.is_empty() => return Ok(indexed_paths),
         Err(error) => {
@@ -476,8 +477,13 @@ fn transcript_extension(path: &Path) -> bool {
 
 pub(crate) fn canonical_thread(value: &str) -> Option<String> {
     let compact = value.trim().replace('-', "").to_ascii_lowercase();
-    (compact.len() == THREAD_HEX_LEN && compact.bytes().all(|byte| byte.is_ascii_hexdigit()))
-        .then_some(compact)
+    if compact.len() != THREAD_HEX_LEN || !compact.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    uuid::Uuid::parse_str(&compact)
+        .ok()
+        .map(wire::CanonicalUuid::new)
+        .map(|identity| identity.to_string())
 }
 
 fn refusal(reason: &str, observed: Option<String>, detail: &str) -> Refusal {
@@ -502,12 +508,13 @@ mod tests {
     use std::os::unix::fs::PermissionsExt as _;
 
     use super::{
-        Environment, SEARCH_DEPTH, find_named_transcript, find_thread, resolve_inputs,
-        resolve_thread_from_registry,
+        Environment, SEARCH_DEPTH, canonical_thread, find_named_transcript, find_thread,
+        resolve_inputs, resolve_thread_from_registry,
     };
     use crate::session_command::VendorEnvironment;
 
     const THREAD: &str = "0123456789abcdef0123456789abcdef";
+    const THREAD_DASHED: &str = "01234567-89ab-cdef-0123-456789abcdef";
     const FIXTURE_DIALECT: vendor::Vendor = vendor::Vendor::named("fixture", &vendor::CODEX);
     const FIXTURE_VENDOR: spice::extension::Vendor =
         spice::extension::Vendor::new(&FIXTURE_DIALECT, fixture_configuration, 2);
@@ -519,6 +526,19 @@ mod tests {
             value: spice::extension::Value::Vendor(&FIXTURE_VENDOR),
         }];
     static FIXTURE: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn dashed_and_compact_thread_inputs_share_one_canonical_presentation() {
+        assert_eq!(canonical_thread(THREAD).as_deref(), Some(THREAD_DASHED));
+        assert_eq!(
+            canonical_thread(THREAD_DASHED).as_deref(),
+            Some(THREAD_DASHED)
+        );
+        assert_eq!(
+            canonical_thread("01234567-89AB-CDEF-0123-456789ABCDEF").as_deref(),
+            Some(THREAD_DASHED),
+        );
+    }
 
     fn fixture_configuration(root: &spice::config::Root) -> vendor::LaunchValues<'_> {
         let configured = root.vendor().codex();
@@ -826,7 +846,7 @@ mod tests {
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].vendor, super::Vendor::declared(fixture));
         assert_eq!(resolved[0].dialect, Some(listen::Dialect::Codex));
-        assert_eq!(resolved[0].thread.as_deref(), Some(THREAD));
+        assert_eq!(resolved[0].thread.as_deref(), Some(THREAD_DASHED));
         assert_eq!(
             resolved[0].path,
             transcript.canonicalize().expect("fixture path")

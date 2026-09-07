@@ -820,7 +820,7 @@ fn actor_route_projects_the_current_lane_session_identity() {
     let occupant = row.occupant.expect("fixture occupant");
     let legacy = actor_route(&Actor::Lane(seats[0].lane), &residency)
         .expect("a legacy occupied seat names its occupant route");
-    assert_eq!(legacy.actor, occupant.get().simple().to_string());
+    assert_eq!(legacy.actor, occupant.to_string());
 
     let row = residency.lanes.first_mut().expect("fixture lane");
     row.session = Some(wire::LaneSession {
@@ -841,7 +841,7 @@ fn actor_route_projects_the_current_lane_session_identity() {
 
     let route = actor_route(&Actor::Lane(seats[0].lane), &residency)
         .expect("current session identity names a route");
-    let actor = identity.get().simple().to_string();
+    let actor = identity.to_string();
     assert_eq!(route.actor, actor);
     assert_eq!(route.project, format!("agent.{actor}.task"));
     assert_eq!(route.origin_thread, actor);
@@ -883,8 +883,8 @@ fn lane_task_origin_thread_comes_from_its_durable_creation_session() {
         Some("todo"),
     );
     let answer = board(&bus, epoch, Actor::Lane(seats[0].lane));
-    let first_actor = first_identity.get().simple().to_string();
-    let second_actor = second_identity.get().simple().to_string();
+    let first_actor = first_identity.to_string();
+    let second_actor = second_identity.to_string();
     assert_eq!(answer.actor_route.origin_thread, second_actor);
     assert_eq!(at(&answer, &first).origin_thread, first_actor);
     assert_eq!(at(&answer, &second).origin_thread, second_actor);
