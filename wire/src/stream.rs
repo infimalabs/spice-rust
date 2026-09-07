@@ -55,6 +55,29 @@ pub enum AutomaticSpeechKind {
     Acknowledgement,
 }
 
+/// Semantic badges earned by one agent-authored message.
+///
+/// These counts are resident-classified from durable steering evidence. Canvas
+/// renders them directly and never parses message prose to infer protocol state.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentMessageBadges {
+    /// Positively acknowledged ordinary directives.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub acknowledgements: u32,
+    /// Positively acknowledged taste reminders.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub tastes: u32,
+}
+
+impl AgentMessageBadges {
+    /// Whether this message earned no semantic badge.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.acknowledgements == 0 && self.tastes == 0
+    }
+}
+
 /// Resident-selected text for one automatic Speak delivery.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -63,6 +86,9 @@ pub struct AutomaticSpeech {
     pub kind: AutomaticSpeechKind,
     /// Cleaned text handed to the configured speech backend.
     pub text: String,
+    /// Typed positive directive classifications carried with this message.
+    #[serde(default, skip_serializing_if = "AgentMessageBadges::is_empty")]
+    pub badges: AgentMessageBadges,
 }
 
 impl AgentActivityKind {
@@ -161,6 +187,10 @@ pub struct AgentMessage {
     /// Admitted media carried beside this exact transcript event.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub media: Vec<crate::Media>,
+}
+
+const fn is_zero(value: &u32) -> bool {
+    *value == 0
 }
 
 impl AgentMessage {

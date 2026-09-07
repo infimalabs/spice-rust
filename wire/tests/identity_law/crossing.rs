@@ -54,6 +54,7 @@ fn every_crossing_type_obeys_the_identity_law() {
     cover_residency_heads(&mut covered);
     cover_head_enums(&mut covered);
     cover_command_frames(&mut covered);
+    cover_message_badges(&mut covered);
     cover_stream_frames(&mut covered);
     cover_packed_frames(&mut covered);
     cover_refusal_frames(&mut covered);
@@ -62,6 +63,39 @@ fn every_crossing_type_obeys_the_identity_law() {
     cover_vocabularies(&mut covered);
 
     assert_coverage_is_complete(&covered);
+}
+
+fn cover_message_badges(covered: &mut BTreeSet<String>) {
+    let empty = AgentMessageBadges::default();
+    let acknowledgements = AgentMessageBadges {
+        acknowledgements: 2,
+        tastes: 0,
+    };
+    let tastes = AgentMessageBadges {
+        acknowledgements: 0,
+        tastes: 1,
+    };
+    law(
+        covered,
+        "AgentMessageBadges",
+        &[empty, acknowledgements, tastes],
+    );
+    law(
+        covered,
+        "AutomaticSpeech",
+        &[
+            AutomaticSpeech {
+                kind: AutomaticSpeechKind::Final,
+                text: "settled final".to_owned(),
+                badges: empty,
+            },
+            AutomaticSpeech {
+                kind: AutomaticSpeechKind::Acknowledgement,
+                text: "applied".to_owned(),
+                badges: acknowledgements,
+            },
+        ],
+    );
 }
 
 /// Closed Doctor report states and metadata spellings.

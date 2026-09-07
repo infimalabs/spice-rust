@@ -167,14 +167,99 @@ fn render_agent_message_card(
     correspondent: &view::chrome::Correspondent,
     layout: &CardLayout,
 ) -> Html {
-    let source_id = agent_message_source_id(message);
+    let AgentMessagePresentation {
+        source_id,
+        attribution,
+        footer_label,
+        is_compaction,
+        rendered_html,
+        unlinked_media,
+        image_only,
+        card_label,
+        badges,
+    } = agent_message_presentation(member, message);
+    html! {
+        <article
+            key={source_id.clone()}
+            id={source_id.clone()}
+            class={classes!(
+                "mosaic-message-card",
+                is_compaction.then_some("mosaic-compaction-card"),
+                (!is_compaction && image_only).then_some("mosaic-message-card--image-only"),
+                message.final_answer.then_some("final"),
+                correspondent.speaking.then_some("now-playing"),
+                layout.lifecycle.as_str(),
+            )}
+            aria-label={card_label}
+            data-card-kind={agent_card_kind(is_compaction)}
+            data-message-role="agent"
+            data-mosaic-card-key={source_id}
+            data-layout-phase={if layout.committed { "committed" } else { "measuring" }}
+            data-agent-lane={member.lane.to_string()}
+            data-agent-activity={agent_activity_name(message.activity)}
+            data-message-ack-count={badges.acknowledgements.to_string()}
+            data-message-taste-count={badges.tastes.to_string()}
+            data-message-final={message.final_answer.to_string()}
+            data-speech-active={correspondent.speaking.to_string()}
+            data-producer-target-id={quote_lane.to_string()}
+            data-accent={correspondent.accent.to_string()}
+            data-accent-slot={correspondent.accent.to_string()}
+            data-state={layout.lifecycle.as_str()}
+            data-track={layout.track.to_string()}
+            data-span={layout.span.to_string()}
+            data-base={layout.base.to_string()}
+            data-row={layout.row.to_string()}
+            data-rows={layout.rows.to_string()}
+            data-creation-index={layout.measurement_index.to_string()}
+            data-mosaic-measure-index={layout.measurement_index.to_string()}
+            data-measurement-reads={layout.measurement_reads.to_string()}
+            data-measured-spans={layout.measured_spans.clone()}
+            data-measured-widths={layout.measured_widths.clone()}
+            data-measured-heights={layout.measured_heights.clone()}
+            data-candidate-spans={layout.candidate_spans.clone()}
+            data-measure-span={layout.measure_span.to_string()}
+        >
+            if is_compaction {
+                {render_compaction_boundary(message, &footer_label)}
+            } else {
+                <div class="message-body markdown-body">{rendered_html}</div>
+                {render_agent_message_media(unlinked_media)}
+                {render_agent_message_footer(
+                    message,
+                    correspondent,
+                    crate::runtime::agent_message_display_millis(message),
+                    &footer_label,
+                    &attribution,
+                )}
+            }
+        </article>
+    }
+}
+
+struct AgentMessagePresentation<'a> {
+    source_id: String,
+    attribution: String,
+    footer_label: String,
+    is_compaction: bool,
+    rendered_html: Html,
+    unlinked_media: Vec<&'a wire::Media>,
+    image_only: bool,
+    card_label: String,
+    badges: wire::AgentMessageBadges,
+}
+
+fn agent_message_presentation<'a>(
+    member: &crate::runtime::LaneMember,
+    message: &'a wire::AgentMessage,
+) -> AgentMessagePresentation<'a> {
     let attribution = watchband::agent_message_attribution(
         message.author,
         member.lane,
         &member.worktree,
         member.name.as_deref(),
     );
-    let footer_label = watchband::agent_message_label(&member.worktree, member.name.as_deref());
+    let footer_label =
+        watchband::agent_message_label(&member.worktree, member.name.as_deref()).to_owned();
     let is_compaction = message.activity == wire::AgentActivityKind::Compaction;
     let rendered_markdown = crate::composer_markdown::render_received(&message.text);
     let card_label = match message.activity {
@@ -198,60 +283,19 @@ fn render_agent_message_card(
         .collect::<Vec<_>>();
     let image_only = rendered_markdown.image_only
         || (!unlinked_media.is_empty() && message.text.trim().is_empty());
-    let rendered_html = Html::from_html_unchecked(AttrValue::from(rendered_markdown.html));
-    html! {
-        <article
-            key={source_id.clone()}
-            id={source_id.clone()}
-            class={classes!(
-                "mosaic-message-card",
-                is_compaction.then_some("mosaic-compaction-card"),
-                (!is_compaction && image_only).then_some("mosaic-message-card--image-only"),
-                message.final_answer.then_some("final"),
-                correspondent.speaking.then_some("now-playing"),
-                layout.lifecycle.as_str(),
-            )}
-            aria-label={card_label}
-            data-card-kind={agent_card_kind(is_compaction)}
-            data-message-role="agent"
-            data-mosaic-card-key={source_id}
-            data-layout-phase={if layout.committed { "committed" } else { "measuring" }}
-            data-agent-lane={member.lane.to_string()}
-            data-agent-activity={agent_activity_name(message.activity)}
-            data-message-final={message.final_answer.to_string()}
-            data-speech-active={correspondent.speaking.to_string()}
-            data-producer-target-id={quote_lane.to_string()}
-            data-accent={correspondent.accent.to_string()}
-            data-accent-slot={correspondent.accent.to_string()}
-            data-state={layout.lifecycle.as_str()}
-            data-track={layout.track.to_string()}
-            data-span={layout.span.to_string()}
-            data-base={layout.base.to_string()}
-            data-row={layout.row.to_string()}
-            data-rows={layout.rows.to_string()}
-            data-creation-index={layout.measurement_index.to_string()}
-            data-mosaic-measure-index={layout.measurement_index.to_string()}
-            data-measurement-reads={layout.measurement_reads.to_string()}
-            data-measured-spans={layout.measured_spans.clone()}
-            data-measured-widths={layout.measured_widths.clone()}
-            data-measured-heights={layout.measured_heights.clone()}
-            data-candidate-spans={layout.candidate_spans.clone()}
-            data-measure-span={layout.measure_span.to_string()}
-        >
-            if is_compaction {
-                {render_compaction_boundary(message, footer_label)}
-            } else {
-                <div class="message-body markdown-body">{rendered_html}</div>
-                {render_agent_message_media(unlinked_media)}
-                {render_agent_message_footer(
-                    message,
-                    correspondent,
-                    crate::runtime::agent_message_display_millis(message),
-                    footer_label,
-                    &attribution,
-                )}
-            }
-        </article>
+    AgentMessagePresentation {
+        source_id: agent_message_source_id(message),
+        attribution,
+        footer_label,
+        is_compaction,
+        rendered_html: Html::from_html_unchecked(AttrValue::from(rendered_markdown.html)),
+        unlinked_media,
+        image_only,
+        card_label,
+        badges: message
+            .automatic_speech
+            .as_ref()
+            .map_or_else(wire::AgentMessageBadges::default, |speech| speech.badges),
     }
 }
 
@@ -397,6 +441,12 @@ fn render_agent_message_footer(
         <footer class="message-footer">
             <div class="message-footer-left">
                 <Age authored={display_millis} class="message-age" title={locus} />
+                {render_agent_message_badges(
+                    message
+                        .automatic_speech
+                        .as_ref()
+                        .map_or_else(wire::AgentMessageBadges::default, |speech| speech.badges),
+                )}
             </div>
             <div class="message-footer-right">
                 {producer_identity}
@@ -405,6 +455,31 @@ fn render_agent_message_footer(
                 }
             </div>
         </footer>
+    }
+}
+
+fn render_agent_message_badges(badges: wire::AgentMessageBadges) -> Html {
+    if badges.is_empty() {
+        return Html::default();
+    }
+    html! {
+        <span class="message-badges" aria-label="Message classifications">
+            if badges.acknowledgements > 0 {
+                {render_agent_message_badge("ACK", "ack", badges.acknowledgements)}
+            }
+            if badges.tastes > 0 {
+                {render_agent_message_badge("TASTE", "taste", badges.tastes)}
+            }
+        </span>
+    }
+}
+
+fn render_agent_message_badge(label: &'static str, class: &'static str, count: u32) -> Html {
+    html! {
+        <span class={classes!("message-badge", format!("message-badge--{class}"))}>
+            <span class="message-badge-label">{label}</span>
+            <span class="message-badge-count">{count}</span>
+        </span>
     }
 }
 

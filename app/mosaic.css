@@ -852,6 +852,7 @@
 }
 .team-surface .message-footer-left {
   display: flex;
+  gap: 6px;
   width: 4ch;
 }
 .team-surface .message-footer-right {
@@ -883,6 +884,36 @@
   font-variant-numeric: tabular-nums;
   text-overflow: clip;
   white-space: pre;
+}
+.team-surface .message-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.team-surface .message-badge {
+  --message-badge-accent: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--message-badge-accent) 42%, var(--panel));
+  border-radius: 999px;
+  background: var(--message-badge-accent);
+  color: var(--panel);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.team-surface .message-badge--taste { --message-badge-accent: var(--accent-5); }
+.team-surface .message-badge-count {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--message-badge-accent) 24%, transparent);
+  color: var(--message-badge-accent);
+  font-size: 9px;
 }
 .team-surface .message-agent-name {
   display: inline-flex; justify-content: flex-end;

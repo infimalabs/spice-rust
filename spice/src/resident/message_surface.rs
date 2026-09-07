@@ -1,6 +1,6 @@
 //! Durable taste recognition and fallible Canvas views over admitted lane capture.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 
 use bus::Bus;
@@ -669,6 +669,7 @@ pub(super) struct PresentationDirectives(BTreeMap<steer::Key, PresentationDirect
 struct PresentationDirective {
     lane: CanonicalUuid,
     text: String,
+    taste: bool,
     disposition: wire::Disposition,
     retirement: Option<wire::body::TranscriptLocus>,
 }
@@ -677,6 +678,7 @@ impl PresentationDirectives {
     fn from_snapshot(snapshot: &journal::FactSnapshot) -> Result<Self, String> {
         let steering = steer::Ledger::from_snapshot(snapshot).map_err(|error| error.to_string())?;
         let mut retirements = BTreeMap::new();
+        let mut tastes = BTreeSet::new();
         for envelope in snapshot.facts() {
             if let Some(body) = envelope.fact.read::<wire::body::SteerAcked>() {
                 let key = body
@@ -690,6 +692,19 @@ impl PresentationDirectives {
                     .parse::<steer::Key>()
                     .map_err(|error| error.to_string())?;
                 retirements.insert(key, body.locus);
+            } else if let Some(body) = envelope.fact.read::<wire::body::TasteReminded>() {
+                tastes.insert(
+                    body.key
+                        .parse::<steer::Key>()
+                        .map_err(|error| error.to_string())?,
+                );
+            } else if let Some(body) = envelope.fact.read::<wire::body::TasteJudged>()
+                && let wire::body::TasteDecision::Confirmed { key, .. } = body.decision
+            {
+                tastes.insert(
+                    key.parse::<steer::Key>()
+                        .map_err(|error| error.to_string())?,
+                );
             }
         }
         Ok(Self(
@@ -700,11 +715,13 @@ impl PresentationDirectives {
                 .map(|directive| {
                     let key = directive.key().clone();
                     let retirement = retirements.get(&key).copied();
+                    let taste = tastes.contains(&key);
                     (
                         key,
                         PresentationDirective {
                             lane: directive.lane(),
                             text: directive.text().to_owned(),
+                            taste,
                             disposition: directive.disposition(),
                             retirement,
                         },
@@ -719,6 +736,45 @@ fn presents_as_authored_steering(control: Option<&str>) -> bool {
     !control.is_some_and(|control| {
         control.starts_with(spice::session_meter::TASK_CONTRACT_CONTROL_PREFIX)
     })
+}
+
+fn message_badges(
+    text: &str,
+    directives: Option<&PresentationDirectives>,
+    event: PresentationEvent,
+) -> wire::AgentMessageBadges {
+    let Some(directives) = directives else {
+        return wire::AgentMessageBadges::default();
+    };
+    let standing = EventDirectives { directives, event };
+    let mut acknowledged = BTreeSet::new();
+    for packet in steer::ack::scan::scan_acknowledgements(text, &standing) {
+        for recognition in packet.recognitions {
+            let steer::ack::scan::Outcome::Retired { key, disposition } = recognition.outcome
+            else {
+                continue;
+            };
+            if disposition == wire::Disposition::Acked
+                && standing.recognizes(&key, disposition, recognition.locus)
+            {
+                acknowledged.insert(key);
+            }
+        }
+    }
+    let tastes = acknowledged
+        .iter()
+        .filter(|key| {
+            directives
+                .0
+                .get(*key)
+                .is_some_and(|directive| directive.taste)
+        })
+        .count();
+    wire::AgentMessageBadges {
+        acknowledgements: u32::try_from(acknowledged.len().saturating_sub(tastes))
+            .unwrap_or(u32::MAX),
+        tastes: u32::try_from(tastes).unwrap_or(u32::MAX),
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

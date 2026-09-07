@@ -159,6 +159,7 @@ impl Projection {
             .collect::<BTreeMap<_, _>>();
         let operator_directives = delta
             .iter()
+            .filter(|envelope| envelope.actor == Actor::Operator)
             .filter_map(|envelope| {
                 envelope
                     .fact
