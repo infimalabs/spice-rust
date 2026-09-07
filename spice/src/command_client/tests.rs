@@ -1,4 +1,4 @@
-use std::net::TcpListener;
+use std::net::{Shutdown, TcpListener};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 
@@ -220,6 +220,217 @@ fn answer_replacement_opening(
         ))
         .expect("replacement command response sends");
     1
+}
+
+fn accept_fixture_session(listener: TcpListener, epoch: CanonicalUuid) -> WebSocket<TcpStream> {
+    let (stream, _) = listener.accept().expect("fixture peer accepts");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("fixture peer read timeout");
+    stream
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .expect("fixture peer write timeout");
+    let mut socket = tungstenite::accept(stream).expect("fixture peer opens socket");
+    let hello: wire::Hello =
+        wire::decode(&socket.read().expect("fixture peer reads Hello").into_data())
+            .expect("fixture Hello decodes");
+    assert_eq!(hello.epoch, epoch);
+    socket
+        .send(Message::Binary(
+            wire::encode(&wire::Accepted {
+                wire: wire::WireVersion::CURRENT,
+                actor: Actor::Operator,
+                epoch,
+            })
+            .expect("fixture acceptance encodes")
+            .into(),
+        ))
+        .expect("fixture peer accepts client");
+    socket
+}
+
+fn read_fixture_command(socket: &mut WebSocket<TcpStream>) -> Command<serde_json::Value> {
+    wire::decode(
+        &socket
+            .read()
+            .expect("fixture peer reads command")
+            .into_data(),
+    )
+    .expect("fixture command decodes")
+}
+
+#[derive(Clone, Copy)]
+enum InterruptedAt {
+    BeforeCommand,
+    AfterCommand,
+}
+
+fn recovering_submission(
+    name: &str,
+    interrupted_at: InterruptedAt,
+    replacement_outcome: Outcome<serde_json::Value>,
+) -> (
+    Outcome<CommandAnswer>,
+    Option<Command<serde_json::Value>>,
+    Command<serde_json::Value>,
+    Vec<String>,
+) {
+    let fixture = Fixture::new(name);
+    let initial_listener = TcpListener::bind("127.0.0.1:0").expect("initial peer binds");
+    let replacement_listener = TcpListener::bind("127.0.0.1:0").expect("replacement peer binds");
+    let initial_epoch = uuid(40);
+    let replacement_epoch = uuid(41);
+    canvas::Discovery {
+        endpoint: format!(
+            "http://{}",
+            initial_listener.local_addr().expect("initial peer address")
+        ),
+        capability: uuid(42),
+        epoch: initial_epoch,
+    }
+    .publish(&fixture.canvas)
+    .expect("initial discovery publishes");
+    fixture.hold(initial_epoch);
+    let replacement = canvas::Discovery {
+        endpoint: format!(
+            "http://{}",
+            replacement_listener
+                .local_addr()
+                .expect("replacement peer address")
+        ),
+        capability: uuid(43),
+        epoch: replacement_epoch,
+    };
+
+    let initial_peer = std::thread::spawn(move || {
+        let mut socket = accept_fixture_session(initial_listener, initial_epoch);
+        let command = match interrupted_at {
+            InterruptedAt::BeforeCommand => None,
+            InterruptedAt::AfterCommand => Some(read_fixture_command(&mut socket)),
+        };
+        socket
+            .get_mut()
+            .shutdown(Shutdown::Both)
+            .expect("initial peer resets connection");
+        command
+    });
+    let replacement_peer = std::thread::spawn(move || {
+        let mut socket = accept_fixture_session(replacement_listener, replacement_epoch);
+        let command = read_fixture_command(&mut socket);
+        let response = Response {
+            v: wire::WireVersion::CURRENT,
+            id: command.id,
+            epoch: replacement_epoch,
+            outcome: replacement_outcome,
+        };
+        socket
+            .send(Message::Binary(
+                wire::encode(&response)
+                    .expect("replacement response encodes")
+                    .into(),
+            ))
+            .expect("replacement response sends");
+        command
+    });
+    let command = mapped();
+    let command_id = command.id;
+    let mut transients = Vec::new();
+    let outcome = execute_mapped_with(
+        &fixture.canvas,
+        &COMMAND_CONTRACT,
+        Connection::Operator,
+        Ok(command),
+        |fault| {
+            transients.push(fault.reason.clone());
+            if fault.reason == "canvas::send-failed"
+                || fault.reason == "canvas::receive-failed"
+                || fault.reason == "canvas::closed-without-answer"
+            {
+                fixture.hold(replacement_epoch);
+                replacement
+                    .publish(&fixture.canvas)
+                    .expect("replacement discovery publishes after reset");
+            }
+        },
+    );
+    let initial = initial_peer.join().expect("initial peer joins");
+    let replacement = replacement_peer.join().expect("replacement peer joins");
+    assert_eq!(replacement.id, command_id);
+    (outcome, initial, replacement, transients)
+}
+
+#[test]
+fn a_reset_before_commit_refreshes_authority_and_submits_the_command_once() {
+    let (outcome, initial, replacement, transients) = recovering_submission(
+        "reset-before-command",
+        InterruptedAt::BeforeCommand,
+        Outcome::Reply(Reply {
+            position: committed(),
+            body: state_body(),
+        }),
+    );
+
+    assert!(initial.is_none(), "the interrupted resident saw no command");
+    assert_eq!(replacement.kind, CommandKind::UpChange);
+    assert!(matches!(outcome, Outcome::Reply(_)), "{outcome:?}");
+    assert!(transients.iter().any(|reason| {
+        matches!(
+            reason.as_str(),
+            "canvas::send-failed" | "canvas::receive-failed" | "canvas::closed-without-answer"
+        )
+    }));
+}
+
+#[test]
+fn a_reset_after_commit_reconciles_the_same_command_identity() {
+    let (outcome, initial, replacement, _) = recovering_submission(
+        "reset-after-command",
+        InterruptedAt::AfterCommand,
+        Outcome::Reply(Reply {
+            position: committed(),
+            body: state_body(),
+        }),
+    );
+
+    let initial = initial.expect("the interrupted resident committed the command");
+    assert_eq!(initial.id, replacement.id);
+    assert_eq!(initial.kind, replacement.kind);
+    assert_eq!(initial.expected, replacement.expected);
+    assert_eq!(initial.body, replacement.body);
+    assert!(matches!(outcome, Outcome::Reply(_)), "{outcome:?}");
+}
+
+#[test]
+fn refreshed_authority_returns_a_moved_claim_with_current_owner_evidence() {
+    let current_owner = Actor::Lane(uuid(44));
+    let (outcome, initial, replacement, _) = recovering_submission(
+        "reset-moved-claim",
+        InterruptedAt::AfterCommand,
+        Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+            "claim::ownership-refused",
+            Some("claim".to_owned()),
+            Some(Actor::Operator.to_string()),
+            Some(current_owner.to_string()),
+        ))),
+    );
+
+    assert_eq!(
+        initial
+            .expect("the interrupted resident saw the command")
+            .id,
+        replacement.id
+    );
+    let Outcome::Refusal(refusal) = outcome else {
+        panic!("moved claim must stop as the current refusal: {outcome:?}");
+    };
+    assert_eq!(refusal.reason(), "claim::ownership-refused");
+    let Refusal::Bare { diagnostic } = refusal else {
+        panic!("moved claim must retain its bare authority diagnostic");
+    };
+    assert_eq!(
+        diagnostic.observed(),
+        Some(current_owner.to_string().as_str())
+    );
 }
 
 #[test]
