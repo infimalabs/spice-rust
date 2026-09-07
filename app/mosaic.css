@@ -1072,6 +1072,7 @@
   border-left: 3px solid var(--accent-slot, var(--accent));
   border-radius: 6px;
   background: color-mix(in srgb, var(--panel) 76%, var(--page));
+  line-height: 1.2;
 }
 .team-task-row-main {
   display: grid;
