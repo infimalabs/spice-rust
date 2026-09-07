@@ -8,6 +8,11 @@ import { fileURLToPath } from "node:url";
 import { buildResident } from "./canvas-fixture.mjs";
 import { auditOwnership } from "./canvas-process-ownership.mjs";
 import {
+  assertTelemetryComplete,
+  createTelemetryLedger,
+  recordTelemetryEvent,
+} from "./canvas-telemetry.mjs";
+import {
   assertShardInventory,
   assertShardMutationGuard,
   CANVAS_PROOF_RELEASE,
@@ -119,9 +124,8 @@ function observeEvents(child, state) {
     if (!line.startsWith(SHARD_EVENT_PREFIX)) return;
     try {
       const event = JSON.parse(line.slice(SHARD_EVENT_PREFIX.length));
-      if (event.kind === "scenario-end") state.scenarios.push(event);
+      recordTelemetryEvent(state.telemetry, event);
       if (event.kind === "ownership") state.ownership = event;
-      if (event.kind === "summary") state.summary = event;
     } catch (error) {
       state.eventError = error;
       void terminate(child);
@@ -139,7 +143,12 @@ async function runShard(shard) {
     env: { ...process.env, SPICE_CANVAS_PREBUILT: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
-  const state = { child, scenarios: [], ownership: null, summary: null, eventError: null };
+  const state = {
+    child,
+    telemetry: createTelemetryLedger(shard.name),
+    ownership: null,
+    eventError: null,
+  };
   active.set(shard.name, state);
   observeEvents(child, state);
   const closed = once(child, "close");
@@ -158,8 +167,9 @@ async function runShard(shard) {
   if (state.eventError) throw state.eventError;
   assert.equal(signal, null, `${shard.name} shard is not interrupted`);
   assert.equal(code, 0, `${shard.name} shard succeeds`);
+  assertTelemetryComplete(state.telemetry);
   assert.deepEqual(
-    state.scenarios.map(({ scenario }) => scenario),
+    state.telemetry.scenarios.map(({ scenario }) => scenario),
     shard.scenarios,
     `${shard.name} executes its registered scenarios exactly once and in order`,
   );
@@ -167,7 +177,6 @@ async function runShard(shard) {
     elapsedMs < timeoutMs,
     `${shard.name} finishes inside ${Math.floor(timeoutMs / 1000)} seconds`,
   );
-  assert.ok(state.summary, `${shard.name} reports CPU and wall timing`);
   if (shard.name !== "ownership") {
     assert.ok(state.ownership, `${shard.name} reports its exact descendant and fixture ownership`);
   }
@@ -182,7 +191,13 @@ async function runShard(shard) {
       `canvas ownership audit name=${shard.name} pids=${pids.join(",")} fixture=absent lanes=absent process_table=clean\n`,
     );
   }
-  return { shard: shard.name, elapsedMs, ...state.summary, scenarios: state.scenarios };
+  return {
+    shard: shard.name,
+    elapsedMs,
+    ...state.telemetry.summary,
+    scenarios: state.telemetry.scenarios,
+    phases: state.telemetry.phases,
+  };
 }
 
 /// Stop assigning work after the first failure, but drain every shard already running.

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
+import { elapsedTiming, phaseName, startTiming } from "./canvas-telemetry.mjs";
+
 export const CANVAS_PROOF_RELEASE = "0.31.0";
 export const CANVAS_BUILD_ACTION = "canvas:build";
 export const CANVAS_ACTION_PREFIX = "canvas:shard:";
@@ -114,37 +116,85 @@ export function descendantPids(ancestor = process.pid) {
 }
 
 /// Bind one worker invocation to the registry and account every scenario.
-export function startShardWorker(arguments_) {
+export function startShardWorker(arguments_, emit = emitShardEvent) {
   assert.equal(arguments_.length, 2, `expected ${SHARD_FLAG} NAME`);
   assert.equal(arguments_[0], SHARD_FLAG, `expected ${SHARD_FLAG} NAME`);
   const shard = shardNamed(arguments_[1]);
-  const started = Date.now();
-  const cpu = process.cpuUsage();
+  const started = startTiming();
   let next = 0;
+  let currentScenario = null;
+  const phases = [];
   return {
     shard,
     owns: (name) => shard.name === name,
     async scenario(name, action) {
       assert.equal(name, shard.scenarios[next], `${shard.name} follows its scenario inventory`);
-      emitShardEvent({ kind: "scenario-start", shard: shard.name, scenario: name });
-      const scenarioStarted = Date.now();
-      await action();
-      emitShardEvent({
-        kind: "scenario-end",
+      assert.equal(currentScenario, null, `${shard.name} starts no nested scenario`);
+      assert.equal(typeof action, "function", `${shard.name}/${name} scenario is executable`);
+      currentScenario = name;
+      emit({ kind: "scenario-start", shard: shard.name, scenario: name });
+      const scenarioStarted = startTiming();
+      let outcome = "passed";
+      try {
+        return await action();
+      } catch (error) {
+        outcome = "failed";
+        throw error;
+      } finally {
+        assert.deepEqual(phases, [], `${shard.name}/${name} ends with no open phase`);
+        emit({
+          kind: "scenario-end",
+          shard: shard.name,
+          scenario: name,
+          outcome,
+          ...elapsedTiming(scenarioStarted),
+        });
+        currentScenario = null;
+        if (outcome === "passed") next += 1;
+      }
+    },
+    async phase(name, action) {
+      assert.ok(currentScenario, `${shard.name} phases run inside a scenario`);
+      phaseName(name);
+      assert.equal(typeof action, "function", `${shard.name}/${name} phase is executable`);
+      const path = [...phases.map((phase) => phase.name), name];
+      const phase = { name, path };
+      phases.push(phase);
+      emit({
+        kind: "phase-start",
         shard: shard.name,
-        scenario: name,
-        elapsedMs: Date.now() - scenarioStarted,
+        scenario: currentScenario,
+        phase: name,
+        path,
       });
-      next += 1;
+      const phaseStarted = startTiming();
+      let outcome = "passed";
+      try {
+        return await action();
+      } catch (error) {
+        outcome = "failed";
+        throw error;
+      } finally {
+        assert.equal(phases.pop(), phase, `${shard.name} phases close in LIFO order`);
+        emit({
+          kind: "phase-end",
+          shard: shard.name,
+          scenario: currentScenario,
+          phase: name,
+          path,
+          outcome,
+          ...elapsedTiming(phaseStarted),
+        });
+      }
     },
     finish() {
       assert.equal(next, shard.scenarios.length, `${shard.name} executes every scenario once`);
-      const used = process.cpuUsage(cpu);
-      emitShardEvent({
+      assert.equal(currentScenario, null, `${shard.name} finishes outside a scenario`);
+      assert.deepEqual(phases, [], `${shard.name} finishes with no open phase`);
+      emit({
         kind: "summary",
         shard: shard.name,
-        elapsedMs: Date.now() - started,
-        cpuMs: Math.round((used.user + used.system) / 1_000),
+        ...elapsedTiming(started),
       });
     },
   };
