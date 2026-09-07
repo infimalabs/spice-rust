@@ -163,7 +163,7 @@ async function reopenLane(page, lineage, lane) {
   await chooseCanvasView(page, "Lanes");
   const surface = page.locator(`.team-surface[data-lineage-id="${lineage}"]`);
   await surface.waitFor({ timeout: TRANSITION_MS * 4 });
-  await surface.getByRole("tab", { name: /^(Lanes|Agents)/ }).click();
+  await surface.getByRole("tab", { name: /^Agents(?:\s|$)/ }).click();
   await surface.locator(`.team-agent[data-agent-lane="${lane}"]`).waitFor();
   return surface;
 }
