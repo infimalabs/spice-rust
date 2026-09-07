@@ -14,6 +14,7 @@ use super::{ClaimState, Decision, Meter, WorkingState};
 const METER_STATE: &str = "session-meter.json";
 const OWNER_STATE: &str = "session-meter-owner.json";
 const LOSS_STATE: &str = "session-meter-loss.json";
+const CLAIM_RECONCILIATION_REFRESH: Duration = Duration::from_secs(1);
 
 /// One read-only live meter bound to the current worktree and process identity.
 #[derive(Clone, Debug)]
@@ -36,6 +37,7 @@ struct BoardObservation {
     state: WorkingState,
     current: Option<StoredOwner>,
     prior_active: Option<AuthorityKey>,
+    claim_reconciliation_pending: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -118,16 +120,10 @@ impl LiveMeter {
         if let Some(current) = observation.current.as_ref() {
             write_json(&self.owner_path, current)?;
         }
-        let loss = match (prior, observation.prior_active) {
-            (Some(owner), Some(observed))
-                if owner.vendor == self.actor.vendor
-                    && owner.identity == self.actor.identity
-                    && observation.current.is_none() =>
-            {
-                self.loss_announcement(StoredLoss { owner, observed })?
-            }
-            _ => None,
-        };
+        let loss = claim_loss(prior, &observation, &self.actor)
+            .map(|loss| self.loss_announcement(loss))
+            .transpose()?
+            .flatten();
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| format!("working-state clock is unavailable: {error}"))?;
@@ -138,6 +134,13 @@ impl LiveMeter {
         if loss.is_some() {
             decision.announcement = loss;
             decision.refresh_after = None;
+        } else if observation.claim_reconciliation_pending {
+            // A replacement resident deliberately publishes a non-seated
+            // residency before its successor can atomically seat and rebound
+            // live claims. Treat that interval as unfinished observation, not
+            // as ownership movement, and let the wrapper's existing callback
+            // worker re-read durable authority until it settles.
+            decision.refresh_after = Some(CLAIM_RECONCILIATION_REFRESH);
         }
         Ok(decision)
     }
@@ -154,6 +157,20 @@ impl LiveMeter {
     }
 }
 
+fn claim_loss(
+    prior: Option<StoredOwner>,
+    observation: &BoardObservation,
+    actor: &ProcessActor,
+) -> Option<StoredLoss> {
+    let owner = prior?;
+    let observed = observation.prior_active.clone()?;
+    (owner.vendor == actor.vendor
+        && owner.identity == actor.identity
+        && observation.current.is_none()
+        && !observation.claim_reconciliation_pending)
+        .then_some(StoredLoss { owner, observed })
+}
+
 fn collect(
     read: &journal::JournalRead<'_>,
     actor: &ProcessActor,
@@ -167,6 +184,7 @@ fn collect(
         return Ok(BoardObservation {
             state: WorkingState::default(),
             current: None,
+            claim_reconciliation_pending: prior_active.is_some(),
             prior_active,
         });
     };
@@ -180,6 +198,7 @@ fn collect(
             state: WorkingState::default(),
             current: None,
             prior_active,
+            claim_reconciliation_pending: false,
         });
     };
     let pending_inbox_count = read.pending_steering(Some(lane.lane))?.len();
@@ -231,6 +250,7 @@ fn collect(
         },
         current,
         prior_active,
+        claim_reconciliation_pending: false,
     })
 }
 
@@ -311,3 +331,6 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
         .publish(|staged| staged.write_all(&bytes))
         .map_err(|error| format!("working-state record is unpublished: {error}"))
 }
+
+#[cfg(test)]
+mod tests;
