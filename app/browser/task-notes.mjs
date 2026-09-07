@@ -35,7 +35,10 @@ export async function assertTaskNotes(page, task) {
   await addNote.click();
   const refusal = content.getByRole("alert");
   await refusal.waitFor();
-  assert.match(await refusal.innerText(), /Task must be .*both parts alphanumeric/);
+  assert.match(
+    await refusal.innerText(),
+    /Task must be .*eight- or nine-character canonical task stamp/,
+  );
   assert.match(await refusal.innerText(), /"not a handle"/);
   const tasks = await content.locator("#note-tasks option").evaluateAll(
     (options) => options.map((option) => option.value),

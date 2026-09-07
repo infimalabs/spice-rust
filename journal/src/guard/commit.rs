@@ -172,7 +172,7 @@ impl Journal {
             transaction
                 .execute(
                     "INSERT INTO steering_heads(\
-                        directive, steer_key, lane, disposition, created_seq, minted_millis, \
+                        directive, steer_key, lane, disposition, created_seq, minted_micros, \
                         head_seq, body\
                      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     params![
@@ -181,7 +181,7 @@ impl Journal {
                         head.lane.to_string(),
                         disposition_name(head.disposition),
                         to_sql(head.created).map_err(commit_fault_to_guard)?,
-                        head.minted_millis,
+                        head.minted_micros,
                         to_sql(position).map_err(commit_fault_to_guard)?,
                         bytes,
                     ],
@@ -592,13 +592,13 @@ fn apply_heads(
             transaction
                 .execute(
                     "INSERT INTO steering_heads(\
-                        directive, steer_key, lane, disposition, created_seq, minted_millis, \
+                        directive, steer_key, lane, disposition, created_seq, minted_micros, \
                         head_seq, body\
                      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
                      ON CONFLICT(directive) DO UPDATE SET \
                         steer_key = excluded.steer_key, lane = excluded.lane, \
                         disposition = excluded.disposition, created_seq = excluded.created_seq, \
-                        minted_millis = excluded.minted_millis, head_seq = excluded.head_seq, \
+                        minted_micros = excluded.minted_micros, head_seq = excluded.head_seq, \
                         body = excluded.body",
                     params![
                         directive,
@@ -606,7 +606,7 @@ fn apply_heads(
                         steering.lane,
                         steering.disposition,
                         to_sql(steering.created)?,
-                        steering.minted_millis,
+                        steering.minted_micros,
                         to_sql(row.seq)?,
                         row.body,
                     ],

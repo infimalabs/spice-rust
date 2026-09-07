@@ -487,6 +487,13 @@ pub(super) fn routine_selection(changed_sources: &[String]) -> bool {
 fn selection_authority_source(path: &str) -> bool {
     workspace_wide_source(path)
         || matches!(
+            path,
+            // These codecs are durable, cross-crate identity authority. A
+            // change to either can affect every stored fact and operator
+            // surface, so its Cargo selection is intentionally exhaustive.
+            "steer/src/ack/keys.rs" | "wire/src/witness.rs"
+        )
+        || matches!(
             Path::new(path).file_name().and_then(OsStr::to_str),
             Some("Cargo.toml") | Some("build.rs")
         )
@@ -687,6 +694,18 @@ fn package_wide_source(changed: &str, package: &PackageInventory, absolute: &Pat
     absolute == package.root.join("Cargo.toml")
         || (Path::new(changed).file_name() == Some(OsStr::new("build.rs"))
             && absolute.parent() == Some(package.root.as_path()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::routine_selection;
+
+    #[test]
+    fn durable_identity_codecs_select_as_workspace_authority() {
+        assert!(!routine_selection(&["wire/src/witness.rs".to_owned()]));
+        assert!(!routine_selection(&["steer/src/ack/keys.rs".to_owned()]));
+        assert!(routine_selection(&["wire/src/ident.rs".to_owned()]));
+    }
 }
 
 fn select_package_targets(

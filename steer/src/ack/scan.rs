@@ -410,23 +410,31 @@ fn tokens_after(line: &str, marker_end: usize) -> Option<Header> {
 }
 
 fn key_token_end(line: &str, start: usize, current_shape: bool) -> Option<usize> {
-    let end = start.checked_add(Key::WIDTH)?;
-    let token = line.get(start..end)?;
-    if !(if current_shape {
-        Key::shaped(token)
-    } else {
-        Key::admitted(token)
-    }) {
-        return None;
+    for width in [Key::WIDTH, Key::LEGACY_WIDTH] {
+        let end = start.checked_add(width)?;
+        let Some(token) = line.get(start..end) else {
+            continue;
+        };
+        let accepted = if current_shape {
+            Key::shaped(token)
+                || (token.len() == Key::LEGACY_WIDTH
+                    && Key::admitted(token)
+                    && token
+                        .bytes()
+                        .any(|byte| byte.is_ascii_digit() || byte.is_ascii_uppercase()))
+        } else {
+            Key::admitted(token)
+        };
+        if accepted
+            && !line
+                .as_bytes()
+                .get(end)
+                .is_some_and(u8::is_ascii_alphanumeric)
+        {
+            return Some(end);
+        }
     }
-    if line
-        .as_bytes()
-        .get(end)
-        .is_some_and(u8::is_ascii_alphanumeric)
-    {
-        return None;
-    }
-    Some(end)
+    None
 }
 
 fn skip_horizontal(line: &str, mut cursor: usize) -> usize {

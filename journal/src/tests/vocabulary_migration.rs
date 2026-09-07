@@ -312,6 +312,7 @@ fn retired_key(bytes: Vec<u8>, current: &str, retired: &str) -> Vec<u8> {
 }
 
 fn set_schema_eight(connection: &Connection) {
+    downgrade_steering_index_to_millis(connection);
     connection
         .execute_batch(
             "UPDATE journal_schema SET version = 8 WHERE singleton = 1; \

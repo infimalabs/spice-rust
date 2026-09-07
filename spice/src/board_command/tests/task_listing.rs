@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn native_task_handles_use_the_predecessor_stamp_alphabet() {
+fn native_task_handles_use_the_current_stamp_width_and_shared_alphabet() {
     const PREDECESSOR_ALPHABET: &[u8; 52] = b"0123456789BCDFGHJKLMNPQRSTVWXYZbcdfghjklmnpqrstvwxyz";
 
     for (value, expected) in PREDECESSOR_ALPHABET.iter().copied().enumerate() {
@@ -10,37 +10,38 @@ fn native_task_handles_use_the_predecessor_stamp_alphabet() {
             .as_str()
             .split_once('-')
             .expect("native handle carries a stem and stamp");
-        assert_eq!(stamp.len(), steer::Key::WIDTH);
+        assert_eq!(stamp.len(), wire::TaskStamp::WIDTH);
         assert!(
             stamp
                 .bytes()
                 .all(|byte| PREDECESSOR_ALPHABET.contains(&byte)),
             "{stamp:?} is outside the predecessor task alphabet"
         );
-        assert_eq!(stamp.as_bytes()[steer::Key::WIDTH - 1], expected);
+        assert_eq!(stamp.as_bytes()[wire::TaskStamp::WIDTH - 1], expected);
     }
 }
-/// Shape CASE 147 / INVARIANTS ID-02: lexical identity order is birth order.
+/// Shape CASE 147 / INVARIANTS ID-02: lexical identity order is birth order
+/// within the current generation.
 #[test]
 fn plain_string_stamp_and_handle_order_is_birth_order() {
-    let millis = [2_705_i64, 51, 2_704, 52, 53];
-    let mut stamps = millis
+    let micros = [2_705_i64, 51, 2_704, 52, 53];
+    let mut stamps = micros
         .into_iter()
-        .map(|millis| wire::TaskStamp::for_millis(millis).expect("fixture birth stamp"))
+        .map(|micros| wire::TaskStamp::for_micros(micros).expect("fixture birth stamp"))
         .collect::<Vec<_>>();
     stamps.sort();
     let expected = [51_i64, 52, 53, 2_704, 2_705]
         .into_iter()
-        .map(|millis| wire::TaskStamp::for_millis(millis).expect("fixture birth stamp"))
+        .map(|micros| wire::TaskStamp::for_micros(micros).expect("fixture birth stamp"))
         .collect::<Vec<_>>();
     assert_eq!(stamps, expected);
 
-    let mut handles = millis
+    let mut handles = micros
         .into_iter()
-        .map(|millis| {
+        .map(|micros| {
             TaskHandle::for_project(
                 "task.identity",
-                &wire::TaskStamp::for_millis(millis).expect("fixture birth stamp"),
+                &wire::TaskStamp::for_micros(micros).expect("fixture birth stamp"),
             )
         })
         .collect::<Vec<_>>();
@@ -56,10 +57,10 @@ fn plain_string_stamp_and_handle_order_is_birth_order() {
 
 /// Shape CASE 148 / INVARIANTS ID-03: every creation route advances collisions.
 #[test]
-fn same_millisecond_adds_followups_and_documents_receive_ordered_distinct_stamps() {
+fn same_microsecond_adds_followups_and_documents_receive_ordered_distinct_stamps() {
     let alphabet = (0..52_i64)
-        .map(|millis| {
-            wire::TaskStamp::for_millis(millis)
+        .map(|micros| {
+            wire::TaskStamp::for_micros(micros)
                 .expect("alphabet fixture birth stamp")
                 .as_str()
                 .as_bytes()[wire::TaskStamp::WIDTH - 1]
@@ -72,45 +73,45 @@ fn same_millisecond_adds_followups_and_documents_receive_ordered_distinct_stamps
     );
 
     let (root, bus, epoch, _seats) = fixture("identity-collision", 0);
-    let candidate_millis = 90_000_i64;
+    let candidate_micros = 90_000_i64;
     let first_stamp =
-        wire::TaskStamp::for_millis(candidate_millis).expect("first fixture birth stamp");
+        wire::TaskStamp::for_micros(candidate_micros).expect("first fixture birth stamp");
     add_born(
         &bus,
         epoch,
         first_stamp.clone(),
-        "First same-millisecond task",
+        "First same-microsecond task",
     );
 
     let after_first = board(&bus, epoch, Actor::Operator);
-    let second_stamp = allocate_task_stamp(&after_first, candidate_millis);
+    let second_stamp = allocate_task_stamp(&after_first, candidate_micros);
     assert_eq!(
         second_stamp,
-        wire::TaskStamp::for_millis(candidate_millis + 1).expect("second fixture birth stamp")
+        wire::TaskStamp::for_micros(candidate_micros + 1).expect("second fixture birth stamp")
     );
     add_born(
         &bus,
         epoch,
         second_stamp.clone(),
-        "Second same-millisecond task",
+        "Second same-microsecond task",
     );
 
     let after_second = board(&bus, epoch, Actor::Operator);
-    let followups = allocate_task_stamps(&after_second, candidate_millis, 3);
+    let followups = allocate_task_stamps(&after_second, candidate_micros, 3);
     let expected = (2..5)
         .map(|offset| {
-            wire::TaskStamp::for_millis(candidate_millis + offset)
+            wire::TaskStamp::for_micros(candidate_micros + offset)
                 .expect("advanced fixture birth stamp")
         })
         .collect::<Vec<_>>();
     assert_eq!(
         followups, expected,
-        "review follow-up planning advances +1 ms"
+        "review follow-up planning advances +1 µs"
     );
 
     let preview = board::Preview::classify("# Goal\n\n- First node\n- Second node\n")
         .expect("document collision fixture classifies");
-    let document = document_handles(preview.document(), &after_second, candidate_millis);
+    let document = document_handles(preview.document(), &after_second, candidate_micros);
     assert_eq!(
         document
             .iter()
@@ -691,7 +692,7 @@ fn plan_only_task_show_requires_an_accepted_connected_child() {
 #[test]
 fn task_status_counts_one_snapshot_and_task_add_retains_authored_context() {
     let (root, bus, epoch, _) = fixture("task-bootstrap", 1);
-    let born = wire::TaskStamp::for_millis(8_001).expect("fixture task stamp");
+    let born = wire::TaskStamp::for_micros(8_001).expect("fixture task stamp");
     let task = TaskHandle::for_project("task.cli", &born);
     let origin: wire::Origin = "ack:1kLGp2NJ".parse().expect("fixture origin");
     assert_committed(issue(

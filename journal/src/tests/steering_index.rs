@@ -260,7 +260,7 @@ fn indexed_read_work_is_constant_as_retired_history_grows() {
         .connection
         .prepare(
             "EXPLAIN QUERY PLAN SELECT directive, steer_key, lane, disposition, created_seq, \
-             minted_millis, head_seq, body FROM steering_heads \
+             minted_micros, head_seq, body FROM steering_heads \
              WHERE disposition = 'live' ORDER BY created_seq",
         )
         .expect("all-lanes plan prepares")
@@ -498,7 +498,7 @@ fn live_head(body: &SteerSent, key: String, created: Seq) -> SteeringHead {
         disposition: Disposition::Live,
         origin: origin(),
         created,
-        minted_millis: None,
+        minted_micros: None,
     }
 }
 

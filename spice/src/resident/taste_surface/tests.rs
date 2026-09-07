@@ -327,6 +327,22 @@ fn two_tastes_in_one_prose_record_commit_two_ordinary_directives() {
             .all(|body| body.compaction == fixture.anchor.get())
     );
     assert!(reminders.iter().all(|body| body.locus.event == 0));
+    let minted = reminders
+        .iter()
+        .map(|body| {
+            let key = body
+                .key
+                .parse::<steer::Key>()
+                .expect("current reminder key");
+            assert_eq!(key.as_str().len(), steer::Key::WIDTH);
+            key.minted_micros().expect("current reminder mint moment")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        minted[1],
+        minted[0] + 1,
+        "one batch advances one microsecond"
+    );
     let snapshot = fixture.bus.fact_snapshot().expect("snapshot");
     let ledger = steer::Ledger::from_snapshot(&snapshot).expect("reminders replay");
     assert_eq!(ledger.pending(fixture.lane).len(), 2);

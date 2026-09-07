@@ -65,7 +65,7 @@ pub(super) fn append_internal_directive(
     internal: InternalDirective,
 ) -> CommandResult<PendingFact> {
     let directive = internal.directive;
-    let (existing, minted_millis) = keyspace(bus, directive).map_err(unit_outcome)?;
+    let (existing, minted_micros) = keyspace(bus, directive).map_err(unit_outcome)?;
     if existing.is_some() {
         return Err(store_fault(
             "steer::identity-taken",
@@ -73,7 +73,7 @@ pub(super) fn append_internal_directive(
         ));
     }
     let at = internal.published;
-    let key = mint_key(minted_millis, at).map_err(unit_outcome)?;
+    let key = mint_key(minted_micros).map_err(unit_outcome)?;
     let expires = expiry(at, internal.lifetime).map_err(unit_outcome)?;
     let sent = wire::body::SteerSent {
         directive,
@@ -847,7 +847,7 @@ fn keyspace(
     bus.read(move |read| {
         Ok((
             read.steering_head(directive)?,
-            read.steering_minted_millis()?,
+            read.steering_minted_micros()?,
         ))
     })
     .map_err(|error| typed_store_fault("steer::index-unreadable", &error.to_string()))
@@ -957,25 +957,28 @@ fn current_instant() -> Result<Instant, Outcome<CommandAnswer>> {
         .map_err(|error| typed_environment_fault("resident::clock-invalid", &error.to_string()))
 }
 
-/// Mints the first unused key at or after the current millisecond.
+/// Mints the first unused key at or after the current microsecond.
 ///
 /// The journal guard repeats the collision check at commit time. Advancing a
-/// millisecond here matches the predecessor when a durable key already owns
-/// the clock's current millisecond.
-fn mint_key(previous: Option<i64>, at: Instant) -> Result<steer::Key, Outcome<CommandAnswer>> {
-    let now = at.get().as_millisecond();
-    let millis = previous.map_or(Ok(now), |previous| {
+/// microsecond here preserves the monotone high-water when a durable key
+/// already owns the clock's current microsecond.
+fn mint_key(previous: Option<i64>) -> Result<steer::Key, Outcome<CommandAnswer>> {
+    mint_key_at(previous, jiff::Timestamp::now().as_microsecond())
+}
+
+fn mint_key_at(previous: Option<i64>, now: i64) -> Result<steer::Key, Outcome<CommandAnswer>> {
+    let micros = previous.map_or(Ok(now), |previous| {
         previous
             .checked_add(1)
             .map(|next| next.max(now))
             .ok_or_else(|| {
                 typed_environment_fault(
                     "steer::key-clock-invalid",
-                    "epoch millisecond overflowed while advancing the indexed key clock",
+                    "epoch microsecond overflowed while advancing the indexed key clock",
                 )
             })
     })?;
-    steer::Key::for_millis(millis)
+    steer::Key::for_micros(micros)
         .map_err(|error| typed_environment_fault("steer::key-clock-invalid", &error.to_string()))
 }
 

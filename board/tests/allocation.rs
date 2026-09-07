@@ -29,7 +29,7 @@ fn stamp(text: &str) -> TaskStamp {
     let value = text.bytes().fold(0_i64, |value, byte| {
         (value * 131 + i64::from(byte)) % 10_000_000_000_000
     });
-    TaskStamp::for_millis(value).expect("fixture name fits the task stamp codec")
+    TaskStamp::for_micros(value).expect("fixture name fits the task stamp codec")
 }
 
 fn handle(text: &str) -> TaskHandle {

@@ -267,7 +267,7 @@ fn completed_predecessor_refiles_only_after_genuine_new_recurrence() {
     let theme = ("grep".to_owned(), "rg".to_owned());
     let first = candidate(base.clone(), theme.clone());
     let prior = PriorProposal {
-        handle: "TASTE-0123456789abcdef".parse().unwrap(),
+        handle: "TASTE-1kKRRsDP".parse().unwrap(),
         occurrence: first.occurrence.clone(),
         recurrence: 3,
         completed: true,

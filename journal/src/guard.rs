@@ -730,7 +730,7 @@ struct SteeringHeadColumns {
     lane: String,
     disposition: &'static str,
     created: wire::Seq,
-    minted_millis: Option<i64>,
+    minted_micros: Option<i64>,
 }
 
 impl HeadRow {
@@ -807,7 +807,7 @@ impl HeadRow {
                 lane: head.lane.to_string(),
                 disposition: disposition_name(head.disposition),
                 created: head.created,
-                minted_millis: head.minted_millis,
+                minted_micros: head.minted_micros,
             }),
             claim: None,
         })

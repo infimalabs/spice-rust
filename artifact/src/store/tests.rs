@@ -47,10 +47,10 @@ impl Drop for Fixture {
 }
 
 fn task(text: &str) -> TaskStamp {
-    let millis = text.bytes().fold(0_i64, |value, byte| {
+    let micros = text.bytes().fold(0_i64, |value, byte| {
         (value * 131 + i64::from(byte)) % 1_000_000_000
     });
-    TaskStamp::for_millis(millis).expect("fixture task stamp")
+    TaskStamp::for_micros(micros).expect("fixture task stamp")
 }
 
 fn handle(task: &TaskStamp) -> TaskHandle {
@@ -412,7 +412,10 @@ fn dangling_manifest_link_is_corruption_not_an_omitted_backup_task() {
 #[test]
 fn rendered_handle_directories_are_refused_as_release_one_not_read_as_a_fallback() {
     let fixture = Fixture::new();
-    let legacy = fixture.store.root().join("ARTIFACT-a1");
+    let legacy = fixture
+        .store
+        .root()
+        .join(handle(&task("ARTIFACT-a1")).as_str());
     fs::create_dir_all(&legacy).expect("create legacy task directory");
 
     let failure = fixture

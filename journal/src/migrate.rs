@@ -12,6 +12,7 @@ mod identity_stamp;
 mod release_notes;
 mod residency_lineage;
 mod steering_identity;
+mod steering_microseconds;
 mod task_allocation;
 mod topology_revision;
 mod vocabulary;
@@ -475,6 +476,7 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (10, MigrationStep::Sql(MIGRATE_10_TO_11_SQL)),
     (11, MigrationStep::Sql(MIGRATE_11_TO_12_SQL)),
     (12, MigrationStep::Rust(creation_context::migrate)),
+    (13, MigrationStep::Rust(steering_microseconds::migrate)),
 ];
 
 /// Schema 11 to 12: producing-worktree identity on durable trust authority.
@@ -666,7 +668,7 @@ CREATE TABLE steering_heads (
     lane TEXT NOT NULL,
     disposition TEXT NOT NULL,
     created_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
-    minted_millis INTEGER,
+    minted_micros INTEGER,
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
     body BLOB NOT NULL
 ) STRICT;
@@ -674,8 +676,8 @@ CREATE INDEX steering_heads_lane_disposition_created
     ON steering_heads(lane, disposition, created_seq);
 CREATE INDEX steering_heads_disposition_created
     ON steering_heads(disposition, created_seq);
-CREATE INDEX steering_heads_minted_millis
-    ON steering_heads(minted_millis) WHERE minted_millis IS NOT NULL;
+CREATE INDEX steering_heads_minted_micros
+    ON steering_heads(minted_micros) WHERE minted_micros IS NOT NULL;
 CREATE TABLE steering_misses (
     identity TEXT PRIMARY KEY,
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
@@ -705,8 +707,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 13, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 14, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 13;
+PRAGMA user_version = 14;
 "#;

@@ -254,9 +254,9 @@ do not. Recovery returns `lapsed` or `deadlettered` to live while retaining the
 directive's identity, lineage, presentation stage, and presentation history.
 
 **Policy —** reminded 15s, escalated 60s, overdue 300s, lapse threshold 24h,
-and fixed-width steering keys. The mint advances the monotone indexed
-epoch-millisecond high-water mark to the first unused value; key width never
-changes.
+and nine-character current steering keys. The mint advances the monotone
+indexed Unix-microsecond high-water to the first unused value. Retained
+eight-character keys remain readable but are never minted.
 
 ### Closed loop: Agent process
 

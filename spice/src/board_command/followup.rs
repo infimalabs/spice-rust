@@ -98,7 +98,7 @@ pub(super) fn plan_followups(
             .map_err(|error| refusal("review::followup-invalid", Some(spec.clone()), &error))?;
         parsed.push(add);
     }
-    let born = allocate_task_stamps(board, jiff::Timestamp::now().as_millisecond(), parsed.len());
+    let born = allocate_task_stamps(board, jiff::Timestamp::now().as_microsecond(), parsed.len());
     let mut planned: Vec<ReviewFollowup> = Vec::new();
     for (add, task) in parsed.into_iter().zip(born) {
         expected.push(Witness::Absence { task: task.clone() });

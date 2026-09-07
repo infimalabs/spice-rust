@@ -843,7 +843,7 @@ mod tests {
             disposition: Disposition::Live,
             origin,
             created,
-            minted_millis: None,
+            minted_micros: None,
         });
         match bus.commit(write).expect("direction commit answers") {
             CommitOutcome::Committed(_) => {}

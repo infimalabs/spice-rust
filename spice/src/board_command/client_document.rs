@@ -39,7 +39,7 @@ pub(super) fn run_doc(
     let touched = document_handles(
         normalized.document(),
         &board,
-        jiff::Timestamp::now().as_millisecond(),
+        jiff::Timestamp::now().as_microsecond(),
     );
     let answer = wire::intent::DocAnswer {
         preview: normalized.digest().clone(),
@@ -114,7 +114,7 @@ fn read_doc_input(matches: &ArgMatches) -> Result<String, Outcome<CommandAnswer>
 pub(super) fn document_handles(
     document: &dialect::Document,
     board: &BoardAnswer,
-    mut epoch_millis: i64,
+    mut epoch_micros: i64,
 ) -> Vec<TaskHandle> {
     let project = document.project.as_deref().unwrap_or("task.document");
     let mut planned = Vec::<wire::TaskStamp>::new();
@@ -130,8 +130,8 @@ pub(super) fn document_handles(
                 return existing.statement.body.handle.clone();
             }
             let born = loop {
-                let candidate = allocate_task_stamp(board, epoch_millis);
-                epoch_millis = epoch_millis
+                let candidate = allocate_task_stamp(board, epoch_micros);
+                epoch_micros = epoch_micros
                     .checked_add(1)
                     .expect("document task birth increment fits i64");
                 if planned.iter().all(|planned| planned != &candidate) {

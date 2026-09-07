@@ -35,7 +35,7 @@ pub(super) fn submit_oops_add(
     body: TaskOopsAdd,
 ) -> Outcome<CommandAnswer> {
     mutate_from_board(repository, contract, |board| {
-        let stamp = allocate_task_stamp(&board, jiff::Timestamp::now().as_millisecond());
+        let stamp = allocate_task_stamp(&board, jiff::Timestamp::now().as_microsecond());
         Ok((
             CommandKind::TaskOopsAdd,
             vec![Witness::Absence { task: stamp }],
@@ -54,7 +54,7 @@ pub(crate) fn submit_task_add(
         Err(outcome) => return outcome,
     };
     let outcome = mutate_from_board(repository, contract, |board| {
-        let stamp = allocate_task_stamp(&board, jiff::Timestamp::now().as_millisecond());
+        let stamp = allocate_task_stamp(&board, jiff::Timestamp::now().as_microsecond());
         Ok((
             CommandKind::TaskAdd,
             vec![Witness::Absence { task: stamp }],
@@ -266,7 +266,7 @@ pub(crate) fn submit_taste_proposal(
 ) -> Outcome<CommandAnswer> {
     for attempt in 0..2 {
         let outcome = mutate_from_board(repository, contract, |board| {
-            let task = allocate_task_stamp(&board, jiff::Timestamp::now().as_millisecond());
+            let task = allocate_task_stamp(&board, jiff::Timestamp::now().as_microsecond());
             Ok((
                 CommandKind::TasteProposalAdd,
                 vec![Witness::Absence { task }],

@@ -42,7 +42,7 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
       "statement": {
         "position": 2,
         "body": {
-          "handle": "SPICE-aBcD",
+          "handle": "SPICE-1kKRRsDP",
           "born": "1kKRRsDP",
           "queue_origin": 2,
           "description": "One task spelled through every field the shape carries.",
@@ -153,7 +153,7 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
     (
         AnswerShape::Task,
         r#"{
-  "task": "SPICE-aBcD",
+  "task": "SPICE-1kKRRsDP",
   "status": "done",
   "completion": {
     "operation": "018f82d4-6f59-7d06-92e3-bce9131163c4",
@@ -168,13 +168,13 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
     ),
     (
         AnswerShape::Claim,
-        r#"{ "task": "SPICE-aBcD", "holder": "operator" }"#,
+        r#"{ "task": "SPICE-1kKRRsDP", "holder": "operator" }"#,
     ),
     (
         AnswerShape::Doc,
         r#"{
   "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "touched": ["SPICE-aBcD"]
+  "touched": ["SPICE-1kKRRsDP"]
 }"#,
     ),
     (

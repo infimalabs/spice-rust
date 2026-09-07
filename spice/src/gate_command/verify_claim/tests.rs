@@ -166,7 +166,7 @@ impl EntryFixture {
 }
 
 fn statement() -> TaskHead {
-    let born = TaskStamp::for_millis(1).expect("fixture task stamp");
+    let born = TaskStamp::for_micros(1).expect("fixture task stamp");
     TaskHead {
         born,
         queue_origin: seq(1),

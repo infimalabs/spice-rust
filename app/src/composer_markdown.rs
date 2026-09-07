@@ -657,24 +657,28 @@ mod tests {
         let mosaic = "MOSAIC-1kRYqQxy"
             .parse::<wire::TaskHandle>()
             .expect("fixture handle parses");
+        let identity = "IDENTIT-dRyDYZqJJ"
+            .parse::<wire::TaskHandle>()
+            .expect("current fixture handle parses");
         let control_chip = task_chip_html(&control);
         let mosaic_chip = task_chip_html(&mosaic);
+        let identity_chip = task_chip_html(&identity);
 
         let rendered = render_received(
             "Plain CONTROL-1kKbC3j4, CONTROL-1kKbC3j4, and `CONTROL-1kKbC3j4`.\n\n\
-             Then MOSAIC-1kRYqQxy and CONTROL-1kKbC3j4!",
+             Then MOSAIC-1kRYqQxy, IDENTIT-dRyDYZqJJ, and CONTROL-1kKbC3j4!",
         );
 
         assert_eq!(
             rendered.html,
             format!(
                 "<p>Plain {control_chip}, {control_chip}, and {control_chip}.</p>\n\
-                 <p>Then {mosaic_chip} and {control_chip}!</p>\n"
+                 <p>Then {mosaic_chip}, {identity_chip}, and {control_chip}!</p>\n"
             ),
         );
         assert_eq!(
             rendered.html.matches("class=\"message-task-chip\"").count(),
-            5
+            6
         );
     }
 

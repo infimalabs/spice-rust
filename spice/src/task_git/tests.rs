@@ -60,7 +60,7 @@ impl RepositoryFixture {
         let epoch = uuid(3);
         let actor = Actor::Lane(lane);
         let phase: Phase = phase.parse().expect("fixture phase");
-        let born = TaskStamp::for_millis(1).expect("fixture task stamp");
+        let born = TaskStamp::for_micros(1).expect("fixture task stamp");
         let statement = TaskHead {
             born,
             queue_origin: seq(1),

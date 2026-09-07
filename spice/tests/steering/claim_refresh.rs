@@ -263,7 +263,7 @@ fn seed_claim(
             .expect("claim expiry remains in range"),
     )
     .expect("claim expiry is canonical");
-    let task = TaskStamp::for_millis(if phase == "todo" { 71 } else { 81 })
+    let task = TaskStamp::for_micros(if phase == "todo" { 71 } else { 81 })
         .expect("claim fixture stamp builds");
     let phase: wire::Phase = phase.parse().expect("claim fixture phase parses");
     let actor = Actor::Lane(lane);

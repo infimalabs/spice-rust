@@ -95,7 +95,7 @@
 | Situation | Expected | Ref |
 | --- | --- | --- |
 | A task is re-homed to another project | its rendered handle changes; its stored identity does not | [A task's `born` stamp is its only stored identity](../invariants/identity.md#identity-a-task-s-born-stamp-is-its-only-stored-identity) |
-| `born` stamps are sorted as plain strings | the order matches birth order | [The stored stamp orders births without parsing](../invariants/identity.md#identity-the-stored-stamp-orders-births-without-parsing) |
+| Current-generation `born` stamps are sorted as plain strings | the order matches current-generation birth order; journal sequence remains cross-generation chronology | [The current stored stamp orders current births without parsing](../invariants/identity.md#identity-the-stored-stamp-orders-births-without-parsing) |
 | Many tasks are minted at the same represented instant | each gets a distinct, still-ordered stamp | [Collision resolution preserves stamp order](../invariants/identity.md#identity-collision-resolution-preserves-stamp-order) |
 | A stream frame is delivered twice at the same sequence | applied once; the duplicate cannot advance the cursor | [Stream sequence is monotone](../invariants/identity.md#identity-stream-sequence-is-monotone) |
 | The resident restarts while a client holds a cursor | the changed epoch rejects resume and yields one authoritative snapshot | [A resume cursor belongs to one exact stream](../invariants/identity.md#identity-a-resume-cursor-belongs-to-one-exact-stream) |

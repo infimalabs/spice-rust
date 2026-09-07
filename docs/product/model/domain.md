@@ -93,8 +93,8 @@ never a separate type. Every rule written for teams must hold for a team of one.
 
 ```mermaid
 flowchart LR
-  T["birth instant"] --> E["epoch millis"]
-  E --> B["profile-selected canonical encoding<br/>order-preserving"]
+  T["birth instant"] --> E["Unix microseconds"]
+  E --> B["current nine-character encoding<br/>order-preserving within generation"]
   B --> I["born — the ONLY stored stamp"]
   P["project's rightmost segment"] --> K["KEY — derived, never stored"]
   I --> H["rendered handle"]
@@ -107,12 +107,14 @@ task's name is derived.
 **Invariant —** Re-homing a task to a different project changes its rendered
 handle **for free**, because the key was never stored.
 
-**Invariant —** The stamp is sortable as a plain string, so identity ordering is
-birth ordering with no parsing.
+**Invariant —** Current stamps are sortable as plain strings into current birth
+order. Retained eight-character and current nine-character stamps coexist as
+deterministic identities; journal sequence and queue origin order them across
+codec generations.
 
-**Invariant —** A minting collision advances the represented instant rather
-than appending entropy, preserving strict string order. The implementation
-profile fixes the concrete increment and codec.
+**Invariant —** A current minting collision advances the represented instant
+rather than appending entropy, preserving strict current-generation string
+order. The implementation profile fixes the concrete increment and codec.
 
 **INC** — the alphabet, the width, the separator.
 

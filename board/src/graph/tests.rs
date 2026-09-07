@@ -5,8 +5,8 @@ use wire::{
     TaskStamp, WireVersion, WorkflowHead, body,
 };
 
-fn stamp(millis: i64) -> TaskStamp {
-    TaskStamp::for_millis(millis).expect("fixture millis fit a task stamp")
+fn stamp(micros: i64) -> TaskStamp {
+    TaskStamp::for_micros(micros).expect("fixture microseconds fit a task stamp")
 }
 
 fn phase(value: &str) -> Phase {

@@ -49,7 +49,7 @@ pub(in crate::resident) fn send(
     if command.expected() != [witness.clone()] {
         return witness_refusal(command.expected(), &witness);
     }
-    let (existing, minted_millis) = match keyspace(bus, command.id()) {
+    let (existing, minted_micros) = match keyspace(bus, command.id()) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -65,7 +65,7 @@ pub(in crate::resident) fn send(
         Ok(at) => at,
         Err(outcome) => return outcome,
     };
-    let key = match mint_key(minted_millis, at) {
+    let key = match mint_key(minted_micros) {
         Ok(key) => key,
         Err(outcome) => return outcome,
     };

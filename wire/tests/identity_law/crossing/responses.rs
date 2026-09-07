@@ -7,7 +7,7 @@ use super::*;
 /// The paged frames, sampled with and without an overflow tail.
 pub(super) fn cover_packed_frames(covered: &mut BTreeSet<String>) {
     let rows = vec![Row {
-        task: handle("SPICE-aBcD"),
+        task: handle("SPICE-1kKRRsDP"),
     }];
     let plain = Packed {
         rows: rows.clone(),

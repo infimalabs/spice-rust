@@ -13,10 +13,10 @@ fn schema_twelve_reconstructs_creation_context_only_from_pre_creation_facts() {
         .join("creation-context-schema-twelve.sqlite3");
     let mut journal = Journal::open(&path).expect("current authority opens");
     let (lane, expected) = seed_proven_creation_history(&mut journal);
-    let available = TaskStamp::for_millis(10).expect("available task stamp");
-    let operator = TaskStamp::for_millis(11).expect("operator task stamp");
-    let spice = TaskStamp::for_millis(12).expect("Spice task stamp");
-    let unproved = TaskStamp::for_millis(13).expect("unproved lane task stamp");
+    let available = TaskStamp::for_micros(10).expect("available task stamp");
+    let operator = TaskStamp::for_micros(11).expect("operator task stamp");
+    let spice = TaskStamp::for_micros(12).expect("Spice task stamp");
+    let unproved = TaskStamp::for_micros(13).expect("unproved lane task stamp");
     let unproved_lane = uuid("018f82d4-6f59-7d06-92e3-bce913116399");
     seed_task(
         &mut journal,
@@ -44,6 +44,7 @@ fn schema_twelve_reconstructs_creation_context_only_from_pre_creation_facts() {
     );
     seed_post_creation_evidence(&mut journal, unproved_lane);
     remove_current_context(&journal.connection);
+    downgrade_steering_index_to_millis(&journal.connection);
     journal
         .connection
         .execute_batch(
@@ -94,9 +95,10 @@ fn schema_twelve_marks_a_sole_unregistered_stream_unavailable() {
         "stdout",
         "unregistered-stream-session",
     );
-    let task = TaskStamp::for_millis(14).expect("unregistered stream task stamp");
+    let task = TaskStamp::for_micros(14).expect("unregistered stream task stamp");
     seed_task(&mut journal, Actor::Lane(lane), &task, legacy_context);
     remove_current_context(&journal.connection);
+    downgrade_steering_index_to_millis(&journal.connection);
     journal
         .connection
         .execute_batch(

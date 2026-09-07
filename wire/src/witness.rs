@@ -18,41 +18,47 @@ use crate::ident::{CanonicalUuid, Digest};
 const TASK_STAMP_ALPHABET: &[u8; 52] = b"0123456789BCDFGHJKLMNPQRSTVWXYZbcdfghjklmnpqrstvwxyz";
 const TASK_STAMP_SPACE: u64 = 52_u64.pow(TaskStamp::WIDTH as u32);
 
-/// A task's sole durable identity: its fixed-width birth instant.
+/// A task's sole durable identity: its encoded birth instant.
 ///
-/// The alphabet is ASCII ordered and vowel-free. Fixed-width base-52 therefore
-/// preserves birth order under ordinary string comparison while keeping a
-/// minted stamp out of prose-shaped words.
+/// Current stamps carry nine base-52 Unix-microsecond digits. Retained
+/// eight-digit Unix-millisecond stamps remain readable without rewriting
+/// immutable task facts. Ordering is deterministic within and across widths;
+/// workflow chronology remains journal-sequence authority across generations.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TaskStamp(String);
 
 /// Text that does not spell a canonical task birth stamp.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
-#[error("task stamp must be eight characters from the vowel-free base-52 alphabet: {0:?}")]
+#[error("task stamp must be eight or nine characters from the vowel-free base-52 alphabet: {0:?}")]
 pub struct TaskStampError(String);
 
-/// An epoch millisecond that cannot be represented by a task stamp.
+/// An epoch moment that cannot be represented by the requested task-stamp codec.
 #[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
-#[error("task birth millisecond is outside the eight-character base-52 space: {0}")]
+#[error("task birth moment is outside its base-52 space: {0}")]
 pub struct TaskStampMintError(i64);
 
 impl TaskStamp {
-    /// Characters in every task stamp.
-    pub const WIDTH: usize = 8;
+    /// Characters in every current task stamp.
+    pub const WIDTH: usize = 9;
+    /// Characters in retained millisecond task stamps.
+    pub const LEGACY_WIDTH: usize = 8;
 
-    /// Mint the order-preserving stamp for one epoch millisecond.
-    pub fn for_millis(epoch_millis: i64) -> Result<Self, TaskStampMintError> {
-        let mut value =
-            u64::try_from(epoch_millis).map_err(|_| TaskStampMintError(epoch_millis))?;
+    /// Mint the current order-preserving stamp for one Unix microsecond.
+    pub fn for_micros(epoch_micros: i64) -> Result<Self, TaskStampMintError> {
+        let value = u64::try_from(epoch_micros).map_err(|_| TaskStampMintError(epoch_micros))?;
         if value >= TASK_STAMP_SPACE {
-            return Err(TaskStampMintError(epoch_millis));
+            return Err(TaskStampMintError(epoch_micros));
         }
-        let mut bytes = [b'0'; Self::WIDTH];
+        Ok(Self(Self::encode(value, Self::WIDTH)))
+    }
+
+    fn encode(mut value: u64, width: usize) -> String {
+        let mut bytes = vec![b'0'; width];
         for byte in bytes.iter_mut().rev() {
             *byte = TASK_STAMP_ALPHABET[(value % 52) as usize];
             value /= 52;
         }
-        Ok(Self(bytes.into_iter().map(char::from).collect()))
+        bytes.into_iter().map(char::from).collect()
     }
 
     /// The canonical stored spelling.
@@ -66,7 +72,8 @@ impl FromStr for TaskStamp {
     type Err = TaskStampError;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        if text.len() == Self::WIDTH && text.bytes().all(|byte| TASK_STAMP_ALPHABET.contains(&byte))
+        if matches!(text.len(), Self::LEGACY_WIDTH | Self::WIDTH)
+            && text.bytes().all(|byte| TASK_STAMP_ALPHABET.contains(&byte))
         {
             Ok(Self(text.to_owned()))
         } else {
@@ -94,13 +101,91 @@ impl<'de> Deserialize<'de> for TaskStamp {
     }
 }
 
-/// A task handle such as `SPICE-aBcD`.
+#[cfg(test)]
+mod task_stamp_tests {
+    use std::collections::BTreeSet;
+
+    use super::{TaskHandle, TaskStamp};
+
+    #[test]
+    fn current_and_retained_stamps_share_one_strict_parser() {
+        let retained = "1dzGkSrJ".parse::<TaskStamp>().expect("retained stamp");
+        let current =
+            TaskStamp::for_micros(1_700_000_000_000_000).expect("current microsecond stamp");
+        assert_eq!(retained.as_str().len(), TaskStamp::LEGACY_WIDTH);
+        assert_eq!(current.as_str().len(), TaskStamp::WIDTH);
+        assert_eq!(retained.as_str().parse::<TaskStamp>(), Ok(retained));
+        assert_eq!(current.as_str().parse::<TaskStamp>(), Ok(current));
+        for refused in ["", "0000000", "0000000000", "0000000A", "00000000A"] {
+            assert!(refused.parse::<TaskStamp>().is_err(), "{refused:?}");
+        }
+    }
+
+    #[test]
+    fn current_microsecond_space_is_exact_and_never_wraps() {
+        let space = 52_i64.pow(TaskStamp::WIDTH as u32);
+        let last = space - 1;
+        assert_eq!(space, 2_779_905_883_635_712);
+        assert_eq!(
+            52_i64.pow((TaskStamp::WIDTH - 1) as u32),
+            53_459_728_531_456
+        );
+        assert_eq!(TaskStamp::for_micros(0).unwrap().as_str(), "000000000");
+        assert_eq!(TaskStamp::for_micros(last).unwrap().as_str(), "zzzzzzzzz");
+        assert!(TaskStamp::for_micros(-1).is_err());
+        assert!(TaskStamp::for_micros(last + 1).is_err());
+        let first_out: jiff::Timestamp = "2058-02-02T20:04:43.635712Z"
+            .parse()
+            .expect("first out-of-range instant");
+        assert_eq!(first_out.as_microsecond(), space);
+        assert_eq!(
+            TaskStamp::for_micros(1_788_810_000_000_000)
+                .unwrap()
+                .as_str()
+                .chars()
+                .next(),
+            Some('d'),
+            "the current Unix era occupies the expected leading digit",
+        );
+    }
+
+    #[test]
+    fn mixed_width_identity_collections_remain_deterministic() {
+        let retained = "1dzGkSrJ".parse::<TaskStamp>().unwrap();
+        let current = TaskStamp::for_micros(1_700_000_000_000_000).unwrap();
+        let rows = BTreeSet::from([current.clone(), retained.clone()]);
+        assert_eq!(rows.len(), 2);
+        assert!(rows.contains(&retained));
+        assert!(rows.contains(&current));
+    }
+
+    #[test]
+    fn task_handles_admit_only_retained_or_current_stamps() {
+        let retained = "1dzGkSrJ".parse::<TaskStamp>().unwrap();
+        let current = TaskStamp::for_micros(1_700_000_000_000_000).unwrap();
+        for stamp in [&retained, &current] {
+            let handle = TaskHandle::for_project("wire.identity", stamp);
+            assert_eq!(handle.as_str().parse::<TaskHandle>(), Ok(handle));
+        }
+        for refused in [
+            "WIRE-aBcD",
+            "WIRE-0000000",
+            "WIRE-0000000000",
+            "WIRE-00000000A",
+            "wire-00000000",
+        ] {
+            assert!(refused.parse::<TaskHandle>().is_err(), "{refused:?}");
+        }
+    }
+}
+
+/// A task handle such as `SPICE-dRyDYZqJJ`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TaskHandle(String);
 
 /// Text that does not name a task.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
-#[error("task handle must be `<UPPER-STEM>-<key>` with both parts alphanumeric: {0:?}")]
+#[error("task handle must be `<UPPER-STEM>-<stamp>` with a canonical task stamp: {0:?}")]
 pub struct TaskHandleError(String);
 
 impl TaskHandle {
@@ -143,7 +228,7 @@ impl FromStr for TaskHandle {
             && stem
                 .bytes()
                 .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit());
-        let key_ok = !key.is_empty() && key.bytes().all(|byte| byte.is_ascii_alphanumeric());
+        let key_ok = key.parse::<TaskStamp>().is_ok();
         if stem_ok && key_ok {
             Ok(Self(text.to_owned()))
         } else {

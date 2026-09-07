@@ -178,7 +178,7 @@ fn send_write() -> JournalWrite {
         disposition: Disposition::Live,
         origin: steering_origin(),
         created: seq,
-        minted_millis: None,
+        minted_micros: None,
     });
     write
 }

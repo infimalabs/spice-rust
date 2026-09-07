@@ -113,7 +113,7 @@ fn answered() -> BrowserState<Row> {
     let mut state = BrowserState::new(&accepted(&session, &format!("lane:{LANE}"), EPOCH));
     assert!(state.replace(&packed_answer(
         &session,
-        &["SPICE-aBcD", "SPICE-eFgH"],
+        &["SPICE-1kKRRsDP", "SPICE-1kKRRsDQ"],
         Some((41, 48250)),
         48213,
     )));
@@ -151,7 +151,7 @@ fn trust() -> Vec<Witness> {
 /// A note body, as one command's registered DTO.
 fn note() -> Note {
     Note {
-        task: "SPICE-aBcD".to_owned(),
+        task: "SPICE-1kKRRsDP".to_owned(),
         note: "observed in review".to_owned(),
     }
 }
@@ -209,7 +209,11 @@ fn a_read_pane_shows_the_answer_it_was_given() {
 
     assert_eq!(
         pane.rows(),
-        [Row("SPICE-aBcD".to_owned()), Row("SPICE-eFgH".to_owned())].as_slice()
+        [
+            Row("SPICE-1kKRRsDP".to_owned()),
+            Row("SPICE-1kKRRsDQ".to_owned())
+        ]
+        .as_slice()
     );
     assert_eq!(pane.horizon(), Some(seq(48213)));
     assert_eq!(
@@ -378,7 +382,7 @@ fn no_lane_surface_renders_the_capability_its_session_presented() {
     let lane = Principal::admitted(&acceptance);
     let answer = packed_answer(
         &session,
-        &["SPICE-aBcD", "SPICE-eFgH"],
+        &["SPICE-1kKRRsDP", "SPICE-1kKRRsDQ"],
         Some((41, 48250)),
         48213,
     );
@@ -565,7 +569,7 @@ fn fold_backed() -> BrowserState<Row> {
         "task::backlog",
         7,
         48200,
-        &["SPICE-aBcD", "SPICE-eFgH"],
+        &["SPICE-1kKRRsDP", "SPICE-1kKRRsDQ"],
         Some((41, 48250)),
         48213,
     )));
@@ -582,7 +586,7 @@ fn head_direct() -> BrowserState<Row> {
     let mut state = BrowserState::new(&accepted(&session, "operator", EPOCH));
     assert!(state.replace(&packed_answer(
         &session,
-        &["SPICE-aBcD", "SPICE-eFgH"],
+        &["SPICE-1kKRRsDP", "SPICE-1kKRRsDQ"],
         Some((41, 48250)),
         48213,
     )));
@@ -633,7 +637,7 @@ fn replacing_a_derived_answer_with_a_head_direct_one_drops_its_provenance() {
     let mut state = fold_backed();
     assert!(state.replace(&packed_answer(
         &operator_session(),
-        &["SPICE-iJkL"],
+        &["SPICE-1kKRRsDR"],
         None,
         48214
     )));
@@ -643,7 +647,7 @@ fn replacing_a_derived_answer_with_a_head_direct_one_drops_its_provenance() {
     // The fold that answered a moment ago did not answer this one. Retaining
     // its name would attribute the current rows to a generation that never
     // produced them.
-    assert_eq!(read.rows(), [Row("SPICE-iJkL".to_owned())].as_slice());
+    assert_eq!(read.rows(), [Row("SPICE-1kKRRsDR".to_owned())].as_slice());
     assert_eq!(read.fold(), None);
     assert_eq!(read.generation(), None);
     assert_eq!(read.generation_cursor(), None);
