@@ -73,10 +73,15 @@ fn changed(changes: &mut Vec<body::TaskFieldEdit>, field: &str, before: &str, af
     if before == after {
         return;
     }
+    let before = bounded(before);
+    let mut after = bounded(after);
+    if before == after {
+        after = changed_summary(after);
+    }
     changes.push(body::TaskFieldEdit {
         field: field.to_owned(),
-        before: bounded(before),
-        after: bounded(after),
+        before,
+        after,
     });
 }
 
@@ -122,6 +127,17 @@ fn bounded(value: &str) -> String {
     bounded
 }
 
+fn changed_summary(summary: String) -> String {
+    const SUFFIX: &str = " [changed]";
+
+    let retained = body::TASK_EDIT_FIELD_SUMMARY_CHARS - SUFFIX.chars().count();
+    format!(
+        "{}{}",
+        summary.chars().take(retained).collect::<String>(),
+        SUFFIX
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,5 +148,23 @@ mod tests {
         let summary = bounded(&value);
         assert_eq!(summary.chars().count(), body::TASK_EDIT_FIELD_SUMMARY_CHARS);
         assert!(summary.ends_with('…'));
+    }
+
+    #[test]
+    fn changed_summaries_remain_distinct_after_whitespace_normalization() {
+        let mut changes = Vec::new();
+        changed(
+            &mut changes,
+            "description",
+            "the old contract",
+            "the  old contract",
+        );
+
+        let [change] = changes.as_slice() else {
+            panic!("one actual contract change is retained");
+        };
+        assert_ne!(change.before, change.after);
+        assert_eq!(change.after, "the old contract [changed]");
+        assert!(change.after.chars().count() <= body::TASK_EDIT_FIELD_SUMMARY_CHARS);
     }
 }

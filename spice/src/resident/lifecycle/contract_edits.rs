@@ -127,7 +127,6 @@ fn admit_notice(
             ));
         };
         if previous.is_some_and(|previous| position <= previous)
-            || change.before == change.after
             || [change.before.as_str(), change.after.as_str()]
                 .into_iter()
                 .any(|summary| {
@@ -138,7 +137,7 @@ fn admit_notice(
         {
             return Err(store_fault(
                 "task-contract::edit-invalid",
-                "task edit notice fields are unordered, unchanged, or unbounded",
+                "task edit notice fields are unordered or unbounded",
             ));
         }
         previous = Some(position);
@@ -287,6 +286,29 @@ mod tests {
         assert_eq!(notice_authority(Some(&encoded)), Ok(Some(authority)));
         assert_eq!(notice_authority(Some("lane-renewal-context")), Ok(None));
         assert!(notice_authority(Some("task-contract-edit:broken")).is_err());
+    }
+
+    #[test]
+    fn legacy_collapsed_field_summaries_are_admitted() {
+        let task: TaskStamp = "1kKRRsDP".parse().expect("task stamp");
+        let notice = wire::body::TaskEditNotice {
+            handle: TaskHandle::for_project("board.test", &task),
+            lane: CanonicalUuid::new(uuid::Uuid::from_u128(1)),
+            claim: Seq::new(1).expect("claim position"),
+            previous: Seq::new(1).expect("previous position"),
+            changes: vec![wire::body::TaskFieldEdit {
+                field: "description".to_owned(),
+                before: "the normalized summary".to_owned(),
+                after: "the normalized summary".to_owned(),
+            }],
+        };
+        let edited = wire::body::TaskEdited {
+            task,
+            revision: 2,
+            notice: None,
+        };
+
+        assert!(admit_notice(&edited, Seq::new(2).expect("edit position"), &notice).is_ok());
     }
 
     #[test]
