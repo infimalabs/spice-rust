@@ -7,6 +7,7 @@ import {
   TRANSITION_MS,
   waitForPageFunction,
 } from "./canvas-fixture.mjs";
+import { assertGlobalHistoryNavigation } from "./team-navigation.mjs";
 
 async function openSpiceMenu(page) {
   const menu = page.locator(".canvas-menu");
@@ -263,6 +264,7 @@ export async function assertCursorRelocation(page, artifacts, engine) {
       );
       assert.equal(await page.locator(".brand-dots").count(), 0, `${label} keeps the agent-light roster removed`);
       const navigation = page.locator(".canvas-navigation");
+      await assertGlobalHistoryNavigation(page, `${label} open Spice menu`);
       assert.deepEqual(
         await navigation.locator(".pill-label").allTextContents(),
         ["History", "Metrics", "Team", "Tasks", "Agents"],

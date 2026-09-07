@@ -84,7 +84,8 @@ impl Axis {
 /// User-facing Canvas destinations in their shared navigation order.
 ///
 /// Internal axes and lane vocabulary remain stable; this registry is the
-/// presentation boundary that labels and orders both global and team controls.
+/// presentation boundary for global Canvas controls. Team controls select
+/// their closed, scoped subset through `LineageMode` in the browser shell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CanvasDestination {
     History,
@@ -94,8 +95,43 @@ pub enum CanvasDestination {
     Agents,
 }
 
+/// Canvas destinations that are meaningful inside one team surface.
+///
+/// This type is intentionally distinct from [`CanvasDestination`]: adding a
+/// global destination cannot make it appear in a team tablist without an
+/// explicit scoped variant and mapping here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TeamDestination {
+    Metrics,
+    Team,
+    Tasks,
+    Agents,
+}
+
+impl TeamDestination {
+    /// Every team-scoped destination, left to right.
+    pub const ALL: [Self; 4] = [Self::Metrics, Self::Team, Self::Tasks, Self::Agents];
+
+    /// Corresponding destination in the global Canvas vocabulary.
+    #[must_use]
+    pub const fn canvas(self) -> CanvasDestination {
+        match self {
+            Self::Metrics => CanvasDestination::Metrics,
+            Self::Team => CanvasDestination::Team,
+            Self::Tasks => CanvasDestination::Tasks,
+            Self::Agents => CanvasDestination::Agents,
+        }
+    }
+
+    /// Presentation label shared with the corresponding global destination.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        self.canvas().label()
+    }
+}
+
 impl CanvasDestination {
-    /// Every displayed destination, left to right.
+    /// Every global destination, left to right.
     pub const ALL: [Self; 5] = [
         Self::History,
         Self::Metrics,
@@ -310,6 +346,27 @@ mod tests {
         assert_eq!(
             CanvasDestination::ALL.map(CanvasDestination::label),
             ["History", "Metrics", "Team", "Tasks", "Agents"],
+        );
+        assert_eq!(
+            CanvasDestination::ALL
+                .iter()
+                .filter(|destination| **destination == CanvasDestination::History)
+                .count(),
+            1,
+        );
+        assert_eq!(
+            TeamDestination::ALL.map(TeamDestination::canvas),
+            [
+                CanvasDestination::Metrics,
+                CanvasDestination::Team,
+                CanvasDestination::Tasks,
+                CanvasDestination::Agents,
+            ],
+        );
+        assert!(
+            !TeamDestination::ALL
+                .map(TeamDestination::canvas)
+                .contains(&CanvasDestination::History)
         );
         assert_eq!(CanvasDestination::Agents.axis(), None);
         for axis in Axis::ALL {

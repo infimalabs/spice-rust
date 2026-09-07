@@ -27,8 +27,8 @@ export async function assertTiledWorkspace(page, fleet, screenshot) {
   assert.deepEqual(
     geometry.consoles.map(({ toolbars, tabs, agents, lifetimes, sends, tickers, activity }) =>
       [toolbars, tabs, agents, lifetimes, sends, tickers, activity]),
-    [[1, 5, 4, 1, 1, 1, 1], [1, 5, 4, 1, 1, 1, 1]],
-    "each console owns five destinations and complete four-agent chrome",
+    [[1, 4, 4, 1, 1, 1, 1], [1, 4, 4, 1, 1, 1, 1]],
+    "each console owns four scoped destinations and complete four-agent chrome",
   );
   assert.deepEqual(
     geometry.consoles.map(({ agents, weight }) => weight === agents),

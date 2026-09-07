@@ -6,14 +6,7 @@ pub(super) mod chrome;
 mod lineage_menu;
 
 #[derive(Clone)]
-pub(super) struct CanvasNavigation {
-    pub(super) axis: UseStateHandle<Axis>,
-    pub(super) mosaic: UseStateHandle<bool>,
-}
-
-#[derive(Clone)]
 pub(super) struct AgentControls {
-    pub(super) navigation: CanvasNavigation,
     pub(super) seat_name: UseStateHandle<String>,
     pub(super) seat_worktree: UseStateHandle<String>,
     pub(super) seat_vendor: UseStateHandle<String>,

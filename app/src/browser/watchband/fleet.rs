@@ -51,22 +51,12 @@ impl LineageMode {
         }
     }
 
-    const fn destination(self) -> CanvasDestination {
-        match self {
-            Self::Team => CanvasDestination::Team,
-            Self::Metrics => CanvasDestination::Metrics,
-            Self::Tasks => CanvasDestination::Tasks,
-            Self::Lanes => CanvasDestination::Agents,
-        }
-    }
-
-    const fn from_destination(destination: CanvasDestination) -> Option<Self> {
+    const fn from_destination(destination: TeamDestination) -> Self {
         match destination {
-            CanvasDestination::History => None,
-            CanvasDestination::Metrics => Some(Self::Metrics),
-            CanvasDestination::Team => Some(Self::Team),
-            CanvasDestination::Tasks => Some(Self::Tasks),
-            CanvasDestination::Agents => Some(Self::Lanes),
+            TeamDestination::Metrics => Self::Metrics,
+            TeamDestination::Team => Self::Team,
+            TeamDestination::Tasks => Self::Tasks,
+            TeamDestination::Agents => Self::Lanes,
         }
     }
 }
@@ -85,8 +75,6 @@ pub(super) struct FleetRender<'a> {
     pub(super) drafts: &'a UseReducerHandle<ComposerDrafts>,
     pub(super) submissions: &'a SubmissionHandle,
     pub(super) lineage_controls: &'a UseReducerHandle<LineageControls>,
-    pub(super) axis: &'a UseStateHandle<Axis>,
-    pub(super) mosaic: &'a UseStateHandle<bool>,
     pub(super) controls: &'a view::AgentControls,
 }
 
@@ -95,8 +83,6 @@ pub(super) fn render_empty_fleet(
     epoch: CanonicalUuid,
     fleet: &NodeRef,
     lineage_controls: &UseReducerHandle<LineageControls>,
-    axis: &UseStateHandle<Axis>,
-    mosaic: &UseStateHandle<bool>,
     controls: &view::AgentControls,
 ) -> Html {
     let empty_lineage = crate::runtime::LaneRow {
@@ -112,8 +98,6 @@ pub(super) fn render_empty_fleet(
                 {render_empty_toolbar(
                     mode,
                     lineage_controls,
-                    axis,
-                    mosaic,
                     &[],
                 )}
                 <div class="team-pane" data-team-mode={mode.key()}>
@@ -374,8 +358,6 @@ fn lineage_drop(
 fn render_empty_toolbar(
     mode: LineageMode,
     lineage_controls: &UseReducerHandle<LineageControls>,
-    axis: &UseStateHandle<Axis>,
-    mosaic: &UseStateHandle<bool>,
     standings: &[Standing],
 ) -> Html {
     html! {
@@ -385,7 +367,7 @@ fn render_empty_toolbar(
                 role="group"
                 aria-label={format!("{} admitted agents", standings.len())}
             ></span>
-            {render_mode_rail(mode, None, standings, lineage_controls, axis, mosaic)}
+            {render_mode_rail(mode, None, standings, lineage_controls)}
             <button
                 class="team-menu"
                 type="button"
@@ -497,8 +479,6 @@ fn render_lineage_toolbar(
                 Some(lineage.lane),
                 standings,
                 render.lineage_controls,
-                render.axis,
-                render.mosaic,
             )}
             {lineage_menu::trigger(lineage.lane, &control, render.lineage_controls)}
         </header>
@@ -512,18 +492,14 @@ fn render_mode_rail(
     lineage: Option<CanonicalUuid>,
     standings: &[Standing],
     lineage_controls: &UseReducerHandle<LineageControls>,
-    axis: &UseStateHandle<Axis>,
-    mosaic: &UseStateHandle<bool>,
 ) -> Html {
     html! {
         <nav class="team-mode-rail" role="tablist" aria-label="Live team views">
-            {for CanvasDestination::ALL.map(|destination| {
+            {for TeamDestination::ALL.map(|destination| {
                 let candidate = LineageMode::from_destination(destination);
-                let selected = destination == mode.destination();
+                let selected = candidate == mode;
                 let choose = lineage_controls.clone();
-                let destination_axis = axis.clone();
-                let destination_mosaic = mosaic.clone();
-                let badge = mode_badge(destination, standings);
+                let badge = mode_badge(candidate, standings);
                 html! {
                     <button
                         type="button"
@@ -531,15 +507,10 @@ fn render_mode_rail(
                         class={classes!("team-mode", selected.then_some("selected"))}
                         aria-selected={selected.to_string()}
                         onclick={Callback::from(move |_| {
-                            if let Some(candidate) = candidate {
-                                choose.dispatch(LineageControlAction::SetMode {
-                                    lineage,
-                                    mode: candidate,
-                                });
-                            } else {
-                                destination_axis.set(Axis::Chronology);
-                                destination_mosaic.set(false);
-                            }
+                            choose.dispatch(LineageControlAction::SetMode {
+                                lineage,
+                                mode: candidate,
+                            });
                         })}
                     >
                         <span class="team-mode-label" title={destination.label()}>
@@ -585,19 +556,18 @@ fn lineage_arrangement_key(
     })
 }
 
-fn mode_badge(destination: CanvasDestination, standings: &[Standing]) -> Option<String> {
-    let count = match destination {
-        CanvasDestination::History => return None,
-        CanvasDestination::Agents => standings.iter().map(|standing| standing.pending).sum(),
-        CanvasDestination::Tasks => standings
+fn mode_badge(mode: LineageMode, standings: &[Standing]) -> Option<String> {
+    let count = match mode {
+        LineageMode::Lanes => standings.iter().map(|standing| standing.pending).sum(),
+        LineageMode::Tasks => standings
             .iter()
             .filter(|standing| standing.handle.is_some())
             .count(),
-        CanvasDestination::Metrics => standings
+        LineageMode::Metrics => standings
             .iter()
             .filter(|standing| standing.held_since.is_some())
             .count(),
-        CanvasDestination::Team => standings.len(),
+        LineageMode::Team => standings.len(),
     };
     watchband::badge(count)
 }

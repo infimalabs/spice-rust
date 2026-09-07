@@ -15,6 +15,7 @@ import {
   captureReferenceControls,
 } from "./control-reference.mjs";
 import { assertLineageResponsiveLayout } from "./lineage-responsive.mjs";
+import { assertTeamNavigation, TEAM_DESTINATION_LABELS } from "./team-navigation.mjs";
 import {
   chooseCanvasView,
   reply,
@@ -76,25 +77,18 @@ export async function assertPerTeamWatchbands(
     [primarySurface, "primary"],
     [secondarySurface, "secondary"],
   ]) {
-    assert.deepEqual(
-      await surface.getByRole("tab").locator(".team-mode-label").allTextContents(),
-      ["History", "Metrics", "Team", "Tasks", "Agents"],
-      `${label} team exposes the mirrored navigation order`,
-    );
+    await assertTeamNavigation(surface, `${label} populated team`);
   }
   const primaryTabs = primarySurface.getByRole("tab");
   await primaryTabs.first().focus();
-  for (const [index, label] of ["History", "Metrics", "Team", "Tasks", "Agents"].entries()) {
+  for (const [index, label] of TEAM_DESTINATION_LABELS.entries()) {
     assert.match(
       (await page.locator(":focus").innerText()).trim(),
       new RegExp(`^${label}`),
       `team keyboard traversal follows visible order at ${label}`,
     );
-    if (index < 4) await page.keyboard.press("Tab");
+    if (index < TEAM_DESTINATION_LABELS.length - 1) await page.keyboard.press("Tab");
   }
-  await primaryTabs.first().click();
-  await page.getByRole("heading", { name: "History", exact: true }).waitFor();
-  await chooseCanvasView(page, "Lanes");
   const selectedMode = (surface) => surface.locator(".team-pane").getAttribute("data-team-mode");
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
@@ -593,6 +587,7 @@ export async function assertPerTeamWatchbands(
     false,
     "the author of the second member's retained cards is seated in no lane",
   );
+  await assertTeamNavigation(primarySurface, "the team with a vacant member");
   await waitForPage(page, "departed author cards retain their lane", TRANSITION_MS,
     ({ lineage, lane }) => {
     const cards = [...document.querySelectorAll(
@@ -673,6 +668,7 @@ export async function assertPerTeamWatchbands(
   const restoredSecondary = reconnected.locator(
     `.team-surface[data-lineage-id="${secondary.lineage_id}"]`,
   );
+  await assertTeamNavigation(reconnected, "the reloaded team selection");
   await restoredPrimary.locator('.team-speech input[type="range"]').fill("2");
   await restoredSecondary.locator('.team-speech input[type="range"]').fill("2");
   await reconnected.getByRole("tab", { name: /^Team/ }).first().click();

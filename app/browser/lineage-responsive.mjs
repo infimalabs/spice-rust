@@ -121,6 +121,8 @@ async function fleetGeometry(fleet) {
         .map((draft) => draft.value)),
       laneScrolls: surfaces.flatMap((surface) => [...surface.querySelectorAll(".lane-mosaic-plane")]
         .map((lane) => lane.scrollTop)),
+      tabLabels: surfaces.map((surface) => [...surface.querySelectorAll(".team-mode-label")]
+        .map((label) => label.textContent.trim())),
       surfaces: surfaceGeometry,
     };
   });
@@ -136,6 +138,12 @@ function assertTrack(geometry, label, overflow) {
   assert.ok(geometry.pageOverflowY <= 1, `${label} has no page-level vertical overflow`);
   assert.ok(Math.abs(geometry.scrollLeft - geometry.overflowX) <= 1, `${label} is right anchored`);
   assert.ok(Math.abs(geometry.lastRight - geometry.right) <= 1, `${label} reveals the newest lane`);
+  assert.ok(
+    geometry.tabLabels.every((labels) => (
+      JSON.stringify(labels) === JSON.stringify(["Metrics", "Team", "Tasks", "Agents"])
+    )),
+    `${label} keeps global History out of every responsive team tablist: ${JSON.stringify(geometry)}`,
+  );
   assert.ok(geometry.surfaces.every(({ width, minWidth, minWidthToken, height, direction, overflow, clipped }) => (
     width >= minWidth - 0.5
       && minWidthToken === "20em"
