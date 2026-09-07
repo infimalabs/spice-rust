@@ -497,6 +497,46 @@ async function assertExternalOperatorReplay(page, fixture, console, lane, worktr
   return replyText;
 }
 
+async function assertInlineTastePills(page, console, lane, activityReplay) {
+  const replyText = "ACK: presentation remains unchanged.";
+  const text = [
+    "> [TASTE] compatibility: Keep one tested path.",
+    "",
+    "> [TASTE] polling: Wait for the completion event.",
+    "",
+    replyText,
+  ].join("\n");
+  const { key } = await activityReplay.injectClassifiedAgentProse(page, lane, text, {
+    acknowledgements: 0,
+    tastes: 2,
+  });
+  const card = console.locator(`[data-mosaic-card-key="${key}"]`);
+  await card.waitFor({ timeout: TRANSITION_MS });
+  assert.equal(await card.getAttribute("data-message-ack-count"), "0");
+  assert.equal(await card.getAttribute("data-message-taste-count"), "2");
+  assert.deepEqual(
+    await card.locator(".message-taste-pill").allTextContents(),
+    ["TASTE", "TASTE"],
+    "each quoted taste receives its own unnumbered inline pill",
+  );
+  assert.equal(
+    await card.locator(".message-taste-pill .message-badge-count").count(),
+    0,
+    "inline taste pills carry no ordinal or count",
+  );
+  assert.equal(
+    await card.locator(".message-footer .message-badge").count(),
+    0,
+    "taste classification is not repeated in the message footer",
+  );
+  const body = await card.locator(".message-body").innerText();
+  assert.doesNotMatch(body, /\[TASTE\]/, "quoted taste markers are replaced in presentation");
+  assert.match(body, /compatibility: Keep one tested path\./);
+  assert.match(body, /polling: Wait for the completion event\./);
+  assert.match(body, /ACK: presentation remains unchanged\.$/);
+  return replyText;
+}
+
 export async function assertAgentConversation(
   page,
   fixture,
@@ -944,6 +984,15 @@ export async function assertAgentConversation(
     (message) => message.lane === team.quoteLane,
   )?.prose;
   assert.ok(restoredQuoteProse, "the canonical replay retains the quote lane's assistant prose");
+  const tasteReply = await assertInlineTastePills(
+    page,
+    console,
+    seated[0].lane,
+    activityReplay,
+  );
+  const tasteHeading = restoredProse.find((message) => message.lane === seated[0].lane);
+  assert.ok(tasteHeading, "the taste response belongs to the primary heading lane");
+  tasteHeading.prose = tasteReply;
   const clearedInbox = await reply(fixture, ["inbox", seated[2].lane]);
   for (const pending of clearedInbox.body.lanes[0].pending) {
     await reply(fixture, ["steer", "cancel", pending.directive]);

@@ -438,6 +438,8 @@ async function installTaskChipFixture(page, surface) {
     const chip = (handle) => `<span class="message-task-chip" data-task-handle="${handle}"`
       + ` aria-label="Reported task ${handle}" title="${handle}">`
       + `<span class="message-task-chip-label">${handle}</span></span>`;
+    const taste = () => '<span class="message-taste-pill" data-message-classification="taste"'
+      + ' aria-label="Taste classification">TASTE</span>';
     const host = document.createElement("div");
     host.className = "team-surface";
     host.dataset.taskChipFixture = "matrix";
@@ -482,6 +484,9 @@ async function installTaskChipFixture(page, surface) {
       <p data-task-chip-case="ordinary"><span data-prose>Settled </span>${chip(handles.generated)}<span data-prose> in one pass.</span></p>
       <p data-task-chip-case="long"><span data-prose>Transferred </span>${chip(handles.long)}<span data-prose> with its identity intact.</span></p>
       <p data-task-chip-case="multi"><span data-prose>Related </span>${chip("CARDS-1kRZRDy7")}<span data-prose> and </span>${chip("MOSAIC-1kRYqQxy")}<span data-prose> remain distinct.</span></p>
+      <div data-task-chip-case="taste">
+        <blockquote><p>${taste()}<span data-prose> compatibility: Keep one path; </span>${taste()}<span data-prose> polling: wait for completion.</span></p></blockquote>
+      </div>
       <div data-task-chip-case="quoted-first">
         <blockquote>
           <p><span data-prose>Quoted </span>${chip(handles.generated)}<span data-prose> first.</span></p>
@@ -567,6 +572,24 @@ async function measureTaskChipFixture(fixture) {
         labelWhiteSpace: labelStyle.whiteSpace,
       };
     };
+    const inspectTaste = (node) => {
+      const style = getComputedStyle(node);
+      return {
+        ariaLabel: node.getAttribute("aria-label"),
+        classification: node.dataset.messageClassification,
+        text: node.textContent,
+        box: rect(node.getBoundingClientRect()),
+        textBox: textRect(node),
+        fontSize: Number.parseFloat(style.fontSize),
+        lineHeight: Number.parseFloat(style.lineHeight),
+        verticalAlign: style.verticalAlign,
+        paddingTop: style.paddingTop,
+        paddingRight: style.paddingRight,
+        paddingBottom: style.paddingBottom,
+        paddingLeft: style.paddingLeft,
+        count: node.querySelector(".message-badge-count")?.textContent ?? null,
+      };
+    };
     return {
       card: {
         box: rect(card.getBoundingClientRect()),
@@ -589,6 +612,7 @@ async function measureTaskChipFixture(fixture) {
         scrollWidth: row.scrollWidth,
         prose: [...row.querySelectorAll("[data-prose]")].flatMap(textRects),
         chips: [...row.querySelectorAll(".message-task-chip")].map(inspectChip),
+        tastes: [...row.querySelectorAll(".message-taste-pill")].map(inspectTaste),
       })),
       action: {
         box: rect(action.getBoundingClientRect()),
@@ -686,6 +710,32 @@ function assertTaskChipMeasurement(label, measured) {
     long.scrollWidth > long.clientWidth + tolerance,
     `${label} long admitted handle exercises the declared ellipsis`,
   );
+  const taste = measured.cases.find(({ name }) => name === "taste");
+  assert.equal(taste.tastes.length, 2, `${label} repeats one pill for each quoted taste`);
+  for (const pill of taste.tastes) {
+    assert.equal(pill.text, "TASTE", `${label} taste pill has no visible ordinal`);
+    assert.equal(pill.count, null, `${label} taste pill has no count element`);
+    assert.equal(pill.ariaLabel, "Taste classification");
+    assert.equal(pill.classification, "taste");
+    assert.equal(pill.verticalAlign, "baseline", `${label} taste pill follows prose baseline`);
+    assert.deepEqual(
+      [pill.paddingTop, pill.paddingRight, pill.paddingBottom, pill.paddingLeft],
+      ["0px", "4px", "0px", "4px"],
+      `${label} taste pill uses compact inline padding`,
+    );
+    assert.ok(
+      pill.fontSize < measured.quote.fontSize && pill.box.height <= ordinary.box.height + tolerance,
+      `${label} taste pill is no larger than the inline task chip: ${JSON.stringify({ pill, ordinary })}`,
+    );
+    const adjacentProse = taste.prose.find((prose) => (
+      prose.top <= pill.textBox.bottom && prose.bottom >= pill.textBox.top
+    ));
+    assert.ok(adjacentProse, `${label} taste pill shares a line with quoted prose`);
+    assert.ok(
+      Math.abs(adjacentProse.bottom - pill.textBox.bottom) <= 2,
+      `${label} taste pill shares the quoted prose baseline`,
+    );
+  }
   assert.equal(measured.action.tabIndex, 0, `${label} surrounding card action remains focusable`);
   assert.deepEqual(
     [measured.action.width, measured.action.height],

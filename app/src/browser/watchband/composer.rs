@@ -261,7 +261,12 @@ fn agent_message_presentation<'a>(
     let footer_label =
         watchband::agent_message_label(&member.worktree, member.name.as_deref()).to_owned();
     let is_compaction = message.activity == wire::AgentActivityKind::Compaction;
-    let rendered_markdown = crate::composer_markdown::render_received(&message.text);
+    let badges = message
+        .automatic_speech
+        .as_ref()
+        .map_or_else(wire::AgentMessageBadges::default, |speech| speech.badges);
+    let rendered_markdown =
+        crate::composer_markdown::render_received_with_tastes(&message.text, badges.tastes);
     let card_label = match message.activity {
         wire::AgentActivityKind::Compaction => format!("Context compacted by {footer_label}"),
         wire::AgentActivityKind::Tool if message.text.trim().is_empty() => {
@@ -292,10 +297,7 @@ fn agent_message_presentation<'a>(
         unlinked_media,
         image_only,
         card_label,
-        badges: message
-            .automatic_speech
-            .as_ref()
-            .map_or_else(wire::AgentMessageBadges::default, |speech| speech.badges),
+        badges,
     }
 }
 
@@ -459,17 +461,12 @@ fn render_agent_message_footer(
 }
 
 fn render_agent_message_badges(badges: wire::AgentMessageBadges) -> Html {
-    if badges.is_empty() {
+    if badges.acknowledgements == 0 {
         return Html::default();
     }
     html! {
         <span class="message-badges" aria-label="Message classifications">
-            if badges.acknowledgements > 0 {
-                {render_agent_message_badge("ACK", "ack", badges.acknowledgements)}
-            }
-            if badges.tastes > 0 {
-                {render_agent_message_badge("TASTE", "taste", badges.tastes)}
-            }
+            {render_agent_message_badge("ACK", "ack", badges.acknowledgements)}
         </span>
     }
 }

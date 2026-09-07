@@ -136,7 +136,12 @@ export async function installActivityReplay(
     page,
     lane,
     text,
-    { activity = undefined, media = undefined, history = false } = {},
+    {
+      activity = undefined,
+      automaticSpeech = undefined,
+      media = undefined,
+      history = false,
+    } = {},
   ) => {
     const source = proseFrames.get(lane);
     assert.ok(source, `the route captured an agent prose frame for ${lane}`);
@@ -145,6 +150,8 @@ export async function installActivityReplay(
     frame.message.text = text;
     if (activity === undefined) delete frame.message.activity;
     else frame.message.activity = activity;
+    if (automaticSpeech === undefined) delete frame.message.automatic_speech;
+    else frame.message.automatic_speech = automaticSpeech;
     delete frame.message.final_answer;
     if (media === undefined) delete frame.message.media;
     else frame.message.media = media;
@@ -235,6 +242,11 @@ export async function installActivityReplay(
     },
     injectAgentProse(page, lane, text, media = undefined) {
       return injectAgentMessage(page, lane, text, { media });
+    },
+    injectClassifiedAgentProse(page, lane, text, badges) {
+      return injectAgentMessage(page, lane, text, {
+        automaticSpeech: { kind: "acknowledgement", text, badges },
+      });
     },
     injectAgentToolMedia(page, lane, media, text = "") {
       return injectAgentMessage(page, lane, text, { activity: "tool", media });
