@@ -696,6 +696,7 @@ impl PresentationDirectives {
             steering
                 .directives()
                 .into_iter()
+                .filter(|directive| presents_as_authored_steering(directive.control()))
                 .map(|directive| {
                     let key = directive.key().clone();
                     let retirement = retirements.get(&key).copied();
@@ -712,6 +713,12 @@ impl PresentationDirectives {
                 .collect(),
         ))
     }
+}
+
+fn presents_as_authored_steering(control: Option<&str>) -> bool {
+    !control.is_some_and(|control| {
+        control.starts_with(spice::session_meter::TASK_CONTRACT_CONTROL_PREFIX)
+    })
 }
 
 #[derive(Clone, Copy, Debug)]

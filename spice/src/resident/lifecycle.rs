@@ -22,7 +22,7 @@ use super::{CommandResult, RuntimePaths, SurfaceConfig, commit, new_uuid, store_
 
 mod materialization;
 use materialization::Projection;
-mod contract_edits;
+pub(super) mod contract_edits;
 #[cfg(test)]
 mod startup_tests;
 

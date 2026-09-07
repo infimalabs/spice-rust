@@ -407,6 +407,23 @@ mod presentation {
     }
 
     #[test]
+    fn task_contract_acknowledgment_remains_system_status_without_a_directive_quote() {
+        assert!(!presents_as_authored_steering(Some(
+            "task-contract-edit:1kKRRsDP:44:33"
+        )));
+        let text = "ACK 1kQwPZtK: Accepted revision 44.";
+        assert_eq!(
+            present_steering_acknowledgements_with_directives(
+                text,
+                &PresentationDirectives::default(),
+                event(),
+            )
+            .expect("system acknowledgment stays visible"),
+            text,
+        );
+    }
+
+    #[test]
     fn live_key_for_another_lane_preserves_the_original_message() {
         let text = "ACK 1kQwPZtK: This lane does not own the directive.";
         let mut directives = directives(&[("1kQwPZtK", "Do not quote this direction here.")]);

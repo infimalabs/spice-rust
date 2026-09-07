@@ -16,6 +16,13 @@ const CONTRACT_FIELDS: [&str; 6] = [
     "dependencies",
 ];
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::resident) struct NoticeAuthority {
+    pub(in crate::resident) task: TaskStamp,
+    pub(in crate::resident) edit: Seq,
+    pub(in crate::resident) claim: Seq,
+}
+
 pub(super) fn reconcile(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -172,7 +179,41 @@ fn claim_guard(task: TaskStamp, lane: CanonicalUuid, claimed: Seq) -> JournalGua
 }
 
 fn control(task: &TaskStamp, edit: Seq, claim: Seq) -> String {
-    format!("task-contract-edit:{task}:{edit}:{claim}")
+    format!(
+        "{}{task}:{edit}:{claim}",
+        spice::session_meter::TASK_CONTRACT_CONTROL_PREFIX
+    )
+}
+
+pub(in crate::resident) fn notice_authority(
+    control: Option<&str>,
+) -> Result<Option<NoticeAuthority>, String> {
+    let Some(control) = control else {
+        return Ok(None);
+    };
+    let Some(encoded) = control.strip_prefix(spice::session_meter::TASK_CONTRACT_CONTROL_PREFIX)
+    else {
+        return Ok(None);
+    };
+    let mut fields = encoded.split(':');
+    let task = fields
+        .next()
+        .ok_or_else(|| "task-contract control omitted its task".to_owned())?
+        .parse()
+        .map_err(|error| format!("task-contract control has an invalid task: {error}"))?;
+    let edit = control_seq(fields.next(), "edit")?;
+    let claim = control_seq(fields.next(), "claim")?;
+    if fields.next().is_some() {
+        return Err("task-contract control carries trailing fields".to_owned());
+    }
+    Ok(Some(NoticeAuthority { task, edit, claim }))
+}
+
+fn control_seq(value: Option<&str>, field: &str) -> Result<Seq, String> {
+    value
+        .and_then(|value| value.parse::<u64>().ok())
+        .and_then(Seq::new)
+        .ok_or_else(|| format!("task-contract control has an invalid {field} position"))
 }
 
 fn identity(control: &str) -> CanonicalUuid {
@@ -207,6 +248,8 @@ fn text(
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use crate::resident::lane_surface::{AdvisoryRtkFixture, seed_task_claim};
     use bus::CommitOutcome;
@@ -230,6 +273,20 @@ mod tests {
                 Seq::new(1).expect("claim"),
             )),
         );
+    }
+
+    #[test]
+    fn task_contract_control_round_trips_exact_notice_authority() {
+        let authority = NoticeAuthority {
+            task: "1kKRRsDP".parse().expect("task stamp"),
+            edit: Seq::new(2).expect("edit"),
+            claim: Seq::new(1).expect("claim"),
+        };
+        let encoded = control(&authority.task, authority.edit, authority.claim);
+
+        assert_eq!(notice_authority(Some(&encoded)), Ok(Some(authority)));
+        assert_eq!(notice_authority(Some("lane-renewal-context")), Ok(None));
+        assert!(notice_authority(Some("task-contract-edit:broken")).is_err());
     }
 
     #[test]
@@ -275,6 +332,36 @@ mod tests {
                 .text()
                 .contains("Acknowledge this revision before continuing.")
         }));
+        let (authored, notices) =
+            super::super::super::steering::pending_presentations(&ledger, fixture.lane)
+                .expect("pending presentation partitions");
+        assert!(authored.is_empty());
+        assert_eq!(notices.len(), 2);
+        assert_eq!(notices[0].task, task);
+        let edit_positions = snapshot
+            .facts()
+            .iter()
+            .filter(|envelope| envelope.fact.read::<wire::body::TaskEdited>().is_some())
+            .map(|envelope| envelope.seq)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            notices.iter().map(|notice| notice.edit).collect::<Vec<_>>(),
+            edit_positions
+        );
+        assert_eq!(
+            notices[0].claim,
+            before.claim().expect("claim head").body().claimed
+        );
+        let inbox = fixture
+            .paths
+            .inbox_for_worktree(fixture.root.to_str().expect("fixture path is UTF-8"))
+            .expect("fixture inbox resolves");
+        assert_eq!(
+            fs::read_to_string(steer::inbox::path(&inbox, fixture.lane))
+                .expect("disposable inbox reads"),
+            "",
+            "system notices never enter the authored steering rendering",
+        );
 
         let after = bus.task_snapshot().expect("post-notice snapshot reads");
         let after = &after.tasks()[0];

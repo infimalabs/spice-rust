@@ -29,7 +29,7 @@ use crate::envelope::{Actor, Origin, Seq};
 use crate::fact::FactKind;
 use crate::head::{ResidentState, TapeLocus, TrustState};
 use crate::ident::{CanonicalUuid, Digest, Instant, ReleaseNotesIdentity};
-use crate::witness::{Answer, Disposition, Name, TaskHandle};
+use crate::witness::{Answer, Disposition, Name, TaskHandle, TaskStamp};
 
 mod board;
 pub use board::{
@@ -535,6 +535,28 @@ pub struct PendingDirective {
     pub expires: Instant,
 }
 
+/// Resident-authored task-contract revision requiring claimant acknowledgment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskContractNotice {
+    /// Stable control identity whose disposition the acknowledgment retires.
+    pub directive: CanonicalUuid,
+    /// Human-sized key the claimant must acknowledge.
+    pub key: String,
+    /// Durable task birth identity whose contract changed.
+    pub task: TaskStamp,
+    /// Journal position of the exact edit being acknowledged.
+    pub edit: Seq,
+    /// Claim-opening position to which the notice remains bound.
+    pub claim: Seq,
+    /// Resident-authored bounded summary of the contract change.
+    pub text: String,
+    /// Current presentation stage.
+    pub stage: crate::body::SteeringStage,
+    /// Instant at which the acknowledgment requirement lapses.
+    pub expires: Instant,
+}
+
 /// Pending direction for one lane at a resident snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -557,6 +579,9 @@ pub struct LaneInbox {
     pub compaction: Option<u64>,
     /// Pending directives in journal order.
     pub pending: Vec<PendingDirective>,
+    /// Pending resident-authored task-contract notices in journal order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub task_contract_notices: Vec<TaskContractNotice>,
     /// Current durable progress or degradation record for the lane rendering.
     #[serde(default, skip_serializing_if = "DeliveryStanding::is_unknown")]
     pub delivery: DeliveryStanding,
