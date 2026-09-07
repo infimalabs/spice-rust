@@ -28,6 +28,7 @@ const ARGUMENT_KEYS: [&str; 8] = [
 ];
 
 const COMMAND_EXECUTION_TOOLS: [&str; 4] = ["exec", "exec_command", "command_execution", "Bash"];
+const STRUCTURED_COMMAND_EXECUTION_TOOLS: [&str; 2] = ["exec", "exec_command"];
 
 /// Call previews held only while their calls are still outstanding.
 ///
@@ -102,7 +103,14 @@ pub(super) fn message_text(tool: &listen::Tool, activity: String, media: &[wire:
 }
 
 fn activity_preview(name: &str, arguments: &str) -> String {
-    if COMMAND_EXECUTION_TOOLS.contains(&name.trim()) {
+    let name = name.trim();
+    if COMMAND_EXECUTION_TOOLS.contains(&name) {
+        if STRUCTURED_COMMAND_EXECUTION_TOOLS.contains(&name)
+            && !arguments.is_empty()
+            && serde_json::from_str::<Value>(arguments).is_err()
+        {
+            return normalized_name(name);
+        }
         let arguments = flatten(&argument_preview(arguments));
         return if arguments.is_empty() {
             normalized_name(name)
