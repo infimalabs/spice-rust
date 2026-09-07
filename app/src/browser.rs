@@ -29,7 +29,7 @@ use crate::composer_submissions::{Submission, SubmissionQueue, SubmissionStatus}
 use crate::runtime::{CanvasSurface, topology_mutation_requires_refresh};
 use crate::speech_queue::{
     Advance, Enqueue, ExternalPause, NarrationCursors, NarrationMessage, SpeechEntry, SpeechQueue,
-    SpeechRequest,
+    SpeechRequest, SuppressAutomatic,
 };
 use crate::thread_refresh::ThreadRefresh;
 use crate::{
@@ -129,6 +129,14 @@ struct NarrationBatch {
     materialization: bool,
     mode: LineageSpeech,
     messages: Vec<NarrationMessage>,
+}
+
+#[derive(Clone)]
+struct AgentSpeechControls {
+    speak: Callback<SpeechRequest>,
+    narrate: Callback<NarrationBatch>,
+    suppress_automatic: Callback<()>,
+    message: UseStateHandle<Option<String>>,
 }
 
 #[derive(Clone)]
@@ -297,6 +305,18 @@ impl SpeechRuntime {
         self.controller.borrow_mut().stop();
         self.message.set(None);
         self.status.set(SpeechStatus::Idle);
+    }
+
+    fn suppress_automatic(&self) {
+        match self.queue.borrow_mut().suppress_automatic() {
+            SuppressAutomatic::Preserved => {}
+            SuppressAutomatic::Idle => {
+                self.controller.borrow_mut().stop();
+                self.message.set(None);
+                self.status.set(SpeechStatus::Idle);
+            }
+            SuppressAutomatic::Start(entry) => self.start(entry),
+        }
     }
 
     fn abandon_lane(&self, lane: &str) {
@@ -529,29 +549,9 @@ fn canvas_app() -> Html {
     };
     let current_speech_runtime = use_mut_ref(|| speech_runtime.clone());
     *current_speech_runtime.borrow_mut() = speech_runtime.clone();
-    let enqueue_speech = {
-        let current_speech_runtime = current_speech_runtime.clone();
-        use_memo((), move |_| {
-            Callback::from(move |request: SpeechRequest| {
-                current_speech_runtime.borrow().enqueue(request);
-            })
-        })
-    };
-    let toggle_message = {
-        let current_speech_runtime = current_speech_runtime.clone();
-        use_memo((), move |_| {
-            Callback::from(move |request: SpeechRequest| {
-                current_speech_runtime.borrow().toggle_message(request);
-            })
-        })
-    };
     let narration_cursors = use_mut_ref(load_narration_cursors);
-    let narrate = {
-        let enqueue_speech = (*enqueue_speech).clone();
-        use_memo((), move |_| {
-            narration_callback(narration_cursors, enqueue_speech)
-        })
-    };
+    let agent_speech =
+        use_agent_speech_controls(current_speech_runtime, narration_cursors, speech_message);
     let agents = use_agent_controls(
         sender.clone(),
         surface.clone(),
@@ -559,9 +559,7 @@ fn canvas_app() -> Html {
             axis: axis.clone(),
             mosaic: mosaic.clone(),
         },
-        (*toggle_message).clone(),
-        (*narrate).clone(),
-        speech_message,
+        agent_speech,
     );
     let unsafe_intent = use_unsafe_intent(&composer_drafts, &submission_status);
     use_surface_connection(
@@ -612,6 +610,39 @@ fn canvas_app() -> Html {
         submit_note,
         refresh,
     })
+}
+
+#[hook]
+fn use_agent_speech_controls(
+    runtime: Rc<RefCell<SpeechRuntime>>,
+    narration_cursors: Rc<RefCell<NarrationCursors>>,
+    message: UseStateHandle<Option<String>>,
+) -> AgentSpeechControls {
+    let enqueue = {
+        let runtime = runtime.clone();
+        use_memo((), move |_| {
+            Callback::from(move |request: SpeechRequest| runtime.borrow().enqueue(request))
+        })
+    };
+    let speak = {
+        let runtime = runtime.clone();
+        use_memo((), move |_| {
+            Callback::from(move |request: SpeechRequest| runtime.borrow().toggle_message(request))
+        })
+    };
+    let suppress_automatic = use_memo((), move |_| {
+        Callback::from(move |()| runtime.borrow().suppress_automatic())
+    });
+    let narrate = {
+        let enqueue = (*enqueue).clone();
+        use_memo((), move |_| narration_callback(narration_cursors, enqueue))
+    };
+    AgentSpeechControls {
+        speak: (*speak).clone(),
+        narrate: (*narrate).clone(),
+        suppress_automatic: (*suppress_automatic).clone(),
+        message,
+    }
 }
 
 #[hook]
@@ -897,9 +928,7 @@ fn use_agent_controls(
     sender: SenderHandle,
     surface: UseStateHandle<SurfaceData>,
     navigation: view::CanvasNavigation,
-    speak: Callback<SpeechRequest>,
-    narrate: Callback<NarrationBatch>,
-    speech_message: UseStateHandle<Option<String>>,
+    speech: AgentSpeechControls,
 ) -> view::AgentControls {
     let seat_name = use_state(String::new);
     let seat_worktree = use_state(String::new);
@@ -922,9 +951,10 @@ fn use_agent_controls(
         seat_vendor,
         seat_life,
         seat_notice,
-        speak,
-        narrate,
-        speech_message,
+        speak: speech.speak,
+        narrate: speech.narrate,
+        suppress_automatic_speech: speech.suppress_automatic,
+        speech_message: speech.message,
     }
 }
 

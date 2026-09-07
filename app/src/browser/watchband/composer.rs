@@ -122,30 +122,26 @@ impl PartialEq for AgentMessageCardProps {
 /// Keep stable message DOM and parsed Markdown out of unrelated surface updates.
 #[function_component(AgentMessageCard)]
 pub(super) fn agent_message_card(props: &AgentMessageCardProps) -> Html {
-    let speak = if props.speech == LineageSpeech::Quiet {
-        Callback::from(|_: String| {})
-    } else {
-        let lane = props.lane.to_string();
-        let message_key = agent_message_source_id(&props.message);
-        let speech_queue = props.speech_queue.clone();
-        let response = watchband::response_speech_text(
-            &props.message.text,
-            props
-                .message
-                .automatic_speech
-                .as_ref()
-                .map(|speech| speech.text.as_str()),
-        );
-        Callback::from(move |_: String| {
-            if let Some(text) = response.clone() {
-                speech_queue.emit(SpeechRequest::message(
-                    lane.clone(),
-                    message_key.clone(),
-                    text,
-                ));
-            }
-        })
-    };
+    let lane = props.lane.to_string();
+    let message_key = agent_message_source_id(&props.message);
+    let speech_queue = props.speech_queue.clone();
+    let response = watchband::response_speech_text(
+        &props.message.text,
+        props
+            .message
+            .automatic_speech
+            .as_ref()
+            .map(|speech| speech.text.as_str()),
+    );
+    let speak = Callback::from(move |_: String| {
+        if let Some(text) = response.clone() {
+            speech_queue.emit(SpeechRequest::message(
+                lane.clone(),
+                message_key.clone(),
+                text,
+            ));
+        }
+    });
     let correspondent = agent_message_correspondent(
         props.accent,
         props.quote_lane,

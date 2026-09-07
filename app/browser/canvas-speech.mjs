@@ -225,11 +225,54 @@ async function assertAutomaticSpeechEngine(engine, endpoint, fixture, worktree, 
     await page.reload({ waitUntil: "networkidle" });
     await chooseCanvasView(page, "Lanes");
     assert.equal(await mode.inputValue(), "2", `${engine} persists Narrate`);
-    await emitAssistantRecord(worktree, page, lane, `${engine} narrated commentary`);
+    const narrated = await emitAssistantRecord(
+      worktree,
+      page,
+      lane,
+      `${engine} narrated commentary`,
+    );
     await waitForSpeech(page, 1, `${engine} Narrate commentary`);
     assert.equal(await latestSpeechText(page), `${engine} narrated commentary`);
-    await settleLatestSpeech(page);
+    const queued = await emitAssistantRecord(
+      worktree,
+      page,
+      lane,
+      `${engine} queued narration`,
+    );
+    assert.equal(await speechCount(page), 1, `${engine} queues behind active narration`);
+    const cancelsBeforeQuiet = await page.evaluate(() =>
+      window.__speechLog.filter((row) => row.action === "cancel").length);
+    await mode.fill("0");
+    await waitForPage(page, `${engine} Quiet stops active narration`, TRANSITION_MS,
+      () => window.__speechActive === 0);
+    assert.equal(
+      await page.evaluate(() =>
+        window.__speechLog.filter((row) => row.action === "cancel").length),
+      cancelsBeforeQuiet + 1,
+      `${engine} Quiet synchronously cancels the active automatic utterance`,
+    );
+    await settleSpeechBackend(page);
+    assert.equal(await speechCount(page), 1, `${engine} Quiet drains queued automatic narration`);
+    assert.equal(
+      await narrated.getByLabel("Speak this message").count(),
+      1,
+      `${engine} Quiet retains explicit play controls`,
+    );
+    await queued.getByLabel("Speak this message").click();
+    await waitForSpeech(page, 2, `${engine} explicit playback in Quiet`);
+    assert.equal(await latestSpeechText(page), `${engine} queued narration`);
+    await queued.getByLabel("Stop playback").click();
+    await waitForPage(page, `${engine} explicit stop in Quiet`, TRANSITION_MS,
+      () => window.__speechActive === 0);
+    const speechesBeforeIdleQuiet = await speechCount(page);
     await mode.fill("1");
+    await mode.fill("0");
+    await settleSpeechBackend(page);
+    assert.equal(
+      await speechCount(page),
+      speechesBeforeIdleQuiet,
+      `${engine} an already-idle Quiet transition starts nothing`,
+    );
     monitor.assertClean();
   } finally {
     await context.close();

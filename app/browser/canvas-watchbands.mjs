@@ -424,12 +424,17 @@ export async function assertPerTeamWatchbands(
   assert.equal(await secondarySurface.locator(".team-speech span").innerText(), "narrate");
 
   await page.evaluate(() => { window.__speechLog = []; });
-  await primarySurface.getByLabel("Speak this message").first().click();
-  assert.deepEqual(
-    await page.evaluate(() => window.__speechLog),
-    [],
-    "Quiet suppresses manual speech for only its team",
-  );
+  const quietManual = primarySurface.getByLabel("Speak this message").first();
+  await quietManual.click();
+  await waitForPage(page, "Quiet retains explicit manual playback", TRANSITION_MS,
+    () => window.__speechLog.some((row) => row.action === "speak"));
+  await primarySurface.getByLabel("Stop playback").first().click();
+  await waitForPage(page, "Quiet retains explicit manual stop", TRANSITION_MS,
+    () => window.__speechActive === 0);
+  await page.evaluate(() => {
+    window.__speechLog = [];
+    window.__speechUtterances = [];
+  });
   await secondarySurface.getByLabel("Speak this message").first().click();
   await waitForPage(page, "Narrate dispatches speech", TRANSITION_MS,
     () => window.__speechLog.some((row) => row.action === "speak"));

@@ -110,6 +110,17 @@ pub enum ExternalPause {
     Start(SpeechEntry),
 }
 
+/// Result of suppressing automatic playback while preserving explicit work.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SuppressAutomatic {
+    /// No automatic head owned playback; any manual head remains current.
+    Preserved,
+    /// The automatic head was stopped and no manual successor remains.
+    Idle,
+    /// The automatic head was stopped and this manual successor became current.
+    Start(SpeechEntry),
+}
+
 /// The one queue deciding which browser speech request owns playback.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SpeechQueue {
@@ -180,6 +191,22 @@ impl SpeechQueue {
     pub fn stop(&mut self) {
         self.active = None;
         self.pending.clear();
+    }
+
+    /// Stop and discard automatic speech without disturbing explicit playback.
+    pub fn suppress_automatic(&mut self) -> SuppressAutomatic {
+        self.pending.retain(|entry| !entry.request.automatic);
+        if !self
+            .active
+            .as_ref()
+            .is_some_and(|entry| entry.request.automatic)
+        {
+            return SuppressAutomatic::Preserved;
+        }
+        self.active = self.pending.pop_front();
+        self.active
+            .clone()
+            .map_or(SuppressAutomatic::Idle, SuppressAutomatic::Start)
     }
 
     /// Remove only queued work from one lineage, preserving the committed head.
