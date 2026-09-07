@@ -65,7 +65,9 @@ fn require_no_plan_implementation(
     }
 }
 
-pub(crate) use spice::claim_lease::{AUTOMATIC_MAXIMUM_SECONDS, AUTOMATIC_PROVISIONAL_SECONDS};
+pub(crate) use spice::claim_lease::{
+    AUTOMATIC_MAXIMUM_SECONDS, AUTOMATIC_PROVISIONAL_SECONDS, RECLAIM_HORIZON_SECONDS,
+};
 pub(crate) const AUTOMATIC_HEARTBEAT_SECONDS: i64 = 20;
 pub(crate) const AUTOMATIC_ROLLING_SECONDS: i64 = 100;
 

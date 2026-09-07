@@ -76,42 +76,19 @@ pub(super) fn reclaim_window(
                 "request a positive representable lease duration",
             )
         })?;
-    let automatic = snapshot
-        .facts
-        .iter()
-        .find(|fact| fact.seq == claim.claimed)
-        .is_some_and(|fact| spice::claim_lease::is_automatic_claim_fact(claim, fact));
-    let maximum = if automatic {
-        std::cmp::max(lease.maximum, instant_after(at, AUTOMATIC_MAXIMUM_SECONDS)?)
-    } else {
-        lease.maximum
-    };
-    let requested = std::cmp::min(instant_after(at, seconds)?, maximum);
+    let requested = instant_after(at, seconds)?;
+    // Every accepted holder reclaim gets a fresh one-hour maximum. This keeps
+    // the automatic-claim horizon intact while letting a manual claim roll the
+    // same horizon forward without ownership churn.
+    let maximum = std::cmp::max(lease.maximum, instant_after(at, RECLAIM_HORIZON_SECONDS)?);
+    let requested = std::cmp::min(requested, maximum);
     let until = match residency {
         ReclaimResidency::Exact if requested <= lease.expiry => {
-            if automatic || lease.expiry < maximum {
-                return Err(refusal(
-                    "claim::lease-nonextending",
-                    Some(lease.expiry.to_string()),
-                    "request a duration that extends the current expiry",
-                ));
-            }
-            let command =
-                wire::SpiceCommand::new("task", ["free".to_owned(), renew.task.to_string()])
-                    .expect("task free is a structural Spice recovery command");
-            return Err(Outcome::Refusal(Refusal::repairable(
-                command,
-                wire::RefusalDiagnostic::new(
-                    "claim::lease-nonextending",
-                    None,
-                    Some("expiry before the durable maximum".to_owned()),
-                    Some(format!(
-                        "expiry={} maximum={}",
-                        lease.expiry, lease.maximum
-                    )),
-                )
-                .with_detail("the claim is already at its durable maximum; free it, then run spice task next for a fresh allocation lease"),
-            )));
+            return Err(refusal(
+                "claim::lease-nonextending",
+                Some(lease.expiry.to_string()),
+                "request a duration that extends the current expiry",
+            ));
         }
         ReclaimResidency::Rebound { .. } => std::cmp::max(requested, lease.expiry),
         ReclaimResidency::Exact => requested,

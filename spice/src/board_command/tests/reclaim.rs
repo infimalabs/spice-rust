@@ -10,9 +10,29 @@ fn reclaim_at(
     expected: Vec<Witness>,
     at: Instant,
 ) -> Outcome<CommandAnswer> {
+    reclaim_at_for(
+        bus,
+        epoch,
+        lane,
+        held_task,
+        expected,
+        at,
+        spice::claim_lease::DEFAULT_RECLAIM_SECONDS,
+    )
+}
+
+fn reclaim_at_for(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: &Actor,
+    held_task: &TaskHandle,
+    expected: Vec<Witness>,
+    at: Instant,
+    lease_seconds: u64,
+) -> Outcome<CommandAnswer> {
     let renew = ClaimRenew {
         task: held_task.clone(),
-        lease_seconds: 90 * 60,
+        lease_seconds,
     };
     let command = fixture_command(
         epoch,
@@ -282,6 +302,55 @@ fn reclaim_refuses_residency_outside_the_claim_lineage_without_mutation() {
     clean(&root, bus);
 }
 
+#[test]
+fn expired_claim_refuses_reclaim_without_mutation() {
+    let (root, bus, epoch, seats) = fixture("reclaim-expired", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "RECLAIM-exp01",
+        "Refuse an expired claim",
+        Some("todo"),
+    );
+    claim_next(&bus, epoch, &lane, &seats[0], &task);
+    let before = board(&bus, epoch, lane.clone());
+    let expiry = at(&before, &task)
+        .lease
+        .as_ref()
+        .expect("active lease")
+        .body
+        .expiry;
+    let before_facts = bus
+        .fact_snapshot()
+        .expect("facts before expired reclaim")
+        .facts()
+        .len();
+
+    assert_authority_recovery(
+        reclaim_at(
+            &bus,
+            epoch,
+            &lane,
+            &task,
+            active_witnesses(&before, &task, &seats[0]),
+            expiry,
+        ),
+        "claim::active-refused",
+    );
+
+    assert_eq!(board(&bus, epoch, lane), before);
+    assert_eq!(
+        bus.fact_snapshot()
+            .expect("facts after expired reclaim")
+            .facts()
+            .len(),
+        before_facts
+    );
+    clean(&root, bus);
+}
+
 fn claim_with_legacy_automatic_lease(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -344,13 +413,14 @@ fn maximum_bound_automatic_claim_reclaims_in_place_for_one_hour() {
     assert_eq!(before_lease.body.expiry, before_lease.body.maximum);
     let reclaimed_at = fixture_instant_after(started, 1);
 
-    assert_committed(reclaim_at(
+    assert_committed(reclaim_at_for(
         &bus,
         epoch,
         &lane,
         &task,
         active_witnesses(&before, &task, &seats[0]),
         reclaimed_at,
+        90 * 60,
     ));
 
     let after = board(&bus, epoch, lane.clone());
@@ -365,13 +435,14 @@ fn maximum_bound_automatic_claim_reclaims_in_place_for_one_hour() {
         fixture_instant_after(reclaimed_at, AUTOMATIC_MAXIMUM_SECONDS)
     );
     assert!(matches!(
-        reclaim_at(
+        reclaim_at_for(
             &bus,
             epoch,
             &lane,
             &task,
             active_witnesses(&after, &task, &seats[0]),
             reclaimed_at,
+            90 * 60,
         ),
         Outcome::Refusal(Refusal::Bare { ref diagnostic })
             if diagnostic.reason() == "claim::lease-nonextending"
@@ -405,15 +476,15 @@ fn maximum_bound_automatic_claim_reclaims_in_place_for_one_hour() {
 }
 
 #[test]
-fn free_and_next_mints_a_fresh_durable_maximum() {
-    let (root, bus, epoch, seats) = fixture("reclaim-maximum-reset", 1);
+fn repeated_explicit_reclaims_roll_the_same_claim_past_its_original_maximum() {
+    let (root, bus, epoch, seats) = fixture("reclaim-rolling-maximum", 1);
     let lane = Actor::Lane(seats[0].lane);
     let task = add(
         &bus,
         epoch,
         Actor::Operator,
-        "RECLAIM-reset1",
-        "Reset one exhausted renewal maximum",
+        "RECLAIM-roll01",
+        "Roll one held claim without ownership churn",
         Some("todo"),
     );
     claim_next(&bus, epoch, &lane, &seats[0], &task);
@@ -425,54 +496,84 @@ fn free_and_next_mints_a_fresh_durable_maximum() {
         .expect("first lease")
         .body
         .clone();
-    let near_expiry = fixture_instant_after(first_lease.expiry, ONE_SECOND_BEFORE_EXPIRY);
+    let first_at = fixture_instant_after(first_lease.expiry, ONE_SECOND_BEFORE_EXPIRY);
     assert_committed(reclaim_at(
         &bus,
         epoch,
         &lane,
         &task,
         active_witnesses(&first, &task, &seats[0]),
-        near_expiry,
+        first_at,
     ));
-    let maximum_bound = board(&bus, epoch, lane.clone());
-    let maximum_heads = at(&maximum_bound, &task);
-    let maximum_lease = maximum_heads.lease.as_ref().expect("maximum-bound lease");
-    assert_eq!(maximum_lease.body.expiry, maximum_lease.body.maximum);
-    let refused = reclaim_at(
+    let once = board(&bus, epoch, lane.clone());
+    let once_heads = at(&once, &task);
+    let once_lease = once_heads.lease.as_ref().expect("first renewed lease");
+    assert_eq!(once_heads.claim, first_heads.claim);
+    assert_eq!(
+        once_lease.body.expiry,
+        fixture_instant_after(first_at, spice::claim_lease::DEFAULT_RECLAIM_SECONDS as i64)
+    );
+    assert_eq!(once_lease.body.maximum, first_lease.maximum);
+
+    let second_at = fixture_instant_after(first_at, 2);
+    assert!(second_at < once_lease.body.expiry);
+    assert_committed(reclaim_at(
         &bus,
         epoch,
         &lane,
         &task,
-        active_witnesses(&maximum_bound, &task, &seats[0]),
-        fixture_instant_after(near_expiry, 1),
-    );
-    assert!(matches!(
-        refused,
-        Outcome::Refusal(Refusal::Repairable { ref command, ref diagnostic })
-            if diagnostic.reason() == "claim::lease-nonextending"
-                && command.arguments() == ["task", "free", task.as_str()]
-                && diagnostic.detail().is_some_and(|detail| detail.contains("spice task next"))
+        active_witnesses(&once, &task, &seats[0]),
+        second_at,
     ));
-    free_active(&bus, epoch, &lane, &seats[0], &task);
-    claim_next(&bus, epoch, &lane, &seats[0], &task);
-    let reacquired = board(&bus, epoch, lane);
-    let second = at(&reacquired, &task)
-        .lease
-        .as_ref()
-        .expect("reacquired lease");
-
-    assert_ne!(second.body.start, first_lease.start);
-    assert_ne!(second.body.maximum, first_lease.maximum);
+    let twice = board(&bus, epoch, lane.clone());
+    let twice_heads = at(&twice, &task);
+    let twice_lease = twice_heads.lease.as_ref().expect("second renewed lease");
+    assert_eq!(twice_heads.claim, first_heads.claim);
     assert_eq!(
-        second
-            .body
-            .maximum
-            .get()
-            .duration_since(second.body.start.get()),
-        first_lease
-            .maximum
-            .get()
-            .duration_since(first_lease.start.get()),
+        twice_lease.body.expiry,
+        fixture_instant_after(
+            second_at,
+            spice::claim_lease::DEFAULT_RECLAIM_SECONDS as i64
+        )
+    );
+    assert_eq!(twice_lease.body.maximum, twice_lease.body.expiry);
+    assert!(twice_lease.body.maximum > first_lease.maximum);
+    assert!(matches!(
+        reclaim_at(
+            &bus,
+            epoch,
+            &lane,
+            &task,
+            active_witnesses(&twice, &task, &seats[0]),
+            second_at,
+        ),
+        Outcome::Refusal(Refusal::Bare { ref diagnostic })
+            if diagnostic.reason() == "claim::lease-nonextending"
+    ));
+    let facts = bus.fact_snapshot().expect("rolling reclaim facts");
+    assert_eq!(
+        facts
+            .facts()
+            .iter()
+            .filter(|fact| fact.fact.kind() == wire::FactKind::ClaimWon)
+            .count(),
+        1
+    );
+    assert_eq!(
+        facts
+            .facts()
+            .iter()
+            .filter(|fact| fact.fact.kind() == wire::FactKind::ClaimFreed)
+            .count(),
+        0
+    );
+    assert_eq!(
+        facts
+            .facts()
+            .iter()
+            .filter(|fact| fact.fact.kind() == wire::FactKind::ClaimRenewed)
+            .count(),
+        2
     );
     clean(&root, bus);
 }

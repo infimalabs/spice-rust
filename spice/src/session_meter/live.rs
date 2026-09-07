@@ -278,15 +278,15 @@ fn collect_lane(
         .as_ref()
         .and_then(|heads| {
             current.as_ref()?;
-            Some((heads, heads.claim()?.body(), heads.lease()?.body()))
+            heads.claim()?;
+            Some((heads, heads.lease()?.body()))
         })
-        .map(|(heads, claim, lease)| {
-            let automatic = read
-                .fact_page(journal::FactPageStart::At(claim.claimed), claim.claimed, 1)?
-                .rows
-                .first()
-                .is_some_and(|fact| crate::claim_lease::is_automatic_claim_fact(claim, fact));
+        .map(|(heads, lease)| {
             let now = jiff::Timestamp::now();
+            let remaining = duration_since(lease.expiry.get(), now);
+            let reclaim_extends = remaining.is_some_and(|remaining| {
+                remaining < Duration::from_secs(crate::claim_lease::DEFAULT_RECLAIM_SECONDS)
+            });
             Ok(ClaimState {
                 handle: TaskHandle::for_project(
                     &heads.statement().body().project,
@@ -295,8 +295,8 @@ fn collect_lane(
                 .to_string(),
                 phase: heads.workflow().body().phase.to_string(),
                 elapsed: duration_since(now, lease.start.get()),
-                remaining: duration_since(lease.expiry.get(), now).or(Some(Duration::ZERO)),
-                reclaim_extends: automatic || lease.expiry < lease.maximum,
+                remaining: remaining.or(Some(Duration::ZERO)),
+                reclaim_extends,
             })
         })
         .transpose()?;

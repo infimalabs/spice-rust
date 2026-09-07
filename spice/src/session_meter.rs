@@ -895,36 +895,6 @@ mod tests {
     }
 
     #[test]
-    fn maximum_bound_claim_names_free_and_next_instead_of_reclaim() {
-        let root = fixture("maximum-recovery");
-        let path = root.join("working-state.json");
-        let meter = Meter::new(&path);
-        let remaining = (CLAIM_CRITICAL_BOUNDARY + CLAIM_CRITICAL_REPEAT).as_secs();
-        let extendable = meter
-            .evaluate(&state(Some(remaining)), Duration::ZERO)
-            .expect("extendable warning evaluates")
-            .announcement
-            .expect("extendable warning speaks");
-        let mut maximum_bound = state(Some(remaining));
-        maximum_bound
-            .claim
-            .as_mut()
-            .expect("fixture claim")
-            .reclaim_extends = false;
-
-        let line = meter
-            .evaluate(&maximum_bound, Duration::ZERO)
-            .expect("maximum-bound state evaluates")
-            .announcement
-            .expect("maximum transition speaks in the same lease tier");
-
-        assert!(extendable.contains("run spice task reclaim METER-00000001"));
-        assert!(line.contains("run spice task free METER-00000001, then spice task next"));
-        assert!(!line.contains("task reclaim"));
-        fs::remove_dir_all(root).expect("fixture cleanup");
-    }
-
-    #[test]
     fn no_claim_keeps_durable_suppression_for_same_key_reacquisition() {
         let root = fixture("reacquisition");
         let path = root.join("working-state.json");

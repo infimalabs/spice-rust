@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
+use std::time::Duration;
 
 use journal::{FactCause, Journal, JournalWrite};
 use wire::body::{ClaimWon, SourceBoundary, TaskAdded};
@@ -19,7 +20,7 @@ struct SeededClaim {
 }
 
 #[test]
-fn installed_wrapper_preserves_todo_and_review_claims_across_resident_replacement() {
+fn installed_wrapper_preserves_replaced_claims_and_reclaims_one_twice() {
     for phase in ["todo", "review"] {
         exercise_claim_replacement(phase);
     }
@@ -31,7 +32,87 @@ fn exercise_claim_replacement(phase: &str) {
     prime_installed_meter(&fixture, &installed, lane);
     let resident = replace_while_wrapper_waits(&fixture, resident, &installed, lane, phase);
     assert_repeated_status_and_authority(&fixture, &installed, lane, &seeded);
+    if phase == "todo" {
+        assert_successive_reclaims(&fixture, &installed, lane, &seeded);
+    }
     stop(&fixture, resident);
+}
+
+fn assert_successive_reclaims(
+    fixture: &Fixture,
+    installed: &Path,
+    lane: wire::CanonicalUuid,
+    seeded: &SeededClaim,
+) {
+    let before_claim = claim_head(fixture, &seeded.task);
+    let before_lease = lease_head(fixture, &seeded.task);
+    let (first_started, first_finished) = invoke_reclaim(fixture, installed, lane, seeded);
+    let first_lease = lease_head(fixture, &seeded.task);
+    assert_one_hour_expiry(&first_lease, first_started, first_finished);
+    assert!(first_lease.body().expiry > before_lease.body().expiry);
+    assert_ne!(first_lease.position(), before_lease.position());
+
+    std::thread::sleep(Duration::from_millis(5));
+    let (second_started, second_finished) = invoke_reclaim(fixture, installed, lane, seeded);
+    let second_lease = lease_head(fixture, &seeded.task);
+    assert_one_hour_expiry(&second_lease, second_started, second_finished);
+    assert!(second_lease.body().expiry > first_lease.body().expiry);
+    assert_ne!(second_lease.position(), first_lease.position());
+    assert_eq!(second_lease.body().maximum, second_lease.body().expiry);
+    assert_eq!(second_lease.body().start, before_lease.body().start);
+    assert_eq!(second_lease.body().epoch, before_lease.body().epoch);
+
+    let after_claim = claim_head(fixture, &seeded.task);
+    assert_eq!(after_claim.position(), before_claim.position());
+    assert_eq!(after_claim.body(), before_claim.body());
+    assert_eq!(after_claim.body().actor, Actor::Lane(lane));
+    assert_eq!(after_claim.body().claimed, seeded.claimed);
+    assert_eq!(after_claim.body().cell.phase.as_str(), "todo");
+    assert_eq!(active_claim_count(fixture), 1);
+}
+
+fn invoke_reclaim(
+    fixture: &Fixture,
+    installed: &Path,
+    lane: wire::CanonicalUuid,
+    seeded: &SeededClaim,
+) -> (jiff::Timestamp, jiff::Timestamp) {
+    let started = jiff::Timestamp::now();
+    let output = invoke_installed_as_lane(
+        fixture,
+        installed,
+        lane,
+        &["task", "reclaim", seeded.handle.as_str()],
+    );
+    let finished = jiff::Timestamp::now();
+    assert!(
+        output.status.success(),
+        "task reclaim failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains(seeded.handle.as_str()),
+        "task reclaim answered for another task: {}",
+        String::from_utf8_lossy(&output.stdout),
+    );
+    (started, finished)
+}
+
+fn assert_one_hour_expiry(
+    lease: &journal::JournalHead<LeaseHead>,
+    started: jiff::Timestamp,
+    finished: jiff::Timestamp,
+) {
+    let duration = jiff::SignedDuration::from_hours(1);
+    let earliest = started
+        .checked_add(duration)
+        .expect("earliest expiry is in range");
+    let latest = finished
+        .checked_add(duration)
+        .expect("latest expiry is in range");
+    assert!(lease.body().expiry.get() >= earliest);
+    assert!(lease.body().expiry.get() <= latest);
 }
 
 fn claimed_fixture(
