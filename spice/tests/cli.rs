@@ -259,7 +259,7 @@ fn top_level_version_flags_are_repository_free_and_byte_identical() {
     let before = directory_state(scratch.path());
     let short = invoke_at(&["-V"], scratch.path());
     let long = invoke_at(&["--version"], scratch.path());
-    let expected = format!("spice {}\n", env!("CARGO_PKG_VERSION")).into_bytes();
+    let expected = format!("spice {}\n", spice::cli::COMPILED_VERSION).into_bytes();
 
     for spoken in [&short, &long] {
         assert_eq!(spoken.code, Some(0));

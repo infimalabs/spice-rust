@@ -91,7 +91,7 @@ pub fn refresh_install(repository: &Repository, binary: &Path) -> Result<Digest,
 }
 /// Build `spice` and answer the executable Cargo reported for it.
 fn build(release: bool, output: &mut impl Write) -> Result<PathBuf, RefreshError> {
-    writeln!(output, "building spice")?;
+    writeln!(output, "building spice profile={}", build_profile(release))?;
     let mut command = Command::new("cargo");
     command.args([
         "build",
@@ -115,6 +115,10 @@ fn build(release: bool, output: &mut impl Write) -> Result<PathBuf, RefreshError
     }
     let rendered = String::from_utf8_lossy(&built.stdout);
     built_executable(&rendered).ok_or(RefreshError::BuildOutputSilent)
+}
+
+const fn build_profile(release: bool) -> &'static str {
+    if release { "release" } else { "development" }
 }
 
 /// Read the `spice` executable path out of Cargo's build event stream.

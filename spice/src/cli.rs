@@ -389,10 +389,17 @@ pub fn command() -> Command {
     command_from(contracts(), &[])
 }
 
+/// Product version and build profile compiled into this appliance.
+#[cfg(debug_assertions)]
+pub const COMPILED_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (development)");
+/// Product version and build profile compiled into this appliance.
+#[cfg(not(debug_assertions))]
+pub const COMPILED_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (release)");
+
 fn command_from(contracts: &[Contract], mounts: &[Mount]) -> Command {
     let mut root = Command::new("spice")
         .about("Repository-local coordination appliance")
-        .version(env!("CARGO_PKG_VERSION"))
+        .version(COMPILED_VERSION)
         .subcommand_required(true)
         .arg_required_else_help(true)
         .disable_help_subcommand(true)
