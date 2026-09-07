@@ -128,8 +128,8 @@ try {
 
   if (mode === "fail") throw new Error(INJECTED);
   // idle and mute: a live parent ends this process after reading the line. If
-  // that parent is gone instead, the heartbeat resolves this same wait so the
-  // fixture still crosses its normal finally boundary.
+  // that parent is gone instead, the disconnect callback resolves this same
+  // wait so the fixture still crosses its normal finally boundary.
   await new Promise((resolve) => {
     endIdleWait = resolve;
     if (parentDisconnected) resolve();
