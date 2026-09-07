@@ -678,7 +678,7 @@ fn a_call_carries_the_command_line_and_not_merely_its_tool_name() {
             &tool(VENDOR_ID, call("Bash", BASH_INPUT)),
             &mut previews
         ),
-        "git status --short"
+        "Bash: git status --short"
     );
 }
 
@@ -698,7 +698,7 @@ fn a_result_names_its_call_and_never_paints_the_vendor_identifier() {
 
     let result = activity(lane(1), &tool(VENDOR_ID, succeeded()), &mut previews);
 
-    assert_eq!(result, "git status --short succeeded");
+    assert_eq!(result, "Bash: git status --short succeeded");
     assert!(
         !result.contains(VENDOR_ID),
         "an operator cannot act on a vendor correlation id: {result}"
@@ -770,7 +770,7 @@ fn one_call_identifier_reused_by_two_lanes_keeps_its_lanes_apart() {
     );
     assert_eq!(
         activity(lane(1), &tool(VENDOR_ID, succeeded()), &mut previews),
-        "git status --short succeeded",
+        "Bash: git status --short succeeded",
         "the owning lane still resolves its own call"
     );
 }
@@ -875,7 +875,7 @@ fn a_preview_is_flattened_onto_one_bounded_line() {
         "a truncated line says so: {preview}"
     );
     assert!(
-        preview.starts_with("echo one two "),
+        preview.starts_with("Bash: echo one two "),
         "runs of whitespace collapse to one space: {preview}"
     );
     assert!(!preview.contains('\n'), "the strip is one line: {preview}");
@@ -885,7 +885,10 @@ fn a_preview_is_flattened_onto_one_bounded_line() {
 #[test]
 fn a_preview_within_the_bound_is_not_elided() {
     let mut previews = CallPreviews::default();
-    let arguments = format!(r#"{{"command":"{}"}}"#, "y".repeat(MAX_CHARS));
+    let arguments = format!(
+        r#"{{"command":"{}"}}"#,
+        "y".repeat(MAX_CHARS - "Bash: ".len())
+    );
 
     let preview = activity(
         lane(1),
@@ -898,10 +901,15 @@ fn a_preview_within_the_bound_is_not_elided() {
         !preview.ends_with('\u{2026}'),
         "a preview at the bound is whole: {preview}"
     );
+
+    let lone = activity_preview("", &format!(r#""{}""#, "z".repeat(MAX_CHARS * 2)));
+    assert_eq!(lone.chars().count(), MAX_CHARS);
+    assert!(lone.starts_with("tool: z"));
+    assert_eq!(informative_tokens(&lone), MIN_INFORMATIVE_TOKENS);
 }
 
 #[test]
-fn only_structured_command_execution_names_suppress_their_taxonomy() {
+fn generic_command_execution_names_suppress_only_informative_commands() {
     for (name, arguments) in [
         ("exec", r#"{"cmd":"cargo test:all --url https://host:443"}"#),
         (
@@ -912,17 +920,12 @@ fn only_structured_command_execution_names_suppress_their_taxonomy() {
             "command_execution",
             r#"{"command":"cargo test:all --url https://host:443"}"#,
         ),
-        (
-            "Bash",
-            r#"{"command":"cargo test:all --url https://host:443"}"#,
-        ),
     ] {
         assert_eq!(
             activity_preview(name, arguments),
             "cargo test:all --url https://host:443",
             "{name}",
         );
-        assert_eq!(activity_preview(name, ""), normalized_name(name), "{name}");
     }
     assert_eq!(
         activity_preview(
@@ -939,9 +942,9 @@ fn only_structured_command_execution_names_suppress_their_taxonomy() {
         activity_preview("unknown_command", r#"{"command":"cargo test:all"}"#),
         "unknown command: cargo test:all",
     );
-    assert_eq!(activity_preview("exec", "null"), "exec");
+    assert_eq!(activity_preview("exec", "null"), "exec command");
     assert_eq!(activity_preview("exec_command", "17"), "exec command");
-    assert_eq!(activity_preview("exec", "{malformed"), "exec");
+    assert_eq!(activity_preview("exec", "{malformed"), "exec command");
     assert_eq!(
         activity_preview("exec_command", "{malformed"),
         "exec command"
@@ -953,6 +956,42 @@ fn only_structured_command_execution_names_suppress_their_taxonomy() {
 }
 
 #[test]
+fn every_generic_preview_keeps_two_informative_tokens() {
+    for (name, arguments, expected) in [
+        ("exec", "", "exec command"),
+        ("exec", r#"{"cmd":"pwd"}"#, "exec: pwd"),
+        ("Read", "", "Read tool"),
+        ("tool", "", "tool activity"),
+        ("", r#""status""#, "status tool"),
+        ("", "", "tool activity"),
+    ] {
+        let preview = activity_preview(name, arguments);
+        assert_eq!(preview, expected, "{name:?} {arguments:?}");
+        assert!(
+            informative_tokens(&preview) >= MIN_INFORMATIVE_TOKENS,
+            "{preview:?} retains the minimum visible vocabulary",
+        );
+    }
+}
+
+#[test]
+fn shell_families_remain_visible_without_discarding_their_commands() {
+    for (name, arguments, expected) in [
+        ("Bash", r#"{"command":"pwd"}"#, "Bash: pwd"),
+        ("zsh", r#"{"command":"pwd"}"#, "zsh: pwd"),
+        (
+            "shell",
+            r#"{"command":"git status --short"}"#,
+            "shell: git status --short",
+        ),
+    ] {
+        assert_eq!(activity_preview(name, arguments), expected, "{name}");
+    }
+    assert_eq!(activity_preview("Bash", ""), "Bash shell");
+    assert_eq!(activity_preview("zsh", ""), "zsh shell");
+}
+
+#[test]
 fn empty_current_exec_call_remains_visible_through_its_correlated_result() {
     let mut previews = CallPreviews::default();
     assert_eq!(
@@ -961,7 +1000,7 @@ fn empty_current_exec_call_remains_visible_through_its_correlated_result() {
             &tool("current-exec", call("exec", "")),
             &mut previews
         ),
-        "exec",
+        "exec command",
     );
     assert_eq!(
         activity(
@@ -969,6 +1008,6 @@ fn empty_current_exec_call_remains_visible_through_its_correlated_result() {
             &tool("current-exec", result(listen::ToolResult::Unreported),),
             &mut previews,
         ),
-        "exec completed",
+        "exec command completed",
     );
 }

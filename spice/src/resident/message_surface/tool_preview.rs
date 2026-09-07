@@ -1,10 +1,11 @@
 //! Operator-facing preview text for one tool moment.
 //!
 //! The lane status strip is read by a person, so a tool moment renders as the
-//! work being done rather than as vendor bookkeeping: command-execution calls
-//! show the command itself, other calls retain their tool name, and results show
-//! the call they answer instead of the `tool_use` id that joins them. The rules
-//! here follow the predecessor at `spice-z spice/serve/messagepresentation.py`.
+//! work being done rather than as vendor bookkeeping: generic command-execution
+//! calls suppress their taxonomy only when the command is already informative,
+//! named shells retain their family, and results show the call they answer
+//! instead of the `tool_use` id that joins them. The rules here follow the
+//! predecessor at `spice-z spice/serve/messagepresentation.py`.
 
 use std::collections::BTreeMap;
 
@@ -16,6 +17,7 @@ mod tests;
 
 /// Longest preview one strip line carries before it is elided.
 pub(in crate::resident) const MAX_CHARS: usize = 120;
+const MIN_INFORMATIVE_TOKENS: usize = 2;
 
 /// Argument fields worth showing, most recognizable first.
 ///
@@ -27,7 +29,7 @@ const ARGUMENT_KEYS: [&str; 8] = [
     "command", "cmd", "path", "query", "url", "input", "prompt", "text",
 ];
 
-const COMMAND_EXECUTION_TOOLS: [&str; 4] = ["exec", "exec_command", "command_execution", "Bash"];
+const GENERIC_COMMAND_EXECUTION_TOOLS: [&str; 3] = ["exec", "exec_command", "command_execution"];
 const STRUCTURED_COMMAND_EXECUTION_TOOLS: [&str; 2] = ["exec", "exec_command"];
 
 /// Call previews held only while their calls are still outstanding.
@@ -104,18 +106,18 @@ pub(super) fn message_text(tool: &listen::Tool, activity: String, media: &[wire:
 
 fn activity_preview(name: &str, arguments: &str) -> String {
     let name = name.trim();
-    if COMMAND_EXECUTION_TOOLS.contains(&name) {
+    if GENERIC_COMMAND_EXECUTION_TOOLS.contains(&name) {
         if STRUCTURED_COMMAND_EXECUTION_TOOLS.contains(&name)
             && !arguments.is_empty()
             && serde_json::from_str::<Value>(arguments).is_err()
         {
-            return normalized_name(name);
+            return complete_preview(&normalized_name(name), "command");
         }
         let arguments = flatten(&argument_preview(arguments));
-        return if arguments.is_empty() {
-            normalized_name(name)
-        } else {
+        return if informative_tokens(&arguments) >= MIN_INFORMATIVE_TOKENS {
             arguments
+        } else {
+            named_preview(&normalized_name(name), &arguments, "command")
         };
     }
     call_preview(name, arguments)
@@ -124,17 +126,49 @@ fn activity_preview(name: &str, arguments: &str) -> String {
 pub(super) fn call_preview(name: &str, arguments: &str) -> String {
     let name = normalized_name(name);
     let arguments = argument_preview(arguments);
-    if name.is_empty() {
-        return flatten(&arguments);
-    }
-    if arguments.is_empty() {
-        return flatten(&name);
-    }
-    flatten(&format!("{name}: {arguments}"))
+    let fallback = match name.to_ascii_lowercase().as_str() {
+        "bash" | "zsh" => "shell",
+        "shell" | "local shell" => "command",
+        _ => "tool",
+    };
+    named_preview(&name, &arguments, fallback)
 }
 
 fn normalized_name(name: &str) -> String {
     flatten(&name.trim().replace('_', " "))
+}
+
+fn named_preview(name: &str, arguments: &str, fallback: &str) -> String {
+    let preview = match (name.is_empty(), arguments.is_empty()) {
+        (false, false) => flatten(&format!("{name}: {arguments}")),
+        (false, true) => name.to_owned(),
+        (true, false) => flatten(arguments),
+        (true, true) => String::new(),
+    };
+    complete_preview(&preview, fallback)
+}
+
+fn complete_preview(preview: &str, fallback: &str) -> String {
+    if informative_tokens(preview) >= MIN_INFORMATIVE_TOKENS {
+        return preview.to_owned();
+    }
+    if preview.is_empty() {
+        return format!("{fallback} activity");
+    }
+    let completed = if preview.eq_ignore_ascii_case(fallback) {
+        format!("{preview} activity")
+    } else {
+        format!("{preview} {fallback}")
+    };
+    if completed.chars().count() <= MAX_CHARS {
+        completed
+    } else {
+        flatten(&format!("{fallback}: {preview}"))
+    }
+}
+
+fn informative_tokens(preview: &str) -> usize {
+    preview.split_whitespace().count()
 }
 
 /// The most readable single argument the vendor payload carries.
