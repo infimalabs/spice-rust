@@ -619,7 +619,7 @@ fn a_steering_receipt_preserves_the_directive_key_and_lowercases_only_its_dispos
         .events()
         .first()
         .expect("steering records one event");
-    assert_eq!(event.title(), format!("Steered lane {LANE}"));
+    assert_eq!(event.title(), format!("Steered agent {LANE}"));
     assert_eq!(event.detail(), "key 1kKQtLsP acked");
 }
 
@@ -768,6 +768,6 @@ fn admitted_steer_reply_names_the_durable_directive_in_chronology() {
     runtime.apply_steer(&admitted, uuid(LANE));
 
     assert_eq!(runtime.events()[0].class(), "reply");
-    assert_eq!(runtime.events()[0].title(), format!("Steered lane {LANE}"));
+    assert_eq!(runtime.events()[0].title(), format!("Steered agent {LANE}"));
     assert_eq!(runtime.events()[0].detail(), "key 1kQTest live");
 }
