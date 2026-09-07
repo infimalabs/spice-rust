@@ -45,8 +45,7 @@ const SELF_PATH: &str = "xtask/tests/git_boundaries.rs";
 /// Counts make each exception closed: another spelling in one of these files
 /// still has to be reviewed and declared. The policy test below separately
 /// rejects executable constructors that name Git through `PATH`.
-const INERT_ABSOLUTE_GIT_TEST_SITES: [(&str, usize); 11] = [
-    ("gate/src/tree/tests.rs", 1),
+const INERT_ABSOLUTE_GIT_TEST_SITES: [(&str, usize); 10] = [
     ("proof/src/bin/spice-proof-darwin-runner/tests.rs", 1),
     ("spice/src/cargo_isolation/tests.rs", 1),
     // Canvas proves an overlay entered its synthetic private index by querying
@@ -91,7 +90,7 @@ const CONTROL_PLANE_SOURCES: [&str; 3] = [
 /// Counted per occurrence rather than per line, because
 /// `spice/src/task_git/command.rs` names both of the sanctioned subcommands on
 /// one line and a line-counting scan would see one site where there are two.
-const NETWORK_CALL_SITES: [(&str, &str, usize); 6] = [
+const NETWORK_CALL_SITES: [(&str, &str, usize); 7] = [
     // The external release authority constructs exact inert Git argv but owns
     // no process runner. Its parent executes these operations at an existing
     // control-plane boundary after authored release approval. Each count
@@ -107,6 +106,13 @@ const NETWORK_CALL_SITES: [(&str, &str, usize); 6] = [
     // subcommands by name to give them a longer timeout, and issues nothing.
     ("spice/src/task_git/command.rs", "fetch", 1),
     ("spice/src/task_git/command.rs", "push", 1),
+    // This fixture fetches only from its owned local bare remote after moving
+    // the upstream branch, exercising divergent task-completion admission.
+    (
+        "spice/tests/reference_transaction_cli/movement.rs",
+        "fetch",
+        1,
+    ),
 ];
 
 /// The activation surface, which GIT-06 keeps free of git entirely.

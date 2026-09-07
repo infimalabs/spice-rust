@@ -86,10 +86,21 @@ fn cargo_post_execution_rechecks_the_captured_worktree_owner() {
     let recheck = execution
         .find("spice::cargo_isolation::readmit_source_generation")
         .expect("Cargo source authority rechecks");
-    assert!(shard < recheck, "source recheck must follow successful execution");
+    assert!(
+        shard < recheck,
+        "source recheck must follow successful execution"
+    );
     let recheck = &execution[recheck..];
-    for argument in ["&source.home", "&source.lockfile", "&source.root", "&source.host"] {
-        assert!(recheck.contains(argument), "post-action recheck omitted {argument}");
+    for argument in [
+        "&source.home",
+        "&source.lockfile",
+        "&source.root",
+        "&source.host",
+    ] {
+        assert!(
+            recheck.contains(argument),
+            "post-action recheck omitted {argument}"
+        );
     }
     assert!(recheck.contains("gate::prove-cargo-source-moved"));
     assert!(recheck.contains("if observed != source.authority"));
