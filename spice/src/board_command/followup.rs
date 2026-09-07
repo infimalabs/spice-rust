@@ -15,7 +15,8 @@ const FOLLOWUP_FIELDS: &str = "title, project, description, acceptance or flow";
 /// The `--then` fields that accrue rather than refusing a second value.
 ///
 /// The predecessor keeps `after` and `tags` here too, which this record has no
-/// place to put: a follow-up depends on the reviewed task and carries no tags.
+/// place to put: a correction's ordering is owned by the reviewed task, and
+/// the correction itself carries no tags.
 const FOLLOWUP_REPEATS: &[&str] = &["acceptance", "flow"];
 
 /// Whether a finding records a clean review rather than a requested change.
@@ -106,7 +107,7 @@ pub(super) fn plan_followups(
     Ok(planned)
 }
 
-/// Resolve every `--followup` handle and witness the edge it will gain.
+/// Resolve every `--followup` handle and witness the reviewed edge it will gain.
 pub(super) fn plan_followup_edges(
     board: &BoardAnswer,
     matches: &ArgMatches,
@@ -114,6 +115,7 @@ pub(super) fn plan_followup_edges(
     expected: &mut Vec<Witness>,
 ) -> Result<Vec<TaskHandle>, Outcome<CommandAnswer>> {
     let mut linked = Vec::new();
+    let reviewed = task_heads(board, task)?;
     for written in matches.get_many::<String>("followup").into_iter().flatten() {
         let handle = written.parse::<TaskHandle>().map_err(|error| {
             refusal(
@@ -122,19 +124,197 @@ pub(super) fn plan_followup_edges(
                 &error.to_string(),
             )
         })?;
+        if linked.contains(&handle) {
+            continue;
+        }
         let heads = task_heads(board, &handle)?;
         expected.push(statement_witness(heads));
         expected.push(workflow_witness(heads));
-        expected.push(Witness::Edge {
-            task: heads.statement.body.born.clone(),
-            after: task_heads(board, task)?.statement.body.born.clone(),
-        });
+        if !reviewed
+            .statement
+            .body
+            .dependencies
+            .contains(&heads.statement.body.born)
+        {
+            expected.push(Witness::Edge {
+                task: reviewed.statement.body.born.clone(),
+                after: heads.statement.body.born.clone(),
+            });
+            append_dependency_reachability_witnesses(
+                board,
+                std::slice::from_ref(&heads.statement.body.born),
+                expected,
+            )?;
+        }
         linked.push(handle);
     }
     Ok(linked)
 }
 
-/// Create the `--then` statements and wire the `--followup` edges.
+/// Validate and project the dependencies one finding leaves on the reviewed task.
+pub(super) fn correction_statement(
+    snapshot: &ValidatedSnapshot,
+    command: &wire::AdmittedCommand,
+    entry: &Entry,
+    review: &TaskReview,
+    projects: &ProjectPolicy,
+) -> Result<TaskHead, Outcome<CommandAnswer>> {
+    let mut statement = entry.statement().clone();
+    for followup in &review.then {
+        require_absence_witness(command, &followup.task)?;
+        if !statement.dependencies.contains(&followup.task) {
+            statement.dependencies.push(followup.task.clone());
+        }
+    }
+    let mut seen = Vec::new();
+    for handle in &review.followup {
+        if seen.contains(handle) {
+            continue;
+        }
+        seen.push(handle.clone());
+        let correction = snapshot
+            .entries
+            .iter()
+            .find(|candidate| candidate.handle() == handle)
+            .ok_or_else(|| {
+                refusal(
+                    "task::unknown",
+                    Some(handle.to_string()),
+                    "name an existing task as the review correction",
+                )
+            })?;
+        require_correction_witnesses(snapshot, command, handle)?;
+        let already_related = statement.dependencies.contains(correction.born());
+        if correction.workflow().status == "completed" && !already_related {
+            return Err(refusal(
+                "task::settled",
+                Some(handle.to_string()),
+                "track a review finding with a pending correction task",
+            ));
+        }
+        if !already_related {
+            require_correction_edge(command, entry.born(), correction.born())?;
+            require_acyclic_correction(snapshot, command, correction, entry.born())?;
+            statement.dependencies.push(correction.born().clone());
+        }
+    }
+    Entry::new(
+        statement.clone(),
+        entry.workflow().clone(),
+        entry.claim().cloned(),
+        entry.lease().cloned(),
+        projects,
+    )
+    .map_err(|error| {
+        refusal(
+            "task::dependency-refused",
+            Some(error.to_string()),
+            "submit distinct correction tasks that keep the review graph acyclic",
+        )
+    })?;
+    Ok(statement)
+}
+
+fn require_absence_witness(
+    command: &wire::AdmittedCommand,
+    task: &TaskStamp,
+) -> Result<(), Outcome<CommandAnswer>> {
+    command
+        .expected()
+        .contains(&Witness::Absence { task: task.clone() })
+        .then_some(())
+        .ok_or_else(|| {
+            protocol_fault(
+                "review::followup-witness-invalid",
+                "each new correction requires its own intended absent birth stamp",
+            )
+        })
+}
+
+fn require_correction_witnesses(
+    snapshot: &ValidatedSnapshot,
+    command: &wire::AdmittedCommand,
+    correction: &TaskHandle,
+) -> Result<(), Outcome<CommandAnswer>> {
+    let heads = task_heads(&snapshot.answer, correction)?;
+    let statement = statement_witness(heads);
+    let workflow = workflow_witness(heads);
+    if command.expected().contains(&statement) && command.expected().contains(&workflow) {
+        Ok(())
+    } else {
+        Err(protocol_fault(
+            "review::followup-witness-invalid",
+            "each existing correction requires its current statement and workflow witnesses",
+        ))
+    }
+}
+
+fn require_correction_edge(
+    command: &wire::AdmittedCommand,
+    task: &TaskStamp,
+    after: &TaskStamp,
+) -> Result<(), Outcome<CommandAnswer>> {
+    command
+        .expected()
+        .contains(&Witness::Edge {
+            task: task.clone(),
+            after: after.clone(),
+        })
+        .then_some(())
+        .ok_or_else(|| {
+            protocol_fault(
+                "review::followup-witness-invalid",
+                "each new correction edge requires its current absence witness",
+            )
+        })
+}
+
+fn require_acyclic_correction(
+    snapshot: &ValidatedSnapshot,
+    command: &wire::AdmittedCommand,
+    correction: &Entry,
+    reviewed: &TaskStamp,
+) -> Result<(), Outcome<CommandAnswer>> {
+    let mut pending = vec![correction.born().clone()];
+    let mut visited = Vec::new();
+    while let Some(task) = pending.pop() {
+        if &task == reviewed {
+            return Err(refusal(
+                "task::dependency-refused",
+                Some(format!("{reviewed} after {}", correction.handle())),
+                "name corrections that do not already depend on the reviewed task",
+            ));
+        }
+        if visited.contains(&task) {
+            continue;
+        }
+        visited.push(task.clone());
+        let entry = snapshot
+            .entries
+            .iter()
+            .find(|entry| entry.born() == &task)
+            .ok_or_else(|| {
+                protocol_fault(
+                    "task::board-incoherent",
+                    "a correction dependency has no current board entry",
+                )
+            })?;
+        let witness = Witness::Task {
+            task: task.clone(),
+            head: entry.statement().revision,
+        };
+        if !command.expected().contains(&witness) {
+            return Err(protocol_fault(
+                "review::followup-witness-invalid",
+                "correction reachability requires every contributing statement witness",
+            ));
+        }
+        pending.extend(entry.statement().dependencies.iter().cloned());
+    }
+    Ok(())
+}
+
+/// Create each new correction in the same transaction as its finding.
 #[allow(
     clippy::too_many_arguments,
     reason = "review follow-ups retain the enclosing transaction's exact authority inputs"
@@ -153,7 +333,6 @@ pub(super) fn record_followups(
     let context = FollowupContext {
         command,
         snapshot,
-        review,
         reviewed,
         origin,
         creation,
@@ -163,16 +342,12 @@ pub(super) fn record_followups(
     for followup in &review.then {
         create_followup(write, &context, followup)?;
     }
-    for handle in &review.followup {
-        wire_followup_edge(write, snapshot, review, handle, reviewed, projects)?;
-    }
     Ok(())
 }
 
 struct FollowupContext<'a> {
     command: &'a wire::AdmittedCommand,
     snapshot: &'a ValidatedSnapshot,
-    review: &'a TaskReview,
     reviewed: PendingFact,
     origin: &'a wire::Origin,
     creation: Option<&'a TaskCreationCapture>,
@@ -247,17 +422,6 @@ fn create_followup(
             "a review follow-up has no creation-time transcript capture",
         )
     })?;
-    let reviewed_entry = context
-        .snapshot
-        .entries
-        .iter()
-        .find(|entry| entry.handle() == &context.review.task)
-        .ok_or_else(|| {
-            protocol_fault(
-                "review::task-missing",
-                "reviewed task disappeared from the validated snapshot",
-            )
-        })?;
     let (flow, phase, tags, taste_review) = prepare_followup_policy(context, &followup.add)?;
     let statement = TaskHead {
         born: followup.task.clone(),
@@ -267,7 +431,7 @@ fn create_followup(
         acceptance: followup.add.acceptance.clone(),
         project: project.as_str().to_owned(),
         tags: tags.clone(),
-        dependencies: vec![reviewed_entry.born().clone()],
+        dependencies: Vec::new(),
         provenance: context.origin.clone(),
         creation: creation.context(),
         revision: Seq::new(1).expect("placeholder revision is non-zero"),
@@ -321,83 +485,6 @@ fn create_followup(
         ..statement
     });
     write.workflow_head(followup.task.clone(), added, move |_| workflow);
-    Ok(())
-}
-
-/// Wire one existing task to follow the reviewed task.
-fn wire_followup_edge(
-    write: &mut JournalWrite,
-    snapshot: &ValidatedSnapshot,
-    review: &TaskReview,
-    handle: &TaskHandle,
-    reviewed: PendingFact,
-    projects: &ProjectPolicy,
-) -> Result<(), Outcome<CommandAnswer>> {
-    let Some(entry) = snapshot
-        .entries
-        .iter()
-        .find(|entry| entry.handle() == handle)
-    else {
-        return Err(refusal(
-            "task::unknown",
-            Some(handle.to_string()),
-            "name an existing task as the review follow-up",
-        ));
-    };
-    if entry.workflow().status == "completed" {
-        return Err(refusal(
-            "task::settled",
-            Some(handle.to_string()),
-            "track a review finding with a pending follow-up task",
-        ));
-    }
-    let mut statement = entry.statement().clone();
-    let reviewed_entry = snapshot
-        .entries
-        .iter()
-        .find(|candidate| candidate.handle() == &review.task)
-        .expect("reviewed task belongs to the validated snapshot");
-    if entry.born() == reviewed_entry.born()
-        || statement.dependencies.contains(reviewed_entry.born())
-    {
-        return Err(refusal(
-            "task::dependency-refused",
-            Some(format!("{handle} after {}", review.task)),
-            "name a distinct follow-up that does not already follow the reviewed task",
-        ));
-    }
-    statement.dependencies.push(reviewed_entry.born().clone());
-    if let Err(error) = Entry::new(
-        statement.clone(),
-        entry.workflow().clone(),
-        entry.claim().cloned(),
-        entry.lease().cloned(),
-        projects,
-    ) {
-        return Err(refusal(
-            "task::dependency-refused",
-            Some(error.to_string()),
-            "submit a valid acyclic follow-up edge",
-        ));
-    }
-    let revision = u32::try_from(entry.statement().revision.get())
-        .unwrap_or(u32::MAX)
-        .saturating_add(1);
-    let notice = task_edit_notice(entry, &statement);
-    let edited = write
-        .fact(
-            body::TaskEdited {
-                task: entry.born().clone(),
-                revision,
-                notice,
-            },
-            FactCause::Pending(reviewed),
-        )
-        .map_err(|error| store_fault("review::followup-edge", &error.to_string()))?;
-    write.task_head(edited, move |position| TaskHead {
-        revision: position,
-        ..statement
-    });
     Ok(())
 }
 

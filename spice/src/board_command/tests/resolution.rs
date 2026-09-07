@@ -4,9 +4,10 @@ mod completion_replay;
 mod document;
 mod drain_guidance;
 mod plan_advance;
+mod review_pending;
 
 #[test]
-fn lane_claim_free_done_and_review_finding_survive_restart() {
+fn lane_claim_free_done_and_pending_review_finding_survive_restart() {
     let (root, bus, epoch, seats) = fixture("workflow", 2);
     authorize_lane_creation(&bus, epoch, &seats[1]);
     let lane_one = Actor::Lane(seats[0].lane);
@@ -22,8 +23,8 @@ fn lane_claim_free_done_and_review_finding_survive_restart() {
     );
     advance_task_to_review(&bus, epoch, &seats[0], &lane_one, &task);
     complete_review_with_finding(&bus, epoch, &seats[1], &lane_two, &task);
-    let settled = assert_review_settled(&bus, epoch, &task);
-    assert_restart_preserves(&root, bus, epoch, &settled);
+    let pending = assert_review_pending(&bus, epoch, &task);
+    assert_restart_preserves(&root, bus, epoch, &pending);
 }
 
 #[test]
@@ -239,7 +240,7 @@ pub(super) fn complete_review_with_finding(
                     description: None,
                     acceptance: Vec::new(),
                     origin: None,
-                    flow: None,
+                    flow: Some("todo".to_owned()),
                     depends: Vec::new(),
                 },
             }],
@@ -279,11 +280,13 @@ pub(super) fn assert_review_assignment_fact(
     assert_eq!(won.cause, Some(typed.seq));
 }
 
-fn assert_review_settled(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) -> BoardAnswer {
-    let settled = board(bus, epoch, Actor::Operator);
-    let heads = at(&settled, task);
-    assert_eq!(heads.workflow.body.status, "completed");
-    assert_eq!(heads.workflow.body.review, "finding");
+fn assert_review_pending(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) -> BoardAnswer {
+    let pending = board(bus, epoch, Actor::Operator);
+    let heads = at(&pending, task);
+    assert_eq!(heads.workflow.body.status, "pending");
+    assert_eq!(heads.workflow.body.review, "unassigned");
+    assert!(heads.workflow.body.assignment.is_none());
+    assert!(heads.workflow.body.completion.is_none());
     assert_eq!(
         heads
             .claim
@@ -293,15 +296,14 @@ fn assert_review_settled(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) -> 
             .disposition,
         ClaimDisposition::Freed
     );
-    let entries = actor_entries(&settled).expect("settled board projects to entries");
+    let entries = actor_entries(&pending).expect("pending board projects to entries");
     let entry = entries
         .iter()
         .find(|entry| entry.handle() == task)
-        .expect("settled task remains on the board");
-    assert_eq!(
-        accepted_transition(&settled.principal, &settled.residency.body, &entries, entry,),
-        NextTransition::Settled,
-        "completion outranks the retained final review phase",
+        .expect("pending review remains on the board");
+    assert!(
+        !board::eligible_entry(&entries, entry, &pending.principal),
+        "an unresolved correction must block another review claim",
     );
     let facts = bus.fact_snapshot().expect("workflow facts read");
     assert!(facts.facts().iter().any(|fact| {
@@ -313,7 +315,7 @@ fn assert_review_settled(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) -> 
                 .and_then(serde_json::Value::as_str)
                 .is_some_and(|finding| finding.contains("negative-path evidence"))
     }));
-    settled
+    pending
 }
 
 /// A finding must name what will carry it, and the word clean must not.
@@ -467,13 +469,13 @@ fn a_review_creates_and_links_its_follow_up_tracking() {
     expected.push(statement_witness(linked_heads));
     expected.push(workflow_witness(linked_heads));
     expected.push(Witness::Edge {
-        task: linked_heads.statement.body.born.clone(),
-        after: at(&assigned, &reviewed).statement.body.born.clone(),
+        task: at(&assigned, &reviewed).statement.body.born.clone(),
+        after: linked_heads.statement.body.born.clone(),
     });
     assert_committed(issue(
         &bus,
         epoch,
-        reviewer,
+        reviewer.clone(),
         CommandKind::TaskReview,
         expected,
         &TaskReview {
@@ -499,10 +501,9 @@ fn a_review_creates_and_links_its_follow_up_tracking() {
     clean(&root, bus);
 }
 
-/// Review follow-ups do not retroactively become prerequisites of existing dependents.
-/// A caller that needs that ordering must wire the downstream task to the follow-up.
+/// An unclean review remains pending behind its correction and blocks every dependent.
 #[test]
-fn completed_unclean_review_needs_an_explicit_followup_edge_to_block_downstream() {
+fn unclean_review_blocks_downstream_until_correction_and_later_clean_review() {
     let (root, bus, epoch, seats) = fixture("review-followup-downstream", 2);
     authorize_lane_creation(&bus, epoch, &seats[1]);
     let implementer = Actor::Lane(seats[0].lane);
@@ -524,7 +525,16 @@ fn completed_unclean_review_needs_an_explicit_followup_edge_to_block_downstream(
         "Downstream delivery",
         None,
     );
+    let transitive = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "TRACK-track006",
+        "Transitive delivery",
+        None,
+    );
     connect_child(&bus, epoch, &downstream, &reviewed);
+    connect_child(&bus, epoch, &transitive, &downstream);
     advance_task_to_review(&bus, epoch, &seats[0], &implementer, &reviewed);
 
     let reviewable = board(&bus, epoch, reviewer.clone());
@@ -556,7 +566,7 @@ fn completed_unclean_review_needs_an_explicit_followup_edge_to_block_downstream(
     assert_committed(issue(
         &bus,
         epoch,
-        reviewer,
+        reviewer.clone(),
         CommandKind::TaskReview,
         expected,
         &TaskReview {
@@ -571,7 +581,7 @@ fn completed_unclean_review_needs_an_explicit_followup_edge_to_block_downstream(
                     description: None,
                     acceptance: Vec::new(),
                     origin: None,
-                    flow: None,
+                    flow: Some("todo".to_owned()),
                     depends: Vec::new(),
                 },
             }],
@@ -579,34 +589,137 @@ fn completed_unclean_review_needs_an_explicit_followup_edge_to_block_downstream(
         },
     ));
 
-    let settled = board(&bus, epoch, implementer.clone());
-    assert_eq!(at(&settled, &reviewed).workflow.body.status, "completed");
-    assert_eq!(
-        at(&settled, &followup).statement.body.dependencies,
-        vec![at(&settled, &reviewed).statement.body.born.clone()],
+    assert_finding_blocks(
+        &bus,
+        epoch,
+        &implementer,
+        &reviewed,
+        &followup,
+        &downstream,
+        &transitive,
     );
-    let entries = actor_entries(&settled).expect("lane projects allocatable entries");
-    let downstream_entry = entries
-        .iter()
-        .find(|entry| entry.handle() == &downstream)
-        .expect("downstream entry is visible");
-    assert!(
-        board::eligible_entry(&entries, downstream_entry, &implementer),
-        "a completed original satisfies downstream even while its sibling follow-up is unresolved",
-    );
-
-    connect_child(&bus, epoch, &downstream, &followup);
-    let explicitly_blocked = board(&bus, epoch, implementer.clone());
-    let entries = actor_entries(&explicitly_blocked).expect("lane projects updated entries");
-    let downstream_entry = entries
-        .iter()
-        .find(|entry| entry.handle() == &downstream)
-        .expect("downstream entry remains visible");
-    assert!(
-        !board::eligible_entry(&entries, downstream_entry, &implementer),
-        "an explicit follow-up dependency blocks downstream without reopening the reviewed task",
+    complete_correction_and_clean(
+        &bus,
+        epoch,
+        &seats,
+        &implementer,
+        &reviewer,
+        &reviewed,
+        &followup,
+        &downstream,
     );
     clean(&root, bus);
+}
+
+fn assert_finding_blocks(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    implementer: &Actor,
+    reviewed: &TaskHandle,
+    correction: &TaskHandle,
+    downstream: &TaskHandle,
+    transitive: &TaskHandle,
+) {
+    let blocked = board(bus, epoch, implementer.clone());
+    assert_eq!(at(&blocked, reviewed).workflow.body.status, "pending");
+    assert_eq!(at(&blocked, reviewed).workflow.body.review, "unassigned");
+    assert_eq!(
+        at(&blocked, reviewed).statement.body.dependencies,
+        vec![at(&blocked, correction).statement.body.born.clone()],
+    );
+    assert!(
+        at(&blocked, correction)
+            .statement
+            .body
+            .dependencies
+            .is_empty()
+    );
+    let entries = actor_entries(&blocked).expect("lane projects allocatable entries");
+    for (task, reason) in [
+        (reviewed, "the finding remains behind its correction"),
+        (downstream, "the direct dependent remains blocked"),
+        (transitive, "the transitive dependent remains blocked"),
+    ] {
+        let entry = entries
+            .iter()
+            .find(|entry| entry.handle() == task)
+            .expect("blocked entry is visible");
+        assert!(
+            !board::eligible_entry(&entries, entry, implementer),
+            "{reason}"
+        );
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the release assertion retains the complete two-lane review fixture"
+)]
+fn complete_correction_and_clean(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seats: &[Seat],
+    implementer: &Actor,
+    reviewer: &Actor,
+    reviewed: &TaskHandle,
+    correction: &TaskHandle,
+    downstream: &TaskHandle,
+) {
+    claim_and_complete_task(bus, epoch, &seats[0], implementer, correction);
+    let reviewable = board(bus, epoch, reviewer.clone());
+    let entries = actor_entries(&reviewable).expect("corrected board projects to entries");
+    let reviewed_entry = entries
+        .iter()
+        .find(|entry| entry.handle() == reviewed)
+        .expect("reviewed entry remains visible");
+    assert!(board::eligible_entry(&entries, reviewed_entry, reviewer));
+    assert_committed(issue(
+        bus,
+        epoch,
+        reviewer.clone(),
+        CommandKind::ClaimWin,
+        claim_expected(&reviewable, reviewed, &seats[1]),
+        &ClaimWin {
+            rule: "next".parse().expect("allocator rule"),
+            recovery: None,
+        },
+    ));
+    let assigned = board(bus, epoch, reviewer.clone());
+    let expected = progress_witnesses(
+        &assigned,
+        at(&assigned, reviewed),
+        seats[1].lane,
+        seats[1].occupant,
+        true,
+    )
+    .expect("fresh clean review has exact witnesses");
+    assert_committed(issue(
+        bus,
+        epoch,
+        reviewer.clone(),
+        CommandKind::TaskReview,
+        expected,
+        &TaskReview {
+            task: reviewed.clone(),
+            finding: "clean".to_owned(),
+            note: Some("correction validated".to_owned()),
+            then: Vec::new(),
+            followup: Vec::new(),
+        },
+    ));
+    let released = board(bus, epoch, implementer.clone());
+    assert_eq!(at(&released, reviewed).workflow.body.status, "completed");
+    assert_eq!(at(&released, reviewed).workflow.body.review, "clean");
+    let entries = actor_entries(&released).expect("clean board projects to entries");
+    let downstream_entry = entries
+        .iter()
+        .find(|entry| entry.handle() == downstream)
+        .expect("downstream entry remains visible");
+    assert!(board::eligible_entry(
+        &entries,
+        downstream_entry,
+        implementer
+    ));
 }
 
 fn assert_review_followup_tracking(
@@ -616,7 +729,7 @@ fn assert_review_followup_tracking(
     created: &TaskHandle,
     linked: &TaskHandle,
 ) {
-    let settled = board(bus, epoch, Actor::Operator);
+    let pending = board(bus, epoch, Actor::Operator);
     let causal = task_origin(
         &reviewed
             .born()
@@ -624,7 +737,7 @@ fn assert_review_followup_tracking(
     )
     .expect("reviewed task forms follow-up origin");
     assert_eq!(
-        at(&settled, created).statement.body.provenance,
+        at(&pending, created).statement.body.provenance,
         causal,
         "--then stored provenance diverged from its reviewed parent"
     );
@@ -634,19 +747,50 @@ fn assert_review_followup_tracking(
         "--then creation envelope diverged from stored provenance"
     );
     assert_eq!(
-        at(&settled, created).statement.body.dependencies,
-        vec![at(&settled, reviewed).statement.body.born.clone()],
-        "--then did not create a task behind the reviewed task"
+        at(&pending, created).statement.body.dependencies,
+        Vec::<wire::TaskStamp>::new(),
+        "--then correction must not depend on the reviewed task"
     );
     assert!(
-        at(&settled, linked)
-            .statement
-            .body
-            .dependencies
-            .contains(&at(&settled, reviewed).statement.body.born),
-        "--followup did not wire the existing task behind the review"
+        at(&pending, linked).statement.body.dependencies.is_empty(),
+        "--followup must not move the correction task behind the review"
     );
-    assert_eq!(at(&settled, reviewed).workflow.body.review, "finding");
+    let dependencies = &at(&pending, reviewed).statement.body.dependencies;
+    assert!(dependencies.contains(&at(&pending, created).statement.body.born));
+    assert!(dependencies.contains(&at(&pending, linked).statement.body.born));
+    assert_eq!(dependencies.len(), 2);
+    assert_eq!(at(&pending, reviewed).workflow.body.status, "pending");
+    assert_eq!(at(&pending, reviewed).workflow.body.review, "unassigned");
+    let snapshot = bus.fact_snapshot().expect("review tracking facts read");
+    let reviewed_fact = snapshot
+        .facts()
+        .iter()
+        .find(|fact| {
+            fact.fact
+                .read::<body::TaskReviewed>()
+                .is_some_and(|body| body.task == reviewed.born().expect("reviewed stamp"))
+        })
+        .expect("finding fact exists");
+    let created_fact = snapshot
+        .facts()
+        .iter()
+        .find(|fact| {
+            fact.fact
+                .read::<body::TaskAdded>()
+                .is_some_and(|body| body.task == created.born().expect("created stamp"))
+        })
+        .expect("created correction fact exists");
+    let dependency_fact = snapshot
+        .facts()
+        .iter()
+        .find(|fact| {
+            fact.fact
+                .read::<body::TaskEdited>()
+                .is_some_and(|body| body.task == reviewed.born().expect("reviewed stamp"))
+        })
+        .expect("review dependency fact exists");
+    assert_eq!(created_fact.cause, Some(reviewed_fact.seq));
+    assert_eq!(dependency_fact.cause, Some(reviewed_fact.seq));
 }
 
 fn assert_restart_preserves(root: &Path, bus: Bus, epoch: CanonicalUuid, settled: &BoardAnswer) {

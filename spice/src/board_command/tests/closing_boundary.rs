@@ -135,7 +135,7 @@ fn a_completed_task_records_an_explicit_proven_closing_boundary() {
     );
 }
 
-/// Pins the closing-boundary read in `task_review` before it writes `TaskReviewed`.
+/// Pins the closing-boundary read in `prepare_review` before it writes `TaskReviewed`.
 ///
 /// The review is issued by a second lane, because a review routes to a peer,
 /// and the boundary recorded is the reviewing lane's own. That last property is
@@ -145,7 +145,7 @@ fn a_completed_task_records_an_explicit_proven_closing_boundary() {
 /// reds this test, while the completion's own assertion below still holds the
 /// proven-versus-unrecorded distinction on an unseeded lane.
 #[test]
-fn a_completed_review_records_the_reviewing_lanes_own_closing_boundary() {
+fn a_finding_review_records_the_reviewing_lanes_own_closing_boundary() {
     let (_root, bus, epoch, seats) = fixture("closing-boundary-review", 2);
     let lane_one = Actor::Lane(seats[0].lane);
     let lane_two = Actor::Lane(seats[1].lane);
@@ -165,7 +165,7 @@ fn a_completed_review_records_the_reviewing_lanes_own_closing_boundary() {
     assert_eq!(
         closing_boundary(&bus, wire::FactKind::TaskReviewed),
         Some(proven_with_seeded_head(seats[1].lane)),
-        "completing a review must record the boundary it closed at, and must \
+        "recording a review must retain the boundary it evaluated at, and must \
          read it for the reviewing lane: only that lane has an accounted \
          transcript, so any other lane would prove empty heads here"
     );
