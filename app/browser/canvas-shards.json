@@ -23,10 +23,18 @@
         "agent-conversation",
         "reference-composer",
         "firefox-restored-mosaic",
-        "authority-task-flow",
-        "automatic-speech",
-        "media-exchange"
+        "authority-task-flow"
       ]
+    },
+    {
+      "name": "speech",
+      "timeout_ms": 120000,
+      "scenarios": ["automatic-speech"]
+    },
+    {
+      "name": "media",
+      "timeout_ms": 120000,
+      "scenarios": ["media-exchange"]
     },
     {
       "name": "lease",

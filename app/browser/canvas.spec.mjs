@@ -557,7 +557,8 @@ try {
       // Interaction owns several reload-sensitive agent workflows and tests no
       // lease deadline. Keep those occupants stable just as the dedicated
       // lease shard does; short expiry remains covered by the other shards.
-      laneLease: run.owns("lease") || run.owns("interaction") || run.owns("resilience")
+      laneLease: run.owns("lease") || run.owns("interaction") || run.owns("speech")
+        || run.owns("media") || run.owns("resilience")
         ? "5m"
         : "5s",
       noCardMember: 5,
@@ -693,29 +694,39 @@ try {
         lightMonitor.assertClean();
         await light.close();
       });
+    } else if (run.owns("speech")) {
+      const added = await reply(fixture, [
+        "lane", "add", worktrees[0], "--name", "Speech", "--life", "Steer", "--vendor", "claude",
+      ]);
+      const wake = await reply(fixture, ["lane", "wake", added.body.lane]);
+      assert.equal(wake.body.to, "occupied", "the speech fixture starts its agent");
       await run.scenario("automatic-speech", async () => {
         await assertAutomaticSpeechEngines(
           resident.discovery.endpoint,
           fixture,
           worktrees[0],
-          seeded.lane,
+          added.body.lane,
           artifacts,
         );
       });
-      await run.scenario("media-exchange", async () => {
-        const media = await browser.newContext({
-          colorScheme: "light",
-          viewport: { width: 1000, height: 720 },
-        });
-        await installSocketControl(media);
-        const page = await media.newPage();
-        const monitor = monitorPage(page);
-        await page.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
-        await assertCanvas(page, "media-exchange");
-        await assertBidirectionalMediaExchange(page, fixture, worktrees[4]);
-        monitor.assertClean();
-        await media.close();
+    } else if (run.owns("media")) {
+      await reply(fixture, [
+        "lane", "add", worktrees[0], "--name", "Control", "--life", "Steer", "--vendor", "claude",
+      ]);
+      const media = await browser.newContext({
+        colorScheme: "light",
+        viewport: { width: 1000, height: 720 },
       });
+      await installSocketControl(media);
+      const page = await media.newPage();
+      const monitor = monitorPage(page);
+      await page.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
+      await assertCanvas(page, "media-exchange");
+      await run.scenario("media-exchange", async () => {
+        await assertBidirectionalMediaExchange(page, fixture, worktrees[4]);
+      });
+      monitor.assertClean();
+      await media.close();
     } else if (run.owns("lease")) {
       light = await browser.newContext({ colorScheme: "light", viewport: { width: 1440, height: 900 } });
       await installBrowserSpeech(light);
