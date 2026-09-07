@@ -25,7 +25,6 @@ import {
   assertCanonicalProbeStable,
   assertUnmoved,
   finishPlacementProbe,
-  settleMosaicActivity,
   waitForMosaicReady,
 } from "./mosaic-placement-reference.mjs";
 import { assertRuntimeToolMediaCards } from "./tool-media-reference.mjs";
@@ -74,7 +73,7 @@ export async function assertPersistentMosaic(
   activityReplay,
   artifacts,
 ) {
-  await settleMosaicActivity(page, plane);
+  await waitForMosaicReady(page);
   const firstCard = console.locator('.mosaic-message-card[data-layout-phase="committed"]').first();
   const life = console.locator('.team-lifetime input[type="range"]');
   const presentationProbe = await armPlacementProbe(plane);
@@ -112,13 +111,16 @@ export async function assertPersistentMosaic(
       && refresh.body.task.length > 0,
     "the no-op refresh command commits an exact journal range",
   );
-  await waitForPage(page, "a no-op refresh reaches the surface", TRANSITION_MS, (expected) => (
-    document.querySelector(".bar-meta")?.textContent === expected
-  ), `cursor ${refresh.seq.last}`);
+  await waitForPage(page, "a no-op refresh reaches the settled surface", TRANSITION_MS,
+    (expected) => {
+      const plane = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
+      return document.querySelector(".bar-meta")?.textContent === expected
+        && plane?.dataset.measurementPhase === "ready"
+        && plane.dataset.measurementPending === "0";
+    }, `cursor ${refresh.seq.last}`);
   const refreshed = await finishPlacementProbe(plane, refreshProbe);
   assertUnmoved(refreshProbe, refreshed, "a no-op refresh");
   assert.equal(refreshed.commits, refreshProbe.commits, "a no-op refresh commits no plane");
-  await settleMosaicActivity(page, plane);
 
   const tickingAge = console.locator(
     '.mosaic-message-card[data-layout-phase="committed"] .message-age[data-age-clock="deadline"]',
