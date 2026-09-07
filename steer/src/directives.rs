@@ -777,7 +777,18 @@ impl Ledger {
     pub fn authority_index(
         snapshot: &journal::FactSnapshot,
     ) -> Result<AuthorityIndex, ReplayError> {
-        let (ledger, positions, misses) = replay(snapshot.facts())?;
+        Self::authority_index_from_facts(snapshot.facts())
+    }
+
+    /// Rebuild the singular bounded steering authority from selected facts.
+    ///
+    /// Facts retain their global journal positions but need not include facts
+    /// that cannot affect steering authority.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn authority_index_from_facts<'a>(
+        facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
+    ) -> Result<AuthorityIndex, ReplayError> {
+        let (ledger, positions, misses) = replay(facts)?;
         let heads = ledger
             .order
             .iter()

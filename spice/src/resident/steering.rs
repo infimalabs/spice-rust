@@ -163,10 +163,16 @@ pub(super) fn append_control_cancellation(
 
 /// Admit or rebuild the bounded steering authority before the bus accepts work.
 pub(super) fn admit_index(journal: &mut journal::Journal) -> CommandResult<()> {
+    if journal
+        .steering_index_current()
+        .map_err(|error| store_fault("steer::index-unreadable", &error.to_string()))?
+    {
+        return Ok(());
+    }
     let snapshot = journal
-        .fact_snapshot()
+        .steering_snapshot()
         .map_err(|error| store_fault("steer::journal-unreadable", &error.to_string()))?;
-    let index = steer::Ledger::authority_index(&snapshot)
+    let index = steer::Ledger::authority_index_from_facts(snapshot.facts())
         .map_err(|error| store_fault("steer::replay-invalid", &error.to_string()))?;
     journal
         .rebuild_steering_index(snapshot.horizon(), index.heads(), index.misses())

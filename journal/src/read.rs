@@ -12,6 +12,31 @@ pub struct FactSnapshot {
     horizon: Option<wire::Seq>,
 }
 
+/// One immutable view of only the facts that can change steering authority.
+///
+/// Positions remain their original journal positions and therefore need not be
+/// contiguous. The horizon is the cursor of the complete journal generation
+/// from which this projection was selected.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SteeringSnapshot {
+    facts: Vec<wire::Envelope<wire::AnyFact>>,
+    horizon: Option<wire::Seq>,
+}
+
+impl SteeringSnapshot {
+    /// Steering-authority facts in ascending journal order.
+    #[must_use]
+    pub fn facts(&self) -> &[wire::Envelope<wire::AnyFact>] {
+        &self.facts
+    }
+
+    /// Complete journal cursor covered by this selected projection.
+    #[must_use]
+    pub const fn horizon(&self) -> Option<wire::Seq> {
+        self.horizon
+    }
+}
+
 impl FactSnapshot {
     /// Validates a fact sequence for use by a disposable materialization.
     pub fn from_facts(facts: Vec<wire::Envelope<wire::AnyFact>>) -> Result<Self, SnapshotError> {
@@ -59,6 +84,15 @@ impl Journal {
     pub fn fact_snapshot(&self) -> Result<FactSnapshot, SnapshotError> {
         read_snapshot(&self.connection)
     }
+
+    /// Reads only facts capable of changing the bounded steering authority.
+    ///
+    /// This recovery surface deliberately excludes unrelated world history.
+    /// The returned horizon still covers the complete journal generation so a
+    /// rebuilt projection can advance atomically to the authoritative cursor.
+    pub fn steering_snapshot(&self) -> Result<SteeringSnapshot, SnapshotError> {
+        read_steering_snapshot(&self.connection)
+    }
 }
 
 impl JournalReader {
@@ -88,6 +122,68 @@ pub(crate) fn read_snapshot(connection: &Connection) -> Result<FactSnapshot, Sna
         facts.push(decode_fact(indexed_seq, &indexed_kind, &bytes)?);
     }
     FactSnapshot::from_facts(facts)
+}
+
+fn read_steering_snapshot(connection: &Connection) -> Result<SteeringSnapshot, SnapshotError> {
+    let raw_horizon = connection
+        .query_row(
+            "SELECT seq FROM cursor_head WHERE singleton = 1",
+            [],
+            |row| row.get::<_, Option<i64>>(0),
+        )
+        .map_err(SnapshotError::Sqlite)?;
+    let horizon = match raw_horizon {
+        None => None,
+        Some(found) => Some(
+            u64::try_from(found)
+                .ok()
+                .and_then(wire::Seq::new)
+                .ok_or_else(|| SnapshotError::Invalid {
+                    seq: u64::try_from(found).ok(),
+                    detail: format!("journal cursor {found} is not a fact position"),
+                })?,
+        ),
+    };
+    let Some(horizon) = horizon else {
+        return Ok(SteeringSnapshot {
+            facts: Vec::new(),
+            horizon: None,
+        });
+    };
+
+    let sql_horizon = i64::try_from(horizon.get()).map_err(|_| SnapshotError::Invalid {
+        seq: Some(horizon.get()),
+        detail: "journal cursor exceeds SQLite integer range".to_owned(),
+    })?;
+    let mut statement = connection
+        .prepare(
+            "SELECT seq, kind, envelope FROM fact_envelopes \
+             WHERE seq <= ?1 AND kind IN (\
+                 'steer::sent', 'steer::escalated', 'steer::recovered', \
+                 'steer::acked', 'steer::declined', 'steer::missed', \
+                 'steer::lapsed', 'steer::deadlettered', 'steer::canceled', \
+                 'taste::reminded', 'taste::judged', 'claim::warned'\
+             ) ORDER BY seq",
+        )
+        .map_err(SnapshotError::Sqlite)?;
+    let rows = statement
+        .query_map([sql_horizon], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+            ))
+        })
+        .map_err(SnapshotError::Sqlite)?;
+    let mut facts = Vec::new();
+    for row in rows {
+        let (indexed_seq, indexed_kind, bytes) = row.map_err(SnapshotError::Sqlite)?;
+        facts.push(decode_fact(indexed_seq, &indexed_kind, &bytes)?);
+    }
+    Ok(SteeringSnapshot {
+        facts,
+        horizon: Some(horizon),
+    })
 }
 
 pub(crate) fn decode_fact(

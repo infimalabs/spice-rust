@@ -334,6 +334,45 @@ fn schema_six_migration_requires_one_explicit_rebuild_then_stays_current() {
     );
 }
 
+#[test]
+fn steering_recovery_snapshot_excludes_unrelated_world_history() {
+    let mut journal = Journal::in_memory().expect("steering journal");
+    journal
+        .apply(send_write(uuid(TARGET), TARGET_KEY))
+        .expect("steering publication applies");
+    let mut ordinary =
+        JournalWrite::new(Actor::Operator, origin(), instant(), Producer::CommandDoor);
+    ordinary
+        .fact(
+            TaskNoted {
+                task: "1kKRRsDP".parse().expect("fixture task"),
+                note: "unrelated world history".to_owned(),
+            },
+            FactCause::Root,
+        )
+        .expect("ordinary fact builds");
+    journal.apply(ordinary).expect("ordinary fact applies");
+
+    journal
+        .connection
+        .execute(
+            "UPDATE fact_envelopes SET envelope = X'00' WHERE kind = 'task::noted'",
+            [],
+        )
+        .expect("corrupt only unrelated history");
+
+    let snapshot = journal
+        .steering_snapshot()
+        .expect("steering recovery ignores unrelated bytes");
+    assert_eq!(snapshot.horizon(), Seq::new(2));
+    assert_eq!(snapshot.facts().len(), 1);
+    assert_eq!(snapshot.facts()[0].fact.kind(), wire::FactKind::SteerSent);
+    assert!(
+        journal.fact_snapshot().is_err(),
+        "a whole-world snapshot would have decoded the unrelated corruption"
+    );
+}
+
 fn measured_key(journal: &Journal) -> crate::guard::IndexedReadMetrics {
     crate::guard::reset_indexed_read_metrics();
     let head = journal

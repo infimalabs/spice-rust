@@ -28,7 +28,7 @@ pub use guard::{
 #[cfg(not(target_arch = "wasm32"))]
 pub use migrate::{Migration, MigrationError, OpenError};
 #[cfg(not(target_arch = "wasm32"))]
-pub use read::{FactSnapshot, SnapshotError};
+pub use read::{FactSnapshot, SnapshotError, SteeringSnapshot};
 #[cfg(not(target_arch = "wasm32"))]
 pub use replay::{
     ReindexError, ReindexReport, ThreadError, ThreadSnapshot, Verification, VerifyError, Violation,

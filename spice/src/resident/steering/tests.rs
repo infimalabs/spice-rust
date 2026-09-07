@@ -118,7 +118,42 @@ fn repeated_delivery_appends_only_the_missing_ordered_stages() {
 }
 
 #[test]
-fn startup_replay_repairs_cursor_current_predicate_corruption() {
+fn cursor_current_startup_does_not_rebuild_the_transactional_fold() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("current.sqlite3");
+    let mut journal = journal::Journal::open(&path).expect("steering authority opens");
+    journal
+        .apply(send_write(DIRECTIVE, KEY))
+        .expect("steering head applies");
+    drop(journal);
+
+    let connection = rusqlite::Connection::open(&path).expect("current fixture opens");
+    connection
+        .execute_batch(
+            "CREATE TRIGGER refuse_redundant_steering_rebuild \
+             BEFORE DELETE ON steering_heads BEGIN \
+                 SELECT RAISE(ABORT, 'current steering fold was rebuilt'); \
+             END;",
+        )
+        .expect("guard current fold against reconstruction");
+    drop(connection);
+
+    let mut journal = journal::Journal::open(&path).expect("current authority reopens");
+    assert!(
+        journal
+            .steering_index_current()
+            .expect("current cursor reads")
+    );
+    admit_index(&mut journal).expect("current transactional fold is admitted directly");
+    let pending = journal
+        .read(|read| read.pending_steering(None))
+        .expect("current inbox reads");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].body().disposition, Disposition::Live);
+}
+
+#[test]
+fn startup_replay_repairs_lagging_predicate_corruption() {
     let scratch = Scratch::new();
     let path = scratch.path().join("journal.sqlite3");
     let mut journal = journal::Journal::open(&path).expect("steering authority opens");
@@ -136,14 +171,17 @@ fn startup_replay_repairs_cursor_current_predicate_corruption() {
     connection
         .execute("UPDATE steering_heads SET disposition = 'canceled'", [])
         .expect("corrupt indexed predicate");
+    connection
+        .execute("UPDATE steering_index SET indexed_seq = NULL", [])
+        .expect("make the corrupt fold lag authority");
     drop(connection);
 
     let mut journal = journal::Journal::open(&path).expect("corrupt authority reopens");
     assert!(
-        journal
+        !journal
             .steering_index_current()
-            .expect("cursor-current corruption reads"),
-        "cursor equality alone must not admit the fold"
+            .expect("lagging corruption reads"),
+        "only a lagging fold needs replay"
     );
     journal
         .verify()
@@ -196,6 +234,9 @@ fn contradictory_startup_replay_refuses_without_fold_mutation() {
             [serde_json::to_vec(&document).expect("encode contradictory envelope")],
         )
         .expect("store contradictory steering history");
+    connection
+        .execute("UPDATE steering_index SET indexed_seq = NULL", [])
+        .expect("make the contradictory fold lag authority");
     let before = stored_fold(&connection);
     drop(connection);
 
