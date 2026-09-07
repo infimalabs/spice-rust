@@ -46,7 +46,7 @@ export function observeStableRightEdge({ node, state }) {
     && Math.abs(current.newestRight - current.right) <= 1;
   const previous = state.previous;
   state.previous = anchored ? current : null;
-  return previous !== null && Object.keys(current).every((key) => (
+  return anchored && previous !== null && Object.keys(current).every((key) => (
     Math.abs(current[key] - previous[key]) <= 1
   ));
 }
