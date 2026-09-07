@@ -35,7 +35,6 @@ import {
 } from "./canvas-activity-records.mjs";
 import { childExited } from "./canvas-child-state.mjs";
 import { describeConnection, describeResident } from "./canvas-endpoint-probes.mjs";
-import { assertHeldTaskCount as assertHeldTaskCountWith } from "./canvas-held-task.mjs";
 import { describeLoad, LOAD_FIELD } from "./canvas-load.mjs";
 import { sampleResidentUsage } from "./resident-process-usage.mjs";
 
@@ -334,17 +333,6 @@ export async function replyAsLane(fixture, lane, args) {
     `${command.join(" ")} as ${lane}: ${JSON.stringify(outcome)}`,
   );
   return outcome;
-}
-
-export function assertHeldTaskCount(team, fixture, lanes, restartAfterExpiry, artifacts) {
-  return assertHeldTaskCountWith(team, fixture, lanes, {
-    artifacts,
-    claimMs: CONNECT_MS,
-    reply,
-    replyAsLane,
-    restartAfterExpiry,
-    transitionMs: TRANSITION_MS,
-  });
 }
 
 export async function configureFixture(

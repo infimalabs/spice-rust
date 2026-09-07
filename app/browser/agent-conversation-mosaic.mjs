@@ -96,9 +96,8 @@ export async function assertPersistentMosaic(
   // advance cannot satisfy it.
   //
   // The missing `--acceptance` is load-bearing, not an omission: a task added
-  // without one starts in `plan`, which `workable` never selects, so this task
-  // can never be held and cannot disturb `assertHeldTaskCount`. Give it
-  // acceptance criteria and a distant assertion about badges goes red.
+  // without one starts in `plan`, which `workable` never selects. Give it
+  // acceptance criteria and an unrelated agent could claim this no-op probe.
   const refreshProbe = await armPlacementProbe(plane);
   const refresh = await reply(fixture, [
     "task",

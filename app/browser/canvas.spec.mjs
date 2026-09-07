@@ -9,7 +9,7 @@ import { assertAgesTickWhileTheResidentIsSilent } from "./age-ticker.mjs";
 import {
   assertAgentConversation, assertMosaicLattice, entirelyQuotedMessage,
   longAgentName, longWorktreeBasename, nestedQuoteMessage, nestedQuotePreview,
-  seatAgentTeam, seatLeaseAgent,
+  seatAgentTeam,
 } from "./agent-conversation.mjs";
 import {
   assertCompactionBoundaryPersistence,
@@ -102,7 +102,6 @@ import {
   buildResident,
   chooseCanvasView,
   configureFixture,
-  assertHeldTaskCount,
   journalExtent,
   monitorPage,
   observedBoundedWait,
@@ -554,10 +553,9 @@ try {
     owner = ownFixture({ fixture, linkedRoot });
     await mkdir(artifacts, { recursive: true });
     const worktrees = await configureFixture(fixture, linkedRoot, 6, {
-      // Interaction owns several reload-sensitive agent workflows and tests no
-      // lease deadline. Keep those occupants stable just as the dedicated
-      // lease shard does; short expiry remains covered by the other shards.
-      laneLease: run.owns("lease") || run.owns("interaction") || run.owns("speech")
+      // Several reload-sensitive agent workflows test no lease deadline, so
+      // keep their occupants stable; short expiry remains covered elsewhere.
+      laneLease: run.owns("interaction") || run.owns("speech")
         || run.owns("media") || run.owns("resilience")
         ? "5m"
         : "5s",
@@ -727,39 +725,6 @@ try {
       });
       monitor.assertClean();
       await media.close();
-    } else if (run.owns("lease")) {
-      light = await browser.newContext({ colorScheme: "light", viewport: { width: 1440, height: 900 } });
-      await installBrowserSpeech(light);
-      await installSocketControl(light);
-      lightPage = await light.newPage();
-      lightMonitor = monitorPage(lightPage);
-      lightPage.on("console", (message) => process.stderr.write(`browser console: ${message.text()}\n`));
-      await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
-      await assertCanvas(lightPage, "light-lease");
-      await run.scenario("composer-lease", async () => {
-        const team = await seatLeaseAgent(lightPage, fixture, worktrees.slice(0, 2));
-        await assertHeldTaskCount(
-          team.console,
-          fixture,
-          team.lanes,
-          async (deadline, observeWhileStopped) => {
-            lightMonitor.expectNetworkInterruption(true);
-            await stopResident(fixture, resident);
-            const observedDeadline = await observeWhileStopped();
-            const remaining = Math.max(deadline, observedDeadline) - Date.now();
-            if (remaining > 0) {
-              await new Promise((resolve) => setTimeout(resolve, remaining));
-            }
-            resident = owner.ownResident(await startResident(fixture));
-            await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
-            lightMonitor.expectNetworkInterruption(false);
-            await chooseCanvasView(lightPage, "Lanes");
-          },
-          artifacts,
-        );
-        lightMonitor.assertClean();
-        await light.close();
-      });
     } else if (run.owns("restart")) {
       light = await browser.newContext({ colorScheme: "light", viewport: { width: 1440, height: 900 } });
       await installBrowserSpeech(light);

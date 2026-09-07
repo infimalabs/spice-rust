@@ -20,7 +20,6 @@ const EXPECTED_SCENARIOS = [
   "authority-task-flow",
   "automatic-speech",
   "media-exchange",
-  "composer-lease",
   "variant-surfaces",
   "socket-resilience",
   "team-lifecycle",

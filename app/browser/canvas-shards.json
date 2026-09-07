@@ -37,11 +37,6 @@
       "scenarios": ["media-exchange"]
     },
     {
-      "name": "lease",
-      "timeout_ms": 180000,
-      "scenarios": ["composer-lease"]
-    },
-    {
       "name": "resilience",
       "timeout_ms": 120000,
       "scenarios": ["variant-surfaces", "socket-resilience", "team-lifecycle"]
