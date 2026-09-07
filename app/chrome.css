@@ -58,8 +58,7 @@ body:has(.shell--mosaic),
   min-width: 6rem;
   overflow-x: auto;
 }
-.task-pill,
-.task-pill-empty {
+.task-pill {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
