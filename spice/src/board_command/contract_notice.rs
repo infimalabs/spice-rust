@@ -151,20 +151,23 @@ mod tests {
     }
 
     #[test]
-    fn changed_summaries_remain_distinct_after_whitespace_normalization() {
+    fn late_contract_changes_remain_distinct_after_prefix_bounding() {
         let mut changes = Vec::new();
+        let shared = "x".repeat(body::TASK_EDIT_FIELD_SUMMARY_CHARS + 20);
         changed(
             &mut changes,
             "description",
-            "the old contract",
-            "the  old contract",
+            &format!("{shared} old contract"),
+            &format!("{shared} new contract"),
         );
 
         let [change] = changes.as_slice() else {
             panic!("one actual contract change is retained");
         };
         assert_ne!(change.before, change.after);
-        assert_eq!(change.after, "the old contract [changed]");
+        assert!(change.before.ends_with('…'));
+        assert!(change.after.ends_with(" [changed]"));
+        assert!(change.before.chars().count() <= body::TASK_EDIT_FIELD_SUMMARY_CHARS);
         assert!(change.after.chars().count() <= body::TASK_EDIT_FIELD_SUMMARY_CHARS);
     }
 }
