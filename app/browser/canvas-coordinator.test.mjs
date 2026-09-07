@@ -31,6 +31,34 @@ test("the canonical registry derives one build action and one action per shard",
   );
 });
 
+test("default prebuilt explicit and queue execution admit one resident stack only", async () => {
+  assert.equal(invocation([]).concurrency, 1);
+  assert.equal(invocation(["--spice-prebuilt-app"]).concurrency, 1);
+  assert.equal(invocation(["--spice-concurrency", "1"]).concurrency, 1);
+  for (const refused of ["0", "2", "4", "not-a-number"]) {
+    assert.throws(
+      () => invocation(["--spice-concurrency", refused]),
+      /must be an integer between 1 and 1/,
+    );
+  }
+
+  let active = 0;
+  let peak = 0;
+  const completed = await drainShardQueue(
+    [{ name: "first" }, { name: "second" }, { name: "third" }],
+    invocation([]).concurrency,
+    async ({ name }) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await Promise.resolve();
+      active -= 1;
+      return name;
+    },
+  );
+  assert.equal(peak, 1, "the default queue never overlaps resident/browser stacks");
+  assert.deepEqual(completed, ["first", "second", "third"]);
+});
+
 test("speech and production media own fixed-horizon shards outside interaction", () => {
   const interaction = CANVAS_SHARDS.find(({ name }) => name === "interaction");
   const speech = CANVAS_SHARDS.find(({ name }) => name === "speech");
