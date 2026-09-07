@@ -702,7 +702,6 @@ try {
         await assertAutomaticSpeechEngines(
           resident.discovery.endpoint,
           fixture,
-          worktrees[0],
           added.body.lane,
           artifacts,
         );
