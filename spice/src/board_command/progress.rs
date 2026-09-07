@@ -647,6 +647,59 @@ fn review_followup_creation(
     }
 }
 
+struct PreparedReview {
+    snapshot: ValidatedSnapshot,
+    entry: Entry,
+    transition: board::Transition,
+    at: Instant,
+    source: body::SourceBoundary,
+    verdict: body::Verdict,
+    finding: Option<String>,
+    statement: TaskHead,
+    origin: wire::Origin,
+    git: Option<body::GitBoundary>,
+    creation: Option<TaskCreationCapture>,
+}
+
+fn prepare_review(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    review: &TaskReview,
+    repository: Option<&Repository>,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+) -> Result<PreparedReview, Outcome<CommandAnswer>> {
+    let snapshot = validated_snapshot(bus, command.actor().clone(), projects, allocation)?;
+    let (entry, transition, at, lane) = admit_review(&snapshot, command, review)?;
+    let source = bus
+        .source_boundary(&lane)
+        .map_err(|error| store_fault("review::boundary-unreadable", &error.to_string()))?;
+    let (verdict, finding) = review_verdict(review)?;
+    let statement = match verdict {
+        body::Verdict::Clean => entry.statement().clone(),
+        body::Verdict::Finding => {
+            correction_statement(&snapshot, command, entry, review, projects)?
+        }
+    };
+    let parent = task_origin(entry.born())?;
+    let origin = resolve_creation_origin(None, command.actor(), &snapshot, Some(parent))?;
+    let git = publish_task_boundary(repository, &snapshot, command, entry)?;
+    let creation = review_followup_creation(bus, command, &snapshot, review)?;
+    Ok(PreparedReview {
+        entry: entry.clone(),
+        snapshot,
+        transition,
+        at,
+        source,
+        verdict,
+        finding,
+        statement,
+        origin,
+        git,
+        creation,
+    })
+}
+
 pub(super) fn task_review(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -655,38 +708,56 @@ pub(super) fn task_review(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
-        Ok(snapshot) => snapshot,
+    task_review_with(
+        bus,
+        command,
+        review,
+        repository,
+        projects,
+        allocation,
+        || {},
+    )
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(super) fn task_review_with(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    review: &TaskReview,
+    repository: Option<&Repository>,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+    after_validation: impl FnOnce(),
+) -> Outcome<CommandAnswer> {
+    let prepared = match prepare_review(bus, command, review, repository, projects, allocation) {
+        Ok(prepared) => prepared,
         Err(outcome) => return outcome,
     };
-    let (entry, transition, at, lane) = match admit_review(&snapshot, command, review) {
-        Ok(admitted) => admitted,
-        Err(outcome) => return outcome,
-    };
-    let source = match bus.source_boundary(&lane) {
-        Ok(source) => source,
-        Err(error) => return store_fault("review::boundary-unreadable", &error.to_string()),
-    };
-    let (verdict, finding) = match review_verdict(review) {
-        Ok(decided) => decided,
-        Err(outcome) => return outcome,
-    };
-    let parent = match task_origin(entry.born()) {
-        Ok(origin) => origin,
-        Err(outcome) => return outcome,
-    };
-    let origin = match resolve_creation_origin(None, command.actor(), &snapshot, Some(parent)) {
-        Ok(origin) => origin,
-        Err(outcome) => return outcome,
-    };
-    let git = match publish_task_boundary(repository, &snapshot, command, entry) {
-        Ok(git) => git,
-        Err(outcome) => return outcome,
-    };
-    let creation = match review_followup_creation(bus, command, &snapshot, review) {
-        Ok(creation) => creation,
-        Err(outcome) => return outcome,
-    };
+    after_validation();
+    commit_review(bus, command, review, repository, projects, prepared)
+}
+
+fn commit_review(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    review: &TaskReview,
+    repository: Option<&Repository>,
+    projects: &ProjectPolicy,
+    prepared: PreparedReview,
+) -> Outcome<CommandAnswer> {
+    let PreparedReview {
+        snapshot,
+        entry,
+        transition,
+        at,
+        source,
+        verdict,
+        finding,
+        statement,
+        origin,
+        git,
+        creation,
+    } = prepared;
     let mut write = JournalWrite::new(
         command.actor().clone(),
         origin.clone(),
@@ -697,33 +768,19 @@ pub(super) fn task_review(
     if let Some(creation) = &creation {
         creation.guard(&mut write);
     }
-    let reviewed = match write.fact(
-        body::TaskReviewed {
-            task: entry.born().clone(),
-            reviewer: command.actor().clone(),
-            verdict,
-            finding,
-            git,
-            source,
-        },
-        FactCause::Root,
-    ) {
-        Ok(fact) => fact,
-        Err(error) => return store_fault("review::build", &error.to_string()),
-    };
-    let mut workflow = transition.next().clone();
-    workflow.review = match verdict {
-        body::Verdict::Clean => "clean",
-        body::Verdict::Finding => "finding",
-    }
-    .to_owned();
+    let reviewed =
+        match append_reviewed_fact(&mut write, command, &entry, verdict, finding, git, source) {
+            Ok(reviewed) => reviewed,
+            Err(outcome) => return outcome,
+        };
+    let workflow = review_workflow(&entry, &transition, verdict);
     let mut claim = entry
         .claim()
         .expect("Active proof requires a claim head")
         .clone();
     claim.disposition = ClaimDisposition::Freed;
     let post = Entry::new(
-        entry.statement().clone(),
+        statement.clone(),
         workflow.clone(),
         Some(claim.clone()),
         entry.lease().cloned(),
@@ -731,12 +788,7 @@ pub(super) fn task_review(
     )
     .expect("an admitted review preserves a valid task entry");
     let next = next_action(&snapshot, &post, false);
-    write.workflow_head(entry.born().clone(), reviewed, move |_| workflow);
-    write.claim_head(entry.born().clone(), reviewed, move |fact| ClaimHead {
-        fact,
-        ..claim
-    });
-    let tracking = record_followups(
+    if let Err(outcome) = record_followups(
         &mut write,
         command,
         &snapshot,
@@ -746,18 +798,19 @@ pub(super) fn task_review(
         creation.as_ref(),
         repository,
         projects,
-    );
-    if let Err(outcome) = tracking {
+    ) {
         return outcome;
     }
-    let answer = wire::intent::TaskAnswer {
-        task: review.task.clone(),
-        status: "completed".to_owned(),
-        guidance: None,
-        completion: None,
-        learning: None,
-        next,
+    let state_cause = match append_review_statement(&mut write, &entry, statement, reviewed) {
+        Ok(cause) => cause,
+        Err(outcome) => return outcome,
     };
+    write.workflow_head(entry.born().clone(), state_cause, move |_| workflow);
+    write.claim_head(entry.born().clone(), state_cause, move |fact| ClaimHead {
+        fact,
+        ..claim
+    });
+    let answer = review_answer(review, verdict, next);
     if let Err(error) = write.command_result(
         request(command, review.clone()),
         command.epoch(),
@@ -766,6 +819,100 @@ pub(super) fn task_review(
         return store_fault("review::receipt", &error.to_string());
     }
     committed(bus, write, CommandAnswer::Task(answer))
+}
+
+fn append_reviewed_fact(
+    write: &mut JournalWrite,
+    command: &wire::AdmittedCommand,
+    entry: &Entry,
+    verdict: body::Verdict,
+    finding: Option<String>,
+    git: Option<body::GitBoundary>,
+    source: body::SourceBoundary,
+) -> Result<PendingFact, Outcome<CommandAnswer>> {
+    write
+        .fact(
+            body::TaskReviewed {
+                task: entry.born().clone(),
+                reviewer: command.actor().clone(),
+                verdict,
+                finding,
+                git,
+                source,
+            },
+            FactCause::Root,
+        )
+        .map_err(|error| store_fault("review::build", &error.to_string()))
+}
+
+fn review_workflow(
+    entry: &Entry,
+    transition: &board::Transition,
+    verdict: body::Verdict,
+) -> WorkflowHead {
+    let mut workflow = match verdict {
+        body::Verdict::Clean => transition.next().clone(),
+        body::Verdict::Finding => entry.workflow().clone(),
+    };
+    match verdict {
+        body::Verdict::Clean => workflow.review = "clean".to_owned(),
+        body::Verdict::Finding => {
+            workflow.status = "pending".to_owned();
+            workflow.review = "unassigned".to_owned();
+            workflow.assignment = None;
+            workflow.completion = None;
+        }
+    }
+    workflow
+}
+
+fn append_review_statement(
+    write: &mut JournalWrite,
+    entry: &Entry,
+    statement: TaskHead,
+    reviewed: PendingFact,
+) -> Result<PendingFact, Outcome<CommandAnswer>> {
+    if &statement == entry.statement() {
+        return Ok(reviewed);
+    }
+    let revision = u32::try_from(entry.statement().revision.get())
+        .unwrap_or(u32::MAX)
+        .saturating_add(1);
+    let notice = task_edit_notice(entry, &statement);
+    let edited = write
+        .fact(
+            body::TaskEdited {
+                task: entry.born().clone(),
+                revision,
+                notice,
+            },
+            FactCause::Pending(reviewed),
+        )
+        .map_err(|error| store_fault("review::dependency-build", &error.to_string()))?;
+    write.task_head(edited, move |position| TaskHead {
+        revision: position,
+        ..statement
+    });
+    Ok(edited)
+}
+
+fn review_answer(
+    review: &TaskReview,
+    verdict: body::Verdict,
+    next: Option<Box<str>>,
+) -> wire::intent::TaskAnswer {
+    wire::intent::TaskAnswer {
+        task: review.task.clone(),
+        status: match verdict {
+            body::Verdict::Clean => "completed",
+            body::Verdict::Finding => "pending",
+        }
+        .to_owned(),
+        guidance: None,
+        completion: None,
+        learning: None,
+        next,
+    }
 }
 
 struct DocPlan {

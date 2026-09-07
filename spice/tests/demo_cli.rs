@@ -288,6 +288,7 @@ fn staged_app_seed_callers_are_fully_inventoried() {
     assert_eq!(
         callers,
         [
+            "claim_refresh_cli.rs",
             "cli.rs",
             "consent_cli.rs",
             "demo_cli.rs",
