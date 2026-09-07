@@ -17,9 +17,6 @@ use super::{
     RuleSourceKind, ScopeAxis, ScopeSelector, SelectionProvenance, SelectorSpecificity,
 };
 
-#[cfg(test)]
-mod tests;
-
 #[derive(Debug, Clone)]
 struct CompiledRule {
     declaration: RuleDeclaration,

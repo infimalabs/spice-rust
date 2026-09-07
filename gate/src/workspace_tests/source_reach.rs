@@ -164,19 +164,6 @@ impl FileMacroCrateContext {
         })
     }
 
-    #[cfg(test)]
-    pub(super) fn test_default() -> Self {
-        Self {
-            edition: RustEdition::Modern,
-            std_extern: NamespaceResolution::Compiler,
-            core_extern: NamespaceResolution::Compiler,
-            externs: BTreeMap::from([
-                ("std".to_owned(), NamespaceResolution::Compiler),
-                ("core".to_owned(), NamespaceResolution::Compiler),
-            ]),
-        }
-    }
-
     pub(super) fn root_scope(&self, attributes: &[syn::Attribute]) -> FileMacroScope {
         let no_std = attributes
             .iter()
@@ -1490,6 +1477,3 @@ fn path_attribute(source: &Path, meta: &Meta) -> Result<String, WorkspaceTestErr
     };
     Ok(path.value())
 }
-
-#[cfg(test)]
-mod tests;

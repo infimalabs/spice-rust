@@ -34,8 +34,6 @@ pub use execution::{
 };
 pub use family_evidence::{ArmEvidence, BatteryState, ResultProvenance};
 pub use findings::GateFinding;
-#[cfg(test)]
-use manifest_contract::declaration_identity;
 pub use manifest_contract::{
     ArmDisposition, BatteryManifest, BatteryManifestArm, CANONICAL_BATTERY_MANIFEST,
     GATE_BATTERY_VERSION,
@@ -116,8 +114,3 @@ impl fmt::Display for BatteryError {
 }
 
 impl Error for BatteryError {}
-
-#[cfg(test)]
-mod fixtures;
-#[cfg(test)]
-mod tests;

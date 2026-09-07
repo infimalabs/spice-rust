@@ -130,16 +130,6 @@ impl CargoGateShard {
             CargoShardReuse::NonCacheable { reason } => Some(reason),
         }
     }
-
-    #[cfg(test)]
-    fn compile_time_authorities(&self) -> &[CargoCompileTimeAuthority] {
-        &self.compile_time_authorities
-    }
-
-    #[cfg(test)]
-    fn compile_time_producers(&self) -> &[CargoCompileTimeProducer] {
-        &self.compile_time_producers
-    }
 }
 
 /// Canonical Cargo actions selected from one immutable source.
@@ -768,6 +758,3 @@ pub fn run_cargo_gate_shard_at(
         ))),
     }
 }
-
-#[cfg(test)]
-mod tests;

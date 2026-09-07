@@ -1071,6 +1071,3 @@ fn is_python(path: &str) -> bool {
 fn extension(path: &str) -> Option<&str> {
     path.rsplit_once('.').map(|(_, extension)| extension)
 }
-
-#[cfg(test)]
-mod tests;

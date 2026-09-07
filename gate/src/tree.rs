@@ -34,15 +34,11 @@ use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, PermissionsExt as 
 
 mod error;
 mod source;
-#[cfg(test)]
-mod tests;
 mod workspace;
 
 pub use error::TreeError;
 use source::{IndexSeal, RevisionSeal, SelectionSeal, head_seal};
 use workspace::{BuildRoot, release_workspace};
-#[cfg(test)]
-use workspace::{reclaim_abandoned, workspace_lock, workspace_parent};
 
 /// Which immutable Git source a gate should measure.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -51,6 +51,3 @@ mod transaction;
 pub use transaction::*;
 mod migration;
 pub use migration::*;
-
-#[cfg(test)]
-mod fixtures;

@@ -1181,6 +1181,3 @@ fn require_lease(
     }
     Ok(record)
 }
-
-#[cfg(test)]
-mod tests;

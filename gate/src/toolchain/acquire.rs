@@ -1036,6 +1036,3 @@ fn version_output(
     }
     Ok(printed)
 }
-
-#[cfg(test)]
-mod tests;

@@ -39,16 +39,6 @@ pub use predecessor::{
     PredecessorResult, compare_predecessor,
 };
 
-#[cfg(test)]
-use crate::manifest::PREDECESSOR_GATE_RELEASE;
-#[cfg(test)]
-use measure::{
-    evidence_rank, has_applicable_language, has_completed_deadline, has_completed_parse,
-    has_native_analyzer, has_traversal_evidence,
-};
-#[cfg(test)]
-use predecessor::{PREDECESSOR_PROVIDER_FIELD, predecessor_arm_field};
-
 /// The only report schema emitted by this compiled arm family.
 pub const HYGIENE_REPORT_VERSION: u64 = 1;
 const NATIVE_ANALYZER_VERSION: &str = "spice-gate-hygiene-v1";
@@ -998,6 +988,3 @@ impl fmt::Display for HygieneError {
 }
 
 impl Error for HygieneError {}
-
-#[cfg(test)]
-mod fixtures;

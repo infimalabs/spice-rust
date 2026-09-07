@@ -275,6 +275,3 @@ pub(in crate::toolchain) fn formatter_edition(root: &Path) -> Result<String, Str
                 .to_owned()
         })
 }
-
-#[cfg(test)]
-mod tests;

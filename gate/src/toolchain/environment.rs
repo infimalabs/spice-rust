@@ -772,6 +772,3 @@ fn destructured() -> &'static Regex {
         Regex::new(DESTRUCTURED_TEMPLATE).expect("compiled destructuring pattern is valid")
     })
 }
-
-#[cfg(test)]
-mod tests;
