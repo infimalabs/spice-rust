@@ -746,7 +746,7 @@ fn active_claims_for(path: &Path, actor: &Actor) -> i64 {
 fn ambient_and_explicit_matching_threads_bind_authority_to_the_live_identity_read_only() {
     let scratch = Scratch::new("authority-live-match");
     fake_repository(scratch.path());
-    let live = uuid(0xaa).to_string().replace('-', "");
+    let live = uuid(0xaa).to_string();
     let authority = authority_path(scratch.path());
     seed_recall_authority(&authority, &live);
     let codex_home = seed_codex_transcripts(scratch.path(), std::slice::from_ref(&live));
@@ -791,8 +791,8 @@ fn ambient_and_explicit_matching_threads_bind_authority_to_the_live_identity_rea
 fn preferred_live_vendor_identity_wins_over_another_populated_vendor() {
     let scratch = Scratch::new("authority-preferred-live-vendor");
     fake_repository(scratch.path());
-    let live = uuid(0xaa).to_string().replace('-', "");
-    let stale = uuid(0xbb).to_string().replace('-', "");
+    let live = uuid(0xaa).to_string();
+    let stale = uuid(0xbb).to_string();
     let authority = authority_path(scratch.path());
     seed_recall_authority(&authority, &live);
     let codex_home = seed_codex_transcripts(scratch.path(), std::slice::from_ref(&live));
@@ -827,8 +827,8 @@ fn preferred_live_vendor_identity_wins_over_another_populated_vendor() {
 fn multiple_live_vendor_identities_without_preference_leave_authority_unknown() {
     let scratch = Scratch::new("authority-ambiguous-live-vendors");
     fake_repository(scratch.path());
-    let selected = uuid(0xaa).to_string().replace('-', "");
-    let other = uuid(0xbb).to_string().replace('-', "");
+    let selected = uuid(0xaa).to_string();
+    let other = uuid(0xbb).to_string();
     let authority = authority_path(scratch.path());
     seed_recall_authority(&authority, &selected);
     let codex_home = seed_codex_transcripts(scratch.path(), std::slice::from_ref(&selected));
@@ -871,7 +871,7 @@ fn multiple_live_vendor_identities_without_preference_leave_authority_unknown() 
 fn preferred_vendor_without_identity_does_not_fall_back_to_another_vendor() {
     let scratch = Scratch::new("authority-missing-preferred-live-vendor");
     fake_repository(scratch.path());
-    let selected = uuid(0xaa).to_string().replace('-', "");
+    let selected = uuid(0xaa).to_string();
     let authority = authority_path(scratch.path());
     seed_recall_authority(&authority, &selected);
     let codex_home = seed_codex_transcripts(scratch.path(), std::slice::from_ref(&selected));
@@ -911,8 +911,8 @@ fn preferred_vendor_without_identity_does_not_fall_back_to_another_vendor() {
 fn explicit_foreign_transcript_preserves_evidence_without_impersonating_its_actor() {
     let scratch = Scratch::new("authority-foreign-transcript");
     fake_repository(scratch.path());
-    let live = uuid(0xaa).to_string().replace('-', "");
-    let foreign = uuid(0xbb).to_string().replace('-', "");
+    let live = uuid(0xaa).to_string();
+    let foreign = uuid(0xbb).to_string();
     let authority = authority_path(scratch.path());
     seed_recall_authority(&authority, &live);
     let codex_home = seed_codex_transcripts(scratch.path(), std::slice::from_ref(&foreign));
@@ -960,8 +960,8 @@ fn explicit_foreign_transcript_preserves_evidence_without_impersonating_its_acto
 fn ambiguous_multi_thread_evidence_does_not_make_current_authority_ambiguous() {
     let scratch = Scratch::new("authority-multi-transcript");
     fake_repository(scratch.path());
-    let live = uuid(0xaa).to_string().replace('-', "");
-    let foreign = uuid(0xbb).to_string().replace('-', "");
+    let live = uuid(0xaa).to_string();
+    let foreign = uuid(0xbb).to_string();
     let authority = authority_path(scratch.path());
     seed_recall_authority(&authority, &live);
     let codex_home = seed_codex_transcripts(scratch.path(), &[live.clone(), foreign.clone()]);
@@ -1010,7 +1010,7 @@ fn ambiguous_multi_thread_evidence_does_not_make_current_authority_ambiguous() {
 fn malformed_live_identity_stays_unknown_instead_of_using_selected_transcript_identity() {
     let scratch = Scratch::new("authority-malformed-live");
     fake_repository(scratch.path());
-    let selected = uuid(0xaa).to_string().replace('-', "");
+    let selected = uuid(0xaa).to_string();
     let authority = authority_path(scratch.path());
     seed_recall_authority(&authority, &selected);
     let codex_home = seed_codex_transcripts(scratch.path(), std::slice::from_ref(&selected));
@@ -1054,7 +1054,7 @@ fn malformed_live_identity_stays_unknown_instead_of_using_selected_transcript_id
 fn absent_live_identity_keeps_current_authority_unknown_during_historical_recovery() {
     let scratch = Scratch::new("authority-no-live");
     fake_repository(scratch.path());
-    let selected = uuid(0xaa).to_string().replace('-', "");
+    let selected = uuid(0xaa).to_string();
     let authority = authority_path(scratch.path());
     seed_recall_authority(&authority, &selected);
     let codex_home = seed_codex_transcripts(scratch.path(), std::slice::from_ref(&selected));
@@ -1149,7 +1149,7 @@ fn recall_authority_sources_asks_and_held_work_from_exact_state_authorities() {
     fake_repository(scratch.path());
     let transcript = scratch.path().join("codex.jsonl");
     write_jsonl(&transcript, &codex_rows());
-    let thread = uuid(0xaa).to_string().replace('-', "");
+    let thread = uuid(0xaa).to_string();
     seed_recall_authority(&authority_path(scratch.path()), &thread);
     let environment = [("CODEX_THREAD_ID", thread.clone())]; // env-policy: allow
 
@@ -1257,7 +1257,7 @@ fn creator_and_claim_briefings_do_not_append_claim_facts_or_duplicate_the_actor_
     let claim_transcript = scratch.path().join("claim.jsonl");
     write_jsonl(&creator_transcript, &codex_rows());
     write_jsonl(&claim_transcript, &codex_rows());
-    let thread = uuid(0xaa).to_string().replace('-', "");
+    let thread = uuid(0xaa).to_string();
     let authority = authority_path(scratch.path());
     seed_recall_authority(&authority, &thread);
     let actor = Actor::Lane(uuid(0xaa));
@@ -1324,7 +1324,7 @@ fn recall_ignores_corrupt_fact_and_retired_steering_outside_the_exact_locus() {
     fake_repository(scratch.path());
     let transcript = scratch.path().join("codex.jsonl");
     write_jsonl(&transcript, &codex_rows());
-    let thread = uuid(0xaa).to_string().replace('-', "");
+    let thread = uuid(0xaa).to_string();
     let authority = authority_path(scratch.path());
     seed_recall_authority(&authority, &thread);
     seed_retired_peer_steering(&authority);
@@ -1377,7 +1377,7 @@ fn a_failed_steering_probe_does_not_hide_independent_board_answers() {
     fake_repository(scratch.path());
     let transcript = scratch.path().join("codex.jsonl");
     write_jsonl(&transcript, &codex_rows());
-    let thread = uuid(0xaa).to_string().replace('-', "");
+    let thread = uuid(0xaa).to_string();
     let authority = authority_path(scratch.path());
     seed_recall_authority(&authority, &thread);
     let connection = Connection::open(&authority).expect("fixture authority opens for corruption");

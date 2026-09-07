@@ -83,7 +83,7 @@ fn root_thread_discovery_gzip_and_deduplication_preserve_identity() {
     ];
 
     let root = reply_forms(&strings(&["session"]), &codex_env, "recall");
-    assert_eq!(root["sources"][0]["thread"], CODEX_THREAD);
+    assert_eq!(root["sources"][0]["thread"], CODEX_THREAD_DASHED);
     assert_eq!(root["sources"][0]["vendor"], "codex");
 
     let codex_thread = reply_forms(
@@ -91,7 +91,7 @@ fn root_thread_discovery_gzip_and_deduplication_preserve_identity() {
         &[("CODEX_HOME", codex_home.to_string_lossy().into_owned())],
         "thread",
     );
-    assert_eq!(codex_thread["thread"]["id"], CODEX_THREAD);
+    assert_eq!(codex_thread["thread"]["id"], CODEX_THREAD_DASHED);
     assert_eq!(codex_thread["thread"]["vendor"], "codex");
 
     let claude_home = scratch.path().join("claude-home");
@@ -110,7 +110,7 @@ fn root_thread_discovery_gzip_and_deduplication_preserve_identity() {
         ],
         "thread",
     );
-    assert_eq!(claude_thread["thread"]["id"], CLAUDE_THREAD);
+    assert_eq!(claude_thread["thread"]["id"], CLAUDE_THREAD_DASHED);
     assert_eq!(claude_thread["thread"]["vendor"], "claude");
     assert_eq!(
         claude_thread["thread"]["latest_turn"]["turn_id"],
@@ -128,7 +128,10 @@ fn root_thread_discovery_gzip_and_deduplication_preserve_identity() {
         ],
         "summary",
     );
-    assert_eq!(resolved_as_input["sources"][0]["thread"], CLAUDE_THREAD);
+    assert_eq!(
+        resolved_as_input["sources"][0]["thread"],
+        CLAUDE_THREAD_DASHED
+    );
 
     let gzip_path = scratch.path().join("codex-session.jsonl.gz");
     write_gzip(&gzip_path, &codex_bytes);

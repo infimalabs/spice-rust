@@ -419,8 +419,6 @@ fn actor_route_with_occupant(
                             "a legacy lane without session authority has no current occupant",
                         )
                     })?
-                    .get()
-                    .simple()
                     .to_string(),
             }
         }
@@ -434,7 +432,7 @@ fn actor_route_with_occupant(
 
 fn route_actor_identity(identity: &str) -> Option<String> {
     if let Ok(identity) = identity.parse::<wire::CanonicalUuid>() {
-        return Some(identity.get().simple().to_string());
+        return Some(identity.to_string());
     }
     (!identity.is_empty()
         && identity
@@ -497,7 +495,7 @@ fn task_origin_threads<'a>(
                                     "the creating vendor session identity cannot name an actor task route",
                                 )
                             })?,
-                            None => occupant.get().simple().to_string(),
+                            None => occupant.to_string(),
                         }
                     }
                 };
