@@ -275,25 +275,34 @@ fn installed_spice_is_the_one_repository_local_executable() {
 }
 
 #[test]
-fn installed_skill_bounds_discretionary_review_corrections() {
+fn installed_skill_enforces_review_correction_and_pending_finding_policy() {
     let scratch = applied("review-correction-guidance");
     let repository = scratch.repository();
     let skill = fs::read_to_string(installed_skill(&repository)).unwrap();
-    let guidance_text = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert_eq!(skill, ::std::include_str!("../agent/SKILL.md"));
+    let guidance_text = skill
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace('`', "");
 
     for guidance in [
-        "While holding the active review claim",
-        "a very small, low-risk finding",
-        "commit it under the review claim before",
-        "Larger, behavior-changing, cross-ownership, or",
-        "separately reviewable work remains an unclean review",
-        "durably track it in the same invocation",
+        "only when every change is tiny, deterministic, mechanical, low-risk",
+        "separate commit while holding the active review claim",
+        "validate the integrated result, then record a clean verdict without --then or --followup",
+        "behavior-changing, schema-or-authority, cross-ownership, broad, uncertain, or independently reviewable change remains a finding review",
+        "add flow=todo when the work is mechanical and needs no independent review",
+        "use flow=todo,review for material correction work",
+        "finding verdict creates or links those corrections as dependencies of the reviewed task",
+        "releases the review claim, and leaves the original task pending and unassigned in review",
+        "a later reviewer must claim the original task and record a clean verdict before it completes",
     ] {
         assert!(
             guidance_text.contains(guidance),
             "installed skill omitted {guidance:?}"
         );
     }
+    assert!(!guidance_text.contains("when that is more proportionate"));
 }
 
 #[test]

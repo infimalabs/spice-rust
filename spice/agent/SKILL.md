@@ -78,17 +78,26 @@ If continuity is clipped, recover only the detail needed to proceed with
   that work, but its declared cheap integrated-tree admission still applies.
 - Complete implementation with `spice task done --validation TEXT`. Complete an
   assigned clean review with
-  `spice task review HANDLE --finding clean --note NOTE`. While holding the
-  active review claim, a reviewer may directly correct a very small, low-risk
-  finding when that is more proportionate than a follow-up. Validate the
-  correction proportionately and commit it under the review claim before
-  recording the clean verdict. Larger, behavior-changing, cross-ownership, or
-  separately reviewable work remains an unclean review: use
-  `--finding FINDING --note NOTE` and durably track it in the same invocation
-  with `--then "title=... | project=..."` or `--followup HANDLE`.
-  Then run `spice task next` again and keep draining until `allocator-empty` or a
-  real blocker. A clean review requires inspecting the integrated diff and
-  independently checking proportionate evidence.
+  `spice task review HANDLE --finding clean --note NOTE`. Directly correct a
+  review only when every change is tiny, deterministic, mechanical, low-risk,
+  within the reviewed ownership and acceptance, and leaves no independently
+  reviewable decision. Make the correction as a separate commit while holding
+  the active review claim, validate the integrated result, then record a clean
+  verdict without `--then` or `--followup`. A behavior-changing,
+  schema-or-authority, cross-ownership, broad, uncertain, or independently
+  reviewable change remains a finding review. Record `--finding FINDING` and
+  `--note NOTE`, then track every correction in the same invocation with
+  `--then "title=... | project=..."` or `--followup HANDLE`. For a created
+  correction, add `flow=todo` when the work is mechanical and needs no
+  independent review; use `flow=todo,review` for material correction work. A
+  finding verdict creates or links those corrections as dependencies of the
+  reviewed task, releases the review claim, and leaves the original task
+  pending and unassigned in review.
+  After every correction settles, a later reviewer must claim the original task
+  and record a clean verdict before it completes. Then run `spice task next`
+  again and keep draining until `allocator-empty` or a real blocker. A clean
+  review requires inspecting the integrated diff and independently checking
+  proportionate evidence.
 - If a claim moves to another worktree, stop editing and return to the allocator.
   Surface any resulting loose commit with its exact task handle; never run
   `spice task capture HANDLE` against work another lane currently holds.
