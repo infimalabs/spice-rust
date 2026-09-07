@@ -847,6 +847,9 @@ fn staging_worktree_matches(tree: &SelectedTree) -> bool {
     let Some(changes) = tree.staged_changes() else {
         return false;
     };
+    if tree.verify_source().is_err() {
+        return false;
+    }
     changes.iter().all(|path| {
         let selected = tree.root().join(path);
         let Ok(selected_metadata) = fs::symlink_metadata(&selected) else {
@@ -1025,6 +1028,40 @@ mod tests {
                 )
             }
         );
+    }
+
+    #[test]
+    fn index_movement_invalidates_an_empty_staging_shortcut() {
+        let fixture = RepositoryFixture::new("moved-index");
+        let root = &fixture.root;
+        fs::write(root.join("tracked.txt"), "committed\n").expect("write committed file");
+        crate::test_repository::stage_all(root);
+        crate::test_repository::commit(root, "initial");
+
+        let tree = crate::Selector::staged()
+            .materialize(root)
+            .expect("materialize clean staged source");
+        assert!(staging_worktree_matches(&tree));
+
+        fs::write(root.join("tracked.txt"), "staged later\n").expect("move worktree");
+        crate::test_repository::stage(root, &["tracked.txt"]);
+        assert!(!staging_worktree_matches(&tree));
+    }
+
+    #[test]
+    fn staged_deletion_remains_eligible_for_the_staging_shortcut() {
+        let fixture = RepositoryFixture::new("staged-deletion");
+        let root = &fixture.root;
+        fs::write(root.join("tracked.txt"), "committed\n").expect("write committed file");
+        crate::test_repository::stage_all(root);
+        crate::test_repository::commit(root, "initial");
+
+        fs::remove_file(root.join("tracked.txt")).expect("delete tracked file");
+        crate::test_repository::stage_all(root);
+        let tree = crate::Selector::staged()
+            .materialize(root)
+            .expect("materialize staged deletion");
+        assert!(staging_worktree_matches(&tree));
     }
 
     #[test]
