@@ -11,7 +11,7 @@ use super::{
     publish_immutable, publish_json, read_optional_regular,
 };
 
-const ADMISSION_VERSION: u64 = 1;
+const ADMISSION_VERSION: u64 = 2;
 pub(super) const MAX_ADMISSION_ACTIONS: usize = 256;
 
 /// Content identity of one immutable admission bundle.
@@ -197,8 +197,7 @@ impl AdmissionLiveCheck {
 #[derive(Clone, Debug)]
 pub struct AdmissionBundleFields {
     pub candidate_tree: String,
-    pub branch: String,
-    pub head: Option<String>,
+    pub parent: Option<String>,
     pub selection: Digest,
     pub policy: Digest,
     pub gate_set: Digest,
@@ -215,9 +214,8 @@ pub struct AdmissionBundleFields {
 pub struct AdmissionBundle {
     version: u64,
     candidate_tree: String,
-    branch: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    head: Option<String>,
+    parent: Option<String>,
     selection: Digest,
     policy: Digest,
     gate_set: Digest,
@@ -233,8 +231,7 @@ impl AdmissionBundle {
         let bundle = Self {
             version: ADMISSION_VERSION,
             candidate_tree: fields.candidate_tree,
-            branch: fields.branch,
-            head: fields.head,
+            parent: fields.parent,
             selection: fields.selection,
             policy: fields.policy,
             gate_set: fields.gate_set,
@@ -254,13 +251,8 @@ impl AdmissionBundle {
     }
 
     #[must_use]
-    pub fn branch(&self) -> &str {
-        &self.branch
-    }
-
-    #[must_use]
-    pub fn head(&self) -> Option<&str> {
-        self.head.as_deref()
+    pub fn parent(&self) -> Option<&str> {
+        self.parent.as_deref()
     }
 
     #[must_use]
@@ -328,15 +320,14 @@ impl AdmissionBundle {
                 format!("candidate tree {:?} is not canonical", self.candidate_tree),
             ));
         }
-        if !canonical_reference(&self.branch)
-            || self
-                .head
-                .as_ref()
-                .is_some_and(|head| !canonical_object_id(head))
+        if self
+            .parent
+            .as_ref()
+            .is_some_and(|parent| !canonical_object_id(parent))
         {
             return Err(EvidenceStoreError::new(
-                "gate-evidence::admission-reference-invalid",
-                "admission branch or HEAD is not canonical",
+                "gate-evidence::admission-parent-invalid",
+                "admission first parent is not canonical",
             ));
         }
         if self.expires_at <= self.created_at {
@@ -413,9 +404,8 @@ pub(super) fn publish(
 pub(super) struct AdmissionIndex {
     version: u64,
     candidate_tree: String,
-    branch: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    head: Option<String>,
+    parent: Option<String>,
     admission: AdmissionId,
     created_at: Instant,
     expires_at: Instant,
@@ -427,7 +417,7 @@ impl AdmissionIndex {
     }
 
     pub(super) fn key(&self) -> Result<Digest, EvidenceStoreError> {
-        index_key(&self.candidate_tree, &self.branch, self.head.as_deref())
+        index_key(&self.candidate_tree, self.parent.as_deref())
     }
 }
 
@@ -436,13 +426,12 @@ fn publish_index(
     bundle: &AdmissionBundle,
     admission: &AdmissionId,
 ) -> Result<(), EvidenceStoreError> {
-    let key = index_key(bundle.candidate_tree(), bundle.branch(), bundle.head())?;
+    let key = index_key(bundle.candidate_tree(), bundle.parent())?;
     let path = layout.admission_index_path(&key);
     let next = AdmissionIndex {
         version: ADMISSION_VERSION,
         candidate_tree: bundle.candidate_tree.clone(),
-        branch: bundle.branch.clone(),
-        head: bundle.head.clone(),
+        parent: bundle.parent.clone(),
         admission: admission.clone(),
         created_at: bundle.created_at,
         expires_at: bundle.expires_at,
@@ -461,17 +450,13 @@ fn publish_index(
 pub(super) fn lookup_current(
     layout: &Layout,
     candidate_tree: &str,
-    branch: &str,
-    head: Option<&str>,
+    parent: Option<&str>,
 ) -> Result<Option<(AdmissionId, AdmissionBundle)>, EvidenceStoreError> {
-    let key = index_key(candidate_tree, branch, head)?;
+    let key = index_key(candidate_tree, parent)?;
     let Some(index) = read_index(&layout.admission_index_path(&key))? else {
         return Ok(None);
     };
-    if index.candidate_tree != candidate_tree
-        || index.branch != branch
-        || index.head.as_deref() != head
-    {
+    if index.candidate_tree != candidate_tree || index.parent.as_deref() != parent {
         return Err(EvidenceStoreError::new(
             "gate-evidence::admission-index-authority-mismatch",
             "candidate admission index does not match its requested authority",
@@ -493,8 +478,7 @@ pub(super) fn lookup_current(
     let bundle = AdmissionBundle::decode(&bytes)?;
     if bundle.id()? != index.admission
         || bundle.candidate_tree() != candidate_tree
-        || bundle.branch() != branch
-        || bundle.head() != head
+        || bundle.parent() != parent
         || bundle.created_at() != index.created_at
         || bundle.expires_at() != index.expires_at
     {
@@ -506,24 +490,19 @@ pub(super) fn lookup_current(
     Ok(Some((index.admission, bundle)))
 }
 
-fn index_key(
-    candidate_tree: &str,
-    branch: &str,
-    head: Option<&str>,
-) -> Result<Digest, EvidenceStoreError> {
+fn index_key(candidate_tree: &str, parent: Option<&str>) -> Result<Digest, EvidenceStoreError> {
     if !canonical_object_id(candidate_tree)
-        || !canonical_reference(branch)
-        || head.is_some_and(|head| !canonical_object_id(head))
+        || parent.is_some_and(|parent| !canonical_object_id(parent))
     {
         return Err(EvidenceStoreError::new(
             "gate-evidence::admission-index-authority-invalid",
             "candidate admission index authority is not canonical",
         ));
     }
-    let bytes = wire::encode(&(candidate_tree, branch, head)).map_err(|error| {
+    let bytes = wire::encode(&(candidate_tree, parent)).map_err(|error| {
         EvidenceStoreError::new("gate-evidence::admission-index-invalid", error.to_string())
     })?;
-    let mut framed = b"candidate-admission-index-v1\0".to_vec();
+    let mut framed = b"candidate-admission-index-v2\0".to_vec();
     framed.extend_from_slice(&bytes);
     Ok(Digest::compute(Domain::GateAdmission, &framed))
 }

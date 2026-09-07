@@ -91,6 +91,20 @@ fn non_utf8_output_names_the_tree_risk_and_recovery() {
     });
 }
 
+#[test]
+fn prepared_evidence_refusal_prescribes_only_non_destructive_inspection() {
+    let message = ReferenceTransactionError::Evidence {
+        state: PREPARED,
+        reason: "gate-evidence::admission-candidate-mismatch".to_owned(),
+        detail: "candidate admission moved".to_owned(),
+    }
+    .to_string();
+    assert!(message.contains("HEAD is not moved"));
+    assert!(message.contains("git status"));
+    assert!(!message.contains("git reset --hard HEAD"));
+    assert!(message.contains("do not use a destructive reset"));
+}
+
 fn refusal(damage: WorktreeDamage) -> String {
     ReferenceTransactionError::ProtectedHistory {
         reference: "refs/heads/main".to_owned(),

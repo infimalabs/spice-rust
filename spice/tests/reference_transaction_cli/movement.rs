@@ -154,7 +154,7 @@ fn existing_history_in_branches_and_tags_does_not_need_new_admission() {
 }
 
 #[test]
-fn a_new_commit_with_existing_tree_still_needs_its_exact_admission() {
+fn the_same_tree_and_parent_admission_is_independent_of_branch_name() {
     let fixture = Movement::new("new-commit-admission");
     fixture.admit("refs/heads/producer");
     let existing = git(
@@ -183,21 +183,10 @@ fn a_new_commit_with_existing_tree_still_needs_its_exact_admission() {
         .current_dir(fixture.scratch.path())
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(128), "{}", streams(&output));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("admission-candidate-mismatch"));
+    assert_success(&output, "branch-independent candidate admission");
     assert_eq!(
         git(fixture.scratch.path(), &["rev-parse", "HEAD"]),
-        fixture.head
-    );
-    fixture.admit("refs/heads/main");
-    git(
-        fixture.scratch.path(),
-        &[
-            "update-ref",
-            "refs/heads/main",
-            &fixture.candidate,
-            &fixture.head,
-        ],
+        fixture.candidate
     );
     let credit = evidence_store(fixture.scratch.path())
         .admission_credit(&transaction_id(
@@ -211,6 +200,55 @@ fn a_new_commit_with_existing_tree_still_needs_its_exact_admission() {
         credit.commits().collect::<Vec<_>>(),
         [fixture.candidate.as_str()]
     );
+}
+
+#[test]
+fn task_landing_merge_matches_admission_by_first_parent_not_branch_tip() {
+    for branch in ["agent-one", "nested/agent-two"] {
+        let fixture = Movement::new("task-landing-first-parent");
+        fixture.admit("refs/heads/proof-producer");
+        git(
+            fixture.scratch.path(),
+            &["update-ref", "refs/remotes/origin/main", &fixture.head],
+        );
+        let landing = git(
+            fixture.scratch.path(),
+            &[
+                "commit-tree",
+                &fixture.tree,
+                "-p",
+                &fixture.head,
+                "-p",
+                &fixture.candidate,
+                "-m",
+                "task landing",
+            ],
+        );
+        let reference = format!("refs/heads/{branch}");
+        git(
+            fixture.scratch.path(),
+            &["update-ref", &reference, &fixture.candidate],
+        );
+        git(
+            fixture.scratch.path(),
+            &["symbolic-ref", "HEAD", &reference],
+        );
+        git(
+            fixture.scratch.path(),
+            &["reset", "--hard", &fixture.candidate],
+        );
+        fixture.install_hook();
+
+        git(
+            fixture.scratch.path(),
+            &["update-ref", &reference, &landing, &fixture.candidate],
+        );
+        assert_eq!(git(fixture.scratch.path(), &["rev-parse", "HEAD"]), landing);
+        assert_eq!(
+            fs::read_to_string(fixture.scratch.join("tracked")).unwrap(),
+            "candidate\n"
+        );
+    }
 }
 
 #[test]

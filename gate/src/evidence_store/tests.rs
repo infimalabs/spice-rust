@@ -182,8 +182,7 @@ fn immutable_candidate_admission_round_trips_and_concurrent_publishers_converge(
     let expires_at: wire::Instant = "2026-09-04T12:10:00.000Z".parse().unwrap();
     let bundle = AdmissionBundle::new(AdmissionBundleFields {
         candidate_tree: "0123456789abcdef0123456789abcdef01234567".to_owned(),
-        branch: "refs/heads/main".to_owned(),
-        head: Some("89abcdef0123456789abcdef0123456789abcdef".to_owned()),
+        parent: Some("89abcdef0123456789abcdef0123456789abcdef".to_owned()),
         selection: Digest::compute(Domain::GateSelection, b"selection"),
         policy: Digest::compute(Domain::GatePolicy, b"policy"),
         gate_set: Digest::compute(Domain::GateSet, b"gate set"),
@@ -224,6 +223,41 @@ fn immutable_candidate_admission_round_trips_and_concurrent_publishers_converge(
         .join(bundle.candidate_tree())
         .join(expected_id.as_str());
     assert_eq!(fs::read(path).unwrap(), bytes);
+}
+
+#[test]
+fn admission_identity_ignores_branch_labels_but_retains_first_parent() {
+    let fixture = Fixture::new("admission-semantic-identity");
+    let store = fixture.store();
+    let tree = "0123456789abcdef0123456789abcdef01234567";
+    let parent = "89abcdef0123456789abcdef0123456789abcdef";
+    let first = publish_candidate_admission(
+        &store,
+        tree,
+        "refs/heads/agent-one",
+        Some(parent),
+        b"same semantic admission",
+    );
+    let renamed = publish_candidate_admission(
+        &store,
+        tree,
+        "refs/heads/nested/agent-two",
+        Some(parent),
+        b"same semantic admission",
+    );
+    assert_eq!(renamed, first, "branch spelling is not admission identity");
+
+    let different_parent = publish_candidate_admission(
+        &store,
+        tree,
+        "refs/heads/agent-one",
+        Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        b"same semantic admission",
+    );
+    assert_ne!(
+        different_parent, first,
+        "first-parent ancestry remains semantic"
+    );
 }
 
 #[test]
@@ -1342,7 +1376,7 @@ fn publish_candidate_admission(
 fn publish_candidate_admission_at(
     store: &EvidenceStore,
     tree: &str,
-    branch: &str,
+    _branch: &str,
     head: Option<&str>,
     identity: &[u8],
     created_at: &str,
@@ -1365,8 +1399,7 @@ fn publish_candidate_admission_at(
         .unwrap();
     let bundle = AdmissionBundle::new(AdmissionBundleFields {
         candidate_tree: tree.to_owned(),
-        branch: branch.to_owned(),
-        head: head.map(str::to_owned),
+        parent: head.map(str::to_owned),
         selection: Digest::compute(Domain::GateSelection, identity),
         policy: Digest::compute(Domain::GatePolicy, b"policy"),
         gate_set: Digest::compute(Domain::GateSet, b"gate set"),
