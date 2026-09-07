@@ -250,7 +250,7 @@ fn seed_restart_claim(
     seed_restart_residency(bus, durable, new_epoch, start);
 }
 
-pub(in crate::resident::lane_surface) fn seed_task_claim(
+pub(in crate::resident) fn seed_task_claim(
     bus: &Bus,
     task: &wire::TaskStamp,
     durable: &wire::LaneResidency,

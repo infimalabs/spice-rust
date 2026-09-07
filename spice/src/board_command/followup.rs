@@ -383,11 +383,13 @@ fn wire_followup_edge(
     let revision = u32::try_from(entry.statement().revision.get())
         .unwrap_or(u32::MAX)
         .saturating_add(1);
+    let notice = task_edit_notice(entry, &statement);
     let edited = write
         .fact(
             body::TaskEdited {
                 task: entry.born().clone(),
                 revision,
+                notice,
             },
             FactCause::Pending(reviewed),
         )

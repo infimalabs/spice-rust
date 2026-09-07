@@ -722,7 +722,13 @@ fn assert_refusal(outcome: Outcome<CommandAnswer>, reason: &str) {
     );
 }
 
-fn claim_task(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, lane: &Actor, task: &TaskHandle) {
+pub(super) fn claim_task(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seat: &Seat,
+    lane: &Actor,
+    task: &TaskHandle,
+) {
     let available = board(bus, epoch, lane.clone());
     assert_committed(issue(
         bus,

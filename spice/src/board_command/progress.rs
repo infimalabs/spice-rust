@@ -1182,15 +1182,6 @@ fn edit_doc_task(
     let revision = u32::try_from(existing.statement().revision.get())
         .unwrap_or(u32::MAX)
         .saturating_add(1);
-    let edited = write
-        .fact(
-            body::TaskEdited {
-                task: existing.born().clone(),
-                revision,
-            },
-            cause,
-        )
-        .map_err(|error| store_fault("doc::edit-build", &error.to_string()))?;
     let mut statement = existing.statement().clone();
     statement.title = spec.title;
     statement.description = spec.description;
@@ -1198,6 +1189,17 @@ fn edit_doc_task(
     statement.acceptance = spec.acceptance;
     statement.tags = spec.tags;
     statement.dependencies = spec.dependencies;
+    let notice = task_edit_notice(existing, &statement);
+    let edited = write
+        .fact(
+            body::TaskEdited {
+                task: existing.born().clone(),
+                revision,
+                notice,
+            },
+            cause,
+        )
+        .map_err(|error| store_fault("doc::edit-build", &error.to_string()))?;
     write.task_head(edited, move |position| TaskHead {
         revision: position,
         ..statement

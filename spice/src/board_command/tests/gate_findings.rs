@@ -941,6 +941,7 @@ fn revise_gate_task(bus: &Bus, task: &TaskHandle, revise: impl FnOnce(&mut TaskH
             body::TaskEdited {
                 task: born,
                 revision,
+                notice: None,
             },
             FactCause::Root,
         )

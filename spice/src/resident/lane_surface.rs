@@ -39,6 +39,8 @@ use ending::{StopEvidence, drain, ending_fact, stop_lane, stop_occupant};
 pub(in crate::resident) use launch::test_support::AdvisoryRtkFixture;
 pub(super) use launch::{OccupantLaunchRequest, occupant_launch};
 pub(super) use lineage::{arrange as arrange_lineages, configure};
+#[cfg(test)]
+pub(in crate::resident) use propose::tests::seed_task_claim;
 use propose::{
     commit_adopted, commit_restored, propose_drain, propose_remove, propose_seat, propose_wake,
 };
