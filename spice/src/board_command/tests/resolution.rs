@@ -929,6 +929,12 @@ pub(super) fn connect_child(
             after: child_heads.statement.body.born.clone(),
         },
     ]);
+    append_dependency_reachability_witnesses(
+        &visible,
+        std::slice::from_ref(&child_heads.statement.body.born),
+        &mut expected,
+    )
+    .expect("fixture dependency closure is visible");
     assert_committed(issue(
         bus,
         epoch,

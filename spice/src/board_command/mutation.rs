@@ -939,6 +939,11 @@ pub(super) fn task_depends_with(
         Err(outcome) => return outcome,
     };
     after_validation();
+    if let Err(outcome) =
+        require_dependency_reachability_witnesses(&snapshot, entry, &statement, command)
+    {
+        return outcome;
+    }
     let post = match Entry::new(
         statement.clone(),
         entry.workflow().clone(),
@@ -957,6 +962,33 @@ pub(super) fn task_depends_with(
     };
     let next = next_action(&snapshot, &post, false);
     commit_dependency_edit(bus, command, depends, entry, statement, next, at)
+}
+
+fn require_dependency_reachability_witnesses(
+    snapshot: &ValidatedSnapshot,
+    entry: &Entry,
+    statement: &TaskHead,
+    command: &wire::AdmittedCommand,
+) -> Result<(), Outcome<CommandAnswer>> {
+    let added = statement
+        .dependencies
+        .iter()
+        .filter(|dependency| !entry.statement().dependencies.contains(dependency))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut required = Vec::new();
+    append_dependency_reachability_witnesses(&snapshot.answer, &added, &mut required)?;
+    let missing = required
+        .iter()
+        .find(|witness| !command.expected().contains(witness));
+    if let Some(missing) = missing {
+        return Err(refusal(
+            "task::dependency-witness-missing",
+            Some(format!("{missing:?}")),
+            "read the complete current prerequisite graph before editing dependencies",
+        ));
+    }
+    Ok(())
 }
 
 fn dependency_entry<'a>(
