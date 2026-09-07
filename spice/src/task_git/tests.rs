@@ -234,6 +234,100 @@ fn plan_publication_refuses_real_file_and_history_mutations() {
 }
 
 #[test]
+fn plan_completion_admits_an_exact_peer_integrated_upstream_advance() {
+    let fixture = RepositoryFixture::new("plan-upstream-advance");
+    configure_peer_integrations(&fixture.root);
+    let opening = prepare_claim(&fixture.repository).expect("capture plan opening boundary");
+    publish_peer_integrations(&fixture.root);
+    git(&fixture.root, &["fetch", "origin"]);
+    git(&fixture.root, &["reset", "--hard", "origin/main"]);
+    let integrated = required_read(
+        &fixture.root,
+        &["rev-parse", "HEAD"],
+        "read integrated head",
+    )
+    .expect("integrated head reads");
+
+    let (entry, actor, now) = fixture.active_entry("plan");
+    let active = board::Active::admit(&entry, &actor, now).expect("plan claim is active");
+    let completed = publish_claimed(
+        &fixture.repository,
+        metadata("plan"),
+        &active,
+        Some(&opening),
+    )
+    .expect("exact peer-integrated upstream advance completes");
+
+    assert_eq!(completed.head, integrated);
+    assert_eq!(completed.integrated, integrated);
+    assert_eq!(
+        required_read(
+            &fixture.root,
+            &["rev-parse", "HEAD"],
+            "recheck integrated head"
+        )
+        .expect("integrated head remains readable"),
+        integrated,
+    );
+
+    commit_local_plan_implementation(&fixture.root);
+    let refused = publish_claimed(
+        &fixture.repository,
+        metadata("plan"),
+        &active,
+        Some(&opening),
+    )
+    .expect_err("a local descendant beyond current upstream must refuse");
+    assert_eq!(refused.reason(), "git::plan-implementation");
+    assert!(refused.detail().contains("current upstream"), "{refused}");
+}
+
+fn configure_peer_integrations(root: &Path) {
+    let remote = root.join(".git/fixture-origin.git");
+    let remote = remote.to_str().expect("fixture remote path is UTF-8");
+    git(root, &["init", "--bare", remote]);
+    git(root, &["remote", "add", "origin", remote]);
+    git(root, &["push", "-u", "origin", "main"]);
+}
+
+fn publish_peer_integrations(root: &Path) {
+    let remote = root.join(".git/fixture-origin.git");
+    let peer = root.join(".git/fixture-peer");
+    let remote = remote.to_str().expect("fixture remote path is UTF-8");
+    let peer_text = peer.to_str().expect("fixture peer path is UTF-8");
+    git(root, &["clone", remote, peer_text]);
+    git(&peer, &["config", "user.name", "Peer Test"]);
+    git(&peer, &["config", "user.email", "peer@example.invalid"]);
+    fs::write(peer.join("tracked.txt"), "peer integrated\n").expect("write peer change");
+    git(&peer, &["add", "tracked.txt"]);
+    git(&peer, &["commit", "-m", "peer integration"]);
+    fs::write(peer.join("second.txt"), "second peer integration\n")
+        .expect("write second peer change");
+    git(&peer, &["add", "second.txt"]);
+    git(&peer, &["commit", "-m", "second peer integration"]);
+    git(&peer, &["push", "origin", "main"]);
+}
+
+fn commit_local_plan_implementation(root: &Path) {
+    fs::write(root.join("local.txt"), "plan implementation\n")
+        .expect("write local plan implementation");
+    git(root, &["add", "local.txt"]);
+    git(
+        root,
+        &[
+            "-c",
+            "user.name=Spice Test",
+            "-c",
+            "user.email=spice@example.invalid",
+            "commit",
+            "--no-verify",
+            "-m",
+            "local plan implementation",
+        ],
+    );
+}
+
+#[test]
 fn clean_implementation_and_review_publication_remain_admitted() {
     for phase in ["todo", "review"] {
         let fixture = RepositoryFixture::new(phase);
@@ -254,13 +348,24 @@ fn plan_boundary_predicate_retains_its_direct_failure_classification() {
         upstream_head: Some("opening-head".to_owned()),
         local_commits: 0,
     };
-    assert!(require_plan_boundary(Some(&boundary), "opening-head").is_ok());
+    assert!(require_plan_opening("plan", false, Some(&boundary)).is_ok());
+    let fixture = RepositoryFixture::new("plan-boundary-predicate");
+    assert!(
+        require_plan_synchronization(&fixture.root, "plan", Some(&boundary), "opening-head", None,)
+            .is_ok()
+    );
 
-    let moved = require_plan_boundary(Some(&boundary), "implementation-head")
-        .expect_err("a commit made during plan must refuse completion");
+    let moved = require_plan_synchronization(
+        &fixture.root,
+        "plan",
+        Some(&boundary),
+        "implementation-head",
+        None,
+    )
+    .expect_err("a commit made during plan must refuse completion");
     assert_eq!(moved.reason(), "git::plan-implementation");
 
-    let absent = require_plan_boundary(None, "opening-head")
+    let absent = require_plan_opening("plan", false, None)
         .expect_err("an unmeasured plan opening must fail closed");
     assert_eq!(absent.reason(), "git::plan-implementation");
 }
