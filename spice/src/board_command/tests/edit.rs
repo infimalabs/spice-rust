@@ -59,7 +59,7 @@ fn edit_facts(bus: &Bus, task: &TaskHandle) -> Vec<(Actor, u64)> {
         .collect()
 }
 
-fn edit_bodies(bus: &Bus, task: &TaskHandle) -> Vec<(Actor, Seq, body::TaskEdited)> {
+pub(super) fn edit_bodies(bus: &Bus, task: &TaskHandle) -> Vec<(Actor, Seq, body::TaskEdited)> {
     let born = task.born().expect("fixture handle carries a birth stamp");
     bus.fact_snapshot()
         .expect("edit facts read")

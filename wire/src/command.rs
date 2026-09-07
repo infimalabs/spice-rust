@@ -296,11 +296,17 @@ impl Law {
         optional: &[WitnessKind::Task],
         authority: Authority::Connected,
     };
-    /// Exact task statement and workflow heads of both tasks and the absence
-    /// of the edge; no board barrier.
+    /// Exact task statement, workflow, and claim heads plus each new edge.
+    /// Active claimant edits additionally carry their lease, residency, and
+    /// review assignment where applicable.
     pub const DEPENDS: Self = Self {
-        required: &[WitnessKind::Task, WitnessKind::Workflow, WitnessKind::Edge],
-        optional: &[],
+        required: &[WitnessKind::Task, WitnessKind::Workflow, WitnessKind::Claim],
+        optional: &[
+            WitnessKind::Edge,
+            WitnessKind::Lease,
+            WitnessKind::Residency,
+            WitnessKind::Assignment,
+        ],
         authority: Authority::Connected,
     };
     /// Exact task statement and workflow heads, winning claim head, live

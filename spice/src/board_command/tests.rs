@@ -1002,6 +1002,10 @@ mod oops_promotion;
 mod edit;
 use edit::*;
 
+// Claimed dependency edits carry possession through one atomic statement-head
+// replacement and keep the complete graph acyclic.
+mod dependencies;
+
 // Withdrawal, its refusals, and what a withdrawn row releases are one
 // bounded scenario seam, kept beside the correction seam for the same
 // structural reason.

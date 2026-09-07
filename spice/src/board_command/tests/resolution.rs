@@ -743,25 +743,54 @@ pub(super) fn claim_task(
     ));
 }
 
-fn connect_child(bus: &Bus, epoch: CanonicalUuid, parent: &TaskHandle, child: &TaskHandle) {
-    let visible = board(bus, epoch, Actor::Operator);
+pub(super) fn connect_child(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    parent: &TaskHandle,
+    child: &TaskHandle,
+) {
+    let operator_view = board(bus, epoch, Actor::Operator);
+    let actor = at(&operator_view, parent)
+        .claim
+        .as_ref()
+        .filter(|claim| claim.body.disposition == ClaimDisposition::Active)
+        .map_or(Actor::Operator, |claim| claim.body.actor.clone());
+    let visible = board(bus, epoch, actor.clone());
     let parent_heads = at(&visible, parent);
     let child_heads = at(&visible, child);
-    assert_committed(issue(
-        bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::TaskDepends,
+    let mut expected = if parent_heads.claim.as_ref().is_some_and(|claim| {
+        claim.body.actor == actor && claim.body.disposition == ClaimDisposition::Active
+    }) {
+        let (lane, occupant) = actor_seat(&visible).expect("claimant has one occupied seat");
+        progress_witnesses(
+            &visible,
+            parent_heads,
+            lane,
+            occupant,
+            parent_heads.workflow.body.phase.as_str() == "review",
+        )
+        .expect("claimant has dependency-edit witnesses")
+    } else {
         vec![
             statement_witness(parent_heads),
             workflow_witness(parent_heads),
-            statement_witness(child_heads),
-            workflow_witness(child_heads),
-            Witness::Edge {
-                task: parent_heads.statement.body.born.clone(),
-                after: child_heads.statement.body.born.clone(),
-            },
-        ],
+            claim_witness(parent_heads),
+        ]
+    };
+    expected.extend([
+        statement_witness(child_heads),
+        workflow_witness(child_heads),
+        Witness::Edge {
+            task: parent_heads.statement.body.born.clone(),
+            after: child_heads.statement.body.born.clone(),
+        },
+    ]);
+    assert_committed(issue(
+        bus,
+        epoch,
+        actor,
+        CommandKind::TaskDepends,
+        expected,
         &TaskDepends {
             task: parent.clone(),
             after: vec![child.clone()],

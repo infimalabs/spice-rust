@@ -47,7 +47,7 @@ fn plan_claim_allows_board_organization_but_classifies_repository_work_as_forbid
     assert_committed(issue(
         &bus,
         epoch,
-        lane,
+        lane.clone(),
         CommandKind::TaskNote,
         vec![Witness::Existence {
             task: at(&edited, &plan).statement.body.born.clone(),
@@ -65,7 +65,35 @@ fn plan_claim_allows_board_organization_but_classifies_repository_work_as_forbid
         &["repository behavior is verified"],
         None,
     );
-    connect_child(&bus, epoch, &plan, &child);
+    let held = board(&bus, epoch, lane.clone());
+    let child_heads = at(&held, &child);
+    let mut expected = progress_witnesses(
+        &held,
+        at(&held, &plan),
+        seats[0].lane,
+        seats[0].occupant,
+        false,
+    )
+    .expect("claimed plan has dependency-edit witnesses");
+    expected.extend([
+        statement_witness(child_heads),
+        workflow_witness(child_heads),
+        Witness::Edge {
+            task: at(&held, &plan).statement.body.born.clone(),
+            after: child_heads.statement.body.born.clone(),
+        },
+    ]);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        lane,
+        CommandKind::TaskDepends,
+        expected,
+        &TaskDepends {
+            task: plan.clone(),
+            after: vec![child.clone()],
+        },
+    ));
 
     let organized = board(&bus, epoch, Actor::Operator);
     assert_eq!(
