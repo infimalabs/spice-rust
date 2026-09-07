@@ -782,7 +782,7 @@ fn assert_tool_media_prose_and_compaction_activity(
     assert_eq!(tool.author, record.occupant);
     assert_eq!(tool.authored, authored);
     assert_eq!(tool.activity, wire::AgentActivityKind::Tool);
-    assert_eq!(tool.text, "git status --short");
+    assert_eq!(tool.text, "Bash: git status --short");
     assert!(
         tool.media.is_empty(),
         "the paired call does not echo result media"
