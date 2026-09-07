@@ -399,6 +399,7 @@ struct MosaicPlaneView<'a> {
     plane: Option<&'a crate::mosaic_plane::PersistentLanePlane<String>>,
     geometry: crate::mosaic::Geometry,
     max_row: Option<i32>,
+    narration_cursor: String,
 }
 
 impl MosaicPlaneView<'_> {
@@ -457,6 +458,7 @@ impl MosaicPlaneView<'_> {
                 data-plane-transition={transition}
                 data-observed-width={self.measurement_width.to_string()}
                 data-committed-width={committed_width.to_string()}
+                data-narration-cursor={self.narration_cursor}
                 tabindex="0"
                 aria-label={format!(
                     "Packed lineage plane: {} policy, {} {}",
@@ -513,6 +515,7 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     );
     let committed_spans = committed_spans(committed.as_ref());
     let measurements = use_state_eq(Vec::<ActivityMeasurement>::new);
+    let narration_cursor = use_state_eq(|| None::<String>);
     use_image_resolution_events(host.clone(), properties.cards.clone());
     use_data_image_open_events(host.clone());
     use_activity_measurements(
@@ -533,6 +536,7 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
         properties.cards.clone(),
         properties.speech,
         properties.narrate.clone(),
+        narration_cursor.clone(),
     );
     let committed_plane = committed.as_ref();
     let geometry_width = committed_plane.map_or(
@@ -549,6 +553,7 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
         plane: committed_plane,
         geometry,
         max_row,
+        narration_cursor: (*narration_cursor).clone().unwrap_or_default(),
     }
     .render(host, track_host)
 }
@@ -663,6 +668,7 @@ fn use_narration(
     cards: Vec<ActivityCard>,
     speech: LineageSpeech,
     narrate: Callback<NarrationBatch>,
+    narration_cursor: UseStateHandle<Option<String>>,
 ) {
     let materialized = use_mut_ref(|| false);
     let messages = cards
@@ -689,6 +695,7 @@ fn use_narration(
             mode: *speech,
             messages: messages.clone(),
         });
+        narration_cursor.set(messages.last().map(|message| message.key.clone()));
     });
 }
 

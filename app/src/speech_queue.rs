@@ -303,10 +303,14 @@ impl NarrationCursors {
         for (lane, key) in newest {
             self.update(lane, key);
         }
+        let mut admitted = BTreeSet::new();
         messages
             .iter()
             .rev()
-            .filter(|message| unseen.contains(&(message.lane.clone(), message.key.clone())))
+            .filter(|message| {
+                unseen.contains(&(message.lane.clone(), message.key.clone()))
+                    && admitted.insert(message.lane.clone())
+            })
             .map(|message| NarrationLine {
                 lane: message.lane.clone(),
                 key: message.key.clone(),

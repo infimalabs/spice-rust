@@ -164,12 +164,12 @@ export async function triggerPrimaryAgentProse(worktree, text, timestamp = null)
   return { text, timestamp: record.timestamp };
 }
 
-/// Stream one exact assistant message through the primary fixture vendor.
+/// Stream one exact assistant message through a fixture vendor.
 ///
 /// Browser scenarios that author several sequential records can use the
 /// vendor's blocking pipe instead of waiting for its test-control-file poll
 /// between every record.
-export async function streamPrimaryAssistantMessage(worktree, message, timestamp = null) {
+export async function streamFixtureAssistantMessage(worktree, message, timestamp = null) {
   await writeFile(join(worktree, ".spice-authored-prose-pipe"), `${JSON.stringify({
     timestamp: timestamp ?? new Date().toISOString(),
     type: "assistant",

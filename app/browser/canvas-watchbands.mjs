@@ -19,6 +19,7 @@ import { assertTeamNavigation, TEAM_DESTINATION_LABELS } from "./team-navigation
 import {
   chooseCanvasView,
   reply,
+  streamFixtureAssistantMessage,
   CONNECT_MS,
   TRANSITION_MS,
   waitForLocator as waitForElement,
@@ -39,6 +40,47 @@ async function triggerAgentProse(worktree, cards) {
   const before = await cards.count();
   await writeFile(join(worktree, ".spice-prose-trigger"), "emit\n");
   await cards.nth(before).waitFor({ timeout: CONNECT_MS });
+}
+
+async function streamAgentProse(worktree, cards, text) {
+  const before = await cards.count();
+  await streamFixtureAssistantMessage(worktree, {
+    type: "message",
+    role: "assistant",
+    content: [{ type: "text", text }],
+    usage: {
+      input_tokens: 1,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+      output_tokens: 1,
+    },
+  });
+  const card = cards.nth(before);
+  await card.waitFor({ timeout: CONNECT_MS });
+  return card;
+}
+
+async function waitForNarrationCursor(surface, key) {
+  await surface.locator(".lane-mosaic-plane").evaluate((plane, expected) => (
+    new Promise((resolve, reject) => {
+      const complete = () => {
+        if (plane.dataset.narrationCursor !== expected.key) return;
+        clearTimeout(deadline);
+        observer.disconnect();
+        resolve();
+      };
+      const observer = new MutationObserver(complete);
+      observer.observe(plane, {
+        attributes: true,
+        attributeFilter: ["data-narration-cursor"],
+      });
+      const deadline = setTimeout(() => {
+        observer.disconnect();
+        reject(new Error(`narration cursor did not adopt ${expected.key}`));
+      }, expected.deadlineMs);
+      complete();
+    })
+  ), { key, deadlineMs: TRANSITION_MS });
 }
 
 export async function assertPerTeamWatchbands(
@@ -455,8 +497,18 @@ export async function assertPerTeamWatchbands(
   await triggerAgentProse(primaryNarrator.worktree, primaryNarrationCards);
   await waitForPage(page, "the first lineage owns the global narration head", CONNECT_MS,
     () => window.__speechLog.filter((row) => row.action === "speak").length === 1);
-  await triggerAgentProse(secondary.worktree, secondaryNarrationCards);
-  await triggerAgentProse(secondary.worktree, secondaryNarrationCards);
+  await streamAgentProse(secondary.worktree, secondaryNarrationCards, "older queued narration");
+  const newestNarration = await streamAgentProse(
+    secondary.worktree,
+    secondaryNarrationCards,
+    "newest queued narration",
+  );
+  const newestNarrationKey = await newestNarration.getAttribute("data-mosaic-card-key");
+  assert.ok(newestNarrationKey, "the newest queued narration has a stable message key");
+  await waitForNarrationCursor(
+    secondarySurface,
+    newestNarrationKey,
+  );
   const messageBackedDestination = await primaryDestination(secondarySurface, secondary.lane);
   assert.equal(messageBackedDestination.rendered.length, secondaryCardsBeforeBurst + 2);
   assert.equal(
@@ -474,6 +526,11 @@ export async function assertPerTeamWatchbands(
   await settleLatestSystemSpeech(page, "error");
   await waitForPage(page, "a failed head advances to the coalesced lineage tail", TRANSITION_MS,
     () => window.__speechLog.filter((row) => row.action === "speak").length === 2);
+  assert.equal(
+    await page.evaluate(() => window.__speechLog.filter((row) => row.action === "speak").at(-1)?.text),
+    "newest queued narration",
+    "the rapid same-lineage burst advances to its newest tail",
+  );
   assert.equal(
     await console.locator('.mosaic-message-card[data-card-kind="agent-message"]').count(),
     transcriptCards,
