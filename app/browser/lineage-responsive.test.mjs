@@ -372,7 +372,9 @@ async function assertTaskCardMatrix(page, engine, width, taskContract) {
   );
 
   await surface.locator('[data-test-lease="expiring"]').evaluate((age) => {
-    age.textContent = "now";
+    const renewed = age.cloneNode(false);
+    renewed.textContent = "now";
+    age.replaceWith(renewed);
   });
   await page.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(resolveFrame)));
   const after = await geometry(page);
@@ -380,7 +382,7 @@ async function assertTaskCardMatrix(page, engine, width, taskContract) {
   assert.deepEqual(
     taskBoxes(after),
     taskBoxes(before),
-    `${label} countdown text cannot move or resize cards`,
+    `${label} authoritative countdown replacement cannot move or resize cards`,
   );
 }
 
