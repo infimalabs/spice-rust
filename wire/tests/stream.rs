@@ -1,7 +1,7 @@
 use wire::{
-    Actor, AgentActivityKind, AgentMessage, AutomaticSpeech, AutomaticSpeechKind, CanonicalUuid,
-    Envelope, Fact, MessageLocus, Packed, StreamAdmissionError, StreamCursor, StreamFact,
-    StreamFrame, StreamRequest, ViewSubject, WireVersion,
+    Actor, AgentActivityKind, AgentMessage, AgentMessageBadges, AutomaticSpeech,
+    AutomaticSpeechKind, CanonicalUuid, Envelope, Fact, MessageLocus, Packed, StreamAdmissionError,
+    StreamCursor, StreamFact, StreamFrame, StreamRequest, ViewSubject, WireVersion,
 };
 
 fn uuid(value: &str) -> CanonicalUuid {
@@ -304,6 +304,10 @@ fn automatic_speech_is_typed_and_has_one_absence_spelling() {
         automatic_speech: Some(AutomaticSpeech {
             kind: AutomaticSpeechKind::Final,
             text: "selected final".to_owned(),
+            badges: AgentMessageBadges {
+                acknowledgements: 2,
+                tastes: 1,
+            },
         }),
         ..prose
     };

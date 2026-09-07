@@ -423,6 +423,13 @@ async function assertExternalOperatorReplay(page, fixture, console, lane, worktr
   await acknowledgedCard.waitFor({ timeout: CONNECT_MS });
   assert.equal(await acknowledgedCard.count(), 1, "acknowledgement renders one assistant card");
   assert.equal(await acknowledgedCard.getAttribute("data-message-role"), "agent");
+  assert.equal(await acknowledgedCard.getAttribute("data-message-ack-count"), "1");
+  assert.equal(await acknowledgedCard.getAttribute("data-message-taste-count"), "0");
+  assert.deepEqual(
+    await acknowledgedCard.locator(".message-badge").allTextContents(),
+    ["ACK1"],
+    "authenticated acknowledgement evidence renders one counted ACK badge",
+  );
   const outerQuote = acknowledgedCard.locator("blockquote").first();
   assert.equal(
     (await outerQuote.locator("blockquote").innerText()).trim(),
@@ -461,6 +468,11 @@ async function assertExternalOperatorReplay(page, fixture, console, lane, worktr
   await console.getByRole("tab", { name: /^Agents/ }).click();
   await acknowledgedCard.waitFor({ timeout: CONNECT_MS });
   assert.equal(await acknowledgedCard.count(), 1, "bootstrap restores one acknowledged assistant card");
+  assert.deepEqual(
+    await acknowledgedCard.locator(".message-badge").allTextContents(),
+    ["ACK1"],
+    "durable replay restores the typed ACK badge",
+  );
   assert.equal(
     (await acknowledgedCard.locator("blockquote blockquote").innerText()).trim(),
     quotedText,

@@ -93,7 +93,9 @@ pub(super) fn reconcile(
             break;
         }
         if !appended {
-            return Ok(changed);
+            let feedback =
+                super::review_feedback::reconcile(bus, paths, epoch, observed, cursor, lifetime)?;
+            return Ok(changed || feedback);
         }
         refreshed = Some(bus.task_snapshot().map_err(|error| {
             store_fault("task-contract::snapshot-unreadable", &error.to_string())

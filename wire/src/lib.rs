@@ -98,9 +98,9 @@ pub use reply::{
     SpiceCommand, ThreadReport, Version,
 };
 pub use stream::{
-    AgentActivityKind, AgentMessage, AutomaticSpeech, AutomaticSpeechKind, MessageLocus,
-    OperatorDirection, StreamAdmissionError, StreamCursor, StreamFact, StreamFrame, StreamRequest,
-    TrustView, ViewSubject,
+    AgentActivityKind, AgentMessage, AgentMessageBadges, AutomaticSpeech, AutomaticSpeechKind,
+    MessageLocus, OperatorDirection, StreamAdmissionError, StreamCursor, StreamFact, StreamFrame,
+    StreamRequest, TrustView, ViewSubject,
 };
 pub use witness::{
     Answer, Disposition, Name, NameError, Phase, PhaseError, TaskHandle, TaskHandleError,

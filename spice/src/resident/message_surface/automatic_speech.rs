@@ -18,6 +18,7 @@ pub(super) fn classify(
     event: PresentationEvent,
 ) -> Option<AutomaticSpeech> {
     let final_answer = prose.phase.as_deref() == Some("final_answer");
+    let badges = super::message_badges(&prose.text, directives, event);
     let packets: Vec<(Acknowledgement, bool)> = directives.map_or_else(
         || {
             let standing = EmptyStanding;
@@ -51,6 +52,7 @@ pub(super) fn classify(
         return prepared_edges(&body).map(|text| AutomaticSpeech {
             kind: AutomaticSpeechKind::Final,
             text,
+            badges,
         });
     }
 
@@ -63,6 +65,7 @@ pub(super) fn classify(
     (!acknowledged.is_empty()).then_some(AutomaticSpeech {
         kind: AutomaticSpeechKind::Acknowledgement,
         text: acknowledged,
+        badges,
     })
 }
 
@@ -425,6 +428,7 @@ mod tests {
                 PresentationDirective {
                     lane: lane(),
                     text: format!("direction for {key}"),
+                    taste: false,
                     disposition: Disposition::Live,
                     retirement: None,
                 },

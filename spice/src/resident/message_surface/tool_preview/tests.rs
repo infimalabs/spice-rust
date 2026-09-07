@@ -227,6 +227,7 @@ mod presentation {
                         PresentationDirective {
                             lane: lane(),
                             text: (*text).to_owned(),
+                            taste: false,
                             disposition: wire::Disposition::Live,
                             retirement: None,
                         },
@@ -265,6 +266,28 @@ mod presentation {
                     .expect("acknowledgment presents"),
                 "> Keep the current path.\n\nApplied.",
                 "wrong presentation for {text:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn message_badges_require_authenticated_positive_directive_evidence() {
+        let directives = directives(&[("1kQnrzNZ", "Keep the current path.")]);
+        assert_eq!(
+            message_badges("ACK 1kQnrzNZ: applied.", Some(&directives), event(),),
+            wire::AgentMessageBadges {
+                acknowledgements: 1,
+                tastes: 0,
+            },
+        );
+        for text in [
+            "NACK 1kQnrzNZ: unsafe.",
+            "ACK not-a-key: prose only.",
+            "Ordinary prose mentions ACK without a key.",
+        ] {
+            assert!(
+                message_badges(text, Some(&directives), event()).is_empty(),
+                "unearned badge for {text:?}",
             );
         }
     }
@@ -461,6 +484,7 @@ mod presentation {
             PresentationDirective {
                 lane: lane(),
                 text: "Keep the original response context.".to_owned(),
+                taste: false,
                 disposition: wire::Disposition::Acked,
                 retirement: Some(retirement),
             },
@@ -504,6 +528,7 @@ mod presentation {
                 PresentationDirective {
                     lane: lane(),
                     text: "Continue".to_owned(),
+                    taste: false,
                     disposition: wire::Disposition::Acked,
                     retirement: Some(retirement(8, 5)),
                 },
@@ -513,6 +538,7 @@ mod presentation {
                 PresentationDirective {
                     lane: lane(),
                     text: "[TASTE] fallbacks: Keep one deterministic path.".to_owned(),
+                    taste: true,
                     disposition: wire::Disposition::Acked,
                     retirement: Some(retirement(0, 14)),
                 },
@@ -532,6 +558,13 @@ mod presentation {
                 "Continuing with the explicit two-context contract only."
             ),
         );
+        assert_eq!(
+            message_badges(text, Some(&directives), event()),
+            wire::AgentMessageBadges {
+                acknowledgements: 0,
+                tastes: 1,
+            },
+        );
     }
 
     #[test]
@@ -547,6 +580,7 @@ mod presentation {
             PresentationDirective {
                 lane: lane(),
                 text: "Keep the original response context.".to_owned(),
+                taste: false,
                 disposition: wire::Disposition::Acked,
                 retirement: Some(wire::body::TranscriptLocus {
                     source: Some(expected_source),

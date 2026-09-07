@@ -255,6 +255,7 @@ mod tests {
         terminal.automatic_speech = Some(wire::AutomaticSpeech {
             kind: wire::AutomaticSpeechKind::Final,
             text: terminal.text.clone(),
+            badges: Default::default(),
         });
         assert!(cards.merge(std::iter::once(&terminal)));
         assert_eq!(cards.entries().len(), 1);
@@ -263,6 +264,26 @@ mod tests {
             cards.entries()[0].automatic_speech,
             terminal.automatic_speech
         );
+    }
+
+    #[test]
+    fn semantic_badges_replace_the_same_live_card_identity() {
+        let mut cards = MessageCards::default();
+        let ordinary = message(1, AgentActivityKind::Prose);
+        cards.snapshot(10, std::slice::from_ref(&ordinary));
+
+        let mut badged = ordinary;
+        badged.automatic_speech = Some(wire::AutomaticSpeech {
+            kind: wire::AutomaticSpeechKind::Acknowledgement,
+            text: "applied".to_owned(),
+            badges: wire::AgentMessageBadges {
+                acknowledgements: 1,
+                tastes: 0,
+            },
+        });
+        assert!(cards.merge(std::iter::once(&badged)));
+        assert_eq!(cards.entries().len(), 1);
+        assert_eq!(cards.entries()[0].automatic_speech, badged.automatic_speech);
     }
 
     #[test]
