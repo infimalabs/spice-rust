@@ -10,8 +10,8 @@ use super::binding::bind_destination;
 use super::files::{observe_bound, publish_bound};
 use super::{
     FileImage, Generation, InstallError, InstallPlan, InstallPlanSummary, InstallReceipt,
-    InstallStatus, LEGACY_RECORD_VERSIONS, RECORD_MODE, RECORD_NAME, RECORD_PATH, RECORD_VERSION,
-    ReceiptGeneration, Repository, RepositoryIdentity, RollbackArchive,
+    InstallStatus, ReceiptGeneration, Repository, RepositoryIdentity, RollbackArchive,
+    LEGACY_RECORD_VERSIONS, RECORD_MODE, RECORD_NAME, RECORD_PATH, RECORD_VERSION,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -222,6 +222,84 @@ impl InstallRecord {
         }
         self.plan_digest = self.plan.digest()?;
         Ok(())
+    }
+
+    /// Rebind one internally coherent receipt after macOS renumbers its mount.
+    ///
+    /// The persisted device number is an immediate race witness, not a stable
+    /// APFS volume identity. A reboot may change it while every inode and path
+    /// remains intact. Only a single old device shared by every recorded parent
+    /// is eligible; strict repository validation below still proves every inode
+    /// before the repaired receipt can drive a refresh.
+    fn repair_mount_device(
+        &mut self,
+        repository: &Repository,
+    ) -> Result<Option<Digest>, InstallError> {
+        #[cfg(not(target_vendor = "apple"))]
+        {
+            let _ = repository;
+            Ok(None)
+        }
+        #[cfg(target_vendor = "apple")]
+        {
+            let metadata =
+                std::fs::symlink_metadata(repository.common_dir()).map_err(|source| {
+                    InstallError::io(
+                        "inspect repository mount generation",
+                        repository.common_dir(),
+                        source,
+                    )
+                })?;
+            let current = Generation::observe(&metadata).device;
+            let prior = self.plan.record.parent.generation.device;
+            if current == prior {
+                return Ok(None);
+            }
+            let coherent = self
+                .plan
+                .operations
+                .iter()
+                .map(|operation| operation.parent.generation.device)
+                .chain(
+                    self.plan
+                        .retirements
+                        .iter()
+                        .map(|retirement| retirement.parent.generation.device),
+                )
+                .chain(
+                    self.installed_parents
+                        .iter()
+                        .flatten()
+                        .map(|parent| parent.device),
+                )
+                .chain(
+                    self.retired_parents
+                        .iter()
+                        .flatten()
+                        .map(|parent| parent.device),
+                )
+                .all(|device| device == prior);
+            if !coherent {
+                return Ok(None);
+            }
+
+            let original_digest = self.plan_digest.clone();
+            self.plan.record.parent.generation.device = current;
+            for operation in &mut self.plan.operations {
+                operation.parent.generation.device = current;
+            }
+            for retirement in &mut self.plan.retirements {
+                retirement.parent.generation.device = current;
+            }
+            for parent in self.installed_parents.iter_mut().flatten() {
+                parent.device = current;
+            }
+            for parent in self.retired_parents.iter_mut().flatten() {
+                parent.device = current;
+            }
+            self.plan_digest = self.plan.digest()?;
+            Ok(Some(original_digest))
+        }
     }
 
     fn validate_with_content(&self, historical: bool) -> Result<(), InstallError> {
@@ -467,7 +545,7 @@ pub(super) fn read_record(repository: &Repository) -> Result<Option<LoadedRecord
     let Some(mut loaded) = decode_record(repository)? else {
         return Ok(None);
     };
-    finish_loaded_record(repository, &mut loaded)?;
+    let _ = finish_loaded_record(repository, &mut loaded)?;
     Ok(Some(loaded))
 }
 
@@ -478,12 +556,16 @@ pub(super) fn read_record_for_refresh(
         return Ok(None);
     };
     match finish_loaded_record(repository, &mut loaded) {
-        Ok(()) => Ok(Some(RefreshRecord::Current(loaded))),
+        Ok(Some(original_digest)) => Ok(Some(RefreshRecord::Repairable {
+            loaded,
+            original_digest,
+        })),
+        Ok(None) => Ok(Some(RefreshRecord::Current(loaded))),
         Err(error) if is_retirement_witness_mismatch(&error) => {
             let original_digest = loaded
                 .record
                 .repair_missing_retirement_witnesses(repository)?;
-            finish_loaded_record(repository, &mut loaded)?;
+            let _ = finish_loaded_record(repository, &mut loaded)?;
             Ok(Some(RefreshRecord::Repairable {
                 loaded,
                 original_digest,
@@ -567,18 +649,19 @@ fn decode_record(repository: &Repository) -> Result<Option<LoadedRecord>, Instal
 fn finish_loaded_record(
     repository: &Repository,
     loaded: &mut LoadedRecord,
-) -> Result<(), InstallError> {
+) -> Result<Option<Digest>, InstallError> {
     loaded.record.validate_loaded()?;
     let record = &mut loaded.record;
     if record.repository.common_git != repository.common_dir() {
         record.rebase_repository(repository)?;
     }
+    let original_digest = record.repair_mount_device(repository)?;
     record.validate_loaded_for_repository(repository)?;
     record.plan.validate_rollback_storage(repository)?;
     if record.version != super::MIGRATABLE_RECORD_VERSION {
         loaded.image = None;
     }
-    Ok(())
+    Ok(original_digest)
 }
 
 fn is_retirement_witness_mismatch(error: &InstallError) -> bool {
