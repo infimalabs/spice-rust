@@ -61,12 +61,7 @@ pub(crate) fn execute_steering(
                 Ok(inbox) => inbox.answer,
                 Err(outcome) => return outcome,
             };
-            let directive = inbox
-                .lanes
-                .iter()
-                .flat_map(|row| &row.pending)
-                .find(|pending| pending.key == key.as_str())
-                .map(|pending| pending.directive);
+            let directive = acknowledgment_directive(&inbox, key);
             let expected = directive
                 .map(|directive| Witness::Directive {
                     steer: directive,
@@ -98,4 +93,22 @@ pub(crate) fn execute_steering(
         }
         selected => execute(discovery_path, contract, selected),
     }
+}
+
+pub(super) fn acknowledgment_directive(
+    inbox: &InboxAnswer,
+    key: &steer::Key,
+) -> Option<CanonicalUuid> {
+    inbox.lanes.iter().find_map(|row| {
+        row.pending
+            .iter()
+            .find(|pending| pending.key == key.as_str())
+            .map(|pending| pending.directive)
+            .or_else(|| {
+                row.task_contract_notices
+                    .iter()
+                    .find(|notice| notice.key == key.as_str())
+                    .map(|notice| notice.directive)
+            })
+    })
 }

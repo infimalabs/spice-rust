@@ -47,7 +47,17 @@ struct HookPublication {
 
 struct HookLanePublication {
     lane: CanonicalUuid,
+    task_contract_notices: Vec<HookTaskContractNotice>,
     groups: Vec<HookDirectiveGroup>,
+}
+
+struct HookTaskContractNotice {
+    task: wire::TaskStamp,
+    edit: wire::Seq,
+    claim: wire::Seq,
+    stage: String,
+    text: Option<String>,
+    key: String,
 }
 
 struct HookDirectiveGroup {
@@ -67,6 +77,19 @@ struct HookContentIdentity<'a> {
     stage: wire::body::SteeringStage,
     text: &'a str,
     media: &'a [wire::AgentMediaReference],
+}
+
+#[derive(serde::Serialize)]
+struct HookTaskContractIdentity<'a> {
+    lane: CanonicalUuid,
+    directive: CanonicalUuid,
+    occupant: CanonicalUuid,
+    compaction: u64,
+    task: &'a wire::TaskStamp,
+    edit: wire::Seq,
+    claim: wire::Seq,
+    stage: wire::body::SteeringStage,
+    text: &'a str,
 }
 
 const HOOK_DELIVERY_LOCK: &str = "steering-delivery";
@@ -186,13 +209,48 @@ fn render_hook_document(publication: &HookPublication) -> Result<Option<Vec<u8>>
         .map(PathBuf::into_os_string)
         .map_err(|error| format!("inbox hook executable unavailable: {error}"))?;
     let executable = executable.to_string_lossy();
-    let mut context = concat!(
-        "Rust Spice steering is pending. Address every key immediately before other work. ",
-        "Begin assistant prose with `ACK <key> [<key> ...]:` or ",
-        "`NACK <key> [<key> ...]:`, then retire every listed key after that prose by ",
-        "running each printed `ack <key>` command; append `--decline` for a NACK."
-    )
-    .to_owned();
+    let mut context = String::new();
+    if publication
+        .lanes
+        .iter()
+        .any(|lane| !lane.task_contract_notices.is_empty())
+    {
+        context.push_str(concat!(
+            "Rust Spice system status. Task-contract revision acknowledgment is required ",
+            "before repository work continues. Begin assistant prose with `ACK <key> ",
+            "[<key> ...]:`, then run every printed acknowledgment command."
+        ));
+        for lane in &publication.lanes {
+            for notice in &lane.task_contract_notices {
+                context.push_str(&format!(
+                    "\n\nTASK CONTRACT REVISION lane={} task={} edit={} claim={} key={} stage={}\n",
+                    lane.lane, notice.task, notice.edit, notice.claim, notice.key, notice.stage,
+                ));
+                match &notice.text {
+                    Some(text) => context.push_str(text),
+                    None => context.push_str(
+                        "This exact task-contract revision was already shown in the current \
+                         compaction epoch; its acknowledgment remains pending.",
+                    ),
+                }
+                context.push_str(&format!(
+                    "\nacknowledgment: `{executable} ack {}`",
+                    notice.key
+                ));
+            }
+        }
+    }
+    if publication.lanes.iter().any(|lane| !lane.groups.is_empty()) {
+        if !context.is_empty() {
+            context.push_str("\n\n");
+        }
+        context.push_str(concat!(
+            "Rust Spice steering is pending. Address every key immediately before other work. ",
+            "Begin assistant prose with `ACK <key> [<key> ...]:` or ",
+            "`NACK <key> [<key> ...]:`, then retire every listed key after that prose by ",
+            "running each printed `ack <key>` command; append `--decline` for a NACK."
+        ));
+    }
     for lane in &publication.lanes {
         for group in &lane.groups {
             let keys = if group.keys.len() == 1 {
@@ -287,7 +345,7 @@ fn filter_hook_lane(
     projection_root: &Path,
 ) -> Result<(Option<HookLanePublication>, bool), String> {
     let existing = state.lanes.iter().position(|row| row.lane == lane.lane);
-    if lane.pending.is_empty() && existing.is_none() {
+    if lane.pending.is_empty() && lane.task_contract_notices.is_empty() && existing.is_none() {
         return Ok((None, false));
     }
     let occupant = lane.occupant.ok_or_else(|| {
@@ -362,8 +420,36 @@ fn filter_hook_directives(
     let mut changed = false;
     let mut filtered = HookLanePublication {
         lane: lane.lane,
+        task_contract_notices: Vec::new(),
         groups: Vec::new(),
     };
+    for notice in &lane.task_contract_notices {
+        let identity = rendered_task_contract_identity(lane.lane, occupant, compaction, notice)?;
+        if row
+            .delivered_keys
+            .iter()
+            .any(|delivered| delivered.content == identity && delivered.key == notice.key)
+        {
+            continue;
+        }
+        let content_was_delivered = row.contents.contains(&identity);
+        filtered.task_contract_notices.push(HookTaskContractNotice {
+            task: notice.task.clone(),
+            edit: notice.edit,
+            claim: notice.claim,
+            stage: notice.stage.to_string(),
+            text: (!content_was_delivered).then(|| notice.text.clone()),
+            key: notice.key.clone(),
+        });
+        if !content_was_delivered {
+            row.contents.push(identity.clone());
+        }
+        row.delivered_keys.push(DeliveredKey {
+            content: identity,
+            key: notice.key.clone(),
+        });
+        changed = true;
+    }
     for directive in &lane.pending {
         let references =
             wire::media::agent_media_references(directive.directive, &directive.attachments)
@@ -417,7 +503,11 @@ fn filter_hook_directives(
         });
         changed = true;
     }
-    Ok(((!filtered.groups.is_empty()).then_some(filtered), changed))
+    Ok((
+        (!filtered.groups.is_empty() || !filtered.task_contract_notices.is_empty())
+            .then_some(filtered),
+        changed,
+    ))
 }
 
 fn rendered_content_identity(
@@ -436,6 +526,27 @@ fn rendered_content_identity(
         stage: directive.stage,
         text,
         media,
+    };
+    let encoded = wire::encode(&identity).map_err(|error| error.to_string())?;
+    Ok(blake3::hash(&encoded).to_hex().to_string())
+}
+
+fn rendered_task_contract_identity(
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    compaction: u64,
+    notice: &wire::intent::TaskContractNotice,
+) -> Result<String, String> {
+    let identity = HookTaskContractIdentity {
+        lane,
+        directive: notice.directive,
+        occupant,
+        compaction,
+        task: &notice.task,
+        edit: notice.edit,
+        claim: notice.claim,
+        stage: notice.stage,
+        text: &notice.text,
     };
     let encoded = wire::encode(&identity).map_err(|error| error.to_string())?;
     Ok(blake3::hash(&encoded).to_hex().to_string())

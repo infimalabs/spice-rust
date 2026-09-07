@@ -243,6 +243,61 @@ fn sequential_duplicate_content_publishes_each_new_key_without_replaying_text() 
 }
 
 #[test]
+fn task_contract_revision_is_a_system_hud_notice_not_authored_steering() {
+    let scratch = HookScratch::new();
+    let answer = task_contract_answer();
+    let CommandAnswer::Inbox(inbox) = &answer else {
+        panic!("fixture answer is an inbox");
+    };
+    assert!(inbox.lanes[0].pending.is_empty());
+    assert_eq!(inbox.lanes[0].task_contract_notices.len(), 1);
+
+    let document = deliver(&scratch, &answer).expect("task-contract HUD publishes");
+    let context = additional_context(&document);
+    assert!(context.starts_with("Rust Spice system status."));
+    assert!(context.contains("TASK CONTRACT REVISION"));
+    assert!(
+        context.contains("task=1kKRRsDP edit=44 claim=33 key=1kL5y53c"),
+        "{context}"
+    );
+    assert!(context.contains("Task contract changed for SPICE-1kKRRsDP."));
+    assert!(context.contains("ack 1kL5y53c"));
+    assert!(!context.contains("Rust Spice steering is pending"));
+    assert_eq!(deliver(&scratch, &answer), None);
+}
+
+#[test]
+fn task_contract_status_and_authored_direction_share_one_hook_document_without_conflation() {
+    let scratch = HookScratch::new();
+    let CommandAnswer::Inbox(mut mixed) = task_contract_answer() else {
+        panic!("task-contract fixture is an inbox");
+    };
+    let CommandAnswer::Inbox(authored) = inbox_answer(
+        OCCUPANT,
+        1,
+        &[("1kFirst1", "published", "Inspect the authored request.")],
+    ) else {
+        panic!("authored fixture is an inbox");
+    };
+    mixed.lanes[0].pending = authored.lanes[0].pending.clone();
+
+    let document =
+        deliver(&scratch, &CommandAnswer::Inbox(mixed)).expect("mixed hook status publishes once");
+    let context = additional_context(&document);
+    let system = context
+        .find("Rust Spice system status.")
+        .expect("system HUD");
+    let steering = context
+        .find("Rust Spice steering is pending.")
+        .expect("authored steering section");
+    assert!(system < steering);
+    assert!(context.contains("TASK CONTRACT REVISION"));
+    assert!(context.contains("Inspect the authored request."));
+    assert!(context.contains("ack 1kL5y53c"));
+    assert!(context.contains("ack 1kFirst1"));
+}
+
+#[test]
 fn content_only_delivery_state_migrates_to_key_tracking_once() {
     let scratch = HookScratch::new();
     let first = inbox_answer(
@@ -587,6 +642,30 @@ fn inbox_answer(
         }],
     }))
     .expect("hook inbox fixture admits");
+    CommandAnswer::Inbox(inbox)
+}
+
+fn task_contract_answer() -> CommandAnswer {
+    let inbox: InboxAnswer = serde_json::from_value(serde_json::json!({
+        "epoch": EPOCH,
+        "lanes": [{
+            "lane": LANE,
+            "occupant": OCCUPANT,
+            "compaction": 1,
+            "pending": [],
+            "task_contract_notices": [{
+                "directive": DIRECTIVE,
+                "key": KEY,
+                "task": "1kKRRsDP",
+                "edit": 44,
+                "claim": 33,
+                "text": "Task contract changed for SPICE-1kKRRsDP.",
+                "stage": "published",
+                "expires": "2026-08-30T10:00:00.000Z",
+            }],
+        }],
+    }))
+    .expect("task-contract hook inbox fixture admits");
     CommandAnswer::Inbox(inbox)
 }
 

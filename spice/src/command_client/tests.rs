@@ -424,9 +424,9 @@ fn refreshed_authority_returns_a_moved_claim_with_current_owner_evidence() {
         panic!("moved claim must stop as the current refusal: {outcome:?}");
     };
     assert_eq!(refusal.reason(), "claim::ownership-refused");
-    let Refusal::Bare { diagnostic } = refusal else {
-        panic!("moved claim must retain its bare authority diagnostic");
-    };
+    let diagnostic = refusal
+        .diagnostic()
+        .expect("moved claim retains its authority diagnostic");
     assert_eq!(
         diagnostic.observed(),
         Some(current_owner.to_string().as_str())
@@ -592,6 +592,39 @@ fn trust_pend_maps_the_current_digest_to_the_existing_pended_witness() {
             digest,
             worktree: Some("/worktrees/producer".to_owned()),
         },
+    );
+}
+
+#[test]
+fn task_contract_notice_key_retains_the_exact_acknowledgment_directive() {
+    let directive = uuid(45);
+    let key = "1kL5y53c"
+        .parse::<steer::Key>()
+        .expect("fixture key is canonical");
+    let inbox: InboxAnswer = serde_json::from_value(serde_json::json!({
+        "epoch": uuid(46),
+        "lanes": [{
+            "lane": uuid(47),
+            "occupant": uuid(48),
+            "compaction": 1,
+            "pending": [],
+            "task_contract_notices": [{
+                "directive": directive,
+                "key": key.as_str(),
+                "task": "1kKRRsDP",
+                "edit": 44,
+                "claim": 33,
+                "text": "Task contract changed.",
+                "stage": "published",
+                "expires": "2026-08-30T10:00:00.000Z",
+            }],
+        }],
+    }))
+    .expect("task-contract inbox admits");
+
+    assert_eq!(
+        steering::acknowledgment_directive(&inbox, &key),
+        Some(directive)
     );
 }
 

@@ -11,7 +11,7 @@ use steer::{Miss, Outcome as ScanOutcome};
 use wire::body::TranscriptLocus;
 use wire::intent::{
     CommandAnswer, DeliveryAnswer, DeliveryStanding, DirectiveAnswer, InboxAnswer, LaneInbox,
-    PendingDirective,
+    PendingDirective, TaskContractNotice,
 };
 use wire::{
     Actor, CanonicalUuid, Command, Disposition, Fault, FaultClass, Instant, Outcome, Producer,
@@ -573,7 +573,16 @@ fn publish_lane_inbox(
 ) -> CommandResult<()> {
     let seal = steer::Key::for_identity(lane_capability(lane)?);
     let inbox = paths.inbox_for_worktree(&lane.worktree)?;
-    steer::inbox::publish(&inbox, lane.lane, &seal, &ledger.pending(lane.lane))
+    let pending = ledger
+        .pending(lane.lane)
+        .into_iter()
+        .filter(|directive| {
+            !directive.control().is_some_and(|control| {
+                control.starts_with(spice::session_meter::TASK_CONTRACT_CONTROL_PREFIX)
+            })
+        })
+        .collect::<Vec<_>>();
+    steer::inbox::publish(&inbox, lane.lane, &seal, &pending)
         .map_err(|error| environment_fault("steer::inbox-unwritable", &error.to_string()))?;
     remove_legacy_inbox(&paths.legacy_inbox, &inbox, lane.lane);
     Ok(())
@@ -648,16 +657,19 @@ pub(super) fn inbox(
             }
             None => None,
         };
+        let (pending, task_contract_notices) =
+            match pending_presentations(&snapshot.ledger, lane.lane) {
+                Ok(presentations) => presentations,
+                Err(error) => {
+                    return typed_store_fault("task-contract::control-invalid", &error);
+                }
+            };
         lanes.push(LaneInbox {
             lane: lane.lane,
             occupant: lane.occupant,
             compaction,
-            pending: snapshot
-                .ledger
-                .pending(lane.lane)
-                .into_iter()
-                .map(pending_directive)
-                .collect(),
+            pending,
+            task_contract_notices,
             delivery: match fold_delivery(paths, lane.lane) {
                 Ok(delivery) => delivery,
                 Err(outcome) => return typed_outcome(outcome),
@@ -854,6 +866,39 @@ fn pending_directive(directive: &steer::Directive) -> PendingDirective {
             .expect("a directive replayed from authority has a publication instant"),
         stage: directive.stage(),
         escalations: directive.escalations().to_vec(),
+        expires: directive.expires(),
+    }
+}
+
+pub(super) fn pending_presentations(
+    ledger: &steer::Ledger,
+    lane: CanonicalUuid,
+) -> Result<(Vec<PendingDirective>, Vec<TaskContractNotice>), String> {
+    let mut pending = Vec::new();
+    let mut task_contract_notices = Vec::new();
+    for directive in ledger.pending(lane) {
+        match super::lifecycle::contract_edits::notice_authority(directive.control())? {
+            Some(authority) => {
+                task_contract_notices.push(task_contract_notice(directive, authority));
+            }
+            None => pending.push(pending_directive(directive)),
+        }
+    }
+    Ok((pending, task_contract_notices))
+}
+
+fn task_contract_notice(
+    directive: &steer::Directive,
+    authority: super::lifecycle::contract_edits::NoticeAuthority,
+) -> TaskContractNotice {
+    TaskContractNotice {
+        directive: directive.directive(),
+        key: directive.key().to_string(),
+        task: authority.task,
+        edit: authority.edit,
+        claim: authority.claim,
+        text: directive.text().to_owned(),
+        stage: directive.stage(),
         expires: directive.expires(),
     }
 }

@@ -182,7 +182,11 @@ fn collect(
             prior_active,
         });
     };
-    let pending_inbox_count = read.pending_steering(Some(lane.lane))?.len();
+    let pending_inbox_count = read
+        .pending_steering(Some(lane.lane))?
+        .into_iter()
+        .filter(|head| counts_as_authored_inbox(head.body().control.as_deref()))
+        .count();
     let mut subscriptions = residency
         .body()
         .subscriptions
@@ -232,6 +236,10 @@ fn collect(
         current,
         prior_active,
     })
+}
+
+fn counts_as_authored_inbox(control: Option<&str>) -> bool {
+    !control.is_some_and(|control| control.starts_with(super::TASK_CONTRACT_CONTROL_PREFIX))
 }
 
 fn current_owner(
@@ -310,4 +318,18 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     destination
         .publish(|staged| staged.write_all(&bytes))
         .map_err(|error| format!("working-state record is unpublished: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::counts_as_authored_inbox;
+
+    #[test]
+    fn task_contract_controls_do_not_increment_the_authored_inbox_hud() {
+        assert!(counts_as_authored_inbox(None));
+        assert!(counts_as_authored_inbox(Some("lane-renewal-context")));
+        assert!(!counts_as_authored_inbox(Some(
+            "task-contract-edit:1kKRRsDP:44:33"
+        )));
+    }
 }
