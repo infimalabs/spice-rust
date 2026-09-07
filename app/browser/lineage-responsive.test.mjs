@@ -57,6 +57,14 @@ test("right-edge settlement rejects predicate-pass followed by geometry drift", 
   geometry.newestRight = 600;
   assert.equal(observeStableRightEdge(witness), false, "the first recovered observation rearms it");
   assert.equal(observeStableRightEdge(witness), true, "two stable anchored observations settle");
+
+  geometry.right = 599.25;
+  geometry.newestRight = 600.75;
+  assert.equal(
+    observeStableRightEdge(witness),
+    false,
+    "individually small edge movements cannot settle a currently unanchored sample",
+  );
 });
 
 async function productionTaskContract() {
