@@ -543,9 +543,11 @@ try {
       await assertLineageDrainFailureTeardown();
     });
     await run.scenario("fixture-reaping", async () => {
-      await assertSurvivingVendorsAreReported();
-      await assertFullyReapedVendorsStaySilent();
-      await assertFixtureTeardownReaps();
+      await run.phase("vendor-reporting", async () => {
+        await run.phase("survivors", () => assertSurvivingVendorsAreReported());
+        await run.phase("fully-reaped", () => assertFullyReapedVendorsStaySilent());
+      });
+      await run.phase("process-lifecycle", () => assertFixtureTeardownReaps());
     });
   } else {
     fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-browser-")));
