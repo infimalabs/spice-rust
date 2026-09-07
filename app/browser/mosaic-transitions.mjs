@@ -245,7 +245,11 @@ async function waitForAuthoredCard(witness, source, lane, label) {
       `.mosaic-message-card[data-card-kind="agent-message"][data-agent-lane="${lane}"]`,
     ).filter({ hasText: matchText });
   assert.equal(await card.count(), 1, `${witness.label} renders ${label} exactly once`);
-  await settleMosaicActivity(witness.page, witness.plane);
+  // The test serializes every authored mutation after its initial quiet
+  // barrier. Matching the exact new locus only after both its card and the
+  // plane report committed/ready with no pending measurements is therefore
+  // the completion boundary; another full cadence of silence proves no
+  // additional state and multiplied this wait across every transition.
   return card;
 }
 
