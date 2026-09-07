@@ -738,21 +738,7 @@ fn run(command: Vec<OsString>) -> ! {
         let mut stderr = io::stderr().lock();
         let _ = writeln!(stderr, "{diagnostic}");
     }
-    let meter = run_meter::Runtime::start(
-        Path::new("."),
-        spice::extension::registry()
-            .expect("compiled extension declarations are validated by the test gate")
-            .session_vendors()
-            .into_iter()
-            .map(|vendor| {
-                (
-                    vendor,
-                    bootstrap_environment(vendor.thread_id_environment())
-                        .and_then(|value| value.into_string().ok()),
-                )
-            })
-            .collect(),
-    );
+    let meter = run_meter::Runtime::start(current_live_meter(Path::new(".")));
     let selected = rewritten
         .as_ref()
         .map_or(command.as_slice(), spice::rtk::Decision::command);
@@ -996,18 +982,52 @@ fn deliver_inbox_hook(
     form: Form,
 ) -> ! {
     match outcome {
-        Outcome::Reply(reply) => match steering_command::hook_document(&reply.body, harness) {
-            Ok(Some(document)) => {
-                let mut stdout = io::stdout().lock();
-                let _ = stdout.write_all(&document);
-                let _ = stdout.flush();
-                terminate_code(REPLY_EXIT);
+        Outcome::Reply(reply) => {
+            let working_state = match &reply.body {
+                wire::intent::CommandAnswer::Inbox(inbox) => inbox
+                    .lanes
+                    .as_slice()
+                    .first()
+                    .filter(|_| inbox.lanes.len() == 1)
+                    .and_then(|lane| {
+                        spice::session_meter::LiveMeter::working_state_for_lane(
+                            Path::new("."),
+                            lane.lane,
+                        )
+                        .ok()
+                    }),
+                _ => None,
+            };
+            match steering_command::hook_document(&reply.body, harness, working_state.as_ref()) {
+                Ok(Some(document)) => {
+                    let mut stdout = io::stdout().lock();
+                    let _ = stdout.write_all(&document);
+                    let _ = stdout.flush();
+                    terminate_code(REPLY_EXIT);
+                }
+                Ok(None) => terminate_code(REPLY_EXIT),
+                Err(error) => deliver_fault(render_fault(error), Form::Text),
             }
-            Ok(None) => terminate_code(REPLY_EXIT),
-            Err(error) => deliver_fault(render_fault(error), Form::Text),
-        },
+        }
         Outcome::Refusal(_) | Outcome::Fault(_) => deliver(outcome, form),
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn current_live_meter(root: &Path) -> Option<spice::session_meter::LiveMeter> {
+    let identities = spice::extension::registry()
+        .expect("compiled extension declarations are validated by the test gate")
+        .session_vendors()
+        .into_iter()
+        .map(|vendor| {
+            (
+                vendor,
+                bootstrap_environment(vendor.thread_id_environment())
+                    .and_then(|value| value.into_string().ok()),
+            )
+        })
+        .collect();
+    spice::session_meter::LiveMeter::open(root, identities).ok()
 }
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -332,6 +332,40 @@ fn content_only_delivery_state_migrates_to_key_tracking_once() {
 }
 
 #[test]
+fn ordinary_working_state_is_change_only_hook_status_without_lease_urgency() {
+    let scratch = HookScratch::new();
+    let answer = inbox_answer(OCCUPANT, 13, &[]);
+    let mut state = spice::session_meter::WorkingState {
+        pending_inbox_count: 2,
+        drain_queue: false,
+        claim: Some(spice::session_meter::ClaimState {
+            handle: "HUD-1kCurrent".to_owned(),
+            phase: "todo".to_owned(),
+            elapsed: Some(std::time::Duration::from_secs(90)),
+            remaining: Some(std::time::Duration::from_secs(30)),
+            reclaim_extends: true,
+        }),
+        last_taste: "polling".to_owned(),
+    };
+
+    let first = deliver_status(&scratch, &answer, &state).expect("working state publishes");
+    let context = additional_context(&first);
+    assert!(context.starts_with("Rust Spice system status."));
+    assert!(context.contains("2 pending inboxes"));
+    assert!(context.contains("claim HUD-1kCurrent todo"));
+    assert!(!context.contains("held for"));
+    assert!(context.contains("last taste polling"));
+    assert!(!context.contains("CLAIM LEASE"));
+    assert!(!context.contains("Rust Spice steering is pending."));
+    assert_eq!(deliver_status(&scratch, &answer, &state), None);
+
+    state.claim.as_mut().expect("fixture claim").phase = "review".to_owned();
+    let changed = deliver_status(&scratch, &answer, &state).expect("changed state republishes");
+    assert!(additional_context(&changed).contains("claim HUD-1kCurrent review"));
+    assert_eq!(deliver_status(&scratch, &answer, &state), None);
+}
+
+#[test]
 fn a_new_compaction_epoch_reopens_identical_content_for_the_same_agent() {
     let scratch = HookScratch::new();
     let first = inbox_answer(
@@ -713,8 +747,25 @@ fn deliver(scratch: &HookScratch, answer: &CommandAnswer) -> Option<Vec<u8>> {
         &scratch.state,
         &scratch.lock,
         &scratch.projections,
+        None,
     )
     .expect("hook delivery succeeds")
+}
+
+fn deliver_status(
+    scratch: &HookScratch,
+    answer: &CommandAnswer,
+    state: &spice::session_meter::WorkingState,
+) -> Option<Vec<u8>> {
+    hook_document_at(
+        answer,
+        "claude",
+        &scratch.state,
+        &scratch.lock,
+        &scratch.projections,
+        Some(state),
+    )
+    .expect("hook status delivery succeeds")
 }
 
 fn additional_context(document: &[u8]) -> String {

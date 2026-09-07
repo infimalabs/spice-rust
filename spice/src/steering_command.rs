@@ -47,6 +47,7 @@ struct HookPublication {
 
 struct HookLanePublication {
     lane: CanonicalUuid,
+    working_state: Option<String>,
     task_contract_notices: Vec<HookTaskContractNotice>,
     groups: Vec<HookDirectiveGroup>,
 }
@@ -114,6 +115,8 @@ struct LaneDeliveryState {
     occupant: CanonicalUuid,
     compaction: u64,
     contents: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    working_state: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     delivered_keys: Vec<DeliveredKey>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -130,6 +133,7 @@ struct DeliveredKey {
 pub(crate) fn hook_document(
     answer: &CommandAnswer,
     harness: &str,
+    working_state: Option<&spice::session_meter::WorkingState>,
 ) -> Result<Option<Vec<u8>>, String> {
     validate_hook_answer(answer, harness)?;
     let CommandAnswer::Inbox(_) = answer else {
@@ -154,6 +158,7 @@ pub(crate) fn hook_document(
         delivery.state(),
         delivery.lock(),
         delivery.projections(),
+        working_state,
     )
 }
 
@@ -163,6 +168,7 @@ fn hook_document_at(
     state_path: &Path,
     lock_path: &Path,
     projection_root: &Path,
+    working_state: Option<&spice::session_meter::WorkingState>,
 ) -> Result<Option<Vec<u8>>, String> {
     validate_hook_answer(answer, harness)?;
     let CommandAnswer::Inbox(inbox) = answer else {
@@ -173,7 +179,13 @@ fn hook_document_at(
         .acquire()
         .map_err(|error| format!("inbox hook delivery lock unavailable: {error}"))?;
     let mut state = read_hook_delivery_state(state_path)?;
-    let (filtered, changed) = filter_hook_inbox(inbox, &mut state, projection_root)?;
+    let working_status = working_state.and_then(spice::session_meter::ordinary_status);
+    let (filtered, changed) = filter_hook_inbox(
+        inbox,
+        &mut state,
+        projection_root,
+        working_status.as_deref(),
+    )?;
     let document = filtered
         .as_ref()
         .map(render_hook_document)
@@ -210,16 +222,30 @@ fn render_hook_document(publication: &HookPublication) -> Result<Option<Vec<u8>>
         .map_err(|error| format!("inbox hook executable unavailable: {error}"))?;
     let executable = executable.to_string_lossy();
     let mut context = String::new();
+    let has_task_contract_notices = publication
+        .lanes
+        .iter()
+        .any(|lane| !lane.task_contract_notices.is_empty());
     if publication
         .lanes
         .iter()
-        .any(|lane| !lane.task_contract_notices.is_empty())
+        .any(|lane| lane.working_state.is_some() || !lane.task_contract_notices.is_empty())
     {
+        context.push_str("Rust Spice system status.");
+    }
+    if has_task_contract_notices {
         context.push_str(concat!(
-            "Rust Spice system status. Task-contract revision acknowledgment is required ",
+            " Task-contract revision acknowledgment is required ",
             "before repository work continues. Begin assistant prose with `ACK <key> ",
             "[<key> ...]:`, then run every printed acknowledgment command."
         ));
+    }
+    for lane in &publication.lanes {
+        if let Some(status) = &lane.working_state {
+            context.push_str(&format!("\n\nlane={}\n{status}", lane.lane));
+        }
+    }
+    if has_task_contract_notices {
         for lane in &publication.lanes {
             for notice in &lane.task_contract_notices {
                 context.push_str(&format!(
@@ -325,11 +351,16 @@ fn filter_hook_inbox(
     inbox: &InboxAnswer,
     state: &mut HookDeliveryState,
     projection_root: &Path,
+    working_status: Option<&str>,
 ) -> Result<(Option<HookPublication>, bool), String> {
+    if working_status.is_some() && inbox.lanes.len() != 1 {
+        return Err("working-state hook status requires one selected lane".to_owned());
+    }
     let mut changed = false;
     let mut lanes = Vec::new();
     for lane in &inbox.lanes {
-        let (filtered, lane_changed) = filter_hook_lane(lane, state, projection_root)?;
+        let (filtered, lane_changed) =
+            filter_hook_lane(lane, state, projection_root, working_status)?;
         changed |= lane_changed;
         if let Some(filtered) = filtered {
             lanes.push(filtered);
@@ -343,9 +374,14 @@ fn filter_hook_lane(
     lane: &wire::intent::LaneInbox,
     state: &mut HookDeliveryState,
     projection_root: &Path,
+    working_status: Option<&str>,
 ) -> Result<(Option<HookLanePublication>, bool), String> {
     let existing = state.lanes.iter().position(|row| row.lane == lane.lane);
-    if lane.pending.is_empty() && lane.task_contract_notices.is_empty() && existing.is_none() {
+    if lane.pending.is_empty()
+        && lane.task_contract_notices.is_empty()
+        && working_status.is_none()
+        && existing.is_none()
+    {
         return Ok((None, false));
     }
     let occupant = lane.occupant.ok_or_else(|| {
@@ -372,8 +408,14 @@ fn filter_hook_lane(
         projection_root,
     )?;
     changed |= before != row.projections;
-    let (filtered, directives_changed) =
-        filter_hook_directives(lane, occupant, compaction, row, &projections)?;
+    let (filtered, directives_changed) = filter_hook_directives(
+        lane,
+        occupant,
+        compaction,
+        row,
+        &projections,
+        working_status,
+    )?;
     Ok((filtered, changed || directives_changed))
 }
 
@@ -393,6 +435,7 @@ fn delivery_row(
                 occupant,
                 compaction,
                 contents: Vec::new(),
+                working_state: None,
                 delivered_keys: Vec::new(),
                 projections: Vec::new(),
             });
@@ -404,6 +447,7 @@ fn delivery_row(
         row.occupant = occupant;
         row.compaction = compaction;
         row.contents.clear();
+        row.working_state = None;
         row.delivered_keys.clear();
         changed = true;
     }
@@ -416,10 +460,19 @@ fn filter_hook_directives(
     compaction: u64,
     row: &mut LaneDeliveryState,
     projections: &std::collections::BTreeMap<CanonicalUuid, Vec<media_projection::Projection>>,
+    working_status: Option<&str>,
 ) -> Result<(Option<HookLanePublication>, bool), String> {
     let mut changed = false;
+    let working_state = (row.working_state.as_deref() != working_status)
+        .then(|| working_status.map(str::to_owned))
+        .flatten();
+    if row.working_state.as_deref() != working_status {
+        row.working_state = working_status.map(str::to_owned);
+        changed = true;
+    }
     let mut filtered = HookLanePublication {
         lane: lane.lane,
+        working_state,
         task_contract_notices: Vec::new(),
         groups: Vec::new(),
     };
@@ -504,8 +557,10 @@ fn filter_hook_directives(
         changed = true;
     }
     Ok((
-        (!filtered.groups.is_empty() || !filtered.task_contract_notices.is_empty())
-            .then_some(filtered),
+        (filtered.working_state.is_some()
+            || !filtered.groups.is_empty()
+            || !filtered.task_contract_notices.is_empty())
+        .then_some(filtered),
         changed,
     ))
 }

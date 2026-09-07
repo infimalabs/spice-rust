@@ -458,7 +458,7 @@ fn invoke_meter_child(root: &Path, thread: &str) -> super::Spoken {
 
 #[test]
 #[cfg(unix)]
-fn real_run_stream_reports_working_state_and_wakes_at_warning_boundary() {
+fn real_run_stream_omits_ordinary_state_and_wakes_at_warning_boundary() {
     let scratch = Scratch::new("run-meter-boundary");
     fake_repository(scratch.path());
     let thread = uuid(0xf0).to_string();
@@ -482,19 +482,18 @@ fn real_run_stream_reports_working_state_and_wakes_at_warning_boundary() {
     let lines = stderr.lines().collect::<Vec<_>>();
     assert_eq!(
         lines.len(),
-        2,
-        "initial state and one boundary warning speak: {stderr:?}"
+        1,
+        "only the no-hook lease transition speaks: {stderr:?}"
     );
-    assert!(lines[0].starts_with("🌶️ Working state: 1 pending inbox; claim "));
-    assert!(!lines[0].contains("CLAIM LEASE"));
-    assert!(lines[1].contains("CLAIM LEASE WARNING"));
+    assert!(!lines[0].contains("Working state"));
+    assert!(lines[0].contains("CLAIM LEASE WARNING"));
     let handle = wire::TaskHandle::for_project(SESSION_PROJECT, &stamp("SESSION-held"));
     assert!(
-        lines[1].contains(&format!("run spice task reclaim {handle}")),
+        lines[0].contains(&format!("run spice task reclaim {handle}")),
         "warning recommends reclaiming the automatic fixture claim: {:?}",
-        lines[1]
+        lines[0]
     );
-    assert!(!lines[1].contains("task free"));
+    assert!(!lines[0].contains("task free"));
 
     scratch.remove();
 }
@@ -524,6 +523,7 @@ fn short_run_processes_share_suppression_and_tier_changes_speak() {
     let handle = wire::TaskHandle::for_project(SESSION_PROJECT, &stamp("SESSION-held"));
     let warning = String::from_utf8(first.err).expect("warning stderr");
     assert_eq!(warning.lines().count(), 1);
+    assert!(!warning.contains("Working state"));
     assert!(warning.contains("CLAIM LEASE WARNING"));
     assert!(warning.contains("s remaining"));
     assert!(

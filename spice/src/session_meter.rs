@@ -227,6 +227,48 @@ impl Meter {
         })
     }
 
+    /// Reduce only lease-tier state for a wrapper that runs between hooks.
+    pub(crate) fn evaluate_time_sensitive(
+        &self,
+        snapshot: &WorkingState,
+        now: Duration,
+    ) -> Result<Decision, MeterError> {
+        let key = StateKey::time_sensitive(snapshot);
+        let stored = self.read_state()?;
+        let matching_age = stored.as_ref().and_then(|stored| {
+            (stored.key == key && now >= stored.displayed_at)
+                .then(|| now.saturating_sub(stored.displayed_at))
+        });
+        let repeat = key.tier.repeat();
+        let suppressed = matching_age.is_some_and(|age| repeat.is_none_or(|bound| age < bound));
+        let announcement = if suppressed {
+            None
+        } else {
+            let Some(line) = render_lease(snapshot) else {
+                return Ok(Decision {
+                    announcement: None,
+                    refresh_after: next_refresh(snapshot, key.tier, None),
+                });
+            };
+            self.write_state(&StoredState {
+                displayed_at: now,
+                key: key.clone(),
+            })?;
+            Some(line)
+        };
+        let repeat_remaining = repeat.map(|bound| {
+            if announcement.is_some() {
+                bound
+            } else {
+                bound.saturating_sub(matching_age.unwrap_or_default())
+            }
+        });
+        Ok(Decision {
+            announcement,
+            refresh_after: next_refresh(snapshot, key.tier, repeat_remaining),
+        })
+    }
+
     fn read_state(&self) -> Result<Option<StoredState>, MeterError> {
         let bytes = match fs::read(&self.state_path) {
             Ok(bytes) => bytes,
@@ -393,6 +435,21 @@ impl From<&WorkingState> for StateKey {
     }
 }
 
+impl StateKey {
+    fn time_sensitive(snapshot: &WorkingState) -> Self {
+        let claim = snapshot.claim.as_ref();
+        Self {
+            pending_inbox_count: 0,
+            drain_queue: false,
+            claim_handle: claim.map_or_else(String::new, |claim| clean(&claim.handle)),
+            claim_phase: String::new(),
+            last_taste: String::new(),
+            tier: LeaseTier::from_remaining(claim.and_then(|claim| claim.remaining)),
+            reclaim_extends: claim.is_some_and(|claim| claim.reclaim_extends),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredState {
@@ -402,6 +459,19 @@ struct StoredState {
 }
 
 fn render(snapshot: &WorkingState) -> String {
+    format!(
+        "🌶️ Working state: {}.",
+        render_parts(snapshot, true).join("; ")
+    )
+}
+
+/// Render ordinary state for post-tool system status, excluding lease urgency.
+pub fn ordinary_status(snapshot: &WorkingState) -> Option<String> {
+    let parts = render_parts(snapshot, false);
+    (!parts.is_empty()).then(|| format!("Working state: {}.", parts.join("; ")))
+}
+
+fn render_parts(snapshot: &WorkingState, include_lease: bool) -> Vec<String> {
     let mut parts = Vec::new();
     if snapshot.pending_inbox_count > 0 {
         let noun = if snapshot.pending_inbox_count == 1 {
@@ -428,21 +498,12 @@ fn render(snapshot: &WorkingState) -> String {
                 text.push(' ');
                 text.push_str(&phase);
             }
-            if let Some(elapsed) = claim.elapsed {
+            if include_lease && let Some(elapsed) = claim.elapsed {
                 text.push_str(&format!(" held for {}s", elapsed.as_secs()));
             }
             parts.push(text);
-            let tier = LeaseTier::from_remaining(claim.remaining);
-            if let (Some(label), Some(remaining)) = (tier.label(), claim.remaining) {
-                let recovery = if claim.reclaim_extends {
-                    format!("run spice task reclaim {handle}")
-                } else {
-                    format!("run spice task free {handle}, then spice task next")
-                };
-                parts.push(format!(
-                    "CLAIM LEASE {label}: {handle} has {}s remaining; {recovery}",
-                    remaining.as_secs(),
-                ));
+            if include_lease && let Some(lease) = render_claim_lease(claim, &handle) {
+                parts.push(lease);
             }
         }
     }
@@ -450,7 +511,29 @@ fn render(snapshot: &WorkingState) -> String {
     if !taste.is_empty() {
         parts.push(format!("last taste {taste}"));
     }
-    format!("🌶️ Working state: {}.", parts.join("; "))
+    parts
+}
+
+fn render_lease(snapshot: &WorkingState) -> Option<String> {
+    let claim = snapshot.claim.as_ref()?;
+    let handle = clean(&claim.handle);
+    (!handle.is_empty())
+        .then(|| render_claim_lease(claim, &handle))
+        .flatten()
+}
+
+fn render_claim_lease(claim: &ClaimState, handle: &str) -> Option<String> {
+    let label = LeaseTier::from_remaining(claim.remaining).label()?;
+    let remaining = claim.remaining?;
+    let recovery = if claim.reclaim_extends {
+        format!("run spice task reclaim {handle}")
+    } else {
+        format!("run spice task free {handle}, then spice task next")
+    };
+    Some(format!(
+        "CLAIM LEASE {label}: {handle} has {}s remaining; {recovery}",
+        remaining.as_secs(),
+    ))
 }
 
 fn next_refresh(
@@ -557,6 +640,26 @@ mod tests {
         assert_eq!(line.matches('.').count(), 1);
         assert!(line.len() < WORKING_STATE_LINE_LIMIT);
         fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn ordinary_hook_status_keeps_state_but_omits_elapsed_and_lease_urgency() {
+        let status = ordinary_status(&state(Some(59))).expect("ordinary state renders");
+        assert!(status.contains("1 pending inbox"));
+        assert!(status.contains("claim METER-00000001 todo"));
+        assert!(status.contains("last taste fallbacks"));
+        assert!(!status.contains("held for"));
+        assert!(!status.contains("CLAIM LEASE"));
+
+        let drain = WorkingState {
+            pending_inbox_count: 1,
+            drain_queue: true,
+            ..WorkingState::default()
+        };
+        let status = ordinary_status(&drain).expect("drain state renders");
+        assert!(status.contains("handle operator direction first"));
+        assert!(status.contains("DRAIN QUEUE ASAP: spice task next"));
+        assert_eq!(ordinary_status(&WorkingState::default()), None);
     }
 
     #[test]
