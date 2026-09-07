@@ -403,7 +403,7 @@ fn publish_inner(
         require_clean(root, "task completion")?;
     }
     let observed_head = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
-    require_plan_integrity(meta.phase, resolution_state, opening, &observed_head)?;
+    require_plan_opening(meta.phase, resolution_state, opening)?;
     let resolution = match (resolution_state, resolution) {
         (true, Some(active)) => {
             let preflight = resolution::Preflight::capture(root)?;
@@ -411,7 +411,9 @@ fn publish_inner(
         }
         _ => None,
     };
-    let Some(target) = resolve_target(root)? else {
+    let Some((target, upstream_head)) =
+        prepare_completion_target(root, meta.phase, opening, &observed_head)?
+    else {
         return Ok(boundary(
             observed_head.clone(),
             observed_head,
@@ -420,8 +422,6 @@ fn publish_inner(
             0,
         ));
     };
-    fetch(root, &target)?;
-    let upstream_head = required_read(root, &["rev-parse", &target.baseline], "read baseline")?;
     if let Some((active, preflight)) = resolution {
         let local_commits = ahead_count(root, &target.baseline)?;
         let message = compose_message(meta);
@@ -492,11 +492,32 @@ fn publish_inner(
     ))
 }
 
-fn require_plan_integrity(
+fn prepare_completion_target(
+    root: &Path,
+    phase: &str,
+    opening: Option<&GitBoundary>,
+    observed_head: &str,
+) -> Result<Option<(Target, String)>, Error> {
+    let Some(target) = resolve_target(root)? else {
+        require_plan_synchronization(root, phase, opening, observed_head, None)?;
+        return Ok(None);
+    };
+    fetch(root, &target)?;
+    let upstream_head = required_read(root, &["rev-parse", &target.baseline], "read baseline")?;
+    require_plan_synchronization(
+        root,
+        phase,
+        opening,
+        observed_head,
+        Some((&target, &upstream_head)),
+    )?;
+    Ok(Some((target, upstream_head)))
+}
+
+fn require_plan_opening(
     phase: &str,
     resolution_state: bool,
     opening: Option<&GitBoundary>,
-    observed_head: &str,
 ) -> Result<(), Error> {
     if phase != "plan" {
         return Ok(());
@@ -506,10 +527,6 @@ fn require_plan_integrity(
             "task completion found merge-resolution state while the active claim is in plan phase",
         ));
     }
-    require_plan_boundary(opening, observed_head)
-}
-
-fn require_plan_boundary(opening: Option<&GitBoundary>, observed_head: &str) -> Result<(), Error> {
     let Some(opening) = opening else {
         return Err(plan_implementation_refusal(
             "the active plan claim has no recorded opening Git boundary",
@@ -521,10 +538,52 @@ fn require_plan_boundary(opening: Option<&GitBoundary>, observed_head: &str) -> 
             opening.local_commits,
         )));
     }
-    if observed_head != opening.integrated {
+    Ok(())
+}
+
+fn require_plan_synchronization(
+    root: &Path,
+    phase: &str,
+    opening: Option<&GitBoundary>,
+    observed_head: &str,
+    target: Option<(&Target, &str)>,
+) -> Result<(), Error> {
+    if phase != "plan" {
+        return Ok(());
+    }
+    let opening = opening.expect("plan opening was admitted before target resolution");
+    if observed_head == opening.integrated {
+        return Ok(());
+    }
+    let Some((target, upstream_head)) = target else {
         return Err(plan_implementation_refusal(format!(
-            "lane HEAD moved from plan opening {} to {observed_head}",
+            "lane HEAD moved from plan opening {} to {observed_head} without an upstream",
             opening.integrated,
+        )));
+    };
+    if opening.upstream.as_deref() != Some(target.baseline.as_str())
+        || opening.upstream_head.as_deref() != Some(opening.integrated.as_str())
+    {
+        return Err(plan_implementation_refusal(format!(
+            "plan opening Git boundary does not match current upstream {}",
+            target.baseline,
+        )));
+    }
+    if observed_head != upstream_head || !is_ancestor(root, &opening.integrated, observed_head)? {
+        return Err(plan_implementation_refusal(format!(
+            "lane HEAD moved from plan opening {} to {observed_head}, but current upstream {} is {upstream_head}",
+            opening.integrated, target.baseline,
+        )));
+    }
+    let current_head = required_read(root, &["rev-parse", "HEAD"], "recheck plan lane HEAD")?;
+    let current_upstream = required_read(
+        root,
+        &["rev-parse", &target.baseline],
+        "recheck plan upstream",
+    )?;
+    if current_head != observed_head || current_upstream != upstream_head {
+        return Err(plan_implementation_refusal(format!(
+            "plan synchronization moved during admission: HEAD {observed_head} -> {current_head}, upstream {upstream_head} -> {current_upstream}",
         )));
     }
     Ok(())
