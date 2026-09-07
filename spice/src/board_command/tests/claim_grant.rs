@@ -124,3 +124,77 @@ fn a_readable_seat_lets_the_boundary_refusal_reach_the_caller() {
         "a seat that reads clean leaves the boundary refusal as the first one",
     );
 }
+
+#[test]
+fn intermediate_dependency_movement_refuses_before_closing_a_cycle() {
+    let (root, bus, epoch, _) = fixture("dependency-intermediate-race", 1);
+    let target = todo_task(&bus, epoch, "RACE-target01", "Target");
+    let direct = todo_task(&bus, epoch, "RACE-direct01", "Direct");
+    let intermediate = todo_task(&bus, epoch, "RACE-middle01", "Intermediate");
+    connect_child(&bus, epoch, &direct, &intermediate);
+    let stale = board(&bus, epoch, Actor::Operator);
+    let witnesses = dependency_witnesses(&stale, &target, &[&direct], None, false);
+    let intent = TaskDepends {
+        task: target.clone(),
+        after: vec![direct],
+    };
+    let command = fixture_command(
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskDepends,
+        witnesses,
+        &intent,
+    );
+    let outcome = task_depends_with(
+        &bus,
+        &command,
+        &intent,
+        &guard_projects(),
+        &board::NextConfig::default(),
+        || connect_child(&bus, epoch, &intermediate, &target),
+    );
+    assert!(
+        matches!(outcome, Outcome::Refusal(ref refusal) if refusal.reason() == "board::witness-moved"),
+        "intermediate graph movement must lose the commit race: {outcome:?}",
+    );
+    assert!(
+        at(&board(&bus, epoch, Actor::Operator), &target)
+            .statement
+            .body
+            .dependencies
+            .is_empty()
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn fresh_absent_lane_authority_refuses_without_an_edge() {
+    let (root, bus, epoch, seats) = fixture("dependency-absent-lane", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let task = todo_task(&bus, epoch, "AUTH-fresh001", "Target");
+    let after = todo_task(&bus, epoch, "AUTH-fresh002", "After");
+    let fresh = board(&bus, epoch, lane.clone());
+    let outcome = issue(
+        &bus,
+        epoch,
+        lane,
+        CommandKind::TaskDepends,
+        dependency_witnesses(&fresh, &task, &[&after], None, false),
+        &TaskDepends {
+            task: task.clone(),
+            after: vec![after],
+        },
+    );
+    assert!(
+        matches!(outcome, Outcome::Refusal(ref refusal) if refusal.reason() == "claim::ownership-refused"),
+        "fresh absent lane authority must refuse: {outcome:?}",
+    );
+    assert!(
+        at(&board(&bus, epoch, Actor::Operator), &task)
+            .statement
+            .body
+            .dependencies
+            .is_empty()
+    );
+    clean(&root, bus);
+}

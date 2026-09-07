@@ -1,6 +1,6 @@
 use super::*;
 
-fn dependency_witnesses(
+pub(super) fn dependency_witnesses(
     answer: &BoardAnswer,
     task: &TaskHandle,
     after: &[&TaskHandle],
@@ -18,6 +18,7 @@ fn dependency_witnesses(
             claim_witness(heads),
         ]
     };
+    let mut new_edges = Vec::new();
     for dependency in after {
         let prerequisite = at(answer, dependency);
         expected.extend([
@@ -28,8 +29,23 @@ fn dependency_witnesses(
                 after: prerequisite.statement.body.born.clone(),
             },
         ]);
+        if !heads
+            .statement
+            .body
+            .dependencies
+            .contains(&prerequisite.statement.body.born)
+            && !new_edges.contains(&prerequisite.statement.body.born)
+        {
+            new_edges.push(prerequisite.statement.body.born.clone());
+        }
     }
+    append_dependency_reachability_witnesses(answer, &new_edges, &mut expected)
+        .expect("fixture reachability witnesses resolve");
     expected
+}
+
+pub(super) fn todo_task(bus: &Bus, epoch: CanonicalUuid, task: &str, title: &str) -> TaskHandle {
+    add(bus, epoch, Actor::Operator, task, title, Some("todo"))
 }
 
 #[test]
@@ -45,22 +61,8 @@ fn active_todo_claim_appends_atomically_without_moving_possession() {
         Some("todo,review"),
     );
     claim_task(&bus, epoch, &seats[0], &lane, &todo);
-    let first = add(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "DEP-first0001",
-        "First prerequisite",
-        Some("todo"),
-    );
-    let second = add(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "DEP-second001",
-        "Second prerequisite",
-        Some("todo"),
-    );
+    let first = todo_task(&bus, epoch, "DEP-first0001", "First prerequisite");
+    let second = todo_task(&bus, epoch, "DEP-second001", "Second prerequisite");
     let before = board(&bus, epoch, lane.clone());
     let before_heads = at(&before, &todo);
     let claim = before_heads.claim.as_ref().expect("todo claim").position;
@@ -117,14 +119,7 @@ fn duplicate_claimed_dependencies_advance_the_revision_without_adding_edges() {
         Some("todo,review"),
     );
     claim_task(&bus, epoch, &seats[0], &lane, &todo);
-    let dependency = add(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "DEP-existing01",
-        "Existing prerequisite",
-        Some("todo"),
-    );
+    let dependency = todo_task(&bus, epoch, "DEP-existing01", "Existing prerequisite");
     let before = board(&bus, epoch, lane.clone());
     assert_committed(issue(
         &bus,
@@ -186,14 +181,7 @@ fn active_review_claim_survives_a_dependency_edit_and_restart() {
     claim_and_complete_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &review);
     let reviewer = Actor::Lane(seats[0].lane);
     claim_task(&bus, epoch, &seats[0], &reviewer, &review);
-    let dependency = add(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "DEP-reviewdep1",
-        "Review prerequisite",
-        Some("todo"),
-    );
+    let dependency = todo_task(&bus, epoch, "DEP-reviewdep1", "Review prerequisite");
     let held = board(&bus, epoch, reviewer.clone());
     let review_claim = at(&held, &review)
         .claim
@@ -241,22 +229,8 @@ fn active_review_claim_survives_a_dependency_edit_and_restart() {
 #[test]
 fn dependency_cycle_refuses_the_whole_requested_edit() {
     let (root, bus, epoch, _) = fixture("dependency-cycle", 1);
-    let first = add(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "CYCLE-first01",
-        "First",
-        Some("todo"),
-    );
-    let second = add(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "CYCLE-second1",
-        "Second",
-        Some("todo"),
-    );
+    let first = todo_task(&bus, epoch, "CYCLE-first01", "First");
+    let second = todo_task(&bus, epoch, "CYCLE-second1", "Second");
     connect_child(&bus, epoch, &first, &second);
     let before = board(&bus, epoch, Actor::Operator);
     let outcome = issue(
@@ -289,23 +263,9 @@ fn foreign_claim_authority_refuses_without_an_edge() {
     let (root, bus, epoch, seats) = fixture("dependency-authority", 2);
     let owner = Actor::Lane(seats[0].lane);
     let foreign = Actor::Lane(seats[1].lane);
-    let task = add(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "AUTH-task0001",
-        "Claimed task",
-        Some("todo"),
-    );
+    let task = todo_task(&bus, epoch, "AUTH-task0001", "Claimed task");
     claim_task(&bus, epoch, &seats[0], &owner, &task);
-    let dependency = add(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "AUTH-after001",
-        "Prerequisite",
-        Some("todo"),
-    );
+    let dependency = todo_task(&bus, epoch, "AUTH-after001", "Prerequisite");
 
     let foreign_view = board(&bus, epoch, foreign.clone());
     let outcome = issue(
@@ -334,28 +294,13 @@ fn foreign_claim_authority_refuses_without_an_edge() {
 }
 
 #[test]
-fn moved_claim_authority_refuses_without_an_edge() {
+fn fresh_freed_claim_authority_refuses_without_an_edge() {
     let (root, bus, epoch, seats) = fixture("moved-dependency-authority", 1);
     let owner = Actor::Lane(seats[0].lane);
-    let task = add(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "MOVE-task0001",
-        "Claimed task",
-        Some("todo"),
-    );
+    let task = todo_task(&bus, epoch, "MOVE-task0001", "Claimed task");
     claim_task(&bus, epoch, &seats[0], &owner, &task);
-    let dependency = add(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "MOVE-after001",
-        "Prerequisite",
-        Some("todo"),
-    );
+    let dependency = todo_task(&bus, epoch, "MOVE-after001", "Prerequisite");
     let held = board(&bus, epoch, owner.clone());
-    let stale = dependency_witnesses(&held, &task, &[&dependency], Some(&seats[0]), false);
     let heads = at(&held, &task);
     assert_committed(issue(
         &bus,
@@ -372,20 +317,21 @@ fn moved_claim_authority_refuses_without_an_edge() {
         ],
         &TaskRef { task: task.clone() },
     ));
+    let fresh = board(&bus, epoch, owner.clone());
     let outcome = issue(
         &bus,
         epoch,
         owner,
         CommandKind::TaskDepends,
-        stale,
+        dependency_witnesses(&fresh, &task, &[&dependency], None, false),
         &TaskDepends {
             task: task.clone(),
             after: vec![dependency],
         },
     );
     assert!(
-        matches!(outcome, Outcome::Refusal(ref refusal) if refusal.reason() == "board::witness-moved"),
-        "moved claim witness must refuse: {outcome:?}",
+        matches!(outcome, Outcome::Refusal(ref refusal) if refusal.reason() == "claim::ownership-refused"),
+        "moved claim authority must refuse: {outcome:?}",
     );
     assert!(
         at(&board(&bus, epoch, Actor::Operator), &task)

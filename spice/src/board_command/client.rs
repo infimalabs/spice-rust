@@ -599,6 +599,7 @@ fn client_depends(
                 new_edges.push(born.clone());
             }
         }
+        append_dependency_reachability_witnesses(board, &new_edges, &mut expected)?;
         Ok((
             CommandKind::TaskDepends,
             expected,

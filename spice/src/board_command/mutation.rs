@@ -907,6 +907,18 @@ pub(super) fn task_depends(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
+    task_depends_with(bus, command, depends, projects, allocation, || {})
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(super) fn task_depends_with(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    depends: &TaskDepends,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+    after_validation: impl FnOnce(),
+) -> Outcome<CommandAnswer> {
     let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
@@ -926,6 +938,7 @@ pub(super) fn task_depends(
         Ok(statement) => statement,
         Err(outcome) => return outcome,
     };
+    after_validation();
     let post = match Entry::new(
         statement.clone(),
         entry.workflow().clone(),
@@ -1095,78 +1108,6 @@ fn dependency_reaches(entries: &[Entry], start: &TaskStamp, target: &TaskStamp) 
         }
     }
     false
-}
-
-fn dependency_claim_authority(
-    snapshot: &ValidatedSnapshot,
-    entry: &Entry,
-    command: &wire::AdmittedCommand,
-    at: Instant,
-) -> Result<(), Outcome<CommandAnswer>> {
-    let Some(claim) = entry
-        .claim()
-        .filter(|claim| claim.disposition == ClaimDisposition::Active)
-    else {
-        return Ok(());
-    };
-    let Actor::Lane(lane) = command.actor() else {
-        return Err(refusal(
-            "claim::lane-required",
-            Some(command.actor().to_string()),
-            "append dependencies through the lane capability that owns the active claim",
-        ));
-    };
-    if claim.actor != *command.actor() || claim.lane != *lane {
-        return Err(refusal(
-            "claim::ownership-refused",
-            Some(claim.actor.to_string()),
-            "append dependencies through the lane capability that owns the active claim",
-        ));
-    }
-    board::Active::admit(entry, command.actor(), at).map_err(|error| {
-        refusal(
-            "claim::active-refused",
-            Some(error.to_string()),
-            "reclaim the current active task before editing its dependencies",
-        )
-    })?;
-    let has_lease = command
-        .expected()
-        .iter()
-        .any(|witness| matches!(witness, Witness::Lease { task, .. } if task == entry.born()));
-    let has_residency = command.expected().iter().any(|witness| {
-        matches!(witness, Witness::Residency { lane: witnessed, .. } if witnessed == lane)
-    });
-    let has_assignment = command
-        .expected()
-        .iter()
-        .any(|witness| matches!(witness, Witness::Assignment { task, .. } if task == entry.born()));
-    if !has_lease
-        || !has_residency
-        || (entry.workflow().phase.as_str() == "review" && !has_assignment)
-    {
-        return Err(protocol_fault(
-            "task::dependency-claim-witness-missing",
-            "an active claimed dependency edit must bind lease, residency, and review assignment authority",
-        ));
-    }
-    let residency = &snapshot.answer.residency.body;
-    let occupant = residency
-        .lanes
-        .iter()
-        .find(|seat| seat.lane == *lane && seat.disposition == "occupied")
-        .and_then(|seat| seat.occupant);
-    if residency.epoch != command.epoch()
-        || claim.epoch != command.epoch()
-        || occupant != Some(claim.occupant)
-    {
-        return Err(refusal(
-            "claim::residency-moved",
-            Some(entry.handle().to_string()),
-            "reclaim the task under the current lane occupant before editing dependencies",
-        ));
-    }
-    Ok(())
 }
 
 /// Replace an unsettled task statement in place, at a fresh revision.
