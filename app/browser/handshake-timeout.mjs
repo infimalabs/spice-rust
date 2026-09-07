@@ -89,8 +89,6 @@ export async function assertHandshakeTimeout(browser, residentEndpoint) {
     });
     const firstClosed = observedEvent(events, "close:0");
     const secondRequest = observedEvent(events, "request:1");
-    await page.getByLabel("Open Spice Canvas menu").waitFor();
-    await chooseCanvasView(page, "Chronology");
     const status = page.locator(".status.offline");
     // Two handshakes wide, not one. `Offline` is not a resting state the page
     // settles into here -- `run_surface` sets it, sleeps the backoff, and clears
@@ -107,12 +105,25 @@ export async function assertHandshakeTimeout(browser, residentEndpoint) {
     // one only if the setup above happened to be slow -- so a fast machine got a
     // single chance at it and a loaded one missed it. Spanning the second island
     // makes the wait independent of how long the setup took.
+    //
+    // Arm before optional UI navigation so a healthy run observes the first
+    // island instead of routinely paying for the second handshake. The wider
+    // production-derived bound remains the fallback when rendering starts late.
     const statusOutcome = status
       .waitFor({
         timeout:
           2 * HANDSHAKE_TIMEOUT_MS + RECONNECT_BASE_MS + renderedToleranceMilliseconds,
       })
-      .then(() => null, (error) => error);
+      .then(async () => {
+        const [renderedLabel, described] = await Promise.all([
+          status.locator(".status-copy").innerText(),
+          describeConnection(page),
+        ]);
+        return { observation: { renderedLabel, described } };
+      })
+      .catch((error) => ({ error }));
+    await page.getByLabel("Open Spice Canvas menu").waitFor();
+    await chooseCanvasView(page, "Chronology");
     const [closed, second] = await Promise.all([firstClosed, secondRequest]);
     assert.ok(closed.closed <= second.opened, "the first Fetch closes before its retry begins");
     assert.equal(state.maximumOpen, 1, "retry never accumulates stalled bootstrap requests");
@@ -132,15 +143,14 @@ export async function assertHandshakeTimeout(browser, residentEndpoint) {
           dispatchToleranceMilliseconds,
       "the retry includes the production reconnect interval after the deadline",
     );
-    const statusFailure = await statusOutcome;
-    if (statusFailure) throw statusFailure;
-    const renderedLabel = await status.locator(".status-copy").innerText();
+    const statusResult = await statusOutcome;
+    if ("error" in statusResult) throw statusResult.error;
+    const { renderedLabel, described } = statusResult.observation;
     assert.match(
       renderedLabel,
       renderedHandshakeReason,
       "rendered Offline state names the bounded handshake",
     );
-    const described = await describeConnection(page);
     assert.equal(described.rendered, true, "describeConnection sees the rendered status");
     assert.match(described.classes, /\boffline\b/, "describeConnection sees Offline");
     assert.match(
