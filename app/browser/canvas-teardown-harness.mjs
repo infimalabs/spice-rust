@@ -46,18 +46,21 @@ const fixture = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-teardo
 const linkedRoot = await realpath(await mkdtemp(join(tmpdir(), "spice-canvas-teardown-lanes-")));
 const owner = ownFixture({ fixture, linkedRoot });
 
-/// Keep the event loop alive while the parent decides how to end this run.
+/// Keep the event loop alive while the parent decides how to end this run, and
+/// observe parent death through the IPC channel that owns this harness.
 ///
-/// A bare unresolved promise would not: with no referenced handle pending, Node
-/// considers the loop drained and exits cleanly, which would make the interrupt
-/// this harness exists to receive arrive at a process that had already gone.
-/// The same tick also notices a parent that has already gone. The absolute
-/// value matters: a harness first observed after reparenting already reads 1,
-/// so comparing against an earlier sample would miss that state forever.
+/// The channel is both the referenced event-loop handle and the exact parent
+/// lifecycle signal. A disconnect wakes immediately; it does not wait for a
+/// sampled `ppid` interval after the operating system has already closed the
+/// parent endpoint.
 let endIdleWait = () => {};
-const heartbeat = setInterval(() => {
-  if (process.ppid === 1) endIdleWait();
-}, 1_000);
+let parentDisconnected = false;
+assert.equal(process.connected, true, "the teardown harness has a parent-liveness IPC channel");
+const onParentDisconnect = () => {
+  parentDisconnected = true;
+  endIdleWait();
+};
+process.once("disconnect", onParentDisconnect);
 
 let browser;
 try {
@@ -92,13 +95,11 @@ try {
   assert.ok(vendors.length > 0, "the fixture launched at least one vendor stand-in");
   const beforeBrowser = new Set(descendantPids());
   browser = await launchBrowser();
-  await new Promise((wake) => setTimeout(wake, 100));
-  const firstBrowserSnapshot = new Set(
-    descendantPids().filter((pid) => !beforeBrowser.has(pid)),
-  );
-  await new Promise((wake) => setTimeout(wake, 500));
+  // `launchBrowser` returns only after a real context, page, and browser-side
+  // user-agent evaluation complete. Descendants present at that event are the
+  // live browser ownership set; another two time samples add delay, not proof.
   const browsers = descendantPids().filter(
-    (pid) => firstBrowserSnapshot.has(pid) && !beforeBrowser.has(pid),
+    (pid) => !beforeBrowser.has(pid),
   );
   assert.ok(browsers.length > 0, "the fixture launched at least one browser descendant");
   // The resident is named alongside its occupants because it is the other half
@@ -129,9 +130,12 @@ try {
   // idle and mute: a live parent ends this process after reading the line. If
   // that parent is gone instead, the heartbeat resolves this same wait so the
   // fixture still crosses its normal finally boundary.
-  await new Promise((resolve) => { endIdleWait = resolve; });
+  await new Promise((resolve) => {
+    endIdleWait = resolve;
+    if (parentDisconnected) resolve();
+  });
 } finally {
-  clearInterval(heartbeat);
+  process.off("disconnect", onParentDisconnect);
   try {
     if (browser) await browser.close();
   } finally {
