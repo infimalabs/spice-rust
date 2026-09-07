@@ -92,6 +92,7 @@ fn install_residency(journal: &mut Journal, repository: &Repository, authority: 
             disposition: "occupied".to_owned(),
         }],
         subscriptions: Vec::new(),
+        renewals: Vec::new(),
     });
     journal
         .apply(residency)
@@ -99,7 +100,7 @@ fn install_residency(journal: &mut Journal, repository: &Repository, authority: 
 }
 
 fn install_task(journal: &mut Journal, now: Instant) -> TaskStamp {
-    let task = TaskStamp::for_millis(1).expect("verify fixture task stamp");
+    let task = TaskStamp::for_micros(1).expect("verify fixture task stamp");
     let flow = ["todo", "verify", "review"]
         .map(|phase| phase.parse().expect("verify fixture phase"))
         .to_vec();
@@ -122,6 +123,9 @@ fn install_task(journal: &mut Journal, now: Instant) -> TaskStamp {
                 project: "task.verify".to_owned(),
                 tags: Vec::new(),
                 depends: Vec::new(),
+                creation: wire::body::TaskCreationContext::unavailable(
+                    wire::body::TaskCreationUnavailable::SpiceActor,
+                ),
                 flow: flow.clone(),
                 phase: verify.clone(),
                 revision: 1,
@@ -142,6 +146,9 @@ fn install_task(journal: &mut Journal, now: Instant) -> TaskStamp {
         provenance: "task:verify-fixture"
             .parse()
             .expect("verify fixture provenance"),
+        creation: wire::body::TaskCreationContext::unavailable(
+            wire::body::TaskCreationUnavailable::SpiceActor,
+        ),
         revision,
     });
     let workflow_task = task.clone();

@@ -7,13 +7,25 @@ use serde_json::Value;
 use wire::body::{SteerSent, SteeringStage};
 use wire::{Actor, Disposition, Origin, Producer, SteeringHead};
 
-use super::{admit_index, due_stage, missing_stages};
+use super::{admit_index, due_stage, mint_key_at, missing_stages};
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 const DIRECTIVE: &str = "018f82d4-6f59-7d06-92e3-bce913116399";
 const OTHER_DIRECTIVE: &str = "018f82d4-6f59-7d06-92e3-bce913116398";
 const KEY: &str = "1kJK6N3R";
 const OTHER_KEY: &str = "1kJK6N3S";
+
+#[test]
+fn steering_key_clock_mints_current_microseconds_and_advances_one_collision() {
+    let now = 1_788_810_000_000_000_i64;
+    let first = mint_key_at(None, now).expect("current key");
+    let collision = mint_key_at(Some(now), now).expect("collision key");
+    let future = mint_key_at(Some(now + 10), now).expect("indexed future key");
+    assert_eq!(first.as_str().len(), steer::Key::WIDTH);
+    assert_eq!(first.minted_micros(), Some(now));
+    assert_eq!(collision.minted_micros(), Some(now + 1));
+    assert_eq!(future.minted_micros(), Some(now + 11));
+}
 
 #[test]
 fn successful_forward_publication_removes_only_the_obsolete_rendering() {
@@ -229,7 +241,7 @@ fn send_write(directive: &str, key: &str) -> JournalWrite {
         disposition: Disposition::Live,
         origin: origin(),
         created: seq,
-        minted_millis: None,
+        minted_micros: None,
     });
     write
 }
@@ -242,7 +254,7 @@ fn stored_fold(connection: &rusqlite::Connection) -> StoredFold {
         .expect("read steering cursor");
     let mut statement = connection
         .prepare(
-            "SELECT directive, steer_key, lane, disposition, created_seq, minted_millis, \
+            "SELECT directive, steer_key, lane, disposition, created_seq, minted_micros, \
              head_seq, body FROM steering_heads ORDER BY directive",
         )
         .expect("prepare steering fold read");
@@ -254,7 +266,7 @@ fn stored_fold(connection: &rusqlite::Connection) -> StoredFold {
                 lane: row.get(2)?,
                 disposition: row.get(3)?,
                 created: row.get(4)?,
-                minted_millis: row.get(5)?,
+                minted_micros: row.get(5)?,
                 position: row.get(6)?,
                 body: row.get(7)?,
             })
@@ -278,7 +290,7 @@ struct StoredHead {
     lane: String,
     disposition: String,
     created: i64,
-    minted_millis: Option<i64>,
+    minted_micros: Option<i64>,
     position: i64,
     body: Vec<u8>,
 }

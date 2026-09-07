@@ -23,7 +23,7 @@ pub(super) fn stamp(text: &str) -> wire::TaskStamp {
     let value = text.bytes().fold(0_i64, |value, byte| {
         (value * 131 + i64::from(byte)) % 10_000_000_000_000
     });
-    wire::TaskStamp::for_millis(value).expect("fixture name fits the task stamp codec")
+    wire::TaskStamp::for_micros(value).expect("fixture name fits the task stamp codec")
 }
 
 pub(super) fn fixture(name: &str, lane_count: usize) -> (PathBuf, Bus, CanonicalUuid, Vec<Seat>) {

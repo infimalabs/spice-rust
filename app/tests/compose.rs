@@ -170,9 +170,9 @@ fn steering_a_blank_message_is_refused_by_name() {
 
 #[test]
 fn a_task_observation_returns_the_typed_handle_and_trimmed_text() {
-    let note = compose::note("  SPICE-aBcD  ", "  one observation  ")
+    let note = compose::note("  SPICE-1kKRRsDP  ", "  one observation  ")
         .expect("a complete task observation composes");
-    assert_eq!(note.task.as_str(), "SPICE-aBcD");
+    assert_eq!(note.task.as_str(), "SPICE-1kKRRsDP");
     assert_eq!(note.text, "one observation");
 }
 
@@ -209,7 +209,7 @@ fn note_fields_refuse_in_form_order() {
     let task = compose::note(" ", " ").expect_err("a blank form refuses its task first");
     assert!(task.to_string().starts_with("Task is required"));
 
-    let observation = compose::note("SPICE-aBcD", " ")
+    let observation = compose::note("SPICE-1kKRRsDP", " ")
         .expect_err("a blank observation refuses after a valid task");
     assert!(
         observation

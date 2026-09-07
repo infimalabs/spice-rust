@@ -142,6 +142,44 @@ fn a_mixed_historical_and_live_header_parses_every_key_in_source_order() {
     );
 }
 
+#[test]
+fn one_header_retires_mixed_width_keys_at_longest_valid_boundaries() {
+    let retained = "1kR5xJDD".parse::<Key>().expect("retained key");
+    let pre_codec = "YTVtQvOX".parse::<Key>().expect("pre-codec retained key");
+    let current = Key::for_micros(1_788_810_000_000_000).expect("current key");
+    let standing = Board(BTreeMap::from([
+        (retained.clone(), Disposition::Live),
+        (pre_codec.clone(), Disposition::Live),
+        (current.clone(), Disposition::Live),
+    ]));
+    let prose = format!("ACK {retained} {pre_codec} {current}: every retained mint retires.");
+    let outcomes = scan(&prose, &standing);
+    assert_eq!(outcomes.len(), 3);
+    assert!(matches!(
+        &outcomes[0].outcome,
+        Outcome::Retired { key, .. } if key == &retained
+    ));
+    assert!(matches!(
+        &outcomes[1].outcome,
+        Outcome::Retired { key, .. } if key == &pre_codec
+    ));
+    assert!(matches!(
+        &outcomes[2].outcome,
+        Outcome::Retired { key, .. } if key == &current
+    ));
+
+    for malformed in [
+        format!("ACK {current}0: overlong."),
+        "ACK 1kR5xJDDa: legacy token followed by a non-current digit.".to_owned(),
+        "ACK 1kR5xADDo: current width with a vowel.".to_owned(),
+    ] {
+        assert!(
+            scan(&malformed, &standing).is_empty(),
+            "accepted {malformed:?}"
+        );
+    }
+}
+
 /// A refusal is a disposition, not an absence of one.
 #[test]
 fn a_refusal_retires_the_directive_as_declined() {
@@ -224,6 +262,7 @@ fn prose_about_acknowledging_is_silent() {
         "ACK",
         "ACK: nothing named",
         "acking is not ACKing 1kJK6N3R without a colon",
+        "I will ACK something after checking the result.",
     ] {
         assert!(
             scan(quiet, &board).is_empty(),

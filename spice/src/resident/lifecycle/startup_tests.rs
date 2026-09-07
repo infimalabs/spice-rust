@@ -233,7 +233,7 @@ fn assert_drain_launch(
 }
 
 fn seed_selectable_task(bus: &Bus) -> wire::TaskStamp {
-    let task = wire::TaskStamp::for_millis(1_900_000_000_000).expect("fixture task stamp");
+    let task = wire::TaskStamp::for_micros(1_900_000_000_000).expect("fixture task stamp");
     let handle = wire::TaskHandle::for_project("task.lifecycle", &task);
     let origin = format!("task:{handle}")
         .parse::<wire::Origin>()

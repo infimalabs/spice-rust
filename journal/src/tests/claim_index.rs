@@ -176,6 +176,7 @@ fn schema_seven_claim_heads_backfill_the_index_once() {
     let scratch = Scratch::new();
     let path = scratch.path().join("schema-seven.sqlite3");
     let old = authority_file_fixture(&path);
+    downgrade_steering_index_to_millis(&old.connection);
     old.connection
         .execute_batch(
             "DROP TABLE claim_index;
@@ -217,8 +218,8 @@ fn measured_claim_authority(journal: &Journal) -> crate::guard::IndexedReadMetri
 }
 
 fn add_unclaimed_task(write: &mut JournalWrite, offset: u64) -> TaskStamp {
-    let millis = i64::try_from(10_000 + offset).expect("scale task offset fits i64");
-    let task = TaskStamp::for_millis(millis).expect("scale task stamp");
+    let micros = i64::try_from(10_000 + offset).expect("scale task offset fits i64");
+    let task = TaskStamp::for_micros(micros).expect("scale task stamp");
     let title = format!("Unrelated board task {offset}");
     let flow = vec![phase("todo"), phase("review")];
     let fact = write

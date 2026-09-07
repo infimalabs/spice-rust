@@ -285,7 +285,7 @@ fn fixture_stamp(label: &str) -> wire::TaskStamp {
     let value = label.bytes().fold(0_i64, |value, byte| {
         (value * 131 + i64::from(byte)) % 10_000_000_000_000
     });
-    wire::TaskStamp::for_millis(value).expect("fixture task stamp")
+    wire::TaskStamp::for_micros(value).expect("fixture task stamp")
 }
 
 fn board_task(label: &str, _id: &str, title: &str, project: &str) -> wire::intent::BoardTask {

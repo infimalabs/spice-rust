@@ -8,6 +8,31 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 #[path = "support/git_repository.rs"]
 mod git_repository;
+#[path = "support/verify_claim.rs"]
+mod verify_claim_fixture;
+
+#[test]
+fn verify_claim_fixture_recognizes_only_the_full_gate_surface() {
+    assert!(verify_claim_fixture::selects_full_gate(&["gate"]));
+    assert!(verify_claim_fixture::selects_full_gate(&["--json", "gate"]));
+    assert!(!verify_claim_fixture::selects_full_gate(&[
+        "gate",
+        "selection"
+    ]));
+
+    let fixture = Fixture::new();
+    verify_claim_fixture::install(&fixture.repository);
+    let repository = spice::repository::Repository::discover(&fixture.repository)
+        .expect("verify fixture repository resolves");
+    assert!(
+        repository
+            .admit_state()
+            .expect("verify fixture state paths admit")
+            .journal()
+            .is_file(),
+        "verify authority installation creates the current journal"
+    );
+}
 
 #[test]
 fn selection_is_one_typed_public_leaf_with_exact_arity() {

@@ -357,7 +357,7 @@ fn a_withdrawn_prerequisite_releases_the_task_that_waited_on_it() {
         "A prerequisite filed by mistake",
         Some("todo"),
     );
-    let dependent_stamp = wire::TaskStamp::for_millis(40_004).expect("fixture task stamp");
+    let dependent_stamp = wire::TaskStamp::for_micros(40_004).expect("fixture task stamp");
     let dependent = TaskHandle::for_project("board.test", &dependent_stamp);
     assert_committed(issue(
         &bus,
@@ -425,7 +425,7 @@ fn a_released_dependent_is_not_still_reported_blocked() {
         "A prerequisite filed by mistake",
         Some("todo"),
     );
-    let dependent_stamp = wire::TaskStamp::for_millis(40_009).expect("fixture task stamp");
+    let dependent_stamp = wire::TaskStamp::for_micros(40_009).expect("fixture task stamp");
     assert_committed(issue(
         &bus,
         epoch,

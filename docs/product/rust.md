@@ -52,19 +52,40 @@ Authorities: [`gate/src/change_selection.rs`](../../gate/src/change_selection.rs
 
 ## Task identity codec
 
-Rust stores every task's `born` identity as exactly eight ASCII characters. It
-encodes a nonnegative epoch millisecond in fixed-width base 52 with the exact
-ordered alphabet
+Rust mints every current task's `born` identity as exactly nine ASCII
+characters encoding nonnegative Unix microseconds in fixed-width base 52 with
+the exact ordered alphabet
 `0123456789BCDFGHJKLMNPQRSTVWXYZbcdfghjklmnpqrstvwxyz`. Ordinary string order
-therefore equals birth order, and the omitted vowels keep a minted stamp
-out of prose-shaped words. An instant outside the eight-character space
-refuses. When minting collides with an existing stamp, Rust advances the
-represented instant by exactly one millisecond until the stamp is free; it
-never appends randomness or entropy.
+equals birth order within that current generation, and the omitted vowels keep
+a minted stamp out of prose-shaped words. The 52⁹ space spans about 88.09 years
+from the Unix epoch; its most-significant digit advances about every 1.69 years,
+the 2026 era begins with `d`, and the first instant outside the space is near
+2058-02-02. An out-of-range instant refuses instead of wrapping. A collision
+advances exactly one microsecond until the stamp is free; it never appends
+randomness or entropy.
+
+Retained eight-character base-52 Unix-millisecond stamps remain readable in
+facts, heads, handles, CLI operands, origins, indexes, and Canvas presentation.
+They are never minted by current creation. Mixed-width equality, hashing, and
+ordered collections remain deterministic, but ordinary string order across
+the two codec generations is not chronology; journal sequence and durable queue
+origin remain that authority.
+
+Steering uses the same nine-character microsecond codec for current keys and
+identity-derived inbox seals. Parsing also admits retained eight-character
+alphanumeric keys; an eight-character vowel-free key contributes its decoded
+millisecond multiplied by 1,000 to the microsecond high-water, while an older
+base-62 key outside the current alphabet contributes no invented time. Schema
+14 migrates the rebuildable steering head/index representation once from
+`minted_millis` to `minted_micros` without rewriting immutable facts.
 
 Authority: [`wire/src/witness.rs`](../../wire/src/witness.rs). Executable
 coverage lives in
 [`spice/src/board_command/tests/task_listing.rs`](../../spice/src/board_command/tests/task_listing.rs).
+Steering codec coverage lives in
+[`steer/src/ack/keys.rs`](../../steer/src/ack/keys.rs),
+[`steer/tests/scan.rs`](../../steer/tests/scan.rs), and
+[`journal/src/migrate/steering_microseconds.rs`](../../journal/src/migrate/steering_microseconds.rs).
 
 ## Session boundary
 

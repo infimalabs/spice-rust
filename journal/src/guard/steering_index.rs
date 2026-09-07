@@ -28,11 +28,11 @@ impl JournalRead<'_> {
     ) -> Result<Vec<JournalHead<wire::SteeringHead>>, GuardError> {
         self.require_current_steering_index()?;
         let sql = if lane.is_some() {
-            "SELECT directive, steer_key, lane, disposition, created_seq, minted_millis, \
+            "SELECT directive, steer_key, lane, disposition, created_seq, minted_micros, \
              head_seq, body FROM steering_heads WHERE disposition = 'live' AND lane = ?1 \
              ORDER BY created_seq"
         } else {
-            "SELECT directive, steer_key, lane, disposition, created_seq, minted_millis, \
+            "SELECT directive, steer_key, lane, disposition, created_seq, minted_micros, \
              head_seq, body FROM steering_heads WHERE disposition = 'live' ORDER BY created_seq"
         };
         let mut statement = self.connection.prepare(sql).map_err(GuardError::Store)?;
@@ -76,7 +76,7 @@ impl JournalRead<'_> {
             .prepare(
                 "WITH ranked AS (\
                  SELECT steering.directive, steering.steer_key, steering.lane, \
-                 steering.disposition, steering.created_seq, steering.minted_millis, \
+                 steering.disposition, steering.created_seq, steering.minted_micros, \
                  steering.head_seq, steering.body, \
                  ROW_NUMBER() OVER (\
                    PARTITION BY steering.lane ORDER BY steering.created_seq DESC\
@@ -85,7 +85,7 @@ impl JournalRead<'_> {
                  JOIN fact_envelopes AS creating ON creating.seq = steering.created_seq \
                  WHERE creating.kind = ?1 AND creating.actor = ?2\
                  ) \
-                 SELECT directive, steer_key, lane, disposition, created_seq, minted_millis, \
+                 SELECT directive, steer_key, lane, disposition, created_seq, minted_micros, \
                  head_seq, body FROM ranked WHERE lane_rank <= ?3 ORDER BY created_seq",
             )
             .map_err(GuardError::Store)?;
@@ -110,12 +110,12 @@ impl JournalRead<'_> {
     }
 
     /// Greatest moment already consumed by the current key mint.
-    pub fn steering_minted_millis(&self) -> Result<Option<i64>, GuardError> {
+    pub fn steering_minted_micros(&self) -> Result<Option<i64>, GuardError> {
         self.require_current_steering_index()?;
         read_metrics::observe_query();
         let maximum = self
             .connection
-            .query_row("SELECT MAX(minted_millis) FROM steering_heads", [], |row| {
+            .query_row("SELECT MAX(minted_micros) FROM steering_heads", [], |row| {
                 row.get(0)
             })
             .map_err(GuardError::Store)?;
@@ -153,7 +153,7 @@ impl JournalRead<'_> {
     ) -> Result<Option<JournalHead<wire::SteeringHead>>, GuardError> {
         self.require_current_steering_index()?;
         let sql = format!(
-            "SELECT directive, steer_key, lane, disposition, created_seq, minted_millis, \
+            "SELECT directive, steer_key, lane, disposition, created_seq, minted_micros, \
              head_seq, body FROM steering_heads WHERE {column} = ?1"
         );
         let row = self
@@ -200,7 +200,7 @@ impl JournalRead<'_> {
             || head.body.lane.to_string() != row.lane
             || disposition_name(head.body.disposition) != row.disposition
             || i64::try_from(head.body.created.get()).ok() != Some(row.created_seq)
-            || head.body.minted_millis != row.minted_millis
+            || head.body.minted_micros != row.minted_micros
         {
             return Err(GuardError::Invalid(format!(
                 "steering head {} indexed columns disagree with its body",
@@ -229,7 +229,7 @@ struct SteeringColumns {
     lane: String,
     disposition: String,
     created_seq: i64,
-    minted_millis: Option<i64>,
+    minted_micros: Option<i64>,
     head_seq: i64,
     body: Vec<u8>,
 }
@@ -241,7 +241,7 @@ fn read_steering_columns(row: &rusqlite::Row<'_>) -> rusqlite::Result<SteeringCo
         lane: row.get(2)?,
         disposition: row.get(3)?,
         created_seq: row.get(4)?,
-        minted_millis: row.get(5)?,
+        minted_micros: row.get(5)?,
         head_seq: row.get(6)?,
         body: row.get(7)?,
     })

@@ -43,7 +43,7 @@ const COMMAND: &str = r#"{
     }
   ],
   "body": {
-    "task": "SPICE-aBcD",
+    "task": "SPICE-1kKRRsDP",
     "validation": "cargo test --workspace"
   }
 }"#;

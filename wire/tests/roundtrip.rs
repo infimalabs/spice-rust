@@ -61,7 +61,7 @@ const ENVELOPE: &str = r#"{
   "seq": 48213,
   "at": "2030-04-12T18:44:09.271Z",
   "actor": "lane:018f82d4-6f59-7d06-92e3-bce9131163c2",
-  "origin": "task:SPICE-aBcD",
+  "origin": "task:SPICE-1kKRRsDP",
   "cause": 48190,
   "fact": {
     "kind": "task::phased",
@@ -94,7 +94,7 @@ const COMMAND: &str = r#"{
     }
   ],
   "body": {
-    "task": "SPICE-aBcD",
+    "task": "SPICE-1kKRRsDP",
     "validation": "cargo test --workspace"
   }
 }"#;
@@ -112,7 +112,7 @@ const REPLY: &str = r#"{
   "outcome": {
     "kind": "reply",
     "seq": { "first": 48213, "last": 48214 },
-    "body": { "task": "SPICE-aBcD", "status": "done" }
+    "body": { "task": "SPICE-1kKRRsDP", "status": "done" }
   }
 }"#;
 
@@ -155,7 +155,7 @@ fn envelope_matches_the_specified_document() {
     );
     assert_eq!(
         envelope.origin,
-        "task:SPICE-aBcD".parse::<Origin>().expect("origin")
+        "task:SPICE-1kKRRsDP".parse::<Origin>().expect("origin")
     );
     assert_eq!(envelope.cause, Some(seq(48190)));
     assert_eq!(envelope.fact.kind(), FactKind::TaskPhased);
@@ -382,7 +382,7 @@ fn envelope_omits_cause_at_a_chain_root() {
         seq: seq(1),
         at: "2030-04-12T18:44:09.271Z".parse::<Instant>().expect("at"),
         actor: Actor::Spice,
-        origin: "task:SPICE-aBcD".parse::<Origin>().expect("origin"),
+        origin: "task:SPICE-1kKRRsDP".parse::<Origin>().expect("origin"),
         cause: None,
         fact: Fact::new(body::TaskPhased {
             task: "0000000B".parse().expect("stamp"),
@@ -540,7 +540,7 @@ fn a_read_only_reply_carries_a_snapshot_cursor_instead_of_a_range() {
         outcome: Outcome::Reply(Reply {
             position: ReplyPosition::Snapshot(seq(48213)),
             body: DoneResult {
-                task: "SPICE-aBcD".parse().expect("handle"),
+                task: "SPICE-1kKRRsDP".parse().expect("handle"),
                 status: "done".to_owned(),
             },
         }),
@@ -561,7 +561,7 @@ fn a_daemonless_reply_states_that_its_journal_position_is_directly_absent() {
     let outcome = Outcome::Reply(Reply {
         position: ReplyPosition::Direct {},
         body: DoneResult {
-            task: "SPICE-aBcD".parse().expect("handle"),
+            task: "SPICE-1kKRRsDP".parse().expect("handle"),
             status: "checked".to_owned(),
         },
     });
@@ -589,7 +589,7 @@ fn direct_absence_has_no_null_unknown_or_sequence_shaped_alias() {
         let alternate = serde_json::json!({
             "kind": "reply",
             "direct": direct,
-            "body": {"task": "SPICE-aBcD", "status": "checked"}
+            "body": {"task": "SPICE-1kKRRsDP", "status": "checked"}
         });
         let bytes = serde_json::to_vec(&alternate).expect("alternate is json");
 
@@ -614,7 +614,7 @@ fn one_reply_cannot_carry_two_position_keys() {
         object.insert("kind".to_owned(), serde_json::json!("reply"));
         object.insert(
             "body".to_owned(),
-            serde_json::json!({"task": "SPICE-aBcD", "status": "checked"}),
+            serde_json::json!({"task": "SPICE-1kKRRsDP", "status": "checked"}),
         );
         let bytes = serde_json::to_vec(&outcome).expect("mixed fixture is json");
 
@@ -713,7 +713,7 @@ fn a_fault_round_trips() {
 fn packed_names_its_overflow_and_horizon() {
     let packed = Packed {
         rows: vec![Row {
-            task: "SPICE-aBcD".parse().expect("handle"),
+            task: "SPICE-1kKRRsDP".parse().expect("handle"),
         }],
         overflow: Some(Overflow {
             omitted: 41,

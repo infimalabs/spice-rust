@@ -14,12 +14,13 @@ use wire::{CanonicalUuid, Disposition};
 const ALPHABET: &[u8; 52] = b"0123456789BCDFGHJKLMNPQRSTVWXYZbcdfghjklmnpqrstvwxyz";
 const SPACE: u64 = 52_u64.pow(Key::WIDTH as u32);
 
-/// A steering key such as `1kJK6N3R`.
+/// A current steering key such as `cLMn3QRsT`.
 ///
-/// The width is fixed at [`Key::WIDTH`], which is what makes prose recognition
-/// exact: an acknowledgment clause is told apart from a sentence that merely
-/// uses the word by whether the tokens it names are key-shaped, and a grammar
-/// admitting any length would make ordinary words indistinguishable from keys.
+/// Current width is fixed at [`Key::WIDTH`]; retained keys have the one explicit
+/// [`Key::LEGACY_WIDTH`]. Those two closed widths keep prose recognition exact:
+/// an acknowledgment clause is told apart from a sentence that merely uses the
+/// word by whether the tokens it names are key-shaped, while arbitrary lengths
+/// would make ordinary words indistinguishable from keys.
 /// A key survives being copied through prose, a shell, and a rendered file
 /// because nothing in it needs escaping.
 ///
@@ -35,13 +36,15 @@ pub struct Key(String);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyError(String);
 
-/// An epoch millisecond that cannot be represented by a steering key.
+/// An epoch moment that cannot be represented by the requested steering-key codec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KeyMintError(i64);
 
 impl Key {
-    /// Characters every key carries.
-    pub const WIDTH: usize = 8;
+    /// Characters every current key carries.
+    pub const WIDTH: usize = 9;
+    /// Characters carried by retained steering keys.
+    pub const LEGACY_WIDTH: usize = 8;
 
     /// The key as written.
     #[must_use]
@@ -58,7 +61,8 @@ impl Key {
     /// that merely discusses acknowledging never names a key by accident.
     #[must_use]
     pub fn shaped(text: &str) -> bool {
-        text.len() == Self::WIDTH && text.bytes().all(|byte| ALPHABET.contains(&byte))
+        matches!(text.len(), Self::LEGACY_WIDTH | Self::WIDTH)
+            && text.bytes().all(|byte| ALPHABET.contains(&byte))
     }
 
     /// Whether this text spells a key any mint of this system ever wrote.
@@ -82,41 +86,49 @@ impl Key {
     /// it is written in a clause of its own.
     #[must_use]
     pub fn admitted(text: &str) -> bool {
-        text.len() == Self::WIDTH && text.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        (text.len() == Self::LEGACY_WIDTH && text.bytes().all(|byte| byte.is_ascii_alphanumeric()))
+            || (text.len() == Self::WIDTH && text.bytes().all(|byte| ALPHABET.contains(&byte)))
     }
 
-    /// Mint the time-ordered key for an epoch millisecond.
+    /// Mint the time-ordered current key for one Unix microsecond.
     ///
-    /// This is the predecessor's authoritative codec: eight fixed-width
-    /// base-52 digits, with vowels omitted and the remaining characters in
-    /// ASCII order. Fixed width and that monotonic alphabet make ordinary
-    /// string comparison agree with mint time.
+    /// This is the current codec: nine fixed-width base-52 digits, with vowels
+    /// omitted and the remaining characters in ASCII order. Within this
+    /// generation, fixed width and that monotonic alphabet make ordinary string
+    /// comparison agree with mint time. Journal sequence remains chronology
+    /// authority across the retained and current widths.
     ///
     /// # Errors
     ///
-    /// Returns [`KeyMintError`] when `epoch_millis` is negative or will not
-    /// fit in eight base-52 digits.
-    pub fn for_millis(epoch_millis: i64) -> Result<Self, KeyMintError> {
-        let value = u64::try_from(epoch_millis).map_err(|_| KeyMintError(epoch_millis))?;
+    /// Returns [`KeyMintError`] when `epoch_micros` is negative or will not
+    /// fit in nine base-52 digits.
+    pub fn for_micros(epoch_micros: i64) -> Result<Self, KeyMintError> {
+        let value = u64::try_from(epoch_micros).map_err(|_| KeyMintError(epoch_micros))?;
         if value >= SPACE {
-            return Err(KeyMintError(epoch_millis));
+            return Err(KeyMintError(epoch_micros));
         }
-        Ok(Self::encode(value))
+        Ok(Self::encode(value, Self::WIDTH))
     }
 
-    /// Decode the moment carried by a key from the current mint alphabet.
+    /// Decode the normalized microsecond moment carried by a timed key.
     ///
-    /// Historical base-62 keys containing a character outside the current
-    /// vowel-free alphabet return `None`; they remain valid identities but do
-    /// not participate in the indexed mint high-water mark.
+    /// Retained base-52 milliseconds are multiplied by 1,000. Historical
+    /// base-62 keys containing a character outside the vowel-free alphabet
+    /// return `None`; they remain valid identities but contribute no invented
+    /// timestamp to the indexed mint high-water mark.
     #[must_use]
-    pub fn minted_millis(&self) -> Option<i64> {
+    pub fn minted_micros(&self) -> Option<i64> {
         let mut value = 0_u64;
         for byte in self.0.bytes() {
             let digit = ALPHABET.iter().position(|candidate| *candidate == byte)?;
             value = value.checked_mul(52)?.checked_add(digit as u64)?;
         }
-        i64::try_from(value).ok()
+        let decoded = i64::try_from(value).ok()?;
+        if self.0.len() == Self::LEGACY_WIDTH {
+            decoded.checked_mul(1_000)
+        } else {
+            Some(decoded)
+        }
     }
 
     /// Derive one stable human-sized seal from a durable identity.
@@ -127,11 +139,11 @@ impl Key {
     #[must_use]
     pub fn for_identity(identity: CanonicalUuid) -> Self {
         let value = identity.get().as_u128() % u128::from(SPACE);
-        Self::encode(value as u64)
+        Self::encode(value as u64, Self::WIDTH)
     }
 
-    fn encode(mut value: u64) -> Self {
-        let mut bytes = [b'0'; Key::WIDTH];
+    fn encode(mut value: u64, width: usize) -> Self {
+        let mut bytes = vec![b'0'; width];
         for byte in bytes.iter_mut().rev() {
             *byte = ALPHABET[(value % 52) as usize];
             value /= 52;
@@ -162,7 +174,8 @@ impl fmt::Display for KeyError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "steering key must be {} alphanumeric characters: {:?}",
+            "steering key must be {} legacy alphanumeric or {} current base-52 characters: {:?}",
+            Key::LEGACY_WIDTH,
             Key::WIDTH,
             self.0
         )
@@ -175,7 +188,7 @@ impl fmt::Display for KeyMintError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "epoch millisecond must fit in {} base-52 characters: {}",
+            "epoch microsecond must fit in {} base-52 characters: {}",
             Key::WIDTH,
             self.0
         )
@@ -285,15 +298,19 @@ mod tests {
     use wire::Disposition;
 
     #[test]
-    fn a_key_is_a_fixed_run_of_alphanumeric_characters() {
+    fn a_key_admits_retained_and_current_widths_only() {
         assert_eq!("1kJK6N3R".parse::<Key>().expect("key").as_str(), "1kJK6N3R");
+        let current = Key::for_micros(1_700_000_000_000_000).expect("current key");
+        assert_eq!(current.as_str().len(), Key::WIDTH);
+        assert_eq!(current.as_str().parse::<Key>(), Ok(current));
         for refused in [
             "",
             "1kJK6N3",
-            "1kJK6N3Rx",
+            "1kJK6N3Rxx",
             "1kJK-N3R",
             "1kJK 6N3",
             "1kJK6N3\u{e9}",
+            "1kJK6A3Rx",
         ] {
             assert!(
                 refused.parse::<Key>().is_err(),
@@ -324,7 +341,7 @@ mod tests {
         }
 
         // A key the current mint writes answers yes to both.
-        let minted = Key::for_millis(1_700_000_000_000).expect("minted key");
+        let minted = Key::for_micros(1_700_000_000_000_000).expect("minted key");
         assert!(Key::shaped(minted.as_str()));
         assert!(Key::admitted(minted.as_str()));
     }
@@ -337,43 +354,54 @@ mod tests {
         let key = Key::for_identity(identity);
 
         assert_eq!(key, Key::for_identity(identity));
+        assert_eq!(key.as_str().len(), Key::WIDTH);
         assert!(Key::shaped(key.as_str()));
     }
 
     #[test]
-    fn keys_minted_one_second_apart_sort_in_mint_order() {
-        let first = Key::for_millis(1_700_000_000_000).expect("first key");
-        let second = Key::for_millis(1_700_000_001_000).expect("second key");
+    fn current_keys_minted_one_second_apart_sort_in_mint_order() {
+        let first = Key::for_micros(1_700_000_000_000_000).expect("first key");
+        let second = Key::for_micros(1_700_000_001_000_000).expect("second key");
 
-        assert_eq!(first.as_str(), "1dzGkSrJ");
-        assert_eq!(second.as_str(), "1dzGkTCX");
         assert!(first.as_str() < second.as_str(), "{first} !< {second}");
     }
 
     #[test]
     fn current_mint_moments_decode_without_searching_other_keys() {
-        for moment in [0, 1, 1_700_000_000_000, 52_i64.pow(Key::WIDTH as u32) - 1] {
-            let key = Key::for_millis(moment).expect("moment encodes");
-            assert_eq!(key.minted_millis(), Some(moment));
+        for moment in [
+            0,
+            1,
+            1_700_000_000_000_000,
+            52_i64.pow(Key::WIDTH as u32) - 1,
+        ] {
+            let key = Key::for_micros(moment).expect("moment encodes");
+            assert_eq!(key.minted_micros(), Some(moment));
         }
         assert_eq!(
             "YTVtQvOX"
                 .parse::<Key>()
                 .expect("retired key")
-                .minted_millis(),
+                .minted_micros(),
             None
+        );
+        assert_eq!(
+            "1dzGkSrJ"
+                .parse::<Key>()
+                .expect("retained key")
+                .minted_micros(),
+            Some(1_700_000_000_000_000),
         );
     }
 
     #[test]
     fn the_moment_codec_is_fixed_width_vowel_free_and_bounded() {
-        let first = Key::for_millis(0).expect("epoch key");
-        let last = Key::for_millis(52_i64.pow(Key::WIDTH as u32) - 1).expect("last key");
+        let first = Key::for_micros(0).expect("epoch key");
+        let last = Key::for_micros(52_i64.pow(Key::WIDTH as u32) - 1).expect("last key");
 
-        assert_eq!(first.as_str(), "00000000");
-        assert_eq!(last.as_str(), "zzzzzzzz");
-        assert!(Key::for_millis(-1).is_err());
-        assert!(Key::for_millis(52_i64.pow(Key::WIDTH as u32)).is_err());
+        assert_eq!(first.as_str(), "000000000");
+        assert_eq!(last.as_str(), "zzzzzzzzz");
+        assert!(Key::for_micros(-1).is_err());
+        assert!(Key::for_micros(52_i64.pow(Key::WIDTH as u32)).is_err());
 
         // Two sample encodings only ever exercise the digits those two values
         // happen to land on, so every digit goes in every position below. What
@@ -385,7 +413,7 @@ mod tests {
         const DIGITS: &[u8; 52] = b"0123456789BCDFGHJKLMNPQRSTVWXYZbcdfghjklmnpqrstvwxyz";
         for position in 0..Key::WIDTH as u32 {
             for digit in 0..52_i64 {
-                let key = Key::for_millis(digit * 52_i64.pow(position)).expect("swept key");
+                let key = Key::for_micros(digit * 52_i64.pow(position)).expect("swept key");
                 let written = key.as_str().as_bytes()[Key::WIDTH - 1 - position as usize];
                 assert_eq!(
                     written,

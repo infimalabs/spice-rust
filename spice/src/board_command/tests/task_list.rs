@@ -62,7 +62,7 @@ fn add_actor_route_rows(
         .origin_thread = "someone_else".to_owned();
     let mut actor_private = template.clone();
     actor_private.statement.body.born =
-        wire::TaskStamp::for_millis(8_002).expect("fixture task stamp");
+        wire::TaskStamp::for_micros(8_002).expect("fixture task stamp");
     actor_private.statement.body.project = answer.actor_route.project.clone();
     actor_private.statement.body.handle = TaskHandle::for_project(
         &actor_private.statement.body.project,
@@ -76,7 +76,7 @@ fn add_actor_route_rows(
 
     let mut origin_thread = template.clone();
     origin_thread.statement.body.born =
-        wire::TaskStamp::for_millis(8_003).expect("fixture task stamp");
+        wire::TaskStamp::for_micros(8_003).expect("fixture task stamp");
     origin_thread.statement.body.project = "external.route".to_owned();
     origin_thread.statement.body.handle = TaskHandle::for_project(
         &origin_thread.statement.body.project,
@@ -89,7 +89,7 @@ fn add_actor_route_rows(
     origin_thread.presentation_title = "Origin-thread route row".to_owned();
 
     let mut outside = template;
-    outside.statement.body.born = wire::TaskStamp::for_millis(8_004).expect("fixture task stamp");
+    outside.statement.body.born = wire::TaskStamp::for_micros(8_004).expect("fixture task stamp");
     outside.statement.body.project = "agent.someone_else.task".to_owned();
     outside.statement.body.handle = TaskHandle::for_project(
         &outside.statement.body.project,

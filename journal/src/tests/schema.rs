@@ -40,6 +40,7 @@ fn schema_nine_steps_through_wire_only_expansions_without_rewriting_authority() 
     let scratch = Scratch::new();
     let path = scratch.path().join("schema-nine.sqlite3");
     let journal = authority_file_fixture(&path);
+    downgrade_steering_index_to_millis(&journal.connection);
     journal
         .connection
         .execute_batch(
@@ -49,6 +50,7 @@ fn schema_nine_steps_through_wire_only_expansions_without_rewriting_authority() 
         .expect("downgrade source-unaware fixture identity");
     let mut before = table_census(&journal.connection);
     before.remove("journal_schema");
+    before.remove("steering_heads");
     remove_creation_context_carriers(&mut before);
     drop(journal);
 
@@ -61,6 +63,7 @@ fn schema_nine_steps_through_wire_only_expansions_without_rewriting_authority() 
     );
     let mut after = table_census(&journal.connection);
     after.remove("journal_schema");
+    after.remove("steering_heads");
     remove_creation_context_carriers(&mut after);
     assert_eq!(
         after, before,
@@ -77,6 +80,7 @@ fn schema_ten_steps_to_fanout_aware_steering_without_rewriting_authority() {
     let scratch = Scratch::new();
     let path = scratch.path().join("schema-ten.sqlite3");
     let journal = authority_file_fixture(&path);
+    downgrade_steering_index_to_millis(&journal.connection);
     journal
         .connection
         .execute_batch(
@@ -86,6 +90,7 @@ fn schema_ten_steps_to_fanout_aware_steering_without_rewriting_authority() {
         .expect("downgrade fanout-unaware fixture identity");
     let mut before = table_census(&journal.connection);
     before.remove("journal_schema");
+    before.remove("steering_heads");
     remove_creation_context_carriers(&mut before);
     drop(journal);
 
@@ -98,6 +103,7 @@ fn schema_ten_steps_to_fanout_aware_steering_without_rewriting_authority() {
     );
     let mut after = table_census(&journal.connection);
     after.remove("journal_schema");
+    after.remove("steering_heads");
     remove_creation_context_carriers(&mut after);
     assert_eq!(
         after, before,
@@ -114,6 +120,7 @@ fn schema_eleven_steps_to_worktree_aware_trust_without_guessing_legacy_identity(
     let scratch = Scratch::new();
     let path = scratch.path().join("schema-eleven.sqlite3");
     let journal = authority_file_fixture(&path);
+    downgrade_steering_index_to_millis(&journal.connection);
     journal
         .connection
         .execute_batch(
@@ -123,6 +130,7 @@ fn schema_eleven_steps_to_worktree_aware_trust_without_guessing_legacy_identity(
         .expect("downgrade worktree-unaware fixture identity");
     let mut before = table_census(&journal.connection);
     before.remove("journal_schema");
+    before.remove("steering_heads");
     remove_creation_context_carriers(&mut before);
     drop(journal);
 
@@ -137,6 +145,7 @@ fn schema_eleven_steps_to_worktree_aware_trust_without_guessing_legacy_identity(
     assert_eq!(head.worktree, None, "migration never guesses a producer");
     let mut after = table_census(&journal.connection);
     after.remove("journal_schema");
+    after.remove("steering_heads");
     remove_creation_context_carriers(&mut after);
     assert_eq!(
         after, before,

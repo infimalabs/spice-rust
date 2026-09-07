@@ -174,10 +174,10 @@ fn seed_active_claim(
     occupant: CanonicalUuid,
     handle: &str,
 ) {
-    let millis = handle.bytes().fold(0_i64, |value, byte| {
+    let micros = handle.bytes().fold(0_i64, |value, byte| {
         (value * 131 + i64::from(byte)) % 10_000_000_000_000
     });
-    let task = wire::TaskStamp::for_millis(millis).expect("fixture task stamp");
+    let task = wire::TaskStamp::for_micros(micros).expect("fixture task stamp");
     let mut write =
         write(Actor::Operator, epoch, Producer::CommandDoor).expect("fixture write starts");
     let added = seed_task(&mut write, &task);

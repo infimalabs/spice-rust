@@ -90,7 +90,7 @@ const CONTROL_PLANE_SOURCES: [&str; 3] = [
 /// Counted per occurrence rather than per line, because
 /// `spice/src/task_git/command.rs` names both of the sanctioned subcommands on
 /// one line and a line-counting scan would see one site where there are two.
-const NETWORK_CALL_SITES: [(&str, &str, usize); 7] = [
+const NETWORK_CALL_SITES: [(&str, &str, usize); 10] = [
     // The external release authority constructs exact inert Git argv but owns
     // no process runner. Its parent executes these operations at an existing
     // control-plane boundary after authored release approval. Each count
@@ -106,6 +106,11 @@ const NETWORK_CALL_SITES: [(&str, &str, usize); 7] = [
     // subcommands by name to give them a longer timeout, and issues nothing.
     ("spice/src/task_git/command.rs", "fetch", 1),
     ("spice/src/task_git/command.rs", "push", 1),
+    // The task-git module's own repository-backed fixtures clone and move only
+    // disposable local bare remotes to exercise claim and publication races.
+    ("spice/src/task_git/tests.rs", "clone", 1),
+    ("spice/src/task_git/tests.rs", "fetch", 1),
+    ("spice/src/task_git/tests.rs", "push", 2),
     // This fixture fetches only from its owned local bare remote after moving
     // the upstream branch, exercising divergent task-completion admission.
     (

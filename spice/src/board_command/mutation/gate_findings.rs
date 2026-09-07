@@ -278,6 +278,7 @@ fn prepare_finding_fold(
     };
     let snapshot = validated_snapshot(bus, command.actor().clone(), projects, allocation)?;
     let at = current_instant()?;
+    let birth_micros = jiff::Timestamp::now().as_microsecond();
     let until = gate_finding_defer_until()?;
     let origin = gate_findings_origin(command.actor(), &snapshot, &dispatch.report)?;
     let instrument_tasks = open_instrument_tasks(&snapshot.entries, instrument)?;
@@ -286,6 +287,7 @@ fn prepare_finding_fold(
         findings,
         &snapshot,
         at,
+        birth_micros,
         instrument,
         repository,
         &dispatch.source,
@@ -569,6 +571,7 @@ fn plan_gate_findings(
     findings: &[FindingRow],
     snapshot: &ValidatedSnapshot,
     at: Instant,
+    birth_micros: i64,
     instrument: gate::GateId,
     repository: &Repository,
     source: &wire::intent::GateFindingSource,
@@ -631,7 +634,7 @@ fn plan_gate_findings(
                 }
             }
         } else {
-            let task = mint_gate_finding_stamp(snapshot, &mut minted, at, index);
+            let task = mint_gate_finding_stamp(snapshot, &mut minted, birth_micros, index);
             GateFindingAction::Created {
                 task,
                 finding: finding.clone(),
@@ -909,7 +912,7 @@ fn gate_finding_task_open(entry: &Entry) -> bool {
 fn mint_gate_finding_stamp(
     snapshot: &ValidatedSnapshot,
     minted: &mut std::collections::BTreeSet<wire::TaskStamp>,
-    at: Instant,
+    base_micros: i64,
     index: usize,
 ) -> wire::TaskStamp {
     // Existing heads and tasks prepared in this write share one stamp collision domain.
@@ -918,10 +921,9 @@ fn mint_gate_finding_stamp(
         .iter()
         .map(|entry| entry.born().clone())
         .collect::<std::collections::BTreeSet<_>>();
-    let base_millis = at.get().as_millisecond();
     let mut offset = index as i64;
     loop {
-        let candidate = wire::TaskStamp::for_millis(base_millis.saturating_add(offset))
+        let candidate = wire::TaskStamp::for_micros(base_micros.saturating_add(offset))
             .expect("the current timestamp fits the task stamp codec");
         if !occupied.contains(&candidate) && minted.insert(candidate.clone()) {
             return candidate;

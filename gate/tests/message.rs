@@ -1,6 +1,7 @@
 use gate::{CommitMessagePolicy, OriginTrailer, TrailerRejection, validate_commit_message};
 
-const VALID: &str = "Spice-Origin: v1 repo=018f82d4-6f59-7d06-92e3-bce9131163c7 task=SPICE-aBcD";
+const VALID: &str =
+    "Spice-Origin: v1 repo=018f82d4-6f59-7d06-92e3-bce9131163c7 task=SPICE-1kKRRsDP";
 
 #[test]
 fn v1_round_trips_byte_identically() {
@@ -11,24 +12,24 @@ fn v1_round_trips_byte_identically() {
         parsed.repo().to_string(),
         "018f82d4-6f59-7d06-92e3-bce9131163c7"
     );
-    assert_eq!(parsed.task().as_str(), "SPICE-aBcD");
+    assert_eq!(parsed.task().as_str(), "SPICE-1kKRRsDP");
 }
 
 #[test]
 fn reordered_extra_missing_and_other_spellings_are_refused() {
     let malformed = [
-        "Spice-Origin: repo=018f82d4-6f59-7d06-92e3-bce9131163c7 v1 task=SPICE-aBcD",
-        "Spice-Origin: v1 task=SPICE-aBcD repo=018f82d4-6f59-7d06-92e3-bce9131163c7",
-        "Spice-Origin: v1 repo=018f82d4-6f59-7d06-92e3-bce9131163c7 task=SPICE-aBcD actor=agent",
+        "Spice-Origin: repo=018f82d4-6f59-7d06-92e3-bce9131163c7 v1 task=SPICE-1kKRRsDP",
+        "Spice-Origin: v1 task=SPICE-1kKRRsDP repo=018f82d4-6f59-7d06-92e3-bce9131163c7",
+        "Spice-Origin: v1 repo=018f82d4-6f59-7d06-92e3-bce9131163c7 task=SPICE-1kKRRsDP actor=agent",
         "Spice-Origin: v1 repo=018f82d4-6f59-7d06-92e3-bce9131163c7",
-        "Spice-Origin: v1 task=SPICE-aBcD",
-        "Spice-Origin: v2 repo=018f82d4-6f59-7d06-92e3-bce9131163c7 task=SPICE-aBcD",
-        "spice-origin: v1 repo=018f82d4-6f59-7d06-92e3-bce9131163c7 task=SPICE-aBcD",
-        "Spice-Origin: v1 repo=018F82D4-6F59-7D06-92E3-BCE9131163C7 task=SPICE-aBcD",
+        "Spice-Origin: v1 task=SPICE-1kKRRsDP",
+        "Spice-Origin: v2 repo=018f82d4-6f59-7d06-92e3-bce9131163c7 task=SPICE-1kKRRsDP",
+        "spice-origin: v1 repo=018f82d4-6f59-7d06-92e3-bce9131163c7 task=SPICE-1kKRRsDP",
+        "Spice-Origin: v1 repo=018F82D4-6F59-7D06-92E3-BCE9131163C7 task=SPICE-1kKRRsDP",
         "Spice-Origin: v1 repo=018f82d4-6f59-7d06-92e3-bce9131163c7 task=spice-aBcD",
-        "Spice-Origin:  v1 repo=018f82d4-6f59-7d06-92e3-bce9131163c7 task=SPICE-aBcD",
-        "Spice-Origin: v1 repo=018f82d4-6f59-7d06-92e3-bce9131163c7  task=SPICE-aBcD",
-        "Spice-Origin: v1 repo=018f82d4-6f59-7d06-92e3-bce9131163c7 task=SPICE-aBcD ",
+        "Spice-Origin:  v1 repo=018f82d4-6f59-7d06-92e3-bce9131163c7 task=SPICE-1kKRRsDP",
+        "Spice-Origin: v1 repo=018f82d4-6f59-7d06-92e3-bce9131163c7  task=SPICE-1kKRRsDP",
+        "Spice-Origin: v1 repo=018f82d4-6f59-7d06-92e3-bce9131163c7 task=SPICE-1kKRRsDP ",
     ];
 
     for line in malformed {
@@ -41,7 +42,8 @@ fn reordered_extra_missing_and_other_spellings_are_refused() {
 
 #[test]
 fn commit_gate_names_the_exact_commit_and_preserves_unresolved_evidence() {
-    let historical = "Spice-Origin-v0: repo=018f82d4-6f59-7d06-92e3-bce9131163c7 task=SPICE-aBcD";
+    let historical =
+        "Spice-Origin-v0: repo=018f82d4-6f59-7d06-92e3-bce9131163c7 task=SPICE-1kKRRsDP";
     let message = format!("Record provenance\n\n{historical}\n");
 
     let error = validate_commit_message("8ac31e7", &message)
@@ -68,7 +70,8 @@ fn commit_gate_validates_every_origin_trailer_and_ignores_unrelated_lines() {
 
 #[test]
 fn commit_gate_refuses_spacing_that_only_normalization_would_accept() {
-    let malformed = " Spice-Origin : v1 repo=018f82d4-6f59-7d06-92e3-bce9131163c7 task=SPICE-aBcD";
+    let malformed =
+        " Spice-Origin : v1 repo=018f82d4-6f59-7d06-92e3-bce9131163c7 task=SPICE-1kKRRsDP";
 
     let error = validate_commit_message("d431f90", malformed)
         .expect_err("the gate must not trim a malformed trailer");

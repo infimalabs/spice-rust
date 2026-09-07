@@ -993,7 +993,7 @@ fn validate_doc_plan(
     let touched = document_handles(
         preview.document(),
         &snapshot.answer,
-        jiff::Timestamp::now().as_millisecond(),
+        jiff::Timestamp::now().as_microsecond(),
     );
     if touched.is_empty() {
         return Err(refusal(

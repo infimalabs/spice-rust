@@ -1176,6 +1176,64 @@ fn residency_head() -> ResidencyHead {
     }
 }
 
+/// Make the current baseline's steering projection exactly schema-13-shaped.
+///
+/// Migration tests begin from a real current database and deliberately lower
+/// its schema identity. The derived steering table must cross with that
+/// identity too; otherwise the test constructs a shape no release ever wrote.
+fn downgrade_steering_index_to_millis(connection: &Connection) {
+    let mut statement = connection
+        .prepare("SELECT directive, minted_micros, body FROM steering_heads ORDER BY directive")
+        .expect("read current steering heads");
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<i64>>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+            ))
+        })
+        .expect("query current steering heads")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("collect current steering heads");
+    drop(statement);
+    connection
+        .execute_batch(
+            "DROP INDEX steering_heads_minted_micros; \
+             ALTER TABLE steering_heads RENAME COLUMN minted_micros TO minted_millis; \
+             CREATE INDEX steering_heads_minted_millis \
+                 ON steering_heads(minted_millis) WHERE minted_millis IS NOT NULL;",
+        )
+        .expect("restore schema-thirteen steering column");
+    for (directive, micros, body) in rows {
+        let millis = micros.map(|value| {
+            assert_eq!(
+                value % 1_000,
+                0,
+                "retained fixture moment is millisecond-aligned"
+            );
+            value / 1_000
+        });
+        let mut document: Value = serde_json::from_slice(&body).expect("current head JSON");
+        let object = document
+            .as_object_mut()
+            .expect("steering head is an object");
+        if object.remove("minted_micros").is_some() {
+            object.insert("minted_millis".to_owned(), json!(millis));
+        }
+        connection
+            .execute(
+                "UPDATE steering_heads SET minted_millis = ?1, body = ?2 WHERE directive = ?3",
+                params![
+                    millis,
+                    serde_json::to_vec(&document).expect("legacy head JSON"),
+                    directive
+                ],
+            )
+            .expect("write schema-thirteen steering head");
+    }
+}
+
 fn schema_fixture(
     version: u32,
     state: &str,

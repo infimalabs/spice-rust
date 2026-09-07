@@ -26,7 +26,7 @@ const BODIES: &[(CommandKind, &str)] = &[
     (CommandKind::BoardRead, r#"{}"#),
     (CommandKind::BoardGraph, r#"{ "view": "dependencies" }"#),
     (CommandKind::BoardHandout, r#"{ "output": "-" }"#),
-    (CommandKind::DocLedger, r#"{ "task": "SPICE-aBcD" }"#),
+    (CommandKind::DocLedger, r#"{ "task": "SPICE-1kKRRsDP" }"#),
     (CommandKind::GlobalSettingsRead, r#"{}"#),
     (CommandKind::GlobalSettingsSet, r#"{ "fast_mode": true }"#),
     (
@@ -36,7 +36,7 @@ const BODIES: &[(CommandKind, &str)] = &[
   "project": "wire",
   "acceptance": ["every kind names one body and one reply"],
   "origin": "task:WIRE-parent",
-  "depends": ["SPICE-aBcD"]
+  "depends": ["SPICE-1kKRRsDP"]
 }"#,
     ),
     (
@@ -56,7 +56,7 @@ const BODIES: &[(CommandKind, &str)] = &[
   "description": "Finding identity: aaaa",
   "acceptance": ["operator reviews cited evidence"],
   "origin": "ack:1kMine01",
-  "depends": ["TASTE-aBcD"]
+  "depends": ["TASTE-1kKRRsDP"]
 }"#,
     ),
     (
@@ -75,41 +75,41 @@ const BODIES: &[(CommandKind, &str)] = &[
     ),
     (
         CommandKind::TaskEdit,
-        r#"{ "task": "SPICE-aBcD", "title": "a replacement statement" }"#,
+        r#"{ "task": "SPICE-1kKRRsDP", "title": "a replacement statement" }"#,
     ),
     (
         CommandKind::TaskDelete,
-        r#"{ "task": "SPICE-aBcD", "reason": "filed against the wrong surface" }"#,
+        r#"{ "task": "SPICE-1kKRRsDP", "reason": "filed against the wrong surface" }"#,
     ),
     (
         CommandKind::TaskNote,
-        r#"{ "task": "SPICE-aBcD", "note": "the registry row is exhaustive" }"#,
+        r#"{ "task": "SPICE-1kKRRsDP", "note": "the registry row is exhaustive" }"#,
     ),
     (
         CommandKind::TaskDefer,
-        r#"{ "task": "SPICE-aBcD", "wait": "2026-07-31T05:49:09.000Z" }"#,
+        r#"{ "task": "SPICE-1kKRRsDP", "wait": "2026-07-31T05:49:09.000Z" }"#,
     ),
-    (CommandKind::TaskWake, r#"{ "task": "SPICE-aBcD" }"#),
+    (CommandKind::TaskWake, r#"{ "task": "SPICE-1kKRRsDP" }"#),
     (
         CommandKind::TaskDepends,
-        r#"{ "task": "SPICE-aBcD", "after": ["SPICE-eFgH"] }"#,
+        r#"{ "task": "SPICE-1kKRRsDP", "after": ["SPICE-1kKRRsDQ"] }"#,
     ),
     (
         CommandKind::TaskPhase,
-        r#"{ "task": "SPICE-aBcD", "phase": "verify" }"#,
+        r#"{ "task": "SPICE-1kKRRsDP", "phase": "verify" }"#,
     ),
     (
         CommandKind::TaskDone,
-        r#"{ "task": "SPICE-aBcD", "validation": "cargo test --workspace" }"#,
+        r#"{ "task": "SPICE-1kKRRsDP", "validation": "cargo test --workspace" }"#,
     ),
     (
         CommandKind::TaskReview,
-        r#"{ "task": "SPICE-aBcD", "finding": "accept" }"#,
+        r#"{ "task": "SPICE-1kKRRsDP", "finding": "accept" }"#,
     ),
     (
         CommandKind::TaskAssign,
         r#"{
-  "task": "SPICE-aBcD",
+  "task": "SPICE-1kKRRsDP",
   "reviewer": "lane:018f82d4-6f59-7d06-92e3-bce9131163c2"
 }"#,
     ),
@@ -117,16 +117,16 @@ const BODIES: &[(CommandKind, &str)] = &[
     (
         CommandKind::ClaimCarry,
         r#"{
-  "task": "SPICE-aBcD",
+  "task": "SPICE-1kKRRsDP",
   "successor": "lane:018f82d4-6f59-7d06-92e3-bce9131163c2"
 }"#,
     ),
     (
         CommandKind::ClaimRenew,
-        r#"{ "task": "SPICE-aBcD", "lease_seconds": 900 }"#,
+        r#"{ "task": "SPICE-1kKRRsDP", "lease_seconds": 900 }"#,
     ),
-    (CommandKind::ClaimFree, r#"{ "task": "SPICE-aBcD" }"#),
-    (CommandKind::ClaimLapse, r#"{ "task": "SPICE-aBcD" }"#),
+    (CommandKind::ClaimFree, r#"{ "task": "SPICE-1kKRRsDP" }"#),
+    (CommandKind::ClaimLapse, r#"{ "task": "SPICE-1kKRRsDP" }"#),
     (
         CommandKind::DocApply,
         r##"{
@@ -383,7 +383,7 @@ fn every_answer_re_encodes_unchanged() {
 #[test]
 fn task_learning_is_only_an_optional_retained_answer_shape() {
     let retained = r#"{
-        "task": "SPICE-aBcD",
+        "task": "SPICE-1kKRRsDP",
         "status": "done",
         "learning": {
             "stored": 1,
@@ -409,7 +409,7 @@ fn task_learning_is_only_an_optional_retained_answer_shape() {
         serde_json::from_str::<serde_json::Value>(retained).expect("retained fixture JSON")
     );
 
-    let current = r#"{"task":"SPICE-aBcD","status":"done"}"#;
+    let current = r#"{"task":"SPICE-1kKRRsDP","status":"done"}"#;
     let current = AnswerShape::Task
         .decode(current.as_bytes())
         .expect("current task answer decodes");
@@ -528,7 +528,7 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
         statement: Positioned {
             position: seq(2),
             body: BoardStatement {
-                handle: handle("SPICE-aBcD"),
+                handle: handle("SPICE-1kKRRsDP"),
                 born: "1kKRRsDP".parse().expect("a task stamp"),
                 queue_origin: seq(2),
                 description: Some(
@@ -677,7 +677,7 @@ fn a_body_spelled_for_another_kind_is_refused() {
     // `task::done` names a validation; the shape bound to `task::wake` names a
     // task alone. Bodies deny unknown fields, so the extra key is a refusal
     // rather than a silent truncation into a valid-looking wake.
-    let done = r#"{ "task": "SPICE-aBcD", "validation": "cargo test --workspace" }"#;
+    let done = r#"{ "task": "SPICE-1kKRRsDP", "validation": "cargo test --workspace" }"#;
     let shape = CommandKind::TaskWake.binding().body;
     assert!(
         shape.decode(done.as_bytes()).is_err(),
@@ -685,7 +685,7 @@ fn a_body_spelled_for_another_kind_is_refused() {
     );
 
     // The reverse direction fails on the missing field rather than an extra.
-    let bare = r#"{ "task": "SPICE-aBcD" }"#;
+    let bare = r#"{ "task": "SPICE-1kKRRsDP" }"#;
     let shape = CommandKind::TaskDone.binding().body;
     assert!(
         shape.decode(bare.as_bytes()).is_err(),
@@ -849,7 +849,7 @@ const ALL_ANSWERS: &[AnswerShape] = &[
 #[test]
 fn the_union_reports_the_shape_it_carries() {
     let intent = Intent::TaskRef(wire::intent::TaskRef {
-        task: "SPICE-aBcD".parse().expect("a handle"),
+        task: "SPICE-1kKRRsDP".parse().expect("a handle"),
     });
     assert_eq!(intent.shape(), BodyShape::TaskRef);
 }

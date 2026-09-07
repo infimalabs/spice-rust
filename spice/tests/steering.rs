@@ -741,6 +741,12 @@ fn acknowledgment_paths(
     };
     let sent = reply.body;
     assert_eq!(sent.disposition, wire::Disposition::Live);
+    let current_key = sent
+        .key
+        .parse::<steer::Key>()
+        .expect("current steering key");
+    assert_eq!(current_key.as_str().len(), steer::Key::WIDTH);
+    assert!(current_key.minted_micros().is_some());
     let inbox = text_inbox(&invoke(fixture, &["inbox", &lane], false));
     assert_eq!(inbox.lanes.len(), 1);
     assert_eq!(

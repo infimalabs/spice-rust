@@ -106,7 +106,7 @@ fn missing_witness_and_wrong_body_stop_before_business_logic() {
     assert_eq!(refusal.reason(), "command::witness-law");
 
     let mut malformed = dark(uuid(1));
-    malformed.body = serde_json::json!({ "task": "SPICE-aBcD" });
+    malformed.body = serde_json::json!({ "task": "SPICE-1kKRRsDP" });
     assert!(matches!(
         malformed.admit(&accepted(Actor::Operator)),
         Err(CommandRejection::Fault(wire::Fault { ref reason, .. }))

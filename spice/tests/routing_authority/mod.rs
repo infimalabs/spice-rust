@@ -11,7 +11,7 @@ const PROJECT: &str = "gate.routing";
 
 pub(super) fn seed_todo_claim(path: &Path, lane: CanonicalUuid) -> TaskHandle {
     let mut journal = Journal::open(path).expect("open routing journal");
-    let task = TaskStamp::for_millis(1).expect("routing task stamp");
+    let task = TaskStamp::for_micros(1).expect("routing task stamp");
     let todo: wire::Phase = "todo".parse().expect("routing todo phase");
     let at = instant("2000-01-01T00:00:00.000Z");
     add_task(&mut journal, &task, &todo, at);

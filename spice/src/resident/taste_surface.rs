@@ -491,8 +491,8 @@ where
             return Ok(());
         }
 
-        let minted_millis = bus
-            .read(|read| read.steering_minted_millis())
+        let minted_micros = bus
+            .read(|read| read.steering_minted_micros())
             .map_err(|error| store_fault("taste::steering-index-unreadable", &error.to_string()))?;
         let at = current_instant()?;
         let expires = expiry(at, steering_config.expiry().get())?;
@@ -503,7 +503,7 @@ where
                 record,
                 anchor,
                 unsuppressed,
-                minted_millis,
+                minted_micros,
                 at,
                 expires,
                 &mut decision_cache,
@@ -517,7 +517,7 @@ where
                 record.occupant,
                 anchor,
                 one_candidate_per_warning(unsuppressed),
-                minted_millis,
+                minted_micros,
                 at,
                 expires,
             )?)
@@ -581,7 +581,7 @@ fn judged_recognition_proposal(
     record: &lane::capture::CaptureRecord,
     anchor: Seq,
     unsuppressed: Vec<Candidate>,
-    minted_millis: Option<i64>,
+    minted_micros: Option<i64>,
     at: Instant,
     expires: Instant,
     decision_cache: &mut BTreeMap<(Digest, Digest, u64), Option<Judgment>>,
@@ -598,7 +598,7 @@ fn judged_recognition_proposal(
         record.occupant,
         anchor,
         decisions,
-        minted_millis,
+        minted_micros,
         at,
         expires,
     )
@@ -616,7 +616,7 @@ fn judged_proposal(
     occupant: CanonicalUuid,
     anchor: Seq,
     decisions: Vec<JudgedCandidate>,
-    minted_millis: Option<i64>,
+    minted_micros: Option<i64>,
     at: Instant,
     expires: Instant,
 ) -> CommandResult<(Vec<Opening>, JournalWrite)> {
@@ -626,8 +626,7 @@ fn judged_proposal(
             .filter(|decision| decision.judgment.confirmed)
             .map(|decision| decision.candidate.clone())
             .collect(),
-        minted_millis,
-        at,
+        minted_micros,
     )?;
     let mut proposal = JournalWrite::new(Actor::Spice, origin.clone(), at, Producer::Judge);
 
@@ -701,11 +700,11 @@ fn reminder_proposal(
     occupant: CanonicalUuid,
     anchor: Seq,
     candidates: Vec<Candidate>,
-    minted_millis: Option<i64>,
+    minted_micros: Option<i64>,
     at: Instant,
     expires: Instant,
 ) -> CommandResult<(Vec<Opening>, JournalWrite)> {
-    let openings = openings(candidates, minted_millis, at)?;
+    let openings = openings(candidates, minted_micros)?;
     let mut proposal = JournalWrite::new(
         Actor::Spice,
         origin.clone(),
@@ -837,8 +836,8 @@ pub(super) fn complete_judgment(
         if decisions.is_empty() {
             return Ok(());
         }
-        let minted_millis = bus
-            .read(|read| read.steering_minted_millis())
+        let minted_micros = bus
+            .read(|read| read.steering_minted_micros())
             .map_err(|error| store_fault("taste::steering-index-unreadable", &error.to_string()))?;
         let at = current_instant()?;
         let expires = expiry(at, steering_config.expiry().get())?;
@@ -849,7 +848,7 @@ pub(super) fn complete_judgment(
             completed.prepared.occupant,
             completed.prepared.anchor,
             decisions,
-            minted_millis,
+            minted_micros,
             at,
             expires,
         )?;
@@ -1079,20 +1078,16 @@ fn is_current_occupant(
         .any(|row| row.lane == lane && row.occupant == Some(occupant))
 }
 
-fn openings(
-    candidates: Vec<Candidate>,
-    previous: Option<i64>,
-    at: Instant,
-) -> CommandResult<Vec<Opening>> {
-    let now = at.get().as_millisecond();
-    let mut millis = previous.map_or(Ok(now), |previous| {
+fn openings(candidates: Vec<Candidate>, previous: Option<i64>) -> CommandResult<Vec<Opening>> {
+    let now = jiff::Timestamp::now().as_microsecond();
+    let mut micros = previous.map_or(Ok(now), |previous| {
         previous
             .checked_add(1)
             .map(|next| next.max(now))
             .ok_or_else(|| {
                 environment_fault(
                     "taste::steering-key-invalid",
-                    "epoch millisecond overflowed while advancing the indexed key clock",
+                    "epoch microsecond overflowed while advancing the indexed key clock",
                 )
             })
     })?;
@@ -1100,15 +1095,15 @@ fn openings(
     let mut opened = Vec::with_capacity(candidates.len());
     for candidate in candidates {
         let directive = new_uuid();
-        let key = steer::Key::for_millis(millis).map_err(|error| {
+        let key = steer::Key::for_micros(micros).map_err(|error| {
             environment_fault("taste::steering-key-invalid", &error.to_string())
         })?;
         let inserted = keys.insert(key.clone());
         debug_assert!(inserted, "monotone moments mint distinct keys");
-        millis = millis.checked_add(1).ok_or_else(|| {
+        micros = micros.checked_add(1).ok_or_else(|| {
             environment_fault(
                 "taste::steering-key-invalid",
-                "epoch millisecond overflowed while allocating one reminder batch",
+                "epoch microsecond overflowed while allocating one reminder batch",
             )
         })?;
         opened.push(Opening {

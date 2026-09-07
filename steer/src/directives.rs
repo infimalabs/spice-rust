@@ -168,7 +168,7 @@ impl Directive {
             disposition: self.disposition,
             origin,
             created,
-            minted_millis: self.key.minted_millis(),
+            minted_micros: self.key.minted_micros(),
         }
     }
 }

@@ -63,7 +63,7 @@ const LEASE: &str = r#"{
 }"#;
 
 const WITNESS: &str = r#"{
-  "name": "review:WIRE-aBcD",
+  "name": "review:WIRE-1kKRRsDP",
   "kind": "review",
   "predicate": "workflow head 41 is review",
   "head": 43

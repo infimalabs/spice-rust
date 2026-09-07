@@ -505,6 +505,15 @@ fn native_task_add_carries_authored_context_through_client_add() {
         "--origin",
         "ack:1kLGp2NJ",
     ]));
+    assert_eq!(
+        added
+            .task
+            .born()
+            .expect("current task stamp")
+            .as_str()
+            .len(),
+        wire::TaskStamp::WIDTH,
+    );
 
     let current = board(&fixture);
     let statement = &current

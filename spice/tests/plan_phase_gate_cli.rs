@@ -223,7 +223,7 @@ fn repeated_proof_and_pre_commit_use_the_bounded_manifest_path() {
 
 fn seed_plan_claim(path: &Path, lane: CanonicalUuid) -> TaskHandle {
     let mut journal = Journal::open(path).expect("open plan hook authority");
-    let task = TaskStamp::for_millis(1).expect("fixture task stamp");
+    let task = TaskStamp::for_micros(1).expect("fixture task stamp");
     let project = "task.phase";
     let plan: wire::Phase = "plan".parse().expect("fixture plan phase");
     let origin: wire::Origin = "task:plan-hook-fixture".parse().expect("fixture origin");

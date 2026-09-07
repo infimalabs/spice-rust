@@ -912,17 +912,17 @@ pub(super) fn progress_witnesses(
 }
 
 #[cfg(test)]
-pub(super) fn mint_handle_at(project: Option<&str>, _title: &str, epoch_millis: i64) -> TaskHandle {
+pub(super) fn mint_handle_at(project: Option<&str>, _title: &str, epoch_micros: i64) -> TaskHandle {
     let project = project.unwrap_or("task.private");
-    let stamp = wire::TaskStamp::for_millis(epoch_millis)
-        .expect("the current epoch millisecond fits the task stamp codec");
+    let stamp = wire::TaskStamp::for_micros(epoch_micros)
+        .expect("the current epoch microsecond fits the task stamp codec");
     TaskHandle::for_project(project, &stamp)
 }
 
-pub(super) fn allocate_task_stamp(board: &BoardAnswer, mut epoch_millis: i64) -> wire::TaskStamp {
+pub(super) fn allocate_task_stamp(board: &BoardAnswer, mut epoch_micros: i64) -> wire::TaskStamp {
     loop {
-        let candidate = wire::TaskStamp::for_millis(epoch_millis)
-            .expect("the current epoch millisecond fits the task stamp codec");
+        let candidate = wire::TaskStamp::for_micros(epoch_micros)
+            .expect("the current epoch microsecond fits the task stamp codec");
         if board
             .tasks
             .iter()
@@ -930,7 +930,7 @@ pub(super) fn allocate_task_stamp(board: &BoardAnswer, mut epoch_millis: i64) ->
         {
             return candidate;
         }
-        epoch_millis = epoch_millis
+        epoch_micros = epoch_micros
             .checked_add(1)
             .expect("task birth collision increment fits i64");
     }
@@ -938,13 +938,13 @@ pub(super) fn allocate_task_stamp(board: &BoardAnswer, mut epoch_millis: i64) ->
 
 pub(super) fn allocate_task_stamps(
     board: &BoardAnswer,
-    mut epoch_millis: i64,
+    mut epoch_micros: i64,
     count: usize,
 ) -> Vec<wire::TaskStamp> {
     let mut planned = Vec::with_capacity(count);
     while planned.len() < count {
-        let candidate = allocate_task_stamp(board, epoch_millis);
-        epoch_millis = epoch_millis
+        let candidate = allocate_task_stamp(board, epoch_micros);
+        epoch_micros = epoch_micros
             .checked_add(1)
             .expect("task birth collision increment fits i64");
         if planned.iter().all(|born| born != &candidate) {

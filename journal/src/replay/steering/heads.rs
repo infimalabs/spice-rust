@@ -13,7 +13,7 @@ pub(super) fn verify(
 ) -> Result<usize, VerifyError> {
     let mut statement = connection
         .prepare(
-            "SELECT directive, steer_key, lane, disposition, created_seq, minted_millis, \
+            "SELECT directive, steer_key, lane, disposition, created_seq, minted_micros, \
              head_seq, body FROM steering_heads ORDER BY directive",
         )
         .map_err(VerifyError::Sqlite)?;
@@ -102,7 +102,7 @@ fn verify_identity(
         || head.lane.to_string() != row.lane
         || crate::guard::disposition_name(head.disposition) != row.disposition
         || i64::try_from(head.created.get()).ok() != Some(row.created_seq)
-        || head.minted_millis != row.minted_millis
+        || head.minted_micros != row.minted_micros
     {
         violations.push(Violation::new(
             ViolationClass::Head,
@@ -189,7 +189,7 @@ fn read_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
         lane: row.get(2)?,
         disposition: row.get(3)?,
         created_seq: row.get(4)?,
-        minted_millis: row.get(5)?,
+        minted_micros: row.get(5)?,
         head_seq: row.get(6)?,
         body: row.get(7)?,
     })
@@ -201,7 +201,7 @@ struct Row {
     lane: String,
     disposition: String,
     created_seq: i64,
-    minted_millis: Option<i64>,
+    minted_micros: Option<i64>,
     head_seq: i64,
     body: Vec<u8>,
 }

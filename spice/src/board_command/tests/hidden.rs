@@ -8,7 +8,7 @@ fn add_oops(bus: &Bus, epoch: CanonicalUuid, actor: Actor, task: &str, title: &s
     let value = task.bytes().fold(0_i64, |value, byte| {
         (value * 131 + i64::from(byte)) % 10_000_000_000_000
     });
-    let born = wire::TaskStamp::for_millis(value).expect("oops fixture stamp");
+    let born = wire::TaskStamp::for_micros(value).expect("oops fixture stamp");
     let task = TaskHandle::for_project(".oops", &born);
     assert_committed(issue(
         bus,
@@ -428,7 +428,7 @@ fn assert_manual_system_project_refuses(bus: &Bus, epoch: CanonicalUuid, lane: &
             actor,
             CommandKind::TaskAdd,
             vec![Witness::Absence {
-                task: wire::TaskStamp::for_millis(42).expect("fixture task stamp"),
+                task: wire::TaskStamp::for_micros(42).expect("fixture task stamp"),
             }],
             &TaskAdd {
                 title: "Manual hidden creation must refuse".to_owned(),
@@ -469,7 +469,7 @@ fn assert_forged_hidden_route_refuses(bus: &Bus, epoch: CanonicalUuid, lane: &Ac
                 epoch,
                 kind: CommandKind::TaskOopsAdd,
                 expected: vec![Witness::Absence {
-                    task: wire::TaskStamp::for_millis(43).expect("fixture task stamp"),
+                    task: wire::TaskStamp::for_micros(43).expect("fixture task stamp"),
                 }],
                 body: serde_json::json!({
                     "title": "forged hidden route",

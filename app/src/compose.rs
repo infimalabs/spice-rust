@@ -38,7 +38,7 @@ pub enum Refusal {
     },
     /// The task field does not spell the wire's task-handle grammar.
     #[error(
-        "Task must be `<UPPER-STEM>-<key>` with both parts alphanumeric, so {written:?} cannot name one."
+        "Task must be `<UPPER-STEM>-<stamp>` with an eight- or nine-character canonical task stamp, so {written:?} cannot name one."
     )]
     Task {
         /// Text as the operator wrote it, after surrounding whitespace is removed.

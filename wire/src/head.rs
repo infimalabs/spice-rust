@@ -301,7 +301,7 @@ pub struct SteeringHead {
     pub origin: Origin,
     /// Creating fact position retained as the cause of later transitions.
     pub created: Seq,
-    /// Decoded moment for a key minted by the current time codec.
+    /// Normalized Unix-microsecond moment for a key minted by a time codec.
     ///
     /// Legacy keys outside that codec leave this absent. The maximum present
     /// value lets new key allocation jump past all historical collisions in
@@ -311,7 +311,8 @@ pub struct SteeringHead {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
-    pub minted_millis: Option<i64>,
+    #[serde(alias = "minted_millis")]
+    pub minted_micros: Option<i64>,
 }
 
 /// How far one logical transcript stream has been accounted.

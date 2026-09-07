@@ -220,7 +220,7 @@ fn cover_spellings(covered: &mut BTreeSet<String>) {
     spelling_law(
         covered,
         "TaskHandle",
-        &[handle("SPICE-aBcD"), handle("WIRE-1kJJP2Qc")],
+        &[handle("SPICE-1kKRRsDP"), handle("WIRE-1kJJP2Qc")],
     );
     spelling_law(
         covered,
@@ -232,7 +232,7 @@ fn cover_spellings(covered: &mut BTreeSet<String>) {
         covered,
         "Origin",
         &[
-            "task:SPICE-aBcD".parse::<Origin>().expect("origin"),
+            "task:SPICE-1kKRRsDP".parse::<Origin>().expect("origin"),
             "repo:genesis".parse::<Origin>().expect("origin"),
         ],
     );
@@ -282,7 +282,7 @@ fn cover_journal_frames(covered: &mut BTreeSet<String>) {
                 seq: seq(48213),
                 at: at("2030-04-12T18:44:09.271Z"),
                 actor: Actor::Operator,
-                origin: "task:SPICE-aBcD".parse().expect("origin"),
+                origin: "task:SPICE-1kKRRsDP".parse().expect("origin"),
                 cause: Some(seq(48190)),
                 fact: Fact::new(body("checked")),
             },
@@ -291,7 +291,7 @@ fn cover_journal_frames(covered: &mut BTreeSet<String>) {
                 seq: seq(48214),
                 at: at("2030-04-12T18:44:09.272Z"),
                 actor: Actor::Operator,
-                origin: "task:SPICE-aBcD".parse().expect("origin"),
+                origin: "task:SPICE-1kKRRsDP".parse().expect("origin"),
                 cause: None,
                 fact: Fact::new(body("cargo test --workspace")),
             },
@@ -543,7 +543,7 @@ fn cover_steering_heads(covered: &mut BTreeSet<String>) {
                 disposition: Disposition::Live,
                 origin: "repo:genesis".parse().expect("origin"),
                 created: seq(16),
-                minted_millis: None,
+                minted_micros: None,
             },
             SteeringHead {
                 directive,
@@ -566,7 +566,7 @@ fn cover_steering_heads(covered: &mut BTreeSet<String>) {
                 disposition: Disposition::Declined,
                 origin: "task:1kKRRsDP".parse().expect("origin"),
                 created: seq(17),
-                minted_millis: Some(1_902_317_049_271),
+                minted_micros: Some(1_902_317_049_271_000),
             },
         ],
     );
@@ -1088,7 +1088,7 @@ fn opaque_stream_envelope(position: u64, cause: Option<u64>, validation: &str) -
         seq: seq(position),
         at: at("2030-04-12T18:44:09.271Z"),
         actor: Actor::Operator,
-        origin: "task:SPICE-aBcD".parse().expect("origin"),
+        origin: "task:SPICE-1kKRRsDP".parse().expect("origin"),
         cause: cause.map(seq),
         fact: Fact::new(body(validation)),
     };
