@@ -9,7 +9,7 @@ import {
   CONNECT_MS,
   monitorPage,
   reply,
-  streamPrimaryAssistantMessage,
+  streamFixtureAssistantMessage,
   TRANSITION_MS,
   waitForPageFunction as waitForPage,
 } from "./canvas-fixture.mjs";
@@ -297,7 +297,7 @@ async function emitAssistantRecord(fixture, page, lane, text, { final = false } 
     },
   };
   if (final) message.stop_reason = "end_turn";
-  await streamPrimaryAssistantMessage(fixture, message);
+  await streamFixtureAssistantMessage(fixture, message);
   await cards.nth(before).waitFor({ timeout: CONNECT_MS });
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
     () => requestAnimationFrame(resolve),

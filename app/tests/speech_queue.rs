@@ -190,7 +190,7 @@ fn narration_cursors_suppress_materialized_history_and_admit_only_live_suffixes(
 }
 
 #[test]
-fn a_two_message_narration_batch_commits_its_newest_message_first() {
+fn a_two_message_narration_batch_admits_only_its_newest_message() {
     let mut cursors = NarrationCursors::default();
     let history = message("agent-a", "a1", "history");
     assert!(
@@ -212,8 +212,22 @@ fn a_two_message_narration_batch_commits_its_newest_message_first() {
             .iter()
             .map(|line| line.text.as_str())
             .collect::<Vec<_>>(),
-        ["newest unseen", "older unseen"]
+        ["newest unseen"]
     );
+
+    let mut busy_queue = SpeechQueue::default();
+    let busy_head = started(busy_queue.enqueue(narration("lineage-b", "active head")));
+    for line in lines.clone() {
+        assert_eq!(
+            busy_queue.enqueue(narration(&line.lane, &line.text)),
+            Enqueue::Queued
+        );
+    }
+    let newest = match busy_queue.finish(busy_head.id()) {
+        Advance::Start(entry) => entry,
+        other => panic!("busy queue did not advance to the newest batched line: {other:?}"),
+    };
+    assert_eq!(newest.text(), "newest unseen");
 
     let mut queue = SpeechQueue::default();
     let first = lines
