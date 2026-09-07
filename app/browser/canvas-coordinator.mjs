@@ -26,8 +26,8 @@ const SHARD_TIMEOUT_MS = 120_000;
 const COORDINATOR_TIMEOUT_MS = 270_000;
 const PROGRESS_MS = 30_000;
 const TERMINATION_GRACE_MS = 30_000;
-const RESIDENT_CONCURRENCY = 4;
-const MAX_CONCURRENCY = 5;
+const RESIDENT_CONCURRENCY = 1;
+const MAX_CONCURRENCY = 1;
 
 function concurrencyFrom(arguments_) {
   const indexes = arguments_.flatMap((argument, index) =>
