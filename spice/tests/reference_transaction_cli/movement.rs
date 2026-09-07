@@ -173,7 +173,7 @@ fn the_same_tree_and_parent_admission_is_independent_of_branch_name() {
         &["update-ref", "refs/heads/producer", &existing],
     );
     fixture.install_hook();
-    let output = Command::new("git")
+    let output = Command::new("/usr/bin/git")
         .args([
             "update-ref",
             "refs/heads/main",
@@ -271,7 +271,7 @@ fn existing_history_still_cannot_abandon_published_commits() {
         &["config", "branch.main.merge", "refs/heads/main"],
     );
     fixture.install_hook();
-    let output = Command::new("git")
+    let output = Command::new("/usr/bin/git")
         .args(["reset", "--soft", &fixture.head])
         .current_dir(fixture.scratch.path())
         .output()

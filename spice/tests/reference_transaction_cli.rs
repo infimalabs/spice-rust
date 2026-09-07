@@ -384,7 +384,7 @@ fn configure_identity(root: &Path) {
 }
 
 fn git(root: &Path, arguments: &[&str]) -> String {
-    let output = Command::new("git")
+    let output = Command::new("/usr/bin/git")
         .args(arguments)
         .current_dir(root)
         .output()
