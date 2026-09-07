@@ -35,7 +35,7 @@ pub struct RefreshRequest {
     pub host: Option<String>,
     /// Port for the restarted resident, or the published one.
     pub port: Option<u16>,
-    /// Build and install the release profile rather than the debug profile.
+    /// Build and install the release profile rather than the development profile.
     pub release: bool,
     /// Restart the resident after the executable is republished.
     pub restart: bool,

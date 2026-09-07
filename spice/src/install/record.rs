@@ -10,8 +10,8 @@ use super::binding::bind_destination;
 use super::files::{observe_bound, publish_bound};
 use super::{
     FileImage, Generation, InstallError, InstallPlan, InstallPlanSummary, InstallReceipt,
-    InstallStatus, ReceiptGeneration, Repository, RepositoryIdentity, RollbackArchive,
-    LEGACY_RECORD_VERSIONS, RECORD_MODE, RECORD_NAME, RECORD_PATH, RECORD_VERSION,
+    InstallStatus, LEGACY_RECORD_VERSIONS, RECORD_MODE, RECORD_NAME, RECORD_PATH, RECORD_VERSION,
+    ReceiptGeneration, Repository, RepositoryIdentity, RollbackArchive,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

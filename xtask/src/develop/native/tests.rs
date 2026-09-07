@@ -9,6 +9,12 @@ use gate::test_support::gix;
 
 use super::*;
 
+#[test]
+fn developer_install_names_its_selected_build_profile() {
+    assert_eq!(build_profile(false), "development");
+    assert_eq!(build_profile(true), "release");
+}
+
 /// How many names one fixture tries before giving up on an exclusive root.
 const SCRATCH_ATTEMPTS: usize = 100;
 
