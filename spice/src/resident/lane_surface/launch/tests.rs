@@ -35,6 +35,126 @@ fn occupant_deadline_uses_runtime_instead_of_the_claim_lease() {
 }
 
 #[test]
+fn absent_cargo_lock_launches_without_rust_environment_or_tool_probe() {
+    let fixture = AdvisoryRtkFixture::new();
+    fs::remove_file(fixture.root.join("Cargo.lock")).expect("remove fixture Cargo lock");
+    let repository = Repository::discover(&fixture.root).expect("fixture repository discovers");
+
+    let (environment, _) = launch_environment(
+        &fixture.paths,
+        &repository,
+        &fixture.root.join("fake-claude"),
+        None,
+        fixture
+            .root
+            .join("advisory-rtk")
+            .to_str()
+            .expect("fixture RTK path is UTF-8"),
+        fixture.lane,
+    )
+    .expect("non-Rust launch environment composes");
+    for name in [
+        spice::cargo_isolation::CARGO_HOME_VARIABLE,
+        spice::cargo_isolation::BOOTSTRAP_HOME_VARIABLE,
+        spice::cargo_isolation::NATIVE_CARGO_VARIABLE,
+        spice::cargo_isolation::NATIVE_RUSTC_VARIABLE,
+        spice::cargo_isolation::NATIVE_RUSTDOC_VARIABLE,
+        spice::cargo_isolation::RUSTC_VARIABLE,
+        spice::cargo_isolation::RUSTDOC_VARIABLE,
+    ] {
+        assert!(
+            environment.entries().iter().all(|(key, _)| key != name),
+            "non-Rust launch retained {name}"
+        );
+    }
+    for name in [
+        "SHELL",
+        steer::hook::BASH_ENV,
+        steer::hook::ZDOTDIR,
+        steer::hook::HOOKS,
+        steer::hook::NATIVE_SHELL,
+        steer::hook::INBOX,
+        steer::hook::EXECUTABLE,
+        spice::rtk::EXECUTABLE_VARIABLE,
+        spice::rtk::HISTORY_VARIABLE,
+    ] {
+        assert!(
+            environment.entries().iter().any(|(key, _)| key == name),
+            "non-Rust launch omitted {name}"
+        );
+    }
+    for name in ["HOME", "TMPDIR", "USER"] {
+        if crate::bootstrap_environment(name).is_some() {
+            assert!(environment.entries().iter().any(|(key, _)| key == name));
+        }
+    }
+}
+
+#[test]
+fn zero_config_repository_without_a_lock_composes_default_codex() {
+    let fixture = AdvisoryRtkFixture::new();
+    for path in ["Cargo.lock", "Cargo.toml", "spice-rust.toml"] {
+        fs::remove_file(fixture.root.join(path)).expect("remove Rust fixture input");
+    }
+    let vendor = "codex".parse().expect("default vendor name");
+    let request = OccupantLaunchRequest {
+        worktree: fixture.root.to_str().expect("fixture worktree is UTF-8"),
+        vendor: &vendor,
+        epoch: fixture.epoch,
+        lane: fixture.lane,
+        occupant: fixture.occupant,
+        resume: vendor::Resume::Fresh,
+        fast_mode: false,
+    };
+
+    occupant_launch(&fixture.paths, request, fixture.reporter())
+        .expect("zero-config non-Rust repository composes default Codex");
+}
+
+#[test]
+fn regular_cargo_lock_retains_the_complete_isolated_rust_environment() {
+    let fixture = AdvisoryRtkFixture::new();
+    let repository = Repository::discover(&fixture.root).expect("fixture repository discovers");
+    let environment = cargo_environment(&repository, fixture.lane)
+        .expect("regular Cargo lock prepares isolation");
+    let names = environment
+        .iter()
+        .map(|(name, _)| name.to_str().expect("Rust variable name is UTF-8"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        names,
+        [
+            spice::cargo_isolation::CARGO_HOME_VARIABLE,
+            spice::cargo_isolation::BOOTSTRAP_HOME_VARIABLE,
+            spice::cargo_isolation::NATIVE_CARGO_VARIABLE,
+            spice::cargo_isolation::NATIVE_RUSTC_VARIABLE,
+            spice::cargo_isolation::NATIVE_RUSTDOC_VARIABLE,
+            spice::cargo_isolation::RUSTC_VARIABLE,
+            spice::cargo_isolation::RUSTDOC_VARIABLE,
+        ]
+    );
+}
+
+#[test]
+fn non_regular_cargo_lock_refuses_before_rust_tool_probe() {
+    let fixture = AdvisoryRtkFixture::new();
+    let lock = fixture.root.join("Cargo.lock");
+    fs::remove_file(&lock).expect("remove fixture Cargo lock");
+    fs::create_dir(&lock).expect("replace Cargo lock with directory");
+    let repository = Repository::discover(&fixture.root).expect("fixture repository discovers");
+
+    let error =
+        cargo_environment(&repository, fixture.lane).expect_err("non-regular Cargo lock refuses");
+    assert!(matches!(
+        error,
+        Outcome::Fault(ref fault)
+            if fault.reason == "lane::cargo-isolation-unavailable"
+                && fault.detail.contains("not a regular file")
+    ));
+}
+
+#[test]
 fn launch_skill_comes_only_from_initialized_git_common_state() {
     let root = std::env::temp_dir().join(format!(
         "spice-launch-skill-{}-{}",
