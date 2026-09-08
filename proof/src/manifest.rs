@@ -834,6 +834,7 @@ impl Error for ManifestAdmissionError {
 #[derive(Debug)]
 pub enum ManifestPublishError {
     InvalidPath(PathBuf),
+    Guard(String),
     Io { path: PathBuf, source: io::Error },
     Atomic(atomic::Error),
 }
@@ -843,6 +844,9 @@ impl fmt::Display for ManifestPublishError {
         match self {
             Self::InvalidPath(path) => {
                 write!(formatter, "invalid manifest path {}", path.display())
+            }
+            Self::Guard(reason) => {
+                write!(formatter, "manifest publication guard refused: {reason}")
             }
             Self::Io { path, source } => {
                 write!(
@@ -863,7 +867,7 @@ impl Error for ManifestPublishError {
         match self {
             Self::Io { source, .. } => Some(source),
             Self::Atomic(source) => Some(source),
-            Self::InvalidPath(_) => None,
+            Self::InvalidPath(_) | Self::Guard(_) => None,
         }
     }
 }
