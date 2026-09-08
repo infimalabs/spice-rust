@@ -582,8 +582,12 @@ fn make_receipt_answer_noncanonical(connection: &Connection) {
             |row| row.get(0),
         )
         .expect("read board response for corruption");
-    let mut document: Value = serde_json::from_slice(&bytes).expect("decode board response JSON");
-    document["outcome"]["body"]["residency"]["body"]["subscriptions"][0]
+    let mut response: Response<Value> =
+        wire::decode(&bytes).expect("decode generic board response");
+    let Outcome::Reply(reply) = &mut response.outcome else {
+        panic!("board response is a reply");
+    };
+    reply.body["residency"]["body"]["subscriptions"][0]
         .as_object_mut()
         .expect("board response lineage subscription")
         .insert("manual_projects".to_owned(), json!([]));
@@ -591,7 +595,7 @@ fn make_receipt_answer_noncanonical(connection: &Connection) {
         .execute(
             "UPDATE command_receipts SET response = ?1 WHERE command_kind = ?2",
             params![
-                serde_json::to_vec(&document).expect("encode noncanonical board response"),
+                wire::encode(&response).expect("encode generic-canonical board response"),
                 command,
             ],
         )
