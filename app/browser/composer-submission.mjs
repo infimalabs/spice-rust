@@ -17,6 +17,29 @@ function assertDocumentOrder(directive, parts, label) {
   );
 }
 
+async function assertCommandPreview(send, expected, label) {
+  let observed = !expected;
+  for (let frame = 0; frame < 8; frame += 1) {
+    observed = await send.evaluate((button) => {
+      const style = getComputedStyle(button);
+      return style.outlineStyle === "solid" && style.outlineWidth === "3px";
+    });
+    if (observed === expected) break;
+    await new Promise((resolve) => setTimeout(resolve, 16));
+  }
+  assert.equal(observed, expected, label);
+}
+
+async function setTextareaValue(textbox, value) {
+  await textbox.evaluate((textarea, next) => {
+    textarea.value = next;
+    textarea.dispatchEvent(new InputEvent("input", {
+      bubbles: true,
+      inputType: next.length === 0 ? "deleteContentBackward" : "insertText",
+    }));
+  }, value);
+}
+
 /// Exercise both submission doors against complete target documents. Keyboard
 /// submission sends only the focused agent; the lineage button sends every
 /// nonempty agent draft. Both must preserve each composer's text-then-upload
@@ -38,7 +61,61 @@ export async function assertCompleteComposerSubmission({
   await assertNoDraftPreview(lane, 2);
   await quotedComposer.getByRole("textbox").fill("canvas quote reply");
   assert.equal(await composer.getByRole("textbox").inputValue(), "");
-  await composer.getByRole("textbox").fill("canvas primary body");
+  const primaryTextbox = composer.getByRole("textbox");
+  const quotedTextbox = quotedComposer.getByRole("textbox");
+  const form = lane.locator("xpath=ancestor::form[1]");
+  const send = form.locator(".organization-send");
+  await primaryTextbox.fill("canvas primary body");
+  await primaryTextbox.focus();
+  await assertCommandPreview(send, false, "focus alone does not preview a keyboard submission");
+  await page.keyboard.down("Control");
+  await assertCommandPreview(
+    send,
+    true,
+    "holding the command modifier outlines the focused eligible composer's action",
+  );
+  assert.equal(
+    await primaryTextbox.evaluate((textarea) => document.activeElement === textarea),
+    true,
+    "the action preview coexists with textarea focus",
+  );
+  const [focusedComposerBorder, idleComposerBorder] = await Promise.all([
+    composer.evaluate((node) => getComputedStyle(node).borderColor),
+    quoteLane.locator(".composer-shard--primary").evaluate(
+      (node) => getComputedStyle(node).borderColor,
+    ),
+  ]);
+  assert.notEqual(
+    focusedComposerBorder,
+    idleComposerBorder,
+    "the focused composer keeps its visible perimeter while the action preview is shown",
+  );
+  await page.keyboard.up("Control");
+  await assertCommandPreview(send, false, "releasing the command modifier clears the preview");
+
+  await page.keyboard.down("Control");
+  await setTextareaValue(primaryTextbox, "");
+  assert.equal(await primaryTextbox.inputValue(), "", "the held-modifier edit empties the textarea");
+  assert.equal(
+    await composer.getAttribute("data-command-submit-eligible"),
+    "false",
+    "the empty primary draft becomes ineligible before preview styling",
+  );
+  await assertCommandPreview(send, false, "empty focused text clears the preview");
+  await setTextareaValue(primaryTextbox, "canvas primary body");
+  await assertCommandPreview(send, true, "restoring eligible focused text restores the preview");
+  await quotedTextbox.focus();
+  await assertCommandPreview(send, false, "a quoted composer never previews the primary action");
+  await primaryTextbox.focus();
+  await assertCommandPreview(send, true, "returning focus to the primary composer restores the preview");
+  await send.evaluate((button) => { button.disabled = true; });
+  await assertCommandPreview(send, false, "a disabled action cannot retain the preview");
+  await send.evaluate((button) => { button.disabled = false; });
+  await assertCommandPreview(send, true, "reenabling the eligible action restores the held preview");
+  await form.locator(".organization-lifetime input").focus();
+  await assertCommandPreview(send, false, "leaving the draft composer clears the preview");
+  await page.keyboard.up("Control");
+
   await assertComposerImageIndicators(page, composer, ["pixel.png", "pixel-copy.png"]);
   await pasteImages(quotedComposer, ["quoted-pixel.png"]);
   await quotedComposer.getByRole("img", { name: "quoted-pixel.png" }).waitFor();
@@ -56,7 +133,11 @@ export async function assertCompleteComposerSubmission({
   await assertNoDraftPreview(lane, 2);
   await page.screenshot({ path: artifactPath, fullPage: true });
 
-  await quotedComposer.getByRole("textbox").press("Control+Enter");
+  await primaryTextbox.focus();
+  await page.keyboard.down("Control");
+  await assertCommandPreview(send, true, "the preview is visible immediately before keyboard submit");
+  await page.keyboard.press("Enter");
+  await page.keyboard.up("Control");
   await quotedComposer.waitFor({ state: "detached", timeout: 10_000 });
   const primaryTextarea = lane.locator("textarea[data-primary-composer-target-id]");
   await primaryTextarea.evaluate((textarea) => {

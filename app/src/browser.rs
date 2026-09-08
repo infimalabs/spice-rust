@@ -548,6 +548,7 @@ fn canvas_app() -> Html {
     use_speech_reset(speech.clone(), speech_runtime.clone());
     use_mosaic_root_scroll(*mosaic);
     use_canvas_menu_dismissal(canvas_menu_open.clone());
+    watchband::use_command_modifier_preview();
     let lineage_count = surface
         .read()
         .as_ref()

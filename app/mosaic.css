@@ -745,6 +745,14 @@
   color: var(--page);
   font: 1rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+html[data-command-modifier-held="true"]
+  .organization-composer:has(
+    .composer-shard--primary[data-command-submit-eligible="true"] textarea:focus
+  )
+  .organization-send:not(:disabled) {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
 .organization-control-issue {
   width: calc(var(--organization-control-track-width) + 16px); margin: 0;
   color: var(--danger); overflow-wrap: anywhere;
