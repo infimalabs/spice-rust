@@ -10,7 +10,6 @@ use std::process::{Command, ExitStatus};
 use spice::repository::Repository;
 use wire::manifest::ReleaseTarget;
 
-const MAX_PACKAGE_MEMBERS: usize = 16;
 const MAX_PACKAGE_ENTRIES: usize = 64;
 const MAX_MEMBER_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_PACKAGE_BYTES: u64 = 1024 * 1024 * 1024;
@@ -210,11 +209,6 @@ fn collect(
                 path.display()
             )));
         }
-        if members.len() == MAX_PACKAGE_MEMBERS {
-            return Err(Error::input(format!(
-                "package has more than {MAX_PACKAGE_MEMBERS} regular files"
-            )));
-        }
         if metadata.len() > MAX_MEMBER_BYTES {
             return Err(Error::input(format!(
                 "package member exceeds {MAX_MEMBER_BYTES} bytes: {}",
@@ -378,6 +372,12 @@ impl std::error::Error for Error {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wire::manifest::{
+        BuildPins, CANVAS_APP_FILES, InventoryEntry, PROOF_RECEIPT_VERSION, ProductVersion,
+        ProofEnvironment, ProofReceipt, ProofStanding, RELEASE_MANIFEST_VERSION, ReleaseManifest,
+        ReleaseManifestTarget, TARGET_PAYLOAD_VERSION, TargetPayload,
+    };
+    use wire::{Digest, Domain};
 
     #[test]
     fn verified_executable_staging_is_exact_executable_and_ephemeral() {
@@ -458,5 +458,191 @@ mod tests {
                 "{candidate} must not advance {current}"
             );
         }
+    }
+
+    #[test]
+    fn current_complete_package_acquires_and_delegates_its_platform_executable() {
+        let root = std::env::temp_dir().join(format!(
+            "spice-complete-package-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir(&root).expect("package fixture root creates");
+        let marker = root.join("selected-executable-ran");
+        let tree = complete_package(&marker);
+        for member in tree.members() {
+            let path = root.join(member.path());
+            fs::create_dir_all(path.parent().expect("package member has a parent"))
+                .expect("package parent creates");
+            fs::write(&path, member.bytes()).expect("package member writes");
+            fs::set_permissions(&path, fs::Permissions::from_mode(member.mode()))
+                .expect("package member mode writes");
+        }
+
+        let selected = acquire(&root).expect("complete package acquires");
+        let status =
+            delegate(&root, &selected, None, false).expect("selected executable delegates");
+        assert!(status.success());
+        assert_eq!(
+            fs::read_to_string(&marker).expect("delegate marker reads"),
+            "install\n"
+        );
+        fs::remove_dir_all(&root).expect("package fixture removes");
+    }
+
+    fn complete_package(marker: &Path) -> proof::PackageTree {
+        const TARGETS: [ReleaseTarget; 2] = [
+            ReleaseTarget::Aarch64AppleDarwin,
+            ReleaseTarget::X86_64UnknownLinuxMusl,
+        ];
+        let source = Digest::compute(Domain::DistSourceCommit, b"source");
+        let app_identity = Digest::compute(Domain::DistArtifact, b"canvas generation");
+        let mut app = CANVAS_APP_FILES
+            .iter()
+            .map(|file| ((*file).to_owned(), file.as_bytes().to_vec()))
+            .collect::<Vec<_>>();
+        app.sort_by(|left, right| left.0.cmp(&right.0));
+        let battery = Digest::compute(Domain::ProofBattery, b"battery");
+        let environment =
+            ProofEnvironment::native(Digest::compute(Domain::ProofNativeRunner, b"runner"));
+        let mut executables = Vec::new();
+        let mut payloads = Vec::new();
+        let mut proofs = Vec::new();
+        let mut manifest_targets = Vec::new();
+
+        for target in TARGETS {
+            let (executable, payload, proof, sealed) = target_evidence(
+                target,
+                marker,
+                &source,
+                &app_identity,
+                &app,
+                &battery,
+                &environment,
+            );
+            executables.push(executable);
+            payloads.push(payload);
+            proofs.push(proof);
+            manifest_targets.push(sealed);
+        }
+        let manifest = wire::encode(&ReleaseManifest {
+            version: RELEASE_MANIFEST_VERSION,
+            source,
+            targets: manifest_targets,
+        })
+        .expect("manifest encodes");
+        let current = dist::current_product_version().expect("current product version");
+        let major = current
+            .as_str()
+            .split('.')
+            .next()
+            .expect("canonical version has a major component");
+        let version = ProductVersion::parse(&format!("1{major}.0.0"))
+            .expect("synthetic package advances the current major");
+        let notes = b"Release notes\n";
+        let notes_identity = Digest::compute(Domain::DistReleaseNotes, b"notes evidence");
+        proof::build_package(proof::PackageInput::new(
+            &version,
+            notes_identity,
+            notes,
+            &manifest,
+            app.iter()
+                .map(|(file, bytes)| proof::PackageAppInput::new(file, bytes))
+                .collect(),
+            TARGETS
+                .into_iter()
+                .enumerate()
+                .map(|(index, target)| {
+                    proof::PackageTargetInput::new(
+                        target,
+                        &executables[index],
+                        &payloads[index],
+                        &proofs[index],
+                    )
+                })
+                .collect(),
+        ))
+        .expect("complete package builds")
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn target_evidence(
+        target: ReleaseTarget,
+        marker: &Path,
+        source: &Digest,
+        app_identity: &Digest,
+        app: &[(String, Vec<u8>)],
+        battery: &Digest,
+        environment: &ProofEnvironment,
+    ) -> (Vec<u8>, Vec<u8>, Vec<u8>, ReleaseManifestTarget) {
+        let executable = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\n",
+            marker.display()
+        )
+        .into_bytes();
+        let native = Digest::compute(Domain::DistArtifact, &executable);
+        let pins = BuildPins {
+            rust: "rustc 1.97.1".to_owned(),
+            wasm_target: "wasm32-unknown-unknown".to_owned(),
+            trunk: "trunk 0.21.0".to_owned(),
+            cargo_mutants: "cargo-mutants 27.0.0".to_owned(),
+            proof_container: format!("spice/proof@sha256:{}", "1".repeat(64)),
+        };
+        let mut inventory = app
+            .iter()
+            .map(|(file, bytes)| InventoryEntry {
+                path: format!("app/{file}"),
+                mode: 0o644,
+                bytes: bytes.len() as u64,
+                digest: Digest::compute(Domain::DistArtifact, bytes),
+            })
+            .collect::<Vec<_>>();
+        inventory.push(InventoryEntry {
+            path: "bin/spice".to_owned(),
+            mode: 0o755,
+            bytes: executable.len() as u64,
+            digest: native.clone(),
+        });
+        inventory.sort_by(|left, right| left.path.cmp(&right.path));
+        let payload = TargetPayload {
+            version: TARGET_PAYLOAD_VERSION,
+            target,
+            source: source.clone(),
+            app: app_identity.clone(),
+            native,
+            pins_digest: Digest::compute(
+                Domain::DistPins,
+                &wire::encode(&pins).expect("pins encode"),
+            ),
+            inventory_digest: Digest::compute(
+                Domain::DistInventory,
+                &wire::encode(&inventory).expect("inventory encodes"),
+            ),
+            pins,
+            inventory,
+        };
+        let payload = wire::encode(&payload).expect("payload encodes");
+        let payload_identity = Digest::compute(Domain::DistTargetPayload, &payload);
+        let replay = Digest::compute(Domain::ProofReplayV3, target.as_str().as_bytes());
+        let proof = ProofReceipt {
+            version: PROOF_RECEIPT_VERSION,
+            target,
+            payload: payload_identity.clone(),
+            battery: battery.clone(),
+            replay: replay.clone(),
+            environment: environment.clone(),
+            standing: ProofStanding::Clean,
+        };
+        let proof = wire::encode(&proof).expect("proof receipt encodes");
+        let sealed = ReleaseManifestTarget {
+            target,
+            payload: payload_identity,
+            receipt: Digest::compute(Domain::ProofReceiptV3, &proof),
+            battery: battery.clone(),
+            replay,
+            environment: environment.clone(),
+            standing: ProofStanding::Clean,
+        };
+        (executable, payload, proof, sealed)
     }
 }
