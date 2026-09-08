@@ -256,6 +256,7 @@ mod presentation {
                             text: (*text).to_owned(),
                             authored: true,
                             taste: false,
+                            review: false,
                             disposition: wire::Disposition::Live,
                             retirement: None,
                         },
@@ -307,6 +308,7 @@ mod presentation {
                 acknowledgements: 1,
                 tastes: 0,
                 broadcasts: 0,
+                reviews: 0,
             },
         );
         for text in [
@@ -332,9 +334,69 @@ mod presentation {
                 acknowledgements: 0,
                 tastes: 0,
                 broadcasts: 1,
+                reviews: 0,
             },
         );
         assert!(message_badges("NACK 1kQnrzNZ: refused.", Some(&directives), event()).is_empty());
+    }
+
+    #[test]
+    fn acknowledged_review_feedback_earns_a_source_bound_semantic_badge() {
+        assert!(is_review_feedback(Some("review-feedback:1kKRRsDR:42")));
+        assert!(!is_review_feedback(Some("task-contract-edit:1kKRRsDR:42")));
+        let source = "00000000-0000-4000-8000-000000000002"
+            .parse()
+            .expect("fixture source");
+        let key = "1kQnrzNZ"
+            .parse::<steer::Key>()
+            .expect("fixture key parses");
+        let directives = PresentationDirectives(BTreeMap::from([(
+            key,
+            PresentationDirective {
+                lane: lane(),
+                text: concat!(
+                    "[REVIEW] Peer feedback for CANVAS-1kKRRsDR:\n\n",
+                    "> preserve the finding\n\n",
+                    "Keep working the current task."
+                )
+                .to_owned(),
+                authored: true,
+                taste: false,
+                review: true,
+                disposition: wire::Disposition::Acked,
+                retirement: Some(wire::body::TranscriptLocus {
+                    source: Some(source),
+                    member: 1,
+                    offset: 0,
+                    length: 1,
+                    event: 0,
+                    line: 1,
+                    column: 5,
+                }),
+            },
+        )]));
+        let text = "ACK 1kQnrzNZ: Internalized.";
+        let mut original = event();
+        original.source = Some(source);
+        assert_eq!(
+            message_badges(text, Some(&directives), original),
+            wire::AgentMessageBadges {
+                acknowledgements: 0,
+                tastes: 0,
+                broadcasts: 0,
+                reviews: 1,
+            },
+        );
+        let mut other_source = original;
+        other_source.source = Some(
+            "00000000-0000-4000-8000-000000000003"
+                .parse()
+                .expect("other fixture source"),
+        );
+        assert!(
+            message_badges(text, Some(&directives), other_source).is_empty(),
+            "the same prose in another tape generation earns no review classification"
+        );
     }
 
     #[test]
@@ -489,6 +551,7 @@ mod presentation {
                 text: "Accepted task contract revision.".to_owned(),
                 authored: false,
                 taste: false,
+                review: false,
                 disposition: wire::Disposition::Acked,
                 retirement: Some(wire::body::TranscriptLocus {
                     source: None,
@@ -513,6 +576,7 @@ mod presentation {
                 acknowledgements: 1,
                 tastes: 0,
                 broadcasts: 0,
+                reviews: 0,
             },
         );
     }
@@ -529,6 +593,7 @@ mod presentation {
                 text: "Accepted task contract revision.".to_owned(),
                 authored: false,
                 taste: false,
+                review: false,
                 disposition: wire::Disposition::Acked,
                 retirement: Some(wire::body::TranscriptLocus {
                     source: None,
@@ -577,6 +642,7 @@ mod presentation {
                 acknowledgements: 1,
                 tastes: 0,
                 broadcasts: 0,
+                reviews: 0,
             },
         );
         assert!(messages[0].automatic_speech.is_none());
@@ -622,6 +688,7 @@ mod presentation {
                 text: "Keep the original response context.".to_owned(),
                 authored: true,
                 taste: false,
+                review: false,
                 disposition: wire::Disposition::Acked,
                 retirement: Some(retirement),
             },
@@ -667,6 +734,7 @@ mod presentation {
                     text: "Continue".to_owned(),
                     authored: true,
                     taste: false,
+                    review: false,
                     disposition: wire::Disposition::Acked,
                     retirement: Some(retirement(8, 5)),
                 },
@@ -678,6 +746,7 @@ mod presentation {
                     text: "[TASTE] fallbacks: Keep one deterministic path.".to_owned(),
                     authored: true,
                     taste: true,
+                    review: false,
                     disposition: wire::Disposition::Acked,
                     retirement: Some(retirement(0, 14)),
                 },
@@ -703,6 +772,7 @@ mod presentation {
                 acknowledgements: 0,
                 tastes: 1,
                 broadcasts: 0,
+                reviews: 0,
             },
         );
     }
@@ -732,6 +802,7 @@ mod presentation {
                     text: "Accepted task contract revision.".to_owned(),
                     authored: false,
                     taste: false,
+                    review: false,
                     disposition: wire::Disposition::Acked,
                     retirement: Some(retirement(5)),
                 },
@@ -743,6 +814,7 @@ mod presentation {
                     text: "[TASTE] compatibility: Keep one tested path.".to_owned(),
                     authored: true,
                     taste: true,
+                    review: false,
                     disposition: wire::Disposition::Acked,
                     retirement: Some(retirement(15)),
                 },
@@ -756,6 +828,7 @@ mod presentation {
                 acknowledgements: 1,
                 tastes: 1,
                 broadcasts: 0,
+                reviews: 0,
             },
         );
         assert_eq!(
@@ -790,6 +863,7 @@ mod presentation {
                     text: "Accepted task contract revision.".to_owned(),
                     authored: false,
                     taste: false,
+                    review: false,
                     disposition: wire::Disposition::Acked,
                     retirement: Some(retirement(13)),
                 },
@@ -801,6 +875,7 @@ mod presentation {
                     text: "Keep retained direction readable.".to_owned(),
                     authored: true,
                     taste: false,
+                    review: false,
                     disposition: wire::Disposition::Acked,
                     retirement: Some(retirement(23)),
                 },
@@ -819,6 +894,7 @@ mod presentation {
                 acknowledgements: 2,
                 tastes: 0,
                 broadcasts: 0,
+                reviews: 0,
             },
         );
     }
@@ -838,6 +914,7 @@ mod presentation {
                 text: "Keep the original response context.".to_owned(),
                 authored: true,
                 taste: false,
+                review: false,
                 disposition: wire::Disposition::Acked,
                 retirement: Some(wire::body::TranscriptLocus {
                     source: Some(expected_source),

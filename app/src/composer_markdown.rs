@@ -38,17 +38,18 @@ pub(crate) fn render_received_with_badges(
     markdown: &str,
     badges: wire::AgentMessageBadges,
 ) -> RenderedMarkdown {
-    render_received_with_classifications(markdown, badges.tastes, badges.broadcasts)
+    render_received_with_classifications(markdown, badges.reviews, badges.tastes, badges.broadcasts)
 }
 
-/// Render received text and replace authenticated quoted taste markers inline.
+/// Render received text and replace authenticated quoted classification markers inline.
 #[cfg(test)]
 pub(crate) fn render_received_with_tastes(markdown: &str, tastes: u32) -> RenderedMarkdown {
-    render_received_with_classifications(markdown, tastes, 0)
+    render_received_with_classifications(markdown, 0, tastes, 0)
 }
 
 fn render_received_with_classifications(
     markdown: &str,
+    reviews: u32,
     tastes: u32,
     broadcasts: u32,
 ) -> RenderedMarkdown {
@@ -67,7 +68,7 @@ fn render_received_with_classifications(
     let image_only = markdown_is_image_only(&events);
     let mut code_block = false;
     let mut block_quote_depth = 0usize;
-    let mut remaining_review = has_marker_prefix(&markdown, "[REVIEW]");
+    let mut remaining_reviews = usize::try_from(reviews).unwrap_or(usize::MAX);
     let mut remaining_tastes = usize::try_from(tastes).unwrap_or(usize::MAX);
     let mut remaining_broadcasts = usize::try_from(broadcasts).unwrap_or(usize::MAX);
     let events = decorate_markdown_images(events, image_only)
@@ -87,7 +88,7 @@ fn render_received_with_classifications(
             } else {
                 let events = inline_classification_marker(
                     event,
-                    &mut remaining_review,
+                    (block_quote_depth > 0).then_some(&mut remaining_reviews),
                     (block_quote_depth > 0).then_some(&mut remaining_tastes),
                     (block_quote_depth > 0).then_some(&mut remaining_broadcasts),
                 );
@@ -117,16 +118,17 @@ fn coalesce_text_events(events: Vec<MarkdownEvent<'_>>) -> Vec<MarkdownEvent<'_>
 
 fn inline_classification_marker<'a>(
     event: MarkdownEvent<'a>,
-    remaining_review: &mut bool,
+    remaining_reviews: Option<&mut usize>,
     remaining_tastes: Option<&mut usize>,
     remaining_broadcasts: Option<&mut usize>,
 ) -> Vec<MarkdownEvent<'a>> {
     let MarkdownEvent::Text(text) = event else {
         return vec![event];
     };
-    if std::mem::take(remaining_review)
+    if let Some(remaining) = remaining_reviews.filter(|remaining| **remaining > 0)
         && let Some(suffix) = marker_suffix(&text, "[REVIEW]")
     {
+        *remaining -= 1;
         return vec![
             MarkdownEvent::InlineHtml(review_pill_html().into()),
             MarkdownEvent::Text(suffix.into()),
@@ -796,17 +798,26 @@ mod tests {
     }
 
     #[test]
-    fn classification_markers_become_inline_pills() {
-        let rendered = render_received_with_tastes(
-            "[REVIEW] Peer feedback remains unchanged.\n\n\
-             Later [REVIEW] prose remains unchanged.\n\n\
-             [REVIEW] A later paragraph remains unchanged.\n\n\
-             > [REVIEW] Quoted context remains unchanged.\n\n\
+    fn authenticated_classification_markers_become_inline_pills() {
+        let rendered = render_received_with_badges(
+            "> [REVIEW] Peer feedback for CANVAS-1kKRRsDR:\n>\n\
+             > > missing current coverage\n>\n\
+             > Keep working the current task.\n\n\
+             [REVIEW] Ordinary prose remains unchanged.\n\n\
+             > [REVIEW] A second quoted marker remains unchanged.\n\n\
+             > `[REVIEW]` remains inline code.\n\n\
+             > ```text\n> [REVIEW] remains fenced code\n> ```\n\n\
              > [TASTE] compatibility: Keep one tested path.\n\n\
              > > [TASTE] fallbacks: Nested guidance keeps its own accent.\n\n\
              > [TASTE] polling: Wait for completion.\n\n\
+             > [BROADCAST] Send this to every occupied agent.\n\n\
              ACK: ordinary [TASTE] prose stays text.",
-            3,
+            wire::AgentMessageBadges {
+                acknowledgements: 0,
+                tastes: 3,
+                broadcasts: 1,
+                reviews: 1,
+            },
         );
         assert!(!rendered.html.contains("compatibility:"));
         assert!(!rendered.html.contains("fallbacks:"));
@@ -818,22 +829,27 @@ mod tests {
                 .contains("Nested guidance keeps its own accent.")
         );
         assert!(rendered.html.contains("Wait for completion."));
-        assert!(rendered.html.contains("Peer feedback remains unchanged."));
+        assert!(rendered.html.contains("Peer feedback for "));
         assert!(
             rendered
                 .html
-                .contains("Later [REVIEW] prose remains unchanged.")
+                .contains("data-task-handle=\"CANVAS-1kKRRsDR\"")
+        );
+        assert!(rendered.html.contains("missing current coverage"));
+        assert!(rendered.html.contains("Keep working the current task."));
+        assert!(!rendered.html.contains("[REVIEW] Peer feedback"));
+        assert!(
+            rendered
+                .html
+                .contains("[REVIEW] Ordinary prose remains unchanged.")
         );
         assert!(
             rendered
                 .html
-                .contains("[REVIEW] A later paragraph remains unchanged.")
+                .contains("[REVIEW] A second quoted marker remains unchanged.")
         );
-        assert!(
-            rendered
-                .html
-                .contains("[REVIEW] Quoted context remains unchanged.")
-        );
+        assert!(rendered.html.contains("<code>[REVIEW]</code>"));
+        assert!(rendered.html.contains("[REVIEW] remains fenced code"));
         assert!(rendered.html.contains("class=\"message-review-pill\""));
         assert!(
             rendered
@@ -841,6 +857,14 @@ mod tests {
                 .contains("aria-label=\"Review classification\">REVIEW</span>")
         );
         assert_eq!(rendered.html.matches("message-review-pill").count(), 1);
+
+        assert_eq!(
+            rendered
+                .html
+                .matches("class=\"message-broadcast-pill\"")
+                .count(),
+            1,
+        );
 
         assert_eq!(
             rendered
@@ -862,6 +886,14 @@ mod tests {
             rendered
                 .html
                 .contains("ACK: ordinary [TASTE] prose stays text.")
+        );
+
+        let unauthenticated = render_received("> [REVIEW] Quoted prose is not metadata.");
+        assert!(!unauthenticated.html.contains("message-review-pill"));
+        assert!(
+            unauthenticated
+                .html
+                .contains("[REVIEW] Quoted prose is not metadata.")
         );
     }
 

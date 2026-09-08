@@ -431,6 +431,7 @@ mod tests {
                     text: format!("direction for {key}"),
                     authored: true,
                     taste: false,
+                    review: false,
                     disposition: Disposition::Live,
                     retirement: None,
                 },

@@ -7,6 +7,9 @@ use wire::{Actor, CanonicalUuid, Seq, TaskStamp};
 
 use super::*;
 
+/// Prefix identifying resident-authored peer-review feedback directives.
+pub(super) const CONTROL_PREFIX: &str = "review-feedback:";
+
 struct ClaimAuthor {
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
@@ -251,7 +254,7 @@ fn feedback_text(handle: &wire::TaskHandle, finding: &str) -> String {
 }
 
 fn control(task: &TaskStamp, reviewed: Seq) -> String {
-    format!("review-feedback:{task}:{reviewed}")
+    format!("{CONTROL_PREFIX}{task}:{reviewed}")
 }
 
 fn identity(control: &str) -> CanonicalUuid {
