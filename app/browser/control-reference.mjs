@@ -974,7 +974,7 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
 
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Lanes");
-  await surface.getByRole("tab", { name: /^Agents/ }).click();
+  await surface.getByRole("tab", { name: /^Threads/ }).click();
   const restoredRenew = surface.locator(
     `.agent-renew-request[data-renewal-lane="${renewalLane}"]`,
   );
@@ -1008,7 +1008,7 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
 
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Lanes");
-  await surface.getByRole("tab", { name: /^Agents/ }).click();
+  await surface.getByRole("tab", { name: /^Threads/ }).click();
   const canceledRenew = surface.locator(
     `.agent-renew-request[data-renewal-lane="${renewalLane}"]`,
   );

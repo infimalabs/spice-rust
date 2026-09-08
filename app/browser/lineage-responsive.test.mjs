@@ -114,7 +114,7 @@ function surface(weight, taskContract) {
     <header class="organization-toolbar">
       <span class="organization-lights"><span class="organization-light"></span></span>
       <nav class="organization-mode-rail" role="tablist">
-        ${["Org", "Tasks", "Agents"].map((label) => `<button class="organization-mode">
+        ${["Team", "Tasks", "Threads"].map((label) => `<button class="organization-mode">
           <span class="organization-mode-label">${label}</span><span class="organization-mode-badge">88</span>
         </button>`).join("")}
       </nav>

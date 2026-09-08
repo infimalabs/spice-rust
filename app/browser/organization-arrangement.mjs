@@ -221,7 +221,7 @@ async function touchJoinOrg(page, fixture, dragged, target) {
 /// Dragging an organization reorders organizations; dropping on an edge joins them.
 export async function assertOrgArrangement(page, fixture, worktrees, artifacts) {
   const agents = page.locator('[data-pane="agent-console"]');
-  await agents.getByRole("tab", { name: /^Agents/ }).first().click();
+  await agents.getByRole("tab", { name: /^Threads/ }).first().click();
   const seated = durableOrgs((await reply(fixture, ["lane"])).body.lanes);
   assert.equal(seated.length, 2, "arranging organizations needs two durable organizations");
   const [primary, secondary] = seated;
@@ -344,7 +344,7 @@ export async function assertOrgArrangement(page, fixture, worktrees, artifacts) 
   );
   const selectedMode = (surface) => surface.locator(".organization-pane").getAttribute("data-organization-mode");
   await primarySurface.getByRole("tab", { name: /^Tasks/ }).click();
-  await secondarySurface.getByRole("tab", { name: /^Org/ }).click();
+  await secondarySurface.getByRole("tab", { name: /^Team/ }).click();
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
     ["Tasks", "Org"],
@@ -378,7 +378,7 @@ export async function assertOrgArrangement(page, fixture, worktrees, artifacts) 
     "Tasks",
     "retiring a sibling preserves the surviving organization's selected view",
   );
-  await primarySurface.getByRole("tab", { name: /^Agents/ }).click();
+  await primarySurface.getByRole("tab", { name: /^Threads/ }).click();
   assert.deepEqual(
     await renderedOrgs(agents),
     [{ lineage: primary.lineage, lanes: [...primary.lanes, ...secondary.lanes] }],

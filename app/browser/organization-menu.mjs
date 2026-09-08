@@ -267,7 +267,7 @@ export async function assertCursorRelocation(page, artifacts, engine) {
       await assertGlobalNavigation(page, `${label} open Spice menu`);
       assert.deepEqual(
         await navigation.locator(".pill-label").allTextContents(),
-        ["Org", "Tasks", "Agents"],
+        ["Team", "Tasks", "Threads"],
         `${label} exposes one ordered navigation rail`,
       );
       assert.deepEqual(
@@ -658,7 +658,7 @@ async function assertPepperDisclosure(page) {
     await waitForDisclosure(page, true, "the pepper disclosure exposes Canvas destinations");
     const destinations = navigation.getByRole("button");
     await destinations.first().focus();
-    for (const [index, label] of ["Org", "Tasks", "Agents"].entries()) {
+    for (const [index, label] of ["Team", "Tasks", "Threads"].entries()) {
       assert.match(
         (await page.locator(":focus").innerText()).trim(),
         new RegExp(`^${label}`),
@@ -739,7 +739,7 @@ async function assertPepperDisclosure(page) {
 async function assertAxisMenu(page, view, copy) {
   const visibleView = {
     Flow: "Tasks",
-    Topology: "Org",
+    Topology: "Team",
   }[view] ?? view;
   await chooseCanvasView(page, view);
   const panel = await openSpiceMenu(page);
@@ -790,13 +790,13 @@ export async function assertOrgMenu(page, fixture, artifacts) {
   await assertCursorRelocation(page, artifacts, "chromium");
   await assertPepperDisclosure(page);
   await chooseCanvasView(page, "Topology");
-  await page.getByRole("heading", { name: "Org", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Team", exact: true }).waitFor();
   await openSpiceMenu(page);
   assert.equal(
     await page.getByRole("navigation", { name: "Canvas views" })
-      .getByRole("button", { name: /^Agents/ }).count(),
+      .getByRole("button", { name: /^Threads/ }).count(),
     1,
-    "the analytics pages keep the same route back to live Agents",
+    "the analytics pages keep the same route back to live Threads",
   );
   await assertAxisMenu(page, "Topology", /resident organizations, seats, capabilities/i);
   await chooseCanvasView(page, "Lanes");

@@ -182,7 +182,7 @@ export async function assertComposerRecovery(page, fixture, seeded, monitor) {
   await assertOnlineObserved(page, "the cut steering socket reconnects", RECONNECT_MS);
   monitor.expectNetworkInterruption(false);
   await chooseCanvasView(page, "Lanes");
-  await page.getByRole("tab", { name: /^Agents/ }).first().click();
+  await page.getByRole("tab", { name: /^Threads/ }).first().click();
 
   const secondInbox = await waitForInbox(fixture, seeded.lane, second);
   const firstDirective = secondInbox.pending.find((directive) => directive.text.includes(first));

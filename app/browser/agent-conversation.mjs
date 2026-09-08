@@ -192,7 +192,7 @@ async function assertThreeAgentOrgPips(page, console) {
   );
 
   await chooseCanvasView(page, "Lanes");
-  await console.getByRole("tab", { name: /^Org/ }).click();
+  await console.getByRole("tab", { name: /^Team/ }).click();
 }
 
 /// Seat the canonical four-member fixture organization without running its scenarios.
@@ -220,7 +220,7 @@ export async function seatAgentOrg(
   await assertGlobalNavigation(page, "the empty fleet");
   await chooseCanvasView(page, "Lanes");
   await assertOrgNavigation(console, "the empty fleet");
-  await console.getByRole("tab", { name: /^Org/ }).click();
+  await console.getByRole("tab", { name: /^Team/ }).click();
   await console.getByLabel("Name").fill(agentNames[0]);
   await console.getByLabel("Worktree").fill(organizationWorktrees[0]);
   await console.getByLabel("Life").fill("steer");
@@ -277,7 +277,7 @@ export async function seatAgentOrg(
   if (beforeReload) await beforeReload(console);
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Lanes");
-  await console.getByRole("tab", { name: /^Org/ }).click();
+  await console.getByRole("tab", { name: /^Team/ }).click();
   await waitForElement(page, "seated agents render after reload", CONNECT_MS,
     console.locator(".organization-detail-card").nth(3));
   await waitForPage(page, "seated agents publish their session identities", CONNECT_MS, () => {
@@ -410,7 +410,7 @@ async function assertExternalOperatorReplay(page, fixture, console, lane, worktr
 
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Lanes");
-  await console.getByRole("tab", { name: /^Agents/ }).click();
+  await console.getByRole("tab", { name: /^Threads/ }).click();
   await assertOperatorProseHidden(console, replyText, "pre-acknowledgement replay");
 
   await writeFile(join(worktree, ".spice-ack-trigger"), `${sent.body.key}\n`);
@@ -472,7 +472,7 @@ async function assertExternalOperatorReplay(page, fixture, console, lane, worktr
   assert.equal(await console.locator('[data-card-kind="operator-message"]').count(), 0);
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Lanes");
-  await console.getByRole("tab", { name: /^Agents/ }).click();
+  await console.getByRole("tab", { name: /^Threads/ }).click();
   await acknowledgedCard.waitFor({ timeout: CONNECT_MS });
   assert.equal(await acknowledgedCard.count(), 1, "bootstrap restores one acknowledged assistant card");
   assert.deepEqual(
@@ -557,7 +557,7 @@ export async function assertAgentConversation(
     organizationWorktrees,
   } = organization;
 
-  await console.getByRole("tab", { name: /^Agents/ }).click();
+  await console.getByRole("tab", { name: /^Threads/ }).click();
   await console.locator(".organization-agent").nth(3).waitFor();
   assert.equal(await console.locator(".organization-surface").count(), 1, "one lineage renders one surface");
   assert.equal(
@@ -944,11 +944,11 @@ export async function assertAgentConversation(
     1,
     "Tasks renders one organization-scoped operational workspace",
   );
-  await console.getByRole("tab", { name: /^Org/ }).click();
+  await console.getByRole("tab", { name: /^Team/ }).click();
   await console.locator(".organization-detail-card").nth(3).waitFor();
   assert.equal(await console.locator(".organization-detail-card").count(), 4, "Org reaches all agents");
   await console.getByText(organizationWorktrees[0], { exact: true }).waitFor();
-  await console.getByRole("tab", { name: /^Agents/ }).click();
+  await console.getByRole("tab", { name: /^Threads/ }).click();
   await assertFourAgentDensity(console);
   await assertAgentWorkspaceGeometry(page, "populated desktop Lanes page");
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
