@@ -42,9 +42,9 @@ async function triggerAgentProse(worktree, cards) {
   await cards.nth(before).waitFor({ timeout: CONNECT_MS });
 }
 
-async function streamAgentProse(worktree, cards, text) {
+async function streamAgentProse(worktree, cards, text, { final = false } = {}) {
   const before = await cards.count();
-  await streamFixtureAssistantMessage(worktree, {
+  const message = {
     type: "message",
     role: "assistant",
     content: [{ type: "text", text }],
@@ -54,7 +54,9 @@ async function streamAgentProse(worktree, cards, text) {
       cache_creation_input_tokens: 0,
       output_tokens: 1,
     },
-  });
+  };
+  if (final) message.stop_reason = "end_turn";
+  await streamFixtureAssistantMessage(worktree, message);
   const card = cards.nth(before);
   await card.waitFor({ timeout: CONNECT_MS });
   return card;
@@ -338,6 +340,11 @@ export async function assertPerOrgWatchbands(
   );
   assert.equal(primaryRows.length, 4, "the first organization retains all four worktrees");
   assert.equal(primarySubscription?.policy, "drain");
+  const primaryNarrator = primaryRows.find((lane) => lane.worktree === worktrees[0]);
+  assert.ok(primaryNarrator, "the first organization exposes a real narrator worktree");
+  const primaryNarrationCards = primarySurface.locator(
+    `[data-card-kind="agent-message"][data-agent-lane="${primaryNarrator.lane}"]`,
+  );
   assert.ok(
     primaryRows.every((lane) => lane.life === primarySeatLives.get(lane.lane)),
     "watchband Drain never changes terminal lane life",
@@ -446,6 +453,11 @@ export async function assertPerOrgWatchbands(
 
   const primarySpeech = primarySurface.locator('.organization-speech input[type="range"]');
   const secondarySpeech = secondarySurface.locator('.organization-speech input[type="range"]');
+  assert.deepEqual(
+    [await primarySpeech.inputValue(), await secondarySpeech.inputValue()],
+    ["1", "1"],
+    "new organizations default to Speak",
+  );
   await primarySpeech.fill("0");
   await secondarySpeech.fill("2");
   assert.equal(await primarySpeech.inputValue(), "0");
@@ -485,11 +497,6 @@ export async function assertPerOrgWatchbands(
     window.__speechActive = 0;
     window.__speechMaxActive = 0;
   });
-  const primaryNarrator = primaryRows.find((lane) => lane.worktree === worktrees[0]);
-  assert.ok(primaryNarrator, "the first organization exposes a real narrator worktree");
-  const primaryNarrationCards = primarySurface.locator(
-    `[data-card-kind="agent-message"][data-agent-lane="${primaryNarrator.lane}"]`,
-  );
   const secondaryNarrationCards = secondarySurface.locator(
     `[data-card-kind="agent-message"][data-agent-lane="${secondary.lane}"]`,
   );
@@ -711,10 +718,33 @@ export async function assertPerOrgWatchbands(
     path: join(artifacts, "canvas-light-watchband-organizations.png"),
     fullPage: true,
   });
+  await secondarySpeech.fill("1");
+  const defaultSpeakStarted = Date.now();
+  const speechesBeforeDefault = await page.evaluate(() =>
+    window.__speechLog.filter((row) => row.action === "speak").length);
+  await streamAgentProse(
+    secondary.worktree,
+    secondaryNarrationCards,
+    "default Speak consumes the resident-prepared final utterance",
+    { final: true },
+  );
+  await waitForPage(page, "default Speak dispatches the prepared final utterance", CONNECT_MS,
+    (before) => window.__speechLog.filter((row) => row.action === "speak").length === before + 1,
+    speechesBeforeDefault);
+  assert.equal(
+    await page.evaluate(() => window.__speechLog.filter((row) => row.action === "speak").at(-1)?.text),
+    "default Speak consumes the resident-prepared final utterance",
+  );
+  await settleLatestSystemSpeech(page);
+  process.stdout.write(
+    `canvas retained default-Speak proof elapsed_ms=${Date.now() - defaultSpeakStarted}\n`,
+  );
+  await secondarySpeech.fill("2");
   await page.evaluate(() => {
     window.__speechLog = [];
     window.__speechUtterances = [];
   });
+  const reloadSpeechStarted = Date.now();
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Lanes");
   const reconnected = page.locator('[data-pane="agent-console"]');
@@ -726,8 +756,18 @@ export async function assertPerOrgWatchbands(
     `.organization-surface[data-lineage-id="${secondary.lineage_id}"]`,
   );
   await assertOrgNavigation(reconnected, "the reloaded organization selection");
-  await restoredPrimary.locator('.organization-speech input[type="range"]').fill("2");
-  await restoredSecondary.locator('.organization-speech input[type="range"]').fill("2");
+  const restoredPrimarySpeech = restoredPrimary.locator('.organization-speech input[type="range"]');
+  const restoredSecondarySpeech = restoredSecondary.locator('.organization-speech input[type="range"]');
+  assert.deepEqual(
+    [await restoredPrimarySpeech.inputValue(), await restoredSecondarySpeech.inputValue()],
+    ["0", "2"],
+    "a full reload restores each organization's browser-local speech mode",
+  );
+  process.stdout.write(
+    `canvas retained speech-mode reload proof elapsed_ms=${Date.now() - reloadSpeechStarted}\n`,
+  );
+  await restoredPrimarySpeech.fill("2");
+  await restoredSecondarySpeech.fill("2");
   await reconnected.getByRole("tab", { name: /^Org/ }).first().click();
   await reconnected.getByRole("tab", { name: /^Agents/ }).first().click();
   await page.evaluate(() => new Promise((resolve) =>
