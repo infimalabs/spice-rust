@@ -396,7 +396,7 @@ fn render_tasks(
         <main class="organization-task-workspace" aria-label="Organization tasks">
             <header class="organization-task-summary">
                 <div>
-                    <span class="organization-task-eyebrow">{"Org work"}</span>
+                    <span class="organization-task-eyebrow">{"Team work"}</span>
                     <strong>{active_summary}</strong>
                 </div>
                 <div
