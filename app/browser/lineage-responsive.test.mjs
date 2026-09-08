@@ -457,20 +457,29 @@ async function imageDensityDocument() {
     readFile(resolve(root, "app/style.css"), "utf8"),
     readFile(resolve(root, "app/mosaic.css"), "utf8"),
   ]);
+  const images = (count) => Array.from({ length: count }, (_, index) => (
+    `<p class="message-image-stack"><a class="message-image message-image--openable" `
+      + `aria-label="Open image ${index + 1} full size"><img alt="image-${index + 1}"></a></p>`
+  )).join("");
   const card = (count) => `<article
     class="mosaic-message-card"
-    data-image-count="${count}"
-  ><div class="message-body markdown-body"><p>Context before the gallery.</p>${
-    Array.from({ length: count }, (_, index) => (
-      `<p class="message-image-stack"><a class="message-image message-image--openable" `
-        + `aria-label="Open image ${index + 1} full size"><img alt="image-${index + 1}"></a></p>`
+    data-top-level-image-count="${count}"
+  ><div class="message-body markdown-body"><p>Context before the gallery.</p>${images(count)}</div></article>`;
+  const quotedCard = (depth, count) => `<article
+    class="mosaic-message-card"
+    data-quote-depth="${depth}"
+    data-quote-image-count="${count}"
+  ><div class="message-body markdown-body">${
+    Array.from({ length: depth }, (_, index) => (
+      `<blockquote data-quote-level="${index + 1}"><p>Quoted level ${index + 1}.</p>`
     )).join("")
-  }</div></article>`;
+  }${images(count)}${"</blockquote>".repeat(depth)}</div></article>`;
   return `<!doctype html><style>${style}\n${mosaic}
     body { margin: 0; }
     .image-density-fixture { width: var(--fixture-width); min-width: 0; max-width: none; }
   </style><main class="organization-surface image-density-fixture">
     ${[1, 2, 3, 4, 5].map(card).join("")}
+    ${[1, 2, 3].flatMap((depth) => [1, 2, 3].map((count) => quotedCard(depth, count))).join("")}
   </main>`;
 }
 
@@ -481,7 +490,7 @@ async function assertTopLevelImageDensity(page, engine, document) {
     await page.locator(".image-density-fixture").evaluate((fixture, value) => {
       fixture.style.setProperty("--fixture-width", `${value}px`);
     }, width);
-    const cards = await page.locator("[data-image-count]").evaluateAll((elements) => (
+    const cards = await page.locator("[data-top-level-image-count]").evaluateAll((elements) => (
       elements.map((card) => {
         const bounds = (node) => {
           const box = node.getBoundingClientRect();
@@ -531,6 +540,66 @@ async function assertTopLevelImageDensity(page, engine, document) {
       assert.ok(rows.every((row) => row.every((preview, index) => (
         index === 0 || row[index - 1].left < preview.left
       ))), `${label} retains source order within each row`);
+    }
+  }
+}
+
+async function assertQuotedImageDensity(page, engine, document) {
+  await page.setContent(document);
+  for (const width of [320, 610]) {
+    await page.setViewportSize({ width: width + 20, height: 1800 });
+    await page.locator(".image-density-fixture").evaluate((fixture, value) => {
+      fixture.style.setProperty("--fixture-width", `${value}px`);
+    }, width);
+    const cards = await page.locator("[data-quote-depth]").evaluateAll((elements) => (
+      elements.map((card) => {
+        const bounds = (node) => {
+          const box = node.getBoundingClientRect();
+          return { left: box.left, right: box.right, top: box.top, width: box.width, height: box.height };
+        };
+        const quotes = [...card.querySelectorAll("blockquote")];
+        const gallery = quotes.at(-1);
+        return {
+          depth: Number(card.dataset.quoteDepth),
+          count: Number(card.dataset.quoteImageCount),
+          gallery: { ...bounds(gallery), client: gallery.clientWidth, scroll: gallery.scrollWidth },
+          previews: [...gallery.querySelectorAll(":scope > p.message-image-stack > .message-image")]
+            .map((preview) => ({
+              ...bounds(preview),
+              image: bounds(preview.querySelector("img")),
+              label: preview.getAttribute("aria-label"),
+            })),
+        };
+      })
+    ));
+    for (const card of cards) {
+      const label = `${engine} ${width}px depth-${card.depth} quoted images`;
+      assert.ok(card.gallery.scroll <= card.gallery.client + 1, `${label} does not overflow`);
+      assert.deepEqual(
+        card.previews.map(({ label: accessible }) => accessible),
+        Array.from({ length: card.count }, (_, index) => `Open image ${index + 1} full size`),
+      );
+      assert.ok(card.previews.every((preview, index) => (
+        preview.width <= 141
+          && Math.abs(preview.width - preview.height) <= 1
+          && Math.abs(preview.image.width - preview.width) <= 1
+          && Math.abs(preview.image.height - preview.height) <= 1
+          && preview.left >= card.gallery.left - 1
+          && preview.right <= card.gallery.right + 1
+          && (index === 0 || preview.top > card.previews[index - 1].top
+            || preview.left > card.previews[index - 1].left)
+      )), `${label} stays square, contained, and source-ordered: ${JSON.stringify(card)}`);
+      if (card.count === 1) {
+        assert.ok(Math.abs(card.previews[0].width - 140) <= 1, `${label} keeps one full-size preview`);
+      } else {
+        assert.ok(
+          Math.abs(card.previews[0].top - card.previews[1].top) <= 1,
+          `${label} keeps the first two previews side-by-side`,
+        );
+      }
+      if (width === 320 && card.count === 3) {
+        assert.ok(card.previews[2].top > card.previews[0].top, `${label} wraps the third preview`);
+      }
     }
   }
 }
@@ -619,6 +688,7 @@ test("lineage minima govern weighted fleet layout in Chromium and Firefox", asyn
         await setWidth(page, 600);
         await expectRightEdge(page, `${engine} narrow track after removal and resize`);
         await assertTopLevelImageDensity(page, engine, imageDocument);
+        await assertQuotedImageDensity(page, engine, imageDocument);
       } finally {
         await context.close();
         await browser.close();
