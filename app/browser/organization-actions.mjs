@@ -78,7 +78,7 @@ export async function assertOrgActions(page, primary, secondary, primaryLineage)
   );
   assert.deepEqual(
     await primaryMenu.locator(".organization-action-detail").allTextContents(),
-    ["4 agents", "choose agent", "one organization per agent", "no saved subgroup"],
+    ["4 agents", "choose agent", "one team per agent", "no saved subgroup"],
     "the four-agent menu carries the reference presentation details",
   );
   assert.equal(
