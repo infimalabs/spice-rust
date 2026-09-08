@@ -15,8 +15,8 @@
 
 .shell {
   --canvas-shell-edge-inline: 10px;
-  --canvas-shell-edge-start: max(var(--canvas-shell-edge-inline), env(safe-area-inset-left, 0px));
-  --canvas-shell-edge-end: max(var(--canvas-shell-edge-inline), env(safe-area-inset-right, 0px));
+  --canvas-shell-edge-start: calc(var(--canvas-shell-edge-inline) + env(safe-area-inset-left, 0px));
+  --canvas-shell-edge-end: calc(var(--canvas-shell-edge-inline) + env(safe-area-inset-right, 0px));
 }
 
 html:has(.shell--mosaic),

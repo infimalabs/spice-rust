@@ -86,6 +86,9 @@ export async function assertCursorRelocation(page, artifacts, engine) {
     for (const [viewportLabel, viewport] of viewports) {
       const label = `${engine} ${viewportLabel}`;
       await page.setViewportSize(viewport);
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
+        () => requestAnimationFrame(resolve),
+      )));
       const bar = page.locator(".commandbar--mosaic");
       const disclosure = page.locator(".canvas-disclosure");
       const strip = page.locator(".task-pill-strip");
@@ -105,6 +108,7 @@ export async function assertCursorRelocation(page, artifacts, engine) {
             height: box.height,
             left: box.left,
             right: box.right,
+            scrollLeft: lane.closest(".lineage-fleet")?.scrollLeft ?? 0,
             scrollTop: lane.querySelector(".lane-mosaic-plane")?.scrollTop ?? 0,
             top: box.top,
           };
@@ -218,6 +222,7 @@ export async function assertCursorRelocation(page, artifacts, engine) {
       );
       assert.equal(geometry.paddingRight, geometry.paddingLeft, `${label} has symmetric inline edges`);
       await assertUniversalShelfOuterEdge(page, label);
+      await assertUniversalShelfOuterEdge(page, `${label} empty task shelf`, true);
       assert.deepEqual(
         [geometry.workspacePaddingLeft, geometry.workspacePaddingRight],
         [geometry.paddingLeft, geometry.paddingRight],
@@ -749,28 +754,46 @@ async function waitForDisclosure(page, expanded, reason) {
   );
 }
 
-async function assertUniversalShelfOuterEdge(page, label) {
-  const geometry = await page.locator(".commandbar--mosaic").evaluate((bar) => {
+async function assertUniversalShelfOuterEdge(page, label, emptyTaskShelf = false) {
+  const geometry = await page.locator(".commandbar--mosaic").evaluate((bar, emptyShelf) => {
     const activeWorkspace = [...bar.parentElement.querySelectorAll(":scope > .workspace")]
       .find((workspace) => !workspace.hidden);
     const content = activeWorkspace?.querySelector(":scope > .content");
-    const firstPill = bar.querySelector(".task-pill-strip > .task-pill");
-    const trigger = bar.querySelector(".canvas-menu > summary");
-    const barStyle = getComputedStyle(bar);
-    const contentStyle = getComputedStyle(content);
-    const first = firstPill.getBoundingClientRect();
-    const summary = trigger.getBoundingClientRect();
+    const strip = bar.querySelector(".task-pill-strip");
+    const originalPills = [...strip.querySelectorAll(":scope > .task-pill")];
+    const detached = document.createDocumentFragment();
+    if (emptyShelf) {
+      for (const pill of originalPills) detached.append(pill);
+    }
+    let measured;
+    try {
+      const firstPill = strip.querySelector(":scope > .task-pill");
+      const trigger = bar.querySelector(".canvas-menu > summary");
+      const barStyle = getComputedStyle(bar);
+      const contentStyle = getComputedStyle(content);
+      const stripBounds = strip.getBoundingClientRect();
+      const summary = trigger.getBoundingClientRect();
+      measured = {
+        contentPaddingLeft: Number.parseFloat(contentStyle.paddingLeft),
+        contentPaddingRight: Number.parseFloat(contentStyle.paddingRight),
+        documentWidth: document.documentElement.scrollWidth,
+        firstPillLeft: firstPill?.getBoundingClientRect().left ?? null,
+        originalTaskPillCount: originalPills.length,
+        paddingLeft: Number.parseFloat(barStyle.paddingLeft),
+        paddingRight: Number.parseFloat(barStyle.paddingRight),
+        stripLeft: stripBounds.left,
+        taskPillCount: strip.querySelectorAll(":scope > .task-pill").length,
+        triggerRight: summary.right,
+        viewportWidth: innerWidth,
+      };
+    } finally {
+      strip.append(detached);
+    }
     return {
-      contentPaddingLeft: Number.parseFloat(contentStyle.paddingLeft),
-      contentPaddingRight: Number.parseFloat(contentStyle.paddingRight),
-      documentWidth: document.documentElement.scrollWidth,
-      firstPillLeft: first.left,
-      paddingLeft: Number.parseFloat(barStyle.paddingLeft),
-      paddingRight: Number.parseFloat(barStyle.paddingRight),
-      triggerRight: summary.right,
-      viewportWidth: innerWidth,
+      ...measured,
+      restoredTaskPillCount: strip.querySelectorAll(":scope > .task-pill").length,
     };
-  });
+  }, emptyTaskShelf);
   const expected = geometry.viewportWidth <= 720 ? 8 : 10;
   assert.deepEqual(
     [geometry.paddingLeft, geometry.paddingRight],
@@ -782,11 +805,27 @@ async function assertUniversalShelfOuterEdge(page, label) {
     `${label} keeps active workspace content inside the shell gutter`,
   );
   assert.ok(
-    geometry.firstPillLeft >= expected - 0.5
+    geometry.stripLeft >= expected - 0.5
       && geometry.triggerRight <= geometry.viewportWidth - expected + 0.5
       && geometry.documentWidth <= geometry.viewportWidth,
     `${label} keeps shelf controls and document paint inside the outer gutter`,
   );
+  assert.equal(
+    geometry.taskPillCount,
+    emptyTaskShelf ? 0 : geometry.originalTaskPillCount,
+    `${label} measures the requested task-shelf population`,
+  );
+  assert.equal(
+    geometry.restoredTaskPillCount,
+    geometry.originalTaskPillCount,
+    `${label} restores every mounted task pill after the geometry probe`,
+  );
+  if (!emptyTaskShelf) {
+    assert.ok(
+      geometry.firstPillLeft >= expected - 0.5,
+      `${label} keeps the first task pill inside the outer gutter`,
+    );
+  }
 }
 
 async function assertPepperDisclosure(page) {
@@ -907,11 +946,11 @@ async function assertPepperDisclosure(page) {
 
   await trigger.click();
   await waitForDisclosure(page, true, "the pepper disclosure reopens for destination selection");
-    await navigation.getByRole("button", { name: /^Tasks/ }).click();
-    await page.getByRole("heading", { name: "Tasks", exact: true }).waitFor({ timeout: TRANSITION_MS });
-    await waitForDisclosure(page, false, "a Canvas destination closes the pepper disclosure");
-    await assertUniversalShelfOuterEdge(page, "narrow Tasks destination");
-    const panel = await openSpiceMenu(page);
+  await navigation.getByRole("button", { name: /^Tasks/ }).click();
+  await page.getByRole("heading", { name: "Tasks", exact: true }).waitFor({ timeout: TRANSITION_MS });
+  await waitForDisclosure(page, false, "a Canvas destination closes the pepper disclosure");
+  await assertUniversalShelfOuterEdge(page, "narrow Tasks destination");
+  const panel = await openSpiceMenu(page);
   assert.equal(
     await panel.locator(".canvas-menu-page").getAttribute("data-menu-page"),
     "flow",
