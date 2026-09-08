@@ -82,7 +82,6 @@ import {
   assertSurvivingVendorsAreReported,
 } from "./canvas-vendor-reap.mjs";
 import {
-  assertAutomaticSpeechEngines,
   assertSpeechVariants,
   installBrowserSpeech,
   installSocketControl,
@@ -423,8 +422,7 @@ try {
     const worktrees = await configureFixture(fixture, linkedRoot, 6, {
       // Several reload-sensitive agent workflows test no lease deadline, so
       // keep their occupants stable; short expiry remains covered elsewhere.
-      laneLease: run.owns("interaction") || run.owns("speech")
-        || run.owns("media") || run.owns("resilience")
+      laneLease: run.owns("interaction") || run.owns("media") || run.owns("resilience")
         ? "5m"
         : "5s",
       noCardMember: 5,
@@ -552,20 +550,6 @@ try {
         await assertTaskNotes(lightPage, seeded.task);
         lightMonitor.assertClean();
         await light.close();
-      });
-    } else if (run.owns("speech")) {
-      const added = await reply(fixture, [
-        "lane", "add", worktrees[0], "--name", "Speech", "--life", "Steer", "--vendor", "claude",
-      ]);
-      const wake = await reply(fixture, ["lane", "wake", added.body.lane]);
-      assert.equal(wake.body.to, "occupied", "the speech fixture starts its agent");
-      await run.scenario("automatic-speech", async () => {
-        await assertAutomaticSpeechEngines(
-          resident.discovery.endpoint,
-          fixture,
-          added.body.lane,
-          artifacts,
-        );
       });
     } else if (run.owns("media")) {
       await reply(fixture, [

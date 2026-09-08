@@ -20,7 +20,6 @@ const EXPECTED_SCENARIOS = [
   "firefox-restored-mosaic",
   "reference-composer",
   "authority-task-flow",
-  "automatic-speech",
   "media-exchange",
   "variant-surfaces",
   "socket-resilience",

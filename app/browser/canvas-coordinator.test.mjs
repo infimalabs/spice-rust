@@ -208,18 +208,18 @@ test("coordinator telemetry rejects malformed nesting and unbalanced completion"
   assert.throws(() => assertTelemetryComplete(failed), /no failed scenario/);
 });
 
-test("speech and production media own fixed-horizon shards outside interaction", () => {
+test("production media owns a fixed-horizon shard outside interaction", () => {
   const interaction = CANVAS_SHARDS.find(({ name }) => name === "interaction");
-  const speech = CANVAS_SHARDS.find(({ name }) => name === "speech");
   const media = CANVAS_SHARDS.find(({ name }) => name === "media");
-  assert.ok(interaction && speech && media, "interaction, speech, and media shards are registered");
+  assert.ok(interaction && media, "interaction and media shards are registered");
   assert.equal(interaction.timeoutMs, 120_000);
-  assert.equal(speech.timeoutMs, 120_000);
   assert.equal(media.timeoutMs, 120_000);
-  assert.deepEqual(speech.scenarios, ["automatic-speech"]);
   assert.deepEqual(media.scenarios, ["media-exchange"]);
-  assert.ok(!interaction.scenarios.includes("automatic-speech"));
   assert.ok(!interaction.scenarios.includes("media-exchange"));
+  assert.ok(
+    !CANVAS_SHARDS.some(({ scenarios }) => scenarios.includes("automatic-speech")),
+    "the obsolete automatic-speech scenario stays deleted",
+  );
 });
 
 function deferred() {
