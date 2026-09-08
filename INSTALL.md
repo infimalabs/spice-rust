@@ -216,9 +216,11 @@ The package directory is the exact regular-file closure published by the
 release pipeline. Before either command changes repository authority, the
 installed appliance verifies the package index, two-target manifest, payloads,
 proof receipts, artifact identities, modes, and current platform. It stages
-only the selected verified executable, which derives and applies the existing
-receipt-owned transaction from its own embedded native, Canvas, hook, and skill
-generation. Package acquisition never changes the `--unapply` path.
+only the admitted package document, selected payload and executable, and shared
+Canvas files in one private production-shaped tree. The selected executable
+revalidates those staged bindings before deriving and applying the existing
+receipt-owned transaction with its embedded hooks and skill. Package acquisition
+never changes the `--unapply` path.
 
 Apply leaves a running resident untouched. When a restart is intended, stop and
 start through this repository's installed appliance so discovery and lock
