@@ -82,6 +82,10 @@
 .markdown-body blockquote p:last-child { margin-bottom: 0; }
 .markdown-body blockquote ul,
 .markdown-body blockquote ol { margin: 0 0 6px; padding-left: 18px; }
+.markdown-body blockquote:has(.message-taste-pill) {
+  border-left-color: var(--accent-2);
+  background: color-mix(in srgb, var(--accent-2) 6%, transparent);
+}
 .markdown-body code {
   padding: 0; background: transparent;
   font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -985,10 +989,10 @@
   align-items: center;
   vertical-align: baseline;
   margin: 2px 0; padding: 0 4px;
-  border: 1px solid var(--accent-5);
+  border: 1px solid var(--accent-2);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--accent-5) 14%, var(--panel));
-  color: var(--accent-5);
+  background: color-mix(in srgb, var(--accent-2) 14%, var(--panel));
+  color: var(--accent-2);
   font-size: .8125em; line-height: 1.34;
   font-weight: 700;
   white-space: nowrap;
