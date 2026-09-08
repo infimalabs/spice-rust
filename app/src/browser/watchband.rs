@@ -9,6 +9,7 @@ use super::*;
 use crate::composer_drafts::{ComposerDraft, compose};
 use crate::watchband::{self, OrgTaskSectionState, Standing};
 
+mod command_preview;
 mod composer;
 mod controls;
 mod fleet;
@@ -16,6 +17,7 @@ mod lineage_menu;
 mod mosaic_view;
 mod state;
 
+pub(super) use command_preview::use_command_modifier_preview;
 use composer::{
     AgentMessageCard, agent_message_source_id, drop_on_lane, keyboard_submit, paste_images,
     primary_textarea_id, render_image_indicators, render_quote_shards, update_body,
@@ -790,6 +792,7 @@ fn render_agent_composer(
         .filter(|_| can_send)
         .map(|occupant| SubmissionTarget::Resident { occupant, epoch })
         .or_else(|| wake.then_some(SubmissionTarget::Wake));
+    let command_submit_eligible = target.is_some() && !draft.body.trim().is_empty();
     let renewal =
         watchband::agent_renewal_control(&standing.label, occupant.is_some(), can_send, renewal);
     let renew = renewal_callback(
@@ -841,6 +844,7 @@ fn render_agent_composer(
                     lane_id,
                     &lane_key,
                     &draft,
+                    command_submit_eligible,
                     standing,
                     status,
                     pending,
@@ -873,6 +877,7 @@ fn render_composer_body(
     lane: CanonicalUuid,
     lane_key: &str,
     draft: &ComposerDraft,
+    command_submit_eligible: bool,
     standing: &Standing,
     status: crate::runtime::LaneStatus,
     pending: usize,
@@ -900,6 +905,7 @@ fn render_composer_body(
             data-shard-kind="primary"
             data-shard-target-id={lane.to_string()}
             data-primary-composer-draggable={drag_enabled.to_string()}
+            data-command-submit-eligible={command_submit_eligible.to_string()}
             data-draft-unsafe={(
                 !draft.body.is_empty()
                     || !draft.quotes.is_empty()
