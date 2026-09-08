@@ -70,6 +70,7 @@ struct EstablishedConnection {
     reader: SocketReader,
     principal: Principal,
     pending: BTreeMap<CanonicalUuid, PendingKind>,
+    hydrating: bool,
 }
 
 #[derive(Clone)]

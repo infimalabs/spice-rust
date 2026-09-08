@@ -674,7 +674,12 @@ try {
           assert.ok(retainedBytes >= RETAINED_HISTORY_BYTES,
             "restart fixture authors substantial retained history");
         });
-        const restart = { epoch: firstEpoch, capability: firstCapability, policy: configuredPolicy };
+        const restart = {
+          epoch: firstEpoch,
+          capability: firstCapability,
+          endpoint: resident.discovery.endpoint,
+          policy: configuredPolicy,
+        };
         await run.phase("resident-startup", async () => {
           resident = owner.ownResident(
             await assertResidentRestart(fixture, lightPage, restart, { measure: true }),

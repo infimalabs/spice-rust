@@ -9,6 +9,7 @@ fn handle_stream_frame(
     surface: &UseStateHandle<SurfaceData>,
     data: &SurfaceData,
     bytes: &[u8],
+    publish: bool,
 ) -> Result<(Vec<StreamDirective>, bool, crate::Stale), String> {
     let admitted = session
         .admit_stream(bytes)
@@ -26,7 +27,7 @@ fn handle_stream_frame(
         let changed = application.changed();
         (application.into_directives(), changed)
     };
-    if changed {
+    if changed && publish {
         surface.set(data.publication());
     }
     Ok((directives, false, stale))
@@ -39,10 +40,11 @@ pub(super) fn handle_incoming(
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     demands: &mut DemandQueue<ClientAction>,
     bytes: &[u8],
+    publish: bool,
 ) -> Result<(Vec<StreamDirective>, bool, crate::Stale), String> {
     let crossing: serde_json::Value = wire::decode(bytes).map_err(|error| error.to_string())?;
     if crossing.get("stream").is_some() {
-        return handle_stream_frame(session, &handles.surface, data, bytes);
+        return handle_stream_frame(session, &handles.surface, data, bytes, publish);
     }
     let identity: ResponseIdentity = wire::decode(bytes).map_err(|error| error.to_string())?;
     let kind = pending
@@ -70,7 +72,9 @@ pub(super) fn handle_incoming(
         }
     }
     drop(runtime_slot);
-    handles.surface.set(data.publication());
+    if publish {
+        handles.surface.set(data.publication());
+    }
     Ok((Vec::new(), application.refresh, crate::Stale::default()))
 }
 

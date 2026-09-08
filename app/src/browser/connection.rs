@@ -14,14 +14,14 @@ pub(super) async fn run_surface(
     handles: SurfaceHandles,
     mut actions: UnboundedReceiver<ClientAction>,
 ) {
-    let data = SurfaceData::default();
+    let mut data = SurfaceData::default();
     let mut backoff = crate::reconnect::Backoff::new();
     let mut demands = DemandQueue::default();
     while active.get() {
         if matches!(&*handles.connection, Connection::Starting) {
             handles.connection.set(Connection::Connecting);
         }
-        let result = run_connection(&active, &handles, &data, &mut actions, &mut demands).await;
+        let result = run_connection(&active, &handles, &mut data, &mut actions, &mut demands).await;
         if !active.get() {
             break;
         }
@@ -54,7 +54,7 @@ struct Ended {
 async fn run_connection(
     active: &Rc<Cell<bool>>,
     handles: &SurfaceHandles,
-    data: &SurfaceData,
+    data: &mut SurfaceData,
     actions: &mut UnboundedReceiver<ClientAction>,
     demands: &mut DemandQueue<ClientAction>,
 ) -> Result<(), Ended> {
@@ -129,6 +129,7 @@ async fn pump_session(
         mut reader,
         principal,
         mut pending,
+        mut hydrating,
     } = established;
     send_subscription(&principal, data, &mut writer).await?;
     send_refresh(&principal, &mut writer, &mut pending, &handles.submissions).await?;
@@ -149,10 +150,22 @@ async fn pump_session(
                 probed = false;
                 apply_incoming_frame(
                     frame, &session, handles, data, &principal, &mut writer, &mut pending, demands,
+                    !hydrating,
                 ).await?;
+                if hydrating && pending.values().all(|entry| entry.current_read().is_none()) {
+                    handles.surface.set(data.publication());
+                    handles.connection.set(Connection::Online {
+                        actor: principal.actor().to_string(),
+                        epoch: principal.epoch().to_string(),
+                    });
+                    hydrating = false;
+                }
             },
             action = action => {
                 let action = action.ok_or_else(|| "canvas command channel closed".to_owned())?;
+                if hydrating {
+                    continue;
+                }
                 dispatch_client_action(
                     &principal,
                     data,
@@ -192,13 +205,14 @@ async fn apply_incoming_frame(
     writer: &mut SocketWriter,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     demands: &mut DemandQueue<ClientAction>,
+    publish: bool,
 ) -> Result<(), String> {
     let frame = frame
         .ok_or_else(|| "resident closed the socket".to_owned())?
         .map_err(websocket_error)?;
     let bytes = binary_message(frame)?;
     let (directives, refresh, stale) =
-        handle_incoming(session, handles, data, pending, demands, &bytes)?;
+        handle_incoming(session, handles, data, pending, demands, &bytes, publish)?;
     relay_directives(principal, writer, directives).await?;
     send_after_frame(
         principal,
@@ -428,11 +442,12 @@ async fn establish_connection(
     surface: &UseStateHandle<SurfaceData>,
     speech: &UseStateHandle<wire::SpeechPlayback>,
     canvas_update: &UseStateHandle<Option<CanvasUpdate>>,
-    data: &SurfaceData,
+    data: &mut SurfaceData,
     signal: &web_sys::AbortSignal,
 ) -> Result<EstablishedConnection, String> {
     let (session, writer, mut reader) = open_socket(speech, canvas_update, signal).await?;
-    let principal = admit_runtime(&session, &mut reader, connection, surface, data).await?;
+    let (principal, hydrating) =
+        admit_runtime(&session, &mut reader, connection, surface, data).await?;
     let pending = BTreeMap::new();
     Ok(EstablishedConnection {
         session,
@@ -440,6 +455,7 @@ async fn establish_connection(
         reader,
         principal,
         pending,
+        hydrating,
     })
 }
 
@@ -526,8 +542,8 @@ async fn admit_runtime(
     reader: &mut SocketReader,
     connection: &UseStateHandle<Connection>,
     surface: &UseStateHandle<SurfaceData>,
-    data: &SurfaceData,
-) -> Result<Principal, String> {
+    data: &mut SurfaceData,
+) -> Result<(Principal, bool), String> {
     let accepted_bytes = binary_message(
         reader
             .next()
@@ -538,11 +554,22 @@ async fn admit_runtime(
     let accepted = session
         .admit_accepted(&accepted_bytes)
         .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?;
+    let hydrating = data
+        .read()
+        .as_ref()
+        .is_some_and(|runtime| !runtime.same_scope(&accepted));
+    if hydrating {
+        let replacement = SurfaceData::default();
+        *replacement.write() = Some(CanvasRuntime::new(&accepted));
+        *data = replacement;
+    }
     let principal = {
         let mut data = data.write();
         match data.as_mut() {
             Some(runtime) => {
-                runtime.reconnect(&accepted);
+                if !hydrating {
+                    runtime.reconnect(&accepted);
+                }
             }
             None => *data = Some(CanvasRuntime::new(&accepted)),
         }
@@ -551,12 +578,14 @@ async fn admit_runtime(
             .principal()
             .clone()
     };
-    surface.set(data.publication());
-    connection.set(Connection::Online {
-        actor: principal.actor().to_string(),
-        epoch: principal.epoch().to_string(),
-    });
-    Ok(principal)
+    if !hydrating {
+        surface.set(data.publication());
+        connection.set(Connection::Online {
+            actor: principal.actor().to_string(),
+            epoch: principal.epoch().to_string(),
+        });
+    }
+    Ok((principal, hydrating))
 }
 
 /// Carry back the stream directives one admitted frame produced.
