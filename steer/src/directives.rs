@@ -753,6 +753,8 @@ impl Ledger {
                 false,
                 None,
             )
+        } else if fact.kind().affects_steering() {
+            return Err(unhandled_authority_fact(envelope));
         } else {
             return Ok(None);
         };
@@ -1358,6 +1360,15 @@ impl Ledger {
     fn place(&mut self, directive: Directive) {
         self.order.push(directive.key.clone());
         self.directives.insert(directive.key.clone(), directive);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn unhandled_authority_fact(envelope: &wire::Envelope<wire::AnyFact>) -> ReplayError {
+    ReplayError {
+        seq: envelope.seq,
+        kind: envelope.fact.kind(),
+        detail: "fact kind is classified as steering authority but has no reducer arm".to_owned(),
     }
 }
 
