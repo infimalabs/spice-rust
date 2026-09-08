@@ -326,15 +326,15 @@ flowchart LR
   O -->|"renewal"| OR["occupied<br/>(successor occupant)"]
   F -->|"split organization"| OS["occupied"]
   F -->|"move or reorder member"| FR["fused<br/>(new member order)"]
-  O -.->|"Close organization"| H["hidden<br/>(this browser only)"]
-  F -.->|"Close organization"| H
+  O -.->|"Close team"| H["hidden<br/>(this browser only)"]
+  F -.->|"Close team"| H
   H -.->|"Agents → Open organization"| V["visible again;<br/>authoritative occupied / fused<br/>topology unchanged"]
 ```
 
 **Invariant —** Fusing is a *organization merge*, splitting a *organization split*. There is no
 client-only grouping.
 
-**Invariant —** `Close organization` is a browser-local presentation action. It hides
+**Invariant —** `Close team` is a browser-local presentation action. It hides
 the organization in that mounted browser reducer; it sends no command, changes no
 topology, and does not hide the organization in another browser. A closed grouped
 lineage remains restorable during that mount through **Agents → Open organization**.

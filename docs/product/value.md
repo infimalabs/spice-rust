@@ -432,7 +432,7 @@ classDiagram
 
 Read the two relationships as lifetimes. A lane belongs to exactly one organization at
 a time and may move between organizations, while the organization is the unit that the current
-browser's `Close organization` presentation action hides. That action does not alter
+browser's `Close team` presentation action hides. That action does not alter
 the relationship, and **Agents → Open organization** can restore a closed grouped
 lineage during the same mount. The organization owns the task policy shared by its members: renewal
 leaves that policy in place because the lineage is unchanged, while a lane moved

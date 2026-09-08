@@ -366,8 +366,8 @@ flowchart LR
   O -->|"renewal"| OR["occupied<br/>(successor replaces occupant)"]
   O -->|"organization merged"| F["fused"]
   F -->|"organization split"| OS["occupied"]
-  O -.->|"Close organization"| H["hidden<br/>(this browser only)"]
-  F -.->|"Close organization"| H
+  O -.->|"Close team"| H["hidden<br/>(this browser only)"]
+  F -.->|"Close team"| H
   H -.->|"Agents → Open organization"| V["visible again;<br/>authoritative occupied / fused<br/>topology unchanged"]
 ```
 
@@ -389,7 +389,7 @@ flowchart LR
    identity, may repeat, and never substitutes for explicit lane attribution. A
    member that momentarily fails to resolve keeps its seat rather than
    re-entering at the tail.
-- `Close organization` only inserts the lineage into that browser reducer's hidden set.
+- `Close team` only inserts the lineage into that browser reducer's hidden set.
    It sends no authority command, changes no membership, and neither inspects
    nor erases a draft. A closed grouped lineage remains restorable during that
    mount through **Agents → Open organization**; a fresh mount independently renders the
@@ -447,7 +447,7 @@ stateDiagram-v2
    timeout.
 - Unsubmitted intent is protected on page exit: an unsafe draft or queued
    submission installs the browser's `beforeunload` confirmation guard.
-   Browser-local `Close organization` only suppresses rendering and does not erase it.
+   Browser-local `Close team` only suppresses rendering and does not erase it.
 - A late completion never steals focus the operator has since moved.
 - Shard order follows member order. Accent follows stable lane identity and may
    repeat, so every card explicitly names the lane that would answer it.

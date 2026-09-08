@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { TRANSITION_MS } from "./canvas-fixture.mjs";
 
 const labels = [
-  "Close organization",
+  "Close team",
   "Import agent",
   "Split into individuals",
   "Restore previous organization",
@@ -115,9 +115,9 @@ export async function assertOrgActions(page, primary, secondary, primaryLineage)
     "a square organization action remains keyboard focusable",
   );
 
-  await primaryMenu.getByRole("menuitem", { name: /Close organization/ }).click();
+  await primaryMenu.getByRole("menuitem", { name: /Close team/ }).click();
   await primary.waitFor({ state: "detached", timeout: TRANSITION_MS });
-  assert.equal(await secondary.isVisible(), true, "Close organization leaves the sibling surface open");
+  assert.equal(await secondary.isVisible(), true, "Close team leaves the sibling surface open");
   assert.equal(await secondaryMenu.isVisible(), true, "the sibling's independent menu stays open");
 
   await page.getByLabel("Open Spice Canvas menu").click();
