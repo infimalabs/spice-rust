@@ -8,7 +8,21 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{Digest, Domain, Pins, Temporary, Tool, allowed_cargo_arguments};
+use super::{Digest, Domain, Pins, Temporary, Tool, allowed_cargo_arguments, release_output_path};
+
+#[test]
+fn release_output_admits_the_manifest_pointer_and_no_neighbour() {
+    assert!(release_output_path("dist/stage/release/manifest.json"));
+    assert!(release_output_path("dist/stage/objects/object"));
+    assert!(release_output_path(
+        "dist/stage/targets/target/payload.json"
+    ));
+    assert!(!release_output_path("dist/stage/release/notes.md"));
+    assert!(!release_output_path(
+        "dist/stage/release/manifest.json.extra"
+    ));
+    assert!(!release_output_path("dist/stage/unexpected"));
+}
 
 /// A pin naming a path and no bytes worth checking.
 ///
