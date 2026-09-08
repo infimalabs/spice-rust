@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use gate::test_support::gix;
 
 const PROCESS_PATH: &str = concat!("PA", "TH");
-const IDENTITY: &str = "sha256:3e8a97ea5628fad302eafb4e93f81da8236c6bf164fd3459509d6db71ee57334";
+const IDENTITY: &str = "sha256:137ff4af79c15277648a78ad85d53e490b897d60e2c30ade6da5ecea8d34305f";
 
 #[test]
 fn proof_image_build_returns_the_buildx_exit_and_diagnoses_an_unexpected_eof() {

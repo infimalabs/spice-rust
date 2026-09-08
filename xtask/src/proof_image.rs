@@ -659,7 +659,7 @@ mod tests {
     use super::*;
 
     const IDENTITY: &str =
-        "sha256:3e8a97ea5628fad302eafb4e93f81da8236c6bf164fd3459509d6db71ee57334";
+        "sha256:137ff4af79c15277648a78ad85d53e490b897d60e2c30ade6da5ecea8d34305f";
 
     #[test]
     fn build_records_the_streamed_archive_checksum_and_admitted_identity() {
