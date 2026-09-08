@@ -440,7 +440,7 @@ fn render_agent_message_footer(
         <footer class="message-footer">
             <div class="message-footer-left">
                 <Age authored={display_millis} class="message-age" title={locus} />
-                {render_agent_message_badges(message.badges)}
+                {render_agent_message_badges(message)}
             </div>
             <div class="message-footer-right">
                 {producer_identity}
@@ -452,22 +452,42 @@ fn render_agent_message_footer(
     }
 }
 
-fn render_agent_message_badges(badges: wire::AgentMessageBadges) -> Html {
-    if badges.acknowledgements == 0 {
+fn render_agent_message_badges(message: &wire::AgentMessage) -> Html {
+    if message.badges.acknowledgements == 0 && !message.final_answer {
         return Html::default();
     }
     html! {
-        <span class="message-badges" aria-label="Message classifications">
-            {render_agent_message_badge("ACK", "ack", badges.acknowledgements)}
+        <span class="message-badges" role="list" aria-label="Message classifications">
+            if message.final_answer {
+                {render_agent_message_badge("FINAL", "final", None)}
+            }
+            if message.badges.acknowledgements > 0 {
+                {render_agent_message_badge(
+                    "ACK",
+                    "ack",
+                    Some(message.badges.acknowledgements),
+                )}
+            }
         </span>
     }
 }
 
-fn render_agent_message_badge(label: &'static str, class: &'static str, count: u32) -> Html {
+fn render_agent_message_badge(
+    label: &'static str,
+    class: &'static str,
+    count: Option<u32>,
+) -> Html {
     html! {
-        <span class={classes!("message-badge", format!("message-badge--{class}"))}>
+        <span
+            class={classes!("message-badge", format!("message-badge--{class}"))}
+            role="listitem"
+            data-message-classification={class}
+            aria-label={format!("{label} message classification")}
+        >
             <span class="message-badge-label">{label}</span>
-            <span class="message-badge-count">{count}</span>
+            if let Some(count) = count {
+                <span class="message-badge-count">{count}</span>
+            }
         </span>
     }
 }

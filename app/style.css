@@ -802,6 +802,15 @@ tbody tr:last-child td { border-bottom: 0; }
 .team-surface .mosaic-message-card.final.now-playing {
   box-shadow: inset 3px 0 0 var(--warning), inset 0 3px 0 var(--accent-1);
 }
+.team-surface .mosaic-message-card.final .message-footer {
+  grid-template-columns: max-content minmax(0, 1fr);
+}
+.team-surface .mosaic-message-card.final .message-footer-left {
+  width: auto;
+}
+.team-surface .message-badge.message-badge--final {
+  --message-badge-accent: var(--accent-1);
+}
 .team-surface .mosaic-message-card[data-accent-slot] {
   border-right-color: var(--accent-slot, var(--accent));
 }

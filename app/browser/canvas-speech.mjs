@@ -160,8 +160,13 @@ async function assertAutomaticSpeechEngine(engine, endpoint, fixture, lane, arti
     assert.equal(await mode.inputValue(), "1", `${engine} defaults to Speak`);
     assert.equal(await speechCount(page), 0, `${engine} materialized history stays silent`);
 
-    await emitAssistantRecord(fixture, page, lane, `${engine} ordinary progress`);
+    const ordinary = await emitAssistantRecord(fixture, page, lane, `${engine} ordinary progress`);
     assert.equal(await speechCount(page), 0, `${engine} Speak ignores commentary`);
+    assert.equal(
+      await ordinary.locator(".message-badge--final").count(),
+      0,
+      `${engine} ordinary commentary has no FINAL badge`,
+    );
 
     const quoted = await emitAssistantRecord(
       fixture,
@@ -309,6 +314,10 @@ async function assertFinalCardPresentation(card, label, nowPlaying) {
   const presentation = await card.evaluate((element) => {
     const style = getComputedStyle(element);
     const bounds = element.getBoundingClientRect();
+    const finalBadge = element.querySelector(".message-badge--final");
+    const badgeStyle = finalBadge && getComputedStyle(finalBadge);
+    const badgeBounds = finalBadge?.getBoundingClientRect();
+    const footerBounds = finalBadge?.closest(".message-footer")?.getBoundingClientRect();
     const painted = [...element.querySelectorAll(".message-body > *, .message-footer")]
       .map((child) => child.getBoundingClientRect())
       .filter((child) => child.width > 0 || child.height > 0);
@@ -334,6 +343,18 @@ async function assertFinalCardPresentation(card, label, nowPlaying) {
       shadow: style.boxShadow,
       warning: color("var(--warning)"),
       playingBorder: color("color-mix(in srgb, var(--warning) 70%, var(--line))"),
+      badge: finalBadge && {
+        text: finalBadge.textContent,
+        ariaLabel: finalBadge.getAttribute("aria-label"),
+        role: finalBadge.getAttribute("role"),
+        background: badgeStyle.backgroundColor,
+        foreground: badgeStyle.color,
+        count: finalBadge.querySelectorAll(".message-badge-count").length,
+        contained: badgeBounds.left >= footerBounds.left
+          && badgeBounds.right <= footerBounds.right
+          && badgeBounds.top >= footerBounds.top
+          && badgeBounds.bottom <= footerBounds.bottom,
+      },
       contentBottom: painted.length > 0 ? Math.max(...painted.map((child) => child.bottom)) : null,
       innerBottom: bounds.bottom - Number.parseFloat(style.borderBottomWidth),
     };
@@ -343,6 +364,19 @@ async function assertFinalCardPresentation(card, label, nowPlaying) {
   assert.equal(presentation.final, "true", `${label} exposes final state`);
   assert.equal(presentation.finalClass, true, `${label} carries the final class`);
   assert.equal(presentation.nowPlaying, nowPlaying, `${label} composes playback state`);
+  assert.deepEqual(
+    presentation.badge,
+    {
+      text: "FINAL",
+      ariaLabel: "FINAL message classification",
+      role: "listitem",
+      background: presentation.accent,
+      foreground: presentation.panel,
+      count: 0,
+      contained: true,
+    },
+    `${label} renders one accessible uncounted blue FINAL badge inside the footer`,
+  );
   assert.equal(
     presentation.background,
     presentation.expectedBackground,
