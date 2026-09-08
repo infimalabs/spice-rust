@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use wire::{
     Accepted, Body, CanonicalUuid, Derived, Envelope, Fact, FoldName, Origin, Outcome, Overflow,
-    Packed, Response, Seq, StreamFrame,
+    Packed, Response, Seq,
 };
 
 use crate::socket::{Admitted, SessionScope};
@@ -453,37 +453,6 @@ impl<T> BrowserState<T> {
             self.answer = None;
             self.causal.clear();
         }
-    }
-
-    /// Retain one packed fold derived from an admitted stream frame.
-    ///
-    /// This stays crate-private because only the runtime knows how a strict
-    /// stream variant projects to a pane row. The admission receipt supplies
-    /// scope; callers outside the crate cannot inject a packed answer.
-    pub(crate) fn replace_stream(
-        &mut self,
-        admitted: &Admitted<StreamFrame>,
-        packed: Packed<T>,
-    ) -> bool {
-        if admitted.scope() != self.scope {
-            return false;
-        }
-        self.answer = Some(Answer::HeadDirect(packed));
-        true
-    }
-
-    /// Retain one projected causal header from an admitted stream frame.
-    pub(crate) fn observe_stream(
-        &mut self,
-        admitted: &Admitted<StreamFrame>,
-        seq: Seq,
-        origin: Origin,
-        cause: Option<Seq>,
-    ) -> Applied {
-        if admitted.scope() != self.scope {
-            return Applied::ForeignScope;
-        }
-        self.observe_header(seq, origin, cause)
     }
 
     fn observe_header(&mut self, seq: Seq, origin: Origin, cause: Option<Seq>) -> Applied {

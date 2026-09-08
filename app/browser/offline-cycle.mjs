@@ -28,7 +28,7 @@
 /// justified against the distribution of the thing it bounds.
 ///
 /// Usage: node app/browser/offline-cycle.mjs [--iterations N] [--bound MS]
-///                                           [--view Lanes|Chronology|Flow|Magnitude|Topology]
+///                                           [--view Lanes|Flow|Topology]
 ///
 /// Pointing `--view` at Lanes reproduces the reported incident, because the
 /// mosaic has no status element for the wait to ever see.
@@ -61,7 +61,7 @@ import {
 /// configuration that proved the reported failure was a deaf wait rather than a
 /// slow transition, and a harness that cannot be pointed back at it cannot
 /// demonstrate the failure it was built to diagnose.
-const VIEWS = ["Lanes", "Chronology", "Flow", "Magnitude", "Topology"];
+const VIEWS = ["Lanes", "Flow", "Topology"];
 
 function argument(name) {
   const index = process.argv.indexOf(name);
@@ -99,7 +99,7 @@ function viewOption(name, fallback) {
 
 const iterations = numericOption("--iterations", 20);
 const bound = numericOption("--bound", 10_000);
-const view = viewOption("--view", "Chronology");
+const view = viewOption("--view", "Flow");
 
 /// Time one transition, carrying the instrument's view out when it never lands.
 ///
@@ -168,15 +168,10 @@ async function cycle(fixture, browser, seed) {
         page.waitForSelector(".status.online", { timeout: bound }),
       );
       await stopResident(fixture, resident);
-      const started = Date.now();
       const elapsed = await timed(page, resident, "the resident stopping reports offline", () =>
         page.waitForSelector(".status.offline", { timeout: bound }),
       );
-      // The companion wait shares the view gate and the close that drives it,
-      // so it is measured here too rather than inheriting a bound justified
-      // only against the status flip.
-      await page.locator(".event.fault").waitFor({ timeout: bound });
-      return { passed: true, connect, reconnect, elapsed, fault: Date.now() - started };
+      return { passed: true, connect, reconnect, elapsed };
     } catch (error) {
       return { passed: false, ...(error.report ?? { error: String(error).split("\n")[0] }) };
     }

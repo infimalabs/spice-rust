@@ -344,10 +344,10 @@ export async function assertTeamArrangement(page, fixture, worktrees, artifacts)
   );
   const selectedMode = (surface) => surface.locator(".team-pane").getAttribute("data-team-mode");
   await primarySurface.getByRole("tab", { name: /^Tasks/ }).click();
-  await secondarySurface.getByRole("tab", { name: /^Metrics/ }).click();
+  await secondarySurface.getByRole("tab", { name: /^Team/ }).click();
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
-    ["Tasks", "Metrics"],
+    ["Tasks", "Team"],
     "the teams hold distinct views immediately before one lineage retires",
   );
 

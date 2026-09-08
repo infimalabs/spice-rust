@@ -9,39 +9,27 @@ fn handle_stream_frame(
     surface: &UseStateHandle<SurfaceData>,
     data: &SurfaceData,
     bytes: &[u8],
-) -> Result<
-    (
-        Vec<StreamDirective>,
-        bool,
-        crate::Stale,
-        Option<wire::StreamCursor>,
-    ),
-    String,
-> {
+) -> Result<(Vec<StreamDirective>, bool, crate::Stale), String> {
     let admitted = session
         .admit_stream(bytes)
         .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?;
     if matches!(admitted.get(), wire::StreamFrame::Pong { .. }) {
-        return Ok((Vec::new(), false, crate::Stale::default(), None));
+        return Ok((Vec::new(), false, crate::Stale::default()));
     }
     let stale = stale_reads(&admitted);
-    let live_fact = matches!(admitted.get(), wire::StreamFrame::Fact { .. });
-    let (directives, refresh_thread, changed) = {
+    let (directives, changed) = {
         let mut data = data.write();
         let runtime = data
             .as_mut()
             .ok_or_else(|| "stream frame arrived before runtime acceptance".to_owned())?;
         let application = runtime.apply_stream_frame(&admitted);
         let changed = application.changed();
-        let refresh_thread = (live_fact && changed)
-            .then(|| runtime.pending_thread())
-            .flatten();
-        (application.into_directives(), refresh_thread, changed)
+        (application.into_directives(), changed)
     };
     if changed {
         surface.set(data.publication());
     }
-    Ok((directives, false, stale, refresh_thread))
+    Ok((directives, false, stale))
 }
 
 pub(super) fn handle_incoming(
@@ -51,15 +39,7 @@ pub(super) fn handle_incoming(
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     demands: &mut DemandQueue<ClientAction>,
     bytes: &[u8],
-) -> Result<
-    (
-        Vec<StreamDirective>,
-        bool,
-        crate::Stale,
-        Option<wire::StreamCursor>,
-    ),
-    String,
-> {
+) -> Result<(Vec<StreamDirective>, bool, crate::Stale), String> {
     let crossing: serde_json::Value = wire::decode(bytes).map_err(|error| error.to_string())?;
     if crossing.get("stream").is_some() {
         return handle_stream_frame(session, &handles.surface, data, bytes);
@@ -91,12 +71,7 @@ pub(super) fn handle_incoming(
     }
     drop(runtime_slot);
     handles.surface.set(data.publication());
-    Ok((
-        Vec::new(),
-        application.refresh,
-        crate::Stale::default(),
-        None,
-    ))
+    Ok((Vec::new(), application.refresh, crate::Stale::default()))
 }
 
 struct CommandApplication {
@@ -145,10 +120,9 @@ fn apply_command_response(
     bytes: &[u8],
 ) -> Result<CommandApplication, String> {
     Ok(match kind {
-        kind @ (PendingKind::Board
-        | PendingKind::Consent
-        | PendingKind::Policy
-        | PendingKind::Settings) => apply_scalar_response(session, runtime, kind, bytes)?,
+        kind @ (PendingKind::Board | PendingKind::Settings) => {
+            apply_scalar_response(session, runtime, kind, bytes)?
+        }
         // A read of the lane table and an arrangement of it answer with the
         // same authoritative table, so successful replies apply identically.
         // Teams move only when that answer lands. A refused mutation differs:
@@ -174,18 +148,17 @@ fn apply_command_response(
             lineage,
             lane,
             requested,
-        } => apply_lane_renewal_response(session, runtime, lineage, lane, requested, bytes)?,
+        } => apply_lane_renewal_response(session, lineage, lane, requested, bytes)?,
         PendingKind::Inbox { covered } => CommandApplication::ordinary(apply_inbox_response(
             session, handles, runtime, &covered, bytes,
         )?),
         PendingKind::LaneSeat => {
-            let admitted: crate::Admitted<Response<wire::intent::LaneChangeAnswer>> =
+            let _admitted: crate::Admitted<Response<wire::intent::LaneChangeAnswer>> =
                 admit_response(session, bytes)?;
-            runtime.apply_lane_change(&admitted);
             CommandApplication::ordinary(true)
         }
         PendingKind::WakeSubmission { lane, submission } => CommandApplication::ordinary(
-            apply_wake_submission_response(session, handles, runtime, submission, lane, bytes)?,
+            apply_wake_submission_response(session, handles, submission, lane, bytes)?,
         ),
         PendingKind::LineageConfigure { lineage, life } => {
             let (refresh, applied) = apply_lineage_configuration(
@@ -201,24 +174,16 @@ fn apply_command_response(
                 lane_authority: applied,
             }
         }
-        PendingKind::Steer { lane } => {
-            let admitted: crate::Admitted<Response<wire::intent::DirectiveAnswer>> =
+        PendingKind::Steer => {
+            let _admitted: crate::Admitted<Response<wire::intent::DirectiveAnswer>> =
                 admit_response(session, bytes)?;
-            runtime.apply_steer(&admitted, lane);
             CommandApplication::ordinary(true)
         }
         PendingKind::SteerSubmission { lane } => CommandApplication::ordinary(
             apply_submission_response(session, handles, runtime, id, lane, bytes)?,
         ),
-        PendingKind::Note(task) => {
-            let admitted: crate::Admitted<Response<TaskAnswer>> = admit_response(session, bytes)?;
-            runtime.apply_note(&admitted, &task.to_string());
-            CommandApplication::ordinary(false)
-        }
-        PendingKind::ConsentDecision => {
-            let admitted: crate::Admitted<Response<wire::intent::ConsentAnswer>> =
-                admit_response(session, bytes)?;
-            runtime.apply_decision(&admitted);
+        PendingKind::Note => {
+            let _admitted: crate::Admitted<Response<TaskAnswer>> = admit_response(session, bytes)?;
             CommandApplication::ordinary(false)
         }
     })
@@ -232,8 +197,6 @@ fn apply_scalar_response(
 ) -> Result<CommandApplication, String> {
     match kind {
         PendingKind::Board => runtime.apply_board(&admit_response(session, bytes)?),
-        PendingKind::Consent => runtime.apply_consent(&admit_response(session, bytes)?),
-        PendingKind::Policy => runtime.apply_policy(&admit_response(session, bytes)?),
         PendingKind::Settings => runtime.apply_settings(&admit_response(session, bytes)?),
         _ => unreachable!("scalar response partition is closed"),
     }
@@ -309,7 +272,6 @@ fn apply_lane_response(
 
 fn apply_lane_renewal_response(
     session: &Session,
-    runtime: &mut CanvasRuntime,
     lineage: CanonicalUuid,
     lane: CanonicalUuid,
     requested: bool,
@@ -330,7 +292,6 @@ fn apply_lane_renewal_response(
             ));
         }
     }
-    runtime.apply_lane_renewal(&admitted);
     Ok(CommandApplication::ordinary(true))
 }
 
@@ -385,8 +346,6 @@ fn apply_submission_response(
     handles.submissions.publish();
     if let Some(submission) = accepted {
         runtime.apply_steer_submission(&admitted, lane, submission.message, submission.attachments);
-    } else {
-        runtime.apply_steer(&admitted, lane);
     }
     Ok(true)
 }
@@ -394,7 +353,6 @@ fn apply_submission_response(
 fn apply_wake_submission_response(
     session: &Session,
     handles: &SurfaceHandles,
-    runtime: &mut CanvasRuntime,
     submission: CanonicalUuid,
     lane: CanonicalUuid,
     bytes: &[u8],
@@ -419,7 +377,6 @@ fn apply_wake_submission_response(
         }
     }
     handles.submissions.publish();
-    runtime.apply_lane_change(&admitted);
     Ok(matches!(&admitted.get().outcome, wire::Outcome::Reply(_)))
 }
 

@@ -259,24 +259,16 @@ fn waiting_directives(runtime: Option<&CanvasRuntime>, submissions: &SubmissionS
 /// never advertises more than the pill leads to.
 fn axis_count(axis: Axis, runtime: Option<&CanvasRuntime>) -> usize {
     match axis {
-        Axis::Magnitude => runtime
-            .and_then(CanvasRuntime::policy)
-            .map_or(0, |policy| policy.rules.len()),
         Axis::Flow => runtime
             .and_then(CanvasRuntime::board)
             .map_or(0, |board| board.active_public_tasks().count()),
         Axis::Topology => runtime
             .and_then(CanvasRuntime::lanes)
             .map_or(0, |lanes| lanes.lanes.len()),
-        Axis::Chronology => runtime.map_or(0, |runtime| runtime.events().len()),
     }
 }
 
 /// Newest activity from any member of one lineage.
-///
-/// Team strips never consult command receipts. Those remain visible in the
-/// chronology pane, while this line follows captured transcript activity
-/// exclusively.
 pub(in crate::browser) fn render_lineage_ticker(
     runtime: &CanvasRuntime,
     lineage: &crate::runtime::LaneRow,

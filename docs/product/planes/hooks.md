@@ -53,24 +53,6 @@ one guarded journal transaction. A pass that does not commit leaves neither;
 the continuation guard refuses gaps, stale heads, and implicit generation
 changes before either value crosses.
 
-### Canvas standing metrics
-
-```mermaid
-flowchart LR
-  L["selected team"] --> M["one row per member"]
-  M --> P["pending"]
-  M --> C["claim age"]
-  M --> R["renewal age"]
-  M --> V["liveness"]
-  C --> B["Metrics badge<br/>members holding claims"]
-```
-
-**Invariant —** Canvas Metrics mode is current member standing, not an activity
-ledger. It renders pending count, claim age, renewal age, and liveness for every
-member; its mode badge counts members whose standing carries a held claim.
-
----
-
 ## Hooks
 
 ### Two hook systems, deliberately distinct

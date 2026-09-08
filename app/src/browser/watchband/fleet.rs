@@ -35,7 +35,6 @@ pub(super) fn carries_lineage(transfer: &web_sys::DataTransfer) -> bool {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(in crate::browser) enum LineageMode {
     Team,
-    Metrics,
     Tasks,
     #[default]
     Lanes,
@@ -45,7 +44,6 @@ impl LineageMode {
     pub(super) const fn key(self) -> &'static str {
         match self {
             Self::Team => "Team",
-            Self::Metrics => "Metrics",
             Self::Tasks => "Tasks",
             Self::Lanes => "Lanes",
         }
@@ -53,7 +51,6 @@ impl LineageMode {
 
     const fn from_destination(destination: TeamDestination) -> Self {
         match destination {
-            TeamDestination::Metrics => Self::Metrics,
             TeamDestination::Team => Self::Team,
             TeamDestination::Tasks => Self::Tasks,
             TeamDestination::Agents => Self::Lanes,
@@ -106,7 +103,7 @@ pub(super) fn render_empty_fleet(
                             empty("No agents are assigned. Open Team to add one.")
                         }
                         LineageMode::Tasks => render_tasks(runtime, &empty_lineage, &[]),
-                        LineageMode::Metrics | LineageMode::Team => {
+                        LineageMode::Team => {
                             render_details(runtime, &empty_lineage, &[], mode, controls)
                         }
                     }}
@@ -202,7 +199,7 @@ pub(super) fn render_populated_fleet(
                                             lineage,
                                             &lineage_standings,
                                         ),
-                                        LineageMode::Metrics | LineageMode::Team => render_details(
+                        LineageMode::Team => render_details(
                                             render.runtime,
                                             lineage,
                                             &lineage_standings,
@@ -562,10 +559,6 @@ fn mode_badge(mode: LineageMode, standings: &[Standing]) -> Option<String> {
         LineageMode::Tasks => standings
             .iter()
             .filter(|standing| standing.handle.is_some())
-            .count(),
-        LineageMode::Metrics => standings
-            .iter()
-            .filter(|standing| standing.held_since.is_some())
             .count(),
         LineageMode::Team => standings.len(),
     };

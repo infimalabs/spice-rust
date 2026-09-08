@@ -30,10 +30,6 @@ fn render_axis(
     sender: &SenderHandle,
 ) -> Html {
     let (noun, context) = match axis {
-        Axis::Magnitude => (
-            "rules",
-            "Metrics summarizes current policy, consent budgets, and trust standing.",
-        ),
         Axis::Flow => (
             "active tasks",
             "Tasks follows ready, active, deferred, and completed work across projects.",
@@ -41,10 +37,6 @@ fn render_axis(
         Axis::Topology => (
             "lineages",
             "Team connects resident teams, seats, capabilities, and current ownership.",
-        ),
-        Axis::Chronology => (
-            "events",
-            "History follows facts, command outcomes, and their causal thread.",
         ),
     };
     html! {

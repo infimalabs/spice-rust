@@ -177,7 +177,7 @@ export async function assertComposerRecovery(page, fixture, seeded, monitor) {
     before.length + 2,
     "queued submissions are an immediate pending floor",
   );
-  await chooseCanvasView(page, "Chronology");
+  await chooseCanvasView(page, "Flow");
   await assertOfflineObserved(page, "the first steering write is cut before durability");
   await assertOnlineObserved(page, "the cut steering socket reconnects", RECONNECT_MS);
   monitor.expectNetworkInterruption(false);

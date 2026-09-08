@@ -697,8 +697,6 @@ export const RECONNECT_MS = RECONNECT_BASE_MS + HANDSHAKE_TIMEOUT_MS + RENDER_SL
 export async function chooseCanvasView(page, name) {
   const visibleName = {
     Flow: "Tasks",
-    Magnitude: "Metrics",
-    Chronology: "History",
     Topology: "Team",
     Lanes: "Agents",
   }[name] ?? name;
@@ -938,7 +936,7 @@ export async function assertResidentRestart(fixture, page, previous, options = {
     "restart preserves the configured task policy instead of deriving it from lane life",
   );
   await page.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(page, "Chronology");
+  await chooseCanvasView(page, "Flow");
   // This is a cold connect, not a reconnect: the line above navigates afresh and
   // waits for `networkidle`, so the client is not sitting out a retry delay
   // and the page has a live socket before this wait arms. Bounding it as a
@@ -1090,17 +1088,8 @@ export async function assertGenerationOnline(page, epoch, cause, bound, context 
 
 /// The canvas must notice the resident is gone.
 ///
-/// The status flips Offline and a fault lands in the event stream. Both waits
-/// report through the instrument, so a timeout names which of the two failed
-/// and what the client and the resident looked like when it did, rather than
-/// killing the node process with a bare TimeoutError.
+/// The status flips Offline and reports through the shared instrument.
 export async function assertResidentLossObserved(page, resident) {
-  // Both waits below are gated on the same layout: `view.rs` renders the topbar
-  // carrying `.status` only outside the mosaic, and the analytics pane carrying
-  // `.event.fault` is the else branch of that same test. Waiting for the gate
-  // first means a wrong view fails saying the status never rendered, instead of
-  // spending the whole bound waiting for a class on an element that is not in
-  // the document and then blaming the connection for it.
   await observedWait(
     page,
     "the status element is rendered to be waited on",
@@ -1108,15 +1097,6 @@ export async function assertResidentLossObserved(page, resident) {
     { resident },
   );
   await assertOfflineObserved(page, "the resident stops", { resident });
-  await observedWait(
-    page,
-    "a fault event is recorded after the resident stops",
-    () => page
-      .locator(".event.fault")
-      .filter({ hasText: "Canvas connection reset" })
-      .waitFor({ timeout: TRANSITION_MS }),
-    { resident },
-  );
 }
 
 function reportField(message, name) {

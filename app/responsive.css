@@ -38,9 +38,6 @@
     padding-inline: var(--canvas-chrome-edge-inline);
   }
   .axis-button { padding: 0 11px; }
-  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .metric:nth-child(3) { border-left: 0; border-top: 1px solid var(--line); }
-  .metric:nth-child(4) { border-top: 1px solid var(--line); }
   .split { grid-template-columns: 1fr; }
   .seat-panel { border-top: 1px solid var(--line); border-left: 0; }
 }
@@ -92,8 +89,5 @@
   .seat-panel { padding: 16px; }
   .page-heading { align-items: start; }
   .page-heading h1 { font-size: 1.35rem; }
-  .metrics { grid-template-columns: 1fr 1fr; }
-  .metric { padding: 13px; }
-  .metric-value { font-size: 1.25rem; }
   th, td { padding: 10px; }
 }

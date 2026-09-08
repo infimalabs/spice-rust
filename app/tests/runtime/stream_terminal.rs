@@ -3,7 +3,7 @@
 use super::*;
 
 #[test]
-fn stream_overflow_is_terminal_and_remains_distinct_in_chronology() {
+fn stream_overflow_remains_a_typed_terminal() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
@@ -35,5 +35,4 @@ fn stream_overflow_is_terminal_and_remains_distinct_in_chronology() {
             dropped: 7,
         })
     );
-    assert_eq!(runtime.events()[0].class(), "overflow");
 }

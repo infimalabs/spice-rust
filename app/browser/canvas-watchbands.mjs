@@ -137,16 +137,16 @@ export async function assertPerTeamWatchbands(
     ["Lanes", "Lanes"],
     "each newly rendered team begins in Lanes",
   );
-  await primarySurface.getByRole("tab", { name: /^Metrics/ }).click();
+  await primarySurface.getByRole("tab", { name: /^Team/ }).click();
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
-    ["Metrics", "Lanes"],
-    "switching the primary team to Metrics leaves its sibling in Lanes",
+    ["Team", "Lanes"],
+    "switching the primary team to Team leaves its sibling in Lanes",
   );
   await secondarySurface.getByRole("tab", { name: /^Team/ }).click();
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
-    ["Metrics", "Team"],
+    ["Team", "Team"],
     "two teams retain different selected views simultaneously",
   );
   await primarySurface.getByRole("tab", { name: /^Tasks/ }).click();

@@ -68,7 +68,6 @@
 | <a id="metrics-transcript-accounting-retains-typed-usage-and-record-counts"></a>**Transcript accounting retains typed usage and record counts** | Each normalized usage sample retains its exact ordered byte spans and event ordinal. Complete records carrying no usage and residue records remain separate counts rather than invented activity facts. |
 | <a id="metrics-a-source-head-is-generation-and-position-not-an-offset"></a>**A source head is generation and position, not an offset** | Resumption requires the exact source generation and next member/offset position. A replacement restarts at member 1, offset 0 and explicitly names the superseded generation. |
 | <a id="metrics-an-accounted-batch-and-its-advanced-source-head-commit-together"></a>**An accounted batch and its advanced source head commit together** | One guarded journal transaction commits the accounted batch and its advanced source head together; failure leaves neither, and discontinuity refuses both. |
-| <a id="metrics-canvas-metrics-render-current-member-standing"></a>**Canvas Metrics render current member standing** | For every member of the selected team, Canvas Metrics render pending count, claim age, renewal age, and liveness. The mode badge counts members holding claims. |
 
 ## Extension, wire, and configuration
 

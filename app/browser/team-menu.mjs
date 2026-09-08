@@ -7,7 +7,7 @@ import {
   TRANSITION_MS,
   waitForPageFunction,
 } from "./canvas-fixture.mjs";
-import { assertGlobalHistoryNavigation } from "./team-navigation.mjs";
+import { assertGlobalNavigation } from "./team-navigation.mjs";
 
 async function openSpiceMenu(page) {
   const menu = page.locator(".canvas-menu");
@@ -264,17 +264,17 @@ export async function assertCursorRelocation(page, artifacts, engine) {
       );
       assert.equal(await page.locator(".brand-dots").count(), 0, `${label} keeps the agent-light roster removed`);
       const navigation = page.locator(".canvas-navigation");
-      await assertGlobalHistoryNavigation(page, `${label} open Spice menu`);
+      await assertGlobalNavigation(page, `${label} open Spice menu`);
       assert.deepEqual(
         await navigation.locator(".pill-label").allTextContents(),
-        ["History", "Metrics", "Team", "Tasks", "Agents"],
+        ["Team", "Tasks", "Agents"],
         `${label} exposes one ordered navigation rail`,
       );
       assert.deepEqual(
         await navigation.locator(".axis-button").evaluateAll(
           (buttons) => buttons.map((button) => button.dataset.navigationTier),
         ),
-        ["primary", "primary", "primary", "primary", "primary"],
+        ["primary", "primary", "primary"],
         `${label} uses one shared navigation tier`,
       );
       assert.equal(
@@ -627,13 +627,13 @@ async function assertPepperDisclosure(page) {
     await waitForDisclosure(page, true, "the pepper disclosure exposes Canvas destinations");
     const destinations = navigation.getByRole("button");
     await destinations.first().focus();
-    for (const [index, label] of ["History", "Metrics", "Team", "Tasks", "Agents"].entries()) {
+    for (const [index, label] of ["Team", "Tasks", "Agents"].entries()) {
       assert.match(
         (await page.locator(":focus").innerText()).trim(),
         new RegExp(`^${label}`),
         `keyboard traversal follows visible navigation order at ${label}`,
       );
-      if (index < 4) await page.keyboard.press("Tab");
+      if (index < 2) await page.keyboard.press("Tab");
     }
     assert.equal(
       await taskStrip.evaluate((node) => node.scrollLeft),
@@ -708,8 +708,6 @@ async function assertPepperDisclosure(page) {
 async function assertAxisMenu(page, view, copy) {
   const visibleView = {
     Flow: "Tasks",
-    Magnitude: "Metrics",
-    Chronology: "History",
     Topology: "Team",
   }[view] ?? view;
   await chooseCanvasView(page, view);
@@ -770,7 +768,6 @@ export async function assertTeamMenu(page, fixture, artifacts) {
     "the analytics pages keep the same route back to live Agents",
   );
   await assertAxisMenu(page, "Topology", /resident teams, seats, capabilities/i);
-  await assertAxisMenu(page, "Chronology", /facts, command outcomes, and their causal thread/i);
   await chooseCanvasView(page, "Lanes");
 
   let panel = await openSpiceMenu(page);

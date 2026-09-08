@@ -53,7 +53,7 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
     "pending direction cannot automatically consume the vacancy under test",
   );
   await reply(fixture, ["lane", "drain", targetLane]);
-  await chooseCanvasView(page, "Chronology");
+  await chooseCanvasView(page, "Flow");
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await chooseCanvasView(page, "Lanes");
   await waitForPage(

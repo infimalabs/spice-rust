@@ -1,4 +1,4 @@
-//! That every pane answers on exactly one of the four axes.
+//! That every pane answers on exactly one of the two axes.
 //!
 //! The registry cannot audit itself. A test that walked `Pane::ALL` to check
 //! that every pane has an axis would pass forever, because a pane omitted from
@@ -18,14 +18,12 @@ use app::{Axis, Pane};
 
 /// Every axis, gathered by exhaustive descent rather than by reading `ALL`.
 ///
-/// The `match` is exhaustive over [`Axis`], so a fifth axis is a compile error
+/// The `match` is exhaustive over [`Axis`], so a third axis is a compile error
 /// here before it is a test failure anywhere.
 fn descend_axes() -> Vec<Axis> {
-    std::iter::successors(Some(Axis::Magnitude), |axis| match axis {
-        Axis::Magnitude => Some(Axis::Flow),
+    std::iter::successors(Some(Axis::Flow), |axis| match axis {
         Axis::Flow => Some(Axis::Topology),
-        Axis::Topology => Some(Axis::Chronology),
-        Axis::Chronology => None,
+        Axis::Topology => None,
     })
     .collect()
 }
@@ -35,10 +33,7 @@ fn descend_axes() -> Vec<Axis> {
 /// Adding a variant to [`Pane`] without adding it here is `E0004`, so this
 /// chain is complete by construction rather than by review.
 fn descend_panes() -> Vec<Pane> {
-    std::iter::successors(Some(Pane::Pressure), |pane| match pane {
-        Pane::Pressure => Some(Pane::Residue),
-        Pane::Residue => Some(Pane::ConsentVolume),
-        Pane::ConsentVolume => Some(Pane::Tasks),
+    std::iter::successors(Some(Pane::Tasks), |pane| match pane {
         Pane::Tasks => Some(Pane::Claims),
         Pane::Claims => Some(Pane::Deferrals),
         Pane::Deferrals => Some(Pane::Reviews),
@@ -47,14 +42,7 @@ fn descend_panes() -> Vec<Pane> {
         Pane::Worktrees => Some(Pane::Lineage),
         Pane::Lineage => Some(Pane::Occupancy),
         Pane::Occupancy => Some(Pane::Residents),
-        Pane::Residents => Some(Pane::Compaction),
-        Pane::Compaction => Some(Pane::Queues),
-        Pane::Queues => Some(Pane::Directives),
-        Pane::Directives => Some(Pane::ConsentDisposition),
-        Pane::ConsentDisposition => Some(Pane::Trust),
-        Pane::Trust => Some(Pane::Commands),
-        Pane::Commands => Some(Pane::Recovery),
-        Pane::Recovery => None,
+        Pane::Residents => None,
     })
     .collect()
 }
@@ -70,7 +58,7 @@ fn the_pane_registry_lists_every_pane_that_exists() {
 }
 
 #[test]
-fn every_pane_maps_to_one_of_the_four_axes() {
+fn every_pane_maps_to_one_of_the_two_axes() {
     let axes: BTreeSet<Axis> = descend_axes().into_iter().collect();
 
     for pane in descend_panes() {
@@ -138,25 +126,9 @@ fn walking_the_axes_in_order_visits_the_whole_registry_once() {
 }
 
 #[test]
-fn one_plane_standing_on_two_axes_is_two_panes() {
-    // Consent is the case the spec names twice: its budgets and rates are
-    // amounts, and its dispositions are events. Two questions, so two panes,
-    // and the audit above then holds for both rather than being waived for one.
-    assert_eq!(Pane::ConsentVolume.axis(), Axis::Magnitude);
-    assert_eq!(Pane::ConsentDisposition.axis(), Axis::Chronology);
-    assert_ne!(Pane::ConsentVolume, Pane::ConsentDisposition);
-
-    // Claims divide the same way: in motion on flow, possessed on topology.
+fn claims_divide_across_the_remaining_axes() {
     assert_eq!(Pane::Claims.axis(), Axis::Flow);
     assert_eq!(Pane::Occupancy.axis(), Axis::Topology);
-}
-
-#[test]
-fn trust_is_read_as_a_history_rather_than_as_an_amount() {
-    // Pended, granted, and revoked are transitions in an order, not a count at
-    // a horizon, so trust answers "what happened, in what order" and belongs
-    // beside the other lifecycle panes.
-    assert_eq!(Pane::Trust.axis(), Axis::Chronology);
 }
 
 #[test]

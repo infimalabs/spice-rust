@@ -70,7 +70,6 @@ import {
   assertAgentRenewalRequest,
   assertTaskChipTypographyMatrix,
 } from "./control-reference.mjs";
-import { assertLiveThreadCoalescing } from "./live-thread-coalescing.mjs";
 import { ownFixture, recordedVendorPids } from "./canvas-lifecycle.mjs";
 import { assertBoundaryLoadReading, withLoadReading } from "./canvas-load.mjs";
 import { auditOwnership } from "./canvas-process-ownership.mjs";
@@ -301,53 +300,6 @@ async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
   await activityReplay.restoreProseSnapshot(page);
 }
 
-async function renderedFactSequences(page) {
-  return page.locator('[data-pane="commands"] .event strong').evaluateAll((nodes) => nodes.map((node) => {
-    const value = Number(node.textContent?.split("/")[0].trim());
-    if (!Number.isInteger(value)) throw new Error(`invalid rendered sequence: ${node.textContent}`);
-    return value;
-  }));
-}
-
-/// Assert the bounded evidence an operator legitimately retains across reconnects.
-///
-/// Operator subscriptions cross reconnect at the current live barrier. Missing
-/// history is therefore expected; retained rows must instead remain authentic,
-/// unique, and ordered under monotone page horizons.
-async function assertRetainedHistory(page, fixture) {
-  await chooseCanvasView(page, "Chronology");
-  const journal = page.locator('[data-pane="commands"]');
-  const sequences = await renderedFactSequences(page);
-  const provenance = await journal.locator('[data-subject="facts"]').allTextContents();
-  const horizons = await journal
-    .locator('[data-subject="facts"] span')
-    .evaluateAll((nodes) => nodes.map((node) => node.textContent?.trim()).filter((text) => text?.startsWith("horizon ")));
-  const horizonValues = horizons.map((text) => Number(text.split(" ")[1]));
-  const authority = await journalExtent(fixture);
-  assert.ok(sequences.length > 0, "the operator retains admitted live fact evidence");
-  assert.equal(provenance.length, horizonValues.length, "every retained page names its horizon");
-  assert.ok(
-    horizonValues.every(Number.isInteger),
-    "every retained page horizon is a journal sequence",
-  );
-  assert.ok(
-    horizonValues.every((value, index) => index === 0 || value >= horizonValues[index - 1]),
-    "retained and later live pages keep monotone horizons",
-  );
-  assert.ok(
-    sequences.every((seq) => seq <= authority.cursor)
-      && horizonValues.every((horizon) => horizon <= authority.cursor),
-    "retained facts and horizons do not outrun journal authority",
-  );
-  assert.equal(
-    new Set(sequences).size,
-    sequences.length,
-    "reconnect and later delivery retain no duplicate fact",
-  );
-
-  await page.screenshot({ path: join(artifacts, "canvas-chronology.png"), fullPage: true });
-}
-
 async function assertNoCredentialOrLandingGap(page, capabilities) {
   const content = await page.content();
   assert.doesNotMatch(content, /release::not-landed/);
@@ -376,12 +328,9 @@ async function assertStaleGeneration(browser, endpoint, currentEpoch) {
     });
   });
   await page.goto(endpoint, { waitUntil: "domcontentloaded" });
-  await chooseCanvasView(page, "Chronology");
+  await chooseCanvasView(page, "Flow");
   await assertOfflineObserved(page, "refusing a stale generation");
-  const fault = page.locator(".event.fault");
-  await fault.waitFor();
-  assert.match(await fault.innerText(), /Canvas connection reset/);
-  assert.match(await fault.innerText(), /accepted|frame|epoch|socket/i);
+  assert.match(await page.locator(".status-copy").innerText(), /Reconnecting/);
   monitor.assertClean();
   await context.close();
 }
@@ -398,74 +347,13 @@ async function assertHalfOpenSocket(browser, endpoint, epoch, fixture, seeded) {
   const monitor = monitorPage(page);
   const route = await routeCanvasSocket(page);
   await page.goto(endpoint, { waitUntil: "domcontentloaded" });
-  // A fresh operator begins at the current live barrier, so the authority
-  // extent -- not a historical page drain -- brackets the gap induced below.
-  await chooseCanvasView(page, "Chronology");
+  await chooseCanvasView(page, "Flow");
   await assertGenerationOnline(page, epoch, "the half-open page connects", CONNECT_MS);
-  const beforeExtent = await journalExtent(fixture);
-  let advanced;
   await assertHalfOpenSocketRecovers(page, monitor, route, epoch, async () => {
     await reply(fixture, ["task", "note", seeded.task, "written while the socket was half open"]);
-    advanced = await journalExtent(fixture);
   });
-  await assertRecoveryBeginsLive(
-    page,
-    fixture,
-    seeded,
-    beforeExtent,
-    advanced,
-    "written after half-open recovery",
-  );
   monitor.assertClean();
   await context.close();
-}
-
-/// Prove an operator reconnect crosses a live barrier instead of replaying.
-///
-/// `beforeExtent..missedExtent` was admitted while the browser could receive
-/// nothing. Its absence proves the replacement subscription did not drain the
-/// gap; the later note proves the same subscription is live rather than stuck.
-async function assertRecoveryBeginsLive(
-  page,
-  fixture,
-  seeded,
-  beforeExtent,
-  missedExtent,
-  liveNote,
-) {
-  await chooseCanvasView(page, "Chronology");
-  assert.ok(
-    missedExtent.cursor > beforeExtent.cursor,
-    "authority crossed the browser's cursor while inbound delivery was absent",
-  );
-  const missed = (seq) => seq > beforeExtent.cursor && seq <= missedExtent.cursor;
-  assert.ok(
-    (await renderedFactSequences(page)).every((seq) => !missed(seq)),
-    "operator recovery skips facts admitted while inbound delivery was absent",
-  );
-
-  await assertLiveNoteArrives(page, fixture, seeded, missedExtent.cursor, liveNote);
-  const recovered = await renderedFactSequences(page);
-  assert.ok(
-    recovered.every((seq) => !missed(seq)),
-    "later live delivery does not backfill the operator's missed range",
-  );
-}
-
-async function assertLiveNoteArrives(page, fixture, seeded, afterCursor, liveNote) {
-  await reply(fixture, ["task", "note", seeded.task, liveNote]);
-  const liveExtent = await journalExtent(fixture);
-  assert.ok(liveExtent.cursor > afterCursor, "live note advances authority");
-  const liveRow = page
-    .locator('[data-pane="commands"] .event strong')
-    .filter({ hasText: new RegExp(`^${liveExtent.cursor} / `) });
-  await liveRow.waitFor({ timeout: RECONNECT_MS });
-  assert.equal(
-    await liveRow.count(),
-    1,
-    "the active operator subscription delivers a new live fact exactly once",
-  );
-  return liveExtent;
 }
 
 async function assertSameGenerationResume(
@@ -474,10 +362,8 @@ async function assertSameGenerationResume(
   fixture,
   seeded,
   epoch,
-  beforeExtent,
 ) {
-  await chooseCanvasView(page, "Chronology");
-  const before = await renderedFactSequences(page);
+  await chooseCanvasView(page, "Flow");
   monitor.expectNetworkInterruption(true);
   await page.evaluate(() => {
     const socket = window.__canvasSockets.at(-1);
@@ -486,15 +372,7 @@ async function assertSameGenerationResume(
   });
   await assertOfflineObserved(page, "the fixture closes its socket");
   assert.match(await page.locator(".status-copy").innerText(), /Reconnecting/);
-  await chooseCanvasView(page, "Chronology");
-  await page
-    .locator(".event.fault")
-    .filter({ hasText: "Canvas connection reset" })
-    .waitFor();
-
   await reply(fixture, ["task", "note", seeded.task, "written during browser disconnect"]);
-  const advanced = await journalExtent(fixture);
-  assert.ok(advanced.facts > beforeExtent.facts, "offline command advances resident authority");
 
   await assertGenerationOnline(page, epoch, "the socket is reopened", RECONNECT_MS);
   await observedBoundedWait(
@@ -508,19 +386,6 @@ async function assertSameGenerationResume(
     }),
   );
   monitor.expectNetworkInterruption(false);
-  await assertRecoveryBeginsLive(
-    page,
-    fixture,
-    seeded,
-    beforeExtent,
-    advanced,
-    "written after browser reconnect",
-  );
-  const after = await renderedFactSequences(page);
-  assert.ok(
-    after.some((seq) => before.includes(seq)),
-    "same-generation recovery retains previously admitted fact evidence",
-  );
 }
 
 assertBoundaryLoadReading();
@@ -670,7 +535,6 @@ try {
         await assertMosaicComposer(lightPage, fixture, seeded, activityReplay);
         await assertComposerRecovery(lightPage, fixture, seeded, lightMonitor);
         await assertVacantWakeSubmission(lightPage, fixture, seeded);
-        await assertRetainedHistory(lightPage, fixture);
         await assertNoCredentialOrLandingGap(lightPage, [resident.discovery.capability]);
       });
       await run.scenario("firefox-restored-mosaic", async () => {
@@ -683,14 +547,7 @@ try {
         assertCandidateMeasurementPaintEngineInventory();
       });
       await run.scenario("authority-task-flow", async () => {
-        await assertLiveThreadCoalescing(
-          browser,
-          resident.discovery.endpoint,
-          fixture,
-          seeded.task,
-        );
         await assertTaskNotes(lightPage, seeded.task);
-        await assertRetainedHistory(lightPage, fixture);
         lightMonitor.assertClean();
         await light.close();
       });
@@ -778,7 +635,7 @@ try {
             ?.getAttribute("aria-checked") === "true",
         );
         lightMonitor.expectNetworkInterruption(true);
-        await chooseCanvasView(lightPage, "Chronology");
+        await chooseCanvasView(lightPage, "Flow");
         await assertWaitReportDistinguishesLayout(lightPage, resident, hiddenStatusReport);
         const shutdownStarted = performance.now();
         await stopResident(fixture, resident);
@@ -816,22 +673,6 @@ try {
         await assertAgentSpacingRejectsFallbackOnlyMarkup(
           lightPage,
           "light-restarted Lanes spacing",
-        );
-        await chooseCanvasView(lightPage, "Chronology");
-        assert.equal(await lightPage.getByText(/Note appended to/).count(), 0,
-          "new generation clears prior command reply state");
-        const restartExtent = await journalExtent(fixture);
-        assert.ok(
-          (await renderedFactSequences(lightPage))
-            .every((seq) => seq > restartExtent.cursor),
-          "the new-generation operator subscription replays no prior journal facts",
-        );
-        await assertLiveNoteArrives(
-          lightPage,
-          fixture,
-          seeded,
-          restartExtent.cursor,
-          "written after resident restart",
         );
         await assertAuthoritySurface(lightPage, seeded);
         await assertNoCredentialOrLandingGap(
@@ -886,9 +727,8 @@ try {
         await assertStaleGeneration(browser, resident.discovery.endpoint, resident.discovery.epoch);
       });
       await run.scenario("socket-resilience", async () => {
-        const extent = await journalExtent(fixture);
         await assertSameGenerationResume(
-          lightPage, lightMonitor, fixture, seeded, resident.discovery.epoch, extent,
+          lightPage, lightMonitor, fixture, seeded, resident.discovery.epoch,
         );
         await assertHalfOpenSocket(
           browser, resident.discovery.endpoint, resident.discovery.epoch, fixture, seeded,

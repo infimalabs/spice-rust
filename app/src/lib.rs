@@ -58,8 +58,6 @@ pub mod speech_queue;
 pub mod state;
 #[cfg(any(target_arch = "wasm32", test))]
 mod task_pill;
-#[cfg(any(target_arch = "wasm32", test))]
-mod thread_refresh;
 pub mod view;
 pub mod watchband;
 
@@ -70,9 +68,8 @@ mod speech;
 
 pub use pane::{Declined, GrantPane, Principal, ReadPane, SteerPane, settled};
 pub use runtime::{
-    BoardView, CanvasRuntime, FACT_PAGE_LIMIT, FactRow, LaneActivity, LaneMember, LaneRow,
-    LaneStatus, LaneView, RuntimeEvent, Stale, StreamApplication, StreamDirective, StreamTerminal,
-    THREAD_PAGE_LIMIT, stale_reads,
+    BoardView, CanvasRuntime, LaneActivity, LaneMember, LaneRow, LaneStatus, LaneView, Stale,
+    StreamApplication, StreamDirective, StreamTerminal, stale_reads,
 };
 pub use socket::{Admitted, Session};
 pub use state::{Answer, Applied, BrowserState, CAUSAL_HEADERS, CausalLink, ChainEnd, ChainWalk};

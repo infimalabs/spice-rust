@@ -123,7 +123,7 @@ export async function assertHandshakeTimeout(browser, residentEndpoint) {
       })
       .catch((error) => ({ error }));
     await page.getByLabel("Open Spice Canvas menu").waitFor();
-    await chooseCanvasView(page, "Chronology");
+    await chooseCanvasView(page, "Flow");
     const [closed, second] = await Promise.all([firstClosed, secondRequest]);
     assert.ok(closed.closed <= second.opened, "the first Fetch closes before its retry begins");
     assert.equal(state.maximumOpen, 1, "retry never accumulates stalled bootstrap requests");

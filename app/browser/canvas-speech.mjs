@@ -452,7 +452,7 @@ export async function assertSpeechVariants(browser, endpoint) {
   const unavailablePage = await unavailableContext.newPage();
   const unavailableMonitor = monitorPage(unavailablePage);
   await unavailablePage.goto(endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(unavailablePage, "Chronology");
+  await chooseCanvasView(unavailablePage, "Flow");
   await assertOnlineObserved(unavailablePage, "the page loads with speech unavailable", CONNECT_MS);
   await chooseCanvasView(unavailablePage, "Lanes");
   const unavailableCard = unavailablePage.locator('[data-card-kind="agent-message"]').first();
@@ -477,7 +477,7 @@ export async function assertSpeechVariants(browser, endpoint) {
   const disabledMonitor = monitorPage(disabled);
   await routeSpeechBootstrap(disabled, { backend: "disabled" });
   await disabled.goto(endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(disabled, "Chronology");
+  await chooseCanvasView(disabled, "Flow");
   await assertOnlineObserved(disabled, "the page loads with speech disabled", CONNECT_MS);
   await chooseCanvasView(disabled, "Lanes");
   const disabledCard = disabled.locator('[data-card-kind="agent-message"]').first();
@@ -499,7 +499,7 @@ export async function assertSpeechVariants(browser, endpoint) {
     available: false,
   });
   await externalUnavailable.goto(endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(externalUnavailable, "Chronology");
+  await chooseCanvasView(externalUnavailable, "Flow");
   await assertOnlineObserved(externalUnavailable, "no external backend is offered", CONNECT_MS);
   await chooseCanvasView(externalUnavailable, "Lanes");
   let unavailableRequests = 0;
@@ -545,7 +545,7 @@ export async function assertSpeechVariants(browser, endpoint) {
     });
   });
   await external.goto(endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(external, "Chronology");
+  await chooseCanvasView(external, "Flow");
   await assertOnlineObserved(external, "the page loads against the external backend", CONNECT_MS);
   await chooseCanvasView(external, "Lanes");
   const card = external.locator('[data-card-kind="agent-message"]').first();
@@ -661,11 +661,10 @@ export async function assertSpeechVariants(browser, endpoint) {
   const malformedMonitor = monitorPage(malformed);
   await routeSpeechBootstrap(malformed, { backend: "system", voice: "Zoe (Premium)" });
   await malformed.goto(endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(malformed, "Chronology");
+  await chooseCanvasView(malformed, "Flow");
   await assertOfflineObserved(malformed, "a malformed bootstrap is rejected");
   assert.match(await malformed.locator(".status-copy").innerText(), /bootstrap response was invalid/);
   assert.equal(await malformed.locator(".speech-button").count(), 0);
-  assert.match(await malformed.locator(".event.fault").innerText(), /bootstrap response was invalid/);
   malformedMonitor.assertClean();
   await malformed.close();
 

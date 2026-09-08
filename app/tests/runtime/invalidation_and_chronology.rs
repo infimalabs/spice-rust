@@ -1,4 +1,4 @@
-//! Runtime cache invalidation and chronology regressions.
+//! Runtime cache invalidation and live projection regressions.
 
 use super::*;
 
@@ -23,7 +23,7 @@ fn envelope(
 const EXPIRES: &str = "2030-04-12T19:44:09.271Z";
 
 /// One fact, and the cached reads it invalidates.
-type StaleRow = (serde_json::Value, [bool; 4]);
+type StaleRow = (serde_json::Value, [bool; 3]);
 
 /// Facts from `steer::*`, the namespace only the inbox is drawn from.
 fn steer_rows() -> Vec<StaleRow> {
@@ -37,11 +37,11 @@ fn steer_rows() -> Vec<StaleRow> {
                 "text": "look at the tile",
                 "expires": EXPIRES,
             }),
-            [false, false, true, false],
+            [false, false, true],
         ),
         (
             serde_json::json!({"kind": "steer::canceled", "key": "QmTKOamJ", "lane": LANE}),
-            [false, false, true, false],
+            [false, false, true],
         ),
     ]
 }
@@ -58,7 +58,7 @@ fn lane_rows() -> Vec<StaleRow> {
                 "life": "continuous",
                 "vendor": "codex",
             }),
-            [false, true, true, false],
+            [false, true, true],
         ),
         (
             serde_json::json!({
@@ -67,7 +67,7 @@ fn lane_rows() -> Vec<StaleRow> {
                 "occupant": REQUEST,
                 "code": 0,
             }),
-            [false, true, true, false],
+            [false, true, true],
         ),
     ]
 }
@@ -77,7 +77,7 @@ fn task_and_claim_rows() -> Vec<StaleRow> {
     vec![
         (
             serde_json::json!({"kind": "task::phased", "task": "1kKRRsDP", "phase": "verify"}),
-            [true, false, false, false],
+            [true, false, false],
         ),
         (
             serde_json::json!({
@@ -85,7 +85,7 @@ fn task_and_claim_rows() -> Vec<StaleRow> {
                 "task": "1kKRRsDP",
                 "validation": "the suite is green",
             }),
-            [true, false, false, false],
+            [true, false, false],
         ),
         (
             serde_json::json!({
@@ -97,35 +97,11 @@ fn task_and_claim_rows() -> Vec<StaleRow> {
                 "epoch": EPOCH,
                 "until": EXPIRES,
             }),
-            [true, true, false, false],
+            [true, true, false],
         ),
         (
             serde_json::json!({"kind": "claim::freed", "task": "1kKRRsDP", "actor": "operator"}),
-            [true, true, false, false],
-        ),
-    ]
-}
-
-/// Facts from `consent::*`, the namespace only the consent queue is drawn from.
-fn consent_rows() -> Vec<StaleRow> {
-    vec![
-        (
-            serde_json::json!({
-                "kind": "consent::asked",
-                "request": REQUEST,
-                "lane": LANE,
-                "operation": "write /etc/hosts",
-            }),
-            [false, false, false, true],
-        ),
-        (
-            serde_json::json!({
-                "kind": "consent::granted",
-                "request": REQUEST,
-                "lane": LANE,
-                "rule": "operator",
-            }),
-            [false, false, false, true],
+            [true, true, false],
         ),
     ]
 }
@@ -147,11 +123,11 @@ fn journal_and_lineage_rows() -> Vec<StaleRow> {
                 "non_usage_records": 3,
                 "residue_records": 0,
             }),
-            [false, false, false, false],
+            [false, false, false],
         ),
         (
             serde_json::json!({"kind": "journal::migrated", "from": 1, "to": 2, "epoch": EPOCH}),
-            [false, false, false, false],
+            [false, false, false],
         ),
         (
             serde_json::json!({
@@ -161,7 +137,7 @@ fn journal_and_lineage_rows() -> Vec<StaleRow> {
                 "from": "steer",
                 "life": "drive",
             }),
-            [false, false, false, false],
+            [false, false, false],
         ),
         (
             serde_json::json!({
@@ -169,7 +145,7 @@ fn journal_and_lineage_rows() -> Vec<StaleRow> {
                 "from": [{"lineage_id": LANE, "lanes": [LANE]}],
                 "lineages": [{"lineage_id": LANE, "lanes": []}],
             }),
-            [false, false, false, false],
+            [false, false, false],
         ),
     ]
 }
@@ -180,21 +156,21 @@ fn unread_namespace_rows() -> Vec<StaleRow> {
     vec![
         (
             serde_json::json!({"kind": "up::dark", "epoch": EPOCH}),
-            [false, false, false, false],
+            [false, false, false],
         ),
         (
             serde_json::json!({"kind": "vendor::armed", "vendor": "codex", "version": "0.1.0"}),
-            [false, false, false, false],
+            [false, false, false],
         ),
         (
             serde_json::json!({"kind": "taste::cleared", "taste": "loud", "locus": "app/src"}),
-            [false, false, false, false],
+            [false, false, false],
         ),
     ]
 }
 
 /// Which cached read each fact invalidates, as
-/// `[board, lanes, inbox, consent]`.
+/// `[board, lanes, inbox]`.
 ///
 /// This inventory is written out above rather than read back off the mapping it
 /// checks, so deleting an arm fails instead of agreeing with itself. The groups
@@ -207,7 +183,6 @@ fn staleness_inventory() -> Vec<StaleRow> {
         .into_iter()
         .chain(lane_rows())
         .chain(task_and_claim_rows())
-        .chain(consent_rows())
         .chain(journal_and_lineage_rows())
         .chain(unread_namespace_rows())
         .collect()
@@ -220,7 +195,7 @@ fn a_live_fact_invalidates_exactly_the_reads_its_namespace_moves() {
     // The inventory is assembled from one group per namespace, so a dropped
     // group would take its whole namespace out of this loop while every
     // surviving row still passed. The count is what makes that a failure.
-    assert_eq!(inventory.len(), 17, "a namespace left the inventory");
+    assert_eq!(inventory.len(), 15, "a namespace left the inventory");
     for (fact, expected) in inventory {
         let kind = fact["kind"]
             .as_str()
@@ -229,7 +204,7 @@ fn a_live_fact_invalidates_exactly_the_reads_its_namespace_moves() {
         let pushed = fact_frame(envelope(41, "spice", &format!("lane:{LANE}"), &fact));
         let stale = stale_reads(&admitted_stream(&session, &pushed));
         assert_eq!(
-            [stale.board(), stale.lanes(), stale.inbox(), stale.consent(),],
+            [stale.board(), stale.lanes(), stale.inbox()],
             expected,
             "{kind} invalidated the wrong reads"
         );
@@ -242,7 +217,7 @@ fn a_live_fact_invalidates_exactly_the_reads_its_namespace_moves() {
 }
 
 #[test]
-fn only_the_tail_of_a_backlog_invalidates_reads_and_a_thread_walk_never_does() {
+fn only_the_tail_of_a_backlog_invalidates_current_reads() {
     let session = session(OPERATOR, EPOCH);
     let sent = serde_json::json!({
         "kind": "steer::sent",
@@ -270,8 +245,8 @@ fn only_the_tail_of_a_backlog_invalidates_reads_and_a_thread_walk_never_does() {
     let tail = admitted_stream(&session, &packed_frame("facts", &ascending, None, 42));
     let stale = stale_reads(&tail);
     assert_eq!(
-        [stale.board(), stale.lanes(), stale.inbox(), stale.consent(),],
-        [true, true, true, false],
+        [stale.board(), stale.lanes(), stale.inbox()],
+        [true, true, true],
         "a page widens to the union of its rows and no further"
     );
 
@@ -294,59 +269,6 @@ fn only_the_tail_of_a_backlog_invalidates_reads_and_a_thread_walk_never_does() {
         stale_reads(&thread),
         Stale::default(),
         "a causal walk is history rather than an advance"
-    );
-}
-
-#[test]
-fn transcript_ingestion_advances_resume_without_displacing_visible_chronology_or_thread() {
-    let session = session(OPERATOR, EPOCH);
-    let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
-    let task = admitted_stream(&session, &fact_frame(task_fact(41, None)));
-    assert!(runtime.apply_stream_frame(&task).changed());
-    assert_eq!(runtime.pending_thread().expect("task thread").seq, seq(41));
-
-    let ingestion = admitted_stream(&session, &fact_frame(journal_ingested_fact(42, Some(41))));
-    assert!(
-        !runtime.apply_stream_frame(&ingestion).changed(),
-        "capture bookkeeping is not an operator-visible chronology mutation"
-    );
-    assert_eq!(
-        runtime.resume().expect("ingestion advances resume").seq,
-        seq(42)
-    );
-    assert_eq!(runtime.fact_pages().len(), 1);
-    assert_eq!(runtime.fact_pages()[0].rows()[0].seq(), seq(41));
-    assert_eq!(
-        runtime
-            .pending_thread()
-            .expect("visible thread remains")
-            .seq,
-        seq(41)
-    );
-}
-
-#[test]
-fn a_backlog_projects_transcript_receipts_out_of_the_visible_fact_page() {
-    let session = session(OPERATOR, EPOCH);
-    let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
-    let rows = [task_fact(41, None), journal_ingested_fact(42, Some(41))];
-    let backlog = admitted_stream(&session, &packed_frame("facts", &rows, None, 42));
-
-    let application = runtime.apply_stream_frame(&backlog);
-    assert!(application.changed());
-    assert_eq!(
-        runtime.resume().expect("raw barrier is retained").seq,
-        seq(42)
-    );
-    let pages = runtime.fact_pages();
-    assert_eq!(pages.len(), 1);
-    assert_eq!(pages[0].rows().len(), 1);
-    assert_eq!(pages[0].rows()[0].seq(), seq(41));
-    assert_eq!(
-        runtime.pending_thread().expect("visible tail thread").seq,
-        seq(41)
     );
 }
 
@@ -580,194 +502,4 @@ fn every_distinct_lineage_forms_one_console_even_when_members_have_no_name() {
     assert!(lineages.iter().all(|lineage| {
         lineage.members.len() == 1 && lineage.host().is_some_and(|member| member.name.is_none())
     }));
-}
-
-/// The one steering receipt shape quotes the key exactly as the resident set it.
-///
-/// The key is a case-sensitive stamp drawn from a vowel-free mixed-case
-/// alphabet, and it is the handle an operator types back at the CLI to cancel
-/// or recover the directive they just sent. Folding its case would print a key
-/// that names no directive. Only the disposition is a word, and it is spelled
-/// by an exhaustive match rather than by rendering the variant, so a new
-/// retirement state must state its spelling instead of reaching the operator
-/// as a debug rendering.
-#[test]
-fn a_steering_receipt_preserves_the_directive_key_and_lowercases_only_its_disposition() {
-    let session = session(OPERATOR, EPOCH);
-    let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
-    let bytes = support::response(
-        WireVersion::CURRENT,
-        uuid(REQUEST),
-        uuid(EPOCH),
-        Outcome::Reply(Reply {
-            position: ReplyPosition::Snapshot(seq(41)),
-            body: wire::intent::DirectiveAnswer {
-                directive: uuid(LANE),
-                key: "1kKQtLsP".to_owned(),
-                authored: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
-                disposition: wire::Disposition::Acked,
-                delivery: Box::new(wire::intent::DeliveryStanding::Unknown),
-            },
-        }),
-    );
-    let admitted: app::Admitted<Response<wire::intent::DirectiveAnswer>> =
-        session.admit_frame(&bytes).expect("response is admitted");
-    runtime.apply_steer(&admitted, uuid(LANE));
-
-    let event = runtime
-        .events()
-        .first()
-        .expect("steering records one event");
-    assert_eq!(event.title(), format!("Steered agent {LANE}"));
-    assert_eq!(event.detail(), "key 1kKQtLsP acked");
-}
-
-/// A seating receipt names the lane and both dispositions it moved between.
-///
-/// This is the only confirmation the operator gets that the seat form did
-/// anything: the lane list refreshes on its own schedule, so between the click
-/// and that refresh the receipt is the whole answer. All three fields are
-/// resident-authored and each is load-bearing — the lane says which of several
-/// rows moved, and `absent` to `occupied` is what distinguishes a fresh seat
-/// from a wake of a lane that was merely vacant.
-#[test]
-fn a_seating_receipt_names_the_lane_and_the_dispositions_it_moved_between() {
-    let session = session(OPERATOR, EPOCH);
-    let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
-    let bytes = support::response(
-        WireVersion::CURRENT,
-        uuid(REQUEST),
-        uuid(EPOCH),
-        Outcome::Reply(Reply {
-            position: ReplyPosition::Snapshot(seq(17)),
-            body: wire::intent::LaneChangeAnswer {
-                lane: uuid(LANE),
-                topology_revision: 10,
-                from: "absent".to_owned(),
-                to: "occupied".to_owned(),
-                git: Some("current".into()),
-                rtk: None,
-            },
-        }),
-    );
-    let admitted: app::Admitted<Response<wire::intent::LaneChangeAnswer>> =
-        session.admit_frame(&bytes).expect("response is admitted");
-    runtime.apply_lane_change(&admitted);
-
-    let event = runtime.events().first().expect("seating records one event");
-    assert_eq!(event.title(), "Agent seated");
-    assert_eq!(
-        event.detail(),
-        format!("{LANE} moved from absent to occupied")
-    );
-}
-
-#[test]
-fn admitted_command_reply_refusal_and_fault_remain_three_chronology_rows() {
-    let session = session(OPERATOR, EPOCH);
-    let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
-    let outcomes: [Outcome<wire::intent::TaskAnswer>; 3] = [
-        Outcome::Reply(Reply {
-            position: ReplyPosition::Snapshot(seq(41)),
-            body: wire::intent::TaskAnswer {
-                task: "SPICE-1kKRRsDP".parse().expect("fixture task handle"),
-                status: "done".to_owned(),
-                guidance: None,
-                completion: None,
-                learning: None,
-                next: None,
-            },
-        }),
-        Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
-            "task::missing".to_owned(),
-            None,
-            None,
-            None,
-        ))),
-        Outcome::Fault(Fault {
-            class: FaultClass::Protocol,
-            reason: "command::stale".to_owned(),
-            detail: "epoch moved".to_owned(),
-        }),
-    ];
-    for outcome in outcomes {
-        let bytes = support::response(WireVersion::CURRENT, uuid(REQUEST), uuid(EPOCH), outcome);
-        let admitted: app::Admitted<Response<wire::intent::TaskAnswer>> =
-            session.admit_frame(&bytes).expect("response is admitted");
-        runtime.apply_note(&admitted, "SPICE-1kKRRsDP");
-    }
-
-    assert_eq!(
-        runtime
-            .events()
-            .iter()
-            .map(app::RuntimeEvent::class)
-            .collect::<Vec<_>>(),
-        vec!["fault", "refusal", "reply"]
-    );
-}
-
-#[test]
-fn the_second_command_outcome_is_the_ticker_source() {
-    let session = session(OPERATOR, EPOCH);
-    let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
-    let outcomes: [Outcome<wire::intent::TaskAnswer>; 2] = [
-        Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
-            "task::first".to_owned(),
-            None,
-            None,
-            None,
-        ))),
-        Outcome::Fault(Fault {
-            class: FaultClass::Protocol,
-            reason: "command::second".to_owned(),
-            detail: "second detail".to_owned(),
-        }),
-    ];
-    for outcome in outcomes {
-        let bytes = support::response(WireVersion::CURRENT, uuid(REQUEST), uuid(EPOCH), outcome);
-        let admitted: app::Admitted<Response<wire::intent::TaskAnswer>> =
-            session.admit_frame(&bytes).expect("response is admitted");
-        runtime.apply_note(&admitted, "SPICE-1kKRRsDP");
-    }
-
-    let ticker = runtime.newest_event().expect("the ticker has one source");
-    assert_eq!(ticker.class(), "fault");
-    assert_eq!(ticker.title(), "command::second");
-    assert_eq!(ticker.detail(), "second detail");
-}
-
-#[test]
-fn admitted_steer_reply_names_the_durable_directive_in_chronology() {
-    let session = session(OPERATOR, EPOCH);
-    let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
-    let bytes = support::response(
-        WireVersion::CURRENT,
-        uuid(REQUEST),
-        uuid(EPOCH),
-        Outcome::Reply(Reply {
-            position: ReplyPosition::Snapshot(seq(41)),
-            body: wire::intent::DirectiveAnswer {
-                directive: uuid(LANE),
-                key: "1kQTest".to_owned(),
-                authored: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
-                disposition: wire::Disposition::Live,
-                delivery: Box::new(wire::intent::DeliveryStanding::Unknown),
-            },
-        }),
-    );
-    let admitted: app::Admitted<Response<wire::intent::DirectiveAnswer>> = session
-        .admit_frame(&bytes)
-        .expect("steer response is admitted");
-
-    runtime.apply_steer(&admitted, uuid(LANE));
-
-    assert_eq!(runtime.events()[0].class(), "reply");
-    assert_eq!(runtime.events()[0].title(), format!("Steered agent {LANE}"));
-    assert_eq!(runtime.events()[0].detail(), "key 1kQTest live");
 }
