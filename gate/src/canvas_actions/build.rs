@@ -347,9 +347,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        ActionKey, ActionKeyAuthority, ActionNonFileInput, ActionNonFileKind, ActionReuseClass,
-        ActionSpec, ActionSpecFields, Selector, compile_explicit_action_input,
-        derive_authority_bound_action_key, test_repository,
+        ActionKey, ActionKeyAuthority, ActionNonFileInput, ActionNonFileKind,
+        ActionPolicyAuthority, ActionReuseClass, ActionSpec, ActionSpecFields, Selector,
+        compile_explicit_action_input, derive_authority_bound_action_key, test_repository,
     };
     use wire::{Digest, Domain};
 
@@ -853,7 +853,7 @@ mod tests {
             &spec,
             &ActionKeyAuthority {
                 input_manifest,
-                policy: canvas_authority_digest(b"policy"),
+                policy_authority: ActionPolicyAuthority::ResolvedExecution,
                 gate_set: canvas_authority_digest(b"gate-set"),
                 tools: canvas_authority_digest(b"tools"),
                 environment: canvas_authority_digest(b"environment"),

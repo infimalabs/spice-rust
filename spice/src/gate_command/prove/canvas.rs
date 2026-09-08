@@ -170,7 +170,6 @@ pub(super) fn prepare(
     let build = Arc::new(Mutex::new(None));
     let prepared_build = prepare_build(
         &arm,
-        &context,
         gate_set,
         &tool_authority,
         &environment,
@@ -212,7 +211,6 @@ pub(super) fn prepare(
         for shard in selected_shards(&plan, request) {
             actions.push(prepare_shard(
                 &arm,
-                &context,
                 gate_set,
                 &tool_authority,
                 &environment,
@@ -304,7 +302,6 @@ fn selected_shards<'a>(plan: &'a CanvasActionPlan, request: Request<'_>) -> Vec<
 #[allow(clippy::too_many_arguments)]
 fn prepare_build(
     arm: &spice::gate::PreparedArm<'_>,
-    context: &gate::BatteryContext,
     gate_set: &Digest,
     tools_digest: &Digest,
     environment: &Digest,
@@ -317,13 +314,7 @@ fn prepare_build(
     plan: &CanvasActionPlan,
 ) -> Result<PreparedAction, ProveFailure> {
     let declaration = Digest::compute(Domain::GateBatteryManifest, BUILD_DECLARATION.as_bytes());
-    let non_files = canvas_non_files(
-        gate_set,
-        context.policy(),
-        tools_digest,
-        environment,
-        declaration,
-    )?;
+    let non_files = canvas_non_files(gate_set, tools_digest, environment, declaration)?;
     let input_manifest = arm
         .compile_explicit_action_input(plan.build_inputs().to_vec(), non_files)
         .map_err(ProveFailure::run)?;
@@ -335,7 +326,6 @@ fn prepare_build(
             "app/browser/canvas-proof-build.mjs".to_owned(),
         ],
         input_manifest,
-        context.policy(),
         gate_set,
         tools_digest,
         environment,
@@ -357,7 +347,6 @@ fn prepare_build(
 #[allow(clippy::too_many_arguments)]
 fn prepare_shard(
     arm: &spice::gate::PreparedArm<'_>,
-    context: &gate::BatteryContext,
     gate_set: &Digest,
     tools_digest: &Digest,
     environment: &Digest,
@@ -373,7 +362,6 @@ fn prepare_shard(
 ) -> Result<PreparedAction, ProveFailure> {
     let mut non_files = canvas_non_files(
         gate_set,
-        context.policy(),
         tools_digest,
         environment,
         Digest::compute(Domain::GateBatteryManifest, SHARD_DECLARATION.as_bytes()),
@@ -404,7 +392,6 @@ fn prepare_shard(
             shard.name().to_owned(),
         ],
         input_manifest,
-        context.policy(),
         gate_set,
         tools_digest,
         environment,
@@ -468,7 +455,6 @@ fn prepared_canvas_action(
     declaration: &str,
     argv: Vec<String>,
     input_manifest: gate::ActionInputManifest,
-    policy: &Digest,
     gate_set: &Digest,
     tools_digest: &Digest,
     environment: &Digest,
@@ -497,7 +483,7 @@ fn prepared_canvas_action(
         &spec,
         &ActionKeyAuthority {
             input_manifest: input_manifest.clone(),
-            policy: policy.clone(),
+            policy_authority: ActionPolicyAuthority::ResolvedExecution,
             gate_set: gate_set.clone(),
             tools: tools_digest.clone(),
             environment: environment.clone(),
@@ -516,7 +502,6 @@ fn prepared_canvas_action(
 
 fn canvas_non_files(
     gate_set: &Digest,
-    policy: &Digest,
     tools: &Digest,
     environment: &Digest,
     declaration: Digest,
@@ -532,7 +517,6 @@ fn canvas_non_files(
             "canonical-gate-set",
             gate_set.clone(),
         )?,
-        non_file(ActionNonFileKind::Policy, "compiled-policy", policy.clone())?,
         non_file(ActionNonFileKind::Toolchain, "canvas-tools", tools.clone())?,
         non_file(
             ActionNonFileKind::Environment,
@@ -880,7 +864,7 @@ mod tests {
                 &spec,
                 &ActionKeyAuthority {
                     input_manifest,
-                    policy: Digest::compute(Domain::GatePolicy, b"policy"),
+                    policy_authority: ActionPolicyAuthority::ResolvedExecution,
                     gate_set: Digest::compute(Domain::GateSet, b"gate-set"),
                     tools: Digest::compute(Domain::GateTool, b"tools"),
                     environment: Digest::compute(Domain::GateInventory, b"environment"),

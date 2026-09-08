@@ -137,7 +137,6 @@ fn prepare_action(
     let tools = action_tools(context.tools())?;
     let (environment_names, environment) = environment(cargo_environment)?;
     let tool_authority = digest_encoded(Domain::GateTool, &context.tools())?;
-    let configuration = digest_encoded(Domain::GateConfiguration, &context.configuration())?;
     let inventory = digest_encoded(Domain::GateInventory, &shard)?;
     let declaration = match shard.kind() {
         CargoGateShardKind::Typecheck => typecheck_declaration,
@@ -153,16 +152,6 @@ fn prepare_action(
             ActionNonFileKind::GateSet,
             "canonical-gate-set",
             gate_set.clone(),
-        )?,
-        non_file(
-            ActionNonFileKind::Policy,
-            "compiled-policy",
-            context.policy().clone(),
-        )?,
-        non_file(
-            ActionNonFileKind::Policy,
-            "resolved-configuration",
-            configuration,
         )?,
         non_file(
             ActionNonFileKind::Toolchain,
@@ -203,7 +192,7 @@ fn prepare_action(
         &spec,
         &ActionKeyAuthority {
             input_manifest: input_manifest.clone(),
-            policy: context.policy().clone(),
+            policy_authority: ActionPolicyAuthority::ResolvedExecution,
             gate_set: gate_set.clone(),
             tools: tool_authority,
             environment,

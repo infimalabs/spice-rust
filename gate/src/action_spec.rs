@@ -8,6 +8,9 @@ use crate::{ActionInputError, ActionKey, ActionReuseClass, derive_action_key};
 /// Current reusable gate action specification schema.
 pub const ACTION_SPEC_VERSION: u64 = 1;
 
+/// Current reusable gate action-key document schema.
+pub const ACTION_KEY_VERSION: u64 = 2;
+
 /// One executable required by a canonical action.
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -144,11 +147,21 @@ impl ActionSpec {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ActionKeyAuthority {
     pub input_manifest: Digest,
-    pub policy: Digest,
+    pub policy_authority: ActionPolicyAuthority,
     pub gate_set: Digest,
     pub tools: Digest,
     pub environment: Digest,
     pub baseline: Option<Digest>,
+}
+
+/// How policy affects one reusable action's execution identity.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ActionPolicyAuthority {
+    /// The action reads complete policy inputs retained in its input manifest.
+    PolicyConsuming,
+    /// Policy selection has already been reduced to the action's resolved inputs.
+    ResolvedExecution,
 }
 
 #[derive(Serialize)]
@@ -157,7 +170,7 @@ struct ActionKeyDocument<'a> {
     version: u64,
     action_spec: &'a Digest,
     input_manifest: &'a Digest,
-    policy: &'a Digest,
+    policy_authority: ActionPolicyAuthority,
     gate_set: &'a Digest,
     tools: &'a Digest,
     environment: &'a Digest,
@@ -172,10 +185,10 @@ pub fn derive_authority_bound_action_key(
 ) -> Result<ActionKey, ActionInputError> {
     let action_spec = spec.digest()?;
     let document = ActionKeyDocument {
-        version: ACTION_SPEC_VERSION,
+        version: ACTION_KEY_VERSION,
         action_spec: &action_spec,
         input_manifest: &authority.input_manifest,
-        policy: &authority.policy,
+        policy_authority: authority.policy_authority,
         gate_set: &authority.gate_set,
         tools: &authority.tools,
         environment: &authority.environment,
@@ -212,6 +225,17 @@ fn invalid_text(value: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[derive(Serialize)]
+    struct LegacyActionKeyDocument<'a> {
+        version: u64,
+        action_spec: &'a Digest,
+        input_manifest: &'a Digest,
+        policy: &'a Digest,
+        gate_set: &'a Digest,
+        tools: &'a Digest,
+        environment: &'a Digest,
+    }
+
     fn digest(seed: &[u8]) -> Digest {
         Digest::compute(Domain::GateInventory, seed)
     }
@@ -238,22 +262,75 @@ mod tests {
         assert_eq!(spec.digest().unwrap(), spec.digest().unwrap());
         let authority = ActionKeyAuthority {
             input_manifest: digest(b"manifest"),
-            policy: digest(b"policy"),
+            policy_authority: ActionPolicyAuthority::ResolvedExecution,
             gate_set: digest(b"gate-set"),
             tools: digest(b"tools"),
             environment: digest(b"environment"),
             baseline: None,
         };
         let original = derive_authority_bound_action_key(&spec, &authority).unwrap();
-        let moved = derive_authority_bound_action_key(
-            &spec,
-            &ActionKeyAuthority {
-                environment: digest(b"moved-environment"),
-                ..authority
+        let moved_authorities = [
+            ActionKeyAuthority {
+                input_manifest: digest(b"moved-manifest"),
+                ..authority.clone()
             },
-        )
-        .unwrap();
-        assert_ne!(original, moved);
+            ActionKeyAuthority {
+                policy_authority: ActionPolicyAuthority::PolicyConsuming,
+                ..authority.clone()
+            },
+            ActionKeyAuthority {
+                gate_set: digest(b"moved-gate-set"),
+                ..authority.clone()
+            },
+            ActionKeyAuthority {
+                tools: digest(b"moved-tools"),
+                ..authority.clone()
+            },
+            ActionKeyAuthority {
+                environment: digest(b"moved-environment"),
+                ..authority.clone()
+            },
+            ActionKeyAuthority {
+                baseline: Some(digest(b"moved-baseline")),
+                ..authority.clone()
+            },
+        ];
+        for moved in moved_authorities {
+            assert_ne!(
+                original,
+                derive_authority_bound_action_key(&spec, &moved).unwrap()
+            );
+        }
+
+        let action_spec = spec.digest().unwrap();
+        let document = ActionKeyDocument {
+            version: ACTION_KEY_VERSION,
+            action_spec: &action_spec,
+            input_manifest: &authority.input_manifest,
+            policy_authority: authority.policy_authority,
+            gate_set: &authority.gate_set,
+            tools: &authority.tools,
+            environment: &authority.environment,
+            baseline: authority.baseline.as_ref(),
+        };
+        let encoded = wire::encode(&document).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(value["version"], ACTION_KEY_VERSION);
+        assert_eq!(value["policy_authority"], "resolved-execution");
+        assert!(value.get("policy").is_none());
+
+        let legacy_policy = digest(b"policy");
+        let legacy = LegacyActionKeyDocument {
+            version: 1,
+            action_spec: &action_spec,
+            input_manifest: &authority.input_manifest,
+            policy: &legacy_policy,
+            gate_set: &authority.gate_set,
+            tools: &authority.tools,
+            environment: &authority.environment,
+        };
+        let legacy = derive_action_key(&wire::encode(&legacy).unwrap());
+        assert_ne!(original, legacy);
     }
 
     #[test]

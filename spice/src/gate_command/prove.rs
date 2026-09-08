@@ -8,11 +8,11 @@ use std::time::Instant as MonotonicInstant;
 use gate::{
     ActionFingerprintAuthority, ActionFingerprintAuthorityFields, ActionFingerprintManifest,
     ActionFingerprintManifestFields, ActionInputClosure, ActionInputInventory, ActionKey,
-    ActionKeyAuthority, ActionNonFileInput, ActionNonFileKind, ActionReuseClass, ActionSpec,
-    ActionSpecFields, ActionToolRequirement, ArmDisposition, BatteryManifest,
-    CargoExternalSourceAuthority, CargoGateShard, CargoGateShardKind, CargoGateShardPlanning,
-    EvidenceProducerRecord, EvidenceStore, FocusedArmReport, GateId, PassReceipt,
-    PassReceiptFields,
+    ActionKeyAuthority, ActionNonFileInput, ActionNonFileKind, ActionPolicyAuthority,
+    ActionReuseClass, ActionSpec, ActionSpecFields, ActionToolRequirement, ArmDisposition,
+    BatteryManifest, CargoExternalSourceAuthority, CargoGateShard, CargoGateShardKind,
+    CargoGateShardPlanning, EvidenceProducerRecord, EvidenceStore, FocusedArmReport, GateId,
+    PassReceipt, PassReceiptFields,
 };
 use serde::Serialize;
 use sill::Environment;

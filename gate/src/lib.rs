@@ -217,8 +217,8 @@ pub use action_input::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use action_spec::{
-    ACTION_SPEC_VERSION, ActionKeyAuthority, ActionSpec, ActionSpecFields, ActionToolRequirement,
-    derive_authority_bound_action_key,
+    ACTION_KEY_VERSION, ACTION_SPEC_VERSION, ActionKeyAuthority, ActionPolicyAuthority, ActionSpec,
+    ActionSpecFields, ActionToolRequirement, derive_authority_bound_action_key,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use structural::{
