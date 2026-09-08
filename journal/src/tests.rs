@@ -32,6 +32,7 @@ mod lineage_migration;
 mod read;
 mod release_notes_migration;
 mod renewal;
+mod renewal_slot_migration;
 mod schema;
 mod steering_index;
 mod steering_verification;
