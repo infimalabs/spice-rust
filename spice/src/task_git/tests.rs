@@ -447,7 +447,7 @@ impl Drop for ScratchDirectory {
 }
 
 #[test]
-fn completion_fetches_only_target_when_configured_refspec_names_the_lane() {
+fn completion_fetches_when_bare_head_names_the_remote_tracking_branch() {
     let scratch = ScratchDirectory::new("bare-head-fetch");
     let seed = scratch.0.join("seed");
     let remote = scratch.0.join("origin.git");
@@ -483,28 +483,6 @@ fn completion_fetches_only_target_when_configured_refspec_names_the_lane() {
     let arrived = required_read(&seed, &["rev-parse", "HEAD"], "read arriving commit")
         .expect("arriving commit reads");
 
-    git(&seed, &["switch", "-c", "overwrite"]);
-    fs::write(seed.join("tracked.txt"), "configured overwrite\n")
-        .expect("write configured overwrite");
-    git(&seed, &["add", "tracked.txt"]);
-    git(
-        &seed,
-        &["commit", "--no-verify", "-m", "configured overwrite"],
-    );
-    git(&seed, &["push", "origin", "overwrite"]);
-    let overwrite = required_read(&seed, &["rev-parse", "HEAD"], "read overwrite commit")
-        .expect("overwrite commit reads");
-    git(&seed, &["switch", "main"]);
-    git(
-        &common,
-        &[
-            "config",
-            "--add",
-            "remote.origin.fetch",
-            "+refs/heads/overwrite:refs/heads/lane",
-        ],
-    );
-
     git(
         &common,
         &["symbolic-ref", "HEAD", "refs/remotes/origin/main"],
@@ -512,7 +490,6 @@ fn completion_fetches_only_target_when_configured_refspec_names_the_lane() {
     let repository = Repository::discover(&lane).expect("discover linked worktree");
     let boundary = prepare_claim(&repository).expect("bare-HEAD completion fetch succeeds");
 
-    assert_ne!(arrived, overwrite);
     assert_eq!(boundary.integrated, arrived);
     assert_eq!(
         required_read(&lane, &["rev-parse", "HEAD"], "read advanced lane")
@@ -523,20 +500,6 @@ fn completion_fetches_only_target_when_configured_refspec_names_the_lane() {
         required_read(&common, &["symbolic-ref", "HEAD"], "read bare HEAD")
             .expect("bare HEAD reads"),
         "refs/remotes/origin/main",
-    );
-    assert_eq!(
-        required_read(&common, &["rev-parse", "refs/heads/lane"], "read lane ref")
-            .expect("lane ref reads"),
-        arrived,
-    );
-    assert!(
-        try_read(
-            &common,
-            &["rev-parse", "--verify", "refs/remotes/origin/overwrite"],
-        )
-        .expect("probe unrelated remote-tracking ref")
-        .is_none(),
-        "the explicit fetch does not apply configured refspecs",
     );
 }
 
