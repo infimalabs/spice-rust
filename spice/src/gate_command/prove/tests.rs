@@ -350,6 +350,30 @@ fn cargo_environment_omits_worktree_outputs_and_matches_forced_wrappers() {
 }
 
 #[test]
+fn codex_launcher_paths_do_not_partition_environment_identity() {
+    let normalized =
+        |path| normalized_action_environment(&[(OsString::from("PATH"), search_path(path))]);
+    let first = normalized(&[
+        "/toolchain/bin",
+        "/runtime/.codex/tmp/arg0/codex-arg0-first",
+        "/usr/bin",
+    ]);
+    let second = normalized(&[
+        "/toolchain/bin",
+        "/runtime/.codex/tmp/arg0/codex-arg0-second",
+        "/usr/bin",
+    ]);
+
+    assert_eq!(first, second);
+    assert_eq!(first[0].1, search_path(&["/toolchain/bin", "/usr/bin"]));
+    assert_ne!(first, normalized(&["/different-toolchain/bin", "/usr/bin"]),);
+}
+
+fn search_path(paths: &[&str]) -> OsString {
+    std::env::join_paths(paths.iter().map(Path::new)).expect("fixture PATH composes")
+}
+
+#[test]
 fn interrupted_execution_retains_prior_publication_and_cleans_up() {
     let events = RefCell::new(Vec::new());
     let result: Result<Vec<u8>, &str> = complete_actions(
