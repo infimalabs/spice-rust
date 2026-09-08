@@ -664,7 +664,10 @@ fn resolve_target(root: &Path) -> Result<Option<Target>, Error> {
 }
 
 fn fetch(root: &Path, target: &Target) -> Result<(), Error> {
-    let fetched = run(root, &["fetch", &target.remote])?;
+    // The Git common directory is bare and may name this remote-tracking ref
+    // as its own HEAD while linked worktrees carry independent branch HEADs.
+    // Fetch owns this explicit update and does not materialize the bare tree.
+    let fetched = run(root, &["fetch", "--update-head-ok", &target.remote])?;
     if fetched.success() {
         Ok(())
     } else {
@@ -747,19 +750,7 @@ fn synthesize_and_update(
         &["rev-parse", &format!("{treeish}^{{tree}}")],
         "read integrated tree",
     )?;
-    let created = run(
-        root,
-        &[
-            "commit-tree",
-            &tree,
-            "-p",
-            first_parent,
-            "-p",
-            second_parent,
-            "-m",
-            message,
-        ],
-    )?;
+    let created = create_merge_commit(root, &tree, first_parent, second_parent, message)?;
     if !created.success() || created.stdout.trim().is_empty() {
         return Err(Error::fault(
             "git::commit-tree-failed",
@@ -771,9 +762,40 @@ fn synthesize_and_update(
     // refusing leaves nothing published and nothing to unwind.
     require_landing_within_footprint(root, label, first_parent, &merge_head, second_parent)?;
     let expected = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
-    materialize_and_update(root, &merge_head, &expected, "advance branch to task merge")
+    materialize_and_update_owned(root, &merge_head, &expected, "advance branch to task merge")
         .map_err(|error| with_retry_remedy(error, label))?;
     Ok(merge_head)
+}
+
+fn create_merge_commit(
+    root: &Path,
+    tree: &str,
+    first_parent: &str,
+    second_parent: &str,
+    message: &str,
+) -> Result<GitOutput, Error> {
+    // A retry over the same immutable parents must name the same commit. Git's
+    // default wall clock made an otherwise identical synthesized landing gain
+    // a new identity on every task-boundary retry.
+    let date = required_read(
+        root,
+        &["show", "-s", "--format=%cI", first_parent],
+        "read task merge timestamp",
+    )?;
+    run_with_environment(
+        root,
+        &[
+            "commit-tree",
+            tree,
+            "-p",
+            first_parent,
+            "-p",
+            second_parent,
+            "-m",
+            message,
+        ],
+        &[("GIT_AUTHOR_DATE", &date), ("GIT_COMMITTER_DATE", &date)],
+    )
 }
 
 fn with_retry_remedy(mut error: Error, label: &str) -> Error {
