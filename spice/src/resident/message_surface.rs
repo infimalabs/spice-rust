@@ -485,12 +485,8 @@ fn message_badges(
         })
         .count();
     wire::AgentMessageBadges {
-        acknowledgements: u32::try_from(
-            acknowledged
-                .len()
-                .saturating_sub(tastes + broadcasts + reviews),
-        )
-        .unwrap_or(u32::MAX),
+        acknowledgements: u32::try_from(acknowledged.len().saturating_sub(reviews))
+            .unwrap_or(u32::MAX),
         tastes: u32::try_from(tastes).unwrap_or(u32::MAX),
         broadcasts: u32::try_from(broadcasts).unwrap_or(u32::MAX),
         reviews: u32::try_from(reviews).unwrap_or(u32::MAX),
