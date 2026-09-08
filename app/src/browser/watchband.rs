@@ -17,8 +17,8 @@ mod mosaic_view;
 mod state;
 
 use composer::{
-    AgentMessageCard, agent_message_source_id, drop_on_lane, focus_after_render, keyboard_submit,
-    paste_images, primary_textarea_id, render_image_indicators, render_quote_shards, update_body,
+    AgentMessageCard, agent_message_source_id, drop_on_lane, keyboard_submit, paste_images,
+    primary_textarea_id, render_image_indicators, render_quote_shards, update_body,
 };
 pub(super) use controls::{LineageControlAction, LineageControls, LineageSpeech};
 use controls::{LineageLife, render_lineage_controls};
@@ -929,7 +929,6 @@ fn render_composer_body(
         >
             {render_composer_heading(
                 lane,
-                lane_key,
                 standing,
                 status,
                 renewal,
@@ -965,7 +964,6 @@ fn render_composer_body(
 )]
 fn render_composer_heading(
     lane: CanonicalUuid,
-    lane_key: &str,
     standing: &Standing,
     status: crate::runtime::LaneStatus,
     renewal: watchband::AgentRenewalControl,
@@ -976,11 +974,6 @@ fn render_composer_heading(
     drag_enabled: bool,
     drag_start: Callback<DragEvent>,
 ) -> Html {
-    let focus_lane = lane_key.to_owned();
-    let focus = Callback::from(move |event: MouseEvent| {
-        close_agent_action_menu(&event);
-        focus_after_render(primary_textarea_id(&focus_lane));
-    });
     let renew = Callback::from(move |event: MouseEvent| {
         close_agent_action_menu(&event);
         renew.emit(event);
@@ -1020,10 +1013,6 @@ fn render_composer_heading(
                     class="agent-action-drawer"
                     data-agent-drawer-target-id={lane.to_string()}
                 >
-                    <button class="agent-focus-message" type="button" onclick={focus}>
-                        <strong>{"Focus message editor"}</strong>
-                        <span>{"return to editor"}</span>
-                    </button>
                     <button
                         class="agent-renew-request"
                         type="button"

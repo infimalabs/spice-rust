@@ -80,8 +80,7 @@
   color: var(--ink);
   text-align: center;
 }
-.agent-renew-request,
-.agent-focus-message {
+.agent-renew-request {
   border-color: color-mix(in srgb, var(--accent-slot, var(--accent)) 58%, var(--line));
   background: color-mix(in srgb, var(--accent-slot, var(--accent)) 8%, var(--panel));
 }

@@ -1113,7 +1113,7 @@ export async function assertComposerShards({
   assert.equal(await drawer.getAttribute("data-agent-drawer-target-id"), seeded.quoteLane);
   assert.deepEqual(
     (await drawer.getByRole("button").allInnerTexts()).map((text) => text.replaceAll("\n", " ")),
-    ["Focus message editor return to editor", "Renew this agent request successor"],
+    ["Renew this agent request successor"],
     "the hamburger opens actions scoped to this agent",
   );
   assert.equal(
