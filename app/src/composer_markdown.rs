@@ -100,8 +100,19 @@ fn inline_taste_marker<'a>(
     *remaining -= 1;
     vec![
         MarkdownEvent::InlineHtml(taste_pill_html().into()),
-        MarkdownEvent::Text(suffix.to_owned().into()),
+        MarkdownEvent::Text(taste_guidance_suffix(suffix).into()),
     ]
+}
+
+fn taste_guidance_suffix(suffix: &str) -> String {
+    let trimmed = suffix.trim_start();
+    let Some((name, guidance)) = trimmed.split_once(':') else {
+        return suffix.to_owned();
+    };
+    if name.is_empty() || name.chars().any(char::is_whitespace) {
+        return suffix.to_owned();
+    }
+    format!(" {}", guidance.trim_start())
 }
 
 fn taste_pill_html() -> &'static str {
@@ -720,6 +731,10 @@ mod tests {
              ACK: ordinary [TASTE] prose stays text.",
             2,
         );
+        assert!(!rendered.html.contains("compatibility:"));
+        assert!(!rendered.html.contains("polling:"));
+        assert!(rendered.html.contains("Keep one tested path."));
+        assert!(rendered.html.contains("Wait for completion."));
 
         assert_eq!(
             rendered

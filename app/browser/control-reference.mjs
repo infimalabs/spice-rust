@@ -485,7 +485,7 @@ async function installTaskChipFixture(page, surface) {
       <p data-task-chip-case="long"><span data-prose>Transferred </span>${chip(handles.long)}<span data-prose> with its identity intact.</span></p>
       <p data-task-chip-case="multi"><span data-prose>Related </span>${chip("CARDS-1kRZRDy7")}<span data-prose> and </span>${chip("MOSAIC-1kRYqQxy")}<span data-prose> remain distinct.</span></p>
       <div data-task-chip-case="taste">
-        <blockquote><p>${taste()}<span data-prose> compatibility: Keep one path; </span>${taste()}<span data-prose> polling: wait for completion.</span></p></blockquote>
+        <blockquote><p>${taste()}<span data-prose> Keep one path; </span>${taste()}<span data-prose> wait for completion.</span></p></blockquote>
       </div>
       <div data-task-chip-case="quoted-first">
         <blockquote>
@@ -587,6 +587,9 @@ async function measureTaskChipFixture(fixture) {
         paddingRight: style.paddingRight,
         paddingBottom: style.paddingBottom,
         paddingLeft: style.paddingLeft,
+        color: style.color,
+        borderColor: style.borderColor,
+        backgroundColor: style.backgroundColor,
         count: node.querySelector(".message-badge-count")?.textContent ?? null,
       };
     };
@@ -604,6 +607,8 @@ async function measureTaskChipFixture(fixture) {
       quote: {
         fontSize: Number.parseFloat(getComputedStyle(quote).fontSize),
         lineHeight: Number.parseFloat(getComputedStyle(quote).lineHeight),
+        borderLeftColor: getComputedStyle(quote).borderLeftColor,
+        backgroundColor: getComputedStyle(quote).backgroundColor,
       },
       cases: [...card.querySelectorAll("[data-task-chip-case]")].map((row) => ({
         name: row.dataset.taskChipCase,
@@ -717,6 +722,10 @@ function assertTaskChipMeasurement(label, measured) {
     assert.equal(pill.count, null, `${label} taste pill has no count element`);
     assert.equal(pill.ariaLabel, "Taste classification");
     assert.equal(pill.classification, "taste");
+    assert.equal(pill.color, measured.quote.borderLeftColor, `${label} taste pill and quote share gold`);
+    assert.equal(pill.borderColor, pill.color, `${label} taste pill border shares its gold accent`);
+    assert.notEqual(pill.backgroundColor, "rgba(0, 0, 0, 0)");
+    assert.notEqual(measured.quote.backgroundColor, "rgba(0, 0, 0, 0)");
     assert.equal(pill.verticalAlign, "baseline", `${label} taste pill follows prose baseline`);
     assert.deepEqual(
       [pill.paddingTop, pill.paddingRight, pill.paddingBottom, pill.paddingLeft],

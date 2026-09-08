@@ -528,8 +528,9 @@ async function assertInlineTastePills(page, console, lane, activityReplay) {
   );
   const body = await card.locator(".message-body").innerText();
   assert.doesNotMatch(body, /\[TASTE\]/, "quoted taste markers are replaced in presentation");
-  assert.match(body, /compatibility: Keep one tested path\./);
-  assert.match(body, /polling: Wait for the completion event\./);
+  assert.doesNotMatch(body, /compatibility:|polling:/);
+  assert.match(body, /Keep one tested path\./);
+  assert.match(body, /Wait for the completion event\./);
   assert.match(body, /ACK: presentation remains unchanged\.$/);
   return replyText;
 }
