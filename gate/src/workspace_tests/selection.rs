@@ -7,6 +7,69 @@ use super::*;
 /// and deliberately exempt because their effect cannot be narrowed.
 pub(super) const ROUTINE_TEST_TARGET_LIMIT: usize = 32;
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct DeclaredTestTarget {
+    package: &'static str,
+    kind: &'static str,
+    name: &'static str,
+}
+
+impl DeclaredTestTarget {
+    const fn new(package: &'static str, kind: &'static str, name: &'static str) -> Self {
+        Self {
+            package,
+            kind,
+            name,
+        }
+    }
+
+    fn display(self) -> String {
+        format!("{}::{}:{}", self.package, self.kind, self.name)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct DurableSourceSelection {
+    source: &'static str,
+    owner: DeclaredTestTarget,
+    supplemental: &'static [DeclaredTestTarget],
+}
+
+const WIRE_ENVIRONMENT_PROOFS: &[DeclaredTestTarget] = &[
+    DeclaredTestTarget::new("wire", "test", "environment"),
+    DeclaredTestTarget::new("wire", "test", "identity_law"),
+    DeclaredTestTarget::new("wire", "test", "roundtrip"),
+];
+const WIRE_WITNESS_PROOFS: &[DeclaredTestTarget] = &[
+    DeclaredTestTarget::new("wire", "test", "identity_law"),
+    DeclaredTestTarget::new("wire", "test", "roundtrip"),
+];
+const STEERING_KEY_PROOFS: &[DeclaredTestTarget] =
+    &[DeclaredTestTarget::new("steer", "test", "scan")];
+
+/// Durable source declarations add semantic proof targets to ordinary Cargo
+/// reach. Their owner and every named target are checked against the selected
+/// tree before any selection is published, so this table cannot go stale in
+/// silence. Downstream contracts remain derived from public module provenance;
+/// declarations may name only local proof targets.
+const DURABLE_SOURCE_SELECTIONS: &[DurableSourceSelection] = &[
+    DurableSourceSelection {
+        source: "steer/src/ack/keys.rs",
+        owner: DeclaredTestTarget::new("steer", "lib", "steer"),
+        supplemental: STEERING_KEY_PROOFS,
+    },
+    DurableSourceSelection {
+        source: "wire/src/environment.rs",
+        owner: DeclaredTestTarget::new("wire", "lib", "wire"),
+        supplemental: WIRE_ENVIRONMENT_PROOFS,
+    },
+    DurableSourceSelection {
+        source: "wire/src/witness.rs",
+        owner: DeclaredTestTarget::new("wire", "lib", "wire"),
+        supplemental: WIRE_WITNESS_PROOFS,
+    },
+];
+
 #[derive(Debug)]
 pub(super) struct SelectionPlan {
     report: crate::TestSelectionReport,
@@ -165,6 +228,7 @@ pub(super) fn selection_plan(
     changed_sources: &[String],
 ) -> Result<SelectionPlan, WorkspaceTestError> {
     let selected_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    validate_durable_source_registry(inventory, &selected_root, DURABLE_SOURCE_SELECTIONS)?;
     let mut build_sources = changed_sources
         .iter()
         .filter(|path| test_relevant_source(path))
@@ -234,6 +298,7 @@ pub(super) fn selection_plan(
                 select_targets(claim.package, direct_tests, changed, &mut tests, &mut edges)?;
             }
         }
+        select_durable_source_proofs(inventory, changed, &mut tests, &mut edges)?;
         if !edges.iter().any(|edge| edge.source() == changed) {
             return Err(WorkspaceTestError::new(format!(
                 "changed Rust source {changed:?} has no proven test-enabled Cargo target reach"
@@ -477,6 +542,214 @@ fn contract_test_targets(package: &PackageInventory) -> Vec<&TargetIdentity> {
     }
 }
 
+fn validate_durable_source_registry(
+    inventory: &Inventory,
+    root: &Path,
+    registry: &[DurableSourceSelection],
+) -> Result<(), WorkspaceTestError> {
+    let mut sources = BTreeSet::new();
+    for declaration in registry {
+        if !sources.insert(declaration.source) {
+            return Err(WorkspaceTestError::new(format!(
+                "durable source {:?} is declared more than once",
+                declaration.source,
+            )));
+        }
+        validate_durable_source_declaration(inventory, root, declaration)?;
+    }
+    Ok(())
+}
+
+fn validate_durable_source_declaration(
+    inventory: &Inventory,
+    root: &Path,
+    declaration: &DurableSourceSelection,
+) -> Result<(), WorkspaceTestError> {
+    let source = Path::new(declaration.source);
+    if source.is_absolute()
+        || source
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(WorkspaceTestError::new(format!(
+            "durable source {:?} is not a normalized repository-relative path",
+            declaration.source,
+        )));
+    }
+    if declaration.supplemental.is_empty() {
+        return Err(WorkspaceTestError::new(format!(
+            "durable source {:?} declares no supplemental proof target",
+            declaration.source,
+        )));
+    }
+    validate_durable_source_owner(inventory, root, declaration)?;
+    validate_supplemental_targets(inventory, declaration)
+}
+
+fn validate_durable_source_owner(
+    inventory: &Inventory,
+    root: &Path,
+    declaration: &DurableSourceSelection,
+) -> Result<(), WorkspaceTestError> {
+    let owner_package = declared_package(inventory, declaration.owner.package)?;
+    let owner = declared_target(owner_package, declaration.owner)?;
+    let absolute = root.join(declaration.source);
+    validate_durable_owner_claim(inventory, declaration, owner_package, owner, &absolute)?;
+    validate_durable_owner_provenance(declaration, owner_package, owner, &absolute)
+}
+
+fn validate_durable_owner_claim(
+    inventory: &Inventory,
+    declaration: &DurableSourceSelection,
+    owner_package: &PackageInventory,
+    owner: &TargetIdentity,
+    absolute: &Path,
+) -> Result<(), WorkspaceTestError> {
+    let claims = source_claims(inventory, declaration.source, absolute);
+    let [claim] = claims.as_slice() else {
+        return Err(WorkspaceTestError::new(format!(
+            "durable source {:?} must have exactly one Cargo source-provenance owner, found {}",
+            declaration.source,
+            claims.len(),
+        )));
+    };
+    if claim.package.id == owner_package.id
+        && !claim.package_wide
+        && !claim.test_only
+        && claim.targets.as_slice() == [owner]
+    {
+        return Ok(());
+    }
+    Err(WorkspaceTestError::new(format!(
+        "durable source {:?} is not owned exclusively by declared target {}",
+        declaration.source,
+        declaration.owner.display(),
+    )))
+}
+
+fn validate_durable_owner_provenance(
+    declaration: &DurableSourceSelection,
+    owner_package: &PackageInventory,
+    owner: &TargetIdentity,
+    absolute: &Path,
+) -> Result<(), WorkspaceTestError> {
+    let Some(provenance) = owner
+        .declared_path_sources
+        .iter()
+        .find(|declared| declared.path == absolute)
+    else {
+        return Err(WorkspaceTestError::new(format!(
+            "durable source {:?} has no declared module provenance in {}",
+            declaration.source,
+            declaration.owner.display(),
+        )));
+    };
+    let public_module = !provenance.test_only
+        && provenance.dependent_tests
+        && provenance
+            .origins
+            .contains(&DeclaredPathSourceOrigin::Module);
+    if target_is_library(owner) && owner_package.targets.contains(owner) && public_module {
+        return Ok(());
+    }
+    Err(WorkspaceTestError::new(format!(
+        "durable source {:?} must be a non-test-only public module of test-enabled library target {}",
+        declaration.source,
+        declaration.owner.display(),
+    )))
+}
+
+fn validate_supplemental_targets(
+    inventory: &Inventory,
+    declaration: &DurableSourceSelection,
+) -> Result<(), WorkspaceTestError> {
+    let mut supplemental = BTreeSet::new();
+    for target in declaration.supplemental {
+        if target.package != declaration.owner.package {
+            return Err(WorkspaceTestError::new(format!(
+                "durable source {:?} supplemental target {} is outside its owner package; downstream contracts must come from public source provenance",
+                declaration.source,
+                target.display(),
+            )));
+        }
+        if !supplemental.insert(*target) {
+            return Err(WorkspaceTestError::new(format!(
+                "durable source {:?} repeats supplemental target {}",
+                declaration.source,
+                target.display(),
+            )));
+        }
+        let package = declared_package(inventory, target.package)?;
+        let resolved = declared_target(package, *target)?;
+        if !package.targets.contains(resolved) {
+            return Err(WorkspaceTestError::new(format!(
+                "durable source {:?} supplemental target {} is not test-enabled",
+                declaration.source,
+                target.display(),
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn declared_package<'a>(
+    inventory: &'a Inventory,
+    name: &str,
+) -> Result<&'a PackageInventory, WorkspaceTestError> {
+    let mut matches = inventory
+        .packages
+        .iter()
+        .filter(|package| package.name == name);
+    let package = matches.next().ok_or_else(|| {
+        WorkspaceTestError::new(format!(
+            "durable source registry names unknown Cargo package {name:?}"
+        ))
+    })?;
+    if matches.next().is_some() {
+        return Err(WorkspaceTestError::new(format!(
+            "durable source registry package name {name:?} is ambiguous"
+        )));
+    }
+    Ok(package)
+}
+
+fn declared_target(
+    package: &PackageInventory,
+    declaration: DeclaredTestTarget,
+) -> Result<&TargetIdentity, WorkspaceTestError> {
+    package
+        .declared_targets
+        .iter()
+        .find(|target| target.kind == declaration.kind && target.name == declaration.name)
+        .ok_or_else(|| {
+            WorkspaceTestError::new(format!(
+                "durable source registry names unknown Cargo target {}",
+                declaration.display(),
+            ))
+        })
+}
+
+fn select_durable_source_proofs(
+    inventory: &Inventory,
+    changed: &str,
+    tests: &mut BTreeSet<String>,
+    edges: &mut BTreeSet<crate::TestSelectionEdge>,
+) -> Result<(), WorkspaceTestError> {
+    let Some(declaration) = DURABLE_SOURCE_SELECTIONS
+        .iter()
+        .find(|declaration| declaration.source == changed)
+    else {
+        return Ok(());
+    };
+    let package = declared_package(inventory, declaration.owner.package)?;
+    let targets = declaration
+        .supplemental
+        .iter()
+        .map(|target| declared_target(package, *target))
+        .collect::<Result<Vec<_>, _>>()?;
+    select_targets(package, targets, changed, tests, edges)
+}
+
 pub(super) fn routine_selection(changed_sources: &[String]) -> bool {
     changed_sources
         .iter()
@@ -486,13 +759,6 @@ pub(super) fn routine_selection(changed_sources: &[String]) -> bool {
 
 fn selection_authority_source(path: &str) -> bool {
     workspace_wide_source(path)
-        || matches!(
-            path,
-            // These codecs are durable, cross-crate identity authority. A
-            // change to any can affect every stored fact and operator
-            // surface, so its Cargo selection is intentionally exhaustive.
-            "steer/src/ack/keys.rs" | "wire/src/environment.rs" | "wire/src/witness.rs"
-        )
         || matches!(
             Path::new(path).file_name().and_then(OsStr::to_str),
             Some("Cargo.toml") | Some("build.rs")
@@ -760,13 +1026,244 @@ fn target_reaches_dependent_tests(target: &TargetIdentity, source: &Path) -> boo
 
 #[cfg(test)]
 mod tests {
-    use super::routine_selection;
+    use super::*;
+
+    const WIRE_OWNER: DeclaredTestTarget = DeclaredTestTarget::new("wire", "lib", "wire");
+    const IDENTITY_LAW_OWNER: DeclaredTestTarget =
+        DeclaredTestTarget::new("wire", "test", "identity_law");
+    const JOURNAL_OWNER: DeclaredTestTarget = DeclaredTestTarget::new("journal", "lib", "journal");
+    const WIRE_PROOF: &[DeclaredTestTarget] =
+        &[DeclaredTestTarget::new("wire", "test", "identity_law")];
+    const JOURNAL_PROOF: &[DeclaredTestTarget] =
+        &[DeclaredTestTarget::new("journal", "lib", "journal")];
+    const UNKNOWN_TARGET: &[DeclaredTestTarget] =
+        &[DeclaredTestTarget::new("wire", "test", "not_a_target")];
+    const DUPLICATE_TARGETS: &[DeclaredTestTarget] = &[
+        DeclaredTestTarget::new("wire", "test", "identity_law"),
+        DeclaredTestTarget::new("wire", "test", "identity_law"),
+    ];
+    const INVALID_REGISTRIES: &[(&str, &[DurableSourceSelection])] = &[
+        (
+            "no declared module provenance",
+            &[DurableSourceSelection {
+                source: "wire/src/not_a_module.rs",
+                owner: WIRE_OWNER,
+                supplemental: WIRE_PROOF,
+            }],
+        ),
+        (
+            "unknown Cargo package",
+            &[DurableSourceSelection {
+                source: "wire/src/witness.rs",
+                owner: DeclaredTestTarget::new("unknown", "lib", "wire"),
+                supplemental: WIRE_PROOF,
+            }],
+        ),
+        (
+            "unknown Cargo target",
+            &[DurableSourceSelection {
+                source: "wire/src/witness.rs",
+                owner: WIRE_OWNER,
+                supplemental: UNKNOWN_TARGET,
+            }],
+        ),
+        (
+            "not owned exclusively",
+            &[DurableSourceSelection {
+                source: "wire/src/witness.rs",
+                owner: JOURNAL_OWNER,
+                supplemental: JOURNAL_PROOF,
+            }],
+        ),
+        (
+            "non-test-only public module",
+            &[DurableSourceSelection {
+                source: "wire/tests/identity_law/laws.rs",
+                owner: IDENTITY_LAW_OWNER,
+                supplemental: WIRE_PROOF,
+            }],
+        ),
+        (
+            "non-test-only public module",
+            &[DurableSourceSelection {
+                source: "journal/src/tests.rs",
+                owner: JOURNAL_OWNER,
+                supplemental: JOURNAL_PROOF,
+            }],
+        ),
+        (
+            "repeats supplemental target",
+            &[DurableSourceSelection {
+                source: "wire/src/witness.rs",
+                owner: WIRE_OWNER,
+                supplemental: DUPLICATE_TARGETS,
+            }],
+        ),
+        (
+            "declares no supplemental proof target",
+            &[DurableSourceSelection {
+                source: "wire/src/witness.rs",
+                owner: WIRE_OWNER,
+                supplemental: &[],
+            }],
+        ),
+        (
+            "declared more than once",
+            &[
+                DurableSourceSelection {
+                    source: "wire/src/witness.rs",
+                    owner: WIRE_OWNER,
+                    supplemental: WIRE_PROOF,
+                },
+                DurableSourceSelection {
+                    source: "wire/src/witness.rs",
+                    owner: WIRE_OWNER,
+                    supplemental: WIRE_PROOF,
+                },
+            ],
+        ),
+    ];
+
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test exercises production Cargo inventory against its admitted process environment"
+    )]
+    fn workspace_inventory() -> (PathBuf, Inventory) {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("gate crate has a workspace parent");
+        let root = fs::canonicalize(root).expect("workspace root canonicalizes");
+        let environment = Environment::new(std::env::vars_os()).expect("test environment");
+        let inventory = acquire_inventory(&root, &environment, OsStr::new("cargo"))
+            .expect("canonical workspace inventory");
+        (root, inventory)
+    }
+
+    fn report_for(inventory: &Inventory, root: &Path, changed: &str) -> crate::TestSelectionReport {
+        selection_plan(
+            inventory,
+            root,
+            wire::Digest::compute(wire::Domain::GateSelection, changed.as_bytes()),
+            &[changed.to_owned()],
+        )
+        .expect("durable source selection")
+        .into_report()
+    }
+
+    fn integration_targets(report: &crate::TestSelectionReport) -> Vec<&str> {
+        report
+            .tests()
+            .iter()
+            .map(String::as_str)
+            .filter(|test| test.contains("::test:"))
+            .collect()
+    }
+
+    fn assert_durable_report(
+        report: &crate::TestSelectionReport,
+        source: &str,
+        required: &[&str],
+        integrations: &[&str],
+    ) {
+        assert!(report.admits());
+        assert!(report.tests().len() <= ROUTINE_TEST_TARGET_LIMIT);
+        assert_eq!(report.changed_sources(), [source]);
+        for required in required {
+            assert!(report.tests().iter().any(|test| test == required));
+        }
+        assert_eq!(integration_targets(report), integrations);
+        assert!(report.tests().iter().all(|test| {
+            report
+                .edges()
+                .iter()
+                .any(|edge| edge.source() == source && edge.test() == test)
+        }));
+    }
 
     #[test]
-    fn durable_identity_codecs_select_as_workspace_authority() {
-        assert!(!routine_selection(&["wire/src/environment.rs".to_owned()]));
-        assert!(!routine_selection(&["wire/src/witness.rs".to_owned()]));
-        assert!(!routine_selection(&["steer/src/ack/keys.rs".to_owned()]));
+    fn durable_sources_add_named_proofs_to_bounded_public_reach() {
+        let (root, inventory) = workspace_inventory();
+        let environment = report_for(&inventory, &root, "wire/src/environment.rs");
+        let witness = report_for(&inventory, &root, "wire/src/witness.rs");
+        let keys = report_for(&inventory, &root, "steer/src/ack/keys.rs");
+        let ordinary = report_for(&inventory, &root, "wire/src/ident.rs");
+
+        for source in [
+            "wire/src/environment.rs",
+            "wire/src/witness.rs",
+            "steer/src/ack/keys.rs",
+        ] {
+            assert!(routine_selection(&[source.to_owned()]));
+        }
         assert!(routine_selection(&["wire/src/ident.rs".to_owned()]));
+        assert_durable_report(
+            &environment,
+            "wire/src/environment.rs",
+            [
+                "wire::lib:wire",
+                "wire::test:environment",
+                "wire::test:identity_law",
+                "wire::test:roundtrip",
+                "journal::lib:journal",
+            ]
+            .as_slice(),
+            [
+                "wire::test:environment",
+                "wire::test:identity_law",
+                "wire::test:roundtrip",
+            ]
+            .as_slice(),
+        );
+        assert_durable_report(
+            &witness,
+            "wire/src/witness.rs",
+            [
+                "wire::lib:wire",
+                "wire::test:identity_law",
+                "wire::test:roundtrip",
+                "journal::lib:journal",
+            ]
+            .as_slice(),
+            ["wire::test:identity_law", "wire::test:roundtrip"].as_slice(),
+        );
+        assert_durable_report(
+            &keys,
+            "steer/src/ack/keys.rs",
+            ["steer::lib:steer", "steer::test:scan"].as_slice(),
+            ["steer::test:scan"].as_slice(),
+        );
+        assert!(ordinary.tests().len() <= ROUTINE_TEST_TARGET_LIMIT);
+        assert!(integration_targets(&ordinary).is_empty());
+    }
+
+    #[test]
+    fn durable_registry_refuses_unknown_private_duplicate_and_incomplete_rows() {
+        let (root, mut inventory) = workspace_inventory();
+        for (expected, registry) in INVALID_REGISTRIES {
+            let error = match validate_durable_source_registry(&inventory, &root, registry) {
+                Ok(()) => panic!("invalid durable registry must refuse: {expected}"),
+                Err(error) => error,
+            };
+            assert!(
+                error.to_string().contains(expected),
+                "expected {expected:?}, found {error}"
+            );
+        }
+
+        inventory
+            .packages
+            .iter_mut()
+            .find(|package| package.name == "wire")
+            .expect("wire package")
+            .targets
+            .retain(|target| !(target.kind == "test" && target.name == "identity_law"));
+        let registry = [DurableSourceSelection {
+            source: "wire/src/witness.rs",
+            owner: WIRE_OWNER,
+            supplemental: WIRE_PROOF,
+        }];
+        let error = validate_durable_source_registry(&inventory, &root, &registry)
+            .expect_err("non-test supplemental target must refuse");
+        assert!(error.to_string().contains("is not test-enabled"));
     }
 }
