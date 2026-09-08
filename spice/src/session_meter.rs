@@ -29,12 +29,6 @@ pub const CLAIM_WARNING_BOUNDARY: Duration = Duration::from_secs(10 * 60);
 pub const CLAIM_URGENT_BOUNDARY: Duration = Duration::from_secs(5 * 60);
 /// Remaining lease below this duration enters the critical tier.
 pub const CLAIM_CRITICAL_BOUNDARY: Duration = Duration::from_secs(60);
-/// Warning-tier reminders repeat at this cadence.
-pub const CLAIM_WARNING_REPEAT: Duration = Duration::from_secs(2 * 60);
-/// Urgent-tier reminders repeat at this cadence.
-pub const CLAIM_URGENT_REPEAT: Duration = Duration::from_secs(60);
-/// Critical-tier reminders repeat at this cadence.
-pub const CLAIM_CRITICAL_REPEAT: Duration = Duration::from_secs(15);
 /// No scheduled refresh may collapse to a zero-delay loop.
 pub const MINIMUM_REFRESH: Duration = Duration::from_millis(50);
 
@@ -153,9 +147,9 @@ pub fn collect_working_state(
 /// One meter evaluation at a command or timer boundary.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Decision {
-    /// One short stderr line when state changed or a reminder became due.
+    /// One short stderr line when durable state changed.
     pub announcement: Option<String>,
-    /// Bound for the next expiry transition or reminder, if one exists.
+    /// Bound for the next scheduled state observation, if one exists.
     pub refresh_after: Option<Duration>,
 }
 
@@ -175,7 +169,7 @@ pub struct Meter {
 }
 
 impl Meter {
-    /// Bind the reducer to its durable last-announcement record.
+    /// Bind the reducer to its durable state record.
     #[must_use]
     pub fn new(state_path: impl Into<PathBuf>) -> Self {
         Self {
@@ -198,12 +192,9 @@ impl Meter {
         }
         let key = StateKey::from(snapshot);
         let stored = self.read_state()?;
-        let matching_age = stored.as_ref().and_then(|stored| {
-            (stored.key == key && now >= stored.displayed_at)
-                .then(|| now.saturating_sub(stored.displayed_at))
-        });
-        let repeat = key.tier.repeat();
-        let suppressed = matching_age.is_some_and(|age| repeat.is_none_or(|bound| age < bound));
+        let suppressed = stored
+            .as_ref()
+            .is_some_and(|stored| stored.key == key && now >= stored.displayed_at);
         let announcement = if suppressed {
             None
         } else {
@@ -214,16 +205,9 @@ impl Meter {
             })?;
             Some(line)
         };
-        let repeat_remaining = repeat.map(|bound| {
-            if announcement.is_some() {
-                bound
-            } else {
-                bound.saturating_sub(matching_age.unwrap_or_default())
-            }
-        });
         Ok(Decision {
             announcement,
-            refresh_after: next_refresh(snapshot, key.tier, repeat_remaining),
+            refresh_after: next_refresh(snapshot, key.tier),
         })
     }
 
@@ -235,37 +219,22 @@ impl Meter {
     ) -> Result<Decision, MeterError> {
         let key = StateKey::time_sensitive(snapshot);
         let stored = self.read_state()?;
-        let matching_age = stored.as_ref().and_then(|stored| {
-            (stored.key == key && now >= stored.displayed_at)
-                .then(|| now.saturating_sub(stored.displayed_at))
-        });
-        let repeat = key.tier.repeat();
-        let suppressed = matching_age.is_some_and(|age| repeat.is_none_or(|bound| age < bound));
+        let suppressed = stored
+            .as_ref()
+            .is_some_and(|stored| stored.key == key && now >= stored.displayed_at);
         let announcement = if suppressed {
             None
         } else {
-            let Some(line) = render_lease(snapshot) else {
-                return Ok(Decision {
-                    announcement: None,
-                    refresh_after: next_refresh(snapshot, key.tier, None),
-                });
-            };
+            let line = render_lease(snapshot);
             self.write_state(&StoredState {
                 displayed_at: now,
                 key: key.clone(),
             })?;
-            Some(line)
+            line
         };
-        let repeat_remaining = repeat.map(|bound| {
-            if announcement.is_some() {
-                bound
-            } else {
-                bound.saturating_sub(matching_age.unwrap_or_default())
-            }
-        });
         Ok(Decision {
             announcement,
-            refresh_after: next_refresh(snapshot, key.tier, repeat_remaining),
+            refresh_after: next_refresh(snapshot, key.tier),
         })
     }
 
@@ -339,7 +308,7 @@ pub fn normalize_timestamp(raw: &str) -> Option<wire::Instant> {
     wire::Instant::new(timestamp).ok()
 }
 
-/// Failure to access the durable announcement record.
+/// Failure to access the durable state record.
 #[derive(Debug)]
 pub enum MeterError {
     /// Existing state could not be read.
@@ -386,24 +355,6 @@ impl LeaseTier {
             Some(value) if value < CLAIM_URGENT_BOUNDARY => Self::Urgent,
             Some(value) if value < CLAIM_WARNING_BOUNDARY => Self::Warning,
             None | Some(_) => Self::None,
-        }
-    }
-
-    const fn repeat(self) -> Option<Duration> {
-        match self {
-            Self::None => None,
-            Self::Warning => Some(CLAIM_WARNING_REPEAT),
-            Self::Urgent => Some(CLAIM_URGENT_REPEAT),
-            Self::Critical => Some(CLAIM_CRITICAL_REPEAT),
-        }
-    }
-
-    const fn label(self) -> Option<&'static str> {
-        match self {
-            Self::None => None,
-            Self::Warning => Some("warning"),
-            Self::Urgent => Some("urgent"),
-            Self::Critical => Some("critical"),
         }
     }
 }
@@ -526,24 +477,22 @@ fn render_lease(snapshot: &WorkingState) -> Option<String> {
 }
 
 fn render_claim_lease(claim: &ClaimState, handle: &str) -> Option<String> {
-    let label = LeaseTier::from_remaining(claim.remaining).label()?;
     let remaining = claim.remaining?;
+    if LeaseTier::from_remaining(Some(remaining)) == LeaseTier::None {
+        return None;
+    }
     let recovery = if claim.reclaim_extends {
         format!("run spice task reclaim {handle}")
     } else {
         format!("run spice task free {handle}, then spice task next")
     };
     Some(format!(
-        "Claim lease {label}: {handle} has {}s remaining; {recovery}",
+        "Claim lease: {handle} has {}s remaining; {recovery}",
         remaining.as_secs(),
     ))
 }
 
-fn next_refresh(
-    snapshot: &WorkingState,
-    tier: LeaseTier,
-    repeat_remaining: Option<Duration>,
-) -> Option<Duration> {
+fn next_refresh(snapshot: &WorkingState, tier: LeaseTier) -> Option<Duration> {
     let remaining = snapshot.claim.as_ref().and_then(|claim| claim.remaining);
     let boundary = remaining.and_then(|remaining| {
         let target = match tier {
@@ -554,11 +503,7 @@ fn next_refresh(
         };
         Some(remaining.saturating_sub(target))
     });
-    [boundary, repeat_remaining]
-        .into_iter()
-        .flatten()
-        .min()
-        .map(|delay| delay.max(MINIMUM_REFRESH))
+    boundary.map(|delay| delay.max(MINIMUM_REFRESH))
 }
 
 fn clean(value: &str) -> String {
@@ -646,7 +591,7 @@ mod tests {
     }
 
     #[test]
-    fn ordinary_hook_status_keeps_state_but_omits_elapsed_and_lease_urgency() {
+    fn ordinary_hook_status_keeps_state_but_omits_elapsed_and_lease_countdown() {
         let status = ordinary_status(&state(Some(59)), false).expect("ordinary state renders");
         assert!(status.contains("1 pending inbox"));
         assert!(status.contains("claim METER-00000001 todo"));
@@ -768,7 +713,7 @@ mod tests {
     }
 
     #[test]
-    fn announcement_identity_survives_exit_and_includes_expiry_tier() {
+    fn announcement_identity_survives_exit_and_boundary_changes_speak() {
         let root = fixture("durable");
         let path = root.join("working-state.json");
         let first = Meter::new(&path)
@@ -777,17 +722,17 @@ mod tests {
         let next_process = Meter::new(&path)
             .evaluate(&state(Some(598)), Duration::from_secs(2))
             .expect("next process reads durable state");
-        let urgent = Meter::new(&path)
+        let next_boundary = Meter::new(&path)
             .evaluate(&state(Some(299)), Duration::from_secs(3))
-            .expect("tier transition evaluates");
+            .expect("boundary transition evaluates");
 
         assert!(first.announcement.is_some());
         assert_eq!(next_process.announcement, None);
         assert!(
-            urgent
+            next_boundary
                 .announcement
                 .as_deref()
-                .is_some_and(|line| line.contains("Claim lease urgent"))
+                .is_some_and(|line| line.contains("Claim lease: METER-00000001 has 299s remaining"))
         );
 
         fs::write(&path, b"not-json").expect("corrupt prior announcement");
@@ -795,55 +740,87 @@ mod tests {
             .evaluate(&state(Some(299)), Duration::from_secs(4))
             .expect("malformed state is absence");
         assert!(recovered.announcement.is_some());
+
+        let live_path = root.join("time-sensitive.json");
+        let live = Meter::new(&live_path);
+        let initial_boundary = live
+            .evaluate_time_sensitive(&state(Some(599)), Duration::from_secs(10))
+            .expect("initial live boundary evaluates");
+        let quiet_renewal = live
+            .evaluate_time_sensitive(&state(Some(700)), Duration::from_secs(11))
+            .expect("quiet live renewal evaluates");
+        let next_cycle = live
+            .evaluate_time_sensitive(&state(Some(599)), Duration::from_secs(12))
+            .expect("next live countdown cycle evaluates");
+        assert!(initial_boundary.announcement.is_some());
+        assert_eq!(quiet_renewal.announcement, None);
+        assert!(next_cycle.announcement.is_some());
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 
     #[test]
-    fn expiry_refresh_cadence_shortens_without_zero_delay() {
-        let root = fixture("cadence");
+    fn expiry_refresh_targets_only_the_next_boundary() {
+        let root = fixture("boundaries");
         let cases = [
-            (601, Duration::from_secs(2)),
-            (599, CLAIM_WARNING_REPEAT),
-            (299, CLAIM_URGENT_REPEAT),
-            (59, CLAIM_CRITICAL_REPEAT),
-            (0, CLAIM_CRITICAL_REPEAT),
+            (601, Some(Duration::from_secs(2))),
+            (599, Some(Duration::from_secs(300))),
+            (299, Some(Duration::from_secs(240))),
+            (59, None),
+            (0, None),
         ];
         for (index, (remaining, expected)) in cases.into_iter().enumerate() {
             let meter = Meter::new(root.join(format!("state-{index}.json")));
             let decision = meter
                 .evaluate(&state(Some(remaining)), Duration::from_secs(1))
-                .expect("tier evaluates");
-            assert_eq!(decision.refresh_after, Some(expected));
-            assert!(decision.refresh_after.is_some_and(|delay| !delay.is_zero()));
+                .expect("boundary evaluates");
+            assert_eq!(decision.refresh_after, expected);
+            if let Some(delay) = decision.refresh_after {
+                assert!(!delay.is_zero());
+            }
         }
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 
     #[test]
-    fn lease_tiers_are_strict_and_renewal_transitions_speak_immediately() {
-        let root = fixture("strict-tiers");
+    fn lease_boundaries_are_strict_and_renewal_transitions_speak_once() {
+        let root = fixture("strict-boundaries");
         let cases = [
-            (600, None),
-            (599, Some("warning")),
-            (299, Some("urgent")),
-            (59, Some("critical")),
+            (600, false, true),
+            (599, true, true),
+            (299, true, false),
+            (59, true, true),
         ];
-        for (index, (remaining, severity)) in cases.into_iter().enumerate() {
+        for (index, (remaining, shows_lease, reclaim_extends)) in cases.into_iter().enumerate() {
+            let mut snapshot = state(Some(remaining));
+            snapshot
+                .claim
+                .as_mut()
+                .expect("fixture claim")
+                .reclaim_extends = reclaim_extends;
             let decision = Meter::new(root.join(format!("boundary-{index}.json")))
-                .evaluate(&state(Some(remaining)), Duration::from_secs(1))
+                .evaluate(&snapshot, Duration::from_secs(1))
                 .expect("strict boundary evaluates");
             let line = decision.announcement.expect("new state speaks once");
             assert_eq!(
-                ["warning", "urgent", "critical"]
-                    .into_iter()
-                    .find(|label| line.contains(&format!("Claim lease {label}:"))),
-                severity,
+                line.contains(&format!(
+                    "Claim lease: METER-00000001 has {remaining}s remaining"
+                )),
+                shows_lease,
             );
-            if severity.is_some() {
+            assert!(!line.contains("Claim lease warning:"));
+            assert!(!line.contains("Claim lease urgent:"));
+            assert!(!line.contains("Claim lease critical:"));
+            if shows_lease {
                 assert!(line.contains("todo held for 90s"));
                 assert!(!line.contains("todo for 90s"));
                 assert!(line.contains(&format!("has {remaining}s remaining")));
-                assert!(line.contains("run spice task reclaim METER-00000001"));
+                if reclaim_extends {
+                    assert!(line.contains("run spice task reclaim METER-00000001"));
+                } else {
+                    assert!(
+                        line.contains("run spice task free METER-00000001, then spice task next")
+                    );
+                }
                 assert!(!line.contains(" ACK"));
                 assert!(!line.contains(" NACK"));
             }
@@ -851,39 +828,62 @@ mod tests {
 
         let path = root.join("renewals.json");
         let meter = Meter::new(&path);
-        let critical = meter
+        let final_boundary = meter
             .evaluate(&state(Some(59)), Duration::from_secs(10))
-            .expect("critical evaluates");
-        let same_tier = meter
+            .expect("final boundary evaluates");
+        let same_band = meter
             .evaluate(&state(Some(58)), Duration::from_secs(11))
-            .expect("same tier renewal evaluates");
-        let urgent = meter
+            .expect("same band evaluates");
+        let middle_boundary = meter
             .evaluate(&state(Some(299)), Duration::from_secs(12))
-            .expect("critical to urgent evaluates");
-        let warning = meter
+            .expect("final to middle boundary evaluates");
+        let first_boundary = meter
             .evaluate(&state(Some(599)), Duration::from_secs(13))
-            .expect("urgent to warning evaluates");
+            .expect("middle to first boundary evaluates");
+        let mut not_reclaimable = state(Some(598));
+        not_reclaimable
+            .claim
+            .as_mut()
+            .expect("fixture claim")
+            .reclaim_extends = false;
+        let free_guidance = meter
+            .evaluate(&not_reclaimable, Duration::from_secs(14))
+            .expect("eligibility change evaluates");
+        let same_eligibility = meter
+            .evaluate(&not_reclaimable, Duration::from_secs(15))
+            .expect("same eligibility evaluates");
+        let mut quiet_state = state(Some(600));
+        quiet_state
+            .claim
+            .as_mut()
+            .expect("fixture claim")
+            .reclaim_extends = false;
         let quiet = meter
-            .evaluate(&state(Some(600)), Duration::from_secs(14))
-            .expect("warning exit evaluates");
+            .evaluate(&quiet_state, Duration::from_secs(16))
+            .expect("countdown exit evaluates");
+        let mut renewed_state = state(Some(700));
+        renewed_state
+            .claim
+            .as_mut()
+            .expect("fixture claim")
+            .reclaim_extends = false;
         let renewed = meter
-            .evaluate(&state(Some(700)), Duration::from_secs(15))
+            .evaluate(&renewed_state, Duration::from_secs(17))
             .expect("renewed lease evaluates");
 
-        assert!(critical.announcement.is_some());
-        assert_eq!(same_tier.announcement, None);
-        assert!(
-            urgent
-                .announcement
-                .as_deref()
-                .is_some_and(|line| { line.contains("Claim lease urgent") })
-        );
-        assert!(
-            warning
-                .announcement
-                .as_deref()
-                .is_some_and(|line| { line.contains("Claim lease warning") })
-        );
+        assert!(final_boundary.announcement.is_some());
+        assert_eq!(same_band.announcement, None);
+        assert!(middle_boundary.announcement.as_deref().is_some_and(|line| {
+            line.contains("Claim lease: METER-00000001 has 299s remaining")
+        }));
+        assert!(first_boundary.announcement.as_deref().is_some_and(|line| {
+            line.contains("Claim lease: METER-00000001 has 599s remaining")
+        }));
+        assert!(free_guidance.announcement.as_deref().is_some_and(|line| {
+            line.contains("Claim lease: METER-00000001 has 598s remaining")
+                && line.contains("run spice task free METER-00000001, then spice task next")
+        }));
+        assert_eq!(same_eligibility.announcement, None);
         assert!(
             quiet
                 .announcement
@@ -901,23 +901,20 @@ mod tests {
         let meter = Meter::new(&path);
         let first = meter
             .evaluate(&state(Some(599)), Duration::from_secs(10))
-            .expect("warning speaks");
+            .expect("boundary speaks");
         let stored = fs::read(&path).expect("suppression state reads");
         let absent = meter
             .evaluate(&WorkingState::default(), Duration::from_secs(11))
             .expect("no claim is silent");
         let reacquired = Meter::new(&path)
             .evaluate(&state(Some(598)), Duration::from_secs(12))
-            .expect("fresh process honors prior cadence");
+            .expect("fresh process honors durable suppression");
 
         assert!(first.announcement.is_some());
         assert_eq!(absent, Decision::default());
         assert_eq!(fs::read(&path).expect("state remains"), stored);
         assert_eq!(reacquired.announcement, None);
-        assert_eq!(
-            reacquired.refresh_after,
-            Some(CLAIM_WARNING_REPEAT - Duration::from_secs(2))
-        );
+        assert_eq!(reacquired.refresh_after, Some(Duration::from_secs(299)));
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 

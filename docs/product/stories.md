@@ -153,9 +153,9 @@ thresholds estimate transcript-turn material, remove the oldest whole turns
 first, and retain at least one turn even when that turn exceeds the estimate.
 
 *As the agent, I want the state line to mean something.* — It speaks when its
-state key changes or the current lease tier's reminder cadence is due, stays
-silent for an identical state before that cadence, and can never alter the
-outcome of the command it decorates.
+state key changes to a visible fact, including when a claim lease crosses a
+countdown boundary, stays silent while the durable state is identical, and can
+never alter the outcome of the command it decorates.
 
 ### Shipping
 

@@ -460,52 +460,57 @@ fn invoke_meter_child(root: &Path, thread: &str) -> super::Spoken {
 
 #[test]
 #[cfg(unix)]
-fn short_run_processes_share_suppression_and_tier_changes_speak() {
+fn short_run_processes_share_suppression_and_boundary_changes_speak() {
     let scratch = Scratch::new("run-meter-processes");
     fake_repository(scratch.path());
     let thread = uuid(0xf2).to_string();
     let authority = authority_path(scratch.path());
     seed_recall_authority(&authority, &thread);
     renew_maximum_bound_claim_for_meter(&authority, 599);
-    let warning_generation_facts = fact_count(&authority);
+    let first_boundary_generation_facts = fact_count(&authority);
 
     let first = invoke_meter_child(scratch.path(), &thread);
     let second = invoke_meter_child(scratch.path(), &thread);
-    assert_eq!(fact_count(&authority), warning_generation_facts);
+    assert_eq!(fact_count(&authority), first_boundary_generation_facts);
     renew_maximum_bound_claim_for_meter(&authority, 299);
-    let urgent_generation_facts = fact_count(&authority);
-    let urgent = invoke_meter_child(scratch.path(), &thread);
+    let next_boundary_generation_facts = fact_count(&authority);
+    let next_boundary = invoke_meter_child(scratch.path(), &thread);
 
-    for spoken in [&first, &second, &urgent] {
+    for spoken in [&first, &second, &next_boundary] {
         assert_eq!(spoken.code, Some(7));
         assert_eq!(spoken.out, b"child-output");
     }
     let handle = wire::TaskHandle::for_project(SESSION_PROJECT, &stamp("SESSION-held"));
-    let warning = String::from_utf8(first.err).expect("warning stderr");
-    assert_eq!(warning.lines().count(), 1);
-    assert!(!warning.contains("Working state"));
-    assert!(warning.contains("Claim lease warning"));
-    assert!(warning.contains("s remaining"));
+    let first_boundary = String::from_utf8(first.err).expect("first boundary stderr");
+    assert_eq!(first_boundary.lines().count(), 1);
+    assert!(!first_boundary.contains("Working state"));
+    assert!(first_boundary.contains("Claim lease:"));
+    assert!(first_boundary.contains("s remaining"));
     assert!(
-        warning.contains(&format!("run spice task reclaim {handle}")),
-        "warning recommends reclaiming the automatic fixture claim: {warning:?}"
+        first_boundary.contains(&format!("run spice task reclaim {handle}")),
+        "first boundary recommends reclaiming the automatic fixture claim: {first_boundary:?}"
     );
-    assert!(!warning.contains("task free"));
-    assert!(!warning.contains(" ACK"));
-    assert!(!warning.contains(" NACK"));
-    assert!(second.err.is_empty(), "same tier is durably suppressed");
-    let urgent = String::from_utf8(urgent.err).expect("urgent stderr");
-    assert_eq!(urgent.lines().count(), 1);
-    assert!(urgent.contains("Claim lease urgent"));
-    assert!(urgent.contains("s remaining"));
+    assert!(!first_boundary.contains("task free"));
+    assert!(!first_boundary.contains("Claim lease warning:"));
+    assert!(!first_boundary.contains(" ACK"));
+    assert!(!first_boundary.contains(" NACK"));
     assert!(
-        urgent.contains(&format!("run spice task reclaim {handle}")),
-        "urgent warning recommends reclaiming the automatic fixture claim: {urgent:?}"
+        second.err.is_empty(),
+        "same boundary band is durably suppressed"
     );
-    assert!(!urgent.contains("task free"));
-    assert!(!urgent.contains(" ACK"));
-    assert!(!urgent.contains(" NACK"));
-    assert_eq!(fact_count(&authority), urgent_generation_facts);
+    let next_boundary = String::from_utf8(next_boundary.err).expect("next boundary stderr");
+    assert_eq!(next_boundary.lines().count(), 1);
+    assert!(next_boundary.contains("Claim lease:"));
+    assert!(next_boundary.contains("s remaining"));
+    assert!(
+        next_boundary.contains(&format!("run spice task reclaim {handle}")),
+        "next boundary recommends reclaiming the automatic fixture claim: {next_boundary:?}"
+    );
+    assert!(!next_boundary.contains("task free"));
+    assert!(!next_boundary.contains("Claim lease urgent:"));
+    assert!(!next_boundary.contains(" ACK"));
+    assert!(!next_boundary.contains(" NACK"));
+    assert_eq!(fact_count(&authority), next_boundary_generation_facts);
 
     scratch.remove();
 }
