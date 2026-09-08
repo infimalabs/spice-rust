@@ -314,7 +314,11 @@ export async function assertBidirectionalMediaExchange(page, fixture, worktree) 
   assert.equal(canceled.body.disposition, "canceled");
   const retiredContext = hookContext(await invokeHook(worktree, fixture, member.lane));
   assert.ok(!retiredContext.includes(projection.path), "retired projection is absent from the hook");
-  await assert.rejects(readFile(projection.path), { code: "ENOENT" });
+  assert.deepEqual(
+    await readFile(projection.path),
+    expectedBytes,
+    "the acknowledged projection remains readable for the active session",
+  );
   await triggerRecords(worktree, [codexMediaRecords(projection.path, dataUrl)[2]]);
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
     () => requestAnimationFrame(resolve),
