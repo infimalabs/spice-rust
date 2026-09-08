@@ -1,6 +1,8 @@
 use super::super::launch::test_support::{AdvisoryRtkFixture, assert_advisory_health};
 use super::*;
 
+mod trust_ice;
+
 #[test]
 fn automatic_wake_commits_advisory_rtk_for_capability_free_readback_without_reprobe() {
     let fixture = AdvisoryRtkFixture::new();
