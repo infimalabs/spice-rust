@@ -332,20 +332,36 @@ fn commit_local_plan_implementation(root: &Path) {
 }
 
 fn commit_task_change(root: &Path) -> String {
+    commit_task_change_at(root, None)
+}
+
+fn commit_task_change_at(root: &Path, date: Option<&str>) -> String {
     fs::write(root.join("task.txt"), "task change\n").expect("write task change");
     git(root, &["add", "task.txt"]);
-    git(
-        root,
-        &[
-            "-c",
-            "user.name=Spice Test",
-            "-c",
-            "user.email=spice@example.invalid",
-            "commit",
-            "--no-verify",
-            "-m",
-            "task change",
-        ],
+    let arguments = [
+        "-c",
+        "user.name=Spice Test",
+        "-c",
+        "user.email=spice@example.invalid",
+        "commit",
+        "--no-verify",
+        "-m",
+        "task change",
+    ];
+    let output = match date {
+        Some(date) => run_with_environment(
+            root,
+            &arguments,
+            &[("GIT_AUTHOR_DATE", date), ("GIT_COMMITTER_DATE", date)],
+        )
+        .expect("launch dated task commit"),
+        None => run(root, &arguments).expect("launch task commit"),
+    };
+    assert!(
+        output.success(),
+        "dated task commit failed: stdout={} stderr={}",
+        output.stdout,
+        output.stderr,
     );
     required_read(root, &["rev-parse", "HEAD"], "read task commit").expect("task commit reads")
 }
@@ -373,7 +389,11 @@ fn install_rejecting_branch_hook(root: &Path) -> PathBuf {
 #[cfg(unix)]
 #[test]
 fn synthesized_todo_and_review_landings_are_stable_and_hook_free() {
-    for phase in ["todo", "review"] {
+    let mut landing_dates = Vec::new();
+    for (phase, task_date) in [
+        ("todo", "2030-04-12T18:44:01Z"),
+        ("review", "2030-04-12T18:44:02Z"),
+    ] {
         let fixture = RepositoryFixture::new(&format!("hook-free-{phase}"));
         configure_peer_integrations(&fixture.root);
         let upstream = required_read(
@@ -382,7 +402,7 @@ fn synthesized_todo_and_review_landings_are_stable_and_hook_free() {
             "read publication baseline",
         )
         .expect("publication baseline reads");
-        let agent = commit_task_change(&fixture.root);
+        let agent = commit_task_change_at(&fixture.root, Some(task_date));
         let marker = install_rejecting_branch_hook(&fixture.root);
         let (entry, actor, now) = fixture.active_entry(phase);
         let active = board::Active::admit(&entry, &actor, now).expect("claim is active");
@@ -400,6 +420,14 @@ fn synthesized_todo_and_review_landings_are_stable_and_hook_free() {
             Some(agent.clone()),
         );
         assert!(!marker.exists(), "task-owned ref update invoked the hook");
+        let dates = required_read(
+            &fixture.root,
+            &["show", "-s", "--format=%aI%n%cI", &first.integrated],
+            "read synthesized landing dates",
+        )
+        .expect("synthesized landing dates read");
+        assert_eq!(dates, format!("{task_date}\n{task_date}"));
+        landing_dates.push(dates);
 
         let remote_reset = format!("{upstream}:refs/heads/main");
         git(
@@ -423,6 +451,7 @@ fn synthesized_todo_and_review_landings_are_stable_and_hook_free() {
         assert_eq!(second.integrated, first.integrated);
         assert!(!marker.exists(), "retried ref update invoked the hook");
     }
+    assert_ne!(landing_dates[0], landing_dates[1]);
 }
 
 struct ScratchDirectory(PathBuf);
