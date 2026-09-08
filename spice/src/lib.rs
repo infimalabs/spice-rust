@@ -24,6 +24,8 @@ pub mod gate;
 pub mod git_shadow;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod install;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod journal_schema;
 pub mod placeholder;
 pub mod repository;
 pub mod resident_lock;
