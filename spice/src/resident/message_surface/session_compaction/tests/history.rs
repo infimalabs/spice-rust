@@ -108,6 +108,7 @@ fn on_demand_history_recovers_boundaries_across_the_retained_horizon() {
 
     let messages = retained_messages(HistoryRequest {
         path: transcript,
+        worktree: PathBuf::from("/worktree"),
         dialect: listen::Dialect::Claude,
         thread: "018f7777-7777-7444-8888-999999999999".to_owned(),
         lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163e5"),
@@ -607,6 +608,7 @@ fn timestamped_claude_boundary_uses_the_same_typed_projection() {
         records.into_iter().next().expect("one compaction"),
         uuid("018f82d4-6f59-7d06-92e3-bce9131163e5"),
         uuid("018f82d4-6f59-7d06-92e3-bce9131163ef"),
+        Path::new("/worktree"),
         &publisher,
         &mut MessageState::default(),
     )

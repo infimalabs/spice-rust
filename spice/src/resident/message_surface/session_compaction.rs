@@ -13,6 +13,13 @@ use std::os::unix::fs::MetadataExt as _;
 
 use super::*;
 
+mod file_stamp;
+mod identity;
+mod presentation;
+use file_stamp::*;
+pub(super) use identity::session_member;
+use presentation::publish;
+
 /// Polling is intentionally modest: compaction is rare, while the first
 /// record after it must still place the divider before later authored prose.
 pub(in crate::resident) const POLL_INTERVAL: std::time::Duration =
@@ -35,6 +42,7 @@ pub(in crate::resident) struct SessionCompactions {
 struct Cursor {
     thread: String,
     path: PathBuf,
+    worktree: PathBuf,
     dialect: listen::Dialect,
     author: CanonicalUuid,
     member: u64,
@@ -95,55 +103,6 @@ thread_local! {
     static BOOTSTRAP_BYTES_DECODED: Cell<u64> = const { Cell::new(0) };
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct FileStamp {
-    length: u64,
-    modified: SystemTime,
-    #[cfg(unix)]
-    device: u64,
-    #[cfg(unix)]
-    inode: u64,
-    #[cfg(unix)]
-    changed_seconds: i64,
-    #[cfg(unix)]
-    changed_nanoseconds: i64,
-}
-
-impl FileStamp {
-    fn read(file: &File) -> io::Result<Self> {
-        let metadata = file.metadata()?;
-        Ok(Self {
-            length: metadata.len(),
-            modified: metadata.modified()?,
-            #[cfg(unix)]
-            device: metadata.dev(),
-            #[cfg(unix)]
-            inode: metadata.ino(),
-            #[cfg(unix)]
-            changed_seconds: metadata.ctime(),
-            #[cfg(unix)]
-            changed_nanoseconds: metadata.ctime_nsec(),
-        })
-    }
-
-    fn extension(&self, observed: Self, prefix_length: u64) -> Option<Self> {
-        if observed.length < prefix_length {
-            return None;
-        }
-        #[cfg(unix)]
-        if observed.device != self.device || observed.inode != self.inode {
-            return None;
-        }
-        if observed == *self {
-            return Some(*self);
-        }
-        if observed.length <= self.length {
-            return None;
-        }
-        Some(observed)
-    }
-}
-
 impl SessionCompactions {
     pub(in crate::resident) fn new(environment: crate::session_command::Environment) -> Self {
         Self {
@@ -197,15 +156,24 @@ impl SessionCompactions {
 
         for (lane, session) in current {
             self.ensure_cursor(lane, session, diagnostic);
-            let Some((scanned, startup_recovery, path, author, dialect, thread)) =
+            let Some((scanned, startup_recovery, path, worktree, author, dialect, thread)) =
                 self.cursors.get_mut(&lane).map(|cursor| {
                     let path = cursor.path.clone();
+                    let worktree = cursor.worktree.clone();
                     let author = cursor.author;
                     let dialect = cursor.dialect;
                     let thread = cursor.thread.clone();
                     let scanned = scan(cursor);
                     let startup_recovery = cursor.startup_recovery.take();
-                    (scanned, startup_recovery, path, author, dialect, thread)
+                    (
+                        scanned,
+                        startup_recovery,
+                        path,
+                        worktree,
+                        author,
+                        dialect,
+                        thread,
+                    )
                 })
             else {
                 continue;
@@ -222,7 +190,7 @@ impl SessionCompactions {
                         if dialect == listen::Dialect::Codex && startup_recovery.is_none() {
                             recover(lane, author, &thread, record.locus())?;
                         }
-                        publish(record, lane, author, publisher, state)?;
+                        publish(record, lane, author, &worktree, publisher, state)?;
                     }
                 }
                 Err(error) => {
@@ -265,7 +233,13 @@ impl SessionCompactions {
                 self.reported.remove(&lane);
                 self.cursors.insert(
                     lane,
-                    Cursor::new(session.identity.clone(), path, dialect, session.occupant),
+                    Cursor::new(
+                        session.identity.clone(),
+                        path,
+                        session.worktree.clone().into(),
+                        dialect,
+                        session.occupant,
+                    ),
                 );
             }
             Err(error) => self.report_once(lane, error, diagnostic),
@@ -285,11 +259,18 @@ impl SessionCompactions {
 }
 
 impl Cursor {
-    fn new(thread: String, path: PathBuf, dialect: listen::Dialect, author: CanonicalUuid) -> Self {
+    fn new(
+        thread: String,
+        path: PathBuf,
+        worktree: PathBuf,
+        dialect: listen::Dialect,
+        author: CanonicalUuid,
+    ) -> Self {
         Self {
             member: session_member(&thread),
             thread,
             path,
+            worktree,
             dialect,
             author,
             initialized: false,
@@ -379,6 +360,7 @@ fn bootstrap_codex(cursor: &mut Cursor, visible_limit: usize) -> io::Result<Vec<
     let mut recovery = Cursor::new(
         cursor.thread.clone(),
         cursor.path.clone(),
+        cursor.worktree.clone(),
         cursor.dialect,
         cursor.author,
     );
@@ -546,6 +528,7 @@ pub(super) struct HistoryScan {
 
 pub(super) struct HistoryRequest<'a> {
     pub(super) path: PathBuf,
+    pub(super) worktree: PathBuf,
     pub(super) dialect: listen::Dialect,
     pub(super) thread: String,
     pub(super) lane: CanonicalUuid,
@@ -560,6 +543,7 @@ pub(super) fn retained_messages(request: HistoryRequest<'_>) -> CommandResult<Hi
     let mut cursor = Cursor::new(
         request.thread,
         request.path,
+        request.worktree.clone(),
         request.dialect,
         request.author,
     );
@@ -577,7 +561,14 @@ pub(super) fn retained_messages(request: HistoryRequest<'_>) -> CommandResult<Hi
         prose: BTreeMap::new(),
     };
     for record in records {
-        publish(record, request.lane, request.author, &messages, &mut state)?;
+        publish(
+            record,
+            request.lane,
+            request.author,
+            &request.worktree,
+            &messages,
+            &mut state,
+        )?;
     }
     let collected = messages.inner.into_inner().map_err(|_| {
         store_fault(
@@ -1005,75 +996,6 @@ fn guard_matches(file: &mut File, cursor: &Cursor) -> io::Result<bool> {
         }
     }
     Ok(record_guard_hash_with_length(&bytes, length) == guard.hash)
-}
-
-fn record_guard_hash(bytes: &[u8]) -> u64 {
-    let witness = bytes.len().min(RECORD_GUARD_BYTES);
-    let hash = hash_bytes(0xcbf2_9ce4_8422_2325, &bytes.len().to_le_bytes());
-    let hash = hash_bytes(hash, &bytes[..witness]);
-    if bytes.len() > witness {
-        hash_bytes(hash, &bytes[bytes.len() - witness..])
-    } else {
-        hash
-    }
-}
-
-fn record_guard_hash_with_length(bytes: &[u8], length: usize) -> u64 {
-    let hash = hash_bytes(0xcbf2_9ce4_8422_2325, &length.to_le_bytes());
-    hash_bytes(hash, bytes)
-}
-
-fn hash_bytes(seed: u64, bytes: &[u8]) -> u64 {
-    bytes.iter().fold(seed, |hash, byte| {
-        (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
-    })
-}
-
-fn publish(
-    record: CompactionRecord,
-    lane: CanonicalUuid,
-    author: CanonicalUuid,
-    publisher: &impl AgentMessagePublisher,
-    state: &mut MessageState,
-) -> CommandResult<()> {
-    publish_agent_event(
-        publisher,
-        AgentEvent {
-            lane,
-            author,
-            source: None,
-            worktree: None,
-            ordinal: record.ordinal,
-            decoded: &record.decoded,
-            authored: Some(&record.authored),
-            observed: None,
-            observations: &state.observations,
-            unavailable_tool_terminals: &record.unavailable_tool_terminals,
-        },
-        &mut state.previews,
-        None,
-    )
-}
-
-/// Namespace preserved-session loci away from tape member ordinals while
-/// retaining a deterministic identity across resident and browser restarts.
-pub(super) fn session_member(thread: &str) -> u64 {
-    let mut value = 0_u64;
-    let mut digits = 0_u32;
-    for byte in thread.bytes().filter(u8::is_ascii_hexdigit) {
-        let nibble = match byte {
-            b'0'..=b'9' => u64::from(byte - b'0'),
-            b'a'..=b'f' => u64::from(byte - b'a' + 10),
-            b'A'..=b'F' => u64::from(byte - b'A' + 10),
-            _ => unreachable!("the filter admits only hexadecimal digits"),
-        };
-        value = (value << 4) | nibble;
-        digits += 1;
-        if digits == 15 {
-            break;
-        }
-    }
-    SESSION_MESSAGE_MEMBER_NAMESPACE | value
 }
 
 #[cfg(test)]

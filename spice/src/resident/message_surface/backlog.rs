@@ -156,6 +156,7 @@ struct DurableLane {
 #[derive(Debug)]
 struct DurableSession {
     path: std::path::PathBuf,
+    worktree: std::path::PathBuf,
     dialect: listen::Dialect,
     thread: String,
     source: session_compaction::HistoryCheckpoint,
@@ -190,6 +191,7 @@ impl DurableHistory {
                         let source = session_compaction::history_checkpoint(&path).ok()?;
                         Some(DurableSession {
                             path,
+                            worktree: session.worktree.clone().into(),
                             dialect,
                             thread: session.identity.clone(),
                             source,
@@ -250,6 +252,7 @@ impl canvas::stream::MessageHistoryProvider for DurableHistory {
             .map(|(session, end)| {
                 session_compaction::retained_messages(session_compaction::HistoryRequest {
                     path: session.path.clone(),
+                    worktree: session.worktree.clone(),
                     dialect: session.dialect,
                     thread: session.thread.clone(),
                     lane,
