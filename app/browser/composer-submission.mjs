@@ -174,7 +174,22 @@ export async function assertCompleteComposerSubmission({
   await primaryTextbox.focus();
   await page.keyboard.down("Control");
   await assertCommandPreview(send, true, "the preview is visible immediately before keyboard submit");
-  await page.keyboard.press("Enter");
+  const repeatedSinglePrevented = await primaryTextbox.evaluate((textarea) => {
+    const repeated = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      key: "Enter",
+      repeat: true,
+    });
+    textarea.dispatchEvent(repeated);
+    return repeated.defaultPrevented;
+  });
+  assert.equal(
+    repeatedSinglePrevented,
+    true,
+    "a repeated ordinary keyboard submission is consumed without suppressing its single target",
+  );
   await page.keyboard.up("Control");
   await quotedComposer.waitFor({ state: "detached", timeout: 10_000 });
   const primaryTextarea = lane.locator("textarea[data-primary-composer-target-id]");
