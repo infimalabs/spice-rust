@@ -188,6 +188,11 @@ export async function assertPerOrgWatchbands(
     "unacknowledged secondary prose is absent from the conversation",
   );
   await secondarySurface.getByRole("tab", { name: /^Tasks/ }).click();
+  assert.equal(
+    await secondarySurface.locator(".organization-task-eyebrow").innerText(),
+    "Team work",
+    "the empty Tasks workspace uses the Team presentation name",
+  );
   const queuedDirection = secondarySurface.locator(
     `.organization-direction-row[data-agent-lane="${secondary.lane}"]`,
   );
@@ -390,6 +395,7 @@ export async function assertPerOrgWatchbands(
       });
     return {
       clientWidth: workspace.clientWidth,
+      eyebrow: workspace.querySelector(".organization-task-eyebrow").textContent,
       scrollWidth: workspace.scrollWidth,
       left: bounds.left,
       right: bounds.right,
@@ -401,6 +407,7 @@ export async function assertPerOrgWatchbands(
     };
   });
   const assertTaskGeometry = (geometry, viewport) => {
+    assert.equal(geometry.eyebrow, "Team work", `${viewport} Tasks uses the Team presentation name`);
     assert.ok(
       geometry.clientWidth > 0 && geometry.scrollWidth <= geometry.clientWidth,
       `${viewport} Tasks workspace has visible width without horizontal overflow: ${
