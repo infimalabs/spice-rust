@@ -64,7 +64,7 @@ pub(super) fn claim_free(
         projects,
     )
     .expect("releasing a claim preserves a valid task entry");
-    let next = next_action(&snapshot, &post, false);
+    let next = next_action(&snapshot, &post);
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
     let freed = match write.fact(
@@ -557,7 +557,7 @@ fn projected_done_next_action(
         projects,
     )
     .expect("an admitted transition preserves a valid task entry");
-    next_action(snapshot, &post, false)
+    next_action(snapshot, &post)
 }
 
 /// Resolve the one entry this actor may settle, and the transition it completes.
@@ -787,7 +787,7 @@ fn commit_review(
         projects,
     )
     .expect("an admitted review preserves a valid task entry");
-    let next = next_action(&snapshot, &post, false);
+    let next = next_action(&snapshot, &post);
     if let Err(outcome) = record_followups(
         &mut write,
         command,

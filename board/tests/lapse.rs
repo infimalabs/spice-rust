@@ -415,8 +415,6 @@ fn seat_residency(write: &mut JournalWrite, fact: journal::PendingFact) {
         subscriptions: vec![wire::LineageSubscription {
             lineage_id: uuid(20),
             policy: wire::intent::LineageLife::Drain,
-            manual_projects: Vec::new(),
-            auto_projects: Vec::new(),
         }],
         renewals: Vec::new(),
     });

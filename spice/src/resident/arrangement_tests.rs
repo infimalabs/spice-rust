@@ -167,7 +167,7 @@ impl Arranged {
             .collect()
     }
 
-    /// Every lineage the durable head still holds a task subscription for.
+    /// Every lineage the durable head still holds an allocation lifetime for.
     fn durable_subscriptions(&self) -> Vec<CanonicalUuid> {
         self.head()
             .subscriptions
@@ -473,7 +473,7 @@ fn one_arrangement_reorders_orgs_and_joins_lanes_without_losing_composer_identit
             .map(|subscription| subscription.lineage_id)
             .collect::<Vec<_>>(),
         vec![first_org, second_org],
-        "both surviving organizations keep their task subscription",
+        "both surviving organizations keep their allocation lifetime",
     );
     assert_eq!(
         fixture
@@ -539,7 +539,7 @@ fn emptying_a_lineage_retires_the_task_subscription_it_left_behind() {
     assert_eq!(
         fixture.durable_subscriptions(),
         vec![second_org],
-        "an emptied organization keeps no durable task subscription",
+        "an emptied organization keeps no durable allocation lifetime",
     );
 
     fixture.retire();

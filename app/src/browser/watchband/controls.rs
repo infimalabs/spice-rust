@@ -22,14 +22,10 @@ impl LineageLife {
     }
 
     const fn help(self) -> &'static str {
-        match self.wire().scope() {
-            wire::intent::TaskSubscriptionScope::Manual => "Use operator-selected work only",
-            wire::intent::TaskSubscriptionScope::ManualAndAutoProject => {
-                "Auto-subscribe to projects this organization creates or claims"
-            }
-            wire::intent::TaskSubscriptionScope::AllAssignable => {
-                "Boundary dissolved: see all assignable work"
-            }
+        match self {
+            Self::Steer => "Operator direction and explicit task capture only",
+            Self::Drive => "Automatically share tasks created for this team",
+            Self::Drain => "Boundary dissolved: see all assignable work",
         }
     }
 
@@ -658,7 +654,7 @@ pub(super) fn render_lineage_controls(
                     max="2"
                     step="1"
                     value={selected.index().to_string()}
-                    aria-label={format!("Task subscription policy: {}", selected.help())}
+                    aria-label={format!("Task allocation policy: {}", selected.help())}
                     title={selected.help()}
                     disabled={!can_configure || control.pending_life.is_some()}
                     oninput={preview_life}

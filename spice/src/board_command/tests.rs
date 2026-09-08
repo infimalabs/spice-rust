@@ -172,6 +172,7 @@ fn seed_creation_stream(bus: &Bus, lane: CanonicalUuid, stream: &str) -> body::T
             source,
             next,
         },
+        creator_lineage: None,
     }
 }
 
@@ -185,10 +186,16 @@ fn authorize_lane_creation(
         .expect("fixture group fits u32");
     declare_session(bus, epoch, seat, identity, group);
     let mut context = seed_creation_transcript(bus, seat.lane);
-    let body::TaskCreationContext::Transcript { session, .. } = &mut context else {
+    let body::TaskCreationContext::Transcript {
+        session,
+        creator_lineage,
+        ..
+    } = &mut context
+    else {
         unreachable!("fixture transcript helper returns transcript authority")
     };
     *session = identity.to_string();
+    *creator_lineage = Some(seat.lane);
     context
 }
 

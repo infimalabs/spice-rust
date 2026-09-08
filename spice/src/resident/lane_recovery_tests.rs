@@ -697,14 +697,12 @@ fn watchband_drain_does_not_end_a_drive_lanes_import_life() {
         subscriptions: vec![wire::LineageSubscription {
             lineage_id: row.lineage_id,
             policy: wire::intent::LineageLife::Drain,
-            manual_projects: Vec::new(),
-            auto_projects: Vec::new(),
         }],
         renewals: Vec::new(),
     };
 
     admit_row(&paths, &Seats::new(), &residency, &row, &successor)
-        .expect("task-subscription Drain leaves the drive lane importable");
+        .expect("task-allocation Drain leaves the drive lane importable");
     finish(fixture);
 }
 

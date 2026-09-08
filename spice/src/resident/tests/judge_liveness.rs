@@ -702,8 +702,6 @@ fn seed_lane(
     head.subscriptions.push(wire::LineageSubscription {
         lineage_id: lane,
         policy: wire::intent::LineageLife::Drive,
-        manual_projects: Vec::new(),
-        auto_projects: Vec::new(),
     });
     head.lanes.sort_by_key(|row| row.lane);
     head.subscriptions.sort_by_key(|row| row.lineage_id);

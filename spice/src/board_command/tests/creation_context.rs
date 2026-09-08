@@ -131,6 +131,11 @@ fn lane_creation_guard_refuses_when_the_accounted_source_moves_before_commit() {
     .expect("fixture snapshot validates");
     let capture = task_creation_capture(&bus, &command, &snapshot)
         .expect("exact lane creation context admits");
+    assert_eq!(
+        capture.creator_lineage(),
+        Some(seats[0].lane),
+        "the same guarded residency observation captures creator-team ownership",
+    );
     let body::TaskCreationContext::Transcript { boundary, .. } = expected else {
         unreachable!("lane authorization returns transcript context")
     };
@@ -194,5 +199,50 @@ fn lane_creation_guard_refuses_when_the_accounted_source_moves_before_commit() {
         panic!("moved creation source must refuse, found {outcome:?}");
     };
     assert_eq!(refusal.reason(), "task::creation-context-source-moved");
+    clean(&root, bus);
+}
+
+#[test]
+fn lane_creation_guard_refuses_when_creator_team_moves_before_commit() {
+    let (root, bus, epoch, seats) = fixture("creation-context-lineage-race", 1);
+    authorize_lane_creation(&bus, epoch, &seats[0]);
+    let lane = seats[0].lane;
+    let command = add_command(epoch, lane);
+    let snapshot = validated_snapshot(
+        &bus,
+        Actor::Lane(lane),
+        &guard_projects(),
+        &board::NextConfig::default(),
+    )
+    .expect("fixture snapshot validates");
+    let capture = task_creation_capture(&bus, &command, &snapshot)
+        .expect("exact lane creation context admits");
+    assert_eq!(capture.creator_lineage(), Some(lane));
+
+    super::subscription::move_fixture_lane_to_lineage(&bus, epoch, &seats[0], uuid(9_999));
+
+    let mut guarded = JournalWrite::new(
+        Actor::Lane(lane),
+        "fixture:creation-lineage-guard"
+            .parse()
+            .expect("fixture origin"),
+        Instant::new(jiff::Timestamp::now()).expect("current fixture instant"),
+        Producer::CommandDoor,
+    );
+    capture.guard(&mut guarded);
+    guarded
+        .fact(
+            body::TaskNoted {
+                task: stamp("creation-lineage-guard"),
+                note: "must never commit".to_owned(),
+            },
+            FactCause::Root,
+        )
+        .expect("guarded proposal builds");
+    let outcome = bus.commit(guarded).expect("guarded write reaches writer");
+    let CommitOutcome::Refused(refusal) = outcome else {
+        panic!("moved creator team must refuse, found {outcome:?}");
+    };
+    assert_eq!(refusal.reason(), "task::creation-context-residency-moved");
     clean(&root, bus);
 }

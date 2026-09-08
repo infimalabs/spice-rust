@@ -1007,7 +1007,6 @@ async fn send_lineage_configuration_as(
             lineage_id: lineage,
             member,
             life,
-            manual_projects: None,
         },
     )
     .await

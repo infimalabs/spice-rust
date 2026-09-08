@@ -65,8 +65,6 @@ pub(super) fn fixture(name: &str, lane_count: usize) -> (PathBuf, Bus, Canonical
         .map(|lane| wire::LineageSubscription {
             lineage_id: lane.lineage_id,
             policy: wire::intent::LineageLife::Drain,
-            manual_projects: Vec::new(),
-            auto_projects: Vec::new(),
         })
         .collect::<Vec<_>>();
     let origin = format!("resident:{epoch}")

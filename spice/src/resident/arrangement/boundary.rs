@@ -238,7 +238,6 @@ fn configure_member(
         lineage_id: lineage,
         member: Some(member),
         life: None,
-        manual_projects: None,
     };
     let command = Command {
         v: wire::WireVersion::CURRENT,
@@ -254,13 +253,10 @@ fn configure_member(
         epoch: fixture.epoch,
     })
     .expect("operator lineage configuration admits");
-    let projects =
-        board::ProjectPolicy::new(Vec::new(), Vec::new(), 2, 4).expect("fixture project policy");
     let outcome = lane_surface::configure(
         &fixture.bus,
         fixture.epoch,
         &fixture.seats,
-        &projects,
         &command,
         &request,
     );

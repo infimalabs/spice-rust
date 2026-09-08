@@ -166,13 +166,13 @@ fn available_subscription<'a>(
     let subscription = subscriptions.next().ok_or_else(|| {
         store_fault(
             "lifecycle::available-work-subscription-missing",
-            "the vacant lane lineage has no durable task subscription",
+            "the vacant lane lineage has no durable task-allocation lifetime",
         )
     })?;
     if subscriptions.next().is_some() {
         return Err(store_fault(
             "lifecycle::available-work-subscription-ambiguous",
-            "the vacant lane lineage has more than one durable task subscription",
+            "the vacant lane lineage has more than one durable task-allocation lifetime",
         ));
     }
     if subscription.policy == wire::intent::LineageLife::Steer {

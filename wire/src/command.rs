@@ -120,7 +120,7 @@ pub enum CommandKind {
     LaneState,
     /// Request or clear agent succession for one exact lane member.
     LaneRenewal,
-    /// Change the shared task-subscription life of one Canvas lineage.
+    /// Change the shared task-allocation lifetime of one Canvas lineage.
     LineageConfigure,
     /// Rearrange the order of every Canvas lineage and the lanes each holds.
     LineageArrange,

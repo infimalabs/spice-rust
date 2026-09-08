@@ -37,6 +37,7 @@ mod renewal_slot_migration;
 mod schema;
 mod steering_index;
 mod steering_verification;
+mod task_creator_scope_migration;
 mod topology_revision_migration;
 mod transcript;
 mod vocabulary_migration;
@@ -1172,8 +1173,6 @@ fn residency_head() -> ResidencyHead {
         subscriptions: vec![wire::LineageSubscription {
             lineage_id: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
             policy: wire::intent::LineageLife::Drive,
-            manual_projects: Vec::new(),
-            auto_projects: Vec::new(),
         }],
         renewals: Vec::new(),
     }

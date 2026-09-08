@@ -87,7 +87,7 @@ fn prepare_correction(
     })?;
     let publication = CorrectionPublication {
         notice: task_edit_notice(entry, &statement),
-        next: next_action(snapshot, &post, false),
+        next: next_action(snapshot, &post),
         at,
         requirement_change,
         taste_review: taste_review.filter(|review| was_required || review.required()),

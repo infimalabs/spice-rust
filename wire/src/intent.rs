@@ -195,16 +195,16 @@ pub struct LaneSeat {
     pub resume: Option<String>,
 }
 
-/// The closed task-subscription policy selected for a Canvas lineage.
+/// The closed task-allocation lifetime selected for a Canvas lineage.
 ///
-/// This is task-subscription policy. It is deliberately distinct from
+/// This is task-allocation policy. It is deliberately distinct from
 /// [`LaneAction::Drain`], which tears down an occupant process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LineageLife {
     /// The operator steers task selection explicitly.
     Steer,
-    /// The lineage follows work it creates or claims.
+    /// The lineage follows work created for the same immutable creator team.
     Drive,
     /// The lineage can draw from all assignable work.
     Drain,
@@ -221,17 +221,24 @@ impl LineageLife {
         }
     }
 
-    /// Task-selection scope this policy authorizes for the lineage.
+    /// Whether this policy admits one task's immutable creator lineage.
     #[must_use]
-    pub const fn scope(self) -> TaskSubscriptionScope {
+    pub fn admits_creator_lineage(
+        self,
+        creator: Option<CanonicalUuid>,
+        lineage: CanonicalUuid,
+    ) -> bool {
         match self {
-            Self::Steer => TaskSubscriptionScope::Manual,
-            Self::Drive => TaskSubscriptionScope::ManualAndAutoProject,
-            Self::Drain => TaskSubscriptionScope::AllAssignable,
+            Self::Steer => false,
+            Self::Drive => match creator {
+                Some(creator) => creator == lineage,
+                None => false,
+            },
+            Self::Drain => true,
         }
     }
 
-    /// Parse one stable task-subscription policy spelling.
+    /// Parse one stable task-allocation lifetime spelling.
     #[must_use]
     pub fn from_wire(value: &str) -> Option<Self> {
         match value {
@@ -243,18 +250,7 @@ impl LineageLife {
     }
 }
 
-/// Closed task-selection scope represented by one lineage subscription policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TaskSubscriptionScope {
-    /// Use only the task filters the operator stored explicitly.
-    Manual,
-    /// Use stored filters and automatically follow projects the lineage creates or claims.
-    ManualAndAutoProject,
-    /// Dissolve the lineage boundary and admit every assignable task.
-    AllAssignable,
-}
-
-/// Change the task-subscription policy shared by one Canvas lineage.
+/// Change the task-allocation lifetime shared by one Canvas lineage.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LineageConfigure {
@@ -273,20 +269,13 @@ pub struct LineageConfigure {
         deserialize_with = "crate::optional::present"
     )]
     pub member: Option<CanonicalUuid>,
-    /// Replacement task-subscription policy, or absent to preserve it.
+    /// Replacement task-allocation lifetime, or absent to preserve it.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
     pub life: Option<LineageLife>,
-    /// Replacement operator-pinned project set, or absent to preserve it.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub manual_projects: Option<Vec<String>>,
 }
 
 /// One Canvas lineage and the seated lanes it holds, in operator order.
@@ -839,7 +828,7 @@ pub struct LaneAnswer {
     pub topology_revision: u64,
     /// Current lane rows in stable lane order.
     pub lanes: Vec<LaneAnswerRow>,
-    /// One authoritative task-subscription policy per returned lineage.
+    /// One authoritative task-allocation lifetime per returned lineage.
     pub subscriptions: Vec<crate::LineageSubscription>,
     /// Current capability-free agent renewal state in lineage/member order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

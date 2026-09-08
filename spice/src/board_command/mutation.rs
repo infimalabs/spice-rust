@@ -214,8 +214,9 @@ where
         None,
         projects,
     )
-    .expect("prepared task already passed entry validation");
-    let next = next_action(snapshot, &post, true);
+    .expect("prepared task already passed entry validation")
+    .with_creator_lineage(prepared.creation.creator_lineage());
+    let next = next_action(snapshot, &post);
     let mut write = JournalWrite::new(
         command.actor().clone(),
         prepared.origin,
@@ -417,7 +418,7 @@ pub(super) fn task_note(
             "read board and name one current task handle",
         );
     };
-    let next = next_action(&snapshot, entry, false);
+    let next = next_action(&snapshot, entry);
     let at = match current_instant() {
         Ok(at) => at,
         Err(outcome) => return outcome,
@@ -583,7 +584,7 @@ fn promote_oops(
             );
         }
     };
-    let next = next_action(&snapshot, &post, false);
+    let next = next_action(&snapshot, &post);
     let at = match current_instant() {
         Ok(at) => at,
         Err(outcome) => return outcome,
@@ -730,7 +731,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
                 );
             }
         };
-        next_action(&snapshot, &post, false)
+        next_action(&snapshot, &post)
     } else {
         None
     };
@@ -836,7 +837,7 @@ pub(super) fn task_delete(
         Err(outcome) => return outcome,
     };
     let post = projected_deleted_entry(entry, at, claimed.is_some(), projects);
-    let next = next_action(&snapshot, &post, false);
+    let next = next_action(&snapshot, &post);
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
     let deleted = match write.fact(
@@ -963,7 +964,7 @@ pub(super) fn task_depends_with(
             );
         }
     };
-    let next = next_action(&snapshot, &post, false);
+    let next = next_action(&snapshot, &post);
     commit_dependency_edit(bus, command, depends, entry, statement, next, at)
 }
 

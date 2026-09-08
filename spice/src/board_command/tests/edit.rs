@@ -822,35 +822,17 @@ fn a_correction_cannot_move_a_task_onto_a_hidden_route() {
     assert!(edit_facts(&bus, &task).is_empty());
 }
 
-/// Moving a task out of the editor's own subscription is a correction, and
-/// the editor loses the row for work by making it.
-///
-/// This is the point of the leaf: a task filed under the wrong project is
-/// unreachable to every lane that project does not admit, so the lane that
-/// can still reach it has to be able to send it where it belongs. The
-/// predecessor moves the project with no subscription check of its own, so
-/// the move succeeding is the behavior being matched here.
-///
-/// The cost is asserted rather than implied, and so is its boundary. What
-/// the editor loses is allocation: the row leaves its selectable set and
-/// the allocator has nothing left to hand it. What the editor keeps is
-/// listing, because the read scope is stem-based rather than subscription
-/// based. Both are pinned so neither is mistaken for the other.
+/// Project correction does not move immutable creator-team allocation scope.
 #[test]
-fn a_corrected_project_moves_the_row_out_of_the_editors_own_subscription() {
+fn a_corrected_project_keeps_creator_team_allocation() {
     let (_root, bus, epoch, seats) = fixture("task-edit-project-scope", 1);
     let lane = Actor::Lane(seats[0].lane);
-    subscription::configure_subscription(
-        &bus,
-        epoch,
-        &seats[0],
-        wire::intent::LineageLife::Steer,
-        &["board.test"],
-    );
+    authorize_lane_creation(&bus, epoch, &seats[0]);
+    subscription::configure_subscription(&bus, epoch, &seats[0], wire::intent::LineageLife::Drive);
     let task = add(
         &bus,
         epoch,
-        Actor::Operator,
+        lane.clone(),
         "EDITED-1kKg6RB5",
         "Filed under the wrong project",
         Some("todo"),
@@ -860,7 +842,7 @@ fn a_corrected_project_moves_the_row_out_of_the_editors_own_subscription() {
         [task.to_string()]
             .into_iter()
             .collect::<std::collections::BTreeSet<_>>(),
-        "the lane has to be able to see the row before it moves it",
+        "the creating team owns the row before its project changes",
     );
 
     assert_eq!(
@@ -886,20 +868,19 @@ fn a_corrected_project_moves_the_row_out_of_the_editors_own_subscription() {
         "rim.elsewhere",
         "the move is a correction, not a refusal",
     );
-    assert!(
-        subscription::selectable_handles(&moved, &lane).is_empty(),
-        "the editor loses the row it just moved out of its own subscription",
+    assert_eq!(
+        subscription::selectable_handles(&moved, &lane),
+        [moved_handle.to_string()]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>(),
+        "project text does not change creator-team scope",
     );
     assert_eq!(
-        allocated(&bus, epoch, &lane),
-        None,
-        "and the allocator has nothing left to hand this lane",
+        allocated(&bus, epoch, &lane).map(|(task, _)| task),
+        Some(moved_handle.to_string()),
+        "the same Drive team can still receive the corrected task",
     );
 
-    // The other half of the cost, so the loss is not read as wider than it
-    // is. Listing is stem scoped rather than subscription scoped, so the
-    // editor can still read the row it can no longer be handed -- which is
-    // what makes the move auditable by the lane that made it.
     let listed = task_list(
         &moved,
         &TaskListOptions {
@@ -911,7 +892,7 @@ fn a_corrected_project_moves_the_row_out_of_the_editors_own_subscription() {
     );
     assert!(
         listed.contains(&format!("{moved_handle} [todo] rim.elsewhere")),
-        "the row the editor can no longer be handed stays readable to it: {listed}",
+        "project-independent allocation does not narrow ordinary public reading: {listed}",
     );
 }
 

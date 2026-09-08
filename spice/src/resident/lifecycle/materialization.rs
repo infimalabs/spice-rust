@@ -18,21 +18,12 @@ pub(super) struct Projection {
     fact_instants: BTreeMap<Seq, Instant>,
     ready_at: BTreeMap<TaskStamp, Instant>,
     dependents: BTreeMap<TaskStamp, BTreeSet<TaskStamp>>,
-    subscriptions: Subscriptions,
-}
-
-#[derive(Default)]
-#[cfg_attr(test, derive(Clone, Debug, PartialEq, Eq))]
-struct Subscriptions {
-    lanes_by_task: BTreeMap<TaskStamp, BTreeSet<CanonicalUuid>>,
-    project_by_task: BTreeMap<TaskStamp, Option<String>>,
-    projects_by_lane: BTreeMap<CanonicalUuid, BTreeMap<String, usize>>,
+    creator_lineages: BTreeMap<TaskStamp, Option<CanonicalUuid>>,
 }
 
 struct EntryUpdate {
     heads: TaskHeads,
     entry: Entry,
-    project: Option<String>,
 }
 
 struct AdvancePlan {
@@ -40,7 +31,7 @@ struct AdvancePlan {
     operator_directives: Vec<CanonicalUuid>,
     fact_instants: BTreeMap<Seq, Instant>,
     entries: BTreeMap<TaskStamp, EntryUpdate>,
-    subscriptions: Vec<(TaskStamp, CanonicalUuid)>,
+    creator_lineages: BTreeMap<TaskStamp, Option<CanonicalUuid>>,
     ready_at: BTreeMap<TaskStamp, Instant>,
 }
 
@@ -57,7 +48,7 @@ impl Projection {
             fact_instants: BTreeMap::new(),
             ready_at: BTreeMap::new(),
             dependents: BTreeMap::new(),
-            subscriptions: Subscriptions::default(),
+            creator_lineages: BTreeMap::new(),
         }
     }
 
@@ -150,8 +141,8 @@ impl Projection {
         delta: &[&wire::Envelope<wire::AnyFact>],
     ) -> CommandResult<AdvancePlan> {
         let changed = self.changed_tasks(snapshot, delta)?;
-        let entries = self.entry_updates(snapshot, projects, &changed)?;
-        let subscriptions = self.subscription_events(delta, &entries)?;
+        let creator_lineages = creator_lineage_events(delta)?;
+        let entries = self.entry_updates(snapshot, projects, &changed, &creator_lineages)?;
         let affected = self.affected_tasks(&changed, &entries);
         let fact_instants = delta
             .iter()
@@ -179,7 +170,7 @@ impl Projection {
             operator_directives,
             fact_instants,
             entries,
-            subscriptions,
+            creator_lineages,
             ready_at,
         })
     }
@@ -222,6 +213,7 @@ impl Projection {
         snapshot: &bus::TaskSnapshot,
         projects: &board::ProjectPolicy,
         changed: &BTreeSet<TaskStamp>,
+        creator_lineages: &BTreeMap<TaskStamp, Option<CanonicalUuid>>,
     ) -> CommandResult<BTreeMap<TaskStamp, EntryUpdate>> {
         let mut entries = BTreeMap::new();
         for task in changed {
@@ -236,41 +228,15 @@ impl Projection {
                         &format!("changed task {task} has no current storage heads"),
                     )
                 })?;
-            let entry = entry(&heads, projects)?;
-            let project = (!entry.project().visibility().is_hidden())
-                .then(|| entry.project().as_str().to_owned());
-            entries.insert(
-                task.clone(),
-                EntryUpdate {
-                    heads,
-                    entry,
-                    project,
-                },
-            );
+            let creator_lineage = creator_lineages
+                .get(task)
+                .or_else(|| self.creator_lineages.get(task))
+                .copied()
+                .flatten();
+            let entry = entry(&heads, projects)?.with_creator_lineage(creator_lineage);
+            entries.insert(task.clone(), EntryUpdate { heads, entry });
         }
         Ok(entries)
-    }
-
-    fn subscription_events(
-        &self,
-        delta: &[&wire::Envelope<wire::AnyFact>],
-        entries: &BTreeMap<TaskStamp, EntryUpdate>,
-    ) -> CommandResult<Vec<(TaskStamp, CanonicalUuid)>> {
-        let mut subscriptions = Vec::new();
-        for envelope in delta {
-            let event = subscription_event(envelope);
-            let Some((task, lane)) = event else {
-                continue;
-            };
-            if self.projected_entry(entries, &task).is_none() {
-                return Err(store_fault(
-                    "lifecycle::subscription-history-invalid",
-                    &format!("subscription history task {task} has no current heads"),
-                ));
-            }
-            subscriptions.push((task, lane));
-        }
-        Ok(subscriptions)
     }
 
     fn affected_tasks(
@@ -303,22 +269,13 @@ impl Projection {
         affected
     }
 
-    pub(super) fn project_residency(
-        &self,
-        residency: &wire::ResidencyHead,
-    ) -> Result<wire::ResidencyHead, String> {
-        self.subscriptions.project(residency)
-    }
-
     fn apply(&mut self, plan: AdvancePlan) {
         self.operator_directives.extend(plan.operator_directives);
         self.fact_instants.extend(plan.fact_instants);
         for (task, update) in plan.entries {
             self.apply_entry(task, update);
         }
-        for (task, lane) in plan.subscriptions {
-            self.subscriptions.apply(task, lane);
-        }
+        self.creator_lineages.extend(plan.creator_lineages);
         self.ready_at.extend(plan.ready_at);
         self.cursor = Some(plan.cursor);
     }
@@ -353,7 +310,6 @@ impl Projection {
                 .or_default()
                 .insert(task.clone());
         }
-        self.subscriptions.update_project(&task, update.project);
         self.heads.insert(task, update.heads);
     }
 
@@ -485,111 +441,30 @@ fn changed_task(
     )
 }
 
-fn subscription_event(
-    envelope: &wire::Envelope<wire::AnyFact>,
-) -> Option<(TaskStamp, CanonicalUuid)> {
-    match envelope.fact.kind() {
-        wire::FactKind::TaskAdded => match envelope.actor {
-            Actor::Lane(lane) => envelope
-                .fact
-                .read::<wire::body::TaskAdded>()
-                .map(|body| (body.task, lane)),
-            Actor::Operator | Actor::Spice => None,
-        },
-        wire::FactKind::ClaimWon => envelope
-            .fact
-            .read::<wire::body::ClaimWon>()
-            .map(|body| (body.task, body.lane)),
-        _ => None,
-    }
-}
-
-impl Subscriptions {
-    fn update_project(&mut self, task: &TaskStamp, project: Option<String>) {
-        let previous = self.project_by_task.insert(task.clone(), project.clone());
-        if previous.as_ref() == Some(&project) {
-            return;
-        }
-        let lanes = self.lanes_by_task.get(task).cloned().unwrap_or_default();
-        for lane in lanes {
-            if let Some(Some(previous)) = &previous {
-                self.remove(lane, previous);
-            }
-            if let Some(project) = &project {
-                self.add(lane, project);
-            }
-        }
-    }
-
-    fn apply(&mut self, task: TaskStamp, lane: CanonicalUuid) {
-        if self
-            .lanes_by_task
-            .entry(task.clone())
-            .or_default()
-            .insert(lane)
-            && let Some(Some(project)) = self.project_by_task.get(&task)
-        {
-            let project = project.clone();
-            self.add(lane, &project);
-        }
-    }
-
-    fn project(&self, residency: &wire::ResidencyHead) -> Result<wire::ResidencyHead, String> {
-        let mut projected = residency.clone();
-        for subscription in &mut projected.subscriptions {
-            subscription.auto_projects.clear();
-        }
-        for (lane, projects) in &self.projects_by_lane {
-            let Some(lineage) = projected
-                .lanes
-                .iter()
-                .find(|seat| seat.lane == *lane)
-                .map(|seat| seat.lineage_id)
-            else {
-                continue;
-            };
-            let mut subscriptions = projected
-                .subscriptions
-                .iter_mut()
-                .filter(|subscription| subscription.lineage_id == lineage);
-            let subscription = subscriptions.next().ok_or_else(|| {
-                format!("lineage {lineage} has no durable task-subscription policy")
-            })?;
-            if subscriptions.next().is_some() {
-                return Err(format!(
-                    "lineage {lineage} has more than one durable task-subscription policy"
+fn creator_lineage_events(
+    delta: &[&wire::Envelope<wire::AnyFact>],
+) -> CommandResult<BTreeMap<TaskStamp, Option<CanonicalUuid>>> {
+    let mut creators = BTreeMap::new();
+    for envelope in delta {
+        let Some(added) = envelope.fact.read::<wire::body::TaskAdded>() else {
+            continue;
+        };
+        let creator = match envelope.actor {
+            Actor::Lane(_) => added.creation.creator_lineage(),
+            Actor::Operator | Actor::Spice if added.creation.creator_lineage().is_none() => None,
+            Actor::Operator | Actor::Spice => {
+                return Err(store_fault(
+                    "lifecycle::task-creator-lineage-invalid",
+                    "a non-lane task creation names a creator lineage",
                 ));
             }
-            for (project, count) in projects {
-                if *count > 0 {
-                    subscription.learn_project(project);
-                }
-            }
-        }
-        Ok(projected)
-    }
-
-    fn add(&mut self, lane: CanonicalUuid, project: &str) {
-        *self
-            .projects_by_lane
-            .entry(lane)
-            .or_default()
-            .entry(project.to_owned())
-            .or_default() += 1;
-    }
-
-    fn remove(&mut self, lane: CanonicalUuid, project: &str) {
-        let Some(projects) = self.projects_by_lane.get_mut(&lane) else {
-            return;
         };
-        if let Some(count) = projects.get_mut(project) {
-            *count = count.saturating_sub(1);
-            if *count == 0 {
-                projects.remove(project);
-            }
-        }
-        if projects.is_empty() {
-            self.projects_by_lane.remove(&lane);
+        if creators.insert(added.task.clone(), creator).is_some() {
+            return Err(store_fault(
+                "lifecycle::task-creator-duplicate",
+                &format!("task {} has more than one creation fact", added.task),
+            ));
         }
     }
+    Ok(creators)
 }

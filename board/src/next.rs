@@ -37,74 +37,6 @@ impl<'a> Selection<'a> {
     }
 }
 
-/// Project server-managed create/claim subscriptions from durable history.
-///
-/// The residency head owns the policy and manual pins. Auto projects remain
-/// facts: task creation and claim transactions already record the lane and
-/// task atomically, so replaying those facts avoids a second mutable authority
-/// while surviving restart exactly.
-pub fn project_subscription_history<'a>(
-    residency: &mut wire::ResidencyHead,
-    entries: &[Entry],
-    facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
-) -> Result<(), String> {
-    for subscription in &mut residency.subscriptions {
-        subscription.auto_projects.clear();
-    }
-    for envelope in facts {
-        let lane = match envelope.fact.kind() {
-            wire::FactKind::TaskAdded => match &envelope.actor {
-                Actor::Lane(lane) => *lane,
-                Actor::Operator | Actor::Spice => continue,
-            },
-            wire::FactKind::ClaimWon => envelope
-                .fact
-                .body()
-                .get("lane")
-                .and_then(|value| value.as_str())
-                .ok_or_else(|| "claim::won fact has no lane".to_owned())?
-                .parse()
-                .map_err(|error| format!("claim::won fact lane is invalid: {error}"))?,
-            _ => continue,
-        };
-        let task = envelope
-            .fact
-            .body()
-            .get("task")
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| format!("{} fact has no task", envelope.fact.kind()))?;
-        let entry = entries
-            .iter()
-            .find(|entry| entry.born().as_str() == task)
-            .ok_or_else(|| format!("subscription history task {task} has no current heads"))?;
-        if entry.project().visibility().is_hidden() {
-            continue;
-        }
-        let Some(lineage) = residency
-            .lanes
-            .iter()
-            .find(|seat| seat.lane == lane)
-            .map(|seat| seat.lineage_id)
-        else {
-            continue;
-        };
-        let mut subscriptions = residency
-            .subscriptions
-            .iter_mut()
-            .filter(|subscription| subscription.lineage_id == lineage);
-        let subscription = subscriptions
-            .next()
-            .ok_or_else(|| format!("lineage {lineage} has no durable task-subscription policy"))?;
-        if subscriptions.next().is_some() {
-            return Err(format!(
-                "lineage {lineage} has more than one durable task-subscription policy"
-            ));
-        }
-        subscription.learn_project(entry.project().as_str());
-    }
-    Ok(())
-}
-
 /// Select the highest-ranked subscribed and eligible task for `actor`.
 ///
 /// This is the only allocation path in `board`. It derives completed
@@ -341,28 +273,27 @@ fn unsettled_public(entry: &Entry) -> bool {
 
 /// Whether this lane may be *handed* the entry.
 ///
-/// Allocation is subscription scoped: a lane is offered only work its
-/// subscription admits, because the subscription is what declares that lane
-/// responsible for a project.
+/// Allocation is lifetime scoped: Steer admits none, Drive admits work created
+/// for the same immutable lineage, and Drain admits every otherwise workable
+/// public task.
 ///
-/// Reading is deliberately wider, and stem scoped rather than subscription
-/// scoped -- see `actor_route_matches`, which decides what `spice task list`
-/// renders. The two scopes must not be unified. A task can be filed, or
-/// corrected, into a project outside every subscription that could act on it,
-/// and only a lane that can *see* a row can move it back; if reading followed
-/// allocation, such a row would be unreachable by construction and the board
-/// would gain an absorbing state, wrong once and wrong forever.
+/// Reading is deliberately wider, and stem scoped rather than lifetime scoped
+/// -- see `actor_route_matches`, which decides what `spice task list` renders.
+/// The two scopes must not be unified. Only a lane that can *see* a row can
+/// correct it; if reading followed Steer's empty automatic allocation, such a
+/// row would be unreachable by construction and the board would gain an
+/// absorbing state, wrong once and wrong forever.
 ///
-/// The invariant is therefore directional rather than an equality. Widening
-/// reading or narrowing allocation both preserve it; narrowing reading to the
-/// subscription, or widening allocation to the public stems, breaks it.
+/// Reading and allocation remain intentionally independent. Project stems can
+/// widen reading without becoming lifetime predicates again.
 fn selectable(
     entry: &Entry,
     actor: &Actor,
     subscription: &LineageSubscription,
     completed: &BTreeSet<TaskStamp>,
 ) -> bool {
-    subscription.admits_project(entry.project().as_str()) && eligible(entry, actor, completed)
+    subscription.admits_creator_lineage(entry.creator_lineage())
+        && eligible(entry, actor, completed)
 }
 
 fn eligible(entry: &Entry, actor: &Actor, completed: &BTreeSet<TaskStamp>) -> bool {

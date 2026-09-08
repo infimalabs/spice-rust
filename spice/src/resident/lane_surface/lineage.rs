@@ -1,7 +1,7 @@
 //! The two writes that address Canvas lineages rather than the seats in them.
 //!
-//! [`configure`] names one lineage and changes it: its task-subscription
-//! policy, and at most one member's home. [`arrange`] names no lineage in
+//! [`configure`] names one lineage and changes it: its task-allocation
+//! lifetime, and at most one member's home. [`arrange`] names no lineage in
 //! particular and restates the whole topology at once, rewriting both the order
 //! lineages stand in and which lineage each lane belongs to, since dropping a
 //! organization onto another is the same durable write as reordering two.
@@ -31,13 +31,12 @@ struct ConfiguredLineage {
     membership: Option<MembershipChange>,
     previous: wire::LineageSubscription,
     life: wire::intent::LineageLife,
-    manual_projects: Vec<String>,
     sources: Vec<wire::body::LaneSourceBoundary>,
     next: wire::ResidencyHead,
     answer: LaneAnswer,
 }
 
-/// Commit one task-subscription policy and optional member move.
+/// Commit one task-allocation lifetime and optional member move.
 ///
 /// `drain` here is a policy spelling. Occupant teardown remains exclusively
 /// owned by `lane::state { action: drain }`, so this transaction changes no
@@ -46,7 +45,6 @@ pub(in crate::resident) fn configure(
     bus: &Bus,
     epoch: CanonicalUuid,
     seats: &Seats,
-    projects: &board::ProjectPolicy,
     command: &wire::AdmittedCommand,
     request: &LineageConfigure,
 ) -> Outcome<CommandAnswer> {
@@ -61,11 +59,6 @@ pub(in crate::resident) fn configure(
     };
     let previous = match previous_subscription(observed.body(), request) {
         Ok(previous) => previous,
-        Err(outcome) => return outcome,
-    };
-    let manual_projects = match admit_manual_projects(projects, request.manual_projects.as_deref())
-    {
-        Ok(projects) => projects,
         Err(outcome) => return outcome,
     };
     let mut next = observed.body().clone();
@@ -84,20 +77,13 @@ pub(in crate::resident) fn configure(
     else {
         return typed_store_fault(
             "lineage::subscription-missing",
-            "the configured lineage has no task-subscription policy after membership moved",
+            "the configured lineage has no task-allocation lifetime after membership moved",
         );
     };
-    if request.life.is_some_and(|life| subscription.policy != life) || manual_projects.is_some() {
-        subscription.auto_projects.clear();
-    }
     if let Some(life) = request.life {
         subscription.policy = life;
     }
-    if let Some(manual_projects) = manual_projects {
-        subscription.manual_projects = manual_projects;
-    }
     let configured_life = subscription.policy;
-    let configured_manual_projects = subscription.manual_projects.clone();
     let lane_answer = match answer(&next, None, seats) {
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
@@ -120,7 +106,6 @@ pub(in crate::resident) fn configure(
             membership,
             previous,
             life: configured_life,
-            manual_projects: configured_manual_projects,
             sources,
             next,
             answer: lane_answer,
@@ -158,8 +143,6 @@ fn commit_configured(
                 .and_then(|change| change.source_rekeyed_to),
             from: configured.previous.policy,
             life: configured.life,
-            from_manual_projects: configured.previous.manual_projects,
-            manual_projects: configured.manual_projects,
             sources: configured.sources,
         },
         FactCause::Existing(observed.position()),
@@ -226,7 +209,7 @@ fn previous_subscription(
         Ok(Some(subscription)) => Ok(subscription.clone()),
         Ok(None) => Err(typed_store_fault(
             "lineage::subscription-missing",
-            "a current lineage has no task-subscription policy",
+            "a current lineage has no task-allocation lifetime",
         )),
         Err(outcome) => Err(typed_outcome(outcome)),
     }
@@ -268,7 +251,7 @@ fn move_member(
         Ok(None) => {
             return Err(typed_store_fault(
                 "lineage::subscription-missing",
-                "the moved member source has no task-subscription policy",
+                "the moved member source has no task-allocation lifetime",
             ));
         }
         Err(outcome) => return Err(typed_outcome(outcome)),
@@ -280,7 +263,7 @@ fn move_member(
             Ok(None) => {
                 return Err(typed_store_fault(
                     "lineage::subscription-missing",
-                    "the target lineage has no task-subscription policy",
+                    "the target lineage has no task-allocation lifetime",
                 ));
             }
             Err(outcome) => return Err(typed_outcome(outcome)),
@@ -326,7 +309,7 @@ fn split_host_member(
         Ok(None) => {
             return Err(typed_store_fault(
                 "lineage::subscription-missing",
-                "the split source has no task-subscription policy",
+                "the split source has no task-allocation lifetime",
             ));
         }
         Err(outcome) => return Err(typed_outcome(outcome)),

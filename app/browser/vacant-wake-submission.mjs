@@ -242,7 +242,7 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
   assert.equal(await steer.isEnabled(), true, "a nonempty vacant draft enables Steer");
   assert.equal(
     await steer.getAttribute("title"),
-    "Send with Steer: Use operator-selected work only",
+    "Send with Steer: Operator direction and explicit task capture only",
     "the vacant action keeps the established Steer title",
   );
   const composerActions = await form.locator(".organization-send").evaluateAll((buttons) =>

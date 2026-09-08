@@ -762,6 +762,7 @@ pub(super) fn actor_entries(board: &BoardAnswer) -> Result<Vec<Entry>, Outcome<C
                     ),
                 )
             })
+            .map(|entry| entry.with_creator_lineage(heads.creator_lineage))
         })
         .collect()
 }

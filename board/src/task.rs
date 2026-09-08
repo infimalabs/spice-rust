@@ -450,6 +450,7 @@ pub struct Entry {
     workflow: WorkflowHead,
     claim: Option<ClaimHead>,
     lease: Option<LeaseHead>,
+    creator_lineage: Option<wire::CanonicalUuid>,
     project: Project,
     family: Family,
 }
@@ -508,6 +509,7 @@ impl Entry {
             workflow,
             claim,
             lease,
+            creator_lineage: None,
             project,
             family,
         })
@@ -547,6 +549,19 @@ impl Entry {
     #[must_use]
     pub const fn lease(&self) -> Option<&LeaseHead> {
         self.lease.as_ref()
+    }
+
+    /// Immutable creator team captured by the task-added fact.
+    #[must_use]
+    pub const fn creator_lineage(&self) -> Option<wire::CanonicalUuid> {
+        self.creator_lineage
+    }
+
+    /// Attach creator-team projection derived from the immutable creation fact.
+    #[must_use]
+    pub fn with_creator_lineage(mut self, creator_lineage: Option<wire::CanonicalUuid>) -> Self {
+        self.creator_lineage = creator_lineage;
+        self
     }
 
     /// Validated and classified project.

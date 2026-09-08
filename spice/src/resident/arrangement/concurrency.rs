@@ -44,7 +44,6 @@ impl Arranged {
             lineage_id,
             member: None,
             life: Some(life),
-            manual_projects: None,
         };
         let command = Command {
             v: wire::WireVersion::CURRENT,
@@ -60,16 +59,7 @@ impl Arranged {
             epoch: self.epoch,
         })
         .expect("operator lineage configuration admits");
-        let projects =
-            board::ProjectPolicy::new(Vec::new(), Vec::new(), 2, 4).expect("project policy");
-        lane_surface::configure(
-            &self.bus,
-            self.epoch,
-            &self.seats,
-            &projects,
-            &command,
-            &request,
-        )
+        lane_surface::configure(&self.bus, self.epoch, &self.seats, &command, &request)
     }
 
     fn configure_member_at(
@@ -84,7 +74,6 @@ impl Arranged {
             lineage_id,
             member: Some(member),
             life: None,
-            manual_projects: None,
         };
         let command = Command {
             v: wire::WireVersion::CURRENT,
@@ -100,16 +89,7 @@ impl Arranged {
             epoch: self.epoch,
         })
         .expect("operator lineage membership admits");
-        let projects =
-            board::ProjectPolicy::new(Vec::new(), Vec::new(), 2, 4).expect("project policy");
-        lane_surface::configure(
-            &self.bus,
-            self.epoch,
-            &self.seats,
-            &projects,
-            &command,
-            &request,
-        )
+        lane_surface::configure(&self.bus, self.epoch, &self.seats, &command, &request)
     }
 
     fn committed(outcome: Outcome<CommandAnswer>) -> Box<wire::intent::LaneAnswer> {

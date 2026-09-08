@@ -334,7 +334,7 @@ export async function assertLineageLifeIsolation(browser) {
       changed.body.lanes
         .filter((lane) => lane.lineage_id === host.lineage_id)
         .every((lane) => lane.life === "drain"),
-      "changing task subscription preserves the lineage's declared seat life",
+      "changing task allocation lifetime preserves the lineage's declared seat life",
     );
     assert.equal(
       await driveSurface.getByRole("button", { name: "Drive", exact: true }).count(),

@@ -524,6 +524,7 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
     let task = BoardTask {
         visibility: ProjectVisibility::Public,
         origin_thread: "operator".to_owned(),
+        creator_lineage: None,
         presentation_title: "Bind a board task".to_owned(),
         statement: Positioned {
             position: seq(2),
@@ -856,19 +857,17 @@ fn the_union_reports_the_shape_it_carries() {
 }
 
 #[test]
-fn lineage_subscription_policies_close_over_the_predecessor_scopes() {
-    use wire::intent::{LineageLife, TaskSubscriptionScope};
+fn lineage_lifetimes_close_over_creator_team_scope() {
+    use wire::intent::LineageLife;
 
-    let policies = [
-        (LineageLife::Steer, TaskSubscriptionScope::Manual),
-        (
-            LineageLife::Drive,
-            TaskSubscriptionScope::ManualAndAutoProject,
-        ),
-        (LineageLife::Drain, TaskSubscriptionScope::AllAssignable),
-    ];
-    for (policy, scope) in policies {
-        assert_eq!(policy.scope(), scope);
+    let team = uuid("018f82d4-6f59-7d06-92e3-bce913116301");
+    let peer = uuid("018f82d4-6f59-7d06-92e3-bce913116302");
+    assert!(!LineageLife::Steer.admits_creator_lineage(Some(team), team));
+    assert!(LineageLife::Drive.admits_creator_lineage(Some(team), team));
+    assert!(!LineageLife::Drive.admits_creator_lineage(Some(peer), team));
+    assert!(!LineageLife::Drive.admits_creator_lineage(None, team));
+    assert!(LineageLife::Drain.admits_creator_lineage(None, team));
+    for policy in [LineageLife::Steer, LineageLife::Drive, LineageLife::Drain] {
         assert_eq!(LineageLife::from_wire(policy.as_str()), Some(policy));
     }
 }

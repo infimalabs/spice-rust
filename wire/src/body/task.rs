@@ -50,6 +50,13 @@ pub enum TaskCreationContext {
         session: String,
         /// Source-aware position of the next complete record at task admission.
         boundary: TranscriptSourceHead,
+        /// Creator team captured under the same residency guard as the boundary.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
+        creator_lineage: Option<CanonicalUuid>,
     },
     /// No authoritative transcript coordinate exists for this task.
     Unavailable {
@@ -82,6 +89,17 @@ impl TaskCreationContext {
                 reason: TaskCreationUnavailable::LegacyWireOmitted
             }
         )
+    }
+
+    /// Immutable creator team, absent for non-lane and migrated task creation.
+    #[must_use]
+    pub const fn creator_lineage(&self) -> Option<CanonicalUuid> {
+        match self {
+            Self::Transcript {
+                creator_lineage, ..
+            } => *creator_lineage,
+            Self::Unavailable { .. } => None,
+        }
     }
 }
 

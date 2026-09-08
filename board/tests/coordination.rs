@@ -53,8 +53,6 @@ fn all_projects() -> wire::LineageSubscription {
     wire::LineageSubscription {
         lineage_id: uuid("019fbbde-5105-75a3-a76a-722afde1e408"),
         policy: wire::intent::LineageLife::Drain,
-        manual_projects: Vec::new(),
-        auto_projects: Vec::new(),
     }
 }
 

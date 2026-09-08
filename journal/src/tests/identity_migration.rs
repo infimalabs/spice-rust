@@ -529,6 +529,7 @@ fn insert_legacy_board_receipt(connection: &Connection) {
         tasks: vec![wire::intent::BoardTask::from_authoritative(
             wire::intent::ProjectVisibility::Public,
             "operator".to_owned(),
+            None,
             wire::intent::Positioned {
                 position: Seq::new(1).expect("statement position"),
                 body: task_head(),

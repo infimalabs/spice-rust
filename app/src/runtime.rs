@@ -121,7 +121,7 @@ impl LaneView {
 pub struct LaneRow {
     /// Stable lineage identity.
     pub lane: CanonicalUuid,
-    /// Authoritative task-subscription policy for this lineage.
+    /// Authoritative task-allocation lifetime for this lineage.
     pub subscription: wire::intent::LineageLife,
     /// Members in canonical resident seat order.
     pub members: Vec<LaneMember>,

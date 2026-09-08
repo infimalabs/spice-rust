@@ -106,14 +106,7 @@ fn changing_org_policy_to_drain_waits_until_work_arrives() {
         "organization policy change re-enables members parked under prior authority"
     );
     assert!(matches!(
-        lane_surface::configure(
-            &bus,
-            fixture.epoch,
-            &seats,
-            &surface.config.projects,
-            &command,
-            &request,
-        ),
+        lane_surface::configure(&bus, fixture.epoch, &seats, &command, &request,),
         Outcome::Reply(_)
     ));
 
@@ -236,7 +229,6 @@ fn drain_configuration(
         lineage_id: fixture.lane,
         member: None,
         life: Some(wire::intent::LineageLife::Drain),
-        manual_projects: None,
     };
     let command = wire::Command {
         v: wire::WireVersion::CURRENT,
@@ -439,8 +431,6 @@ fn seed_vacant_org_members(
         subscriptions: vec![wire::LineageSubscription {
             lineage_id: lineage,
             policy,
-            manual_projects: Vec::new(),
-            auto_projects: Vec::new(),
         }],
         renewals: Vec::new(),
     });
