@@ -95,6 +95,7 @@ const CASES: &[Case] = &[
     case("proof", &["proof"]),
     case("proof replay", &["proof", "replay"]),
     case("release notes", &["release", "notes"]),
+    case("release seal", &["release", "seal"]),
     case("up", &["up"]),
     case("down", &["down"]),
     case("board", &["board"]),

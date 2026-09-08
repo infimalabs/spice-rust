@@ -12,6 +12,8 @@ use spice::repository::Repository;
 use wire::{CanonicalUuid, Digest, Domain};
 
 mod routing_authority;
+#[path = "support/staged_app.rs"]
+mod staged_app;
 
 const ROUTING: [wire::SpiceVariable; 9] = [
     wire::SpiceVariable::AgentVendor,
@@ -161,6 +163,7 @@ impl Fixture {
                 .expect("write routing candidate");
             git(worktree, &["add", "--all"]);
         }
+        staged_app::seed(&linked);
 
         let repository = Repository::discover(&linked).expect("discover routing worktree");
         let state = repository.admit_state().expect("admit routing state");
