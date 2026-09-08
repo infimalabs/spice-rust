@@ -55,7 +55,7 @@ fn plain_string_stamp_and_handle_order_is_birth_order() {
     );
 }
 
-/// Shape CASE 148 / INVARIANTS ID-03: every creation route advances collisions.
+/// Shape CASE 148 / INVARIANTS ID-03: every creation route rewinds collisions.
 #[test]
 fn same_microsecond_adds_followups_and_documents_receive_ordered_distinct_stamps() {
     let alphabet = (0..52_i64)
@@ -84,10 +84,11 @@ fn same_microsecond_adds_followups_and_documents_receive_ordered_distinct_stamps
     );
 
     let after_first = board(&bus, epoch, Actor::Operator);
-    let second_stamp = allocate_task_stamp(&after_first, candidate_micros);
+    let second_stamp =
+        allocate_task_stamp(&after_first, candidate_micros).expect("collision rewinds");
     assert_eq!(
         second_stamp,
-        wire::TaskStamp::for_micros(candidate_micros + 1).expect("second fixture birth stamp")
+        wire::TaskStamp::for_micros(candidate_micros - 1).expect("second fixture birth stamp")
     );
     add_born(
         &bus,
@@ -97,29 +98,44 @@ fn same_microsecond_adds_followups_and_documents_receive_ordered_distinct_stamps
     );
 
     let after_second = board(&bus, epoch, Actor::Operator);
-    let followups = allocate_task_stamps(&after_second, candidate_micros, 3);
-    let expected = (2..5)
+    let followups =
+        allocate_task_stamps(&after_second, candidate_micros, 3).expect("batch rewinds");
+    let expected = (-4..-1)
         .map(|offset| {
             wire::TaskStamp::for_micros(candidate_micros + offset)
-                .expect("advanced fixture birth stamp")
+                .expect("rewound fixture birth stamp")
         })
         .collect::<Vec<_>>();
-    assert_eq!(
-        followups, expected,
-        "review follow-up planning advances +1 µs"
-    );
+    assert_eq!(followups, expected, "review follow-up planning rewinds");
 
     let preview = board::Preview::classify("# Goal\n\n- First node\n- Second node\n")
         .expect("document collision fixture classifies");
-    let document = document_handles(preview.document(), &after_second, candidate_micros);
+    let document = document_handles(preview.document(), &after_second, candidate_micros)
+        .expect("document stamps rewind");
     assert_eq!(
         document
             .iter()
             .map(|handle| handle.born().expect("document handle stamp"))
             .collect::<Vec<_>>(),
         expected,
-        "authored-document creation advances over the same occupied instants"
+        "authored-document creation rewinds over the same occupied instants"
     );
+    clean(&root, bus);
+}
+
+#[test]
+fn occupied_zero_refuses_before_task_stamp_clock_underflow() {
+    let (root, bus, epoch, _seats) = fixture("identity-clock-underflow", 0);
+    let zero = wire::TaskStamp::for_micros(0).expect("zero is representable");
+    add_born(&bus, epoch, zero, "Zero-microsecond task");
+
+    let current = board(&bus, epoch, Actor::Operator);
+    let error = allocate_task_stamp(&current, 0).expect_err("occupied zero cannot rewind");
+    let Outcome::Fault(fault) = error else {
+        panic!("clock underflow must be an environment fault");
+    };
+    assert_eq!(fault.reason, "task::stamp-clock-invalid");
+    assert!(fault.detail.contains("before zero"));
     clean(&root, bus);
 }
 

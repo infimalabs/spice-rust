@@ -994,7 +994,7 @@ fn validate_doc_plan(
         preview.document(),
         &snapshot.answer,
         jiff::Timestamp::now().as_microsecond(),
-    );
+    )?;
     if touched.is_empty() {
         return Err(refusal(
             "doc::empty",

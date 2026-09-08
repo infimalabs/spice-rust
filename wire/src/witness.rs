@@ -29,8 +29,10 @@ const TASK_STAMP_SPACE: u64 = 52_u64.pow(TaskStamp::WIDTH as u32);
 ///
 /// Current stamps carry nine base-52 Unix-microsecond digits. Retained
 /// eight-digit Unix-millisecond stamps remain readable without rewriting
-/// immutable task facts. Ordering is deterministic within and across widths;
-/// workflow chronology remains journal-sequence authority across generations.
+/// immutable task facts. Collision allocation probes earlier microseconds, so
+/// a stamp never claims a future instant. Ordering is deterministic within and
+/// across widths; workflow chronology remains journal-sequence authority across
+/// generations.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TaskStamp(String);
 

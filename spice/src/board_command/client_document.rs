@@ -36,11 +36,14 @@ pub(super) fn run_doc(
         Ok(board) => board,
         Err(outcome) => return outcome,
     };
-    let touched = document_handles(
+    let touched = match document_handles(
         normalized.document(),
         &board,
         jiff::Timestamp::now().as_microsecond(),
-    );
+    ) {
+        Ok(touched) => touched,
+        Err(outcome) => return outcome,
+    };
     let answer = wire::intent::DocAnswer {
         preview: normalized.digest().clone(),
         touched,
@@ -114,34 +117,41 @@ fn read_doc_input(matches: &ArgMatches) -> Result<String, Outcome<CommandAnswer>
 pub(super) fn document_handles(
     document: &dialect::Document,
     board: &BoardAnswer,
-    mut epoch_micros: i64,
-) -> Vec<TaskHandle> {
+    epoch_micros: i64,
+) -> Result<Vec<TaskHandle>, Outcome<CommandAnswer>> {
     let project = document.project.as_deref().unwrap_or("task.document");
-    let mut planned = Vec::<wire::TaskStamp>::new();
-    document
+    let existing = document
         .nodes
         .iter()
         .filter(|node| node.kind != dialect::NodeKind::SyntheticRoot)
         .map(|node| {
             let marker = document_slug_tag(&node.slug);
-            if let Some(existing) = board.tasks.iter().find(|task| {
-                task.statement.body.project == project && task.statement.body.tags.contains(&marker)
-            }) {
-                return existing.statement.body.handle.clone();
-            }
-            let born = loop {
-                let candidate = allocate_task_stamp(board, epoch_micros);
-                epoch_micros = epoch_micros
-                    .checked_add(1)
-                    .expect("document task birth increment fits i64");
-                if planned.iter().all(|planned| planned != &candidate) {
-                    break candidate;
-                }
-            };
-            planned.push(born.clone());
-            TaskHandle::for_project(project, &born)
+            board.tasks.iter().find_map(|task| {
+                (task.statement.body.project == project
+                    && task.statement.body.tags.contains(&marker))
+                .then(|| task.statement.body.handle.clone())
+            })
         })
-        .collect()
+        .collect::<Vec<_>>();
+    let mut allocated = allocate_task_stamps(
+        board,
+        epoch_micros,
+        existing.iter().filter(|handle| handle.is_none()).count(),
+    )?
+    .into_iter();
+    Ok(existing
+        .into_iter()
+        .map(|handle| {
+            handle.unwrap_or_else(|| {
+                TaskHandle::for_project(
+                    project,
+                    &allocated
+                        .next()
+                        .expect("every new document node owns one stamp"),
+                )
+            })
+        })
+        .collect())
 }
 
 pub(super) fn document_slug_tag(slug: &str) -> String {
