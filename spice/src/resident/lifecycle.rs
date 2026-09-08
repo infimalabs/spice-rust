@@ -60,6 +60,12 @@ enum Available {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SelectedReady {
+    at: Instant,
+    eligible: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Target {
     lane: CanonicalUuid,
     pending_inbox: bool,
@@ -212,6 +218,35 @@ impl Runtime {
         let now = Instant::new(jiff::Timestamp::now()).map_err(|error| {
             super::environment_fault("lifecycle::clock-invalid", &error.to_string())
         })?;
+        self.reconcile_at(
+            now,
+            bus,
+            repository,
+            paths,
+            epoch,
+            seats,
+            lane_runtime,
+            config,
+            diagnostic,
+        )
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "deterministic lifecycle resolution retains the complete resident effect boundary"
+    )]
+    fn reconcile_at(
+        &mut self,
+        now: Instant,
+        bus: &Bus,
+        repository: &Repository,
+        paths: &RuntimePaths,
+        epoch: CanonicalUuid,
+        seats: &mut Seats,
+        lane_runtime: &lane_surface::Runtime<'_>,
+        config: &SurfaceConfig,
+        diagnostic: &mut dyn std::io::Write,
+    ) -> CommandResult<Option<WakeDeadline>> {
         if lane_surface::reconcile_renewal(bus, paths, epoch, seats, lane_runtime, config)? {
             self.backoff.release_all();
             return Ok(self.holds.next().map(|(lane, at)| WakeDeadline {
@@ -704,7 +739,14 @@ fn project_targets(
             ),
             Some(subscription) if subscription.policy == wire::intent::LineageLife::Drive => (
                 Available::None,
-                available_deadline(entries, ready_at, &actor, subscription)?,
+                available_deadline(
+                    snapshot,
+                    entries,
+                    ready_at,
+                    &actor,
+                    subscription,
+                    allocation,
+                )?,
             ),
             Some(_) | None => (Available::None, Available::None),
         };
@@ -744,17 +786,21 @@ fn fact_body<T: serde::de::DeserializeOwned>(
 }
 
 fn available_deadline(
+    snapshot: &bus::TaskSnapshot,
     entries: &[Entry],
     ready_at: &BTreeMap<TaskStamp, Instant>,
     actor: &Actor,
     subscription: &wire::LineageSubscription,
+    allocation: &board::NextConfig,
 ) -> CommandResult<Available> {
-    let mut eligible = entries
-        .iter()
-        .filter(|entry| board::selectable_entry(entries, entry, actor, subscription))
-        .filter_map(|entry| ready_at.get(entry.born()).copied())
-        .collect::<Vec<_>>();
-    available_from_ready_instants(&mut eligible)
+    available_from_selected(selected_ready(
+        snapshot,
+        entries,
+        ready_at,
+        actor,
+        subscription,
+        allocation,
+    )?)
 }
 
 fn drain_available(
@@ -766,53 +812,69 @@ fn drain_available(
     allocation: &board::NextConfig,
     first_member: bool,
 ) -> CommandResult<Available> {
+    drain_from_selected(
+        selected_ready(snapshot, entries, ready_at, actor, subscription, allocation)?,
+        first_member,
+    )
+}
+
+fn selected_ready(
+    snapshot: &bus::TaskSnapshot,
+    entries: &[Entry],
+    ready_at: &BTreeMap<TaskStamp, Instant>,
+    actor: &Actor,
+    subscription: &wire::LineageSubscription,
+    allocation: &board::NextConfig,
+) -> CommandResult<Option<SelectedReady>> {
     let recent_cell = board::recent_claim_cell(entries, snapshot.facts().iter(), actor);
-    if board::select(
+    let Some(selected) = board::select(
         entries,
         actor,
         subscription,
         allocation.band(),
         recent_cell.as_ref(),
-    )
-    .is_none()
-    {
-        return Ok(Available::None);
-    }
-
-    let mut eligible = entries
+    ) else {
+        return Ok(None);
+    };
+    let at = ready_at
+        .get(selected.entry().born())
+        .copied()
+        .ok_or_else(|| {
+            store_fault(
+                "lifecycle::selected-ready-fact-missing",
+                &format!(
+                    "selected task {} has no durable READY transition instant",
+                    selected.entry().handle()
+                ),
+            )
+        })?;
+    let eligible = entries
         .iter()
         .filter(|entry| board::selectable_entry(entries, entry, actor, subscription))
-        .filter_map(|entry| ready_at.get(entry.born()).copied())
-        .collect::<Vec<_>>();
-    drain_from_ready_instants(&mut eligible, first_member)
+        .count();
+    Ok(Some(SelectedReady { at, eligible }))
 }
 
-fn drain_from_ready_instants(
-    eligible: &mut [Instant],
+fn drain_from_selected(
+    selected: Option<SelectedReady>,
     first_member: bool,
 ) -> CommandResult<Available> {
-    eligible.sort();
-    if eligible.is_empty() {
-        Ok(Available::None)
-    } else if first_member || eligible.len() >= NORMAL_READY {
-        Ok(Available::Ready)
-    } else {
-        after(eligible[0], STARVATION_SECONDS).map(Available::At)
+    match selected {
+        None => Ok(Available::None),
+        Some(selected) if first_member || selected.eligible >= NORMAL_READY => {
+            after(selected.at, SETTLE_SECONDS).map(Available::At)
+        }
+        Some(selected) => after(selected.at, STARVATION_SECONDS).map(Available::At),
     }
 }
 
-fn available_from_ready_instants(eligible: &mut [Instant]) -> CommandResult<Available> {
-    eligible.sort();
-    if eligible.is_empty() {
-        Ok(Available::None)
-    } else if eligible.len() < NORMAL_READY {
-        after(eligible[0], STARVATION_SECONDS).map(Available::At)
-    } else {
-        after(
-            *eligible.last().expect("nonempty eligible set"),
-            SETTLE_SECONDS,
-        )
-        .map(Available::At)
+fn available_from_selected(selected: Option<SelectedReady>) -> CommandResult<Available> {
+    match selected {
+        None => Ok(Available::None),
+        Some(selected) if selected.eligible < NORMAL_READY => {
+            after(selected.at, STARVATION_SECONDS).map(Available::At)
+        }
+        Some(selected) => after(selected.at, SETTLE_SECONDS).map(Available::At),
     }
 }
 
@@ -909,7 +971,7 @@ mod tests {
         let mut row = target(1);
         row.pending_inbox = true;
         row.held_claim = true;
-        row.available = Available::Ready;
+        row.available = Available::At(instant(30));
         assert_eq!(
             resolve(&[row], &Backoff::default(), instant(10)),
             Resolution::Attempt {
@@ -986,45 +1048,67 @@ mod tests {
     }
 
     #[test]
-    fn two_ready_tasks_settle_and_one_ready_task_ages_to_starvation() {
-        let mut none = Vec::new();
+    fn selected_ready_task_settles_or_ages_to_starvation_by_capacity() {
         assert_eq!(
-            available_from_ready_instants(&mut none).expect("empty fold resolves"),
+            available_from_selected(None).expect("empty fold resolves"),
             Available::None
         );
-        let mut lone = vec![instant(0)];
         assert_eq!(
-            available_from_ready_instants(&mut lone).expect("lone fold resolves"),
+            available_from_selected(Some(SelectedReady {
+                at: instant(0),
+                eligible: 1,
+            }))
+            .expect("lone fold resolves"),
             Available::At(instant_after_minutes(3))
         );
-        let mut burst = vec![instant(0), instant(7)];
         assert_eq!(
-            available_from_ready_instants(&mut burst).expect("burst fold resolves"),
-            Available::At(instant(10))
+            available_from_selected(Some(SelectedReady {
+                at: instant(0),
+                eligible: 2,
+            }))
+            .expect("burst fold resolves"),
+            Available::At(instant(3))
         );
     }
 
     #[test]
-    fn drain_capacity_starts_first_member_then_scales_for_age_or_two_tasks() {
-        let mut none = Vec::new();
+    fn drain_capacity_settles_first_member_then_scales_for_age_or_two_tasks() {
         assert_eq!(
-            drain_from_ready_instants(&mut none, true).expect("empty drain fold resolves"),
+            drain_from_selected(None, true).expect("empty drain fold resolves"),
             Available::None
         );
-        let mut first = vec![instant(0)];
         assert_eq!(
-            drain_from_ready_instants(&mut first, true).expect("first drain member resolves"),
-            Available::Ready
+            drain_from_selected(
+                Some(SelectedReady {
+                    at: instant(0),
+                    eligible: 1,
+                }),
+                true,
+            )
+            .expect("first drain member resolves"),
+            Available::At(instant(3))
         );
-        let mut next = vec![instant(0)];
         assert_eq!(
-            drain_from_ready_instants(&mut next, false).expect("next drain member resolves"),
+            drain_from_selected(
+                Some(SelectedReady {
+                    at: instant(0),
+                    eligible: 1,
+                }),
+                false,
+            )
+            .expect("next drain member resolves"),
             Available::At(instant_after_minutes(3))
         );
-        let mut backlog = vec![instant(0), instant(7)];
         assert_eq!(
-            drain_from_ready_instants(&mut backlog, false).expect("drain backlog resolves"),
-            Available::Ready
+            drain_from_selected(
+                Some(SelectedReady {
+                    at: instant(0),
+                    eligible: 2,
+                }),
+                false,
+            )
+            .expect("drain backlog resolves"),
+            Available::At(instant(3))
         );
     }
 

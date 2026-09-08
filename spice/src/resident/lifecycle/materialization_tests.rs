@@ -15,6 +15,7 @@ use super::{Available, Backoff, Resolution, Trigger, project_targets, resolve};
 
 const PROJECT: &str = "lifecycle.work";
 const TASK_MOMENT: &str = "1kKRRsDP";
+const NEWER_TASK_MOMENT: &str = "1kKRRsDT";
 const INVALID_TASK_MOMENT: &str = "1kKRRsDQ";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -123,6 +124,99 @@ fn org_policy_drives_every_member_while_terminal_seat_life_remains_an_override()
         "terminal seat life suppresses organization startup"
     );
     bus.shutdown().expect("terminal override bus stops");
+}
+
+#[test]
+fn drive_burst_uses_the_selected_winners_ready_instant() {
+    let (bus, projects, mut projection) = policy_fixture(wire::intent::LineageLife::Drive, false);
+    committed(
+        bus.commit(ready_task_write(NEWER_TASK_MOMENT, instant(7)))
+            .expect("newer ready candidate commits"),
+    );
+    let snapshot = bus.task_snapshot().expect("drive burst snapshot reads");
+    projection
+        .advance(&snapshot, &projects)
+        .expect("drive burst projection advances");
+
+    let targets = project_targets(
+        &snapshot,
+        &projection,
+        instant(8),
+        &Holds::new(3),
+        &board::NextConfig::default(),
+    )
+    .expect("drive burst targets project");
+    assert_eq!(targets.len(), 1);
+    assert_eq!(
+        targets[0].available,
+        Available::At(instant(4)),
+        "the selected older winner settles from its own READY transition rather than the newer nonwinner"
+    );
+    assert!(matches!(
+        resolve(&targets, &Backoff::default(), instant(8)),
+        Resolution::Attempt {
+            trigger: Trigger::AvailableWork,
+            ..
+        }
+    ));
+    bus.shutdown().expect("drive burst fixture bus stops");
+}
+
+#[test]
+fn drain_ready_reentry_restarts_the_first_members_timer_deadline() {
+    let (bus, projects, mut projection) = policy_fixture(wire::intent::LineageLife::Drain, false);
+    committed(
+        bus.commit(deferral_write(true, instant(5)))
+            .expect("task deferral commits"),
+    );
+    projection
+        .advance(
+            &bus.task_snapshot().expect("deferred snapshot reads"),
+            &projects,
+        )
+        .expect("deferred projection advances");
+    committed(
+        bus.commit(deferral_write(false, instant(7)))
+            .expect("task wake commits"),
+    );
+    let snapshot = bus.task_snapshot().expect("woken snapshot reads");
+    projection
+        .advance(&snapshot, &projects)
+        .expect("woken projection advances");
+
+    let targets = project_targets(
+        &snapshot,
+        &projection,
+        instant(8),
+        &Holds::new(3),
+        &board::NextConfig::default(),
+    )
+    .expect("woken Drain target projects");
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].drain_queue, Available::At(instant(10)));
+    assert_eq!(
+        resolve(&targets, &Backoff::default(), instant(8)),
+        Resolution::Wait {
+            trigger: Trigger::DrainQueue,
+            lane: lane(),
+            deadline: instant(10),
+        }
+    );
+    assert_eq!(
+        bus.task_snapshot()
+            .expect("post-resolution snapshot reads")
+            .cursor(),
+        snapshot.cursor(),
+        "deadline projection writes no claim or lifecycle fact"
+    );
+    assert_eq!(
+        resolve(&targets, &Backoff::default(), instant(10)),
+        Resolution::Attempt {
+            trigger: Trigger::DrainQueue,
+            lane: lane(),
+        }
+    );
+    bus.shutdown().expect("Drain re-entry fixture bus stops");
 }
 
 #[test]
@@ -268,7 +362,7 @@ fn drain_org_startup_projects_every_current_member() {
     assert!(
         targets
             .iter()
-            .all(|target| target.drain_queue == Available::Ready)
+            .all(|target| target.drain_queue == Available::At(instant(4)))
     );
     bus.shutdown().expect("expanded organization bus stops");
 }
@@ -447,6 +541,82 @@ fn seed_write_with_policy(policy: wire::intent::LineageLife, terminal: bool) -> 
             auto_projects: Vec::new(),
         }],
         renewals: Vec::new(),
+    });
+    write
+}
+
+fn ready_task_write(moment: &str, at: Instant) -> JournalWrite {
+    let task = task(moment);
+    let phase = phase();
+    let origin = format!("task:{}", handle(moment))
+        .parse::<Origin>()
+        .expect("ready task origin");
+    let mut write = JournalWrite::new(
+        Actor::Lane(lane()),
+        origin.clone(),
+        at,
+        Producer::CommandDoor,
+    );
+    let added = write
+        .fact(
+            body::TaskAdded {
+                task: task.clone(),
+                title: "Newer ready lifecycle candidate".to_owned(),
+                description: None,
+                acceptance: Vec::new(),
+                requirements: wire::EnvironmentRequirements::default(),
+                project: PROJECT.to_owned(),
+                tags: Vec::new(),
+                depends: Vec::new(),
+                flow: vec![phase.clone()],
+                phase: phase.clone(),
+                creation: body::TaskCreationContext::unavailable(
+                    body::TaskCreationUnavailable::SpiceActor,
+                ),
+                revision: 1,
+            },
+            FactCause::Root,
+        )
+        .expect("ready task fact builds");
+    attach_task_heads(&mut write, added, task, origin, phase, Vec::new());
+    write
+}
+
+fn deferral_write(deferred: bool, at: Instant) -> JournalWrite {
+    let task = task(TASK_MOMENT);
+    let until = instant(20);
+    let mut write = JournalWrite::new(
+        Actor::Lane(lane()),
+        format!("task:{}", handle(TASK_MOMENT))
+            .parse()
+            .expect("deferral task origin"),
+        at,
+        Producer::CommandDoor,
+    );
+    let changed = if deferred {
+        write
+            .fact(
+                body::TaskDeferred {
+                    task: task.clone(),
+                    until,
+                },
+                FactCause::Root,
+            )
+            .expect("deferral fact builds")
+    } else {
+        write
+            .fact(body::TaskWoken { task: task.clone() }, FactCause::Root)
+            .expect("wake fact builds")
+    };
+    let phase = phase();
+    write.workflow_head(task, changed, move |_| WorkflowHead {
+        flow: vec![phase.clone()],
+        phase,
+        status: "pending".to_owned(),
+        review: "unassigned".to_owned(),
+        assignment: None,
+        deferral: deferred.then_some(until),
+        completion: None,
     });
     write
 }
