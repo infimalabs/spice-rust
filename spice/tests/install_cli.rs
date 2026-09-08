@@ -487,6 +487,39 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
 }
 
 #[test]
+fn package_source_never_bypasses_receipt_owned_unapply() {
+    let fixture = Fixture::new("package-unapply");
+    let refused = fixture.invoke(&[
+        "--json",
+        "install",
+        "--package",
+        fixture.root.to_str().expect("fixture root is UTF-8"),
+        "--unapply",
+    ]);
+    assert_eq!(refused.code, Some(2));
+    assert!(refused.out.is_empty());
+    assert_refusal(&refused.err, "install::package-refused");
+    fixture.assert_state_unchanged();
+}
+
+#[test]
+fn refused_package_preview_changes_no_repository_authority() {
+    let fixture = Fixture::new("package-refusal");
+    let refused = fixture.invoke(&[
+        "--json",
+        "install",
+        "--package",
+        fixture.root.to_str().expect("fixture root is UTF-8"),
+    ]);
+    assert_eq!(refused.code, Some(2));
+    assert!(refused.out.is_empty());
+    assert_refusal(&refused.err, "install::package-refused");
+    assert!(!fixture.installed_binary().exists());
+    assert!(!fixture.record().exists());
+    fixture.assert_state_unchanged();
+}
+
+#[test]
 fn installed_hook_activation_uses_no_cargo_or_xtask_and_reverses_git_config() {
     let fixture = Fixture::new("no-cargo-hook-activation");
     let tools = fixture.root.join("fixture-tools");

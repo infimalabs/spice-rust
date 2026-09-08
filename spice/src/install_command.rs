@@ -1,6 +1,7 @@
 //! Native rim for the digest-bound Spice installer.
 
 use std::path::{Path, PathBuf};
+use std::process::ExitStatus;
 
 use spice::install::{InstallError, InstallPreview, InstallReceipt};
 use spice::repository::Repository;
@@ -10,6 +11,7 @@ use wire::{Digest, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 pub(crate) enum Answer {
     Plan(Outcome<InstallPreview>),
     Receipt(Outcome<InstallReceipt>),
+    Child(ExitStatus),
 }
 
 pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
@@ -42,6 +44,27 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
             return request.fault("install::repository-unresolved", error.to_string());
         }
     };
+    if let Some(package) = matches.get_one::<String>("package") {
+        if matches!(request, Request::Unapply) {
+            return request.package_failure(crate::install_package::Error::input(
+                "a package source cannot be combined with --unapply; the installed receipt owns reversal",
+            ));
+        }
+        let apply = match &request {
+            Request::Apply(digest) => Some(digest.as_str()),
+            Request::Plan => None,
+            Request::Unapply => unreachable!("package unapply returned above"),
+        };
+        return match crate::install_package::run(
+            &repository,
+            Path::new(package),
+            apply,
+            matches.get_flag("json"),
+        ) {
+            Ok(status) => Answer::Child(status),
+            Err(error) => request.package_failure(error),
+        };
+    }
     match request {
         Request::Plan => {
             let executable = match executable() {
@@ -89,7 +112,7 @@ enum Request {
 }
 
 impl Request {
-    fn fault(self, reason: &str, detail: String) -> Answer {
+    fn fault(&self, reason: &str, detail: String) -> Answer {
         let fault = Fault {
             class: FaultClass::Environment,
             reason: reason.to_owned(),
@@ -99,6 +122,35 @@ impl Request {
             Self::Plan => Answer::Plan(Outcome::Fault(fault)),
             Self::Apply(_) | Self::Unapply => Answer::Receipt(Outcome::Fault(fault)),
         }
+    }
+
+    fn package_failure(&self, error: crate::install_package::Error) -> Answer {
+        match self {
+            Self::Plan => Answer::Plan(package_failure(&error)),
+            Self::Apply(_) | Self::Unapply => Answer::Receipt(package_failure(&error)),
+        }
+    }
+}
+
+fn package_failure<B>(error: &crate::install_package::Error) -> Outcome<B> {
+    if error.is_environment() {
+        Outcome::Fault(Fault {
+            class: FaultClass::Environment,
+            reason: "install::package-environment-failed".to_owned(),
+            detail: error.to_string(),
+        })
+    } else {
+        Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "install::package-refused".to_owned(),
+                Some("sealed-package".to_owned()),
+                Some("one exact current-platform release package closure".to_owned()),
+                Some(error.to_string()),
+            )
+            .with_detail(
+                "select the explicit local root of a canonical sealed release package and retry; no repository authority changed",
+            ),
+        ))
     }
 }
 
