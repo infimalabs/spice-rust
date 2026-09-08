@@ -94,6 +94,7 @@ fn prepare_claim(
         Vec::new(),
         AllocationObservation {
             heads: allocation_heads(&snapshot.answer),
+            creator_lineages: allocation_creator_lineages(&snapshot.answer),
             winner: task.clone(),
             actor: actor.clone(),
             subscription: subscription.clone(),

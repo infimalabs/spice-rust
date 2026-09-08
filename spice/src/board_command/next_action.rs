@@ -29,6 +29,14 @@ impl NextTransition {
 /// that handle in the observed entry set makes dependency and possession checks
 /// use one coherent projected board rather than the phase's position in a flow.
 pub(super) fn next_action(snapshot: &ValidatedSnapshot, post: &Entry) -> Option<Box<str>> {
+    let post = snapshot
+        .entries
+        .iter()
+        .find(|entry| entry.born() == post.born())
+        .map_or_else(
+            || post.clone(),
+            |entry| post.clone().with_creator_lineage(entry.creator_lineage()),
+        );
     let entries = snapshot
         .entries
         .iter()
@@ -41,7 +49,7 @@ pub(super) fn next_action(snapshot: &ValidatedSnapshot, post: &Entry) -> Option<
         &snapshot.answer.principal,
         &snapshot.answer.residency.body,
         &entries,
-        post,
+        &post,
         &environment,
     )
     .command(post.handle())

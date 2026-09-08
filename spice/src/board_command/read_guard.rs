@@ -1080,6 +1080,8 @@ type AllocationHeads = Vec<(TaskHandle, Seq, Seq, Option<Seq>, Option<Seq>)>;
 
 pub(super) struct AllocationObservation {
     pub(super) heads: AllocationHeads,
+    pub(super) creator_lineages:
+        std::collections::BTreeMap<wire::TaskStamp, Option<wire::CanonicalUuid>>,
     pub(super) winner: TaskHandle,
     pub(super) actor: Actor,
     pub(super) subscription: wire::LineageSubscription,
@@ -1154,6 +1156,16 @@ pub(super) fn allocation_heads(board: &BoardAnswer) -> AllocationHeads {
         .collect()
 }
 
+pub(super) fn allocation_creator_lineages(
+    board: &BoardAnswer,
+) -> std::collections::BTreeMap<wire::TaskStamp, Option<wire::CanonicalUuid>> {
+    board
+        .tasks
+        .iter()
+        .map(|task| (task.statement.body.born.clone(), task.creator_lineage))
+        .collect()
+}
+
 /// Refuse the allocator's write if the board it selected over has moved.
 ///
 /// Four comparisons run in order and the caller sees the first one only: the
@@ -1225,6 +1237,16 @@ pub(super) fn guard_allocation(
         let entries = heads
             .iter()
             .map(|task| {
+                let creator_lineage = observed
+                    .creator_lineages
+                    .get(&task.statement().body().born)
+                    .copied()
+                    .ok_or_else(|| {
+                        GuardError::Invalid(format!(
+                            "allocator task {} has no observed creator lineage",
+                            task.statement().body().born,
+                        ))
+                    })?;
                 Entry::new(
                     task.statement().body().clone(),
                     task.workflow().body().clone(),
@@ -1235,6 +1257,7 @@ pub(super) fn guard_allocation(
                 .map_err(|error| {
                     GuardError::Invalid(format!("allocator current heads are invalid: {error}"))
                 })
+                .map(|entry| entry.with_creator_lineage(creator_lineage))
             })
             .collect::<Result<Vec<_>, _>>()?;
         if board::select(

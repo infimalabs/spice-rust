@@ -1,6 +1,46 @@
 use super::*;
 
 #[test]
+fn drive_guidance_preserves_creator_team_on_claim_release() {
+    let (root, bus, epoch, seats) = fixture("drive-continuation", 1);
+    authorize_lane_creation(&bus, epoch, &seats[0]);
+    subscription::configure_subscription(&bus, epoch, &seats[0], wire::intent::LineageLife::Drive);
+    let lane = Actor::Lane(seats[0].lane);
+    let task = add(
+        &bus,
+        epoch,
+        lane.clone(),
+        "DRIVE-first001",
+        "Drive continuation",
+        Some("todo"),
+    );
+
+    claim_task(&bus, epoch, &seats[0], &lane, &task);
+    let held = board(&bus, epoch, lane.clone());
+    let held_heads = at(&held, &task);
+    let released = assert_committed(issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::ClaimFree,
+        vec![
+            claim_witness(held_heads),
+            Witness::Lease {
+                task: held_heads.statement.body.born.clone(),
+                head: held_heads.lease.as_ref().expect("lease head").position,
+            },
+            residency(&held, &seats[0]),
+        ],
+        &TaskRef { task },
+    ));
+    let CommandAnswer::Claim(released) = released else {
+        panic!("claim release did not return a claim answer");
+    };
+    assert_eq!(released.next.as_deref(), Some("spice task next"));
+    clean(&root, bus);
+}
+
+#[test]
 fn drain_guidance_follows_lane_ownership_across_add_release_and_wake() {
     let (root, bus, epoch, seats) = fixture("drain-continuation", 1);
     authorize_lane_creation(&bus, epoch, &seats[0]);
