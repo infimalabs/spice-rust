@@ -45,6 +45,26 @@ fn admission_refreshes_a_byte_identical_index_replacement() {
 }
 
 #[test]
+fn publication_validation_refuses_merge_control_movement() {
+    let fixture = StagedFixture::new("merge-control-publication");
+    let repository = Repository::discover(&fixture.root).expect("discover staged fixture");
+    let staged = fixture.staged(&repository);
+    let candidate_tree =
+        spice::gate::capture_candidate_tree(&repository).expect("capture candidate tree");
+
+    fs::write(
+        fixture.root.join(".git/MERGE_MSG"),
+        "arrived after proof capture\n",
+    )
+    .expect("create merge control after capture");
+
+    let error = validate_source(&repository, staged.anchor(), &candidate_tree)
+        .expect_err("publication validation must refuse moved merge controls");
+    assert_eq!(error.reason(), "gate::source-moved");
+    assert!(error.detail().contains("merge-control source moved"));
+}
+
+#[test]
 fn admission_refuses_semantic_index_movement_before_publication() {
     let fixture = StagedFixture::new("semantic-index-movement");
     let repository = Repository::discover(&fixture.root).expect("discover staged fixture");
