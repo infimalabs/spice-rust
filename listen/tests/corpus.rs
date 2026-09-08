@@ -166,6 +166,34 @@ fn current_corpus_maps_every_kind_for_both_dialects() {
 }
 
 #[test]
+fn completed_codex_tools_retain_the_operation_beside_the_result() {
+    let completed = br#"{"type":"item.completed","item":{"id":"item-3","type":"command_execution","command":"cargo test -p spice","aggregated_output":"ok","exit_code":0,"status":"completed"}}"#;
+    let decoded = decode(Dialect::Codex, completed, locus(completed))
+        .expect("completed Codex tool remains typed");
+    assert!(matches!(
+        decoded.events(),
+        [
+            Event::Tool(listen::Tool {
+                call_id: call,
+                moment: ToolMoment::Call { name, arguments },
+                ..
+            }),
+            Event::Tool(listen::Tool {
+                call_id: result_call,
+                moment: ToolMoment::Result(outcome),
+                ..
+            }),
+        ] if call == "item-3"
+            && result_call == call
+            && name == "command_execution"
+            && arguments == r#"{"command":"cargo test -p spice"}"#
+            && outcome.result == ToolResult::Succeeded
+            && outcome.output.as_deref() == Some("ok")
+            && outcome.exit_code == Some(0)
+    ));
+}
+
+#[test]
 fn current_opaque_failure_and_statusless_tool_payloads_are_preserved() {
     let opaque = decode(
         Dialect::Claude,
@@ -214,10 +242,15 @@ fn current_opaque_failure_and_statusless_tool_payloads_are_preserved() {
     .expect("matching completed web-search locus");
     assert!(matches!(
         completed.events(),
-        [Event::Tool(tool)]
-            if tool.call_id == "item-4"
+        [Event::Tool(call), Event::Tool(result)]
+            if call.call_id == "item-4"
+                && call.moment == ToolMoment::Call {
+                    name: "web_search".to_owned(),
+                    arguments: r#"{"query":""}"#.to_owned(),
+                }
+                && result.call_id == call.call_id
                 && matches!(
-                    tool.moment,
+                    result.moment,
                     ToolMoment::Result(ref outcome)
                         if outcome.result == ToolResult::Unreported
                 )
