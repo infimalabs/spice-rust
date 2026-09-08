@@ -227,6 +227,7 @@ where
             title: add.title.clone(),
             description: add.description.clone(),
             acceptance: add.acceptance.clone(),
+            requirements: prepared.statement.requirements.clone(),
             project: prepared.project,
             tags,
             depends: prepared.statement.dependencies.clone(),
@@ -319,6 +320,7 @@ fn prepare_task(
         title: add.title.clone(),
         description: add.description.clone(),
         acceptance: add.acceptance.clone(),
+        requirements: wire::EnvironmentRequirements::default(),
         project: project_text.clone(),
         tags: Vec::new(),
         dependencies: add

@@ -477,7 +477,17 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (11, MigrationStep::Sql(MIGRATE_11_TO_12_SQL)),
     (12, MigrationStep::Rust(creation_context::migrate)),
     (13, MigrationStep::Rust(steering_microseconds::migrate)),
+    (14, MigrationStep::Sql(MIGRATE_14_TO_15_SQL)),
 ];
+
+/// Schema 14 to 15: typed environmental requirements on task authority.
+///
+/// Existing task facts and heads omit the collection and decode it as empty;
+/// their immutable bytes remain untouched. The explicit no-data step makes the
+/// expanded task wire visible at the journal boundary, so a schema-14 build
+/// refuses the authority before it can decode a requirement-bearing row as if
+/// the field did not exist.
+const MIGRATE_14_TO_15_SQL: &str = "SELECT 1;";
 
 /// Schema 11 to 12: producing-worktree identity on durable trust authority.
 ///
@@ -707,8 +717,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 14, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 15, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 14;
+PRAGMA user_version = 15;
 "#;

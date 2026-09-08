@@ -67,6 +67,7 @@ impl RepositoryFixture {
             title: "Exercise a task Git boundary".to_owned(),
             description: None,
             acceptance: Vec::new(),
+            requirements: wire::EnvironmentRequirements::default(),
             project: "task.phase".to_owned(),
             tags: Vec::new(),
             dependencies: Vec::new(),

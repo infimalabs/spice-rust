@@ -36,6 +36,83 @@ fn empty_database_reaches_the_same_finalized_baseline_once() {
 }
 
 #[test]
+fn schema_fourteen_crosses_the_requirement_wire_boundary_once_without_rewriting_tasks() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("schema-fourteen.sqlite3");
+    let journal = authority_file_fixture(&path);
+    journal
+        .connection
+        .execute_batch(
+            "UPDATE journal_schema SET version = 14 WHERE singleton = 1;
+             PRAGMA user_version = 14;",
+        )
+        .expect("downgrade the requirement-unaware fixture identity");
+    let fact_before: Vec<u8> = journal
+        .connection
+        .query_row(
+            "SELECT envelope FROM fact_envelopes WHERE kind = 'task::added'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read retained task fact");
+    let head_before: Vec<u8> = journal
+        .connection
+        .query_row("SELECT body FROM task_heads", [], |row| row.get(0))
+        .expect("read retained task head");
+    let mut census_before = table_census(&journal.connection);
+    census_before.remove("journal_schema");
+    drop(journal);
+
+    let journal = Journal::open(&path).expect("schema-fourteen authority migrates");
+    let migration = journal.migration().expect("wire boundary advances");
+    assert_eq!((migration.from(), migration.to()), (14, SCHEMA_VERSION));
+    assert_eq!(
+        version_records(&journal.connection),
+        (SCHEMA_VERSION, SCHEMA_VERSION)
+    );
+    let fact_after: Vec<u8> = journal
+        .connection
+        .query_row(
+            "SELECT envelope FROM fact_envelopes WHERE kind = 'task::added'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read migrated task fact");
+    let head_after: Vec<u8> = journal
+        .connection
+        .query_row("SELECT body FROM task_heads", [], |row| row.get(0))
+        .expect("read migrated task head");
+    assert_eq!(
+        fact_after, fact_before,
+        "immutable fact bytes stay retained"
+    );
+    assert_eq!(head_after, head_before, "legacy head bytes stay retained");
+
+    let snapshot = journal.fact_snapshot().expect("retained facts decode");
+    let added = snapshot
+        .facts()
+        .iter()
+        .find_map(|envelope| envelope.fact.read::<wire::body::TaskAdded>())
+        .expect("retained task-added fact");
+    assert!(added.requirements.is_empty());
+    let task = "1kKRRsDP".parse().expect("fixture task stamp");
+    let head = journal
+        .read(|read| read.task_head(&task))
+        .expect("retained task head reads")
+        .expect("retained task exists");
+    assert!(head.body().requirements.is_empty());
+
+    let mut census_after = table_census(&journal.connection);
+    census_after.remove("journal_schema");
+    assert_eq!(census_after, census_before, "only schema identity advances");
+    journal.verify().expect("migrated authority verifies");
+    drop(journal);
+
+    let reopened = Journal::open(&path).expect("current authority reopens");
+    assert_eq!(reopened.migration(), None, "schema step runs exactly once");
+}
+
+#[test]
 fn schema_nine_steps_through_wire_only_expansions_without_rewriting_authority() {
     let scratch = Scratch::new();
     let path = scratch.path().join("schema-nine.sqlite3");

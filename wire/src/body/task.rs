@@ -136,6 +136,13 @@ pub struct TaskAdded {
     /// Criteria that decide whether the work is done.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub acceptance: Vec<String>,
+    /// Typed facts the execution environment must satisfy together.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::EnvironmentRequirements::is_empty",
+        deserialize_with = "crate::EnvironmentRequirements::present"
+    )]
+    pub requirements: crate::EnvironmentRequirements,
     /// Dotted project stem.
     pub project: String,
     /// Free tags carried on the statement.

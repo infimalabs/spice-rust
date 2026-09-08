@@ -4,8 +4,8 @@ use std::thread::{self, ThreadId};
 
 use bus::{Bus, CommitOutcome};
 use journal::crossing::{
-    Actor, CanonicalUuid, Command, CommandKind, Origin, Phase, Producer, Seq, TaskHandle, TaskHead,
-    WireVersion, Witness, WorkflowHead, body, intent,
+    Actor, CanonicalUuid, Command, CommandKind, EnvironmentRequirements, Origin, Phase, Producer,
+    Seq, TaskHandle, TaskHead, WireVersion, Witness, WorkflowHead, body, intent,
 };
 use journal::{FactCause, GuardError, Journal, JournalGuard, JournalWrite};
 
@@ -343,6 +343,7 @@ fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>)
                 title: "Implement bus writer".to_owned(),
                 description: Some("Persist one ordered write".to_owned()),
                 acceptance: vec!["The journal commits atomically".to_owned()],
+                requirements: EnvironmentRequirements::default(),
                 project: "bus".to_owned(),
                 tags: vec!["journal".to_owned()],
                 depends: Vec::new(),
@@ -365,6 +366,7 @@ fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>)
         title: "Implement bus writer".to_owned(),
         description: Some("Persist one ordered write".to_owned()),
         acceptance: vec!["The journal commits atomically".to_owned()],
+        requirements: EnvironmentRequirements::default(),
         project: "bus".to_owned(),
         tags: vec!["journal".to_owned()],
         dependencies: Vec::new(),

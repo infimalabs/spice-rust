@@ -166,6 +166,10 @@ impl ProjectVisibility {
 }
 
 /// Actor-facing task statement evidence, excluding authored title prose.
+///
+/// Environmental requirements remain on the authoritative [`crate::TaskHead`]
+/// until the requirement-aware board surface projects their observed standing;
+/// this pre-existing actor view must not expose a partial requirements model.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BoardStatement {
@@ -219,6 +223,10 @@ impl From<&crate::TaskHead> for BoardStatement {
 
 impl BoardStatement {
     /// Reconstruct a client-side statement using its actor-facing title.
+    ///
+    /// This actor view predates environmental standing, so its client-side
+    /// reconstruction is unconstrained. Authoritative allocation always reads
+    /// the journal's [`crate::TaskHead`] rather than this presentation copy.
     #[must_use]
     pub fn with_title(&self, title: &str) -> crate::TaskHead {
         crate::TaskHead {
@@ -227,6 +235,7 @@ impl BoardStatement {
             title: title.to_owned(),
             description: self.description.clone(),
             acceptance: self.acceptance.clone(),
+            requirements: crate::EnvironmentRequirements::default(),
             project: self.project.clone(),
             tags: self.tags.clone(),
             dependencies: self.dependencies.clone(),

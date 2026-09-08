@@ -42,6 +42,7 @@ pub mod command;
 pub mod config;
 pub mod doctor;
 pub mod envelope;
+pub mod environment;
 pub mod fact;
 pub mod head;
 pub mod hello;
@@ -75,6 +76,10 @@ pub use doctor::{
 };
 pub use envelope::{
     Actor, ActorError, Envelope, JournalCursor, Origin, OriginError, Seq, WireVersion,
+};
+pub use environment::{
+    Environment, EnvironmentFact, EnvironmentObservation, EnvironmentRequirement,
+    EnvironmentRequirements,
 };
 pub use fact::{AnyFact, Body, Fact, FactKind, Producer};
 pub use head::{

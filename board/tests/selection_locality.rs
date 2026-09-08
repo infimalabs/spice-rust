@@ -66,6 +66,7 @@ fn statement(name: &str) -> TaskHead {
         title: format!("Implement {name}"),
         description: None,
         acceptance: Vec::new(),
+        requirements: wire::EnvironmentRequirements::default(),
         project: "board.kernel".to_owned(),
         tags: Vec::new(),
         dependencies: Vec::new(),

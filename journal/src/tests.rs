@@ -1076,6 +1076,7 @@ fn task_head() -> TaskHead {
         title: "Lay journal baseline".to_owned(),
         description: None,
         acceptance: Vec::new(),
+        requirements: wire::EnvironmentRequirements::default(),
         project: "journal".to_owned(),
         tags: vec!["journal".to_owned()],
         dependencies: Vec::new(),
