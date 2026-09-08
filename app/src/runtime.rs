@@ -9,19 +9,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use wire::intent::{
-    BoardAnswer, BoardTask, ConsentPolicyAnswer, ConsentQueueAnswer, DirectiveAnswer,
-    GlobalSettingsAnswer, InboxAnswer, LaneAnswer, LaneChangeAnswer, LaneLiveness,
-    LaneRenewalAnswer,
+    BoardAnswer, BoardTask, DirectiveAnswer, GlobalSettingsAnswer, InboxAnswer, LaneAnswer,
+    LaneLiveness,
 };
 use wire::{
     Accepted, Actor, AgentActivityKind, AgentMessage, CanonicalUuid, CommandKind, FactKind,
-    MessageLocus, Origin, Outcome, Packed, Response, Seq, StreamCursor, StreamFrame, TrustView,
-    ViewSubject,
+    MessageLocus, Outcome, Packed, Response, Seq, StreamCursor, StreamFrame, ViewSubject,
 };
 
-use crate::pane::{GrantPane, Principal, ReadPane, SteerPane};
+use crate::pane::{Principal, SteerPane};
 use crate::socket::{Admitted, SessionScope};
-use crate::state::{BrowserState, ChainWalk};
 
 mod message_cards;
 #[cfg(any(target_arch = "wasm32", test))]
@@ -29,15 +26,7 @@ mod publication;
 mod stream;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use publication::CanvasSurface;
-pub use stream::{FactRow, OperatorMessage, StreamApplication, StreamDirective, StreamTerminal};
-
-const EVENT_LIMIT: usize = 32;
-
-/// Maximum number of fact pages one long-lived Canvas tab retains.
-pub const FACT_PAGE_LIMIT: usize = 16;
-
-/// Maximum number of causal-thread pages one explicit walk may fetch and retain.
-pub const THREAD_PAGE_LIMIT: usize = 16;
+pub use stream::{OperatorMessage, StreamApplication, StreamDirective, StreamTerminal};
 
 /// Whether a topology mutation response leaves Canvas owing an authoritative read.
 ///
@@ -320,20 +309,7 @@ impl<T> ScopedValue<T> {
     }
 }
 
-/// One visible chronological outcome retained from an admitted frame.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RuntimeEvent {
-    class: &'static str,
-    title: String,
-    detail: String,
-}
-
 /// One agent-authored activity retained for a lineage status strip.
-///
-/// Command outcomes deliberately remain [`RuntimeEvent`]s: they have their own
-/// chronology pane, while this type is restricted to work performed by a
-/// seated lane. Keeping the two chronologies distinct prevents a board, lane,
-/// or inbox snapshot receipt from displacing the work the operator is watching.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LaneActivity {
     lane: CanonicalUuid,
@@ -466,13 +442,8 @@ pub struct CanvasRuntime {
     lanes: ScopedValue<LaneView>,
     lane_position: Option<Seq>,
     inbox: ScopedValue<InboxAnswer>,
-    consent: ScopedValue<ConsentQueueAnswer>,
-    policy: ScopedValue<ConsentPolicyAnswer>,
     settings: ScopedValue<GlobalSettingsAnswer>,
     settings_position: Option<Seq>,
-    fact_pages: Vec<BrowserState<FactRow>>,
-    trust_pages: Vec<BrowserState<TrustView>>,
-    trust_resume: Option<StreamCursor>,
     message_cards: message_cards::MessageCards,
     operator_messages: Vec<OperatorMessage>,
     /// Exact oldest admitted card each independently paged member can extend.
@@ -481,14 +452,8 @@ pub struct CanvasRuntime {
     message_reconnect_pending: bool,
     /// Re-arms member-local paging after a same-scope subscription refresh.
     message_history_revision: u64,
-    thread_pages: Vec<BrowserState<FactRow>>,
-    facts: BrowserState<FactRow>,
-    thread: BrowserState<FactRow>,
-    thread_start: Option<Seq>,
-    thread_next: Option<Seq>,
     resume: Option<StreamCursor>,
     terminal: Option<StreamTerminal>,
-    events: Vec<RuntimeEvent>,
     activities: Vec<LaneActivity>,
     lifecycle_boundaries: Vec<LaneLifecycleBoundary>,
 }
@@ -504,26 +469,15 @@ impl CanvasRuntime {
             lanes: ScopedValue::new(accepted),
             lane_position: None,
             inbox: ScopedValue::new(accepted),
-            consent: ScopedValue::new(accepted),
-            policy: ScopedValue::new(accepted),
             settings: ScopedValue::new(accepted),
             settings_position: None,
-            fact_pages: Vec::new(),
-            trust_pages: Vec::new(),
-            trust_resume: None,
             message_cards: message_cards::MessageCards::default(),
             operator_messages: Vec::new(),
             message_history: BTreeMap::new(),
             message_reconnect_pending: false,
             message_history_revision: 0,
-            thread_pages: Vec::new(),
-            facts: BrowserState::new(accepted),
-            thread: BrowserState::new(accepted),
-            thread_start: None,
-            thread_next: None,
             resume: None,
             terminal: None,
-            events: Vec::new(),
             activities: Vec::new(),
             lifecycle_boundaries: Vec::new(),
         }
@@ -535,17 +489,6 @@ impl CanvasRuntime {
         if self.accepted.scope() == accepted.scope() {
             self.accepted = accepted.clone();
             self.principal = Principal::admitted(accepted);
-            self.facts.reconnect(accepted);
-            self.thread.reconnect(accepted);
-            for page in &mut self.fact_pages {
-                page.reconnect(accepted);
-            }
-            for page in &mut self.trust_pages {
-                page.reconnect(accepted);
-            }
-            for page in &mut self.thread_pages {
-                page.reconnect(accepted);
-            }
             self.message_reconnect_pending = true;
             self.terminal = None;
             false
@@ -564,9 +507,8 @@ impl CanvasRuntime {
     #[must_use]
     pub fn subjects(&self) -> Vec<ViewSubject> {
         let mut subjects = vec![ViewSubject::Facts];
-        if GrantPane::over(&self.principal).is_some() {
+        if self.principal.actor() == &Actor::Operator {
             subjects.push(ViewSubject::Directions);
-            subjects.push(ViewSubject::Trust);
             subjects.push(ViewSubject::Messages);
         }
         subjects
@@ -578,12 +520,6 @@ impl CanvasRuntime {
         SteerPane::over(&self.principal).offers(kind)
     }
 
-    /// Whether this runtime has an admitted operator grant pane.
-    #[must_use]
-    pub fn grants(&self) -> bool {
-        GrantPane::over(&self.principal).is_some()
-    }
-
     #[must_use]
     pub const fn resume(&self) -> Option<StreamCursor> {
         self.resume
@@ -592,15 +528,6 @@ impl CanvasRuntime {
     #[must_use]
     pub const fn terminal(&self) -> Option<StreamTerminal> {
         self.terminal
-    }
-
-    /// Exact causal cursor whose response can extend the current walk.
-    #[must_use]
-    pub fn pending_thread(&self) -> Option<StreamCursor> {
-        self.thread_next.map(|seq| StreamCursor {
-            epoch: self.principal.epoch(),
-            seq,
-        })
     }
 
     /// Exact member-local cursor for the next retained history page.
@@ -630,31 +557,10 @@ impl CanvasRuntime {
         self.inbox.get(&self.principal)
     }
 
-    #[must_use]
-    pub fn consent(&self) -> Option<&ConsentQueueAnswer> {
-        self.consent.get(&self.principal)
-    }
-
-    #[must_use]
-    pub fn policy(&self) -> Option<&ConsentPolicyAnswer> {
-        self.policy.get(&self.principal)
-    }
-
     /// Authoritative global settings, absent until the initial read lands.
     #[must_use]
     pub fn settings(&self) -> Option<&GlobalSettingsAnswer> {
         self.settings.get(&self.principal)
-    }
-
-    #[must_use]
-    pub fn events(&self) -> &[RuntimeEvent] {
-        &self.events
-    }
-
-    /// Newest retained command outcome for the chronology pane.
-    #[must_use]
-    pub fn newest_event(&self) -> Option<&RuntimeEvent> {
-        self.events.first()
     }
 
     /// Newest retained activity produced by any member of `lineage`.
@@ -689,26 +595,10 @@ impl CanvasRuntime {
         &self.lifecycle_boundaries
     }
 
-    #[must_use]
-    pub fn fact_pages(&self) -> Vec<ReadPane<'_, FactRow>> {
-        self.fact_pages
-            .iter()
-            .filter_map(|state| ReadPane::over(&self.principal, state))
-            .collect()
-    }
-
     /// Durable operator-authored direction retained in command acceptance order.
     #[must_use]
     pub fn operator_messages(&self) -> &[OperatorMessage] {
         &self.operator_messages
-    }
-
-    #[must_use]
-    pub fn trust_pages(&self) -> Vec<ReadPane<'_, TrustView>> {
-        self.trust_pages
-            .iter()
-            .filter_map(|state| ReadPane::over(&self.principal, state))
-            .collect()
     }
 
     /// Newest retained agent-authored transcript messages in creation order.
@@ -717,28 +607,11 @@ impl CanvasRuntime {
         self.message_cards.entries()
     }
 
-    #[must_use]
-    pub fn thread_pages(&self) -> Vec<ReadPane<'_, FactRow>> {
-        self.thread_pages
-            .iter()
-            .filter_map(|state| ReadPane::over(&self.principal, state))
-            .collect()
-    }
-
-    #[must_use]
-    pub fn thread_walk(&self) -> Option<ChainWalk> {
-        self.thread_start.map(|start| self.thread.walk(start))
-    }
-
     pub fn apply_board(&mut self, admitted: &Admitted<Response<BoardAnswer>>) {
         self.apply_response(admitted, |runtime, answer| {
             runtime
                 .board
                 .replace(admitted.scope(), BoardView::from(answer));
-            (
-                "Board snapshot".to_owned(),
-                format!("cursor {}", answer.cursor),
-            )
         });
     }
 
@@ -767,10 +640,6 @@ impl CanvasRuntime {
             runtime
                 .lanes
                 .replace(admitted.scope(), LaneView::from(answer));
-            (
-                "Agent snapshot".to_owned(),
-                format!("{} agents", answer.lanes.len()),
-            )
         });
         matches!(&admitted.get().outcome, Outcome::Reply(_))
     }
@@ -778,32 +647,6 @@ impl CanvasRuntime {
     pub fn apply_inbox(&mut self, admitted: &Admitted<Response<InboxAnswer>>) {
         self.apply_response(admitted, |runtime, answer| {
             runtime.inbox.replace(admitted.scope(), answer.clone());
-            let pending = answer
-                .lanes
-                .iter()
-                .map(|lane| lane.pending.len())
-                .sum::<usize>();
-            ("Steering inbox".to_owned(), format!("{pending} pending"))
-        });
-    }
-
-    pub fn apply_consent(&mut self, admitted: &Admitted<Response<ConsentQueueAnswer>>) {
-        self.apply_response(admitted, |runtime, answer| {
-            runtime.consent.replace(admitted.scope(), answer.clone());
-            (
-                "Consent queue".to_owned(),
-                format!("{} pending", answer.pending.len()),
-            )
-        });
-    }
-
-    pub fn apply_policy(&mut self, admitted: &Admitted<Response<ConsentPolicyAnswer>>) {
-        self.apply_response(admitted, |runtime, answer| {
-            runtime.policy.replace(admitted.scope(), answer.clone());
-            (
-                "Consent policy".to_owned(),
-                format!("{} rules", answer.rules.len()),
-            )
         });
     }
 
@@ -826,79 +669,6 @@ impl CanvasRuntime {
                 runtime.settings_position = position;
                 runtime.settings.replace(admitted.scope(), *answer);
             }
-            (
-                "Global settings".to_owned(),
-                format!("fast mode {}", if answer.fast_mode { "on" } else { "off" }),
-            )
-        });
-    }
-
-    /// Record the resident's authoritative result for one lane seating request.
-    pub fn apply_lane_change(&mut self, admitted: &Admitted<Response<LaneChangeAnswer>>) {
-        self.apply_response(admitted, |_runtime, answer| {
-            (
-                "Agent seated".to_owned(),
-                format!(
-                    "{} moved from {} to {}",
-                    answer.lane, answer.from, answer.to
-                ),
-            )
-        });
-    }
-
-    /// Record one typed agent-renewal mutation without fabricating a lane table.
-    pub fn apply_lane_renewal(&mut self, admitted: &Admitted<Response<LaneRenewalAnswer>>) {
-        self.apply_response(admitted, |_runtime, answer| {
-            let state = answer.renewal.as_ref().map_or_else(
-                || "request cleared".to_owned(),
-                |renewal| match &renewal.state {
-                    wire::LaneRenewalState::Requested { .. } => "successor requested".to_owned(),
-                    wire::LaneRenewalState::HandoffPending { .. } => "handoff pending".to_owned(),
-                    wire::LaneRenewalState::SuccessorStarted { .. } => {
-                        "successor started".to_owned()
-                    }
-                    wire::LaneRenewalState::LaunchRefused { reason, .. } => {
-                        format!("launch refused: {reason}")
-                    }
-                },
-            );
-            (format!("Agent renewal for {}", answer.lane), state)
-        });
-    }
-
-    pub fn apply_note<T>(&mut self, admitted: &Admitted<Response<T>>, task: &str) {
-        self.apply_response(admitted, |_runtime, _answer| {
-            (
-                format!("Note appended to {task}"),
-                "reply admitted".to_owned(),
-            )
-        });
-    }
-
-    pub fn apply_decision<T>(&mut self, admitted: &Admitted<Response<T>>) {
-        self.apply_response(admitted, |_runtime, _answer| {
-            ("Consent decision".to_owned(), "reply admitted".to_owned())
-        });
-    }
-
-    /// Record the receipt for direction the operator sent from a lane tile.
-    ///
-    /// The acknowledgment key is the operator's handle on the directive from
-    /// here on, so it is the detail rather than the opaque directive identity.
-    pub fn apply_steer(
-        &mut self,
-        admitted: &Admitted<Response<DirectiveAnswer>>,
-        lane: CanonicalUuid,
-    ) {
-        self.apply_response(admitted, |_runtime, answer| {
-            (
-                format!("Steered agent {lane}"),
-                format!(
-                    "key {} {}",
-                    answer.key,
-                    disposition_label(answer.disposition)
-                ),
-            )
         });
     }
 
@@ -923,55 +693,19 @@ impl CanvasRuntime {
                 attachments,
             );
         }
-        self.apply_steer(admitted, lane);
     }
 
-    /// Record one response and hand back the chronology row it produced.
-    ///
-    /// The row is returned rather than only pushed because a caller may need
-    /// the failing arms too, and reading them back off the one match here is
-    /// what keeps a second interpretation of the same outcome from existing.
-    /// `None` means the response belonged to another scope and moved nothing.
     fn apply_response<T>(
         &mut self,
         admitted: &Admitted<Response<T>>,
-        reply: impl FnOnce(&mut Self, &T) -> (String, String),
-    ) -> Option<RuntimeEvent> {
+        reply: impl FnOnce(&mut Self, &T),
+    ) {
         if admitted.scope() != self.accepted.scope() {
-            return None;
+            return;
         }
-        match &admitted.get().outcome {
-            Outcome::Reply(answer) => {
-                let (title, detail) = reply(self, &answer.body);
-                self.push_event("reply", title, detail);
-            }
-            Outcome::Refusal(refusal) => {
-                self.push_event(
-                    "refusal",
-                    refusal.reason().to_owned(),
-                    refusal.explanation().to_owned(),
-                );
-            }
-            Outcome::Fault(fault) => {
-                self.push_event("fault", fault.reason.clone(), fault.detail.clone());
-            }
+        if let Outcome::Reply(answer) = &admitted.get().outcome {
+            reply(self, &answer.body);
         }
-        self.newest_event().cloned()
-    }
-}
-
-/// The operator-facing spelling of a directive disposition.
-///
-/// The match is exhaustive, so a new retirement state must state its spelling
-/// rather than reach the operator as a debug rendering.
-const fn disposition_label(disposition: wire::Disposition) -> &'static str {
-    match disposition {
-        wire::Disposition::Live => "live",
-        wire::Disposition::Acked => "acked",
-        wire::Disposition::Declined => "declined",
-        wire::Disposition::Lapsed => "lapsed",
-        wire::Disposition::DeadLettered => "deadlettered",
-        wire::Disposition::Canceled => "canceled",
     }
 }
 
@@ -979,22 +713,20 @@ const fn disposition_label(disposition: wire::Disposition) -> &'static str {
 ///
 /// The stream carries facts, not snapshots: it advances the journal cursor and
 /// leaves every read the surface is drawn from exactly as stale as it was.
-/// That was survivable while the four axes were the whole surface and the
-/// operator was reading history, and it is not survivable for the watchband,
-/// which claims to show what a lane is doing right now. Uncorrected, the shell
+/// That is not survivable for the watchband, which claims to show what a lane
+/// is doing right now. Uncorrected, the shell
 /// reports itself online with a current cursor while a tile shows a directive
 /// two events old — worse than showing nothing, because the staleness is
 /// invisible.
 ///
 /// This lives beside [`CanvasRuntime::apply_board`], [`CanvasRuntime::apply_lanes`],
-/// [`CanvasRuntime::apply_inbox`] and [`CanvasRuntime::apply_consent`] — one field per read it names — rather than
+/// [`CanvasRuntime::apply_inbox`] — one field per read it names — rather than
 /// in the socket loop that acts on it, so it can be tested off `wasm32`.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stale {
     board: bool,
     lanes: bool,
     inbox: bool,
-    consent: bool,
 }
 
 impl Stale {
@@ -1030,7 +762,6 @@ impl Stale {
                 self.board = true;
                 self.lanes = true;
             }
-            Some(("consent", _)) => self.consent = true,
             _ => {}
         }
     }
@@ -1053,16 +784,10 @@ impl Stale {
         self.inbox
     }
 
-    /// Whether the consent queue read went stale.
-    #[must_use]
-    pub const fn consent(self) -> bool {
-        self.consent
-    }
-
     /// Whether anything needs re-reading at all.
     #[must_use]
     pub const fn any(self) -> bool {
-        self.board || self.lanes || self.inbox || self.consent
+        self.board || self.lanes || self.inbox
     }
 }
 

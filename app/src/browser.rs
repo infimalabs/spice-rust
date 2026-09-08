@@ -14,13 +14,11 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use wire::body::DirectiveAttachment;
 use wire::intent::{
-    BoardRead, ConsentPolicy, ConsentRead, GlobalSettingsRead, GlobalSettingsSet, LaneAction,
-    LaneArrange, LaneRead, LaneRenewal, LaneSeat, LaneState, LineageArrange, LineageArrangement,
-    LineageConfigure, LineageLife, SteerInbox, SteerSend, TaskAnswer, TaskNote,
+    BoardRead, GlobalSettingsRead, GlobalSettingsSet, LaneAction, LaneArrange, LaneRead,
+    LaneRenewal, LaneSeat, LaneState, LineageArrange, LineageArrangement, LineageConfigure,
+    LineageLife, SteerInbox, SteerSend, TaskAnswer, TaskNote,
 };
-use wire::{
-    Answer, CanonicalUuid, CommandKind, Response, StreamRequest, TaskHandle, WireVersion, Witness,
-};
+use wire::{CanonicalUuid, CommandKind, Response, StreamRequest, TaskHandle, WireVersion, Witness};
 use yew::prelude::*;
 
 use crate::command_demands::{DemandQueue, DemandResponse, classify_demand_outcome};
@@ -31,10 +29,9 @@ use crate::speech_queue::{
     Advance, Enqueue, ExternalPause, NarrationCursors, NarrationMessage, SpeechEntry, SpeechQueue,
     SpeechRequest, SuppressAutomatic,
 };
-use crate::thread_refresh::ThreadRefresh;
 use crate::{
-    Axis, CanvasDestination, CanvasRuntime, ChainEnd, Pane, Principal, Session, SteerPane,
-    StreamDirective, TeamDestination, stale_reads,
+    Axis, CanvasDestination, CanvasRuntime, Principal, Session, SteerPane, StreamDirective,
+    TeamDestination, stale_reads,
 };
 
 mod clock;
@@ -62,9 +59,6 @@ const NARRATION_CURSOR_STORAGE: &str = "spice:narration-cursors:v1";
 /// The probe is what makes the next interval meaningful: after it, silence is a
 /// resident that did not answer rather than a resident with nothing to say.
 const LIVENESS_PROBE_MILLIS: u32 = 15_000;
-
-/// Maximum time a burst of live facts waits for one newest-thread request.
-const THREAD_REFRESH_COALESCE_MILLIS: u32 = 75;
 
 type SenderHandle = Rc<RefCell<Option<UnboundedSender<ClientAction>>>>;
 type SocketWriter = futures_util::stream::SplitSink<WebSocket, Message>;
@@ -394,11 +388,6 @@ enum ClientAction {
         task: TaskHandle,
         note: String,
     },
-    Consent {
-        request: CanonicalUuid,
-        rule: wire::Name,
-        answer: Answer,
-    },
     /// Direction the operator aimed at one seated lane from its tile.
     ///
     /// The occupant and epoch travel with the message because the residency
@@ -425,8 +414,6 @@ enum PendingKind {
         /// Accepted keys a successful answer can reconstruct as settled.
         covered: BTreeMap<CanonicalUuid, String>,
     },
-    Consent,
-    Policy,
     Settings,
     LaneSeat,
     /// One member arrangement whose stale refusal must refresh the roster.
@@ -458,14 +445,11 @@ enum PendingKind {
     /// is the send: by the time the answer lands the selection may have moved,
     /// so reading it back off the surface would attribute the receipt to
     /// whichever lane the operator is looking at now.
-    Steer {
-        lane: CanonicalUuid,
-    },
+    Steer,
     SteerSubmission {
         lane: CanonicalUuid,
     },
-    Note(TaskHandle),
-    ConsentDecision,
+    Note,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -473,8 +457,6 @@ enum CurrentRead {
     Board,
     Lanes,
     Inbox,
-    Consent,
-    Policy,
     Settings,
 }
 
@@ -484,8 +466,6 @@ impl PendingKind {
             Self::Board => Some(CurrentRead::Board),
             Self::Lanes { .. } => Some(CurrentRead::Lanes),
             Self::Inbox { .. } => Some(CurrentRead::Inbox),
-            Self::Consent => Some(CurrentRead::Consent),
-            Self::Policy => Some(CurrentRead::Policy),
             Self::Settings => Some(CurrentRead::Settings),
             Self::LaneSeat
             | Self::LaneArrange
@@ -493,10 +473,9 @@ impl PendingKind {
             | Self::WakeSubmission { .. }
             | Self::LineageConfigure { .. }
             | Self::LineageArrange
-            | Self::Steer { .. }
+            | Self::Steer
             | Self::SteerSubmission { .. }
-            | Self::Note(_)
-            | Self::ConsentDecision => None,
+            | Self::Note => None,
         }
     }
 
@@ -1167,31 +1146,12 @@ fn queue_submission(
     false
 }
 
-fn metric(label: &'static str, value: String, detail: String) -> Html {
-    html! {
-        <div class="metric">
-            <div class="metric-label">{label}</div>
-            <div class="metric-value">{value}</div>
-            <div class="metric-detail">{detail}</div>
-        </div>
-    }
-}
-
 fn empty(message: &'static str) -> Html {
     html! { <div class="empty">{message}</div> }
 }
 
 fn short(value: &str) -> String {
     value.get(..8).unwrap_or(value).to_owned()
-}
-
-fn resident_state(surface: &SurfaceData) -> String {
-    surface
-        .read()
-        .as_ref()
-        .and_then(CanvasRuntime::lanes)
-        .map(|lanes| format!("{:?}", lanes.state).to_lowercase())
-        .unwrap_or_else(|| "resident state".to_owned())
 }
 
 fn phase_class(status: &str) -> Classes {

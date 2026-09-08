@@ -1,4 +1,4 @@
-//! Same-generation reconnect coverage for the packed Canvas fact history.
+//! Same-generation reconnect coverage for a packed Canvas fact backlog.
 
 use app::{CanvasRuntime, Session, StreamDirective};
 use wire::{CanonicalUuid, Seq, StreamFrame, ViewSubject};
@@ -65,7 +65,7 @@ fn admitted(session: &Session, bytes: &[u8]) -> app::Admitted<StreamFrame> {
 }
 
 #[test]
-fn replayed_prefix_cannot_move_reconnect_before_the_history_origin() {
+fn replayed_prefix_cannot_move_reconnect_before_the_backlog_origin() {
     let session = Session::open(uuid(OPERATOR), uuid(EPOCH));
     let accepted = acceptance(&session);
     let mut runtime = CanvasRuntime::new(&accepted);
@@ -81,7 +81,7 @@ fn replayed_prefix_cannot_move_reconnect_before_the_history_origin() {
     runtime.apply_stream(&second);
     let settled = runtime
         .resume()
-        .expect("complete history settles its horizon");
+        .expect("complete backlog settles its horizon");
     assert!(!runtime.reconnect(&acceptance(&session)));
 
     assert_eq!(
@@ -96,10 +96,4 @@ fn replayed_prefix_cannot_move_reconnect_before_the_history_origin() {
         "a replayed prefix may still advance its producer continuation"
     );
     assert_eq!(runtime.resume(), Some(settled));
-    let pages = runtime.fact_pages();
-    let sequences = pages
-        .iter()
-        .flat_map(|page| page.rows().iter().map(|row| row.seq()))
-        .collect::<Vec<_>>();
-    assert_eq!(sequences, [seq(1), seq(2), seq(3), seq(4)]);
 }

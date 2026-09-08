@@ -131,7 +131,7 @@ async function assertMalformedProtocolStopsBeforeSocket(browser, endpoint) {
     CONNECT_MS,
     () => document.querySelector(".canvas-menu") !== null,
   );
-  await chooseCanvasView(page, "Chronology");
+  await chooseCanvasView(page, "Flow");
   await assertOfflineObserved(page, "malformed Canvas version metadata");
   assert.match(
     await page.locator(".status-copy").innerText(),

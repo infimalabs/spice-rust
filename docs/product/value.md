@@ -360,15 +360,13 @@ the discovery happens after the one step that cannot be undone.
 ```mermaid
 flowchart LR
   C["Canvas"] --> A["Agents<br/>converse with seated agents"]
-  C --> M["Magnitude<br/>how much exists now?"]
   C --> F["Flow<br/>what work is moving?"]
   C --> T["Topology<br/>what is connected and possessed?"]
-  C --> H["Chronology<br/>what happened, in what order, and what waits?"]
 ```
 
-Agents is the conversation surface. Magnitude, Flow, Topology, and Chronology
-are the complete closed analytical vocabulary; every analytical pane stands on
-one of those four axes. The rail changes the question asked of the whole Canvas,
+Agents is the conversation surface. Flow and Topology are the complete closed
+analytical vocabulary; every analytical pane stands on one of those two axes.
+The rail changes the question asked of the whole Canvas,
 not the mode of one lane or team.
 
 ### The team console

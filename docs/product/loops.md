@@ -589,9 +589,9 @@ What the operator actually manipulates, stated as a component contract.
 ```mermaid
 block-beta
   columns 1
-  G["CANVAS VIEW RAIL, agents | magnitude | flow | topology | chronology"]
+  G["CANVAS VIEW RAIL, agents | flow | topology"]
   C["AGENTS VIEW, one console per live team"]
-  R["team mode rail, compose | tasks | metrics | info, badges are live counts"]
+  R["team mode rail, compose | tasks | info, badges are live counts"]
   W["COMPOSE, one member shard per lane, status face + composer"]
   A["AUTONOMY, speech | lifetime | submit, submit names the lifetime"]
   S["status line, age + latest action"]
@@ -601,16 +601,15 @@ block-beta
 **Contract**
 
 - **The Canvas rail is the global view vocabulary.** Agents is the conversation
-   surface; Magnitude, Flow, Topology, and Chronology are the complete closed
-   analytical axes. A pane belongs to one of those axes rather than inventing a
-   fifth.
+   surface; Flow and Topology are the complete closed analytical axes. A pane
+   belongs to one of those axes rather than inventing a third.
 - **The team console is the unit of tiling in Agents.** Consoles sit side by
    side; each is the complete operator surface for one live lineage containing
    one or more member lanes. Adding an agent widens its team console through the
    six-share visual ceiling; later members retain that maximum rather than
    narrowing it. Membership never adds another peer console.
-- **The team rail's badges are the summary.** Compose shows pending direction, Tasks
-   shows active work, Metrics shows held claims, and Info shows member count. A badge is only present when its
+- **The team rail's badges are the summary.** Compose shows pending direction,
+   Tasks shows active work, and Info shows member count. A badge is only present when its
    count is non-zero, so an empty rail means a quiet team.
 - **The member shards are the identity and composer-address summary.** Across
    Compose and Info they expose the concrete lane/worktree address, agent label,

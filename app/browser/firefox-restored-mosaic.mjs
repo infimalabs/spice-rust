@@ -22,7 +22,7 @@ import { captureMessageStreamBoundaries } from "./message-stream-boundaries.mjs"
 import { assertCandidateMeasurementPaintAtomic } from "./mosaic-candidate-paint.mjs";
 import { assertCursorRelocation } from "./team-menu.mjs";
 import {
-  assertGlobalHistoryNavigation,
+  assertGlobalNavigation,
   assertTeamNavigation,
 } from "./team-navigation.mjs";
 import {
@@ -164,7 +164,7 @@ export async function captureFirefoxAgentPageSpacing(
     const console = page.locator('[data-pane="agent-console"]');
     await assertTeamNavigation(console, state);
     await page.getByLabel("Open Spice Canvas menu").click();
-    await assertGlobalHistoryNavigation(page, state);
+    await assertGlobalNavigation(page, state);
     await page.getByLabel("Open Spice Canvas menu").click();
     const committed = page.locator(
       '.mosaic-message-card[data-layout-phase="committed"]',

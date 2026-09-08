@@ -1,12 +1,11 @@
 //! The real canvas runtime retains only admitted, capability-scoped state.
 
 use app::{
-    CanvasRuntime, ChainEnd, FACT_PAGE_LIMIT, LaneStatus, Session, Stale, StreamDirective,
-    StreamTerminal, THREAD_PAGE_LIMIT, stale_reads,
+    CanvasRuntime, LaneStatus, Session, Stale, StreamDirective, StreamTerminal, stale_reads,
 };
 use wire::{
-    CanonicalUuid, CommandKind, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition,
-    Response, Seq, StreamFrame, ViewSubject, WireVersion,
+    CanonicalUuid, CommandKind, Outcome, Reply, ReplyPosition, Response, Seq, StreamFrame,
+    ViewSubject, WireVersion,
 };
 
 #[path = "runtime/invalidation_and_chronology.rs"]
@@ -121,54 +120,6 @@ fn operator_submission_response(
     session
         .admit_frame(&response)
         .expect("operator submission response is admitted")
-}
-
-fn journal_ingested_fact(position: u64, cause: Option<u64>) -> serde_json::Value {
-    let mut value = serde_json::json!({
-        "v": 1,
-        "seq": position,
-        "at": "2030-04-12T18:44:09.271Z",
-        "actor": "spice",
-        "origin": format!("lane:{LANE}"),
-        "fact": {
-            "kind": "journal::ingested",
-            "lane": LANE,
-            "vendor": "codex",
-            "stream": "transcript",
-            "source": REQUEST,
-            "from": {"member": 0, "offset": 0},
-            "to": {"member": 0, "offset": 4096},
-            "usage": [],
-            "non_usage_records": 3,
-            "residue_records": 0,
-        },
-    });
-    if let Some(cause) = cause {
-        value["cause"] = serde_json::json!(cause);
-    }
-    value
-}
-
-fn seated_fact(position: u64, capability: Option<&str>) -> serde_json::Value {
-    let mut value = serde_json::json!({
-        "v": 1,
-        "seq": position,
-        "at": "2030-04-12T18:44:09.271Z",
-        "actor": "spice",
-        "origin": format!("lane:{LANE}"),
-        "fact": {
-            "kind": "lane::seated",
-            "lane": LANE,
-            "lineage_id": LANE,
-            "worktree": "/tmp/lane",
-            "life": "continuous",
-            "vendor": "codex",
-        },
-    });
-    if let Some(capability) = capability {
-        value["fact"]["capability"] = serde_json::json!(capability);
-    }
-    value
 }
 
 fn packed_frame(
@@ -482,26 +433,6 @@ fn fact_frame(fact: serde_json::Value) -> Vec<u8> {
     .expect("fact fixture serializes")
 }
 
-fn trust_frame(position: u64, horizon: u64) -> Vec<u8> {
-    serde_json::to_vec(&serde_json::json!({
-        "stream": "trust",
-        "v": 1,
-        "id": REQUEST,
-        "epoch": EPOCH,
-        "packed": {
-            "rows": [{
-                "position": position,
-                "head": {
-                    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                    "state": "granted",
-                },
-            }],
-            "horizon": horizon,
-        },
-    }))
-    .expect("trust frame serializes")
-}
-
 #[test]
 fn stream_application_invalidates_only_observable_runtime_changes() {
     let session = session(OPERATOR, EPOCH);
@@ -540,19 +471,6 @@ fn stream_application_invalidates_only_observable_runtime_changes() {
     assert!(
         !foreign_runtime.apply_stream_frame(&live).changed(),
         "an admitted frame from another scope does not invalidate the rendered surface"
-    );
-
-    let mut trust_runtime = CanvasRuntime::new(&accepted);
-    let trust = admitted_stream(&session, &trust_frame(41, 41));
-    assert!(trust_runtime.apply_stream_frame(&trust).changed());
-    assert!(
-        !trust_runtime.apply_stream_frame(&trust).changed(),
-        "a duplicate trust page does not invalidate the rendered surface"
-    );
-    let stale_trust = admitted_stream(&session, &trust_frame(40, 40));
-    assert!(
-        !trust_runtime.apply_stream_frame(&stale_trust).changed(),
-        "a stale trust page does not invalidate the rendered surface"
     );
 }
 
@@ -643,17 +561,10 @@ fn operator_direction_and_agent_response_retain_separate_source_identity() {
     );
     assert_eq!(runtime.messages().len(), 1);
 
-    for position in 44..=(44 + app::FACT_PAGE_LIMIT as u64) {
-        runtime.apply_stream(&admitted_stream(
-            &session,
-            &fact_frame(task_fact(position, None)),
-        ));
-    }
-    assert_eq!(runtime.fact_pages().len(), app::FACT_PAGE_LIMIT);
     assert_eq!(
         runtime.operator_messages()[0].text(),
         operator_text,
-        "unrelated chronology retention never turns operator history temporary"
+        "unrelated facts never turn operator history temporary"
     );
 }
 
@@ -753,18 +664,15 @@ fn operator_and_lane_stream_authority_come_from_the_admitted_principal() {
         vec![
             ViewSubject::Facts,
             ViewSubject::Directions,
-            ViewSubject::Trust,
             ViewSubject::Messages,
         ]
     );
-    assert!(operator.grants());
     assert!(operator.offers(CommandKind::ConsentDecide));
 
     let lane_session = session(LANE_CAPABILITY, EPOCH);
     let lane = acceptance(&lane_session, &format!("lane:{LANE}"), EPOCH);
     let lane = CanvasRuntime::new(&lane);
     assert_eq!(lane.subjects(), vec![ViewSubject::Facts]);
-    assert!(!lane.grants());
     assert!(lane.offers(CommandKind::TaskNote));
     assert!(!lane.offers(CommandKind::ConsentDecide));
 }
@@ -982,10 +890,6 @@ fn lineage_activity_orders_tool_and_prose_without_admitting_snapshot_receipts() 
     assert_eq!(other.lane(), uuid(THIRD_LANE));
     assert_eq!(other.class(), "tool");
     assert_eq!(other.detail(), "Read");
-    assert_eq!(
-        runtime.newest_event().expect("receipt chronology").title(),
-        "Steering inbox"
-    );
 }
 
 fn lineage_runtime_with_activity_and_receipts() -> CanvasRuntime {
@@ -1210,227 +1114,12 @@ fn browser_state_retains_hidden_evidence_without_hidden_title_prose() {
     assert!(public_json["statement"]["body"].get("title").is_none());
 }
 
-#[test]
-fn packed_pages_keep_explicit_overflow_and_continue_without_merging() {
-    let session = session(OPERATOR, EPOCH);
-    let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
-    let first = admitted_stream(
-        &session,
-        &packed_frame("facts", &[task_fact(40, None)], Some((2, 41)), 43),
-    );
-
-    assert_eq!(
-        runtime.apply_stream(&first),
-        vec![StreamDirective::Continue {
-            subject: ViewSubject::Facts,
-            cursor: wire::StreamCursor {
-                epoch: uuid(EPOCH),
-                seq: seq(41),
-            },
-        }]
-    );
-    let first_page = runtime.fact_pages().remove(0);
-    assert_eq!(first_page.rows()[0].seq(), seq(40));
-    assert_eq!(first_page.overflow().expect("overflow").omitted, 2);
-    assert_eq!(first_page.horizon(), Some(seq(43)));
-    assert_eq!(runtime.resume().expect("resume cursor").seq, seq(40));
-
-    let second = admitted_stream(
-        &session,
-        &packed_frame("facts", &[task_fact(41, Some(40))], None, 43),
-    );
-    assert_eq!(
-        runtime.apply_stream(&second),
-        vec![StreamDirective::Thread {
-            cursor: wire::StreamCursor {
-                epoch: uuid(EPOCH),
-                seq: seq(41),
-            },
-        }]
-    );
-    let pages = runtime.fact_pages();
-    assert_eq!(pages.len(), 2, "producer pages remain separate");
-    assert_eq!(pages[0].rows()[0].seq(), seq(40));
-    assert_eq!(pages[1].rows()[0].seq(), seq(41));
-    assert_eq!(runtime.resume().expect("settled horizon").seq, seq(43));
-}
-
-#[test]
-fn raw_fact_capability_is_dropped_before_any_renderable_row_is_retained() {
-    let session = session(OPERATOR, EPOCH);
-    let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
-    let leaked = packed_frame(
-        "facts",
-        &[seated_fact(51, Some(SECRET_LANE_CAPABILITY))],
-        None,
-        51,
-    );
-    let fault = session
-        .admit_stream(&leaked)
-        .expect_err("credential-bearing stream fact is refused");
-    assert_eq!(fault.reason, "frame::undecodable");
-
-    let frame = admitted_stream(
-        &session,
-        &packed_frame("facts", &[seated_fact(51, None)], None, 51),
-    );
-
-    runtime.apply_stream(&frame);
-
-    let rendered = format!("{:?}", runtime.fact_pages()[0].rows()[0]);
-    assert!(rendered.contains("LaneSeated"), "{rendered}");
-    assert!(!rendered.contains(SECRET_LANE_CAPABILITY), "{rendered}");
-}
-
-#[test]
-fn admitted_thread_pages_render_received_links_and_their_real_terminal_state() {
-    let session = session(OPERATOR, EPOCH);
-    let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
-    let facts = admitted_stream(
-        &session,
-        &packed_frame("facts", &[task_fact(43, Some(42))], None, 43),
-    );
-    runtime.apply_stream(&facts);
-    let thread = admitted_stream(
-        &session,
-        &packed_frame(
-            "thread",
-            &[task_fact(43, Some(42)), task_fact(42, None)],
-            None,
-            43,
-        ),
-    );
-
-    assert!(runtime.apply_stream(&thread).is_empty());
-    let walk = runtime.thread_walk().expect("thread start was admitted");
-    assert_eq!(
-        walk.links()
-            .iter()
-            .map(app::CausalLink::seq)
-            .collect::<Vec<_>>(),
-        vec![seq(43), seq(42)]
-    );
-    assert_eq!(walk.end(), ChainEnd::Root);
-}
-
-#[test]
-fn a_stale_thread_reply_cannot_merge_into_the_latest_requested_walk() {
-    let session = session(OPERATOR, EPOCH);
-    let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
-    let first = admitted_stream(&session, &fact_frame(task_fact(41, None)));
-    let latest = admitted_stream(&session, &fact_frame(task_fact(42, Some(41))));
-
-    assert!(
-        runtime.apply_stream(&first).is_empty(),
-        "a live fact retains one pending walk without requesting it immediately"
-    );
-    assert!(
-        runtime.apply_stream(&latest).is_empty(),
-        "a later live fact replaces the pending walk without issuing another request"
-    );
-    assert_eq!(
-        runtime.pending_thread().expect("pending thread").seq,
-        seq(42)
-    );
-
-    let stale = admitted_stream(
-        &session,
-        &packed_frame("thread", &[task_fact(41, None)], None, 42),
-    );
-    assert!(runtime.apply_stream(&stale).is_empty());
-    assert!(runtime.thread_pages().is_empty());
-
-    let current = admitted_stream(
-        &session,
-        &packed_frame(
-            "thread",
-            &[task_fact(42, Some(41)), task_fact(41, None)],
-            None,
-            42,
-        ),
-    );
-    assert!(runtime.apply_stream(&current).is_empty());
-    assert_eq!(
-        runtime.thread_walk().expect("current walk").end(),
-        ChainEnd::Root
-    );
-    assert_eq!(runtime.pending_thread(), None);
-}
-
-#[test]
-fn live_fact_pages_retain_only_the_declared_browser_window() {
-    let session = session(OPERATOR, EPOCH);
-    let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
-    let delivered = FACT_PAGE_LIMIT + 3;
-
-    for position in 1..=delivered {
-        let frame = admitted_stream(&session, &fact_frame(task_fact(position as u64, None)));
-        assert!(runtime.apply_stream(&frame).is_empty());
-    }
-
-    let pages = runtime.fact_pages();
-    assert_eq!(pages.len(), FACT_PAGE_LIMIT);
-    assert_eq!(pages[0].rows()[0].seq(), seq(4));
-    assert_eq!(
-        pages.last().expect("newest page remains").rows()[0].seq(),
-        seq(delivered as u64)
-    );
-}
-
-#[test]
-fn causal_thread_fetch_stops_at_the_declared_page_window() {
-    let session = session(OPERATOR, EPOCH);
-    let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
-    let start = (THREAD_PAGE_LIMIT + 2) as u64;
-    let live = admitted_stream(&session, &fact_frame(task_fact(start, Some(start - 1))));
-    assert!(runtime.apply_stream(&live).is_empty());
-
-    for page in 0..THREAD_PAGE_LIMIT {
-        let position = start - page as u64;
-        let continuation = position - 1;
-        let thread = admitted_stream(
-            &session,
-            &packed_frame(
-                "thread",
-                &[task_fact(position, Some(continuation))],
-                Some((1, continuation)),
-                start,
-            ),
-        );
-        let directives = runtime.apply_stream(&thread);
-        if page + 1 == THREAD_PAGE_LIMIT {
-            assert!(directives.is_empty());
-        } else {
-            assert_eq!(
-                directives,
-                vec![StreamDirective::Thread {
-                    cursor: wire::StreamCursor {
-                        epoch: uuid(EPOCH),
-                        seq: seq(continuation),
-                    },
-                }]
-            );
-        }
-    }
-
-    assert_eq!(runtime.thread_pages().len(), THREAD_PAGE_LIMIT);
-    assert_eq!(runtime.pending_thread(), None);
-}
-
 /// A liveness answer proves the socket carries traffic and nothing else.
 ///
 /// The cursor it must not move is the one a reconnect resumes strictly after,
-/// so a probe that advanced it would not show up as a redraw or a stray row --
-/// it would show up later, as the frames between the old cursor and the new one
-/// never being asked for again.
+/// so a probe that advanced it would show up later as skipped frames.
 #[test]
-fn a_liveness_answer_moves_neither_the_resume_cursor_nor_any_page() {
+fn a_liveness_answer_moves_neither_the_resume_cursor_nor_terminal() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
@@ -1439,12 +1128,6 @@ fn a_liveness_answer_moves_neither_the_resume_cursor_nor_any_page() {
         &packed_frame("facts", &[task_fact(41, None)], None, 41),
     ));
     let settled = runtime.resume().expect("resume cursor");
-    // Debug covers rows, horizon and overflow together, so this compares more
-    // of the page than an assertion naming the fields a probe was expected to
-    // leave alone.
-    let pages = format!("{:?}", runtime.fact_pages());
-    let events = format!("{:?}", runtime.events());
-    let pending = runtime.pending_thread();
     let terminal = runtime.terminal();
 
     let pong = wire::encode(&StreamFrame::Pong {
@@ -1460,12 +1143,6 @@ fn a_liveness_answer_moves_neither_the_resume_cursor_nor_any_page() {
     );
 
     assert_eq!(runtime.resume(), Some(settled));
-    assert_eq!(format!("{:?}", runtime.fact_pages()), pages);
-    assert_eq!(format!("{:?}", runtime.events()), events);
-    // Both are asserted unchanged rather than absent: the fact applied above
-    // already opened a thread walk, so requiring absence here would have passed
-    // only by describing the fixture wrongly.
-    assert_eq!(runtime.pending_thread(), pending);
     assert_eq!(runtime.terminal(), terminal);
 
     // Reconnecting to the same generation still continues from the cursor the
@@ -1475,7 +1152,7 @@ fn a_liveness_answer_moves_neither_the_resume_cursor_nor_any_page() {
 }
 
 #[test]
-fn same_scope_reconnect_preserves_pages_and_changed_scope_clears_everything() {
+fn same_scope_reconnect_preserves_cursor_and_changed_scope_clears_it() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
@@ -1485,16 +1162,11 @@ fn same_scope_reconnect_preserves_pages_and_changed_scope_clears_everything() {
     );
     runtime.apply_stream(&frame);
     assert!(!runtime.reconnect(&acceptance(&session, "operator", EPOCH)));
-    assert_eq!(runtime.fact_pages().len(), 1);
     assert_eq!(runtime.resume().expect("resume retained").seq, seq(41));
 
     let next = Session::open(uuid(NEXT_CAPABILITY), uuid(NEXT_EPOCH));
     let next_accepted = acceptance(&next, "operator", NEXT_EPOCH);
     assert!(runtime.reconnect(&next_accepted));
-    assert!(runtime.fact_pages().is_empty());
-    assert!(runtime.trust_pages().is_empty());
-    assert!(runtime.thread_pages().is_empty());
-    assert!(runtime.events().is_empty());
     assert_eq!(runtime.resume(), None);
     assert_eq!(runtime.terminal(), None);
 }

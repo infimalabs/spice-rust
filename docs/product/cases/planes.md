@@ -46,7 +46,6 @@
 | A decoded record is residue | its batch increments `residue_records` | [Transcript accounting retains typed usage and record counts](../invariants/session.md#metrics-transcript-accounting-retains-typed-usage-and-record-counts) |
 | A transcript is replaced under the same path | ingestion restarts at member 1, offset 0 and names the superseded source generation | [A source head is generation and position, not an offset](../invariants/session.md#metrics-a-source-head-is-generation-and-position-not-an-offset) |
 | Ingestion fails before its journal transaction commits | neither the batch nor the advanced head crosses; the same continuation remains eligible on retry | [An accounted batch and its advanced source head commit together](../invariants/session.md#metrics-an-accounted-batch-and-its-advanced-source-head-commit-together) |
-| Canvas Metrics mode is selected for a team | every member shows pending count, claim age, renewal age, and liveness; the badge counts members holding claims | [Canvas Metrics render current member standing](../invariants/session.md#metrics-canvas-metrics-render-current-member-standing) |
 
 ### Task documents
 

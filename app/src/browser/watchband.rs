@@ -496,12 +496,6 @@ fn render_direction_row(standing: &Standing) -> Html {
 }
 
 /// One lease instant as a ticking age, or `vacant` for a lane holding no claim.
-///
-/// The vacant spelling stays a caller's choice because the two sites mean
-/// different things by it: a metrics row is stating that a measurement is
-/// absent, while a composer heading is stating that the agent's activity is
-/// current. Both render into the same fixed slot, so a lane taking or releasing
-/// a claim swaps text in a box that was already the right size.
 fn lease_age(instant: Option<i64>, class: &'static str, vacant: &'static str) -> Html {
     match instant {
         Some(authored) => html! { <Age {authored} class={class} /> },
@@ -537,8 +531,6 @@ fn render_agent_details(
         .occupant
         .map(|value| value.to_string())
         .unwrap_or_else(|| "vacant".to_owned());
-    let held = lease_age(standing.held_since, "claim-age", "—");
-    let expiry = lease_countdown(standing.expires_at, "claim-age", "—");
     html! {
         <article
             class="team-detail-card"
@@ -551,17 +543,6 @@ fn render_agent_details(
                 <span>{standing.vendor.clone()}</span>
             </header>
             {match mode {
-                LineageMode::Metrics => html! {
-                    <dl>
-                        <div><dt>{"Pending"}</dt><dd>{standing.pending}</dd></div>
-                        <div><dt>{"Claim age"}</dt><dd>{held}</dd></div>
-                        <div><dt>{"Expires"}</dt><dd>{expiry}</dd></div>
-                        <div>
-                            <dt>{"Liveness"}</dt>
-                            <dd>{standing.liveness.as_str()}</dd>
-                        </div>
-                    </dl>
-                },
                 LineageMode::Team => html! {
                     <dl>
                         <div><dt>{"Agent channel"}</dt><dd>{standing.lane.to_string()}</dd></div>

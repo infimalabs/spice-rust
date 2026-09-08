@@ -51,60 +51,6 @@ impl OperatorMessage {
     }
 }
 
-/// One fact envelope projected to fields that are safe and useful to render.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FactRow {
-    seq: Seq,
-    actor: Actor,
-    origin: Origin,
-    cause: Option<Seq>,
-    kind: FactKind,
-}
-
-impl FactRow {
-    /// Durable journal position.
-    #[must_use]
-    pub const fn seq(&self) -> Seq {
-        self.seq
-    }
-
-    /// Principal that authored the fact.
-    #[must_use]
-    pub const fn actor(&self) -> &Actor {
-        &self.actor
-    }
-
-    /// Root attribution carried by the envelope.
-    #[must_use]
-    pub const fn origin(&self) -> &Origin {
-        &self.origin
-    }
-
-    /// Immediately provoking position, absent at a root.
-    #[must_use]
-    pub const fn cause(&self) -> Option<Seq> {
-        self.cause
-    }
-
-    /// Closed fact discriminant.
-    #[must_use]
-    pub const fn kind(&self) -> FactKind {
-        self.kind
-    }
-}
-
-impl From<&wire::StreamFact> for FactRow {
-    fn from(fact: &wire::StreamFact) -> Self {
-        Self {
-            seq: fact.seq(),
-            actor: fact.actor().clone(),
-            origin: fact.origin().clone(),
-            cause: fact.cause(),
-            kind: fact.kind(),
-        }
-    }
-}
-
 /// A terminal stream boundary that remains distinct from command outcomes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StreamTerminal {
@@ -122,8 +68,6 @@ pub enum StreamDirective {
         subject: ViewSubject,
         cursor: StreamCursor,
     },
-    /// Request or continue one causal thread.
-    Thread { cursor: StreamCursor },
     /// Close this socket and reconnect after the retained cursor.
     Reconnect,
 }
@@ -167,23 +111,6 @@ impl StreamApplication {
     }
 }
 
-impl RuntimeEvent {
-    #[must_use]
-    pub const fn class(&self) -> &'static str {
-        self.class
-    }
-
-    #[must_use]
-    pub fn title(&self) -> &str {
-        &self.title
-    }
-
-    #[must_use]
-    pub fn detail(&self) -> &str {
-        &self.detail
-    }
-}
-
 impl CanvasRuntime {
     /// Apply one admitted stream frame and return immediate writer work.
     pub fn apply_stream(&mut self, admitted: &Admitted<StreamFrame>) -> Vec<StreamDirective> {
@@ -197,11 +124,13 @@ impl CanvasRuntime {
         }
         let epoch = self.principal.epoch();
         match admitted.get() {
-            StreamFrame::Facts { packed, .. } => self.apply_fact_page(admitted, packed, epoch),
+            StreamFrame::Facts { packed, .. } => self.apply_fact_page(packed, epoch),
             StreamFrame::Directions {
                 limit, directions, ..
             } => self.apply_direction_snapshot(*limit as usize, directions),
-            StreamFrame::Trust { packed, .. } => self.apply_trust_page(admitted, packed, epoch),
+            StreamFrame::Trust { .. } | StreamFrame::Thread { .. } => {
+                StreamApplication::new(Vec::new(), false)
+            }
             StreamFrame::Messages {
                 limit,
                 messages,
@@ -215,7 +144,6 @@ impl CanvasRuntime {
                 messages,
                 ..
             } => self.apply_message_history(*lane, *before, messages, *more),
-            StreamFrame::Thread { packed, .. } => self.apply_thread_page(admitted, packed, epoch),
             StreamFrame::Fact { fact, .. } => {
                 let operator_changed = self.observe_operator_rows(std::slice::from_ref(fact));
                 let settings_changed = self.observe_settings_rows(std::slice::from_ref(fact));
@@ -228,22 +156,11 @@ impl CanvasRuntime {
                         operator_changed || settings_changed,
                     );
                 }
-                self.observe_fact_rows(admitted, std::slice::from_ref(fact), false);
+                self.observe_lifecycle_boundary(fact);
                 self.resume = Some(StreamCursor {
                     epoch,
                     seq: fact.seq(),
                 });
-                if !operator_visible_fact(fact.kind()) {
-                    return StreamApplication::new(Vec::new(), false);
-                }
-                let packed = Packed {
-                    rows: vec![FactRow::from(fact)],
-                    overflow: None,
-                    horizon: fact.seq(),
-                };
-                let page = self.page(admitted, packed);
-                push_bounded_page(&mut self.fact_pages, page, FACT_PAGE_LIMIT);
-                self.prepare_thread(fact.seq());
                 StreamApplication::new(Vec::new(), true)
             }
             StreamFrame::Message { message, .. } => {
@@ -253,17 +170,8 @@ impl CanvasRuntime {
             // Proof the socket answered, and nothing else. It reports no state,
             // so applying it changes none.
             StreamFrame::Pong { .. } => StreamApplication::new(Vec::new(), false),
-            StreamFrame::Refusal { refusal, .. } => {
-                self.push_event(
-                    "refusal",
-                    refusal.reason().to_owned(),
-                    refusal.explanation().to_owned(),
-                );
-                StreamApplication::new(Vec::new(), true)
-            }
-            StreamFrame::Fault { fault, .. } => {
-                self.push_event("fault", fault.reason.clone(), fault.detail.clone());
-                StreamApplication::new(Vec::new(), true)
+            StreamFrame::Refusal { .. } | StreamFrame::Fault { .. } => {
+                StreamApplication::new(Vec::new(), false)
             }
             StreamFrame::Overflow { after, dropped, .. } => {
                 let terminal = StreamTerminal::Overflow {
@@ -274,11 +182,6 @@ impl CanvasRuntime {
                 if changed {
                     self.resume = Some(*after);
                     self.terminal = Some(terminal);
-                    self.push_event(
-                        "overflow",
-                        "Canvas stream overflow".to_owned(),
-                        format!("{dropped} updates omitted; resume after {}", after.seq),
-                    );
                 }
                 StreamApplication::new(vec![StreamDirective::Reconnect], changed)
             }
@@ -288,11 +191,6 @@ impl CanvasRuntime {
                 if changed {
                     self.resume = Some(*after);
                     self.terminal = Some(terminal);
-                    self.push_event(
-                        "closing",
-                        "Resident generation closing".to_owned(),
-                        format!("resume after {}", after.seq),
-                    );
                 }
                 StreamApplication::new(vec![StreamDirective::Reconnect], changed)
             }
@@ -321,7 +219,6 @@ impl CanvasRuntime {
 
     fn apply_fact_page(
         &mut self,
-        admitted: &Admitted<StreamFrame>,
         packed: &Packed<wire::StreamFact>,
         epoch: CanonicalUuid,
     ) -> StreamApplication {
@@ -331,8 +228,6 @@ impl CanvasRuntime {
             .overflow
             .and_then(|_| packed.rows.last().map(wire::StreamFact::seq))
             .unwrap_or(packed.horizon);
-        // A same-scope replacement may extend retained history, but a packed
-        // page at or below its resume cursor is replay rather than a new page.
         if self
             .resume
             .is_some_and(|resume| resume.epoch == epoch && resume.seq >= page_cursor)
@@ -342,121 +237,14 @@ impl CanvasRuntime {
                 operator_changed || settings_changed,
             );
         }
-        let page = project_page(packed);
-        let visible_tail = page.rows.last().map(FactRow::seq);
-        self.observe_fact_rows(admitted, &packed.rows, false);
-        let changed = !page.rows.is_empty();
-        if changed {
-            let page = self.page(admitted, page);
-            push_bounded_page(&mut self.fact_pages, page, FACT_PAGE_LIMIT);
+        for row in &packed.rows {
+            self.observe_lifecycle_boundary(row);
         }
         self.resume = Some(StreamCursor {
             epoch,
             seq: page_cursor,
         });
-        let mut directives = continuation(ViewSubject::Facts, epoch, packed);
-        if packed.overflow.is_none()
-            && let Some(seq) = visible_tail
-        {
-            directives.push(self.begin_thread(epoch, seq));
-        }
-        StreamApplication::new(directives, changed)
-    }
-
-    fn apply_trust_page(
-        &mut self,
-        admitted: &Admitted<StreamFrame>,
-        packed: &Packed<wire::TrustView>,
-        epoch: CanonicalUuid,
-    ) -> StreamApplication {
-        let page_cursor = packed
-            .overflow
-            .and_then(|_| packed.rows.last().map(|row| row.position))
-            .unwrap_or(packed.horizon);
-        let directives = continuation(ViewSubject::Trust, epoch, packed);
-        if self
-            .trust_resume
-            .is_some_and(|resume| resume.epoch == epoch && resume.seq >= page_cursor)
-        {
-            return StreamApplication::new(directives, false);
-        }
-        let page = self.page(admitted, packed.clone());
-        self.trust_pages.push(page);
-        self.trust_resume = Some(StreamCursor {
-            epoch,
-            seq: page_cursor,
-        });
-        StreamApplication::new(directives, true)
-    }
-
-    fn apply_thread_page(
-        &mut self,
-        admitted: &Admitted<StreamFrame>,
-        packed: &Packed<wire::StreamFact>,
-        epoch: CanonicalUuid,
-    ) -> StreamApplication {
-        let Some(first) = packed.rows.first().map(wire::StreamFact::seq) else {
-            return StreamApplication::new(Vec::new(), false);
-        };
-        if self.thread_next != Some(first) {
-            return StreamApplication::new(Vec::new(), false);
-        }
-        if self.thread_start.is_none() {
-            self.thread_start = Some(first);
-        }
-        self.observe_fact_rows(admitted, &packed.rows, true);
-        let page = self.page(admitted, project_page(packed));
-        push_bounded_page(&mut self.thread_pages, page, THREAD_PAGE_LIMIT);
-        let directives = match packed.overflow {
-            None => {
-                self.thread_next = None;
-                Vec::new()
-            }
-            Some(_) if self.thread_pages.len() == THREAD_PAGE_LIMIT => {
-                self.thread_next = None;
-                Vec::new()
-            }
-            Some(overflow) => {
-                self.thread_next = Some(overflow.continuation);
-                vec![StreamDirective::Thread {
-                    cursor: StreamCursor {
-                        epoch,
-                        seq: overflow.continuation,
-                    },
-                }]
-            }
-        };
-        StreamApplication::new(directives, true)
-    }
-
-    fn page<T: Clone>(
-        &self,
-        admitted: &Admitted<StreamFrame>,
-        packed: Packed<T>,
-    ) -> BrowserState<T> {
-        let mut state = BrowserState::new(&self.accepted);
-        let replaced = state.replace_stream(admitted, packed);
-        debug_assert!(replaced, "runtime page and stream frame share a scope");
-        state
-    }
-
-    fn observe_fact_rows(
-        &mut self,
-        admitted: &Admitted<StreamFrame>,
-        rows: &[wire::StreamFact],
-        thread: bool,
-    ) {
-        for row in rows {
-            let state = if thread {
-                &mut self.thread
-            } else {
-                &mut self.facts
-            };
-            state.observe_stream(admitted, row.seq(), row.origin().clone(), row.cause());
-            if !thread {
-                self.observe_lifecycle_boundary(row);
-            }
-        }
+        StreamApplication::new(continuation(ViewSubject::Facts, epoch, packed), true)
     }
 
     fn observe_settings_rows(&mut self, rows: &[wire::StreamFact]) -> bool {
@@ -684,32 +472,6 @@ impl CanvasRuntime {
         changed
     }
 
-    fn begin_thread(&mut self, epoch: CanonicalUuid, seq: Seq) -> StreamDirective {
-        self.prepare_thread(seq);
-        StreamDirective::Thread {
-            cursor: StreamCursor { epoch, seq },
-        }
-    }
-
-    fn prepare_thread(&mut self, seq: Seq) {
-        self.thread = BrowserState::new(&self.accepted);
-        self.thread_pages.clear();
-        self.thread_start = None;
-        self.thread_next = Some(seq);
-    }
-
-    pub(super) fn push_event(&mut self, class: &'static str, title: String, detail: String) {
-        self.events.insert(
-            0,
-            RuntimeEvent {
-                class,
-                title,
-                detail,
-            },
-        );
-        self.events.truncate(EVENT_LIMIT);
-    }
-
     fn push_activity(&mut self, activity: LaneActivity) -> bool {
         if let Some(index) = self
             .activities
@@ -797,31 +559,6 @@ fn retain_first_for_lane<T>(
     });
 }
 
-fn project_page(packed: &Packed<wire::StreamFact>) -> Packed<FactRow> {
-    Packed {
-        rows: packed
-            .rows
-            .iter()
-            .filter(|fact| operator_visible_fact(fact.kind()))
-            .map(FactRow::from)
-            .collect(),
-        overflow: packed.overflow,
-        horizon: packed.horizon,
-    }
-}
-
-/// Whether one durable fact is useful in the operator's event chronology.
-///
-/// Transcript ingestion receipts prove that a capture reader consumed one
-/// source byte range. They remain durable and continue advancing the stream
-/// cursor and causal-header window, but rendering every receipt overwhelms the
-/// facts about tasks, claims, lanes, and steering that the chronology exists
-/// to expose. The transcript message stream is the operator-facing projection
-/// of the captured content.
-fn operator_visible_fact(kind: FactKind) -> bool {
-    kind != FactKind::JournalIngested
-}
-
 fn continuation<T>(
     subject: ViewSubject,
     epoch: CanonicalUuid,
@@ -836,13 +573,6 @@ fn continuation<T>(
             },
         }]
     })
-}
-
-fn push_bounded_page<T>(pages: &mut Vec<BrowserState<T>>, page: BrowserState<T>, limit: usize) {
-    pages.push(page);
-    if pages.len() > limit {
-        pages.remove(0);
-    }
 }
 
 #[cfg(test)]

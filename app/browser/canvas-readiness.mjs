@@ -23,18 +23,8 @@ const agentGeometryOwners = Object.freeze({
   plane: ":scope > .lane-mosaic-plane",
 });
 const axisPanes = new Map([
-  ["Metrics", ["Pressure", "Residue", "Consent Volume"]],
   ["Tasks", ["Tasks", "Claims", "Deferrals", "Reviews"]],
   ["Team", ["Agents", "Worktrees", "Lineage", "Occupancy", "Residents"]],
-  ["History", [
-    "Compaction",
-    "Queues",
-    "Directives",
-    "Consent Disposition",
-    "Trust",
-    "Commands",
-    "Recovery",
-  ]],
 ]);
 
 export async function assertAgentWorkspaceGeometry(page, state) {

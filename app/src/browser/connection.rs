@@ -135,75 +135,20 @@ async fn pump_session(
     drain_demands(&principal, data, &mut writer, &mut pending, demands).await?;
     let mut silence = TimeoutFuture::new(LIVENESS_PROBE_MILLIS).fuse();
     let mut probed = false;
-    let (thread_timer_sender, mut thread_timers) = mpsc::unbounded::<()>();
-    let mut thread_refresh = ThreadRefresh::default();
     while active.get() {
         let incoming = reader.next().fuse();
         let action = actions.next().fuse();
-        let thread_timer = thread_timers.next().fuse();
-        futures_util::pin_mut!(incoming, action, thread_timer);
+        futures_util::pin_mut!(incoming, action);
         let mut rearm = false;
         futures_util::select_biased! {
-            tick = thread_timer => {
-                tick.ok_or_else(|| "canvas thread refresh timer closed".to_owned())?;
-                if let Some(cursor) = thread_refresh.take_due() {
-                    send_stream_request(
-                        &mut writer,
-                        &StreamRequest::Thread {
-                            v: WireVersion::CURRENT,
-                            id: random_uuid()?,
-                            epoch: principal.epoch(),
-                            cursor,
-                        },
-                    )
-                    .await?;
-                }
-            },
             frame = incoming => {
                 // Any frame proves socket traffic; a refusal names a reachable
                 // resident, so a probe response need not be Pong specifically.
                 rearm = true;
                 probed = false;
-                let frame = frame
-                    .ok_or_else(|| "resident closed the socket".to_owned())?
-                    .map_err(websocket_error)?;
-                let bytes = binary_message(frame)?;
-                let (directives, refresh, stale, refresh_thread) =
-                    handle_incoming(
-                        &session,
-                        handles,
-                        data,
-                        &mut pending,
-                        demands,
-                        &bytes,
-                    )?;
-                if let Some(cursor) = refresh_thread
-                    && thread_refresh.observe(cursor)
-                {
-                    let timer = thread_timer_sender.clone();
-                    spawn_local(async move {
-                        TimeoutFuture::new(THREAD_REFRESH_COALESCE_MILLIS).await;
-                        let _ = timer.unbounded_send(());
-                    });
-                }
-                relay_directives(&principal, &mut writer, directives).await?;
-                send_after_frame(
-                    &principal,
-                    &mut writer,
-                    &mut pending,
-                    &handles.submissions,
-                    refresh,
-                    stale,
-                )
-                .await?;
-                drain_submissions(
-                    &principal,
-                    &mut writer,
-                    &mut pending,
-                    &handles.submissions,
-                )
-                .await?;
-                drain_demands(&principal, data, &mut writer, &mut pending, demands).await?;
+                apply_incoming_frame(
+                    frame, &session, handles, data, &principal, &mut writer, &mut pending, demands,
+                ).await?;
             },
             action = action => {
                 let action = action.ok_or_else(|| "canvas command channel closed".to_owned())?;
@@ -234,6 +179,37 @@ async fn pump_session(
         }
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn apply_incoming_frame(
+    frame: Option<Result<Message, WebSocketError>>,
+    session: &Session,
+    handles: &SurfaceHandles,
+    data: &SurfaceData,
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    demands: &mut DemandQueue<ClientAction>,
+) -> Result<(), String> {
+    let frame = frame
+        .ok_or_else(|| "resident closed the socket".to_owned())?
+        .map_err(websocket_error)?;
+    let bytes = binary_message(frame)?;
+    let (directives, refresh, stale) =
+        handle_incoming(session, handles, data, pending, demands, &bytes)?;
+    relay_directives(principal, writer, directives).await?;
+    send_after_frame(
+        principal,
+        writer,
+        pending,
+        &handles.submissions,
+        refresh,
+        stale,
+    )
+    .await?;
+    drain_submissions(principal, writer, pending, &handles.submissions).await?;
+    drain_demands(principal, data, writer, pending, demands).await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -666,11 +642,6 @@ async fn dispatch_action(
         ClientAction::Note { task, note } => {
             send_task_note(principal, writer, pending, task, note).await
         }
-        ClientAction::Consent {
-            request,
-            rule,
-            answer,
-        } => send_consent_decision(principal, writer, pending, request, rule, answer).await,
         ClientAction::Steer {
             lane,
             occupant,
@@ -756,7 +727,7 @@ async fn send_steer(
         principal,
         writer,
         pending,
-        PendingKind::Steer { lane },
+        PendingKind::Steer,
         CommandKind::SteerSend,
         expected,
         body,
@@ -1001,36 +972,8 @@ async fn send_task_note(
         principal,
         writer,
         pending,
-        PendingKind::Note(task),
+        PendingKind::Note,
         CommandKind::TaskNote,
-        expected,
-        body,
-    )
-    .await
-}
-
-async fn send_consent_decision(
-    principal: &Principal,
-    writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
-    request: CanonicalUuid,
-    rule: wire::Name,
-    answer: Answer,
-) -> Result<(), String> {
-    let body = wire::intent::ConsentDecide { request, answer };
-    let expected = vec![
-        Witness::Consent {
-            request,
-            answer: Answer::Asked,
-        },
-        Witness::Rule { name: rule },
-    ];
-    send_typed(
-        principal,
-        writer,
-        pending,
-        PendingKind::ConsentDecision,
-        CommandKind::ConsentDecide,
         expected,
         body,
     )
@@ -1156,16 +1099,12 @@ async fn send_subscription(
     data: &SurfaceData,
     writer: &mut SocketWriter,
 ) -> Result<(), String> {
-    let (subjects, after, pending_thread) = {
+    let (subjects, after) = {
         let data = data.read();
         let runtime = data
             .as_ref()
             .ok_or_else(|| "canvas runtime is absent".to_owned())?;
-        (
-            runtime.subjects(),
-            runtime.resume(),
-            runtime.pending_thread(),
-        )
+        (runtime.subjects(), runtime.resume())
     };
     send_stream_request(
         writer,
@@ -1178,18 +1117,6 @@ async fn send_subscription(
         },
     )
     .await?;
-    if let Some(cursor) = pending_thread {
-        send_stream_request(
-            writer,
-            &StreamRequest::Thread {
-                v: WireVersion::CURRENT,
-                id: random_uuid()?,
-                epoch: principal.epoch(),
-                cursor,
-            },
-        )
-        .await?;
-    }
     Ok(())
 }
 
@@ -1204,12 +1131,6 @@ async fn send_stream_directive(
             id: random_uuid()?,
             epoch: principal.epoch(),
             subject,
-            cursor,
-        },
-        StreamDirective::Thread { cursor } => StreamRequest::Thread {
-            v: WireVersion::CURRENT,
-            id: random_uuid()?,
-            epoch: principal.epoch(),
             cursor,
         },
         StreamDirective::Reconnect => return Ok(true),

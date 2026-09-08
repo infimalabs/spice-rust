@@ -32,7 +32,7 @@ import { assertCandidateMeasurementPaintAtomic } from "./mosaic-candidate-paint.
 import { assertLaneHeaderPipMatrix } from "./lane-header-pips.mjs";
 import { captureMessageStreamBoundaries } from "./message-stream-boundaries.mjs";
 import {
-  assertGlobalHistoryNavigation,
+  assertGlobalNavigation,
   assertTeamNavigation,
 } from "./team-navigation.mjs";
 import {
@@ -217,10 +217,7 @@ export async function seatAgentTeam(
     "the empty team begins in the right-edge Lanes mode",
   );
   await page.getByLabel("Open Spice Canvas menu").click();
-  await assertGlobalHistoryNavigation(page, "the empty fleet");
-  await page.getByRole("navigation", { name: "Canvas views" })
-    .getByRole("button", { name: /^History(?:\s|$)/ }).click();
-  await page.getByRole("heading", { name: "History", exact: true }).waitFor();
+  await assertGlobalNavigation(page, "the empty fleet");
   await chooseCanvasView(page, "Lanes");
   await assertTeamNavigation(console, "the empty fleet");
   await console.getByRole("tab", { name: /^Team/ }).click();
@@ -946,11 +943,9 @@ export async function assertAgentConversation(
     1,
     "Tasks renders one team-scoped operational workspace",
   );
-  for (const mode of ["Metrics", "Team"]) {
-    await console.getByRole("tab", { name: new RegExp(`^${mode}`) }).click();
-    await console.locator(".team-detail-card").nth(3).waitFor();
-    assert.equal(await console.locator(".team-detail-card").count(), 4, `${mode} reaches all agents`);
-  }
+  await console.getByRole("tab", { name: /^Team/ }).click();
+  await console.locator(".team-detail-card").nth(3).waitFor();
+  assert.equal(await console.locator(".team-detail-card").count(), 4, "Team reaches all agents");
   await console.getByText(teamWorktrees[0], { exact: true }).waitFor();
   await console.getByRole("tab", { name: /^Agents/ }).click();
   await assertFourAgentDensity(console);
