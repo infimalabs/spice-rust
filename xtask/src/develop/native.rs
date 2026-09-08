@@ -35,6 +35,17 @@ pub(super) fn perform(
     let installed = install::installed_binary(&repository);
     let rollback = park(&repository, &installed)?;
     let before = snapshot_install(&repository, &installed)?;
+    let journal = repository
+        .admit_state()
+        .map_err(InstallError::from)?
+        .journal()
+        .to_path_buf();
+    let before_schema =
+        inspect_schema(&journal).map_err(|error| RefreshError::SchemaRecoveryUncertain {
+            before: None,
+            cause: "pre-refresh schema inspection failed".to_owned(),
+            error,
+        })?;
     let published = read_endpoint(&repository);
     let endpoint = requested_endpoint(request, published.as_deref());
 
@@ -65,7 +76,16 @@ pub(super) fn perform(
     let bound = (endpoint.0.as_deref(), endpoint.1);
     let endpoint = match restart(&repository, &installed, bound, request, output) {
         Ok(endpoint) => endpoint,
-        Err(error) => return Err(restore(&repository, &unwind, output, error)),
+        Err(error) => {
+            return Err(recover_start_failure(
+                &repository,
+                &unwind,
+                &journal,
+                before_schema,
+                output,
+                error,
+            ));
+        }
     };
     Ok(RefreshReport {
         built,
@@ -73,6 +93,72 @@ pub(super) fn perform(
         digest,
         endpoint,
     })
+}
+
+fn inspect_schema(path: &Path) -> Result<Option<u32>, spice::journal_schema::InspectionError> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    spice::journal_schema::inspect(path).map(Some)
+}
+
+fn recover_start_failure(
+    repository: &Repository,
+    rollback: &Rollback<'_>,
+    journal: &Path,
+    before_schema: Option<u32>,
+    output: &mut impl Write,
+    cause: RefreshError,
+) -> RefreshError {
+    recover_start_failure_after(
+        repository,
+        rollback,
+        before_schema,
+        inspect_schema(journal),
+        output,
+        cause,
+    )
+}
+
+fn recover_start_failure_after(
+    repository: &Repository,
+    rollback: &Rollback<'_>,
+    before_schema: Option<u32>,
+    after_schema: Result<Option<u32>, spice::journal_schema::InspectionError>,
+    output: &mut impl Write,
+    cause: RefreshError,
+) -> RefreshError {
+    let cause_text = cause.to_string();
+    let after_schema = match after_schema {
+        Ok(schema) => schema,
+        Err(error) => {
+            return RefreshError::SchemaRecoveryUncertain {
+                before: before_schema,
+                cause: cause_text,
+                error,
+            };
+        }
+    };
+    if schema_rollback_safe(before_schema, after_schema) {
+        return restore(repository, rollback, output, cause);
+    }
+    let _ = writeln!(
+        output,
+        "journal schema moved from {before_schema:?} to {after_schema:?}; preserving new executable"
+    );
+    RefreshError::SchemaAdvanced {
+        before: before_schema,
+        after: after_schema,
+        cause: cause_text,
+    }
+}
+
+const fn schema_rollback_safe(before: Option<u32>, after: Option<u32>) -> bool {
+    match (before, after) {
+        (None, None) => true,
+        (Some(before), Some(after)) => before == after,
+        _ => false,
+    }
 }
 
 /// Republish the installed executable from `binary` under one fresh plan.

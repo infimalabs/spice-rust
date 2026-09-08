@@ -15,6 +15,54 @@ fn developer_install_names_its_selected_build_profile() {
     assert_eq!(build_profile(true), "release");
 }
 
+#[test]
+fn executable_rollback_requires_the_journal_schema_to_be_proven_unchanged() {
+    const CURRENT: u32 = 15;
+    assert!(schema_rollback_safe(None, None));
+    assert!(schema_rollback_safe(Some(CURRENT), Some(CURRENT)));
+    assert!(!schema_rollback_safe(None, Some(CURRENT)));
+    assert!(!schema_rollback_safe(Some(CURRENT - 1), Some(CURRENT)));
+    assert!(!schema_rollback_safe(Some(CURRENT), None));
+}
+
+#[test]
+fn a_committed_schema_advance_preserves_the_successor_executable() {
+    let fixture = Fixture::new("schema-advance");
+    let repository = fixture.repository();
+    let installed = install::installed_binary(&repository);
+    let predecessor = fixture.binary("spice-predecessor", b"predecessor\n");
+    let successor = fixture.binary("spice-successor", b"successor\n");
+    refresh_install(&repository, &predecessor).expect("predecessor installs");
+    let parked = park(&repository, &installed)
+        .expect("predecessor parks")
+        .expect("predecessor exists");
+    refresh_install(&repository, &successor).expect("successor installs");
+    let rollback = Rollback {
+        installed: &installed,
+        executable: Some(&parked),
+        published: None,
+        restart: false,
+    };
+    let mut output = Vec::new();
+
+    const SUCCESSOR_SCHEMA: u32 = 15;
+    let error = recover_start_failure_after(
+        &repository,
+        &rollback,
+        Some(SUCCESSOR_SCHEMA - 1),
+        Ok(Some(SUCCESSOR_SCHEMA)),
+        &mut output,
+        RefreshError::ResidentUnready,
+    );
+
+    assert!(matches!(error, RefreshError::SchemaAdvanced { .. }));
+    assert_eq!(
+        fs::read(installed).expect("installed reads"),
+        b"successor\n"
+    );
+    assert!(String::from_utf8_lossy(&output).contains("preserving new executable"));
+}
+
 /// How many names one fixture tries before giving up on an exclusive root.
 const SCRATCH_ATTEMPTS: usize = 100;
 

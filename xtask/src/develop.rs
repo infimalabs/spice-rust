@@ -104,6 +104,26 @@ pub enum RefreshError {
     ResidentStopRefused(String),
     /// The sole daemon launcher returned its exact startup refusal.
     ResidentStartRefused(String),
+    /// Startup failed after the journal crossed an irreversible schema boundary.
+    #[cfg(not(target_arch = "wasm32"))]
+    SchemaAdvanced {
+        /// Finalized schema observed before installing the successor.
+        before: Option<u32>,
+        /// Finalized schema observed after the failed successor start.
+        after: Option<u32>,
+        /// Startup failure that exposed the completed migration.
+        cause: String,
+    },
+    /// Refresh recovery could not prove the journal schema remained unchanged.
+    #[cfg(not(target_arch = "wasm32"))]
+    SchemaRecoveryUncertain {
+        /// Finalized schema observed before installing the successor.
+        before: Option<u32>,
+        /// Startup failure that would otherwise trigger rollback.
+        cause: String,
+        /// Exact read-only schema inspection failure.
+        error: spice::journal_schema::InspectionError,
+    },
     /// The resident exited before it was ready.
     ResidentExited(Option<i32>),
     /// The resident never published an endpoint it answers on.
@@ -138,6 +158,24 @@ impl fmt::Display for RefreshError {
             Self::ResidentStartRefused(refusal) => {
                 write!(formatter, "resident start refused: {refusal}")
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::SchemaAdvanced {
+                before,
+                after,
+                cause,
+            } => write!(
+                formatter,
+                "resident start failed after journal schema moved from {before:?} to {after:?}; preserving the new installed generation: {cause}"
+            ),
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::SchemaRecoveryUncertain {
+                before,
+                cause,
+                error,
+            } => write!(
+                formatter,
+                "journal schema could not be proven unchanged from {before:?}; preserving the installed generation: {cause}; {error}"
+            ),
             Self::ResidentExited(code) => match code {
                 Some(code) => write!(formatter, "resident exited with status {code}"),
                 None => write!(formatter, "resident exited on a signal"),
