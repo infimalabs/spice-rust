@@ -21,7 +21,7 @@ async function boundaryDocument() {
       .boundary-fixture .lane-mosaic-plane { height: auto; }
       .boundary-fixture .mosaic-message-card { --mosaic-measure-span: 12; }
     </style>
-    <main class="team-surface boundary-fixture">
+    <main class="organization-surface boundary-fixture">
       <div class="lane-mosaic-plane" data-measurement-phase="base">
         <article
           class="mosaic-message-card mosaic-compaction-card mosaic-lifecycle-card frozen"

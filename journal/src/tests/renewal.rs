@@ -28,20 +28,20 @@ fn states() -> Vec<LaneRenewalState> {
     vec![
         LaneRenewalState::Requested {
             predecessor: predecessor(),
-            team_slot: 0,
+            org_slot: 0,
         },
         LaneRenewalState::HandoffPending {
             predecessor: predecessor(),
-            team_slot: 0,
+            org_slot: 0,
         },
         LaneRenewalState::SuccessorStarted {
             predecessor: predecessor(),
             successor: successor(),
-            team_slot: 0,
+            org_slot: 0,
         },
         LaneRenewalState::LaunchRefused {
             predecessor: predecessor(),
-            team_slot: 0,
+            org_slot: 0,
             reason: "selected vendor refused launch".to_owned(),
         },
     ]

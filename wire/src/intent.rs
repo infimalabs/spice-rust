@@ -264,8 +264,8 @@ pub struct LineageConfigure {
     pub lineage_id: CanonicalUuid,
     /// One seated member to move into this lineage, or absent to preserve membership.
     ///
-    /// Moving a member to a fresh lineage creates a team. Moving it to its own
-    /// lane identity removes it from a team. The resident keeps every other
+    /// Moving a member to a fresh lineage creates an organization. Moving it to its own
+    /// lane identity removes it from an organization. The resident keeps every other
     /// member and subscription authoritative in the same transaction.
     #[serde(
         default,
@@ -301,7 +301,7 @@ pub struct LineageArrangement {
 
 /// Rearrange every Canvas lineage: their order, and which lanes each holds.
 ///
-/// The operator drags one team lane to reorder the teams, or drops one team
+/// The operator drags one organization lane to reorder the organizations, or drops one organization
 /// lane onto another to join them. Both gestures are the same durable
 /// commitment -- a complete restatement of the topology -- so the authority
 /// never has to reconcile a reorder against a concurrent join. Stating the
@@ -368,7 +368,7 @@ pub struct LaneState {
 pub struct LaneRenewal {
     /// Topology revision observed before this intent was requested.
     pub topology_revision: u64,
-    /// Canvas lineage whose member retains its original team slot.
+    /// Canvas lineage whose member retains its original organization slot.
     pub lineage_id: CanonicalUuid,
     /// Independently steerable member whose occupant is renewed.
     pub lane: CanonicalUuid,

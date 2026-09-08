@@ -697,7 +697,7 @@ export const RECONNECT_MS = RECONNECT_BASE_MS + HANDSHAKE_TIMEOUT_MS + RENDER_SL
 export async function chooseCanvasView(page, name) {
   const visibleName = {
     Flow: "Tasks",
-    Topology: "Team",
+    Topology: "Org",
     Lanes: "Agents",
   }[name] ?? name;
   const navigation = page.getByRole("navigation", { name: "Canvas views" });

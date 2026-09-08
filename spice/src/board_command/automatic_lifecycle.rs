@@ -179,7 +179,7 @@ fn available_subscription<'a>(
         return Err(refusal(
             "lifecycle::available-work-scope",
             Some(subscription.policy.as_str().to_owned()),
-            "use a drive or drain team policy for capacity-following wake",
+            "use a drive or drain organization policy for capacity-following wake",
         ));
     }
     Ok(subscription)

@@ -64,9 +64,9 @@ async function openFirefoxTransitionWitness(endpoint) {
   try {
     await page.goto(endpoint, { waitUntil: "networkidle" });
     await chooseCanvasView(page, "Lanes");
-    const team = page.locator('[data-pane="agent-console"]');
-    await team.getByRole("tab", { name: /^Agents/ }).click();
-    const plane = team.locator(".lane-mosaic-plane");
+    const organization = page.locator('[data-pane="agent-console"]');
+    await organization.getByRole("tab", { name: /^Agents/ }).click();
+    const plane = organization.locator(".lane-mosaic-plane");
     await waitForMosaicReady(page);
     await settleMosaicActivity(page, plane);
     return {
@@ -77,7 +77,7 @@ async function openFirefoxTransitionWitness(endpoint) {
       monitor,
       page,
       plane,
-      team,
+      organization,
     };
   } catch (failure) {
     await context.close();
@@ -193,16 +193,16 @@ async function scrollAndArmTransitionWitnesses(witnesses) {
 async function waitForAuthoredCard(witness, source, lane, label) {
   const suffix = Number.isSafeInteger(source.offset) ? authoredLocusSuffix(source) : null;
   const matchText = source.text?.split("\n", 1)[0] ?? null;
-  await witness.team.evaluate((team, expected) => new Promise((resolve, reject) => {
+  await witness.organization.evaluate((organization, expected) => new Promise((resolve, reject) => {
     const inspect = () => {
-      const cards = [...team.querySelectorAll(
+      const cards = [...organization.querySelectorAll(
         `.mosaic-message-card[data-agent-lane="${expected.lane}"]`,
       )].filter((card) => (
         expected.suffix
           ? card.dataset.mosaicCardKey?.endsWith(expected.suffix)
           : card.textContent?.includes(expected.text)
       ));
-      const plane = team.querySelector(".lane-mosaic-plane");
+      const plane = organization.querySelector(".lane-mosaic-plane");
       return cards.length === 1
         && cards[0].dataset.layoutPhase === "committed"
         && plane?.dataset.measurementPhase === "ready"
@@ -218,7 +218,7 @@ async function waitForAuthoredCard(witness, source, lane, label) {
       resolve();
     };
     const observer = new MutationObserver(changed);
-    observer.observe(team, {
+    observer.observe(organization, {
       attributes: true,
       attributeFilter: ["data-layout-phase", "data-measurement-phase", "data-measurement-pending"],
       childList: true,
@@ -238,10 +238,10 @@ async function waitForAuthoredCard(witness, source, lane, label) {
     text: matchText,
   });
   const card = suffix
-    ? witness.team.locator(
+    ? witness.organization.locator(
       `.mosaic-message-card[data-agent-lane="${lane}"][data-mosaic-card-key$="${suffix}"]`,
     )
-    : witness.team.locator(
+    : witness.organization.locator(
       `.mosaic-message-card[data-card-kind="agent-message"][data-agent-lane="${lane}"]`,
     ).filter({ hasText: matchText });
   assert.equal(await card.count(), 1, `${witness.label} renders ${label} exactly once`);
@@ -378,7 +378,7 @@ async function assertSharedPrefixBackfill(witnesses, worktree, lane) {
 export async function assertCompactionBoundary(
   page,
   fixture,
-  team,
+  organization,
   seeded,
   artifacts,
   postHiddenMosaic,
@@ -390,11 +390,11 @@ export async function assertCompactionBoundary(
     label: "Chromium no preference",
     reducedMotion: false,
     page,
-    plane: team.locator(".lane-mosaic-plane"),
-    team,
+    plane: organization.locator(".lane-mosaic-plane"),
+    organization,
   };
   const witnesses = [chromium, firefox];
-  const primaryWorktree = seeded.teamWorktrees[0];
+  const primaryWorktree = seeded.organizationWorktrees[0];
   let complete = false;
   try {
     await waitForMosaicReady(page);
@@ -438,12 +438,12 @@ export async function assertCompactionBoundary(
       assert.ok(finished.maxRow > armed.maxRow, `${label} advances the upper frontier`);
       assertVisuallyTopmost(card, label);
       await waitForCompactionReady(witness.page, divider, label);
-      const laneAccent = await witness.team
-        .locator(`.team-agent[data-agent-lane="${seeded.lane}"]`)
+      const laneAccent = await witness.organization
+        .locator(`.organization-agent[data-agent-lane="${seeded.lane}"]`)
         .getAttribute("data-accent");
       assert.equal(await divider.getAttribute("data-accent"), laneAccent, `${label} uses its lane accent`);
       assert.equal(
-        await witness.team.locator('[data-card-kind="compaction"]').count(),
+        await witness.organization.locator('[data-card-kind="compaction"]').count(),
         1,
         `${label} renders exactly once`,
       );
@@ -511,12 +511,12 @@ export async function assertCompactionBoundary(
       assert.ok(finished.maxRow > armed.maxRow, `${label} advances the upper frontier`);
       assertVisuallyTopmost(card, label);
       await waitForCompactionReady(witness.page, divider, label);
-      const laneAccent = await witness.team
-        .locator(`.team-agent[data-agent-lane="${seeded.lane}"]`)
+      const laneAccent = await witness.organization
+        .locator(`.organization-agent[data-agent-lane="${seeded.lane}"]`)
         .getAttribute("data-accent");
       assert.equal(await divider.getAttribute("data-accent"), laneAccent, `${label} uses its lane accent`);
       assert.equal(
-        await witness.team.locator('[data-card-kind="compaction"]').count(),
+        await witness.organization.locator('[data-card-kind="compaction"]').count(),
         2,
         `${label} renders both distinct boundaries exactly once`,
       );

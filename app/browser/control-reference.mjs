@@ -7,7 +7,7 @@ import {
   TRANSITION_MS,
   waitForPageFunction,
 } from "./canvas-fixture.mjs";
-import { assertTeamActions } from "./team-actions.mjs";
+import { assertOrgActions } from "./organization-actions.mjs";
 
 const darkPalette = {
   quiet: "rgb(142, 162, 255)",
@@ -31,7 +31,7 @@ async function selectLifetime(page, lineage, input, value, label) {
     TRANSITION_MS,
     ({ lineageId, expected }) => {
       const current = document.querySelector(
-        `.team-surface[data-lineage-id="${lineageId}"] .team-composer-controls`,
+        `.organization-surface[data-lineage-id="${lineageId}"] .organization-composer-controls`,
       );
       return current?.dataset.lifetimePending === "false"
         && current.dataset.lifetime === expected;
@@ -70,11 +70,11 @@ function measureReference(surface) {
   };
   const rect = (selector, root = surface) => measured(root.querySelector(selector), selector);
   const taskStrip = rect(".task-pill-strip", document);
-  const toolbar = rect(".team-toolbar");
-  const rail = rect(".team-mode-rail");
-  const composer = rect(".team-composer");
-  const controls = rect(".team-composer-controls");
-  const activity = rect(".team-activity-grid");
+  const toolbar = rect(".organization-toolbar");
+  const rail = rect(".organization-mode-rail");
+  const composer = rect(".organization-composer");
+  const controls = rect(".organization-composer-controls");
+  const activity = rect(".organization-activity-grid");
   // The armed and maxed sliders carry the state accent blended 70% into the
   // resting line, the way the predecessor mixes it, so the hue role has to be
   // read back through the same mix rather than through the raw token.
@@ -120,12 +120,12 @@ function measureReference(surface) {
     composer,
     controls,
     activity,
-    selected: rect(".team-mode.selected"),
-    menu: rect(".team-menu"),
-    speech: rect(".team-speech"),
-    lifetime: rect(".team-lifetime"),
-    send: rect(".team-send"),
-    badges: [...surface.querySelectorAll(".team-mode-badge")].map((badge) => ({
+    selected: rect(".organization-mode.selected"),
+    menu: rect(".organization-menu"),
+    speech: rect(".organization-speech"),
+    lifetime: rect(".organization-lifetime"),
+    send: rect(".organization-send"),
+    badges: [...surface.querySelectorAll(".organization-mode-badge")].map((badge) => ({
       text: badge.textContent,
       background: getComputedStyle(badge).backgroundColor,
       width: badge.getBoundingClientRect().width,
@@ -134,11 +134,11 @@ function measureReference(surface) {
       paddingTop: getComputedStyle(badge).paddingTop,
       boxShadow: getComputedStyle(badge).boxShadow,
     })),
-    lights: [...surface.querySelectorAll(".team-light")].map((light) => ({
+    lights: [...surface.querySelectorAll(".organization-light")].map((light) => ({
       width: light.getBoundingClientRect().width,
       height: light.getBoundingClientRect().height,
     })),
-    agents: [...surface.querySelectorAll(".team-agent")].map((agent) => {
+    agents: [...surface.querySelectorAll(".organization-agent")].map((agent) => {
       const box = agent.getBoundingClientRect();
       return {
         left: box.left,
@@ -148,17 +148,17 @@ function measureReference(surface) {
         width: box.width,
       };
     }),
-    labels: [...surface.querySelectorAll(".team-slider span")].map((label) => ({
+    labels: [...surface.querySelectorAll(".organization-slider span")].map((label) => ({
       text: label.textContent,
       clientWidth: label.clientWidth,
       scrollWidth: label.scrollWidth,
       textAlign: getComputedStyle(label).textAlign,
       textTransform: getComputedStyle(label).textTransform,
     })),
-    modes: [...surface.querySelectorAll(".team-mode")].map((mode) => ({
+    modes: [...surface.querySelectorAll(".organization-mode")].map((mode) => ({
       label: mode.firstElementChild?.textContent,
       selected: mode.classList.contains("selected"),
-      badge: mode.querySelector(".team-mode-badge")?.textContent ?? null,
+      badge: mode.querySelector(".organization-mode-badge")?.textContent ?? null,
       background: getComputedStyle(mode).backgroundColor,
       border: getComputedStyle(mode).borderColor,
       borderWidth: getComputedStyle(mode).borderWidth,
@@ -441,7 +441,7 @@ async function installTaskChipFixture(page, surface) {
     const taste = () => '<span class="message-taste-pill" data-message-classification="taste"'
       + ' aria-label="Taste classification">TASTE</span>';
     const host = document.createElement("div");
-    host.className = "team-surface";
+    host.className = "organization-surface";
     host.dataset.taskChipFixture = "matrix";
     Object.assign(host.style, {
       position: "fixed",
@@ -799,8 +799,8 @@ export async function assertTaskChipTypographyMatrix(page, surface, artifactPath
 /// The operator agent card carries its own control: renewing this agent has to
 /// name both the action and the request it sends, stay on the exact agent lane
 /// it was drawn for, and reach the resident rather than only the message list.
-export async function assertReferenceTeamActions(page, surface) {
-  const surfaces = page.locator('[data-pane="agent-console"] .team-surface');
+export async function assertReferenceOrgActions(page, surface) {
+  const surfaces = page.locator('[data-pane="agent-console"] .organization-surface');
   if ((await surfaces.count()) === 2) {
     const primaryLineage = await surface.getAttribute("data-lineage-id");
     assert.ok(primaryLineage, "the primary control surface names its lineage");
@@ -811,9 +811,9 @@ export async function assertReferenceTeamActions(page, surface) {
     const secondaryLineage = await secondaryRow.getAttribute("data-lineage-id");
     assert.ok(secondaryLineage, "the sibling control surface names its lineage");
     const secondary = page.locator(
-      `[data-pane="agent-console"] .team-surface[data-lineage-id="${secondaryLineage}"]`,
+      `[data-pane="agent-console"] .organization-surface[data-lineage-id="${secondaryLineage}"]`,
     );
-    await assertTeamActions(page, surface, secondary, primaryLineage);
+    await assertOrgActions(page, surface, secondary, primaryLineage);
   }
 }
 
@@ -901,7 +901,7 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
     true,
     "the open drawer receives interaction across the composer's covered interior",
   );
-  const siblingEditor = surface.locator(".team-agent").first().getByRole("textbox");
+  const siblingEditor = surface.locator(".organization-agent").first().getByRole("textbox");
   await siblingEditor.click();
   assert.equal(
     await menu.getAttribute("open"),
@@ -916,7 +916,7 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
     "the renewal action names both the command and its request",
   );
   const renewalLane = await renew.evaluate(
-    (button) => button.closest(".team-agent")?.dataset.agentLane,
+    (button) => button.closest(".organization-agent")?.dataset.agentLane,
   );
   assert.ok(renewalLane, "the renewal control retains its exact agent lane");
   const renewalLineage = await surface.getAttribute("data-lineage-id");
@@ -1025,7 +1025,7 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
 
 async function claimRenewalWitness(fixture, lane, surface) {
   const taskTab = surface.getByRole("tab", { name: /^Tasks/ });
-  const badge = taskTab.locator(".team-mode-badge");
+  const badge = taskTab.locator(".organization-mode-badge");
   const priorCount = await badge.count() === 0 ? 0 : Number(await badge.innerText());
   assert.ok(Number.isInteger(priorCount), "renewal fixture reads the prior task badge");
   const added = await replyAsLane(fixture, lane, [
@@ -1040,16 +1040,16 @@ async function claimRenewalWitness(fixture, lane, surface) {
   assert.equal(claimed.body.task, handle, "renewal lane claims the critical fixture task");
   await waitForPageFunction(
     surface.page(),
-    "the renewal witness increments the exact team task badge",
+    "the renewal witness increments the exact organization task badge",
     TRANSITION_MS * 4,
     ({ lineage, expected }) => {
       const tabs = document.querySelectorAll(
-        `.team-surface[data-lineage-id="${lineage}"] [role="tab"]`,
+        `.organization-surface[data-lineage-id="${lineage}"] [role="tab"]`,
       );
       const tasks = [...tabs].find(
-        (tab) => tab.querySelector(".team-mode-label")?.textContent === "Tasks",
+        (tab) => tab.querySelector(".organization-mode-label")?.textContent === "Tasks",
       );
-      return Number(tasks?.querySelector(".team-mode-badge")?.textContent) === expected;
+      return Number(tasks?.querySelector(".organization-mode-badge")?.textContent) === expected;
     },
     {
       lineage: await surface.getAttribute("data-lineage-id"),
@@ -1082,7 +1082,7 @@ async function renewalClaimState(fixture, lane, handle) {
 
 async function renewalComposerProvenance(surface, lane) {
   return surface.locator(
-    `.team-agent[data-agent-lane="${lane}"] .composer-shard--primary .composer-shard-age`,
+    `.organization-agent[data-agent-lane="${lane}"] .composer-shard--primary .composer-shard-age`,
   ).evaluate((age) => ({
     href: age.getAttribute("href"),
     authored: age.dataset.ageAuthored,
@@ -1098,7 +1098,7 @@ async function assertRenewalClaimUnchanged(fixture, lane, surface, expected, lab
   );
   assert.equal(
     Number(await surface.getByRole("tab", { name: /^Tasks/ })
-      .locator(".team-mode-badge").innerText()),
+      .locator(".organization-mode-badge").innerText()),
     expected.badge,
     `${label} preserves the active-task badge count`,
   );
@@ -1156,15 +1156,15 @@ async function assertRenewalCommand(page, lane, lineage, requested) {
   });
 }
 
-export async function captureReferenceControls(page, team, artifactPath) {
-  const surface = team.locator('.team-surface[data-lineage-weight="4"]').first();
+export async function captureReferenceControls(page, organization, artifactPath) {
+  const surface = organization.locator('.organization-surface[data-lineage-weight="4"]').first();
   await surface.waitFor();
-  const controls = surface.locator(".team-composer-controls");
+  const controls = surface.locator(".organization-composer-controls");
   const lineage = await surface.getAttribute("data-lineage-id");
   assert.ok(lineage, "the reference controls belong to an identified lineage");
-  const speech = controls.locator('.team-speech input[type="range"]');
-  const lifetime = controls.locator('.team-lifetime input[type="range"]');
-  const textarea = surface.locator(".team-agent textarea").first();
+  const speech = controls.locator('.organization-speech input[type="range"]');
+  const lifetime = controls.locator('.organization-lifetime input[type="range"]');
+  const textarea = surface.locator(".organization-agent textarea").first();
   const initial = {
     speech: await speech.inputValue(),
     lifetime: await lifetime.inputValue(),

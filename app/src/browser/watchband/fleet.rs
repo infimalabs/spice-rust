@@ -1,25 +1,25 @@
-//! Team-fleet shell, topology drag, and per-team toolbar rendering.
+//! Org-fleet shell, topology drag, and per-organization toolbar rendering.
 
 use super::*;
 
-/// The media type a dragged team carries, and the only one a team accepts.
+/// The media type a dragged organization carries, and the only one an organization accepts.
 ///
 /// Message cards are draggable too, and they carry their prose as `text/plain`
-/// so it can be quoted into a composer. A team surface that accepted plain
+/// so it can be quoted into a composer. An organization surface that accepted plain
 /// text would rearrange the fleet because the operator dragged a message onto
 /// it, so the gesture is told apart by what it carries rather than by where it
 /// lands.
-const LINEAGE_DRAG_MEDIA: &str = "application/x-spice-team";
+const LINEAGE_DRAG_MEDIA: &str = "application/x-spice-organization";
 
-/// The box a drop is measured against: one team's whole surface.
-const LINEAGE_SURFACE: &str = ".team-surface";
+/// The box a drop is measured against: one organization's whole surface.
+const LINEAGE_SURFACE: &str = ".organization-surface";
 
-/// The team a drop carries, if it carries one at all.
+/// The organization a drop carries, if it carries one at all.
 fn dragged_lineage(transfer: &web_sys::DataTransfer) -> Option<CanonicalUuid> {
     transfer.get_data(LINEAGE_DRAG_MEDIA).ok()?.parse().ok()
 }
 
-/// Whether a drag in flight carries a team.
+/// Whether a drag in flight carries an organization.
 ///
 /// Only the media types are readable while a drag is moving; the identity
 /// itself stays sealed until the drop. That is enough to decide whether this
@@ -31,10 +31,10 @@ pub(super) fn carries_lineage(transfer: &web_sys::DataTransfer) -> bool {
         .any(|media| media.as_string().as_deref() == Some(LINEAGE_DRAG_MEDIA))
 }
 
-/// The four one-click views of one live team.
+/// The four one-click views of one live organization.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(in crate::browser) enum LineageMode {
-    Team,
+    Org,
     Tasks,
     #[default]
     Lanes,
@@ -43,17 +43,17 @@ pub(in crate::browser) enum LineageMode {
 impl LineageMode {
     pub(super) const fn key(self) -> &'static str {
         match self {
-            Self::Team => "Team",
+            Self::Org => "Org",
             Self::Tasks => "Tasks",
             Self::Lanes => "Lanes",
         }
     }
 
-    const fn from_destination(destination: TeamDestination) -> Self {
+    const fn from_destination(destination: OrgDestination) -> Self {
         match destination {
-            TeamDestination::Team => Self::Team,
-            TeamDestination::Tasks => Self::Tasks,
-            TeamDestination::Agents => Self::Lanes,
+            OrgDestination::Org => Self::Org,
+            OrgDestination::Tasks => Self::Tasks,
+            OrgDestination::Agents => Self::Lanes,
         }
     }
 }
@@ -90,20 +90,20 @@ pub(super) fn render_empty_fleet(
     let mode = lineage_controls.empty_mode();
     html! {
         <div ref={fleet.clone()} class="lineage-fleet" data-pane="agent-console" data-view="mosaic"
-            tabindex="0" aria-label="Agent teams">
-            <section class="team-surface" data-lineage-weight="1">
+            tabindex="0" aria-label="Agent organizations">
+            <section class="organization-surface" data-lineage-weight="1">
                 {render_empty_toolbar(
                     mode,
                     lineage_controls,
                     &[],
                 )}
-                <div class="team-pane" data-team-mode={mode.key()}>
+                <div class="organization-pane" data-organization-mode={mode.key()}>
                     {match mode {
                         LineageMode::Lanes => {
-                            empty("No agents are assigned. Open Team to add one.")
+                            empty("No agents are assigned. Open Org to add one.")
                         }
                         LineageMode::Tasks => render_tasks(runtime, &empty_lineage, &[]),
-                        LineageMode::Team => {
+                        LineageMode::Org => {
                             render_details(runtime, &empty_lineage, &[], mode, controls)
                         }
                     }}
@@ -123,7 +123,7 @@ pub(super) fn render_populated_fleet(
     let escape = lineage_menu_escape(render.lineage_controls);
     html! {
         <div ref={fleet.clone()} class="lineage-fleet" data-pane="agent-console" data-view="mosaic"
-            tabindex="0" aria-label="Agent teams" onclick={dismiss} onkeydown={escape}>
+            tabindex="0" aria-label="Agent organizations" onclick={dismiss} onkeydown={escape}>
             {for lanes.iter().map(|lineage| {
                 if render.lineage_controls.is_closed(lineage.lane) {
                     return Html::default();
@@ -138,7 +138,7 @@ pub(super) fn render_populated_fleet(
                     .mode;
                 html! {
                     <section
-                        class="team-surface"
+                        class="organization-surface"
                         data-lineage-id={lineage.lane.to_string()}
                         data-lineage-weight={watchband::lineage_visual_weight(lineage.members.len()).to_string()}
                         ondragover={lineage_dragover(render.can_arrange_lineages)}
@@ -161,9 +161,9 @@ pub(super) fn render_populated_fleet(
                             lineage,
                             &lineage_standings,
                         )}
-                        <div class="team-pane" data-team-mode={mode.key()}>
+                        <div class="organization-pane" data-organization-mode={mode.key()}>
                             <div
-                                class="team-mode-pane"
+                                class="organization-mode-pane"
                                 data-mode="Lanes"
                                 data-active={(mode == LineageMode::Lanes).to_string()}
                                 aria-hidden={(mode != LineageMode::Lanes).to_string()}
@@ -188,7 +188,7 @@ pub(super) fn render_populated_fleet(
                             </div>
                             if mode != LineageMode::Lanes {
                                 <div
-                                    class="team-mode-pane"
+                                    class="organization-mode-pane"
                                     data-mode={mode.key()}
                                     data-active="true"
                                     aria-hidden="false"
@@ -199,7 +199,7 @@ pub(super) fn render_populated_fleet(
                                             lineage,
                                             &lineage_standings,
                                         ),
-                        LineageMode::Team => render_details(
+                        LineageMode::Org => render_details(
                                             render.runtime,
                                             lineage,
                                             &lineage_standings,
@@ -226,7 +226,7 @@ fn lineage_menu_dismissal(controls: &UseReducerHandle<LineageControls>) -> Callb
             .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
             .is_some_and(|target| {
                 target
-                    .closest(".team-action-menu, .team-menu, .team-lights[data-lane-drag-handle]")
+                    .closest(".organization-action-menu, .organization-menu, .organization-lights[data-lane-drag-handle]")
                     .ok()
                     .flatten()
                     .is_some()
@@ -247,7 +247,9 @@ fn lineage_menu_escape(controls: &UseReducerHandle<LineageControls>) -> Callback
             .and_then(|window| window.document())
             .and_then(|document| {
                 document
-                    .query_selector(".team-lights[data-lane-drag-handle][aria-expanded=\"true\"]")
+                    .query_selector(
+                        ".organization-lights[data-lane-drag-handle][aria-expanded=\"true\"]",
+                    )
                     .ok()
                     .flatten()
             })
@@ -259,7 +261,7 @@ fn lineage_menu_escape(controls: &UseReducerHandle<LineageControls>) -> Callback
     })
 }
 
-/// Pick up a team from its pip stack, but only where it can be arranged.
+/// Pick up an organization from its pip stack, but only where it can be arranged.
 ///
 /// Keeping the gesture on the compact status pips leaves composer prose and
 /// activity cards free for their own selection and drag behavior.
@@ -277,7 +279,7 @@ fn lineage_drag_start(lineage: CanonicalUuid, can_arrange: bool) -> Callback<Dra
     })
 }
 
-/// Accept a team in flight, and nothing else.
+/// Accept an organization in flight, and nothing else.
 fn lineage_dragover(can_arrange: bool) -> Callback<DragEvent> {
     Callback::from(move |event: DragEvent| {
         if !can_arrange {
@@ -296,11 +298,11 @@ fn lineage_dragover(can_arrange: bool) -> Callback<DragEvent> {
     })
 }
 
-/// Commit the arrangement a drop on this team states.
+/// Commit the arrangement a drop on this organization states.
 ///
 /// The topology is the one this render drew, captured rather than re-read: the
-/// operator arranged the teams they were looking at, and an arrangement built
-/// from a table that changed underneath them would move a team they never
+/// operator arranged the organizations they were looking at, and an arrangement built
+/// from a table that changed underneath them would move an organization they never
 /// dragged.
 fn lineage_drop(
     can_arrange: bool,
@@ -319,8 +321,8 @@ fn lineage_drop(
             return;
         };
         // The listener is delegated, so the element the drop landed on is the
-        // only handle on this team's box; `current_target` is the delegation
-        // root and would measure the whole workspace as one team.
+        // only handle on this organization's box; `current_target` is the delegation
+        // root and would measure the whole workspace as one organization.
         let Some(surface) = event
             .target()
             .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
@@ -358,28 +360,28 @@ fn render_empty_toolbar(
     standings: &[Standing],
 ) -> Html {
     html! {
-        <header class="team-toolbar">
+        <header class="organization-toolbar">
             <span
-                class="team-lights"
+                class="organization-lights"
                 role="group"
                 aria-label={format!("{} admitted agents", standings.len())}
             ></span>
             {render_mode_rail(mode, None, standings, lineage_controls)}
             <button
-                class="team-menu"
+                class="organization-menu"
                 type="button"
-                aria-label="Team and agent details"
-                title="Team and agent details"
+                aria-label="Organization and agent details"
+                title="Organization and agent details"
                 onclick={{
                     let choose = lineage_controls.clone();
                     Callback::from(move |_| {
                         choose.dispatch(LineageControlAction::SetMode {
                             lineage: None,
-                            mode: LineageMode::Team,
+                            mode: LineageMode::Org,
                         });
                     })
                 }}
-            ><span class="team-menu-icon" aria-hidden="true"></span></button>
+            ><span class="organization-menu-icon" aria-hidden="true"></span></button>
         </header>
     }
 }
@@ -393,10 +395,10 @@ fn render_lineage_toolbar(
     let pip_stack = crate::pip_layout::PipStack::new(standings.len());
     let can_arrange = render.can_arrange_lineages && render.topology.len() > 1;
     let lineage_id = lineage.lane;
-    let arrangement_help_id = format!("team-arrangement-help-{lineage_id}");
+    let arrangement_help_id = format!("organization-arrangement-help-{lineage_id}");
     let lights_label = if can_arrange {
         format!(
-            "{} admitted agents; arrange team {}",
+            "{} admitted agents; arrange organization {}",
             standings.len(),
             watchband::short(lineage.lane)
         )
@@ -429,7 +431,7 @@ fn render_lineage_toolbar(
         let label = format!("{}: {}", standing.label, status.label());
         Some(html! {
             <span
-                class={classes!("team-light", status.key())}
+                class={classes!("organization-light", status.key())}
                 role="img"
                 data-lane-light-target-id={member.lane.to_string()}
                 data-lane-status={status.key()}
@@ -442,16 +444,16 @@ fn render_lineage_toolbar(
     };
     html! {
         <>
-        <header class="team-toolbar">
+        <header class="organization-toolbar">
             <span
-                class={classes!("team-lights", (pip_stack.rows() == 1).then_some("single"))}
+                class={classes!("organization-lights", (pip_stack.rows() == 1).then_some("single"))}
                 role={if can_arrange { "button" } else { "group" }}
                 aria-label={lights_label}
                 aria-haspopup={can_arrange.then_some("menu")}
                 aria-expanded={can_arrange.then(|| control.arrangement_open.to_string())}
                 aria-describedby={can_arrange.then(|| arrangement_help_id.clone())}
                 tabindex={can_arrange.then_some("0")}
-                title={can_arrange.then_some("Drag, or press Enter or Space to arrange this team")}
+                title={can_arrange.then_some("Drag, or press Enter or Space to arrange this organization")}
                 draggable={can_arrange.to_string()}
                 data-lane-drag-handle={can_arrange.then_some("")}
                 data-lineage-drag-id={can_arrange.then(|| lineage.lane.to_string())}
@@ -461,11 +463,11 @@ fn render_lineage_toolbar(
             >
                 if can_arrange {
                     <span id={arrangement_help_id} class="visually-hidden">
-                        {"Press Enter or Space, or tap, to choose where to move or join this team."}
+                        {"Press Enter or Space, or tap, to choose where to move or join this organization."}
                     </span>
                 }
                 {for pip_stack.columns_from_left().map(|column| html! {
-                    <span class="team-pip-column" data-pip-column={column.column.to_string()}>
+                    <span class="organization-pip-column" data-pip-column={column.column.to_string()}>
                         {column.upper.and_then(&render_pip)}
                         {render_pip(column.lower)}
                     </span>
@@ -491,8 +493,8 @@ fn render_mode_rail(
     lineage_controls: &UseReducerHandle<LineageControls>,
 ) -> Html {
     html! {
-        <nav class="team-mode-rail" role="tablist" aria-label="Live team views">
-            {for TeamDestination::ALL.map(|destination| {
+        <nav class="organization-mode-rail" role="tablist" aria-label="Live organization views">
+            {for OrgDestination::ALL.map(|destination| {
                 let candidate = LineageMode::from_destination(destination);
                 let selected = candidate == mode;
                 let choose = lineage_controls.clone();
@@ -501,7 +503,7 @@ fn render_mode_rail(
                     <button
                         type="button"
                         role="tab"
-                        class={classes!("team-mode", selected.then_some("selected"))}
+                        class={classes!("organization-mode", selected.then_some("selected"))}
                         aria-selected={selected.to_string()}
                         onclick={Callback::from(move |_| {
                             choose.dispatch(LineageControlAction::SetMode {
@@ -510,11 +512,11 @@ fn render_mode_rail(
                             });
                         })}
                     >
-                        <span class="team-mode-label" title={destination.label()}>
+                        <span class="organization-mode-label" title={destination.label()}>
                             {destination.label()}
                         </span>
                         if let Some(badge) = badge {
-                            <span class="team-mode-badge">{badge}</span>
+                            <span class="organization-mode-badge">{badge}</span>
                         }
                     </button>
                 }
@@ -560,7 +562,7 @@ fn mode_badge(mode: LineageMode, standings: &[Standing]) -> Option<String> {
             .iter()
             .filter(|standing| standing.handle.is_some())
             .count(),
-        LineageMode::Team => standings.len(),
+        LineageMode::Org => standings.len(),
     };
     watchband::badge(count)
 }

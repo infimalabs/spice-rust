@@ -12,19 +12,19 @@ import {
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const artifacts = join(root, "artifacts/canvas");
 const agentGeometryOwners = Object.freeze({
-  activity: ':scope > .team-pane[data-team-mode="Lanes"] '
-    + '> .team-mode-pane[data-mode="Lanes"] > .team-compose > .team-activity-grid',
+  activity: ':scope > .organization-pane[data-organization-mode="Lanes"] '
+    + '> .organization-mode-pane[data-mode="Lanes"] > .organization-compose > .organization-activity-grid',
   committedCard: ':scope > .lane-mosaic-plane > .lane-mosaic-track '
     + '> .mosaic-message-card[data-layout-phase="committed"]',
   emptyActivity: ":scope > .mosaic-message-empty",
-  emptyFleet: ':scope > .team-pane[data-team-mode="Lanes"] > .empty',
+  emptyFleet: ':scope > .organization-pane[data-organization-mode="Lanes"] > .empty',
   measuringCard: ':scope > .lane-mosaic-plane > .lane-mosaic-track '
     + '> .mosaic-message-card[data-layout-phase="measuring"]',
   plane: ":scope > .lane-mosaic-plane",
 });
 const axisPanes = new Map([
   ["Tasks", ["Tasks", "Claims", "Deferrals", "Reviews"]],
-  ["Team", ["Agents", "Worktrees", "Lineage", "Occupancy", "Residents"]],
+  ["Org", ["Agents", "Worktrees", "Lineage", "Occupancy", "Residents"]],
 ]);
 
 export async function assertAgentWorkspaceGeometry(page, state) {
@@ -32,7 +32,7 @@ export async function assertAgentWorkspaceGeometry(page, state) {
     page,
     `${state} populated spacing geometry commits`,
     TRANSITION_MS,
-    ({ owners }) => [...document.querySelectorAll(".team-surface")].every((surface) => {
+    ({ owners }) => [...document.querySelectorAll(".organization-surface")].every((surface) => {
       if (!surface.hasAttribute("data-lineage-id")) return true;
       const activities = surface.querySelectorAll(owners.activity);
       if (activities.length !== 1) return true;
@@ -79,7 +79,7 @@ export async function assertAgentWorkspaceGeometry(page, state) {
     const fleet = exactlyOne(content, ":scope > .lineage-fleet", "lineage fleet");
     const contentStyle = getComputedStyle(content);
     const commandbarStyle = getComputedStyle(commandbar);
-    const surfaces = [...fleet.querySelectorAll(":scope > .team-surface")].map((surface) => {
+    const surfaces = [...fleet.querySelectorAll(":scope > .organization-surface")].map((surface) => {
       const exactlyOne = (root, selector, label) => {
         const matches = root.querySelectorAll(selector);
         if (matches.length !== 1) {
@@ -93,7 +93,7 @@ export async function assertAgentWorkspaceGeometry(page, state) {
       let cards = [];
       let floor;
       let owner;
-      const pane = exactlyOne(surface, ":scope > .team-pane", "team pane");
+      const pane = exactlyOne(surface, ":scope > .organization-pane", "organization pane");
       if (!populated) {
         const empty = exactlyOne(surface, owners.emptyFleet, "fleet-empty geometry owner");
         const committed = surface.querySelectorAll(
@@ -236,7 +236,7 @@ export async function assertAgentWorkspaceGeometry(page, state) {
   for (const surface of geometry.surfaces) {
     assert.ok(
       surface.box.left >= -0.5 && surface.box.right <= geometry.viewportWidth + 0.5,
-      `${state} keeps each team surface inside the viewport: ${JSON.stringify(surface)}`,
+      `${state} keeps each organization surface inside the viewport: ${JSON.stringify(surface)}`,
     );
     if (surface.plane) {
       assert.equal(surface.plane.overflowY, "auto", `${state} keeps the Mosaic plane scrollable`);
@@ -258,7 +258,7 @@ export async function assertAgentWorkspaceGeometry(page, state) {
     for (let index = 1; index < geometry.surfaces.length; index += 1) {
       assert.ok(
         geometry.surfaces[index].box.top >= geometry.surfaces[index - 1].box.bottom - 1,
-        `${state} stacks team surfaces without overlap: ${JSON.stringify(geometry.surfaces)}`,
+        `${state} stacks organization surfaces without overlap: ${JSON.stringify(geometry.surfaces)}`,
       );
     }
   }
@@ -297,10 +297,10 @@ export async function assertAgentWorkspaceGeometry(page, state) {
       Math.abs(surface.box.bottom - intendedBottom) <= 1,
       `${state} surface reaches the content lower inset: ${JSON.stringify({ geometry, surface })}`,
     );
-    assert.equal(surface.style.display, "flex", `${state} team surface owns a flex column`);
-    assert.equal(surface.style.minHeight, "100%", `${state} team surface fills the fleet block`);
-    assert.equal(surface.pane.display, "flex", `${state} team pane participates in flex sizing`);
-    assert.equal(surface.pane.minHeight, "0px", `${state} team pane releases its automatic minimum`);
+    assert.equal(surface.style.display, "flex", `${state} organization surface owns a flex column`);
+    assert.equal(surface.style.minHeight, "100%", `${state} organization surface fills the fleet block`);
+    assert.equal(surface.pane.display, "flex", `${state} organization pane participates in flex sizing`);
+    assert.equal(surface.pane.minHeight, "0px", `${state} organization pane releases its automatic minimum`);
     if (surface.compose) {
       assert.equal(surface.compose.display, "flex", `${state} Lanes participates in flex sizing`);
       assert.equal(surface.compose.minHeight, "0px", `${state} Lanes releases its automatic minimum`);
@@ -309,7 +309,7 @@ export async function assertAgentWorkspaceGeometry(page, state) {
       assert.equal(surface.activity.minHeight, "0px", `${state} activity releases its automatic minimum`);
       assert.ok(
         surface.plane.box.bottom <= surface.box.bottom + 0.5,
-        `${state} Mosaic plane remains inside its team surface: ${JSON.stringify(surface)}`,
+        `${state} Mosaic plane remains inside its organization surface: ${JSON.stringify(surface)}`,
       );
     }
   }
@@ -321,19 +321,19 @@ export async function assertAgentSpacingRejectsFallbackOnlyMarkup(page, state) {
   const console = page.locator('[data-pane="agent-console"]');
   await console.evaluate((host, fallbackMarker) => {
     const surface = document.createElement("section");
-    surface.className = "team-surface";
+    surface.className = "organization-surface";
     surface.dataset.lineageId = fallbackMarker;
     surface.dataset.fallbackSpacingOwner = fallbackMarker;
     const pane = document.createElement("div");
-    pane.className = "team-pane";
-    pane.dataset.teamMode = "Lanes";
+    pane.className = "organization-pane";
+    pane.dataset.organizationMode = "Lanes";
     const mode = document.createElement("div");
-    mode.className = "team-mode-pane";
+    mode.className = "organization-mode-pane";
     mode.dataset.mode = "Lanes";
     const compose = document.createElement("div");
-    compose.className = "team-compose";
+    compose.className = "organization-compose";
     const activity = document.createElement("div");
-    activity.className = "team-activity-grid";
+    activity.className = "organization-activity-grid";
     activity.dataset.empty = "false";
     const plane = document.createElement("div");
     plane.className = "lane-mosaic-plane";

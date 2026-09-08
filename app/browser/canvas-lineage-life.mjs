@@ -25,8 +25,8 @@ const artifacts = join(root, "artifacts/canvas");
 export async function cleanupLineageFixture({ fixture, resident, owner, request = reply }) {
   try {
     if (resident && !childExited(resident.child)) {
-      const liveTeam = await request(fixture, ["lane"]);
-      for (const agent of liveTeam.body.lanes) {
+      const liveOrg = await request(fixture, ["lane"]);
+      for (const agent of liveOrg.body.lanes) {
         if (agent.occupant) await request(fixture, ["lane", "drain", agent.lane]);
       }
     }
@@ -73,24 +73,24 @@ async function findSevenMemberComposer(context, endpoint, lineageId) {
   const monitor = monitorPage(page);
   await page.goto(endpoint, { waitUntil: "networkidle" });
   await chooseCanvasView(page, "Lanes");
-  const surface = page.locator(`.team-surface[data-lineage-id="${lineageId}"]`);
+  const surface = page.locator(`.organization-surface[data-lineage-id="${lineageId}"]`);
   await surface.waitFor();
   await surface.getByRole("tab", { name: /^Agents/ }).click();
-  const strip = surface.locator(":scope > .team-pane .team-composer > .team-agents");
-  await strip.locator(":scope > .team-agent").nth(6).waitFor();
+  const strip = surface.locator(":scope > .organization-pane .organization-composer > .organization-agents");
+  await strip.locator(":scope > .organization-agent").nth(6).waitFor();
   return { monitor, strip };
 }
 
 async function measureComposerStrip(strip) {
   return strip.evaluate((node) => {
     return {
-      weight: node.closest(".team-surface")?.dataset.lineageWeight,
+      weight: node.closest(".organization-surface")?.dataset.lineageWeight,
       overflowX: getComputedStyle(node).overflowX,
       clientWidth: node.clientWidth,
       scrollWidth: node.scrollWidth,
       bodyWidth: document.body.scrollWidth,
       viewportWidth: innerWidth,
-      members: [...node.querySelectorAll(":scope > .team-agent")].map((member) => {
+      members: [...node.querySelectorAll(":scope > .organization-agent")].map((member) => {
         const box = member.getBoundingClientRect();
         return {
           accent: member.dataset.accent,
@@ -145,7 +145,7 @@ async function assertEasternComposerVisible(strip) {
     node.style.scrollBehavior = "auto";
     node.scrollLeft = node.scrollWidth;
     const stripBox = node.getBoundingClientRect();
-    const last = node.querySelector(":scope > .team-agent:last-child")?.getBoundingClientRect();
+    const last = node.querySelector(":scope > .organization-agent:last-child")?.getBoundingClientRect();
     return {
       scrollLeft: node.scrollLeft,
       stripRight: stripBox.right,
@@ -266,14 +266,14 @@ export async function assertLineageLifeIsolation(browser) {
     const console = page.locator('[data-pane="agent-console"]');
     await console.waitFor();
     const drainSurface = console.locator(
-      `.team-surface[data-lineage-id="${host.lineage_id}"]`,
+      `.organization-surface[data-lineage-id="${host.lineage_id}"]`,
     );
     const driveSurface = console.locator(
-      `.team-surface[data-lineage-id="${drive.lineage_id}"]`,
+      `.organization-surface[data-lineage-id="${drive.lineage_id}"]`,
     );
     await drainSurface.getByRole("button", { name: "Drain", exact: true }).waitFor();
     await driveSurface.getByRole("button", { name: "Drive", exact: true }).waitFor();
-    assert.equal(await console.locator(".team-surface").count(), 2);
+    assert.equal(await console.locator(".organization-surface").count(), 2);
 
     const drainTextbox = drainSurface.getByRole("textbox").first();
     await drainTextbox.fill("drain lineage accessibility");
@@ -284,7 +284,7 @@ export async function assertLineageLifeIsolation(browser) {
     );
     const drainPlane = drainSurface.locator(".lane-mosaic-plane");
     const driveTextbox = driveSurface
-      .locator(`.team-agent[data-agent-lane="${drive.lane}"]`)
+      .locator(`.organization-agent[data-agent-lane="${drive.lane}"]`)
       .getByRole("textbox");
     await driveTextbox.fill("drive lineage accessibility");
     await driveSurface.getByRole("button", { name: "Drive", exact: true }).click();
@@ -321,7 +321,7 @@ export async function assertLineageLifeIsolation(browser) {
       join(artifacts, "canvas-tiled-workspace-dark.png"),
     );
 
-    await drainSurface.locator('.team-lifetime input[type="range"]').fill("0");
+    await drainSurface.locator('.organization-lifetime input[type="range"]').fill("0");
     await drainSurface.getByRole("button", { name: "Steer", exact: true }).waitFor();
     const changed = await reply(fixture, ["lane"]);
     assert.equal(

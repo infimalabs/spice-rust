@@ -34,7 +34,7 @@ product contract; failing any of them disproves it.
 | Projection loudness | corrupt a projection; the answer differs from a healthy empty |
 | Repair-first refusals | every refusal with a way out leads with the exact repair action; commands are runnable as printed |
 | Provenance | every effective config value names its source |
-| Observer inertness | run observation; assert no repo, team, claim, or hook writes |
+| Observer inertness | run observation; assert no repo, organization, claim, or hook writes |
 
 ---
 

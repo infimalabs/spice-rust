@@ -32,9 +32,9 @@ pub use renewal::{AgentRenewalControl, agent_renewal_control};
 /// from color.
 pub const ACCENTS: usize = 6;
 
-/// Largest member-count weight the team console assigns to layout.
+/// Largest member-count weight the organization console assigns to layout.
 ///
-/// Membership itself is unbounded by presentation. Above this ceiling a team
+/// Membership itself is unbounded by presentation. Above this ceiling an organization
 /// keeps the widest admitted console instead of falling through CSS to a
 /// narrower default.
 pub const MAX_LINEAGE_VISUAL_WEIGHT: usize = 6;
@@ -57,9 +57,9 @@ pub const FIELD_BUDGET: usize = 22;
 /// Stable bounded identity when neither configured name nor worktree leaf exists.
 pub const UNKNOWN_AGENT_LABEL: &str = "Unknown agent";
 
-/// Render state for one independently admitted section of the team Tasks view.
+/// Render state for one independently admitted section of the organization Tasks view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TeamTaskSectionState {
+pub enum OrgTaskSectionState {
     TaskSnapshotUnavailable,
     NoActiveTasks,
     ActiveTasks,
@@ -68,7 +68,7 @@ pub enum TeamTaskSectionState {
     QueuedDirection,
 }
 
-impl TeamTaskSectionState {
+impl OrgTaskSectionState {
     /// State of the board-backed active-task section.
     #[must_use]
     pub const fn active(board_available: bool, count: usize) -> Self {
@@ -98,7 +98,7 @@ impl TeamTaskSectionState {
     pub const fn message(self) -> Option<&'static str> {
         match self {
             Self::TaskSnapshotUnavailable => Some("Task snapshot unavailable."),
-            Self::NoActiveTasks => Some("No active tasks for this team."),
+            Self::NoActiveTasks => Some("No active tasks for this organization."),
             Self::DirectionSnapshotUnavailable => Some("Direction snapshot unavailable."),
             Self::NoQueuedDirection => Some("No queued direction."),
             Self::ActiveTasks | Self::QueuedDirection => None,
@@ -211,34 +211,34 @@ pub fn composer_vendor_icon_class(vendor: &str) -> Option<&'static str> {
     }
 }
 
-/// The fraction of a team's width, at either edge, that joins rather than
+/// The fraction of an organization's width, at either edge, that joins rather than
 /// reorders.
 ///
 /// The predecessor's lane drag reads the same gutter: the outer fifth of the
-/// team under the pointer fuses the two teams, and the middle three fifths
-/// moves the dragged team into that position. Keeping the fraction identical
+/// organization under the pointer fuses the two organizations, and the middle three fifths
+/// moves the dragged organization into that position. Keeping the fraction identical
 /// keeps the muscle memory identical, which is the whole reason a number this
 /// arbitrary is stated once rather than chosen twice.
 pub const LINEAGE_JOIN_GUTTER: f64 = 0.2;
 
-/// What a drop on a team states, decided by where in that team it landed.
+/// What a drop on an organization states, decided by where in that organization it landed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineageDrop {
-    /// Insert the dragged team immediately before the target team.
+    /// Insert the dragged organization immediately before the target organization.
     ///
     /// Stated as "before the target" rather than "into the target's position"
-    /// because those coincide only when the dragged team came from later in
+    /// because those coincide only when the dragged organization came from later in
     /// the row. Dragging one forward lands it one place ahead of where the
     /// target stood, since removing it first shifts the target back.
     Reorder,
-    /// Insert the dragged team immediately after the target team.
+    /// Insert the dragged organization immediately after the target organization.
     ReorderAfter,
-    /// Give the dragged team's agents to the target team.
+    /// Give the dragged organization's agents to the target organization.
     Join,
 }
 
 impl LineageDrop {
-    /// Read the gesture out of a drop's position across the target team.
+    /// Read the gesture out of a drop's position across the target organization.
     ///
     /// `offset` is the pointer's distance from the target's left edge and
     /// `width` the target's width, both in the same units; a target with no
@@ -257,7 +257,7 @@ impl LineageDrop {
     }
 }
 
-/// Every team and the agents it holds, in the order the surface drew them.
+/// Every organization and the agents it holds, in the order the surface drew them.
 ///
 /// This is the same grouping the canvas renders from, read back out as bare
 /// identities: a drag has to answer with the arrangement it *saw*, so the
@@ -279,23 +279,23 @@ pub fn topology(lanes: &[LaneRow]) -> Vec<(CanonicalUuid, Vec<CanonicalUuid>)> {
         .collect()
 }
 
-/// State the whole team arrangement one drop produces.
+/// State the whole organization arrangement one drop produces.
 ///
 /// The resident admits an arrangement only as a complete restatement of the
-/// lane table, so this returns every team and every agent rather than the
-/// delta: the operator dragged one team, but what the canvas knows and the
+/// lane table, so this returns every organization and every agent rather than the
+/// delta: the operator dragged one organization, but what the canvas knows and the
 /// resident must agree on is where all of them now stand.
 ///
-/// A join appends the dragged team's agents *after* the target's, never
+/// A join appends the dragged organization's agents *after* the target's, never
 /// before. The target's first agent is its primary composer, so prepending
-/// would silently hand the composer to whichever team was dragged in.
+/// would silently hand the composer to whichever organization was dragged in.
 ///
 /// A drop that states nothing returns `None` rather than a no-op command, and
-/// the arrangement it would have stated is what decides that. Dropping a team
+/// the arrangement it would have stated is what decides that. Dropping an organization
 /// on itself and dropping one that is no longer on the surface are the cases
-/// that can be recognised up front; a team dropped on the neighbour it already
-/// sits in front of is not, because that gesture is a real drag of a live team
-/// onto a different live team and only the result gives it away. Every one of
+/// that can be recognised up front; an organization dropped on the neighbour it already
+/// sits in front of is not, because that gesture is a real drag of a live organization
+/// onto a different live organization and only the result gives it away. Every one of
 /// them would otherwise commit a complete restatement of the table the canvas
 /// is already showing, writing a durable fact that records no change.
 #[must_use]
@@ -319,7 +319,7 @@ pub fn arrangement(
     let target_at = arranged
         .iter()
         .position(|(lineage, _)| *lineage == target)
-        .expect("the target survives removing a different team");
+        .expect("the target survives removing a different organization");
     match drop {
         LineageDrop::Reorder => arranged.insert(target_at, (dragged, moved)),
         LineageDrop::ReorderAfter => arranged.insert(target_at + 1, (dragged, moved)),
@@ -328,12 +328,12 @@ pub fn arrangement(
     (arranged != lineages).then_some(arranged)
 }
 
-/// Replace one multi-agent team with one team per agent.
+/// Replace one multi-agent organization with one organization per agent.
 ///
-/// The first agent keeps the source team's identity so browser-local state can
+/// The first agent keeps the source organization's identity so browser-local state can
 /// offer a one-click restore after the resident returns the split topology.
-/// Every later agent becomes an individual team under its own stable lane
-/// identity. Teams outside the target keep both their identity and order.
+/// Every later agent becomes an individual organization under its own stable lane
+/// identity. Orgs outside the target keep both their identity and order.
 #[must_use]
 pub fn split_lineage(
     lineages: &[(CanonicalUuid, Vec<CanonicalUuid>)],

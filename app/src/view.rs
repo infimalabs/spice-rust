@@ -67,36 +67,36 @@ impl Axis {
 /// User-facing Canvas destinations in their shared navigation order.
 ///
 /// Internal axes and lane vocabulary remain stable; this registry is the
-/// presentation boundary for global Canvas controls. Team controls select
+/// presentation boundary for global Canvas controls. Org controls select
 /// their closed, scoped subset through `LineageMode` in the browser shell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CanvasDestination {
-    Team,
+    Org,
     Tasks,
     Agents,
 }
 
-/// Canvas destinations that are meaningful inside one team surface.
+/// Canvas destinations that are meaningful inside one organization surface.
 ///
 /// This type is intentionally distinct from [`CanvasDestination`]: adding a
-/// global destination cannot make it appear in a team tablist without an
+/// global destination cannot make it appear in an organization tablist without an
 /// explicit scoped variant and mapping here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TeamDestination {
-    Team,
+pub enum OrgDestination {
+    Org,
     Tasks,
     Agents,
 }
 
-impl TeamDestination {
-    /// Every team-scoped destination, left to right.
-    pub const ALL: [Self; 3] = [Self::Team, Self::Tasks, Self::Agents];
+impl OrgDestination {
+    /// Every organization-scoped destination, left to right.
+    pub const ALL: [Self; 3] = [Self::Org, Self::Tasks, Self::Agents];
 
     /// Corresponding destination in the global Canvas vocabulary.
     #[must_use]
     pub const fn canvas(self) -> CanvasDestination {
         match self {
-            Self::Team => CanvasDestination::Team,
+            Self::Org => CanvasDestination::Org,
             Self::Tasks => CanvasDestination::Tasks,
             Self::Agents => CanvasDestination::Agents,
         }
@@ -111,13 +111,13 @@ impl TeamDestination {
 
 impl CanvasDestination {
     /// Every global destination, left to right.
-    pub const ALL: [Self; 3] = [Self::Team, Self::Tasks, Self::Agents];
+    pub const ALL: [Self; 3] = [Self::Org, Self::Tasks, Self::Agents];
 
     /// Presentation label independent of internal protocol spelling.
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Team => "Team",
+            Self::Org => "Org",
             Self::Tasks => "Tasks",
             Self::Agents => "Agents",
         }
@@ -127,7 +127,7 @@ impl CanvasDestination {
     #[must_use]
     pub const fn for_axis(axis: Axis) -> Self {
         match axis {
-            Axis::Topology => Self::Team,
+            Axis::Topology => Self::Org,
             Axis::Flow => Self::Tasks,
         }
     }
@@ -136,7 +136,7 @@ impl CanvasDestination {
     #[must_use]
     pub const fn axis(self) -> Option<Axis> {
         match self {
-            Self::Team => Some(Axis::Topology),
+            Self::Org => Some(Axis::Topology),
             Self::Tasks => Some(Axis::Flow),
             Self::Agents => None,
         }
@@ -146,9 +146,9 @@ impl CanvasDestination {
     #[must_use]
     pub const fn description(self) -> &'static str {
         match self {
-            Self::Team => "Resident teams, agents, capabilities, and possession",
+            Self::Org => "Resident organizations, agents, capabilities, and possession",
             Self::Tasks => "Tasks moving through their workflow",
-            Self::Agents => "Converse across persistent team agents",
+            Self::Agents => "Converse across persistent organization agents",
         }
     }
 }
@@ -252,12 +252,12 @@ mod tests {
     fn canvas_destinations_own_the_complete_presentation_order() {
         assert_eq!(
             CanvasDestination::ALL.map(CanvasDestination::label),
-            ["Team", "Tasks", "Agents"],
+            ["Org", "Tasks", "Agents"],
         );
         assert_eq!(
-            TeamDestination::ALL.map(TeamDestination::canvas),
+            OrgDestination::ALL.map(OrgDestination::canvas),
             [
-                CanvasDestination::Team,
+                CanvasDestination::Org,
                 CanvasDestination::Tasks,
                 CanvasDestination::Agents,
             ],

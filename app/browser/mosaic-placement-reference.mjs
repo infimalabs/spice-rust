@@ -118,15 +118,15 @@ export async function assertMosaicScrollInputs(page, plane) {
     };
     return {
       diagnostics: {
-        activity: describe(element.closest(".team-activity-grid")),
-        compose: describe(element.closest(".team-compose")),
+        activity: describe(element.closest(".organization-activity-grid")),
+        compose: describe(element.closest(".organization-compose")),
         content: describe(element.closest(".content")),
         fleet: describe(element.closest(".lineage-fleet")),
-        mode: describe(element.closest(".team-mode-pane")),
-        pane: describe(element.closest(".team-pane")),
+        mode: describe(element.closest(".organization-mode-pane")),
+        pane: describe(element.closest(".organization-pane")),
         plane: describe(element),
         shell: describe(element.closest(".shell")),
-        surface: describe(element.closest(".team-surface")),
+        surface: describe(element.closest(".organization-surface")),
         viewport: { height: innerHeight, width: innerWidth },
         workspace: describe(element.closest(".workspace")),
       },
@@ -192,12 +192,12 @@ export function assertMosaicLifecycleAdvanced(before, after, label) {
 export async function assertCompactionBoundaryPersistence(page, seeded, boundaryKeys) {
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Lanes");
-  const restoredTeam = page.locator('[data-pane="agent-console"]');
-  await restoredTeam.getByRole("tab", { name: /^Agents/ }).click();
-  const restoredUnresolved = restoredTeam.locator(
+  const restoredOrg = page.locator('[data-pane="agent-console"]');
+  await restoredOrg.getByRole("tab", { name: /^Agents/ }).click();
+  const restoredUnresolved = restoredOrg.locator(
     `[data-mosaic-card-key="${boundaryKeys.unresolved}"]`,
   );
-  const restoredEmpty = restoredTeam.locator(
+  const restoredEmpty = restoredOrg.locator(
     `[data-mosaic-card-key="${boundaryKeys.empty}"]`,
   );
   await Promise.all([
@@ -205,7 +205,7 @@ export async function assertCompactionBoundaryPersistence(page, seeded, boundary
     restoredEmpty.waitFor({ timeout: RECONNECT_MS }),
   ]);
   assert.equal(
-    await restoredTeam.locator(
+    await restoredOrg.locator(
       `.mosaic-message-card[data-card-kind="compaction"][data-agent-lane="${seeded.lane}"]`,
     ).count(),
     2,

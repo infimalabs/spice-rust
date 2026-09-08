@@ -74,12 +74,12 @@ async function fleetGeometry(fleet) {
     const bounds = element.getBoundingClientRect();
     const style = getComputedStyle(element);
     const minimumToken = style.getPropertyValue("--lineage-surface-min-inline").trim();
-    const surfaces = [...element.querySelectorAll(":scope > .team-surface")];
+    const surfaces = [...element.querySelectorAll(":scope > .organization-surface")];
     const surfaceGeometry = surfaces.map((surface) => {
       const rect = surface.getBoundingClientRect();
       const surfaceStyle = getComputedStyle(surface);
       const controls = [...surface.querySelectorAll("button, textarea, table")]
-        .filter((control) => control.closest('.team-mode-pane[data-active="false"]') === null);
+        .filter((control) => control.closest('.organization-mode-pane[data-active="false"]') === null);
       const clippedControls = controls.flatMap((control) => {
         const controlRect = control.getBoundingClientRect();
         if (controlRect.left >= rect.left - 1 && controlRect.right <= rect.right + 1) return [];
@@ -116,12 +116,12 @@ async function fleetGeometry(fleet) {
       pageOverflowX: document.documentElement.scrollWidth - innerWidth,
       pageOverflowY: document.documentElement.scrollHeight - innerHeight,
       ids: surfaces.map((surface) => surface.dataset.lineageId),
-      modes: surfaces.map((surface) => surface.querySelector(".team-pane")?.dataset.teamMode),
+      modes: surfaces.map((surface) => surface.querySelector(".organization-pane")?.dataset.organizationMode),
       drafts: surfaces.flatMap((surface) => [...surface.querySelectorAll("textarea")]
         .map((draft) => draft.value)),
       laneScrolls: surfaces.flatMap((surface) => [...surface.querySelectorAll(".lane-mosaic-plane")]
         .map((lane) => lane.scrollTop)),
-      tabLabels: surfaces.map((surface) => [...surface.querySelectorAll(".team-mode-label")]
+      tabLabels: surfaces.map((surface) => [...surface.querySelectorAll(".organization-mode-label")]
         .map((label) => label.textContent.trim())),
       surfaces: surfaceGeometry,
     };
@@ -140,9 +140,9 @@ function assertTrack(geometry, label, overflow) {
   assert.ok(Math.abs(geometry.lastRight - geometry.right) <= 1, `${label} reveals the newest lane`);
   assert.ok(
     geometry.tabLabels.every((labels) => (
-      JSON.stringify(labels) === JSON.stringify(["Team", "Tasks", "Agents"])
+      JSON.stringify(labels) === JSON.stringify(["Org", "Tasks", "Agents"])
     )),
-    `${label} keeps only retained destinations in every responsive team tablist: ${JSON.stringify(geometry)}`,
+    `${label} keeps only retained destinations in every responsive organization tablist: ${JSON.stringify(geometry)}`,
   );
   assert.ok(geometry.surfaces.every(({ width, minWidth, minWidthToken, height, direction, overflow, clipped }) => (
     width >= minWidth - 0.5

@@ -41,7 +41,7 @@ fn head(rows: &[(u8, u8)]) -> wire::ResidencyHead {
                 lineage_id: uuid(lineage),
                 policy: LineageLife::Drive,
                 manual_projects: Vec::new(),
-                auto_projects: vec![format!("team.{lineage}")],
+                auto_projects: vec![format!("organization.{lineage}")],
             })
             .collect(),
         renewals: Vec::new(),
@@ -63,10 +63,10 @@ fn subscription_ids(head: &wire::ResidencyHead) -> Vec<CanonicalUuid> {
 }
 
 #[test]
-fn a_member_moves_between_teams_and_an_empty_source_subscription_disappears() {
+fn a_member_moves_between_orgs_and_an_empty_source_subscription_disappears() {
     let mut state = head(&[(1, 1), (2, 1), (3, 3)]);
 
-    let joined = move_member(&mut state, uuid(3), uuid(1)).expect("member joins team");
+    let joined = move_member(&mut state, uuid(3), uuid(1)).expect("member joins organization");
 
     assert_eq!(joined.from_lineage, uuid(3));
     assert_eq!(joined.source_rekeyed_to, None);
@@ -76,7 +76,7 @@ fn a_member_moves_between_teams_and_an_empty_source_subscription_disappears() {
     );
     assert_eq!(subscription_ids(&state), vec![uuid(1)]);
 
-    move_member(&mut state, uuid(2), uuid(2)).expect("member leaves team");
+    move_member(&mut state, uuid(2), uuid(2)).expect("member leaves organization");
     assert_eq!(
         grouping(&state),
         vec![(uuid(1), uuid(1)), (uuid(2), uuid(2)), (uuid(3), uuid(1))]
@@ -88,7 +88,7 @@ fn a_member_moves_between_teams_and_an_empty_source_subscription_disappears() {
 fn removing_the_host_rekeys_every_remaining_member_and_preserves_both_policies() {
     let mut state = head(&[(1, 1), (2, 1), (3, 1)]);
 
-    let split = move_member(&mut state, uuid(1), uuid(1)).expect("host leaves team");
+    let split = move_member(&mut state, uuid(1), uuid(1)).expect("host leaves organization");
 
     assert_eq!(split.from_lineage, uuid(1));
     assert_eq!(split.source_rekeyed_to, Some(uuid(2)));
@@ -97,16 +97,16 @@ fn removing_the_host_rekeys_every_remaining_member_and_preserves_both_policies()
         vec![(uuid(1), uuid(1)), (uuid(2), uuid(2)), (uuid(3), uuid(2))]
     );
     assert_eq!(subscription_ids(&state), vec![uuid(1), uuid(2)]);
-    assert_eq!(state.subscriptions[0].auto_projects, ["team.1"]);
-    assert_eq!(state.subscriptions[1].auto_projects, ["team.1"]);
+    assert_eq!(state.subscriptions[0].auto_projects, ["organization.1"]);
+    assert_eq!(state.subscriptions[1].auto_projects, ["organization.1"]);
 }
 
 #[test]
 fn removing_a_host_mints_an_identity_when_every_remaining_member_name_is_taken() {
     let mut state = head(&[(1, 1), (2, 2), (3, 2)]);
-    move_member(&mut state, uuid(2), uuid(1)).expect("member joins the host team");
+    move_member(&mut state, uuid(2), uuid(1)).expect("member joins the host organization");
 
-    let split = move_member(&mut state, uuid(1), uuid(1)).expect("host leaves the team");
+    let split = move_member(&mut state, uuid(1), uuid(1)).expect("host leaves the organization");
     let rekeyed = split
         .source_rekeyed_to
         .expect("the remaining member receives a lineage identity");
@@ -129,6 +129,6 @@ fn removing_a_host_mints_an_identity_when_every_remaining_member_name_is_taken()
             .find(|subscription| subscription.lineage_id == rekeyed)
             .expect("the replacement lineage has a subscription")
             .auto_projects,
-        ["team.1"]
+        ["organization.1"]
     );
 }

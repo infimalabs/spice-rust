@@ -25,7 +25,7 @@ impl LineageLife {
         match self.wire().scope() {
             wire::intent::TaskSubscriptionScope::Manual => "Use operator-selected work only",
             wire::intent::TaskSubscriptionScope::ManualAndAutoProject => {
-                "Auto-subscribe to projects this team creates or claims"
+                "Auto-subscribe to projects this organization creates or claims"
             }
             wire::intent::TaskSubscriptionScope::AllAssignable => {
                 "Boundary dissolved: see all assignable work"
@@ -60,7 +60,7 @@ impl From<wire::intent::LineageLife> for LineageLife {
     }
 }
 
-/// Browser-local speech posture for one Canvas team.
+/// Browser-local speech posture for one Canvas organization.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LineageSpeech {
     Quiet,
@@ -127,7 +127,7 @@ impl Default for LineageControl {
     }
 }
 
-/// Per-team control state retained across Mosaic redraws.
+/// Per-organization control state retained across Mosaic redraws.
 #[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct LineageControls {
     lineages: BTreeMap<CanonicalUuid, LineageControl>,
@@ -426,7 +426,7 @@ impl LineageControls {
         self.closed
             .retain(|lineage| live_lineages.contains(lineage));
 
-        // A seat submitted from the empty Team view must keep that view when
+        // A seat submitted from the empty Org view must keep that view when
         // its first real surface arrives. The resident's authoritative
         // subscription order resolves the transition: its first lineage
         // inherits the empty selection exactly once, and every sibling keeps
@@ -481,7 +481,7 @@ impl LineageControls {
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "watchband rendering binds team identity and interactive control state"
+    reason = "watchband rendering binds organization identity and interactive control state"
 )]
 pub(super) fn render_lineage_controls(
     lineage: CanonicalUuid,
@@ -502,14 +502,14 @@ pub(super) fn render_lineage_controls(
     let life_sender = sender.clone();
     html! {
         <aside
-            class="team-composer-controls"
+            class="organization-composer-controls"
             data-speech-mode={speech.label()}
             data-lifetime={selected.label()}
             data-lifetime-pending={control.pending_life.is_some().to_string()}
         >
             <label class={classes!(
-                "team-slider",
-                "team-speech",
+                "organization-slider",
+                "organization-speech",
                 (speech == LineageSpeech::Quiet).then_some("armed"),
                 (speech == LineageSpeech::Narrate).then_some("maxed"),
             )}>
@@ -537,8 +537,8 @@ pub(super) fn render_lineage_controls(
                 <span>{speech.label()}</span>
             </label>
             <label class={classes!(
-                "team-slider",
-                "team-lifetime",
+                "organization-slider",
+                "organization-lifetime",
                 (selected == LineageLife::Steer).then_some("armed"),
                 (selected == LineageLife::Drain).then_some("maxed"),
             )}>
@@ -575,7 +575,7 @@ pub(super) fn render_lineage_controls(
             </label>
             <button
                 class={classes!(
-                    "team-send",
+                    "organization-send",
                     (selected == LineageLife::Steer).then_some("armed"),
                     (selected == LineageLife::Drain).then_some("maxed"),
                 )}
@@ -584,7 +584,7 @@ pub(super) fn render_lineage_controls(
                 title={format!("Send with {}: {}", selected.label(), selected.help())}
             >{selected.label()}</button>
             if let Some(issue) = &control.issue {
-                <p class="team-control-issue" role="status">{issue.clone()}</p>
+                <p class="organization-control-issue" role="status">{issue.clone()}</p>
             }
         </aside>
     }

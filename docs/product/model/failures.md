@@ -77,7 +77,7 @@ flowchart TD
   B --> C["run selected repository checks"]
   C --> D["steer one lane"]
   D --> E["admit another worktree lane"]
-  E --> F["group lanes into one team console"]
+  E --> F["group lanes into one organization console"]
 ```
 
 **Story.** *As a newcomer, I want the first thing I run to show me something
@@ -154,7 +154,7 @@ sequenceDiagram
   F->>B: claims one, leaves one
 ```
 
-### Reading a fused team
+### Reading a fused organization
 
 **Story.** *As a reader, I want four agents' output in one stream, attributed,
 newest first, without cards hopping sideways, and with my off-top reading
@@ -175,9 +175,9 @@ The vocabulary is deliberate. These words carry contracts.
 
 | Term | Means | Not |
 | --- | --- | --- |
-| **lane** | independently steerable worktree seat | the agent or a team |
+| **lane** | independently steerable worktree seat | the agent or an organization |
 | **occupant** | the agent thread currently inhabiting a lane | the lane |
-| **team** | server-side grouping of one or more lanes rendered in one console | a lane or client-only view |
+| **organization** | server-side grouping of one or more lanes rendered in one console | a lane or client-only view |
 | **watchband** | the per-agent status-and-compose strip | a toolbar |
 | **mosaic** | the placed, newest-first message lattice | a feed |
 | **shard** | one member's concrete send address | a broadcast |

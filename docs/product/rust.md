@@ -190,7 +190,7 @@ and retention with one correlation identity per request. Explicit reconnect
 pacing and a liveness probe turn a half-open connection into the ordinary
 reconnect path.
 
-Lane/team topology and attribution remain server-owned product invariants.
+Lane/organization topology and attribution remain server-owned product invariants.
 Reading, motion, scroll, no-launch behavior, and composer-draft restoration bind
 the browser client. Drafts survive lane reorder and renewal within the live
 client; browser death may discard them.
@@ -218,7 +218,7 @@ compaction-epoch replay. JavaScript only drives browser tests.
 The predecessor's implementation details differ where the Rust product has a
 stronger ownership boundary:
 
-- One lineage plane merges all team members instead of maintaining a
+- One lineage plane merges all organization members instead of maintaining a
   JavaScript lane store. Every card retains explicit lane and author identity,
   and each member retains an independent typed history frontier, so a delayed
   member cannot stall or overwrite its siblings.

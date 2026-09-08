@@ -30,8 +30,8 @@ use crate::speech_queue::{
     SpeechRequest, SuppressAutomatic,
 };
 use crate::{
-    Axis, CanvasDestination, CanvasRuntime, Principal, Session, SteerPane, StreamDirective,
-    TeamDestination, stale_reads,
+    Axis, CanvasDestination, CanvasRuntime, OrgDestination, Principal, Session, SteerPane,
+    StreamDirective, stale_reads,
 };
 
 mod clock;
@@ -375,11 +375,11 @@ enum ClientAction {
         member: Option<CanonicalUuid>,
         life: Option<LineageLife>,
     },
-    /// Where every team and every agent stands after one team drag.
+    /// Where every organization and every agent stands after one organization drag.
     ///
     /// The whole topology travels because that is the only thing the resident
     /// admits: a drop states an arrangement, not a move, so the surface that
-    /// drew the teams is the one that says where they all now stand.
+    /// drew the organizations is the one that says where they all now stand.
     ArrangeLineages {
         topology_revision: u64,
         lineages: Vec<LineageArrangement>,
@@ -432,10 +432,10 @@ enum PendingKind {
         lineage: CanonicalUuid,
         life: Option<LineageLife>,
     },
-    /// A team arrangement in flight.
+    /// An organization arrangement in flight.
     ///
-    /// No lineage travels with it: an arrangement names every team, so there is
-    /// no one team a refusal belongs to. A successful answer replaces the
+    /// No lineage travels with it: an arrangement names every organization, so there is
+    /// no one organization a refusal belongs to. A successful answer replaces the
     /// whole lane table; a refusal re-reads it so a losing client redraws the
     /// winning topology and revision.
     LineageArrange,

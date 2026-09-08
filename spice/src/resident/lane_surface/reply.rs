@@ -587,7 +587,7 @@ mod tests {
                     session: "private-session".to_owned(),
                     thread: "thread-predecessor".to_owned(),
                 },
-                team_slot: 0,
+                org_slot: 0,
             },
         }
     }

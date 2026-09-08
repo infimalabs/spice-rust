@@ -4,10 +4,10 @@ const TASK: &str = "1kQpV9Gt";
 const SUCCESSOR_SESSION: &str = "018f8888-8888-7444-8888-999999999999";
 
 #[test]
-fn renewal_carries_one_claim_through_the_same_team_slot() {
+fn renewal_carries_one_claim_through_the_same_org_slot() {
     let fixture = AdvisoryRtkFixture::new();
     fixture.set_next_session(SUCCESSOR_SESSION);
-    let seeded = seed_claimed_team(&fixture);
+    let seeded = seed_claimed_org(&fixture);
     let discovery = publish_surface(&fixture);
     let repository = Repository::discover(&fixture.root).expect("fixture repository resolves");
     let surface = super::super::super::super::load_startup_surface(&repository)
@@ -83,7 +83,7 @@ fn renewal_carries_one_claim_through_the_same_team_slot() {
 }
 
 fn assert_successor_observations(
-    seeded: &SeededTeam,
+    seeded: &SeededOrg,
     fixture: &AdvisoryRtkFixture,
     surface: &super::super::super::super::StartupSurface,
     seats: &mut Seats,
@@ -156,7 +156,7 @@ fn assert_successor_observations(
 }
 
 fn assert_successor_command(
-    seeded: &SeededTeam,
+    seeded: &SeededOrg,
     fixture: &AdvisoryRtkFixture,
     surface: &super::super::super::super::StartupSurface,
     seats: &Seats,
@@ -247,7 +247,7 @@ fn reconcile(
         .expect("renewal reconciliation succeeds");
 }
 
-struct SeededTeam {
+struct SeededOrg {
     bus: Bus,
     task: wire::TaskStamp,
     phase: wire::Phase,
@@ -257,14 +257,14 @@ struct SeededTeam {
     subscription: wire::LineageSubscription,
 }
 
-fn seed_claimed_team(fixture: &AdvisoryRtkFixture) -> SeededTeam {
+fn seed_claimed_org(fixture: &AdvisoryRtkFixture) -> SeededOrg {
     let task: wire::TaskStamp = TASK.parse().expect("fixture task");
     let phase: wire::Phase = "todo".parse().expect("fixture phase");
     let now = wire::Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
     let start = shifted(now, -60);
     let expiry = shifted(now, 60 * 60);
     let maximum = shifted(now, 2 * 60 * 60);
-    let lanes = team_rows(fixture);
+    let lanes = org_rows(fixture);
     let subscription = wire::LineageSubscription {
         lineage_id: fixture.lane,
         policy: wire::intent::LineageLife::Drive,
@@ -295,7 +295,7 @@ fn seed_claimed_team(fixture: &AdvisoryRtkFixture) -> SeededTeam {
         subscriptions: vec![next_subscription],
         renewals: vec![renewal],
     });
-    commit(&bus, proposal).expect("claimed team authority commits");
+    commit(&bus, proposal).expect("claimed organization authority commits");
     let mut claimed = lanes[1].clone();
     claimed.occupant = Some(fixture.occupant);
     super::super::super::propose::tests::seed_task_claim(
@@ -307,7 +307,7 @@ fn seed_claimed_team(fixture: &AdvisoryRtkFixture) -> SeededTeam {
         expiry,
         maximum,
     );
-    SeededTeam {
+    SeededOrg {
         bus,
         task,
         phase,
@@ -318,7 +318,7 @@ fn seed_claimed_team(fixture: &AdvisoryRtkFixture) -> SeededTeam {
     }
 }
 
-fn team_rows(fixture: &AdvisoryRtkFixture) -> Vec<wire::LaneResidency> {
+fn org_rows(fixture: &AdvisoryRtkFixture) -> Vec<wire::LaneResidency> {
     let west_lane = fixture_uuid(101);
     let west_occupant = fixture_uuid(102);
     let east_lane = fixture_uuid(103);
@@ -393,12 +393,12 @@ fn handoff(fixture: &AdvisoryRtkFixture) -> wire::LaneRenewalRecord {
                 session: SESSION.to_owned(),
                 thread: SESSION.to_owned(),
             },
-            team_slot: 1,
+            org_slot: 1,
         },
     }
 }
 
-fn assert_carried(seeded: &SeededTeam, fixture: &AdvisoryRtkFixture) -> CanonicalUuid {
+fn assert_carried(seeded: &SeededOrg, fixture: &AdvisoryRtkFixture) -> CanonicalUuid {
     let snapshot = seeded.bus.task_snapshot().expect("carried task heads read");
     let heads = snapshot.tasks().first().expect("fixture task remains");
     let claim = heads.claim().expect("claim remains active");
@@ -443,7 +443,7 @@ fn assert_carried(seeded: &SeededTeam, fixture: &AdvisoryRtkFixture) -> Canonica
         wire::LaneRenewalState::SuccessorStarted {
             predecessor,
             successor: next,
-            team_slot: 1,
+            org_slot: 1,
         } if predecessor.occupant == fixture.occupant && next.occupant == successor
     ));
 

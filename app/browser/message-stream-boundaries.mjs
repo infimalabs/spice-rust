@@ -54,15 +54,15 @@ async function boundaryGeometry(console, edge) {
     if (!selected) throw new Error(`${requestedEdge} boundary has no scrollable action footer`);
     const { plane, candidates } = selected;
     const witness = candidates[Math.floor(candidates.length / 2)];
-    const activity = plane.closest(".team-activity-grid");
+    const activity = plane.closest(".organization-activity-grid");
     const composer = activity.previousElementSibling;
-    const surface = plane.closest(".team-surface");
+    const surface = plane.closest(".organization-surface");
     const track = plane.querySelector(":scope > .lane-mosaic-track");
     const activityStyle = getComputedStyle(activity);
     const planeStyle = getComputedStyle(plane);
     const trackStyle = getComputedStyle(track);
-    const controls = composer.querySelector(".team-composer-controls");
-    const agents = [...composer.querySelectorAll(".team-agent")];
+    const controls = composer.querySelector(".organization-composer-controls");
+    const agents = [...composer.querySelectorAll(".organization-agent")];
     const controlFloor = Math.max(
       controls.getBoundingClientRect().bottom,
       ...agents.map((agent) => agent.getBoundingClientRect().bottom),
@@ -162,7 +162,7 @@ export async function captureMessageStreamBoundaries(page, console, artifacts, e
         const geometry = await boundaryGeometry(console, edge);
         assertBoundaryGeometry(geometry, label);
         await console.locator(
-          `.team-surface[data-lineage-id="${geometry.surfaceId}"]`,
+          `.organization-surface[data-lineage-id="${geometry.surfaceId}"]`,
         ).screenshot({
           path: join(artifacts, `${engine}-message-stream-${edge}-${viewport.label}.png`),
         });

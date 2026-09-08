@@ -550,14 +550,14 @@ pub enum LaneRenewalState {
         /// Current occupant being replaced.
         predecessor: RenewalIdentity,
         /// Original member position inside the Canvas lineage.
-        team_slot: u64,
+        org_slot: u64,
     },
     /// The predecessor reached its stopping boundary and succession owns the slot.
     HandoffPending {
         /// Stopped occupant whose context the successor receives.
         predecessor: RenewalIdentity,
         /// Original member position inside the Canvas lineage.
-        team_slot: u64,
+        org_slot: u64,
     },
     /// A fresh successor started and replaced the predecessor in the same slot.
     SuccessorStarted {
@@ -566,14 +566,14 @@ pub enum LaneRenewalState {
         /// Fresh occupant now owning the lane.
         successor: RenewalIdentity,
         /// Original member position inside the Canvas lineage.
-        team_slot: u64,
+        org_slot: u64,
     },
     /// Successor launch refused after the predecessor reached handoff.
     LaunchRefused {
         /// Occupant whose handoff remains pending repair.
         predecessor: RenewalIdentity,
         /// Original member position inside the Canvas lineage.
-        team_slot: u64,
+        org_slot: u64,
         /// Exact actionable launch refusal.
         reason: String,
     },
@@ -583,7 +583,7 @@ pub enum LaneRenewalState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaneRenewalRecord {
-    /// Canvas lineage retaining the original team slot.
+    /// Canvas lineage retaining the original organization slot.
     pub lineage_id: CanonicalUuid,
     /// Independently steerable member undergoing succession.
     pub lane: CanonicalUuid,
@@ -638,13 +638,13 @@ pub struct LaneResidency {
 
 /// Durable task-subscription policy owned by one Canvas lineage.
 ///
-/// This policy controls which tasks a team may draw. It is deliberately
+/// This policy controls which tasks an organization may draw. It is deliberately
 /// separate from [`LaneResidency::life`], which controls whether an individual
 /// seat may be occupied again after its current process exits.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LineageSubscription {
-    /// Stable Canvas lineage identifying the subscribed team.
+    /// Stable Canvas lineage identifying the subscribed organization.
     pub lineage_id: CanonicalUuid,
     /// Authoritative task-selection policy for the entire lineage.
     pub policy: crate::intent::LineageLife,
@@ -695,7 +695,7 @@ pub struct ResidencyHead {
     pub epoch: CanonicalUuid,
     /// Durable resident life.
     pub state: ResidentState,
-    /// Monotonic authority for Canvas team membership, order, and policy.
+    /// Monotonic authority for Canvas organization membership, order, and policy.
     ///
     /// Zero is the legacy and freshly seated baseline. Every transaction that
     /// changes topology advances this value exactly once, while lifecycle-only

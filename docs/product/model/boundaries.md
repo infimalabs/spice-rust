@@ -292,11 +292,11 @@ teeth, not silent defaults.
 flowchart TD
   W["OBSERVE<br/>read foreign transcripts"] --> G["GATE<br/>checks only"]
   G --> S["STEER<br/>one supervised agent"]
-  S --> F["FLEET<br/>teams, routing, allocation"]
+  S --> F["FLEET<br/>organizations, routing, allocation"]
 ```
 
 **Invariant —** Observation initializes nothing: no repository, no worktree, no
-team state, no claims, no hooks, no steering, no supervisor socket. It is
+organization state, no claims, no hooks, no steering, no supervisor socket. It is
 strictly read-only and says so.
 
 **Invariant —** Each tier is independently usable. A user may stop at any rung.
@@ -314,7 +314,7 @@ strictly read-only and says so.
 | sends within one lane | yes | inbox order must match operator order |
 | reads per target | FIFO chain | two reads must apply in request order |
 | reads across targets | parallel | independent lanes must not block each other |
-| team mutations | optimistic, revision-checked | clients re-pull on loss |
+| organization mutations | optimistic, revision-checked | clients re-pull on loss |
 | inbox projection publication | short-lived lock | atomically replace the disposable projection |
 
 **Invariant —** A slow read on one lane must never block a heartbeat, a send, or

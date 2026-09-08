@@ -145,7 +145,7 @@ fn handoff_pending_launches_one_fresh_successor_with_context() {
         wire::LaneRenewalState::SuccessorStarted {
             predecessor,
             successor: next,
-            team_slot: 0,
+            org_slot: 0,
         } if predecessor.occupant == fixture.occupant && next.occupant == successor
     ));
     assert_eq!(controls(&bus, fixture.lane), [CONTEXT_CONTROL]);
@@ -378,7 +378,7 @@ fn resident_restart_preserves_the_original_predecessor_across_a_resumed_process(
         &current.body().renewals[0].state,
         wire::LaneRenewalState::Requested {
             predecessor,
-            team_slot: 0,
+            org_slot: 0,
         } if predecessor.occupant == fixture.occupant
             && predecessor.session == SESSION
     ));
@@ -471,7 +471,7 @@ fn assert_first_request(
     let head = current_residency(bus, fixture.epoch).expect("requested head reads");
     assert!(matches!(
         head.body().renewals[0].state,
-        wire::LaneRenewalState::Requested { team_slot: 0, .. }
+        wire::LaneRenewalState::Requested { org_slot: 0, .. }
     ));
     assert_eq!(controls(bus, fixture.lane), [HANDOFF_CONTROL]);
 }
@@ -645,12 +645,12 @@ fn requested(fixture: &AdvisoryRtkFixture, handoff_pending: bool) -> wire::LaneR
         state: if handoff_pending {
             wire::LaneRenewalState::HandoffPending {
                 predecessor,
-                team_slot: 0,
+                org_slot: 0,
             }
         } else {
             wire::LaneRenewalState::Requested {
                 predecessor,
-                team_slot: 0,
+                org_slot: 0,
             }
         },
     }

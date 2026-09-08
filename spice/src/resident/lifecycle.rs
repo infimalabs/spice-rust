@@ -327,7 +327,7 @@ impl Runtime {
         false
     }
 
-    /// A topology command can change which team policy governs any parked
+    /// A topology command can change which organization policy governs any parked
     /// member, so it makes every local startup refusal eligible for retry.
     pub(super) fn observe_topology(&mut self, command: &wire::AdmittedCommand) -> bool {
         if self.observe_command(command.actor()) {
@@ -339,7 +339,7 @@ impl Runtime {
                 | wire::intent::Intent::LineageArrange(_)
                 | wire::intent::Intent::LaneArrange(_)
         ) {
-            // A deliberate topology or team-policy change is new startup
+            // A deliberate topology or organization-policy change is new startup
             // authority. Retry every member against the committed shape rather
             // than retaining a refusal parked under the preceding policy.
             self.backoff.release_all();

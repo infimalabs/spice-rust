@@ -17,7 +17,7 @@ import {
 async function waitForReady(page, label = "progressive Mosaic settles") {
   await waitForPage(page, label, TRANSITION_MS, () => {
     const plane = document.querySelector(
-      '[data-pane="agent-console"] .team-surface .lane-mosaic-plane',
+      '[data-pane="agent-console"] .organization-surface .lane-mosaic-plane',
     );
     return plane?.dataset.measurementPhase === "ready"
       && plane.dataset.measurementPending === "0";
@@ -27,7 +27,7 @@ async function waitForReady(page, label = "progressive Mosaic settles") {
 async function waitForCard(page, key, label) {
   await waitForPage(page, label, TRANSITION_MS, (expected) => {
     const plane = document.querySelector(
-      '[data-pane="agent-console"] .team-surface .lane-mosaic-plane',
+      '[data-pane="agent-console"] .organization-surface .lane-mosaic-plane',
     );
     const card = plane?.querySelector(`[data-mosaic-card-key="${expected}"]`);
     return Boolean(card)
@@ -70,9 +70,9 @@ async function assertChronology(plane, expected, label) {
   assert.equal(new Set(keys).size, keys.length, `${label} renders every card identity once`);
 }
 
-async function readTeamWorktrees(team) {
-  await team.getByRole("tab", { name: /^Team/ }).click();
-  const cards = team.locator(".team-detail-card");
+async function readOrgWorktrees(organization) {
+  await organization.getByRole("tab", { name: /^Org/ }).click();
+  const cards = organization.locator(".organization-detail-card");
   await cards.nth(3).waitFor();
   const worktrees = await cards.evaluateAll((elements) => elements.map((card) => {
     const row = [...card.querySelectorAll("dl > div")].find(
@@ -80,20 +80,20 @@ async function readTeamWorktrees(team) {
     );
     return row?.querySelector("dd")?.textContent ?? "";
   }));
-  assert.equal(worktrees.length, 4, "the progressive team exposes four fixture worktrees");
+  assert.equal(worktrees.length, 4, "the progressive organization exposes four fixture worktrees");
   assert.ok(worktrees.every((worktree) => worktree.startsWith("/")),
     "each progressive fixture worktree is an absolute path");
-  await team.getByRole("tab", { name: /^Agents/ }).click();
+  await organization.getByRole("tab", { name: /^Agents/ }).click();
   return worktrees;
 }
 
-function dragTeam(page, dragged, target) {
+function dragOrg(page, dragged, target) {
   return page.evaluate(({ dragged, target }) => {
     const pips = document.querySelector(
-      `.team-surface[data-lineage-id="${dragged}"] .team-lights[data-lane-drag-handle]`,
+      `.organization-surface[data-lineage-id="${dragged}"] .organization-lights[data-lane-drag-handle]`,
     );
-    const surface = document.querySelector(`.team-surface[data-lineage-id="${target}"]`);
-    if (!pips || !surface) throw new Error("joining teams requires pips and both durable surfaces");
+    const surface = document.querySelector(`.organization-surface[data-lineage-id="${target}"]`);
+    if (!pips || !surface) throw new Error("joining organizations requires pips and both durable surfaces");
     const transfer = new DataTransfer();
     pips.dispatchEvent(new DragEvent("dragstart", {
       bubbles: true,
@@ -129,16 +129,16 @@ async function joinAndRemoveMember(page, fixture, worktrees, surface, plane, pri
   assert.ok(secondary, "the fixture seats one secondary lineage for the join proof");
   await waitForPage(page, "the secondary progressive lineage renders", TRANSITION_MS * 4,
     (lineage) => Boolean(document.querySelector(
-      `.team-surface[data-lineage-id="${lineage}"]`,
+      `.organization-surface[data-lineage-id="${lineage}"]`,
     )), secondary.lineage_id);
 
-  await dragTeam(page, secondary.lineage_id, primaryLineage);
-  await waitForPage(page, "the secondary member joins the progressive team",
+  await dragOrg(page, secondary.lineage_id, primaryLineage);
+  await waitForPage(page, "the secondary member joins the progressive organization",
     TRANSITION_MS * 4, ({ primary, secondary }) => (
       document.querySelector(
-        `.team-surface[data-lineage-id="${primary}"]`,
-      )?.querySelectorAll(".team-agent").length === 5
-        && !document.querySelector(`.team-surface[data-lineage-id="${secondary}"]`)
+        `.organization-surface[data-lineage-id="${primary}"]`,
+      )?.querySelectorAll(".organization-agent").length === 5
+        && !document.querySelector(`.organization-surface[data-lineage-id="${secondary}"]`)
     ), { primary: primaryLineage, secondary: secondary.lineage_id });
   await reply(fixture, [
     "lane", "add", worktrees[5], "--lineage", secondary.lineage_id,
@@ -150,7 +150,7 @@ async function joinAndRemoveMember(page, fixture, worktrees, surface, plane, pri
   );
   assert.ok(cleanup, "the recreated lineage exposes its temporary cleanup lane");
   const recreated = surface.page().locator(
-    `.team-surface[data-lineage-id="${secondary.lineage_id}"]`,
+    `.organization-surface[data-lineage-id="${secondary.lineage_id}"]`,
   );
   await recreated.waitFor({ timeout: TRANSITION_MS * 4 });
   const source = surface.locator(
@@ -158,26 +158,26 @@ async function joinAndRemoveMember(page, fixture, worktrees, surface, plane, pri
   );
   const target = recreated.locator(".composer-shard--primary").first();
   await source.dragTo(target, { targetPosition: { x: 10, y: 10 } });
-  await waitForPage(page, "the joined member leaves the progressive team",
+  await waitForPage(page, "the joined member leaves the progressive organization",
     TRANSITION_MS * 4, ({ lane, primary, secondary }) => (
       !document.querySelector(
-        `.team-surface[data-lineage-id="${primary}"] `
+        `.organization-surface[data-lineage-id="${primary}"] `
           + `.composer-shard--primary[data-shard-target-id="${lane}"]`,
       )
         && Boolean(document.querySelector(
-          `.team-surface[data-lineage-id="${secondary}"] `
+          `.organization-surface[data-lineage-id="${secondary}"] `
             + `.composer-shard--primary[data-shard-target-id="${lane}"]`,
         ))
     ), { lane: secondary.lane, primary: primaryLineage, secondary: secondary.lineage_id });
 
   await reply(fixture, ["lane", "remove", secondary.lane]);
   await reply(fixture, ["lane", "remove", cleanup.lane]);
-  await waitForPage(page, "the topology proof restores the original progressive team",
+  await waitForPage(page, "the topology proof restores the original progressive organization",
     TRANSITION_MS * 4, ({ primary, secondary }) => (
       document.querySelector(
-        `.team-surface[data-lineage-id="${primary}"]`,
-      )?.querySelectorAll(".team-agent").length === 4
-        && !document.querySelector(`.team-surface[data-lineage-id="${secondary}"]`)
+        `.organization-surface[data-lineage-id="${primary}"]`,
+      )?.querySelectorAll(".organization-agent").length === 4
+        && !document.querySelector(`.organization-surface[data-lineage-id="${secondary}"]`)
     ), { primary: primaryLineage, secondary: secondary.lineage_id });
 }
 
@@ -212,18 +212,18 @@ async function answerReplay(history, requests, generation, plane) {
 /// whole-stream replacement participates in hydration.
 export async function assertStagedMosaicHydration(
   page,
-  team,
+  organization,
   activityReplay,
   inspectOneShot,
 ) {
   assert.equal(typeof inspectOneShot, "function", "pagination supplies an integrated proof sink");
-  const surface = team.locator(".team-surface").first();
+  const surface = organization.locator(".organization-surface").first();
   const lineage = await surface.getAttribute("data-lineage-id");
-  assert.ok(lineage, "the progressive proof owns one durable team identity");
+  assert.ok(lineage, "the progressive proof owns one durable organization identity");
   const plane = surface.locator(".lane-mosaic-plane");
   const history = activityReplay.progressiveHistory();
-  const teamWorktrees = await readTeamWorktrees(team);
-  const fixture = teamWorktrees[0];
+  const organizationWorktrees = await readOrgWorktrees(organization);
+  const fixture = organizationWorktrees[0];
   const [firstLane, secondLane, thirdLane] = history.lanes;
   assert.ok(history.lanes.includes(lineage), "the retained fixture includes the lineage host lane");
 
@@ -287,16 +287,16 @@ export async function assertStagedMosaicHydration(
   await assertChronology(plane, history.expectedKeys(), "the independently paged run");
   const staged = await placement(plane);
 
-  const linkedRoot = dirname(teamWorktrees[1]);
+  const linkedRoot = dirname(organizationWorktrees[1]);
   await joinAndRemoveMember(
     page,
     fixture,
-    [...teamWorktrees, join(linkedRoot, "lane-5"), join(linkedRoot, "lane-6")],
+    [...organizationWorktrees, join(linkedRoot, "lane-5"), join(linkedRoot, "lane-6")],
     surface,
     plane,
     lineage,
   );
-  await assertChronology(plane, history.expectedKeys(), "team removal and join");
+  await assertChronology(plane, history.expectedKeys(), "organization removal and join");
 
   const reconnectProbe = await armPlacementProbe(plane);
   const beforeReconnect = history.generation;
@@ -341,9 +341,9 @@ export async function assertStagedMosaicHydration(
   const reloadGeneration = await history.waitForSocketAfter(openedGeneration);
   await history.waitForServerSnapshot(reloadGeneration);
   await chooseCanvasView(replayPage, "Lanes");
-  const replayTeam = replayPage.locator('[data-pane="agent-console"]');
-  const restoredSurface = replayTeam.locator(
-    `.team-surface[data-lineage-id="${lineage}"]`,
+  const replayOrg = replayPage.locator('[data-pane="agent-console"]');
+  const restoredSurface = replayOrg.locator(
+    `.organization-surface[data-lineage-id="${lineage}"]`,
   );
   await restoredSurface.getByRole("tab", { name: /^Agents/ }).click();
   history.sendHeads("reload", history.lanes, reloadGeneration);

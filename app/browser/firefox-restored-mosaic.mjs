@@ -20,11 +20,11 @@ import { assertLaneHeaderPipMatrix } from "./lane-header-pips.mjs";
 import { assertNaturalMessageFooterInsets } from "./message-card-reference.mjs";
 import { captureMessageStreamBoundaries } from "./message-stream-boundaries.mjs";
 import { assertCandidateMeasurementPaintAtomic } from "./mosaic-candidate-paint.mjs";
-import { assertCursorRelocation } from "./team-menu.mjs";
+import { assertCursorRelocation } from "./organization-menu.mjs";
 import {
   assertGlobalNavigation,
-  assertTeamNavigation,
-} from "./team-navigation.mjs";
+  assertOrgNavigation,
+} from "./organization-navigation.mjs";
 import {
   assertQuoteBlockDensity,
   captureQuoteBlockDensity,
@@ -76,7 +76,7 @@ async function installFirefoxQuoteFixture(page) {
       return node;
     };
     const fixture = element("section");
-    fixture.className = "team-surface";
+    fixture.className = "organization-surface";
     fixture.dataset.firefoxQuoteFixture = "true";
     const article = element("article");
     article.className = "mosaic-message-card";
@@ -162,7 +162,7 @@ export async function captureFirefoxAgentPageSpacing(
     await page.goto(endpoint, { waitUntil: "networkidle" });
     await chooseCanvasView(page, "Lanes");
     const console = page.locator('[data-pane="agent-console"]');
-    await assertTeamNavigation(console, state);
+    await assertOrgNavigation(console, state);
     await page.getByLabel("Open Spice Canvas menu").click();
     await assertGlobalNavigation(page, state);
     await page.getByLabel("Open Spice Canvas menu").click();
@@ -208,7 +208,7 @@ export async function assertFirefoxRestoredMosaic(
     await chooseCanvasView(page, "Lanes");
     await assertCursorRelocation(page, artifacts, "firefox");
     const console = page.locator('[data-pane="agent-console"]');
-    await assertTeamNavigation(console, "Firefox restored populated fleet");
+    await assertOrgNavigation(console, "Firefox restored populated fleet");
     await console.getByRole("tab", { name: /^Agents/ }).click();
     await assertLaneHeaderPipMatrix(page, console, artifacts, "firefox", "dark");
     const linkedComposer = console.locator(".agent-composer-stack").filter({
@@ -224,7 +224,7 @@ export async function assertFirefoxRestoredMosaic(
     });
     const initial = await settledMosaicCards(page, "before tool-media delivery");
     assert.ok(initial.length > 0, "Firefox receives restored Mosaic cards");
-    const toolLane = await console.locator(".team-agent").first().getAttribute("data-agent-lane");
+    const toolLane = await console.locator(".organization-agent").first().getAttribute("data-agent-lane");
     assert.ok(toolLane, "Firefox tool-media fixture resolves one runtime agent lane");
     const toolCards = await assertRuntimeToolMediaCards(
       page,
@@ -294,7 +294,7 @@ export async function assertFirefoxRestoredMosaic(
     );
     await page.locator('[data-firefox-quote-fixture="true"]')
       .evaluate((fixture) => fixture.remove());
-    const lane = console.locator(".team-agent").first();
+    const lane = console.locator(".organization-agent").first();
     await assertComposerPointerSelection(
       page,
       lane,
@@ -303,7 +303,7 @@ export async function assertFirefoxRestoredMosaic(
 
     await page.reload({ waitUntil: "networkidle" });
     await chooseCanvasView(page, "Lanes");
-    await assertTeamNavigation(console, "Firefox reloaded populated fleet");
+    await assertOrgNavigation(console, "Firefox reloaded populated fleet");
     await console.getByRole("tab", { name: /^Agents/ }).click();
     const restored = await settledMosaicCards(page, "after reload");
     assert.equal(restored.length, before.length, "Firefox reload restores every Mosaic card");

@@ -73,4 +73,4 @@ pub use runtime::{
 };
 pub use socket::{Admitted, Session};
 pub use state::{Answer, Applied, BrowserState, CAUSAL_HEADERS, CausalLink, ChainEnd, ChainWalk};
-pub use view::{Axis, CanvasDestination, Pane, TeamDestination};
+pub use view::{Axis, CanvasDestination, OrgDestination, Pane};

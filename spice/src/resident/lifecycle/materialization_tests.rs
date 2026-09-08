@@ -68,7 +68,7 @@ fn one_fact_advancement_is_suffix_bounded_and_restart_equivalent_at_different_sc
 }
 
 #[test]
-fn team_policy_drives_every_member_while_terminal_seat_life_remains_an_override() {
+fn org_policy_drives_every_member_while_terminal_seat_life_remains_an_override() {
     for (policy, expected) in [
         (wire::intent::LineageLife::Steer, Resolution::Idle),
         (
@@ -98,7 +98,7 @@ fn team_policy_drives_every_member_while_terminal_seat_life_remains_an_override(
             &Holds::new(3),
             &board::NextConfig::default(),
         )
-        .expect("team policy projects lifecycle targets");
+        .expect("organization policy projects lifecycle targets");
         assert_eq!(
             resolve(&targets, &Backoff::default(), instant(50)),
             expected
@@ -120,7 +120,7 @@ fn team_policy_drives_every_member_while_terminal_seat_life_remains_an_override(
     .expect("terminal override projects");
     assert!(
         targets.is_empty(),
-        "terminal seat life suppresses team startup"
+        "terminal seat life suppresses organization startup"
     );
     bus.shutdown().expect("terminal override bus stops");
 }
@@ -243,13 +243,15 @@ fn operator_direction_write() -> JournalWrite {
 }
 
 #[test]
-fn drain_team_startup_projects_every_current_member() {
+fn drain_org_startup_projects_every_current_member() {
     let (bus, projects, mut projection) = policy_fixture(wire::intent::LineageLife::Drain, false);
-    add_vacant_team_members(&bus, &[lane_at(2), lane_at(3)]);
-    let snapshot = bus.task_snapshot().expect("expanded team snapshot reads");
+    add_vacant_org_members(&bus, &[lane_at(2), lane_at(3)]);
+    let snapshot = bus
+        .task_snapshot()
+        .expect("expanded organization snapshot reads");
     projection
         .advance(&snapshot, &projects)
-        .expect("expanded team projection advances");
+        .expect("expanded organization projection advances");
 
     let targets = project_targets(
         &snapshot,
@@ -258,7 +260,7 @@ fn drain_team_startup_projects_every_current_member() {
         &Holds::new(3),
         &board::NextConfig::default(),
     )
-    .expect("expanded team targets project");
+    .expect("expanded organization targets project");
     assert_eq!(
         targets.iter().map(|target| target.lane).collect::<Vec<_>>(),
         vec![lane(), lane_at(2), lane_at(3)],
@@ -268,7 +270,7 @@ fn drain_team_startup_projects_every_current_member() {
             .iter()
             .all(|target| target.drain_queue == Available::Ready)
     );
-    bus.shutdown().expect("expanded team bus stops");
+    bus.shutdown().expect("expanded organization bus stops");
 }
 
 fn one_fact_scenario(unrelated_history: usize) -> SemanticState {
@@ -449,11 +451,11 @@ fn seed_write_with_policy(policy: wire::intent::LineageLife, terminal: bool) -> 
     write
 }
 
-fn add_vacant_team_members(bus: &Bus, lanes: &[CanonicalUuid]) {
+fn add_vacant_org_members(bus: &Bus, lanes: &[CanonicalUuid]) {
     let observed = bus
         .residency_head()
-        .expect("expanded team residency reads")
-        .expect("expanded team has residency");
+        .expect("expanded organization residency reads")
+        .expect("expanded organization has residency");
     let mut next = observed.body().clone();
     for member in lanes {
         next.lanes.push(LaneResidency {
@@ -473,9 +475,9 @@ fn add_vacant_team_members(bus: &Bus, lanes: &[CanonicalUuid]) {
     next.lanes.sort_by_key(|row| row.lane);
     let mut write = JournalWrite::new(
         Actor::Spice,
-        "recovery:expanded-team"
+        "recovery:expanded-organization"
             .parse()
-            .expect("expanded team origin"),
+            .expect("expanded organization origin"),
         instant(2),
         Producer::ResidentRecognition,
     );
@@ -495,15 +497,15 @@ fn add_vacant_team_members(bus: &Bus, lanes: &[CanonicalUuid]) {
                 },
                 cause,
             )
-            .expect("expanded team seat fact builds");
+            .expect("expanded organization seat fact builds");
         cause = FactCause::Pending(seated);
         expanded = Some(seated);
     }
     write.residency_head(
-        expanded.expect("expanded team has at least one added member"),
+        expanded.expect("expanded organization has at least one added member"),
         move |_| next,
     );
-    committed(bus.commit(write).expect("expanded team commits"));
+    committed(bus.commit(write).expect("expanded organization commits"));
 }
 
 fn invalid_late_suffix() -> JournalWrite {

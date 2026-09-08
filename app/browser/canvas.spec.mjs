@@ -9,7 +9,7 @@ import { assertAgesTickWhileTheResidentIsSilent } from "./age-ticker.mjs";
 import {
   assertAgentConversation, assertMosaicLattice, entirelyQuotedMessage,
   longAgentName, longWorktreeBasename, nestedQuoteMessage, nestedQuotePreview,
-  seatAgentTeam,
+  seatAgentOrg,
 } from "./agent-conversation.mjs";
 import {
   assertCompactionBoundaryPersistence,
@@ -46,14 +46,14 @@ import {
 import { assertCanvasProtocolRefresh } from "./canvas-compatibility.mjs";
 import { assertAuthoritySurface } from "./canvas-authority.mjs";
 import {
-  assertPerTeamWatchbands,
+  assertPerOrgWatchbands,
   captureReferenceViewport,
 } from "./canvas-watchbands.mjs";
 import { assertMotionPreference } from "./mosaic-motion.mjs";
 import { assertIntegratedMosaicProof } from "./mosaic-integrated-proof.mjs";
 import { assertBidirectionalMediaExchange } from "./media-exchange.mjs";
-import { assertTeamArrangement } from "./team-arrangement.mjs";
-import { assertTeamMenu } from "./team-menu.mjs";
+import { assertOrgArrangement } from "./organization-arrangement.mjs";
+import { assertOrgMenu } from "./organization-menu.mjs";
 import { assertTaskNotes } from "./task-notes.mjs";
 import { assertHandshakeTimeout } from "./handshake-timeout.mjs";
 import { assertHeadlessLaunchSites, launchBrowser } from "./headless-launch.mjs";
@@ -163,18 +163,18 @@ async function assertDistinctWaitCallSites(page) {
 
 async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
   await chooseCanvasView(page, "Lanes");
-  const team = page.locator('[data-pane="agent-console"]');
-  await team.getByRole("tab", { name: /^Agents/ }).click();
-  const lane = page.locator(`.team-agent[data-agent-lane="${seeded.lane}"]`);
-  const activity = team.locator(`.mosaic-message-card[data-agent-lane="${seeded.lane}"]`);
-  const quoteLane = page.locator(`.team-agent[data-agent-lane="${seeded.quoteLane}"]`);
-  const quoteActivity = team.locator(
+  const organization = page.locator('[data-pane="agent-console"]');
+  await organization.getByRole("tab", { name: /^Agents/ }).click();
+  const lane = page.locator(`.organization-agent[data-agent-lane="${seeded.lane}"]`);
+  const activity = organization.locator(`.mosaic-message-card[data-agent-lane="${seeded.lane}"]`);
+  const quoteLane = page.locator(`.organization-agent[data-agent-lane="${seeded.quoteLane}"]`);
+  const quoteActivity = organization.locator(
     `.mosaic-message-card[data-agent-lane="${seeded.quoteLane}"]`,
   );
   await assertComposerShards({
     page,
     fixture,
-    team,
+    organization,
     quoteLane,
     quoteActivity,
     seeded,
@@ -191,10 +191,10 @@ async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
   try {
     await page.setViewportSize({ width: 2018, height: 1728 });
     await waitForMosaicReady(page);
-    await assertStagedMosaicHydration(page, team, activityReplay, (hydration) => (
+    await assertStagedMosaicHydration(page, organization, activityReplay, (hydration) => (
       assertIntegratedMosaicProof(
         page,
-        team,
+        organization,
         artifacts,
         [longAgentName, longWorktreeBasename],
         hydration,
@@ -205,24 +205,24 @@ async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
     await waitForMosaicReady(page);
   }
   const restoredMosaic = await rearmRetainedMosaicIdentity(
-    team.locator(".lane-mosaic-plane"),
+    organization.locator(".lane-mosaic-plane"),
     seeded.postHiddenMosaic,
     "staged replay and restored geometry",
   );
 
-  const quoteSourceCandidate = team.locator(
+  const quoteSourceCandidate = organization.locator(
     `.mosaic-message-card[data-card-kind="agent-message"][data-agent-lane="${seeded.lane}"]`,
   ).first();
   await quoteSourceCandidate.waitFor();
   const quoteSourceKey = await quoteSourceCandidate.getAttribute("data-mosaic-card-key");
   assert.ok(quoteSourceKey, "the quote source has one stable Mosaic identity");
-  const quoteSource = team.locator(`[data-mosaic-card-key="${quoteSourceKey}"]`);
+  const quoteSource = organization.locator(`[data-mosaic-card-key="${quoteSourceKey}"]`);
 
   const compactionBoundary = await assertCompactionBoundary(
-    page, fixture, team, seeded, artifacts, restoredMosaic,
+    page, fixture, organization, seeded, artifacts, restoredMosaic,
   );
   const unnamedCompaction = await activityReplay.injectCompaction(page, seeded.quoteLane);
-  const unnamedDivider = team.locator(
+  const unnamedDivider = organization.locator(
     `[data-mosaic-card-key="${unnamedCompaction.key}"]`,
   );
   const unnamedAfter = await activityReplay.injectAgentProse(
@@ -230,7 +230,7 @@ async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
     seeded.quoteLane,
     "The unnamed lane continues after compaction.",
   );
-  await team.locator(`[data-mosaic-card-key="${unnamedAfter.key}"]`).waitFor();
+  await organization.locator(`[data-mosaic-card-key="${unnamedAfter.key}"]`).waitFor();
   await waitForCompactionReady(page, unnamedDivider, "unnamed compaction boundary");
   await assertCompactionDivider(
     unnamedDivider,
@@ -296,7 +296,7 @@ async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
     "dropping text on a lane sends quoted steering",
   );
   assert.equal(await activity.filter({ hasText: "dragged card direction" }).count(), 0);
-  assert.equal(await team.locator('[data-card-kind="operator-message"]').count(), 0);
+  assert.equal(await organization.locator('[data-card-kind="operator-message"]').count(), 0);
   await activityReplay.restoreProseSnapshot(page);
 }
 
@@ -473,10 +473,10 @@ try {
           populated: false,
           state: "Firefox empty Lanes viewport",
         });
-        const team = await seatAgentTeam(lightPage, fixture, worktrees);
-        await team.console.getByRole("tab", { name: /^Agents/ }).click();
-        const surface = team.console.locator(
-          `.team-surface[data-lineage-id="${team.host.lineage_id}"]`,
+        const organization = await seatAgentOrg(lightPage, fixture, worktrees);
+        await organization.console.getByRole("tab", { name: /^Agents/ }).click();
+        const surface = organization.console.locator(
+          `.organization-surface[data-lineage-id="${organization.host.lineage_id}"]`,
         );
         await assertTaskChipTypographyMatrix(
           lightPage,
@@ -511,14 +511,14 @@ try {
           artifacts,
         ));
         const pointerLane = lightPage.locator(
-          `.team-agent[data-agent-lane="${seeded.lane}"]`,
+          `.organization-agent[data-agent-lane="${seeded.lane}"]`,
         );
         await assertComposerPointerSelection(
           lightPage,
           pointerLane,
           pointerLane.locator(".composer-shard--primary"),
         );
-        await assertTeamMenu(lightPage, fixture, artifacts);
+        await assertOrgMenu(lightPage, fixture, artifacts);
       });
       await run.scenario("reference-composer", async () => {
         const reference = await browser.newContext({ colorScheme: "dark", viewport: { width: 1000, height: 568 } });
@@ -593,25 +593,25 @@ try {
       await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
       await assertCanvas(lightPage, "light-restart");
       hiddenStatusReport = await assertWaitReporting(lightPage, resident);
-      const team = await seatAgentTeam(lightPage, fixture, worktrees);
+      const organization = await seatAgentOrg(lightPage, fixture, worktrees);
       Object.assign(seeded, {
-        lane: team.lane,
-        quoteLane: team.quoteLane,
-        agentName: team.agentName,
-        quoteProse: team.quoteProse,
-        primaryHeadings: team.primaryHeadings,
+        lane: organization.lane,
+        quoteLane: organization.quoteLane,
+        agentName: organization.agentName,
+        quoteProse: organization.quoteProse,
+        primaryHeadings: organization.primaryHeadings,
       });
-      await team.console.getByRole("tab", { name: /^Agents/ }).first().click();
-      const primary = team.console.locator(
-        `.team-surface[data-lineage-id="${team.host.lineage_id}"]`,
+      await organization.console.getByRole("tab", { name: /^Agents/ }).first().click();
+      const primary = organization.console.locator(
+        `.organization-surface[data-lineage-id="${organization.host.lineage_id}"]`,
       );
-      await primary.locator('.team-lifetime input[type="range"]').fill("2");
+      await primary.locator('.organization-lifetime input[type="range"]').fill("2");
       await primary.getByRole("button", { name: "Drain", exact: true }).waitFor();
       const configured = await reply(fixture, ["lane"]);
       const configuredPolicy = {
-        lineage: team.host.lineage_id,
+        lineage: organization.host.lineage_id,
         policy: configured.body.subscriptions.find(
-          (subscription) => subscription.lineage_id === team.host.lineage_id,
+          (subscription) => subscription.lineage_id === organization.host.lineage_id,
         )?.policy,
       };
       assert.equal(configuredPolicy.policy, "drain", "restart setup records a task policy");
@@ -693,16 +693,16 @@ try {
         await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
         await assertCanvas(lightPage, "light-resilience");
         hiddenStatusReport = await assertWaitReporting(lightPage, resident);
-        const team = await seatAgentTeam(lightPage, fixture, worktrees);
+        const organization = await seatAgentOrg(lightPage, fixture, worktrees);
         Object.assign(seeded, {
-          lane: team.lane,
-          quoteLane: team.quoteLane,
-          agentName: team.agentName,
-          quoteProse: team.quoteProse,
-          primaryHeadings: team.primaryHeadings,
+          lane: organization.lane,
+          quoteLane: organization.quoteLane,
+          agentName: organization.agentName,
+          quoteProse: organization.quoteProse,
+          primaryHeadings: organization.primaryHeadings,
         });
         await reply(fixture, ["steer", seeded.lane, "browser direction survives streaming"]);
-        for (const [index, member] of team.seated.entries()) {
+        for (const [index, member] of organization.seated.entries()) {
           const rows = Array.from({ length: 18 + index * 6 }, (_, row) => `- row ${row + 1}`);
           await reply(fixture, ["steer", member.lane,
             [`resilience lattice witness ${index + 1}`, ...rows].join("\n")]);
@@ -737,19 +737,19 @@ try {
           browser, resident.discovery.endpoint, seeded.lane,
         );
       });
-      await run.scenario("team-lifecycle", async () => {
-        await assertPerTeamWatchbands(
+      await run.scenario("organization-lifecycle", async () => {
+        await assertPerOrgWatchbands(
           lightPage,
           fixture,
           worktrees,
           { artifacts, staleEpoch },
         );
-        await assertTeamArrangement(lightPage, fixture, worktrees, artifacts);
-        const renewedTeam = lightPage.locator('[data-pane="agent-console"]');
-        await renewedTeam.getByRole("tab", { name: /^Agents/ }).first().click();
+        await assertOrgArrangement(lightPage, fixture, worktrees, artifacts);
+        const renewedOrg = lightPage.locator('[data-pane="agent-console"]');
+        await renewedOrg.getByRole("tab", { name: /^Agents/ }).first().click();
         await assertAgentRenewalRequest(
           lightPage,
-          renewedTeam.locator(".team-surface").first(),
+          renewedOrg.locator(".organization-surface").first(),
           fixture,
         );
         lightMonitor.assertClean();

@@ -15,24 +15,24 @@ import {
 /// and only for a lineage with no message card the named stream default. Every
 /// branch is read back off the live DOM because a hand-written anchor id is
 /// precisely what went stale when that resolver landed.
-export async function primaryDestination(team, lane) {
-  const member = team.locator(`.team-agent[data-agent-lane="${lane}"]`);
-  const surface = member.locator("xpath=ancestor::*[contains(@class, 'team-surface')][1]");
+export async function primaryDestination(organization, lane) {
+  const member = organization.locator(`.organization-agent[data-agent-lane="${lane}"]`);
+  const surface = member.locator("xpath=ancestor::*[contains(@class, 'organization-surface')][1]");
   const link = member.locator(".composer-shard--primary .composer-shard-link");
   const href = await link.getAttribute("href");
   const label = await link.getAttribute("aria-label");
   const rendered = await surface
     .locator(
-      `.team-activity-grid .mosaic-message-card[data-agent-lane="${lane}"]`
+      `.organization-activity-grid .mosaic-message-card[data-agent-lane="${lane}"]`
         + '[data-card-kind="agent-message"]',
     )
     .evaluateAll((cards) => cards.map((card) => card.id));
   const lineageMessages = await surface.locator(
-    '.team-activity-grid .mosaic-message-card[data-card-kind="agent-message"]',
+    '.organization-activity-grid .mosaic-message-card[data-card-kind="agent-message"]',
   ).evaluateAll((cards) => cards.map((card) => card.id));
   if (rendered.length === 0) {
     if (lineageMessages.length === 0) {
-      const stream = await surface.locator(".team-activity-grid").getAttribute("id");
+      const stream = await surface.locator(".organization-activity-grid").getAttribute("id");
       assert.equal(href, `#${stream}`);
       assert.equal(label, "Jump to lineage activity");
       assert.equal((await link.innerText()).trim(), "—", "only an empty stream renders a dash");
@@ -64,19 +64,19 @@ export async function primaryDestination(team, lane) {
 /// rewriting the frame as vendor-authored or Spice-observed.
 export async function assertSyntheticComposerObservation(
   page,
-  team,
+  organization,
   activityReplay,
   ownLane,
   fallbackLane,
 ) {
   assert.notEqual(ownLane, fallbackLane, "own and lineage-fallback composers are distinct");
   const text = `synthetic display chronology ${crypto.randomUUID()}`;
-  await team.evaluate((surface, lanes) => {
+  await organization.evaluate((surface, lanes) => {
     window.__syntheticComposerStates = [];
     const capture = () => {
       for (const lane of lanes) {
         const link = surface.querySelector(
-          `.team-agent[data-agent-lane="${lane}"] .composer-shard--primary .composer-shard-age`,
+          `.organization-agent[data-agent-lane="${lane}"] .composer-shard--primary .composer-shard-age`,
         );
         const href = link?.getAttribute("href");
         const card = href?.startsWith("#") ? document.getElementById(href.slice(1)) : null;
@@ -99,7 +99,7 @@ export async function assertSyntheticComposerObservation(
 
   try {
     const witness = await activityReplay.injectSyntheticSnapshot(page, ownLane, text);
-    const card = team.locator('[data-card-kind="agent-message"]').filter({ hasText: text });
+    const card = organization.locator('[data-card-kind="agent-message"]').filter({ hasText: text });
     const cardId = await card.getAttribute("id");
     const expectedDisplay = Date.parse(witness.authored).toString();
     const cardDisplay = await card.locator("[data-age-authored]").getAttribute("data-age-authored");
@@ -108,7 +108,7 @@ export async function assertSyntheticComposerObservation(
 
     const states = [];
     for (const [lane, source] of [[ownLane, "own-agent"], [fallbackLane, "lineage fallback"]]) {
-      const composer = team.locator(`.team-agent[data-agent-lane="${lane}"]`);
+      const composer = organization.locator(`.organization-agent[data-agent-lane="${lane}"]`);
       const link = composer.locator(".composer-shard--primary .composer-shard-age");
       const age = link.locator("[data-age-authored]");
       const state = {
@@ -147,19 +147,19 @@ export async function assertSyntheticComposerObservation(
   }
 }
 
-async function appendPrimaryDestinationProbe(team, fixture, lane, ordinal) {
+async function appendPrimaryDestinationProbe(organization, fixture, lane, ordinal) {
   const text = `primary destination ordering witness ${ordinal} ${crypto.randomUUID()}`;
   await reply(fixture, ["steer", lane, text]);
   const inbox = await reply(fixture, ["inbox", lane]);
   const pending = inbox.body.lanes[0].pending.find((directive) => directive.text === text);
   assert.ok(pending, `the primary destination probe reached ${lane}`);
   assert.equal(
-    await team.locator('[data-card-kind="operator-message"]').count(),
+    await organization.locator('[data-card-kind="operator-message"]').count(),
     0,
     "a newer direction never creates a standalone source card",
   );
   assert.equal(
-    await team.locator(".mosaic-message-card").filter({ hasText: text }).count(),
+    await organization.locator(".mosaic-message-card").filter({ hasText: text }).count(),
     0,
     "unacknowledged direction text remains outside the activity plane",
   );
@@ -370,14 +370,14 @@ export async function assertComposerPointerSelection(page, lane, composer) {
 async function activityMeasurementSnapshot(page, lane, label, expectedToken = null) {
   await page.waitForFunction(
     (target) => {
-      const member = document.querySelector(`.team-agent[data-agent-lane="${target}"]`);
-      const plane = member?.closest(".team-surface")?.querySelector(".lane-mosaic-plane");
+      const member = document.querySelector(`.organization-agent[data-agent-lane="${target}"]`);
+      const plane = member?.closest(".organization-surface")?.querySelector(".lane-mosaic-plane");
       return plane?.dataset.measurementPhase === "ready";
     },
     await lane.getAttribute("data-agent-lane"),
   );
   const snapshot = await lane.evaluate((node, expected) => {
-    const surface = node.closest(".team-surface");
+    const surface = node.closest(".organization-surface");
     const plane = surface?.querySelector(".lane-mosaic-plane");
     if (!plane) return null;
     const token = expected ?? crypto.randomUUID();
@@ -435,15 +435,15 @@ async function touchPan(page, start, end) {
   }
 }
 
-async function assertHorizontalComposerStrip(page, team, artifactPath) {
+async function assertHorizontalComposerStrip(page, organization, artifactPath) {
   const viewport = page.viewportSize();
   assert.ok(viewport, "the composer-strip fixture has a viewport to restore");
-  const strip = team.locator(".team-surface .team-agents").first();
+  const strip = organization.locator(".organization-surface .organization-agents").first();
   try {
     await page.setViewportSize({ width: 390, height: viewport.height });
     const geometry = await strip.evaluate((node) => {
       const box = node.getBoundingClientRect();
-      const controls = node.parentElement?.querySelector(".team-composer-controls")
+      const controls = node.parentElement?.querySelector(".organization-composer-controls")
         ?.getBoundingClientRect();
       const stack = node.querySelector(".agent-composer-stack");
       const stackStyle = stack && getComputedStyle(stack);
@@ -462,7 +462,7 @@ async function assertHorizontalComposerStrip(page, team, artifactPath) {
           inline: stackStyle.overscrollBehaviorX,
           block: stackStyle.overscrollBehaviorY,
         },
-        columns: [...node.querySelectorAll(":scope > .team-agent")].map((agent) => {
+        columns: [...node.querySelectorAll(":scope > .organization-agent")].map((agent) => {
           const column = agent.getBoundingClientRect();
           return { left: column.left, right: column.right, width: column.width };
         }),
@@ -516,11 +516,11 @@ async function assertHorizontalComposerStrip(page, team, artifactPath) {
       page,
       "a touch pan over the primary textarea scrolls its composer strip east",
       TRANSITION_MS,
-      () => document.querySelector(".team-surface .team-agents")?.scrollLeft > 0,
+      () => document.querySelector(".organization-surface .organization-agents")?.scrollLeft > 0,
     );
     const eastern = await strip.evaluate((node) => {
       const stripBox = node.getBoundingClientRect();
-      const last = node.querySelector(":scope > .team-agent:last-child")?.getBoundingClientRect();
+      const last = node.querySelector(":scope > .organization-agent:last-child")?.getBoundingClientRect();
       return {
         scrollLeft: node.scrollLeft,
         stripLeft: stripBox.left,
@@ -529,7 +529,7 @@ async function assertHorizontalComposerStrip(page, team, artifactPath) {
         viewportWidth: innerWidth,
         pageScrollLeft: scrollX,
         controls: (() => {
-          const box = node.parentElement?.querySelector(".team-composer-controls")
+          const box = node.parentElement?.querySelector(".organization-composer-controls")
             ?.getBoundingClientRect();
           return box && { left: box.left, right: box.right };
         })(),
@@ -550,7 +550,7 @@ async function assertHorizontalComposerStrip(page, team, artifactPath) {
     assert.deepEqual(
       eastern.controls,
       geometry.controls,
-      "touch navigation leaves the surrounding team controls fixed",
+      "touch navigation leaves the surrounding organization controls fixed",
     );
     await page.screenshot({ path: artifactPath });
 
@@ -587,7 +587,7 @@ async function assertHorizontalComposerStrip(page, team, artifactPath) {
 export async function assertComposerShards({
   page,
   fixture,
-  team,
+  organization,
   quoteLane,
   quoteActivity,
   seeded,
@@ -607,14 +607,14 @@ export async function assertComposerShards({
     const box = lane.getBoundingClientRect();
     return { width: box.width, height: box.height };
   });
-  const primaryShard = team.locator(
-    `.team-agent[data-agent-lane="${seeded.lane}"] .composer-shard--primary`,
+  const primaryShard = organization.locator(
+    `.organization-agent[data-agent-lane="${seeded.lane}"] .composer-shard--primary`,
   );
   // Located by the class the heading wears rather than as a strong under the
   // header: the renew control lives in this header's drawer and carries a
   // strong of its own, so a descendant tag match resolves to two elements.
-  const primaryHeadings = team.locator(
-    ".team-agent .composer-shard--primary .composer-shard-heading > .composer-shard-prose",
+  const primaryHeadings = organization.locator(
+    ".organization-agent .composer-shard--primary .composer-shard-heading > .composer-shard-prose",
   );
   assert.equal(
     await primaryHeadings.count(),
@@ -626,8 +626,8 @@ export async function assertComposerShards({
   // standing is rendered into another lane's heading.
   const observedHeadings = [];
   for (const expected of seeded.primaryHeadings) {
-    const heading = team.locator(
-      `.team-agent[data-agent-lane="${expected.lane}"] `
+    const heading = organization.locator(
+      `.organization-agent[data-agent-lane="${expected.lane}"] `
         + ".composer-shard--primary .composer-shard-heading > .composer-shard-prose",
     );
     const prose = await heading.innerText();
@@ -674,7 +674,7 @@ export async function assertComposerShards({
   );
   await assertHorizontalComposerStrip(
     page,
-    team,
+    organization,
     join(artifacts, "canvas-mobile-composer-touch.png"),
   );
 
@@ -717,11 +717,11 @@ export async function assertComposerShards({
     }`,
   );
 
-  const activityChrome = await team
-    .locator(".team-agent .composer-shard--primary .composer-shard-age")
+  const activityChrome = await organization
+    .locator(".organization-agent .composer-shard--primary .composer-shard-age")
     .evaluateAll((ages) => ages.map((age) => {
-      const lane = age.closest(".team-agent")?.dataset.agentLane;
-      const pip = document.querySelector(`.team-light[data-lane-light-target-id="${lane}"]`);
+      const lane = age.closest(".organization-agent")?.dataset.agentLane;
+      const pip = document.querySelector(`.organization-light[data-lane-light-target-id="${lane}"]`);
       return {
         label: age.textContent?.trim(),
         status: age.getAttribute("data-lane-status"),
@@ -752,8 +752,8 @@ export async function assertComposerShards({
       JSON.stringify(activityChrome)
     }`,
   );
-  const linkedHeaderAges = await team
-    .locator(".team-agent .composer-shard--primary .composer-shard-age")
+  const linkedHeaderAges = await organization
+    .locator(".organization-agent .composer-shard--primary .composer-shard-age")
     .evaluateAll((ages) => ages.map((age) => {
       const href = age.getAttribute("href");
       const card = href?.startsWith("#") ? document.getElementById(href.slice(1)) : null;
@@ -793,10 +793,10 @@ export async function assertComposerShards({
   const destinationLanes = [seeded.lane, seeded.quoteLane];
   const destinationProbes = [];
   for (const [index, lane] of destinationLanes.entries()) {
-    destinationProbes.push(await appendPrimaryDestinationProbe(team, fixture, lane, index + 1));
+    destinationProbes.push(await appendPrimaryDestinationProbe(organization, fixture, lane, index + 1));
   }
   for (const lane of destinationLanes) {
-    const { link, href, rendered } = await primaryDestination(team, lane);
+    const { link, href, rendered } = await primaryDestination(organization, lane);
     assert.ok(rendered.length, `${lane} owns an agent message before its newer directive`);
     assert.match(
       href,
@@ -839,11 +839,11 @@ export async function assertComposerShards({
   // rest holds every seated agent to the same resolver, so an agent that has
   // rendered no card of its own is held to the lineage default here rather
   // than going unmeasured.
-  const seatedLanes = await team
-    .locator(".team-agent")
+  const seatedLanes = await organization
+    .locator(".organization-agent")
     .evaluateAll((agents) => agents.map((agent) => agent.dataset.agentLane));
   assert.ok(seatedLanes.length > 2, "the lineage seats more agents than the two proven above");
-  for (const lane of seatedLanes) await primaryDestination(team, lane);
+  for (const lane of seatedLanes) await primaryDestination(organization, lane);
   for (const probe of destinationProbes) {
     await reply(fixture, ["steer", "cancel", probe.directive]);
   }
@@ -888,7 +888,7 @@ export async function assertComposerShards({
         right: quote.right,
         width: quote.width,
         height: quote.height,
-        owner: quoteShard.closest(".team-agent")?.dataset.agentLane,
+        owner: quoteShard.closest(".organization-agent")?.dataset.agentLane,
         target: quoteShard.dataset.quoteTargetId,
       },
     };
@@ -977,7 +977,7 @@ export async function assertComposerShards({
   // the draft shard's is below.
   const primaryLink = quotePrimary.locator("header > .composer-shard-link:first-child");
   const primaryHref = await primaryLink.getAttribute("href");
-  const latestAuthoredQuoteCard = team.locator(
+  const latestAuthoredQuoteCard = organization.locator(
     `[data-mosaic-card-key="${latestAuthoredQuoteWitness.key}"]`,
   );
   const latestAuthoredQuoteCardId = await latestAuthoredQuoteCard.getAttribute("id");
@@ -1019,8 +1019,8 @@ export async function assertComposerShards({
     "following the draft deep link targets the quoted message card",
   );
 
-  const arrivalPrimary = team.locator(
-    `.team-agent[data-agent-lane="${seeded.lane}"] .composer-shard--primary`,
+  const arrivalPrimary = organization.locator(
+    `.organization-agent[data-agent-lane="${seeded.lane}"] .composer-shard--primary`,
   );
   const previousArrival = await arrivalPrimary.locator(".composer-shard-age").evaluate((link) => ({
     href: link.getAttribute("href"),
@@ -1045,12 +1045,12 @@ export async function assertComposerShards({
       subtree: true,
     });
   });
-  const arrivalCards = team.locator(
+  const arrivalCards = organization.locator(
     `.mosaic-message-card[data-agent-lane="${seeded.lane}"]`
       + '[data-card-kind="agent-message"]',
   );
   const arrivalOrdinal = await arrivalCards.count();
-  await writeFile(join(seeded.teamWorktrees[0], ".spice-prose-trigger"), "emit\n");
+  await writeFile(join(seeded.organizationWorktrees[0], ".spice-prose-trigger"), "emit\n");
   const arrivalCard = arrivalCards.nth(arrivalOrdinal);
   await arrivalCard.waitFor({ timeout: 10_000 });
   assert.match(await arrivalCard.innerText(), /newest lane prose witness/);
@@ -1060,7 +1060,7 @@ export async function assertComposerShards({
     TRANSITION_MS,
     ({ lane, previous }) => {
       const link = document.querySelector(
-        `.team-agent[data-agent-lane="${lane}"] .composer-shard--primary .composer-shard-age`,
+        `.organization-agent[data-agent-lane="${lane}"] .composer-shard--primary .composer-shard-age`,
       );
       const href = link?.getAttribute("href");
       const card = href?.startsWith("#") ? document.getElementById(href.slice(1)) : null;
@@ -1094,7 +1094,7 @@ export async function assertComposerShards({
     "the new primary message age advances on the shared browser clock",
     5_000,
     ({ lane, label }) => document.querySelector(
-      `.team-agent[data-agent-lane="${lane}"] .composer-shard--primary [data-age-authored]`,
+      `.organization-agent[data-agent-lane="${lane}"] .composer-shard--primary [data-age-authored]`,
     )?.textContent?.trim() !== label,
     { lane: seeded.lane, label: arrived.label },
   );
@@ -1117,11 +1117,11 @@ export async function assertComposerShards({
     "the hamburger opens actions scoped to this agent",
   );
   assert.equal(
-    await team.locator(".team-pane").getAttribute("data-team-mode"),
+    await organization.locator(".organization-pane").getAttribute("data-organization-mode"),
     "Lanes",
-    "the agent drawer does not switch to the team Team panel",
+    "the agent drawer does not switch to the organization Org panel",
   );
-  assert.equal(await team.locator(".team-detail-pane").count(), 0);
+  assert.equal(await organization.locator(".organization-detail-pane").count(), 0);
   await drawerToggle.click();
   assert.equal(await drawer.isVisible(), false, "closing the hamburger hides its agent actions");
   assert.equal(
@@ -1169,7 +1169,7 @@ export async function assertComposerShards({
   assert.equal(await quoteLane.locator(".composer-shard--quote .agent-action-menu").count(), 0);
   assert.equal(await quoteLane.locator(".composer-shard--quote .agent-renew-request").count(), 0);
   const stackOverflow = await quoteStack.evaluate((stack) => {
-    const lane = stack.closest(".team-agent");
+    const lane = stack.closest(".organization-agent");
     const laneBox = lane.getBoundingClientRect();
     const primary = stack.querySelector(".composer-shard--primary").getBoundingClientRect();
     const quotes = [...stack.querySelectorAll(".composer-shard--quote")].map((shard) => {

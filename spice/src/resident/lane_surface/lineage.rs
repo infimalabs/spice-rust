@@ -4,11 +4,11 @@
 //! policy, and at most one member's home. [`arrange`] names no lineage in
 //! particular and restates the whole topology at once, rewriting both the order
 //! lineages stand in and which lineage each lane belongs to, since dropping a
-//! team onto another is the same durable write as reordering two.
+//! organization onto another is the same durable write as reordering two.
 //!
 //! The asymmetry is deliberate. A partial configuration is a change; a partial
-//! arrangement is a loss, because the head's lane order *is* the durable team
-//! order, so a lane the operator failed to restate would vanish from every team
+//! arrangement is a loss, because the head's lane order *is* the durable organization
+//! order, so a lane the operator failed to restate would vanish from every organization
 //! while still being seated. [`arrange`] therefore admits only a faithful
 //! restatement of the current lane table and repairs nothing by inference.
 //!
@@ -258,7 +258,7 @@ fn move_member(
                 "lineage::member-unchanged",
                 Some("a different target lineage".to_owned()),
                 Some(target.to_string()),
-                "drop the member on another team or on Agents Without Team",
+                "drop the member on another organization or on Agents Without Org",
             ));
         }
         return split_host_member(head, member, source, &source_members);
@@ -380,8 +380,8 @@ fn first_free_derived_lineage(head: &wire::ResidencyHead, source: CanonicalUuid)
 /// Group the head's lanes into lineage standings in first-appearance order.
 ///
 /// First appearance is not an arbitrary choice: it is exactly how the Canvas
-/// groups the lane answer into team surfaces, so the head's lane order *is* the
-/// durable team order. Rewriting that order below is what makes a drag durable
+/// groups the lane answer into organization surfaces, so the head's lane order *is* the
+/// durable organization order. Rewriting that order below is what makes a drag durable
 /// without teaching the canvas a second ordering to disagree with.
 /// Lanes this arrangement moved between lineages, in arranged order.
 ///
@@ -433,7 +433,7 @@ fn standings(lanes: &[wire::LaneResidency]) -> Vec<wire::body::LineageStanding> 
 ///
 /// Every rule here is stated over the arrangement as a whole. A partial
 /// arrangement is never repaired by inference: a lane the operator forgot would
-/// otherwise be silently dropped from every team, which is a lane that exists
+/// otherwise be silently dropped from every organization, which is a lane that exists
 /// in the resident and appears nowhere on the canvas.
 fn admit_arrangement(
     head: &wire::ResidencyHead,
@@ -459,7 +459,7 @@ fn admit_arrangement(
                 "lineage::arrangement-unknown-lineage",
                 Some("one current Canvas lineage".to_owned()),
                 Some(lineage.lineage_id.to_string()),
-                "join teams by naming the surviving lineage; a new lineage is created by seating",
+                "join organizations by naming the surviving lineage; a new lineage is created by seating",
             ));
         }
         if seen_lineages.contains(&lineage.lineage_id) {
@@ -516,7 +516,7 @@ fn admit_arrangement(
 
 /// Commit one complete Canvas lineage arrangement.
 ///
-/// This is the durable end of both drag gestures. Reordering the teams and
+/// This is the durable end of both drag gestures. Reordering the organizations and
 /// joining two of them differ only in the arrangement the operator sends, so
 /// they commit through one law and one fact rather than racing two.
 pub(in crate::resident) fn arrange(

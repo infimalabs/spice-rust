@@ -80,7 +80,7 @@ pub struct LaneView {
     pub epoch: CanonicalUuid,
     /// Current resident state.
     pub state: wire::ResidentState,
-    /// Monotonic authority for these exact team rows and policies.
+    /// Monotonic authority for these exact organization rows and policies.
     pub topology_revision: u64,
     /// Safe current lane rows.
     pub lanes: Vec<LaneRow>,
@@ -89,7 +89,7 @@ pub struct LaneView {
 }
 
 impl LaneView {
-    /// Current durable renewal state for one exact team member.
+    /// Current durable renewal state for one exact organization member.
     #[must_use]
     pub fn renewal(
         &self,
@@ -567,7 +567,7 @@ impl CanvasRuntime {
     ///
     /// Activity is retained in arrival order across the resident's captured
     /// transcript feed. Filtering that one chronology by membership is
-    /// what makes a fused team show whichever of its agents acted last.
+    /// what makes a fused organization show whichever of its agents acted last.
     #[must_use]
     pub fn newest_lineage_activity(&self, lineage: &LaneRow) -> Option<&LaneActivity> {
         self.activities

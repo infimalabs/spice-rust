@@ -128,12 +128,12 @@
 }
 .composer-shard--primary:has(.agent-action-menu[open]) .composer-vendor-icon { display: none; }
 
-.team-surface .mosaic-composer {
+.organization-surface .mosaic-composer {
   gap: 0;
   height: auto;
   padding: 0;
 }
-.team-surface .mosaic-composer textarea {
+.organization-surface .mosaic-composer textarea {
   height: 100%;
   min-height: 0;
   padding: 7px 9px;
@@ -144,8 +144,8 @@
   font-size: 14px;
   line-height: 1.35;
 }
-.team-surface .mosaic-composer textarea:focus-visible { outline: none; }
-.team-surface .composer-shard--primary textarea {
+.organization-surface .mosaic-composer textarea:focus-visible { outline: none; }
+.organization-surface .composer-shard--primary textarea {
   padding-right: 32px;
   padding-bottom: 28px;
 }

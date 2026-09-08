@@ -140,8 +140,8 @@ async function reconnectInPlace(page, monitor, reason, socketCount) {
 /// reconnect replay is idempotent rather than a second directive.
 export async function assertComposerRecovery(page, fixture, seeded, monitor) {
   await chooseCanvasView(page, "Lanes");
-  const lane = page.locator(`.team-agent[data-agent-lane="${seeded.lane}"]`);
-  const sibling = page.locator(`.team-agent[data-agent-lane="${seeded.quoteLane}"]`);
+  const lane = page.locator(`.organization-agent[data-agent-lane="${seeded.lane}"]`);
+  const sibling = page.locator(`.organization-agent[data-agent-lane="${seeded.quoteLane}"]`);
   const activity = page.locator(
     `.mosaic-message-card[data-agent-lane="${seeded.lane}"]`,
   );

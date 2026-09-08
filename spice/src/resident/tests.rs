@@ -985,7 +985,7 @@ fn lane_arrangement_durably_reorders_and_transfers_the_existing_member() {
         seed_lane_in_lineage(&bus, epoch, lane, lineage, occupant, &root);
     }
 
-    let same_team = arrange_lane_for_test(
+    let same_org = arrange_lane_for_test(
         &bus,
         epoch,
         &seats,
@@ -994,11 +994,11 @@ fn lane_arrangement_durably_reorders_and_transfers_the_existing_member() {
         test_uuid(3),
     );
     assert_eq!(
-        lane_order(&same_team),
+        lane_order(&same_org),
         vec![test_uuid(7), test_uuid(3), test_uuid(5), test_uuid(9)],
-        "the moved member is inserted immediately before its same-team target",
+        "the moved member is inserted immediately before its same-organization target",
     );
-    assert_eq!(same_team.lanes[0].lineage_id, first_lineage);
+    assert_eq!(same_org.lanes[0].lineage_id, first_lineage);
 
     let transferred = arrange_lane_for_test(
         &bus,

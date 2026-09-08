@@ -1,4 +1,4 @@
-/* The live team is one dense surface. Its dimensions deliberately follow the
+/* The live organization is one dense surface. Its dimensions deliberately follow the
    supplied 1000 × 568 reference: compact global chrome, one shared mode rail,
    four simultaneous standings, one ticker, then four independently operable
    agent columns. */
@@ -251,8 +251,8 @@ body:has(.shell--mosaic),
   font-size: .72rem;
   line-height: 1.45;
 }
-.canvas-open-teams { gap: 9px; }
-.canvas-team {
+.canvas-open-organizations { gap: 9px; }
+.canvas-organization {
   display: grid;
   gap: 7px;
   padding: 8px;
@@ -260,17 +260,17 @@ body:has(.shell--mosaic),
   border-radius: 9px;
   background: color-mix(in srgb, var(--accent) 3%, var(--panel));
 }
-.canvas-team > header {
+.canvas-organization > header {
   display: flex;
   min-width: 0;
   gap: 10px;
   color: var(--muted);
   font: .66rem/1.2 ui-monospace, monospace;
 }
-.canvas-team > header strong { color: var(--ink); }
-.canvas-team > header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.canvas-team-members { display: grid; gap: 6px; }
-.canvas-team-member {
+.canvas-organization > header strong { color: var(--ink); }
+.canvas-organization > header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.canvas-organization-members { display: grid; gap: 6px; }
+.canvas-organization-member {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr) 16px;
   align-items: center;
@@ -282,7 +282,7 @@ body:has(.shell--mosaic),
   background: var(--page);
   cursor: grab;
 }
-.canvas-team-member[aria-disabled="true"] { cursor: default; opacity: .66; }
+.canvas-organization-member[aria-disabled="true"] { cursor: default; opacity: .66; }
 .canvas-member-presence {
   width: 18px;
   height: 18px;
@@ -304,8 +304,8 @@ body:has(.shell--mosaic),
 }
 .canvas-member-copy small { color: var(--muted); font-size: .67rem; }
 .canvas-member-drag { color: var(--muted); font-family: monospace; }
-.canvas-team-drop,
-.canvas-unteamed {
+.canvas-organization-drop,
+.canvas-unassigned {
   padding: 9px;
   border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--line));
   border-radius: 9px;

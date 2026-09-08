@@ -1,6 +1,6 @@
 //! One drag, one durable arrangement.
 //!
-//! Every gesture the canvas offers -- dragging a team into another's place,
+//! Every gesture the canvas offers -- dragging an organization into another's place,
 //! dropping one onto another's edge to join them -- arrives here as the same
 //! whole restatement of the lane table. These tests share one fixture because
 //! the law under them is shared: an arrangement is admitted entire or refused
@@ -19,20 +19,20 @@ mod boundary;
 #[path = "arrangement/concurrency.rs"]
 mod concurrency;
 
-/// Supervised lanes standing in two teams, the shape an arrangement starts from.
+/// Supervised lanes standing in two organizations, the shape an arrangement starts from.
 struct Arranged {
     root: PathBuf,
     paths: RuntimePaths,
     bus: Bus,
     epoch: CanonicalUuid,
     seats: Seats,
-    teams: [CanonicalUuid; 2],
+    organizations: [CanonicalUuid; 2],
     lanes: Vec<CanonicalUuid>,
     occupants: Vec<CanonicalUuid>,
 }
 
 impl Arranged {
-    /// Seat one supervised lane per entry, in the team that entry names.
+    /// Seat one supervised lane per entry, in the organization that entry names.
     fn seat(name: &str, membership: &[usize]) -> Self {
         let (root, paths) = resident_fixture(name);
         let repository = Repository::discover(&root).expect("fixture repository resolves");
@@ -42,11 +42,11 @@ impl Arranged {
         let bus = Bus::start(journal).expect("fixture bus starts");
         let epoch = test_uuid(1);
         commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
-        let teams = [test_uuid(2), test_uuid(8)];
+        let organizations = [test_uuid(2), test_uuid(8)];
         let mut seats = Seats::new();
         let mut lanes = Vec::new();
         let mut occupants = Vec::new();
-        for (index, team) in membership.iter().enumerate() {
+        for (index, organization) in membership.iter().enumerate() {
             let step = u8::try_from(index).expect("fixture lane count");
             let lane = test_uuid(30 + step * 2);
             let occupant = test_uuid(31 + step * 2);
@@ -57,7 +57,14 @@ impl Arranged {
                     process_spec("sleep 0.05", Duration::from_secs(5)),
                 )
                 .expect("supervised occupant starts");
-            seed_lane_in_lineage(&bus, epoch, lane, teams[*team], occupant, &root);
+            seed_lane_in_lineage(
+                &bus,
+                epoch,
+                lane,
+                organizations[*organization],
+                occupant,
+                &root,
+            );
             lanes.push(lane);
             occupants.push(occupant);
         }
@@ -67,7 +74,7 @@ impl Arranged {
             bus,
             epoch,
             seats,
-            teams,
+            organizations,
             lanes,
             occupants,
         }
@@ -411,23 +418,23 @@ fn arranged_fact(bus: &Bus, field: &str) -> serde_json::Value {
 /// Both drag gestures commit through one arrangement.
 ///
 /// The reorder and the join are asserted in a single arrangement because that
-/// is the only shape the canvas can send: a drag states where every team and
+/// is the only shape the canvas can send: a drag states where every organization and
 /// every lane stands afterwards, so a test that moved one lane at a time would
 /// be proving a law this resident does not offer. The occupant, its lineage,
 /// and its supervised seat are asserted across the move because a joined lane
 /// that lost them would be a new lane wearing an old identity.
 #[test]
-fn one_arrangement_reorders_teams_and_joins_lanes_without_losing_composer_identity() {
+fn one_arrangement_reorders_orgs_and_joins_lanes_without_losing_composer_identity() {
     let fixture = Arranged::seat("lineage-arrangement", &[0, 0, 1]);
-    let [first_team, second_team] = fixture.teams;
+    let [first_org, second_org] = fixture.organizations;
     let lanes = fixture.lanes.clone();
     let occupants = fixture.occupants.clone();
 
     let answer = fixture.commit(
         11,
         vec![
-            standing(second_team, &[lanes[2], lanes[1]]),
-            standing(first_team, &[lanes[0]]),
+            standing(second_org, &[lanes[2], lanes[1]]),
+            standing(first_org, &[lanes[0]]),
         ],
     );
 
@@ -442,8 +449,8 @@ fn one_arrangement_reorders_teams_and_joins_lanes_without_losing_composer_identi
             .iter()
             .map(|row| row.lineage_id)
             .collect::<Vec<_>>(),
-        vec![second_team, second_team, first_team],
-        "the joined lane holds the target team",
+        vec![second_org, second_org, first_org],
+        "the joined lane holds the target organization",
     );
     assert_eq!(
         answer
@@ -465,8 +472,8 @@ fn one_arrangement_reorders_teams_and_joins_lanes_without_losing_composer_identi
             .iter()
             .map(|subscription| subscription.lineage_id)
             .collect::<Vec<_>>(),
-        vec![first_team, second_team],
-        "both surviving teams keep their task subscription",
+        vec![first_org, second_org],
+        "both surviving organizations keep their task subscription",
     );
     assert_eq!(
         fixture
@@ -481,10 +488,10 @@ fn one_arrangement_reorders_teams_and_joins_lanes_without_losing_composer_identi
         arranged_fact(&fixture.bus, "from"),
         serde_json::json!([
             {
-                "lineage_id": first_team.to_string(),
+                "lineage_id": first_org.to_string(),
                 "lanes": [lanes[0].to_string(), lanes[1].to_string()],
             },
-            { "lineage_id": second_team.to_string(), "lanes": [lanes[2].to_string()] },
+            { "lineage_id": second_org.to_string(), "lanes": [lanes[2].to_string()] },
         ]),
         "the fact records the standing the arrangement replaced",
     );
@@ -492,17 +499,17 @@ fn one_arrangement_reorders_teams_and_joins_lanes_without_losing_composer_identi
         arranged_fact(&fixture.bus, "lineages"),
         serde_json::json!([
             {
-                "lineage_id": second_team.to_string(),
+                "lineage_id": second_org.to_string(),
                 "lanes": [lanes[2].to_string(), lanes[1].to_string()],
             },
-            { "lineage_id": first_team.to_string(), "lanes": [lanes[0].to_string()] },
+            { "lineage_id": first_org.to_string(), "lanes": [lanes[0].to_string()] },
         ]),
     );
 
     fixture.retire();
 }
 
-/// Joining the last lane out of a team retires that team's subscription.
+/// Joining the last lane out of an organization retires that organization's subscription.
 ///
 /// A policy left behind would be inherited by whichever lineage next carried
 /// that id, so this cannot be read off the reply: the answer states one
@@ -512,27 +519,27 @@ fn one_arrangement_reorders_teams_and_joins_lanes_without_losing_composer_identi
 #[test]
 fn emptying_a_lineage_retires_the_task_subscription_it_left_behind() {
     let fixture = Arranged::seat("lineage-arrangement-emptied", &[0, 0, 1]);
-    let [_, second_team] = fixture.teams;
+    let [_, second_org] = fixture.organizations;
     let lanes = fixture.lanes.clone();
 
     let answer = fixture.commit(
         12,
-        vec![standing(second_team, &[lanes[2], lanes[1], lanes[0]])],
+        vec![standing(second_org, &[lanes[2], lanes[1], lanes[0]])],
     );
 
-    assert!(answer.lanes.iter().all(|row| row.lineage_id == second_team));
+    assert!(answer.lanes.iter().all(|row| row.lineage_id == second_org));
     assert_eq!(
         answer
             .subscriptions
             .iter()
             .map(|subscription| subscription.lineage_id)
             .collect::<Vec<_>>(),
-        vec![second_team],
+        vec![second_org],
     );
     assert_eq!(
         fixture.durable_subscriptions(),
-        vec![second_team],
-        "an emptied team keeps no durable task subscription",
+        vec![second_org],
+        "an emptied organization keeps no durable task subscription",
     );
 
     fixture.retire();
@@ -566,7 +573,7 @@ fn removing_a_lane_requires_a_vacant_claim_free_seat() {
     );
     assert_eq!(
         fixture.durable_subscriptions(),
-        vec![fixture.teams[1]],
+        vec![fixture.organizations[1]],
         "the emptied lineage subscription is removed with its last lane",
     );
     let facts = fixture.bus.fact_snapshot().expect("removal facts read");
@@ -615,7 +622,7 @@ fn removing_a_vacant_lane_with_an_active_claim_is_refused() {
     fixture.retire();
 }
 
-/// Team membership is not capped by the Canvas's six-slot accent palette.
+/// Org membership is not capped by the Canvas's six-slot accent palette.
 ///
 /// Colour is presentation continuity rather than identity: every member keeps
 /// its lane, occupant, worktree, and independent send address when colours
@@ -625,7 +632,7 @@ fn removing_a_vacant_lane_with_an_active_claim_is_refused() {
 #[test]
 fn a_lineage_may_hold_more_members_than_the_six_slot_accent_palette() {
     let fixture = Arranged::seat("lineage-arrangement-seven-members", &[0, 1, 1, 1, 1, 1, 1]);
-    let target = fixture.teams[0];
+    let target = fixture.organizations[0];
     let lanes = fixture.lanes.clone();
 
     let answer = fixture.commit(13, vec![standing(target, &lanes)]);
@@ -635,7 +642,7 @@ fn a_lineage_may_hold_more_members_than_the_six_slot_accent_palette() {
     assert_eq!(
         answer.lanes.iter().map(|row| row.lane).collect::<Vec<_>>(),
         lanes,
-        "an unbounded team keeps every independently addressed lane",
+        "an unbounded organization keeps every independently addressed lane",
     );
     assert_eq!(fixture.durable_subscriptions(), vec![target]);
 
@@ -647,14 +654,14 @@ fn a_lineage_may_hold_more_members_than_the_six_slot_accent_palette() {
 /// Each case below is built to trip exactly one rule, because a fixture that
 /// broke two would only ever prove the first. The durable head is read after
 /// every refusal: a partially applied arrangement would leave a lane holding a
-/// team the operator never stated.
+/// organization the operator never stated.
 #[test]
 fn an_arrangement_that_is_not_a_faithful_restatement_of_the_lane_table_is_refused() {
     let fixture = Arranged::seat("lineage-arrangement-refusals", &[0, 1]);
-    let [first_team, second_team] = fixture.teams;
+    let [first_org, second_org] = fixture.organizations;
     let lanes = fixture.lanes.clone();
     let stranger = test_uuid(99);
-    let seated = vec![(lanes[0], first_team), (lanes[1], second_team)];
+    let seated = vec![(lanes[0], first_org), (lanes[1], second_org)];
 
     let cases = [
         ("lineage::arrangement-empty", Vec::new()),
@@ -662,40 +669,40 @@ fn an_arrangement_that_is_not_a_faithful_restatement_of_the_lane_table_is_refuse
             "lineage::arrangement-unknown-lineage",
             vec![
                 standing(stranger, &[lanes[0]]),
-                standing(second_team, &[lanes[1]]),
+                standing(second_org, &[lanes[1]]),
             ],
         ),
         (
             "lineage::arrangement-duplicate-lineage",
             vec![
-                standing(first_team, &[lanes[0]]),
-                standing(first_team, &[lanes[1]]),
+                standing(first_org, &[lanes[0]]),
+                standing(first_org, &[lanes[1]]),
             ],
         ),
         (
             "lineage::arrangement-vacant-lineage",
             vec![
-                standing(first_team, &[]),
-                standing(second_team, &[lanes[0], lanes[1]]),
+                standing(first_org, &[]),
+                standing(second_org, &[lanes[0], lanes[1]]),
             ],
         ),
         (
             "lineage::arrangement-unknown-lane",
             vec![
-                standing(first_team, &[lanes[0]]),
-                standing(second_team, &[lanes[1], stranger]),
+                standing(first_org, &[lanes[0]]),
+                standing(second_org, &[lanes[1], stranger]),
             ],
         ),
         (
             "lineage::arrangement-duplicate-lane",
             vec![
-                standing(first_team, &[lanes[0], lanes[0]]),
-                standing(second_team, &[lanes[1]]),
+                standing(first_org, &[lanes[0], lanes[0]]),
+                standing(second_org, &[lanes[1]]),
             ],
         ),
         (
             "lineage::arrangement-incomplete",
-            vec![standing(first_team, &[lanes[0]])],
+            vec![standing(first_org, &[lanes[0]])],
         ),
     ];
     for (index, (reason, lineages)) in cases.into_iter().enumerate() {

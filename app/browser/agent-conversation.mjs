@@ -33,8 +33,8 @@ import { assertLaneHeaderPipMatrix } from "./lane-header-pips.mjs";
 import { captureMessageStreamBoundaries } from "./message-stream-boundaries.mjs";
 import {
   assertGlobalNavigation,
-  assertTeamNavigation,
-} from "./team-navigation.mjs";
+  assertOrgNavigation,
+} from "./organization-navigation.mjs";
 import {
   assertQuoteBlockDensity,
   captureQuoteBlockDensity,
@@ -46,7 +46,7 @@ export { assertMosaicLattice };
 export const longAgentName = "Bexley Integration Reliability Operator";
 export const longWorktreeBasename = "lane-4-release-observability-and-follow-through";
 export const agentNames = ["Ava", longAgentName, "Marco"];
-const teamSeatNames = [...agentNames, undefined];
+const organizationSeatNames = [...agentNames, undefined];
 
 function canonicalAgentAttribution(member) {
   assert.ok(member.occupant, `lane ${member.lane} has an occupant identity`);
@@ -61,7 +61,7 @@ function messageFooterLabel(member) {
 
 /// Fixed lane identities keep the browser fixture deterministic. Accent slots
 /// come from canonical member order, independently of these UUID values.
-const teamLaneIds = [
+const organizationLaneIds = [
   "00000000-0000-4000-8000-000000000000", "00000000-0000-4000-8000-000000000001",
   "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000006",
 ];
@@ -116,7 +116,7 @@ const tallMosaicMessage = [
   "- the tall path remains two reads",
 ].join("\n");
 
-async function assignTeamLaneIds(page) {
+async function assignOrgLaneIds(page) {
   await page.evaluate((laneIds) => {
     const socket = window.__canvasSockets.at(-1);
     if (!socket) throw new Error("canvas WebSocket was not captured");
@@ -142,7 +142,7 @@ async function assignTeamLaneIds(page) {
         send(rewrite(new Uint8Array(data.buffer ?? data, data.byteOffset ?? 0, data.byteLength)));
       }
     };
-  }, teamLaneIds);
+  }, organizationLaneIds);
 }
 
 async function measurePips(locator, laneKey, statusKey) {
@@ -159,47 +159,47 @@ async function measurePips(locator, laneKey, statusKey) {
   }), { laneKey, statusKey });
 }
 
-async function assertThreeAgentTeamPips(page, console) {
-  const lanes = teamLaneIds.slice(0, 3);
+async function assertThreeAgentOrgPips(page, console) {
+  const lanes = organizationLaneIds.slice(0, 3);
   const menu = page.locator(".canvas-menu");
   await menu.locator(":scope > summary").click();
-  const menuTeam = menu.locator(".canvas-team");
-  await menuTeam.locator(".canvas-team-member").nth(2).waitFor({ timeout: TRANSITION_MS });
+  const menuOrg = menu.locator(".canvas-organization");
+  await menuOrg.locator(".canvas-organization-member").nth(2).waitFor({ timeout: TRANSITION_MS });
   assert.deepEqual(
-    await menuTeam.locator(":scope > .canvas-team-members > .canvas-team-member")
+    await menuOrg.locator(":scope > .canvas-organization-members > .canvas-organization-member")
       .evaluateAll((members) => members.map((member) => [
-        member.dataset.teamMember,
+        member.dataset.organizationMember,
         member.dataset.accent,
       ])),
     lanes.map((lane, index) => [lane, String(lanes.length - index - 1)]),
     "the visible control order establishes the green right-edge agent",
   );
 
-  const teamPips = await measurePips(
-    console.locator(".team-light"),
+  const organizationPips = await measurePips(
+    console.locator(".organization-light"),
     "laneLightTargetId",
     "laneStatus",
   );
-  const teamByLane = new Map(teamPips.map((pip) => [pip.lane, pip]));
-  assert.ok(teamPips.every((pip) => pip.status), "every three-agent team pip has a live status");
+  const organizationByLane = new Map(organizationPips.map((pip) => [pip.lane, pip]));
+  assert.ok(organizationPips.every((pip) => pip.status), "every three-agent organization pip has a live status");
   assert.deepEqual(
     lanes.map((lane) => {
-      const pip = teamByLane.get(lane);
+      const pip = organizationByLane.get(lane);
       return [pip?.column, pip?.row];
     }),
     [["1", "2"], ["2", "1"], ["2", "2"]],
-    "three team pip identities keep the established stack fill order",
+    "three organization pip identities keep the established stack fill order",
   );
 
   await chooseCanvasView(page, "Lanes");
-  await console.getByRole("tab", { name: /^Team/ }).click();
+  await console.getByRole("tab", { name: /^Org/ }).click();
 }
 
-/// Seat the canonical four-member fixture team without running its scenarios.
+/// Seat the canonical four-member fixture organization without running its scenarios.
 ///
 /// Other independently runnable browser shards need a real lineage but must
 /// not replay the conversation assertions or their deliberate quiet window.
-export async function seatAgentTeam(
+export async function seatAgentOrg(
   page,
   fixture,
   worktrees,
@@ -207,22 +207,22 @@ export async function seatAgentTeam(
   beforeReload = null,
   artifacts = null,
 ) {
-  const teamWorktrees = worktrees.slice(0, 4);
+  const organizationWorktrees = worktrees.slice(0, 4);
   const console = page.locator('[data-pane="agent-console"]');
   await chooseCanvasView(page, "Lanes");
   await console.waitFor();
   assert.equal(
-    await console.locator(".team-pane").getAttribute("data-team-mode"),
+    await console.locator(".organization-pane").getAttribute("data-organization-mode"),
     "Lanes",
-    "the empty team begins in the right-edge Lanes mode",
+    "the empty organization begins in the right-edge Lanes mode",
   );
   await page.getByLabel("Open Spice Canvas menu").click();
   await assertGlobalNavigation(page, "the empty fleet");
   await chooseCanvasView(page, "Lanes");
-  await assertTeamNavigation(console, "the empty fleet");
-  await console.getByRole("tab", { name: /^Team/ }).click();
+  await assertOrgNavigation(console, "the empty fleet");
+  await console.getByRole("tab", { name: /^Org/ }).click();
   await console.getByLabel("Name").fill(agentNames[0]);
-  await console.getByLabel("Worktree").fill(teamWorktrees[0]);
+  await console.getByLabel("Worktree").fill(organizationWorktrees[0]);
   await console.getByLabel("Life").fill("steer");
 
   const refusal = console.locator(".form-refusal");
@@ -235,68 +235,68 @@ export async function seatAgentTeam(
     assert.match(await refusal.innerText(), /Vendor must be one lower-case word/);
   }
 
-  await assignTeamLaneIds(page);
+  await assignOrgLaneIds(page);
   await console.getByLabel("Vendor", { exact: true }).fill("Claude");
   await console.getByRole("button", { name: "Seat agent" }).click();
   await refusal.waitFor({ state: "detached", timeout: 10_000 });
   await waitForElement(page, "first external agent seat renders", AGENT_SEAT_MS,
-    console.locator(".team-detail-card").nth(0));
+    console.locator(".organization-detail-card").nth(0));
 
   const firstSnapshot = await reply(fixture, ["lane"]);
-  const host = firstSnapshot.body.lanes.find((lane) => lane.worktree === teamWorktrees[0]);
+  const host = firstSnapshot.body.lanes.find((lane) => lane.worktree === organizationWorktrees[0]);
   assert.ok(host, "the Canvas seat control creates the lineage host");
-  assert.equal(host.lane, teamLaneIds[0], "the fixture fixes the lineage host accent slot");
+  assert.equal(host.lane, organizationLaneIds[0], "the fixture fixes the lineage host accent slot");
   const hostSurface = console.locator(
-    `.team-surface[data-lineage-id="${host.lineage_id}"]`,
+    `.organization-surface[data-lineage-id="${host.lineage_id}"]`,
   );
   assert.equal(
-    await hostSurface.locator(".team-pane").getAttribute("data-team-mode"),
-    "Team",
-    "the first seated lineage inherits the empty Canvas Team selection",
+    await hostSurface.locator(".organization-pane").getAttribute("data-organization-mode"),
+    "Org",
+    "the first seated lineage inherits the empty Canvas Org selection",
   );
   assert.equal(
-    await hostSurface.locator(".team-detail-card").count(),
+    await hostSurface.locator(".organization-detail-card").count(),
     1,
-    "the inherited Team surface keeps the first seat details visible",
+    "the inherited Org surface keeps the first seat details visible",
   );
-  for (const [index, worktree] of teamWorktrees.slice(1).entries()) {
-    await console.getByLabel("Name").fill(teamSeatNames[index + 1] ?? "");
+  for (const [index, worktree] of organizationWorktrees.slice(1).entries()) {
+    await console.getByLabel("Name").fill(organizationSeatNames[index + 1] ?? "");
     await console.getByLabel("Worktree").fill(worktree);
     await console.getByLabel("Life").fill("steer");
     await console.getByLabel("Vendor", { exact: true }).fill("Claude");
     await console.getByRole("button", { name: "Seat agent" }).click();
     await waitForElement(page, "next external agent seat renders", AGENT_SEAT_MS,
-      console.locator(".team-detail-card").nth(index + 1));
-    if (index === 1) await assertThreeAgentTeamPips(page, console);
+      console.locator(".organization-detail-card").nth(index + 1));
+    if (index === 1) await assertThreeAgentOrgPips(page, console);
   }
-  for (const lane of teamLaneIds) {
+  for (const lane of organizationLaneIds) {
     const wake = await reply(fixture, ["lane", "wake", lane]);
-    assert.equal(wake.body.lane, lane, "the fixture wakes each canonical team member");
+    assert.equal(wake.body.lane, lane, "the fixture wakes each canonical organization member");
     assert.equal(wake.body.to, "occupied", "the fixture starts an agent before prose assertions");
   }
   if (beforeReload) await beforeReload(console);
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Lanes");
-  await console.getByRole("tab", { name: /^Team/ }).click();
+  await console.getByRole("tab", { name: /^Org/ }).click();
   await waitForElement(page, "seated agents render after reload", CONNECT_MS,
-    console.locator(".team-detail-card").nth(3));
+    console.locator(".organization-detail-card").nth(3));
   await waitForPage(page, "seated agents publish their session identities", CONNECT_MS, () => {
-    const cards = [...document.querySelectorAll(".team-detail-card")];
+    const cards = [...document.querySelectorAll(".organization-detail-card")];
     return cards.length >= 4 && cards.every((card) => !card.title.includes("thread: unbound"));
   }, undefined, {
-    observed: () => console.locator(".team-detail-card").evaluateAll((cards) => (
+    observed: () => console.locator(".organization-detail-card").evaluateAll((cards) => (
       cards.map((card) => card.title)
     )),
   });
 
   const lanes = await reply(fixture, ["lane"]);
-  const seated = teamWorktrees.map(
+  const seated = organizationWorktrees.map(
     (worktree) => lanes.body.lanes.find((lane) => lane.worktree === worktree),
   );
   assert.ok(seated.every(Boolean), "one lineage admits all four linked worktrees");
-  assert.deepEqual(seated.map((lane) => lane.lane), teamLaneIds, "four fixed lane identities render");
+  assert.deepEqual(seated.map((lane) => lane.lane), organizationLaneIds, "four fixed lane identities render");
   assert.ok(seated.every((lane) => lane.lineage_id === host.lineage_id), "one lineage renders");
-  assert.deepEqual(seated.map((lane) => lane.name), teamSeatNames);
+  assert.deepEqual(seated.map((lane) => lane.name), organizationSeatNames);
   assert.equal(seated[1].name, longAgentName, "the fixture admits a long configured agent name");
   assert.equal(
     messageFooterLabel(seated[3]),
@@ -304,9 +304,9 @@ export async function seatAgentTeam(
     "the unnamed fixture lane exposes a long worktree basename",
   );
   assert.ok(seated.every((lane) => lane.vendor === "claude"));
-  assert.ok(seated.every((lane) => lane.life === "steer"), "the team shares one lifetime");
+  assert.ok(seated.every((lane) => lane.life === "steer"), "the organization shares one lifetime");
   assert.equal(
-    await console.locator(".team-detail-card").first().getAttribute("title"),
+    await console.locator(".organization-detail-card").first().getAttribute("title"),
     `Claude vendor; model: claude-opus-5; effort: high; thread: ${seated[0].occupant}; `
       + "session: 018f7777-7777-7444-8888-999999999999",
     "the agent card tooltip carries the admitted launch and session identity",
@@ -316,17 +316,17 @@ export async function seatAgentTeam(
     console,
     host,
     seated,
-    teamWorktrees,
+    organizationWorktrees,
     lane: seated[0].lane,
     quoteLane: seated[3].lane,
     agentName: agentNames[0],
     agentAttribution: canonicalAgentAttribution(seated[0]),
-    quoteProse: agentProse(teamWorktrees[3]),
+    quoteProse: agentProse(organizationWorktrees[3]),
     primaryHeadings: seated.map((lane, index) => ({
       lane: lane.lane,
       prose: index === 0
         ? "newest lane prose witness"
-        : agentProse(teamWorktrees[index]),
+        : agentProse(organizationWorktrees[index]),
     })),
   };
 }
@@ -346,7 +346,7 @@ async function assertOperatorProseHidden(console, text, label) {
 
 async function assertStableOperatorAuthorship(page, fixture, console, lane, activityReplay) {
   const text = `stable operator authorship ${crypto.randomUUID()}`;
-  const composer = console.locator(`.team-agent[data-agent-lane="${lane}"]`);
+  const composer = console.locator(`.organization-agent[data-agent-lane="${lane}"]`);
   await composer.getByRole("textbox").fill(text);
   await console.getByRole("button", { name: "Steer", exact: true }).click();
   const inbox = await reply(fixture, ["inbox", lane]);
@@ -542,7 +542,7 @@ export async function assertAgentConversation(
   activityReplay,
   artifacts,
 ) {
-  const team = await seatAgentTeam(
+  const organization = await seatAgentOrg(
     page,
     fixture,
     worktrees,
@@ -554,14 +554,14 @@ export async function assertAgentConversation(
     console,
     host,
     seated,
-    teamWorktrees,
-  } = team;
+    organizationWorktrees,
+  } = organization;
 
   await console.getByRole("tab", { name: /^Agents/ }).click();
-  await console.locator(".team-agent").nth(3).waitFor();
-  assert.equal(await console.locator(".team-surface").count(), 1, "one lineage renders one surface");
+  await console.locator(".organization-agent").nth(3).waitFor();
+  assert.equal(await console.locator(".organization-surface").count(), 1, "one lineage renders one surface");
   assert.equal(
-    await console.locator(".team-activity-grid").count(),
+    await console.locator(".organization-activity-grid").count(),
     1,
     "all lineage members share exactly one packed activity plane",
   );
@@ -592,12 +592,12 @@ export async function assertAgentConversation(
     fixture,
     console,
     seated[0].lane,
-    teamWorktrees[0],
+    organizationWorktrees[0],
   );
   const currentProse = seated.map((member) => activityReplay.nextAgentProse(member.lane));
   await Promise.all([
-    writeFile(join(teamWorktrees[0], ".spice-tool-trigger"), "emit\n"),
-    ...teamWorktrees.slice(0, seated.length).map((worktree) => (
+    writeFile(join(organizationWorktrees[0], ".spice-tool-trigger"), "emit\n"),
+    ...organizationWorktrees.slice(0, seated.length).map((worktree) => (
       writeFile(join(worktree, ".spice-prose-trigger"), "emit\n")
     )),
   ]);
@@ -610,12 +610,12 @@ export async function assertAgentConversation(
     seated[3],
   );
   await assertRosterPips(page, console, seated, artifacts);
-  const accessibility = await console.locator(".team-activity-grid").ariaSnapshot();
+  const accessibility = await console.locator(".organization-activity-grid").ariaSnapshot();
   for (const name of producerNames) {
     assert.match(accessibility, new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   assert.equal(await console.getByRole("button", { name: "Steer", exact: true }).count(), 1);
-  const lifetime = console.locator('.team-lifetime input[type="range"]');
+  const lifetime = console.locator('.organization-lifetime input[type="range"]');
   await lifetime.fill("2");
   await console.getByRole("button", { name: "Drain", exact: true }).waitFor();
   await lifetime.fill("0");
@@ -634,19 +634,19 @@ export async function assertAgentConversation(
     "final review found",
   ];
   for (const [index, lane] of seated.entries()) {
-    const column = console.locator(`.team-agent[data-agent-lane="${lane.lane}"]`);
+    const column = console.locator(`.organization-agent[data-agent-lane="${lane.lane}"]`);
     await column.getByRole("textbox").fill(messages[index]);
     await console.getByRole("button", { name: "Steer", exact: true }).click();
     if (index === 0) await assertQueuedRosterPip(page, console, seated[0]);
   }
-  const quoteLane = console.locator(`.team-agent[data-agent-lane="${seated[3].lane}"]`);
+  const quoteLane = console.locator(`.organization-agent[data-agent-lane="${seated[3].lane}"]`);
   await quoteLane.getByRole("textbox").fill(entirelyQuotedMessage);
   await console.getByRole("button", { name: "Steer", exact: true }).click();
-  const tallLane = console.locator(`.team-agent[data-agent-lane="${seated[1].lane}"]`);
+  const tallLane = console.locator(`.organization-agent[data-agent-lane="${seated[1].lane}"]`);
   await tallLane.getByRole("textbox").fill(tallMosaicMessage);
   await console.getByRole("button", { name: "Steer", exact: true }).click();
   const refreshedProse = seated.map((member) => activityReplay.nextAgentProse(member.lane));
-  await Promise.all(teamWorktrees.slice(0, seated.length).map((worktree) => (
+  await Promise.all(organizationWorktrees.slice(0, seated.length).map((worktree) => (
     writeFile(join(worktree, ".spice-prose-trigger"), "emit\n")
   )));
   await Promise.all(refreshedProse);
@@ -938,16 +938,16 @@ export async function assertAgentConversation(
   assert.equal(await outgoing.locator(".message-actions button").count(), 3);
 
   await console.getByRole("tab", { name: /^Tasks/ }).click();
-  await console.locator(".team-task-workspace").waitFor();
+  await console.locator(".organization-task-workspace").waitFor();
   assert.equal(
-    await console.locator(".team-task-workspace").count(),
+    await console.locator(".organization-task-workspace").count(),
     1,
-    "Tasks renders one team-scoped operational workspace",
+    "Tasks renders one organization-scoped operational workspace",
   );
-  await console.getByRole("tab", { name: /^Team/ }).click();
-  await console.locator(".team-detail-card").nth(3).waitFor();
-  assert.equal(await console.locator(".team-detail-card").count(), 4, "Team reaches all agents");
-  await console.getByText(teamWorktrees[0], { exact: true }).waitFor();
+  await console.getByRole("tab", { name: /^Org/ }).click();
+  await console.locator(".organization-detail-card").nth(3).waitFor();
+  assert.equal(await console.locator(".organization-detail-card").count(), 4, "Org reaches all agents");
+  await console.getByText(organizationWorktrees[0], { exact: true }).waitFor();
   await console.getByRole("tab", { name: /^Agents/ }).click();
   await assertFourAgentDensity(console);
   await assertAgentWorkspaceGeometry(page, "populated desktop Lanes page");
@@ -977,7 +977,7 @@ export async function assertAgentConversation(
     "the canonical snapshot replacement",
   );
   const restoredQuoteProse = restoredProse.find(
-    (message) => message.lane === team.quoteLane,
+    (message) => message.lane === organization.quoteLane,
   )?.prose;
   assert.ok(restoredQuoteProse, "the canonical replay retains the quote lane's assistant prose");
   const tasteReply = await assertInlineTastePills(
@@ -994,15 +994,15 @@ export async function assertAgentConversation(
     await reply(fixture, ["steer", "cancel", pending.directive]);
   }
   return {
-    lane: team.lane,
-    quoteLane: team.quoteLane,
-    agentName: team.agentName,
-    agentAttribution: team.agentAttribution,
+    lane: organization.lane,
+    quoteLane: organization.quoteLane,
+    agentName: organization.agentName,
+    agentAttribution: organization.agentAttribution,
     quoteProse: restoredQuoteProse,
     acknowledgementReply,
     postHiddenMosaic,
     primaryHeadings: restoredProse,
-    teamWorktrees,
+    organizationWorktrees,
   };
 }
 
@@ -1030,7 +1030,7 @@ export async function assertFourAgentDensity(console) {
         const box = node.getBoundingClientRect();
         return { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
       }),
-      columns: [...fleet.querySelectorAll(".team-agent")].map((node) => {
+      columns: [...fleet.querySelectorAll(".organization-agent")].map((node) => {
         const box = node.getBoundingClientRect();
         return { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
       }),
@@ -1044,7 +1044,7 @@ export async function assertFourAgentDensity(console) {
     ) - geometry.contentWidth) <= 1,
     `one live lineage consumes the content box exactly once: ${JSON.stringify(geometry)}`,
   );
-  assert.ok(geometry.fleetOverflow <= 1, "the team fleet does not hide horizontal content");
+  assert.ok(geometry.fleetOverflow <= 1, "the organization fleet does not hide horizontal content");
   for (const row of [geometry.headers, geometry.columns]) {
     for (let index = 1; index < row.length; index += 1) {
       assert.ok(row[index - 1].right <= row[index].left + 1, "agent columns never overlap");
@@ -1054,63 +1054,63 @@ export async function assertFourAgentDensity(console) {
 }
 
 async function assertRosterPips(page, console, seated, artifacts) {
-  const teamPips = console.locator(".team-light");
-  await teamPips.nth(seated.length - 1).waitFor();
-  const teamPipGrid = await teamPips.evaluateAll((pips) => pips.map((pip) => ({
+  const organizationPips = console.locator(".organization-light");
+  await organizationPips.nth(seated.length - 1).waitFor();
+  const organizationPipGrid = await organizationPips.evaluateAll((pips) => pips.map((pip) => ({
     lane: pip.dataset.laneLightTargetId,
     status: pip.dataset.laneStatus,
     column: pip.dataset.pipColumn,
     row: pip.dataset.pipRow,
   })));
-  const teamRoster = [...teamPipGrid].sort((left, right) => left.lane.localeCompare(right.lane));
+  const organizationRoster = [...organizationPipGrid].sort((left, right) => left.lane.localeCompare(right.lane));
   assert.deepEqual(
-    teamRoster.map((entry) => entry.lane),
+    organizationRoster.map((entry) => entry.lane),
     seated.map((member) => member.lane).sort(),
-    "the team pips are keyed by every admitted member and no decorative slot",
+    "the organization pips are keyed by every admitted member and no decorative slot",
   );
   assert.ok(
-    teamRoster.every((entry) => ["running", "running-stale"].includes(entry.status)),
+    organizationRoster.every((entry) => ["running", "running-stale"].includes(entry.status)),
     "every supervised member has a lit liveness pip",
   );
-  const teamPipsByLane = new Map(teamPipGrid.map((pip) => [pip.lane, pip]));
+  const organizationPipsByLane = new Map(organizationPipGrid.map((pip) => [pip.lane, pip]));
   assert.deepEqual(
     seated.map((member) => {
-      const pip = teamPipsByLane.get(member.lane);
+      const pip = organizationPipsByLane.get(member.lane);
       return [pip.column, pip.row];
     }),
     [["1", "1"], ["1", "2"], ["2", "1"], ["2", "2"]],
-    "team pip identities follow composers from the right edge without moving the stack",
+    "organization pip identities follow composers from the right edge without moving the stack",
   );
   await assertLaneHeaderPipMatrix(page, console, artifacts, "chromium", "light");
 
 }
 
 async function assertQueuedRosterPip(page, console, member) {
-  const teamPip = console.locator(
-    `.team-light[data-lane-light-target-id="${member.lane}"]`,
+  const organizationPip = console.locator(
+    `.organization-light[data-lane-light-target-id="${member.lane}"]`,
   );
-  await waitForPage(page, "team roster shows queued", TRANSITION_MS, (lane) => (
-    document.querySelector(`.team-light[data-lane-light-target-id="${lane}"]`)
+  await waitForPage(page, "organization roster shows queued", TRANSITION_MS, (lane) => (
+    document.querySelector(`.organization-light[data-lane-light-target-id="${lane}"]`)
       ?.getAttribute("data-lane-status") === "queued"
   ), member.lane);
-  const teamRoster = await console.locator(".team-light").evaluateAll((pips) => pips.map((pip) => ({
+  const organizationRoster = await console.locator(".organization-light").evaluateAll((pips) => pips.map((pip) => ({
     column: pip.dataset.pipColumn,
     lane: pip.dataset.laneLightTargetId,
     row: pip.dataset.pipRow,
     status: pip.dataset.laneStatus,
   })));
   assert.deepEqual(
-    teamRoster.filter(({ status }) => status === "queued").map(({ lane }) => lane),
+    organizationRoster.filter(({ status }) => status === "queued").map(({ lane }) => lane),
     [member.lane],
-    "only the directed member lights its team pip as queued",
+    "only the directed member lights its organization pip as queued",
   );
-  const queuedTeamPip = teamRoster.find(({ lane }) => lane === member.lane);
+  const queuedOrgPip = organizationRoster.find(({ lane }) => lane === member.lane);
   assert.deepEqual(
-    [queuedTeamPip.column, queuedTeamPip.row],
+    [queuedOrgPip.column, queuedOrgPip.row],
     ["1", "1"],
-    "the queued member keeps its reversed right-edge team-pip assignment",
+    "the queued member keeps its reversed right-edge organization-pip assignment",
   );
-  const teamStyle = await teamPip.evaluate((pip) => {
+  const organizationStyle = await organizationPip.evaluate((pip) => {
     const style = getComputedStyle(pip);
     return {
       backgroundColor: style.backgroundColor,
@@ -1119,6 +1119,6 @@ async function assertQueuedRosterPip(page, console, member) {
     };
   });
 
-  assert.equal(teamStyle.opacity, "1", "queued direction never mutes an occupied agent");
-  assert.notEqual(teamStyle.boxShadow, "none", "the queued agent remains visibly lit");
+  assert.equal(organizationStyle.opacity, "1", "queued direction never mutes an occupied agent");
+  assert.notEqual(organizationStyle.boxShadow, "none", "the queued agent remains visibly lit");
 }

@@ -18,7 +18,7 @@ counsel, and repository checks preserve those authority boundaries.
 flowchart TD
   S["STEERING, durable intent, semantically retired"] --> L["LIFECYCLE, one supervised agent per worktree"]
   L --> C["COUNSEL, taste offered while speaking"]
-  C --> O["COORDINATION, claims, phases, teams, routing"]
+  C --> O["COORDINATION, claims, phases, organizations, routing"]
   O --> K["CHECKS, gates that refuse"]
   K --> S
 ```
@@ -51,7 +51,7 @@ The surface topology owns durable places:
 erDiagram
   REPOSITORY ||--|{ WORKTREE : "all worktrees share one control plane"
   WORKTREE ||--|| LANE : "the lane is the worktree's operator surface"
-  TEAM ||--|{ LANE : "one or more; palette size does not bound topology"
+  ORG ||--|{ LANE : "one or more; palette size does not bound topology"
 ```
 
 Occupant history hangs from the durable lane and remains readable through its
@@ -86,8 +86,8 @@ erDiagram
   MESSAGE ||--o{ DISPOSITION : "one message may answer several directives"
 ```
 
-**Invariant —** A team of one is the degenerate case of a team of any size,
-never a separate type. Every rule written for teams must hold for a team of one.
+**Invariant —** An organization of one is the degenerate case of an organization of any size,
+never a separate type. Every rule written for organizations must hold for an organization of one.
 
 ### Identity
 
