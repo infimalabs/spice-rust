@@ -38,6 +38,7 @@ pub(crate) fn render_received_with_tastes(markdown: &str, tastes: u32) -> Render
     let image_only = markdown_is_image_only(&events);
     let mut code_block = false;
     let mut block_quote_depth = 0usize;
+    let mut remaining_review = has_marker_prefix(markdown, "[REVIEW]");
     let mut remaining_tastes = usize::try_from(tastes).unwrap_or(usize::MAX);
     let events = decorate_markdown_images(events, image_only)
         .into_iter()
@@ -56,6 +57,7 @@ pub(crate) fn render_received_with_tastes(markdown: &str, tastes: u32) -> Render
             } else {
                 let events = inline_classification_marker(
                     event,
+                    &mut remaining_review,
                     (block_quote_depth > 0).then_some(&mut remaining_tastes),
                 );
                 events.into_iter().flat_map(inline_task_chips).collect()
@@ -84,12 +86,15 @@ fn coalesce_text_events(events: Vec<MarkdownEvent<'_>>) -> Vec<MarkdownEvent<'_>
 
 fn inline_classification_marker<'a>(
     event: MarkdownEvent<'a>,
+    remaining_review: &mut bool,
     remaining_tastes: Option<&mut usize>,
 ) -> Vec<MarkdownEvent<'a>> {
     let MarkdownEvent::Text(text) = event else {
         return vec![event];
     };
-    if let Some(suffix) = marker_suffix(&text, "[REVIEW]") {
+    if std::mem::take(remaining_review)
+        && let Some(suffix) = marker_suffix(&text, "[REVIEW]")
+    {
         return vec![
             MarkdownEvent::InlineHtml(review_pill_html().into()),
             MarkdownEvent::Text(suffix.into()),
@@ -106,6 +111,11 @@ fn inline_classification_marker<'a>(
         MarkdownEvent::InlineHtml(taste_pill_html().into()),
         MarkdownEvent::Text(taste_guidance_suffix(&suffix).into()),
     ]
+}
+
+fn has_marker_prefix(text: &str, marker: &str) -> bool {
+    text.strip_prefix(marker)
+        .is_some_and(|suffix| suffix.starts_with(char::is_whitespace))
 }
 
 fn marker_suffix(text: &str, marker: &str) -> Option<String> {
@@ -743,6 +753,9 @@ mod tests {
     fn classification_markers_become_inline_pills() {
         let rendered = render_received_with_tastes(
             "[REVIEW] Peer feedback remains unchanged.\n\n\
+             Later [REVIEW] prose remains unchanged.\n\n\
+             [REVIEW] A later paragraph remains unchanged.\n\n\
+             > [REVIEW] Quoted context remains unchanged.\n\n\
              > [TASTE] compatibility: Keep one tested path.\n\n\
              > [TASTE] polling: Wait for completion.\n\n\
              ACK: ordinary [TASTE] prose stays text.",
@@ -753,12 +766,28 @@ mod tests {
         assert!(rendered.html.contains("Keep one tested path."));
         assert!(rendered.html.contains("Wait for completion."));
         assert!(rendered.html.contains("Peer feedback remains unchanged."));
+        assert!(
+            rendered
+                .html
+                .contains("Later [REVIEW] prose remains unchanged.")
+        );
+        assert!(
+            rendered
+                .html
+                .contains("[REVIEW] A later paragraph remains unchanged.")
+        );
+        assert!(
+            rendered
+                .html
+                .contains("[REVIEW] Quoted context remains unchanged.")
+        );
         assert!(rendered.html.contains("class=\"message-review-pill\""));
         assert!(
             rendered
                 .html
                 .contains("aria-label=\"Review classification\">REVIEW</span>")
         );
+        assert_eq!(rendered.html.matches("message-review-pill").count(), 1);
 
         assert_eq!(
             rendered
