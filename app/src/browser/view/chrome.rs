@@ -198,6 +198,7 @@ fn task_pills(runtime: Option<&CanvasRuntime>) -> Vec<TaskPill> {
         {
             TaskPillAvailability::Active
         } else if workflow.deferral.is_some()
+            || !board.environment_satisfies(task)
             || task.statement.body.dependencies.iter().any(|dependency| {
                 board.tasks.iter().any(|candidate| {
                     candidate.statement.body.born == *dependency

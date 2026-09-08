@@ -2,6 +2,9 @@
 
 use super::*;
 
+#[path = "startup/schema_rollout.rs"]
+mod schema_rollout;
+
 fn listen_for(argv: &[&str]) -> CommandResult<SocketAddr> {
     let matches = spice::cli::command()
         .try_get_matches_from(argv)

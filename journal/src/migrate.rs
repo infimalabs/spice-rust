@@ -478,7 +478,15 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (12, MigrationStep::Rust(creation_context::migrate)),
     (13, MigrationStep::Rust(steering_microseconds::migrate)),
     (14, MigrationStep::Sql(MIGRATE_14_TO_15_SQL)),
+    (15, MigrationStep::Sql(MIGRATE_15_TO_16_SQL)),
 ];
+
+/// Schema 15 to 16: environmental-requirement rollout boundary.
+///
+/// Schema 15 already stores the typed requirement wire. This no-data step is
+/// the environmental fact a task may require before a successor is installed:
+/// the task stays byte-identical while the admitted runtime observation moves.
+const MIGRATE_15_TO_16_SQL: &str = "SELECT 1;";
 
 /// Schema 14 to 15: typed environmental requirements on task authority.
 ///
@@ -717,8 +725,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 15, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 16, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 15;
+PRAGMA user_version = 16;
 "#;
