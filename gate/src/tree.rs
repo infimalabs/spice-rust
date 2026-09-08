@@ -20,6 +20,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
+use gix::objs::WriteTo as _;
 use sill::Possession;
 
 use crate::state::RenameMap;
@@ -276,6 +277,16 @@ impl SelectedTree {
         &self.repository
     }
 
+    /// Gate-owned writable workspace that contains this immutable selection.
+    ///
+    /// Observation scratch belongs below this directory so it is protected by
+    /// the same possession and abandoned-workspace recovery as the selected
+    /// tree. Callers must never place observation state in the source
+    /// repository.
+    pub(crate) fn private_workspace(&self) -> &Path {
+        &self.workspace
+    }
+
     /// Materialize the exact `HEAD` commit captured beside a staged index.
     ///
     /// The retained object identity, rather than a fresh `HEAD` resolution,
@@ -435,12 +446,25 @@ fn write_index_tree(repo: &gix::Repository, items: &[Item]) -> Result<String, Tr
                 ),
             })?;
     }
+    // The identity is evidence, not an object the caller repository needs to
+    // retain. The high-level editor writes every synthesized directory tree to
+    // the repository object database; detach it and hash the canonical tree
+    // encodings in memory instead. Every leaf was already admitted and read
+    // from the repository by `materialize_items`, and every path was normalized
+    // before it reached this editor.
     editor
-        .write()
-        .map(|identity| identity.detach().to_string())
+        .detach()
+        .write(|tree| {
+            let mut encoded = Vec::with_capacity(tree.size() as usize);
+            tree.write_to(&mut encoded)
+                .map_err(|error| error.to_string())?;
+            gix::objs::compute_hash(repo.object_hash(), gix::objs::Kind::Tree, &encoded)
+                .map_err(|error| error.to_string())
+        })
+        .map(|identity| identity.to_string())
         .map_err(|source| TreeError::Repository {
             path: repository_path(repo),
-            evidence: format!("cannot write staged candidate tree: {source}"),
+            evidence: format!("cannot identify staged candidate tree: {source}"),
         })
 }
 
@@ -1233,6 +1257,7 @@ fn set_owner_writable(path: &Path, metadata: &fs::Metadata) {
 mod tests {
     use super::*;
     use crate::test_repository;
+    use std::collections::BTreeMap;
 
     #[test]
     fn byte_identical_index_replacement_refuses_the_captured_source() {
@@ -1250,6 +1275,60 @@ mod tests {
             .expect_err("index write-restore must move source identity");
 
         assert!(matches!(error, TreeError::IndexChanged { .. }));
+    }
+
+    #[test]
+    fn staged_tree_identity_is_hashed_without_writing_repository_objects() {
+        let fixture = test_repository::Fixture::repository("tree-object-isolation");
+        fixture.write("base.txt", b"base\n");
+        test_repository::stage_all(fixture.path());
+        test_repository::commit(fixture.path(), "base");
+        fixture.write("nested/new.txt", b"novel staged bytes\n");
+        test_repository::stage(fixture.path(), &["nested/new.txt"]);
+
+        let objects = fixture.join(".git/objects");
+        let before = file_snapshot(&objects);
+        let selected = Selector::staged()
+            .materialize(fixture.path())
+            .expect("materialize novel staged tree");
+        let identity = selected
+            .staged_authority()
+            .expect("staged authority")
+            .candidate_tree_identity();
+
+        assert_eq!(file_snapshot(&objects), before);
+        assert!(
+            !objects.join(&identity[..2]).join(&identity[2..]).exists(),
+            "candidate tree identity must not be persisted in the caller object database"
+        );
+    }
+
+    #[test]
+    fn unresolved_index_refusal_preserves_every_conflict_stage_byte() {
+        let fixture = test_repository::Fixture::repository("tree-conflict-preservation");
+        fixture.write("conflicted.txt", b"base\n");
+        test_repository::stage_all(fixture.path());
+        let head = test_repository::commit(fixture.path(), "base");
+        test_repository::install_conflict_stages(fixture.path(), "conflicted.txt");
+        for (name, value) in [
+            ("ORIG_HEAD", format!("{head}\n")),
+            ("MERGE_HEAD", format!("{head}\n")),
+            ("MERGE_MODE", "no-ff\n".to_owned()),
+            ("MERGE_MSG", "allocator conflict\n".to_owned()),
+        ] {
+            fs::write(fixture.join(format!(".git/{name}")), value).expect("write merge control");
+        }
+        let before = file_snapshot(&fixture.join(".git"));
+
+        let refusal = Selector::staged()
+            .materialize(fixture.path())
+            .expect_err("an unresolved index cannot become a selected tree");
+
+        assert!(matches!(
+            refusal,
+            TreeError::UnmergedIndex { path, stage: 1 } if path == "conflicted.txt"
+        ));
+        assert_eq!(file_snapshot(&fixture.join(".git")), before);
     }
 
     #[test]
@@ -1283,5 +1362,29 @@ mod tests {
             .expect("linked ref movement is outside retained source authority");
         drop(selected);
         test_repository::remove_linked_worktree(fixture.path(), &linked);
+    }
+
+    fn file_snapshot(root: &Path) -> BTreeMap<String, Vec<u8>> {
+        let mut pending = vec![PathBuf::new()];
+        let mut observed = BTreeMap::new();
+        while let Some(relative) = pending.pop() {
+            let mut entries = fs::read_dir(root.join(&relative))
+                .expect("read object directory")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("read object entry");
+            entries.sort_by_key(std::fs::DirEntry::file_name);
+            for entry in entries {
+                let path = relative.join(entry.file_name());
+                if entry.file_type().expect("inspect object entry").is_dir() {
+                    pending.push(path);
+                } else {
+                    observed.insert(
+                        path.to_string_lossy().into_owned(),
+                        fs::read(entry.path()).expect("read object bytes"),
+                    );
+                }
+            }
+        }
+        observed
     }
 }

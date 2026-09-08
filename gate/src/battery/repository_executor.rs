@@ -697,7 +697,7 @@ fn capture_baselines(
     repository: &Path,
     contract: &Contract,
     rim: &RimCapture,
-    clean_merge_tree: Option<(&str, &str, &str)>,
+    clean_merge_tree: Option<(&str, &str, &str, &Path)>,
 ) -> BaselineCapture {
     let classes = contract.rule_policy().document().file_classes();
     let mut suffixes = classes.magic().to_vec();

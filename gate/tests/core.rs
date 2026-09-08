@@ -68,9 +68,9 @@ fn declarations_fix_identity_order_sources_schemas_and_tool_contracts() {
     else {
         panic!("merge integrity must use bounded git acquisition");
     };
-    assert_eq!(merge.len(), 5);
+    assert_eq!(merge.len(), 4);
     assert_eq!(
-        merge[3].arguments(),
+        merge[2].arguments(),
         [
             "merge-tree",
             "--write-tree",
@@ -80,7 +80,7 @@ fn declarations_fix_identity_order_sources_schemas_and_tool_contracts() {
             "MERGE_HEAD",
         ]
     );
-    assert_eq!(merge[3].accepted_exit_codes(), [0, 1]);
+    assert_eq!(merge[2].accepted_exit_codes(), [0, 1]);
 
     let CoreToolContract::Git {
         commands: staging,

@@ -87,7 +87,7 @@ impl BaselineCapture {
         repository: &Path,
         suffixes: &[String],
         paths: &[String],
-        clean_merge_tree: Option<(&str, &str, &str)>,
+        clean_merge_tree: Option<(&str, &str, &str, &Path)>,
     ) -> Self {
         match CommittedTexts::read(repository, suffixes, paths, clean_merge_tree) {
             Ok(baselines) => Self::Reached(baselines),
@@ -262,7 +262,7 @@ impl CommittedTexts {
         repository: &Path,
         suffixes: &[String],
         paths: &[String],
-        clean_merge_tree: Option<(&str, &str, &str)>,
+        clean_merge_tree: Option<(&str, &str, &str, &Path)>,
     ) -> Result<Self, TreeError> {
         let repo = open_repository(repository)?;
         let paths = paths.iter().map(String::as_str).collect::<BTreeSet<_>>();
@@ -275,12 +275,13 @@ impl CommittedTexts {
         };
         let merging = merge_heads(&repo)?;
         let clean_merge = match clean_merge_tree {
-            Some((captured_head, captured_merging, tree))
+            Some((captured_head, captured_merging, tree, object_repository))
                 if commit_id.to_string() == captured_head
                     && merging.len() == 1
                     && merging[0].to_string() == captured_merging =>
             {
-                Some(selected_tree_texts(&repo, tree, suffixes, &paths)?)
+                let objects = open_repository(object_repository)?;
+                Some(selected_tree_texts(&objects, tree, suffixes, &paths)?)
             }
             Some(_) | None => None,
         };

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use gix::bstr::BStr;
-use gix::index::entry::{Flags, Mode, Stat};
+use gix::index::entry::{Flags, Mode, Stage, Stat};
 use gix::object::tree::EntryKind;
 
 const MAIN_BRANCH: &str = "refs/heads/main";
@@ -98,6 +98,33 @@ pub(crate) fn stage_all(root: &Path) {
     persist_index(&mut index);
 }
 
+pub(crate) fn install_conflict_stages(root: &Path, path: &str) {
+    let repository = open(root);
+    let mut index = repository
+        .index_or_load_from_head_or_empty()
+        .expect("load fixture index")
+        .into_owned();
+    index.remove_entries(|_, candidate, _| candidate == path.as_bytes());
+    for (stage, bytes) in [
+        (Stage::Base, b"base\n".as_slice()),
+        (Stage::Ours, b"ours\n".as_slice()),
+        (Stage::Theirs, b"theirs\n".as_slice()),
+    ] {
+        let id = repository
+            .write_blob(bytes)
+            .expect("write conflict-stage blob")
+            .detach();
+        index.dangerously_push_entry(
+            Stat::default(),
+            id,
+            Flags::from_stage(stage),
+            Mode::FILE,
+            BStr::new(path.as_bytes()),
+        );
+    }
+    persist_index(&mut index);
+}
+
 pub(crate) fn commit(root: &Path, message: &str) -> String {
     let repository = open(root);
     let index = repository.index().expect("open fixture index");
@@ -127,6 +154,37 @@ pub(crate) fn commit(root: &Path, message: &str) -> String {
         .detach();
     append_head_reflog(&repository, parent, commit, &format!("commit: {message}"));
     commit.to_string()
+}
+
+pub(crate) fn commit_to(root: &Path, reference: &str, parent: &str, message: &str) -> String {
+    let repository = open(root);
+    let index = repository.index().expect("open fixture index");
+    let mut editor = repository.empty_tree().edit().expect("edit fixture tree");
+    for entry in index.entries() {
+        let kind = match entry.mode {
+            Mode::FILE => EntryKind::Blob,
+            Mode::FILE_EXECUTABLE => EntryKind::BlobExecutable,
+            Mode::SYMLINK => EntryKind::Link,
+            unsupported => panic!("unsupported fixture index mode {unsupported:?}"),
+        };
+        editor
+            .upsert(entry.path(&index), kind, entry.id)
+            .expect("insert fixture tree entry");
+    }
+    let tree = editor.write().expect("write fixture tree").detach();
+    let parent = parent
+        .parse::<gix::ObjectId>()
+        .expect("parse fixture parent");
+    let signature = gix::actor::SignatureRef {
+        name: "Gate Fixture".into(),
+        email: "gate@example.invalid".into(),
+        time: FIXTURE_STAMP,
+    };
+    repository
+        .commit_as(signature, signature, reference, message, tree, Some(parent))
+        .expect("commit fixture branch")
+        .detach()
+        .to_string()
 }
 
 pub(crate) fn create_linked_worktree(root: &Path, linked: &Path, branch: &str) {
