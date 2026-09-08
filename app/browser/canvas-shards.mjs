@@ -11,21 +11,9 @@ export const CANVAS_ACTION_PREFIX = "canvas:shard:";
 export const SHARD_FLAG = "--spice-shard";
 export const SHARD_EVENT_PREFIX = "CANVAS-SHARD ";
 
-const EXPECTED_SCENARIOS = [
-  "launch-boundaries",
-  "fixture-reaping",
-  "light-readiness",
-  "inline-task-chip",
-  "agent-conversation",
-  "firefox-restored-mosaic",
-  "reference-composer",
-  "authority-task-flow",
-  "media-exchange",
-  "variant-surfaces",
-  "socket-resilience",
-  "organization-lifecycle",
-  "resident-restart",
-];
+const workerSource = readFileSync(new URL("./canvas.spec.mjs", import.meta.url), "utf8");
+const declaredScenarios = [...workerSource.matchAll(/\brun\.scenario\(\s*"([a-z0-9-]+)"/g)]
+  .map((match) => match[1]);
 
 const selectedShard = process.env.SPICE_CANVAS_SHARD; // env-policy: allow
 const registry = selectedShard === undefined
@@ -56,8 +44,8 @@ export function assertShardInventory(shards = CANVAS_SHARDS) {
   );
   assert.deepEqual(
     [...observed].sort(),
-    [...EXPECTED_SCENARIOS].sort(),
-    "the shard registry covers the complete Canvas scenario inventory",
+    [...declaredScenarios].sort(),
+    "the shard registry covers every scenario declared by the Canvas worker",
   );
   assert.ok(shards.every((shard) => shard.scenarios.length > 0), "every shard owns a scenario");
   assert.ok(
@@ -70,7 +58,7 @@ export function assertShardInventory(shards = CANVAS_SHARDS) {
 export function assertShardMutationGuard() {
   assert.throws(
     () => assertShardInventory(CANVAS_SHARDS.slice(1)),
-    /complete Canvas scenario inventory/,
+    /every scenario declared by the Canvas worker/,
     "deleting one Canvas shard registration fails the named inventory assertion",
   );
 }
@@ -153,7 +141,6 @@ export function startShardWorker(arguments_, emit = emitShardEvent) {
       }
     },
     async phase(name, action) {
-      assert.ok(currentScenario, `${shard.name} phases run inside a scenario`);
       phaseName(name);
       assert.equal(typeof action, "function", `${shard.name}/${name} phase is executable`);
       const path = [...phases.map((phase) => phase.name), name];

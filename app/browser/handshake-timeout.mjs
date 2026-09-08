@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter, once } from "node:events";
 import { createServer, request as requestHttp } from "node:http";
-import { performance } from "node:perf_hooks";
 
 import {
   chooseCanvasView,
@@ -16,7 +15,6 @@ const renderedHandshakeReason = new RegExp(
   `canvas connection handshake timed out after ${HANDSHAKE_TIMEOUT_MS} ms`,
 );
 
-const dispatchToleranceMilliseconds = 250;
 const renderedToleranceMilliseconds = 2_000;
 // This watchdog only rejects an absent callback; it never advances the fixture.
 const eventBoundMilliseconds = 10_000;
@@ -42,14 +40,13 @@ export async function assertHandshakeTimeout(browser, residentEndpoint) {
     request.resume();
     const attempt = {
       index: attempts.length,
-      opened: performance.now(),
-      closed: null,
+      closed: false,
     };
     attempts.push(attempt);
     state.open += 1;
     state.maximumOpen = Math.max(state.maximumOpen, state.open);
     response.once("close", () => {
-      attempt.closed = performance.now();
+      attempt.closed = true;
       state.open -= 1;
       events.emit(`close:${attempt.index}`, attempt);
     });
@@ -68,6 +65,7 @@ export async function assertHandshakeTimeout(browser, residentEndpoint) {
     const firstRequest = observedEvent(events, "request:0");
     context = await browser.newContext({ viewport: { width: 1024, height: 768 } });
     const page = await context.newPage();
+    await page.clock.install();
     const pageRequests = [];
     const pageProblems = [];
     page.on("request", (request) => pageRequests.push(request.url()));
@@ -124,25 +122,13 @@ export async function assertHandshakeTimeout(browser, residentEndpoint) {
       .catch((error) => ({ error }));
     await page.getByLabel("Open Spice Canvas menu").waitFor();
     await chooseCanvasView(page, "Flow");
-    const [closed, second] = await Promise.all([firstClosed, secondRequest]);
-    assert.ok(closed.closed <= second.opened, "the first Fetch closes before its retry begins");
+    await new Promise(setImmediate);
+    assert.equal(first.closed, false, "the stalled Fetch stays open before its deadline advances");
+    assert.equal(attempts.length, 1, "no retry starts before the first deadline advances");
+    await page.clock.fastForward(HANDSHAKE_TIMEOUT_MS);
+    const closed = await firstClosed;
+    assert.equal(closed.closed, true, "the exact production deadline aborts the stalled Fetch");
     assert.equal(state.maximumOpen, 1, "retry never accumulates stalled bootstrap requests");
-    assert.ok(
-      closed.closed - first.opened >=
-        HANDSHAKE_TIMEOUT_MS - dispatchToleranceMilliseconds,
-      "the abort was not an inverted or prematurely short handshake deadline",
-    );
-    // The base and not the ceiling: this is the first attempt to end, so the
-    // client's ladder is still on its bottom rung. A later retry in the same
-    // outage would owe more than this, which is why the bound names the rung it
-    // means rather than the delay in general.
-    assert.ok(
-      second.opened - first.opened >=
-        HANDSHAKE_TIMEOUT_MS +
-          RECONNECT_BASE_MS -
-          dispatchToleranceMilliseconds,
-      "the retry includes the production reconnect interval after the deadline",
-    );
     const statusResult = await statusOutcome;
     if ("error" in statusResult) throw statusResult.error;
     const { renderedLabel, described } = statusResult.observation;
@@ -158,6 +144,15 @@ export async function assertHandshakeTimeout(browser, residentEndpoint) {
       renderedHandshakeReason,
       "describeConnection carries the same timeout reason",
     );
+    assert.equal(attempts.length, 1, "the timed-out connection waits before retrying");
+    // The base and not the ceiling: this is the first attempt to end, so the
+    // client's ladder is still on its bottom rung. A later retry in the same
+    // outage would owe more than this, which is why the advance names the rung
+    // it means rather than the delay in general.
+    await page.clock.fastForward(RECONNECT_BASE_MS);
+    await secondRequest;
+    assert.equal(attempts.length, 2, "one retry starts after the production reconnect interval");
+    assert.equal(state.maximumOpen, 1, "the retry begins only after the first Fetch closed");
 
     monitor.assertClean();
   } finally {
