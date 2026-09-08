@@ -983,19 +983,26 @@
   white-space: nowrap;
 }
 .organization-surface .markdown-body blockquote .message-task-chip { font-size: inherit; }
-.organization-surface .message-taste-pill {
+.organization-surface .message-taste-pill,
+.organization-surface .message-review-pill {
   display: inline-flex;
   min-height: 17px;
   align-items: center;
   vertical-align: baseline;
   margin: 2px 0; padding: 0 4px;
-  border: 1px solid var(--accent-2);
+  border: 1px solid currentColor;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--accent-2) 14%, var(--panel));
-  color: var(--accent-2);
   font-size: .8125em; line-height: 1.34;
   font-weight: 700;
   white-space: nowrap;
+}
+.organization-surface .message-taste-pill {
+  border-color: var(--accent-2);
+  background: color-mix(in srgb, var(--accent-2) 14%, var(--panel));
+  color: var(--accent-2);
+}
+.organization-surface .message-review-pill {
+  background: color-mix(in srgb, currentColor 14%, var(--panel));
 }
 .organization-surface .mosaic-message-card footer .card-action {
   width: 32px;
