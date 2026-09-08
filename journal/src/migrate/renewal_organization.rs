@@ -1,9 +1,9 @@
-//! Schema 16 to 17 retirement of the durable `team_slot` spelling.
+//! Schema 16 to 17 retirement of the renewal-state `team_slot` key.
 //!
-//! Renewal state can rest in immutable renewal facts, the residency head, and
-//! successful snapshot or mutation receipts. Every changed carrier is decoded
-//! through its exact current DTO before canonical bytes replace the legacy
-//! document. Runtime wire remains strict: compatibility ends at this migration.
+//! Renewal state can rest in a fact, the residency singleton, or a typed
+//! command answer. Each carrier is normalized at its declared path, decoded
+//! through its current wire type, and written only when its predecessor bytes
+//! differ by the retired key.
 
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
@@ -14,12 +14,15 @@ use super::{MigrationError, OpenError};
 
 const FROM: u32 = 16;
 const TO: u32 = 17;
-
-const LANE_ANSWER_KINDS: &[&str] = &[
+const CURRENT_SLOT: &[u8] = br#""org_slot":"#;
+const RETIRED_SLOT: &[u8] = br#""team_slot":"#;
+const RECEIPT_KINDS: &[&str] = &[
+    "board::read",
     "lane::read",
     "lane::arrange",
     "lineage::configure",
     "lineage::arrange",
+    "lane::renewal",
 ];
 
 pub(super) fn migrate(connection: &Connection) -> Result<(), OpenError> {
@@ -29,66 +32,30 @@ pub(super) fn migrate(connection: &Connection) -> Result<(), OpenError> {
 }
 
 fn migrate_facts(connection: &Connection) -> Result<(), OpenError> {
-    let mut statement = connection
-        .prepare(
-            "SELECT seq, kind, envelope FROM fact_envelopes \
-             WHERE kind = 'lane::renewal' ORDER BY seq",
-        )
-        .map_err(OpenError::Sqlite)?;
-    let rows = statement
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Vec<u8>>(2)?,
-            ))
-        })
-        .map_err(OpenError::Sqlite)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(OpenError::Sqlite)?;
-
-    for (seq, indexed_kind, bytes) in rows {
+    let rows = fact_rows(connection)?;
+    for (seq, indexed_kind, original) in rows {
         let row = seq.to_string();
-        let mut document = decode("fact_envelopes", &row, &bytes)?;
-        let fact = member_object(
+        let mut document = decode("fact_envelopes", &row, &original)?;
+        let fact = required_object_field(
             "fact_envelopes",
             &row,
             object("fact_envelopes", &row, &mut document)?,
             "fact",
+            "envelope.fact",
         )?;
-        let changed = normalize_optional_record(
+        let mut retired = Vec::new();
+        normalize_optional_record(
             "fact_envelopes",
             &row,
-            fact.get_mut("renewal"),
+            fact,
+            "renewal",
             "fact.renewal",
+            &mut retired,
         )?;
-        let intermediate = encoded_value("fact_envelopes", &row, &document)?;
-        let envelope: wire::Envelope<wire::AnyFact> =
-            wire::decode(&intermediate).map_err(|error| {
-                invalid(
-                    "fact_envelopes",
-                    &row,
-                    &format!("migrated renewal envelope is not current wire: {error}"),
-                )
-            })?;
-        if u64::try_from(seq).ok() != Some(envelope.seq.get())
-            || indexed_kind != envelope.fact.kind().as_str()
+        let canonical = canonical_fact(&row, seq, &indexed_kind, &document)?;
+        if let Some(canonical) =
+            changed_bytes("fact_envelopes", &row, &original, canonical, &retired)?
         {
-            return Err(invalid(
-                "fact_envelopes",
-                &row,
-                "indexed renewal fact identity disagrees with its envelope",
-            ));
-        }
-        let canonical = wire::encode(&envelope).map_err(|error| {
-            invalid(
-                "fact_envelopes",
-                &row,
-                &format!("migrated renewal envelope cannot encode canonically: {error}"),
-            )
-        })?;
-        require_unchanged_canonical("fact_envelopes", &row, changed, &bytes, &canonical)?;
-        if changed {
             connection
                 .execute(
                     "UPDATE fact_envelopes SET envelope = ?1 WHERE seq = ?2",
@@ -101,7 +68,7 @@ fn migrate_facts(connection: &Connection) -> Result<(), OpenError> {
 }
 
 fn migrate_residency_head(connection: &Connection) -> Result<(), OpenError> {
-    let Some(bytes) = connection
+    let Some(original) = connection
         .query_row(
             "SELECT body FROM residency_head WHERE singleton = 1",
             [],
@@ -112,30 +79,22 @@ fn migrate_residency_head(connection: &Connection) -> Result<(), OpenError> {
     else {
         return Ok(());
     };
-    let mut document = decode("residency_head", "1", &bytes)?;
-    let head = object("residency_head", "1", &mut document)?;
-    let changed = normalize_records("residency_head", "1", head.get_mut("renewals"), "renewals")?;
-    let intermediate = encoded_value("residency_head", "1", &document)?;
-    let head: wire::ResidencyHead = wire::decode(&intermediate).map_err(|error| {
-        invalid(
-            "residency_head",
-            "1",
-            &format!("migrated residency head is not current wire: {error}"),
-        )
-    })?;
-    let canonical = wire::encode(&head).map_err(|error| {
-        invalid(
-            "residency_head",
-            "1",
-            &format!("migrated residency head cannot encode canonically: {error}"),
-        )
-    })?;
-    require_unchanged_canonical("residency_head", "1", changed, &bytes, &canonical)?;
-    if changed {
+    let mut document = decode("residency_head", "1", &original)?;
+    let mut retired = Vec::new();
+    normalize_records(
+        "residency_head",
+        "1",
+        object("residency_head", "1", &mut document)?,
+        "renewals",
+        "body.renewals",
+        &mut retired,
+    )?;
+    let canonical = canonical::<wire::ResidencyHead>("residency_head", "1", &document)?;
+    if let Some(canonical) = changed_bytes("residency_head", "1", &original, canonical, &retired)? {
         connection
             .execute(
                 "UPDATE residency_head SET body = ?1 WHERE singleton = 1",
-                [canonical],
+                params![canonical],
             )
             .map_err(OpenError::Sqlite)?;
     }
@@ -143,62 +102,80 @@ fn migrate_residency_head(connection: &Connection) -> Result<(), OpenError> {
 }
 
 fn migrate_receipts(connection: &Connection) -> Result<(), OpenError> {
-    let mut statement = connection
-        .prepare(
-            "SELECT command_id, command_kind, response FROM command_receipts \
-             WHERE command_kind IN (\
-                 'board::read', 'lane::read', 'lane::arrange', 'lane::renewal', \
-                 'lineage::configure', 'lineage::arrange'\
-             ) ORDER BY command_id",
-        )
-        .map_err(OpenError::Sqlite)?;
-    let rows = statement
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Vec<u8>>(2)?,
-            ))
-        })
-        .map_err(OpenError::Sqlite)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(OpenError::Sqlite)?;
-
-    for (command, kind, bytes) in rows {
-        let mut document = decode("command_receipts", &command, &bytes)?;
-        let changed = normalize_response(&command, &kind, &mut document)?;
-        let intermediate = encoded_value("command_receipts", &command, &document)?;
-        let canonical = match kind.as_str() {
-            "board::read" => canonical_response::<wire::intent::BoardAnswer>(
+    let rows = receipt_rows(connection)?;
+    for (command, kind, original) in rows {
+        if !RECEIPT_KINDS.contains(&kind.as_str()) {
+            return Err(invalid(
                 "command_receipts",
                 &command,
-                &intermediate,
-                "board response",
-            )?,
-            "lane::renewal" => canonical_response::<wire::intent::LaneRenewalAnswer>(
-                "command_receipts",
-                &command,
-                &intermediate,
-                "lane renewal response",
-            )?,
-            kind if LANE_ANSWER_KINDS.contains(&kind) => {
-                canonical_response::<wire::intent::LaneAnswer>(
-                    "command_receipts",
-                    &command,
-                    &intermediate,
-                    "lane response",
-                )?
+                "renewal-bearing response kind is not registered by the migration",
+            ));
+        }
+        let mut document = decode("command_receipts", &command, &original)?;
+        let outcome_kind = response_outcome_kind(&command, &mut document)?;
+        let mut retired = Vec::new();
+        match outcome_kind.as_str() {
+            "refusal" | "fault" => {}
+            "reply" => {
+                let body = reply_body("command_receipts", &command, &mut document)?;
+                match kind.as_str() {
+                    "board::read" => {
+                        let residency = required_object_field(
+                            "command_receipts",
+                            &command,
+                            body,
+                            "residency",
+                            "response.outcome.body.residency",
+                        )?;
+                        let residency = required_object_field(
+                            "command_receipts",
+                            &command,
+                            residency,
+                            "body",
+                            "response.outcome.body.residency.body",
+                        )?;
+                        normalize_records(
+                            "command_receipts",
+                            &command,
+                            residency,
+                            "renewals",
+                            "response.outcome.body.residency.body.renewals",
+                            &mut retired,
+                        )?;
+                    }
+                    "lane::read" | "lane::arrange" | "lineage::configure" | "lineage::arrange" => {
+                        normalize_records(
+                            "command_receipts",
+                            &command,
+                            body,
+                            "renewals",
+                            "response.outcome.body.renewals",
+                            &mut retired,
+                        )?;
+                    }
+                    "lane::renewal" => normalize_optional_record(
+                        "command_receipts",
+                        &command,
+                        body,
+                        "renewal",
+                        "response.outcome.body.renewal",
+                        &mut retired,
+                    )?,
+                    _ => unreachable!("receipt query and registry are the same closed set"),
+                }
             }
             _ => {
                 return Err(invalid(
                     "command_receipts",
                     &command,
-                    "renewal response kind is not registered by the migration",
+                    &format!("response outcome kind {outcome_kind:?} is unknown"),
                 ));
             }
-        };
-        require_unchanged_canonical("command_receipts", &command, changed, &bytes, &canonical)?;
-        if changed {
+        }
+        let canonical = canonical_response(&command, &kind, &document)?;
+        if let Some(canonical) =
+            changed_bytes("command_receipts", &command, &original, canonical, &retired)?
+        {
             connection
                 .execute(
                     "UPDATE command_receipts SET response = ?1 WHERE command_id = ?2",
@@ -210,84 +187,37 @@ fn migrate_receipts(connection: &Connection) -> Result<(), OpenError> {
     Ok(())
 }
 
-fn normalize_response(row: &str, kind: &str, document: &mut Value) -> Result<bool, OpenError> {
-    let response = object("command_receipts", row, document)?;
-    let outcome = member_object("command_receipts", row, response, "outcome")?;
-    match outcome.get("kind").and_then(Value::as_str) {
-        Some("refusal" | "fault") => Ok(false),
-        Some("reply") => {
-            let body = member_object("command_receipts", row, outcome, "body")?;
-            match kind {
-                "board::read" => {
-                    let residency = member_object("command_receipts", row, body, "residency")?;
-                    let residency = member_object("command_receipts", row, residency, "body")?;
-                    normalize_records(
-                        "command_receipts",
-                        row,
-                        residency.get_mut("renewals"),
-                        "outcome.body.residency.body.renewals",
-                    )
-                }
-                "lane::renewal" => normalize_optional_record(
-                    "command_receipts",
-                    row,
-                    body.get_mut("renewal"),
-                    "outcome.body.renewal",
-                ),
-                kind if LANE_ANSWER_KINDS.contains(&kind) => normalize_records(
-                    "command_receipts",
-                    row,
-                    body.get_mut("renewals"),
-                    "outcome.body.renewals",
-                ),
-                _ => Err(invalid(
-                    "command_receipts",
-                    row,
-                    "renewal response kind is not registered by the migration",
-                )),
-            }
-        }
-        Some(other) => Err(invalid(
-            "command_receipts",
-            row,
-            &format!("response outcome kind {other:?} is unknown"),
-        )),
-        None => Err(invalid(
-            "command_receipts",
-            row,
-            "response outcome kind is missing or not a string",
-        )),
-    }
-}
-
 fn normalize_records(
     table: &'static str,
     row: &str,
-    value: Option<&mut Value>,
+    parent: &mut Map<String, Value>,
+    field: &str,
     path: &str,
-) -> Result<bool, OpenError> {
-    let Some(value) = value else {
-        return Ok(false);
+    retired: &mut Vec<bool>,
+) -> Result<(), OpenError> {
+    let Some(value) = parent.get_mut(field) else {
+        return Ok(());
     };
     let records = value
         .as_array_mut()
         .ok_or_else(|| invalid(table, row, &format!("{path} is not an array")))?;
-    let mut changed = false;
     for (index, record) in records.iter_mut().enumerate() {
-        changed |= normalize_record(table, row, record, &format!("{path}[{index}]"))?;
+        normalize_record(table, row, record, &format!("{path}[{index}]"), retired)?;
     }
-    Ok(changed)
+    Ok(())
 }
 
 fn normalize_optional_record(
     table: &'static str,
     row: &str,
-    value: Option<&mut Value>,
+    parent: &mut Map<String, Value>,
+    field: &str,
     path: &str,
-) -> Result<bool, OpenError> {
-    match value {
-        None | Some(Value::Null) => Ok(false),
-        Some(record) => normalize_record(table, row, record, path),
+    retired: &mut Vec<bool>,
+) -> Result<(), OpenError> {
+    match parent.get_mut(field) {
+        None | Some(Value::Null) => Ok(()),
+        Some(record) => normalize_record(table, row, record, path, retired),
     }
 }
 
@@ -296,40 +226,16 @@ fn normalize_record(
     row: &str,
     record: &mut Value,
     path: &str,
-) -> Result<bool, OpenError> {
-    let record = record
-        .as_object_mut()
-        .ok_or_else(|| invalid(table, row, &format!("{path} is not an object")))?;
-    let state = member_object(table, row, record, "state")?;
-    match state.get("state").and_then(Value::as_str) {
-        Some("requested" | "handoff-pending" | "successor-started" | "launch-refused") => {}
-        Some(found) => {
-            return Err(invalid(
-                table,
-                row,
-                &format!("{path}.state names unknown renewal state {found:?}"),
-            ));
-        }
-        None => {
-            return Err(invalid(
-                table,
-                row,
-                &format!("{path}.state.state is missing or not a string"),
-            ));
-        }
-    }
-    match (
-        state.contains_key("team_slot"),
-        state.contains_key("org_slot"),
-    ) {
-        (true, false) => {
-            let slot = state
-                .remove("team_slot")
-                .expect("retired slot was just observed");
-            state.insert("org_slot".to_owned(), slot);
-            Ok(true)
-        }
-        (false, true) => Ok(false),
+    retired: &mut Vec<bool>,
+) -> Result<(), OpenError> {
+    let record = object_at(table, row, record, path)?;
+    let state = record
+        .get_mut("state")
+        .ok_or_else(|| invalid(table, row, &format!("{path}.state is missing")))?;
+    let state = object_at(table, row, state, &format!("{path}.state"))?;
+    let has_retired = state.contains_key("team_slot");
+    let has_current = state.contains_key("org_slot");
+    match (has_retired, has_current) {
         (true, true) => Err(invalid(
             table,
             row,
@@ -340,66 +246,216 @@ fn normalize_record(
             row,
             &format!("{path}.state carries neither team_slot nor org_slot"),
         )),
+        (true, false) => {
+            let slot = state
+                .remove("team_slot")
+                .expect("the retired slot was just observed");
+            state.insert("org_slot".to_owned(), slot);
+            retired.push(true);
+            Ok(())
+        }
+        (false, true) => {
+            retired.push(false);
+            Ok(())
+        }
     }
 }
 
-fn canonical_response<B>(
+fn changed_bytes(
     table: &'static str,
     row: &str,
-    bytes: &[u8],
-    description: &str,
-) -> Result<Vec<u8>, OpenError>
-where
-    B: DeserializeOwned + Serialize,
-{
-    let _: wire::Response<B> = wire::decode(bytes).map_err(|error| {
-        invalid(
+    original: &[u8],
+    canonical: Vec<u8>,
+    retired: &[bool],
+) -> Result<Option<Vec<u8>>, OpenError> {
+    let predecessor = predecessor_bytes(table, row, &canonical, retired)?;
+    if predecessor != original {
+        return Err(invalid(
             table,
             row,
-            &format!("migrated {description} is not current wire: {error}"),
+            "stored bytes are not canonical schema-16 renewal wire",
+        ));
+    }
+    Ok(retired.iter().any(|value| *value).then_some(canonical))
+}
+
+fn predecessor_bytes(
+    table: &'static str,
+    row: &str,
+    canonical: &[u8],
+    retired: &[bool],
+) -> Result<Vec<u8>, OpenError> {
+    let mut output = Vec::with_capacity(canonical.len() + retired.len());
+    let mut cursor = 0;
+    for &was_retired in retired {
+        let Some(relative) = find(&canonical[cursor..], CURRENT_SLOT) else {
+            return Err(invalid(
+                table,
+                row,
+                "typed renewal state has no current slot key",
+            ));
+        };
+        let start = cursor + relative;
+        output.extend_from_slice(&canonical[cursor..start]);
+        output.extend_from_slice(if was_retired {
+            RETIRED_SLOT
+        } else {
+            CURRENT_SLOT
+        });
+        cursor = start + CURRENT_SLOT.len();
+    }
+    if find(&canonical[cursor..], CURRENT_SLOT).is_some() {
+        return Err(invalid(
+            table,
+            row,
+            "typed carrier contains an unvisited renewal slot",
+        ));
+    }
+    output.extend_from_slice(&canonical[cursor..]);
+    Ok(output)
+}
+
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+fn canonical_fact(
+    row: &str,
+    seq: i64,
+    indexed_kind: &str,
+    value: &Value,
+) -> Result<Vec<u8>, OpenError> {
+    let bytes = intermediate("fact_envelopes", row, value)?;
+    let envelope: wire::Envelope<wire::AnyFact> = wire::decode(&bytes).map_err(|error| {
+        invalid(
+            "fact_envelopes",
+            row,
+            &format!("migrated envelope is not current fact wire: {error}"),
         )
     })?;
-    let response: wire::Response<Value> = wire::decode(bytes).map_err(|error| {
-        invalid(
-            table,
+    if u64::try_from(seq).ok() != Some(envelope.seq.get())
+        || indexed_kind != envelope.fact.kind().as_str()
+        || envelope.fact.kind() != wire::FactKind::LaneRenewalChanged
+    {
+        return Err(invalid(
+            "fact_envelopes",
             row,
-            &format!("migrated {description} is not a receipt envelope: {error}"),
-        )
-    })?;
-    wire::encode(&response).map_err(|error| {
+            "indexed renewal fact identity disagrees with its envelope",
+        ));
+    }
+    wire::encode(&envelope).map_err(|error| {
         invalid(
-            table,
+            "fact_envelopes",
             row,
-            &format!("migrated {description} cannot encode canonically: {error}"),
+            &format!("migrated envelope cannot encode canonically: {error}"),
         )
     })
 }
 
-fn require_unchanged_canonical(
-    table: &'static str,
-    row: &str,
-    changed: bool,
-    stored: &[u8],
-    canonical: &[u8],
-) -> Result<(), OpenError> {
-    if !changed && stored != canonical {
-        return Err(invalid(
+fn canonical_response(row: &str, kind: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
+    match kind {
+        "board::read" => canonical_receipt::<wire::intent::BoardAnswer>(row, value),
+        "lane::read" | "lane::arrange" | "lineage::configure" | "lineage::arrange" => {
+            canonical_receipt::<wire::intent::LaneAnswer>(row, value)
+        }
+        "lane::renewal" => canonical_receipt::<wire::intent::LaneRenewalAnswer>(row, value),
+        _ => Err(invalid(
+            "command_receipts",
+            row,
+            "renewal-bearing response kind is not registered by the migration",
+        )),
+    }
+}
+
+fn canonical_receipt<B>(row: &str, value: &Value) -> Result<Vec<u8>, OpenError>
+where
+    B: DeserializeOwned,
+{
+    let bytes = intermediate("command_receipts", row, value)?;
+    wire::decode::<wire::Response<B>>(&bytes).map_err(|error| {
+        invalid(
+            "command_receipts",
+            row,
+            &format!("migrated response is not its command-kind wire: {error}"),
+        )
+    })?;
+    let response: wire::Response<Value> = wire::decode(&bytes).map_err(|error| {
+        invalid(
+            "command_receipts",
+            row,
+            &format!("migrated response is not generic receipt wire: {error}"),
+        )
+    })?;
+    wire::encode(&response).map_err(|error| {
+        invalid(
+            "command_receipts",
+            row,
+            &format!("migrated response cannot encode canonically: {error}"),
+        )
+    })
+}
+
+fn canonical<T>(table: &'static str, row: &str, value: &Value) -> Result<Vec<u8>, OpenError>
+where
+    T: DeserializeOwned + Serialize,
+{
+    let bytes = intermediate(table, row, value)?;
+    let typed: T = wire::decode(&bytes).map_err(|error| {
+        invalid(
             table,
             row,
-            "current-spelling carrier is not canonical current wire",
-        ));
-    }
-    Ok(())
+            &format!("migrated carrier is not current typed wire: {error}"),
+        )
+    })?;
+    wire::encode(&typed).map_err(|error| {
+        invalid(
+            table,
+            row,
+            &format!("migrated carrier cannot encode canonically: {error}"),
+        )
+    })
 }
 
-fn decode(table: &'static str, row: &str, bytes: &[u8]) -> Result<Value, OpenError> {
-    serde_json::from_slice(bytes)
-        .map_err(|error| invalid(table, row, &format!("stored JSON is invalid: {error}")))
+fn reply_body<'a>(
+    table: &'static str,
+    row: &str,
+    value: &'a mut Value,
+) -> Result<&'a mut Map<String, Value>, OpenError> {
+    let root = object(table, row, value)?;
+    let outcome = required_object_field(table, row, root, "outcome", "response.outcome")?;
+    required_object_field(table, row, outcome, "body", "response.outcome.body")
 }
 
-fn encoded_value(table: &'static str, row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
-    serde_json::to_vec(value)
-        .map_err(|error| invalid(table, row, &format!("migrated JSON cannot encode: {error}")))
+fn response_outcome_kind(row: &str, value: &mut Value) -> Result<String, OpenError> {
+    let root = object("command_receipts", row, value)?;
+    let outcome =
+        required_object_field("command_receipts", row, root, "outcome", "response.outcome")?;
+    outcome
+        .get("kind")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            invalid(
+                "command_receipts",
+                row,
+                "response outcome kind is missing or not a string",
+            )
+        })
+}
+
+fn required_object_field<'a>(
+    table: &'static str,
+    row: &str,
+    parent: &'a mut Map<String, Value>,
+    field: &str,
+    path: &str,
+) -> Result<&'a mut Map<String, Value>, OpenError> {
+    let value = parent
+        .get_mut(field)
+        .ok_or_else(|| invalid(table, row, &format!("{path} is missing")))?;
+    object_at(table, row, value, path)
 }
 
 fn object<'a>(
@@ -407,21 +463,63 @@ fn object<'a>(
     row: &str,
     value: &'a mut Value,
 ) -> Result<&'a mut Map<String, Value>, OpenError> {
-    value
-        .as_object_mut()
-        .ok_or_else(|| invalid(table, row, "carrier is not an object"))
+    object_at(table, row, value, "document")
 }
 
-fn member_object<'a>(
+fn object_at<'a>(
     table: &'static str,
     row: &str,
-    object: &'a mut Map<String, Value>,
-    member: &str,
+    value: &'a mut Value,
+    path: &str,
 ) -> Result<&'a mut Map<String, Value>, OpenError> {
-    object
-        .get_mut(member)
-        .and_then(Value::as_object_mut)
-        .ok_or_else(|| invalid(table, row, &format!("{member} is missing or not an object")))
+    value
+        .as_object_mut()
+        .ok_or_else(|| invalid(table, row, &format!("{path} is not an object")))
+}
+
+fn decode(table: &'static str, row: &str, bytes: &[u8]) -> Result<Value, OpenError> {
+    serde_json::from_slice(bytes)
+        .map_err(|error| invalid(table, row, &format!("stored JSON is invalid: {error}")))
+}
+
+fn intermediate(table: &'static str, row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
+    serde_json::to_vec(value)
+        .map_err(|error| invalid(table, row, &format!("migrated JSON cannot encode: {error}")))
+}
+
+type FactRow = (i64, String, Vec<u8>);
+
+fn fact_rows(connection: &Connection) -> Result<Vec<FactRow>, OpenError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT seq, kind, envelope FROM fact_envelopes \
+             WHERE kind = 'lane::renewal' ORDER BY seq",
+        )
+        .map_err(OpenError::Sqlite)?;
+    statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .map_err(OpenError::Sqlite)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(OpenError::Sqlite)
+}
+
+type Receipt = (String, String, Vec<u8>);
+
+fn receipt_rows(connection: &Connection) -> Result<Vec<Receipt>, OpenError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT command_id, command_kind, response FROM command_receipts \
+             WHERE command_kind IN ('board::read', 'lane::read', 'lane::arrange', \
+                                    'lineage::configure', 'lineage::arrange', \
+                                    'lane::renewal') \
+             ORDER BY command_id",
+        )
+        .map_err(OpenError::Sqlite)?;
+    statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .map_err(OpenError::Sqlite)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(OpenError::Sqlite)
 }
 
 fn invalid(table: &'static str, row: &str, detail: &str) -> OpenError {
@@ -433,46 +531,4 @@ fn invalid(table: &'static str, row: &str, detail: &str) -> OpenError {
         detail: detail.to_owned(),
     }
     .into()
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::*;
-
-    #[test]
-    fn all_retired_states_rename_once_and_current_states_stay_current() {
-        for name in [
-            "requested",
-            "handoff-pending",
-            "successor-started",
-            "launch-refused",
-        ] {
-            let mut retired = json!({"state": {"state": name, "team_slot": 2}});
-            assert!(normalize_record("fixture", "1", &mut retired, "renewal").unwrap());
-            assert_eq!(retired["state"]["org_slot"], 2);
-            assert!(retired["state"].get("team_slot").is_none());
-            assert!(!normalize_record("fixture", "1", &mut retired, "renewal").unwrap());
-        }
-    }
-
-    #[test]
-    fn ambiguous_or_missing_slot_refuses() {
-        for mut state in [
-            json!({"state": {"state": "requested", "team_slot": 1, "org_slot": 1}}),
-            json!({"state": {"state": "requested"}}),
-        ] {
-            let error = normalize_record("fixture", "row", &mut state, "renewal")
-                .expect_err("ambiguous renewal refuses");
-            assert!(matches!(
-                error,
-                OpenError::Migration(MigrationError::StoredContent {
-                    from: 16,
-                    to: 17,
-                    ..
-                })
-            ));
-        }
-    }
 }

@@ -33,6 +33,7 @@ mod read;
 mod release_notes_migration;
 mod renewal;
 mod renewal_organization_migration;
+mod renewal_slot_migration;
 mod schema;
 mod steering_index;
 mod steering_verification;

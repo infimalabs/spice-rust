@@ -1,7 +1,6 @@
 //! Schema 16 to 17 durable renewal-slot migration.
 
 use rusqlite::params;
-use serde_json::Value;
 use wire::body::LaneRenewalChanged;
 use wire::{LaneRenewalRecord, LaneRenewalState, RenewalIdentity};
 
@@ -222,12 +221,13 @@ fn insert_renewal_receipt(journal: &Journal, renewal: LaneRenewalRecord) {
                 first: seq(6),
                 last: seq(6),
             }),
-            body: wire::intent::LaneRenewalAnswer {
+            body: serde_json::to_value(wire::intent::LaneRenewalAnswer {
                 lineage_id: uuid(LINEAGE),
                 lane: uuid(LANE),
                 topology_revision: 0,
                 renewal: Some(renewal),
-            },
+            })
+            .expect("renewal answer encodes"),
         }),
     };
     journal
@@ -276,34 +276,29 @@ fn retire_slots(connection: &Connection) {
             .expect("carrier rows collect");
         drop(statement);
         for (key, bytes) in rows {
-            let mut document: Value = serde_json::from_slice(&bytes).expect("carrier JSON");
-            rename_to_retired(&mut document);
             connection
-                .execute(
-                    update,
-                    params![
-                        serde_json::to_vec(&document).expect("retired JSON encodes"),
-                        key
-                    ],
-                )
+                .execute(update, params![retire_slot_bytes(&bytes), key])
                 .expect("retired carrier writes");
         }
     }
 }
 
-fn rename_to_retired(value: &mut Value) {
-    match value {
-        Value::Object(object) => {
-            for nested in object.values_mut() {
-                rename_to_retired(nested);
-            }
-            if let Some(slot) = object.remove("org_slot") {
-                assert!(object.insert("team_slot".to_owned(), slot).is_none());
-            }
-        }
-        Value::Array(values) => values.iter_mut().for_each(rename_to_retired),
-        _ => {}
+fn retire_slot_bytes(bytes: &[u8]) -> Vec<u8> {
+    let current = br#""org_slot":"#;
+    let retired = br#""team_slot":"#;
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut cursor = 0;
+    while let Some(relative) = bytes[cursor..]
+        .windows(current.len())
+        .position(|window| window == current)
+    {
+        let start = cursor + relative;
+        output.extend_from_slice(&bytes[cursor..start]);
+        output.extend_from_slice(retired);
+        cursor = start + current.len();
     }
+    output.extend_from_slice(&bytes[cursor..]);
+    output
 }
 
 fn set_schema_sixteen(connection: &Connection) {
