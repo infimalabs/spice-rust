@@ -465,7 +465,7 @@ fn project_agent_event(
         locus,
         ordinal,
     };
-    let (activity, final_answer, locus, text, automatic_speech, media) = match decoded {
+    let (activity, final_answer, locus, text, badges, automatic_speech, media) = match decoded {
         listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => {
             let event = presentation_event(prose.locus);
             (
@@ -473,6 +473,7 @@ fn project_agent_event(
                 prose.phase.as_deref() == Some("final_answer"),
                 prose.locus,
                 present_steering_acknowledgements(&prose.text, steering, event)?,
+                message_badges(&prose.text, steering, event),
                 automatic_speech::classify(prose, steering, event),
                 prose.media.clone(),
             )
@@ -489,6 +490,7 @@ fn project_agent_event(
                 false,
                 tool.locus,
                 text,
+                wire::AgentMessageBadges::default(),
                 None,
                 media,
             )
@@ -502,6 +504,7 @@ fn project_agent_event(
                 .clone()
                 .filter(|summary| !summary.trim().is_empty())
                 .unwrap_or_else(|| "Context compacted".to_owned()),
+            wire::AgentMessageBadges::default(),
             None,
             Vec::new(),
         ),
@@ -528,6 +531,7 @@ fn project_agent_event(
         activity,
         final_answer,
         text,
+        badges,
         automatic_speech,
         unavailable_tool_terminals: unavailable_tool_terminals.to_vec(),
         media,
@@ -669,6 +673,7 @@ pub(super) struct PresentationDirectives(BTreeMap<steer::Key, PresentationDirect
 struct PresentationDirective {
     lane: CanonicalUuid,
     text: String,
+    authored: bool,
     taste: bool,
     disposition: wire::Disposition,
     retirement: Option<wire::body::TranscriptLocus>,
@@ -711,7 +716,6 @@ impl PresentationDirectives {
             steering
                 .directives()
                 .into_iter()
-                .filter(|directive| presents_as_authored_steering(directive.control()))
                 .map(|directive| {
                     let key = directive.key().clone();
                     let retirement = retirements.get(&key).copied();
@@ -721,6 +725,7 @@ impl PresentationDirectives {
                         PresentationDirective {
                             lane: directive.lane(),
                             text: directive.text().to_owned(),
+                            authored: presents_as_authored_steering(directive.control()),
                             taste,
                             disposition: directive.disposition(),
                             retirement,
@@ -808,13 +813,27 @@ impl EventDirectives<'_> {
                     })))
     }
 
+    fn recognizes_authored(
+        &self,
+        key: &steer::Key,
+        disposition: wire::Disposition,
+        locus: steer::ack::scan::Locus,
+    ) -> bool {
+        self.recognizes(key, disposition, locus)
+            && self
+                .directives
+                .0
+                .get(key)
+                .is_some_and(|directive| directive.authored)
+    }
+
     fn historical_context(&self, token: &str, miss: steer::ack::scan::Miss) -> Option<steer::Key> {
         if miss != steer::ack::scan::Miss::Historical {
             return None;
         }
         let key = token.parse::<steer::Key>().ok()?;
         let directive = self.directives.0.get(&key)?;
-        (directive.lane == self.event.lane).then_some(key)
+        (directive.lane == self.event.lane && directive.authored).then_some(key)
     }
 }
 
@@ -883,7 +902,12 @@ fn present_steering_acknowledgements_with_directives(
                     {
                         recognized.push((key.clone(), disposition));
                     }
-                    if !contexts.iter().any(|known| known == &key) {
+                    if directives
+                        .0
+                        .get(&key)
+                        .is_some_and(|directive| directive.authored)
+                        && !contexts.iter().any(|known| known == &key)
+                    {
                         contexts.push(key);
                     }
                 }
@@ -906,23 +930,24 @@ fn present_steering_acknowledgements_with_directives(
         if recognized.is_empty() {
             continue;
         }
-
         let source = text
             .get(cursor..acknowledgement.start)
             .ok_or_else(|| "acknowledgment header crossed a non-character boundary".to_owned())?;
         append_presented_source(&mut rendered, source, capitalize_body);
         capitalize_body = false;
-        start_quote_block(&mut rendered);
-        for (index, key) in contexts.iter().enumerate() {
-            let directive = directives.0.get(key).ok_or_else(|| {
-                format!("canonical acknowledgment recognition lost directive {key}")
-            })?;
-            if index > 0 {
-                rendered.push_str("\n\n");
+        if !contexts.is_empty() {
+            start_quote_block(&mut rendered);
+            for (index, key) in contexts.iter().enumerate() {
+                let directive = directives.0.get(key).ok_or_else(|| {
+                    format!("canonical acknowledgment recognition lost directive {key}")
+                })?;
+                if index > 0 {
+                    rendered.push_str("\n\n");
+                }
+                append_acknowledgement_quote(&mut rendered, &directive.text);
             }
-            append_acknowledgement_quote(&mut rendered, &directive.text);
+            rendered.push_str("\n\n");
         }
-        rendered.push_str("\n\n");
         cursor = acknowledgement.end;
         if missed.is_empty() {
             cursor = skip_horizontal_space(text, cursor);

@@ -102,12 +102,10 @@ fn cover_message_badges(covered: &mut BTreeSet<String>) {
             AutomaticSpeech {
                 kind: AutomaticSpeechKind::Final,
                 text: "settled final".to_owned(),
-                badges: empty,
             },
             AutomaticSpeech {
                 kind: AutomaticSpeechKind::Acknowledgement,
                 text: "applied".to_owned(),
-                badges: acknowledgements,
             },
         ],
     );
@@ -820,6 +818,10 @@ fn cover_stream_frames(covered: &mut BTreeSet<String>) {
                 activity: AgentActivityKind::Prose,
                 final_answer: false,
                 text: "settled".to_owned(),
+                badges: AgentMessageBadges {
+                    acknowledgements: 2,
+                    tastes: 0,
+                },
                 automatic_speech: None,
                 unavailable_tool_terminals: Vec::new(),
                 media: Vec::new(),
@@ -839,6 +841,7 @@ fn cover_stream_frames(covered: &mut BTreeSet<String>) {
                 activity: AgentActivityKind::Tool,
                 final_answer: false,
                 text: "Bash".to_owned(),
+                badges: Default::default(),
                 automatic_speech: None,
                 unavailable_tool_terminals: Vec::new(),
                 media: Vec::new(),
@@ -858,6 +861,7 @@ fn cover_stream_frames(covered: &mut BTreeSet<String>) {
                 activity: AgentActivityKind::Compaction,
                 final_answer: false,
                 text: "Context compacted".to_owned(),
+                badges: Default::default(),
                 automatic_speech: None,
                 unavailable_tool_terminals: vec!["Bash: cargo test".to_owned()],
                 media: Vec::new(),
@@ -1006,6 +1010,7 @@ fn stream_data_samples(
         activity: wire::AgentActivityKind::Prose,
         final_answer: false,
         text: "older retained prose".to_owned(),
+        badges: Default::default(),
         automatic_speech: None,
         unavailable_tool_terminals: Vec::new(),
         media: Vec::new(),

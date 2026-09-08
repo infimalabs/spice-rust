@@ -151,6 +151,7 @@ fn merged_history_fixture() -> MergedHistoryFixture {
         activity: wire::AgentActivityKind::Prose,
         final_answer: false,
         text: "future".to_owned(),
+        badges: Default::default(),
         automatic_speech: None,
         unavailable_tool_terminals: Vec::new(),
         media: Vec::new(),

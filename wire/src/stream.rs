@@ -86,9 +86,6 @@ pub struct AutomaticSpeech {
     pub kind: AutomaticSpeechKind,
     /// Cleaned text handed to the configured speech backend.
     pub text: String,
-    /// Typed positive directive classifications carried with this message.
-    #[serde(default, skip_serializing_if = "AgentMessageBadges::is_empty")]
-    pub badges: AgentMessageBadges,
 }
 
 impl AgentActivityKind {
@@ -167,6 +164,12 @@ pub struct AgentMessage {
     pub final_answer: bool,
     /// Visible assistant prose or concise tool preview.
     pub text: String,
+    /// Typed positive directive classifications earned by this message.
+    ///
+    /// Classification is independent of automatic speech eligibility: system
+    /// acknowledgments may earn a badge while deliberately remaining silent.
+    #[serde(default, skip_serializing_if = "AgentMessageBadges::is_empty")]
+    pub badges: AgentMessageBadges,
     /// Optional resident-classified automatic Speak delivery.
     ///
     /// Its absence is the compatibility spelling and means this activity must
@@ -257,6 +260,7 @@ mod message_retention_tests {
             activity: AgentActivityKind::Prose,
             final_answer: false,
             text: "fixture".to_owned(),
+            badges: AgentMessageBadges::default(),
             automatic_speech: None,
             unavailable_tool_terminals: Vec::new(),
             media: Vec::new(),
