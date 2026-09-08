@@ -119,6 +119,8 @@ impl RepositorySelection {
             rim,
             core.clean_merge_tree(),
         ));
+        core.verify_git_controls()
+            .map_err(|error| BatteryError::new(error.to_string()))?;
         self.verify_source()?;
         Ok(RepositorySource {
             tree: self.tree,
@@ -152,6 +154,9 @@ impl RepositorySource {
     pub(super) fn verify_source(&self) -> Result<(), BatteryError> {
         self.tree
             .verify_source()
+            .map_err(|error| BatteryError::new(error.to_string()))?;
+        self.core
+            .verify_git_controls()
             .map_err(|error| BatteryError::new(error.to_string()))
     }
 }
@@ -189,6 +194,7 @@ impl RepositorySource {
 /// against one ledger reading; neither is retained for a later observation.
 pub struct RepositoryExecutor<'trace> {
     tree: Arc<SelectedTree>,
+    core_source: Arc<CoreSource>,
     contract: Arc<Contract>,
     source: Digest,
     core: Option<Result<Vec<ArmEvidence>, String>>,
@@ -262,6 +268,7 @@ impl<'trace> RepositoryExecutor<'trace> {
         let execution_objects =
             bound_execution_objects(selected, selection, reached_paths.as_deref(), rim.changes())?;
         let tree = Arc::clone(&repository_source.tree);
+        let core_source = Arc::clone(&repository_source.core);
         let contract = Arc::clone(&repository_source.contract);
         let latches = state.latches();
         let CapturedCore {
@@ -315,6 +322,7 @@ impl<'trace> RepositoryExecutor<'trace> {
         state_run.observe(&observations, &bounds)?;
         Ok(Self {
             tree,
+            core_source,
             contract,
             source: digest,
             core,
@@ -370,6 +378,9 @@ impl<'trace> RepositoryExecutor<'trace> {
     pub(super) fn verify_source(&self) -> Result<(), BatteryError> {
         self.tree
             .verify_source()
+            .map_err(|error| BatteryError::new(error.to_string()))?;
+        self.core_source
+            .verify_git_controls()
             .map_err(|error| BatteryError::new(error.to_string()))
     }
 
@@ -1001,5 +1012,37 @@ const fn family_index(family: ArmFamily) -> usize {
         ArmFamily::Toolchain => 1,
         ArmFamily::Metrics => 2,
         ArmFamily::Hygiene => 3,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repository_source_validation_includes_merge_control_authority() {
+        let fixture = crate::test_repository::Fixture::repository("repository-control-source");
+        fixture.write("tracked.txt", b"base\n");
+        crate::test_repository::stage_all(fixture.path());
+        crate::test_repository::commit(fixture.path(), "base");
+        let selection =
+            RepositorySelection::capture(fixture.path(), &Selector::staged(), InputMode::Generic)
+                .expect("capture generic repository selection");
+        let rim = RimCapture::new(fixture.path(), None, Vec::<String>::new())
+            .expect("capture repository rim");
+        let source = selection
+            .bind(ClaimCapture::Idle, ActorCapture::Absent, &[], &rim)
+            .expect("bind repository source");
+        source
+            .verify_source()
+            .expect("unchanged repository source verifies");
+
+        std::fs::write(fixture.join(".git/MERGE_MSG"), "arrived after capture\n")
+            .expect("create merge control after capture");
+
+        let error = source
+            .verify_source()
+            .expect_err("merge-control creation must move repository source");
+        assert!(error.to_string().contains("merge-control source moved"));
     }
 }

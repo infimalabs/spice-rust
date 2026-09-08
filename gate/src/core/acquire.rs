@@ -18,14 +18,13 @@
 //! mutated or swapped after capture has nothing left to reach: there is no
 //! later state that can cross into a report under the captured digest.
 
+use serde::{Deserialize, Serialize};
+use sill::{Argv, Completion, Environment, spawn};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
-
-use serde::{Deserialize, Serialize};
-use sill::{Argv, Completion, Environment, spawn};
 use wire::{Digest, Phase, TaskHandle};
 
 use super::admission::{validate_git_tree, validate_repo_path};
@@ -51,6 +50,10 @@ use crate::state::{
     ActorInputs, BoundDecision, BoundError, LatchEntry, LatchObservation, PeerClaim, owning_claim,
 };
 use crate::tree::SelectedTree;
+
+mod merge_control;
+
+use merge_control::GitControlSeal;
 
 /// The one program both Git-declared arms observe through.
 ///
@@ -197,6 +200,7 @@ pub struct CoreSource {
     digest: Digest,
     claim: ClaimCapture,
     actor: ActorCapture,
+    git_controls: GitControlSeal,
     git: GitObservations,
     latches: Vec<LatchEntry>,
 }
@@ -235,10 +239,13 @@ impl CoreSource {
         actor: ActorCapture,
         latches: &[LatchEntry],
     ) -> Result<Self, CoreInputError> {
-        // Taken before the walk because it is the only subject here that can
-        // still move: the selected tree was sealed at materialization, while
-        // the repository stays live and writable underneath the run.
+        // Taken before the walk because these are the only subjects here that
+        // can still move: the selected tree was sealed at materialization,
+        // while the repository and its allocator-owned merge controls stay
+        // live and writable underneath the run.
+        let git_controls = GitControlSeal::capture(tree.repository())?;
         let git = GitObservations::capture(tree, contract.bounds());
+        git_controls.verify()?;
         let jurisdiction = Jurisdiction::walk(tree.root(), contract.policy().ignore())
             .map_err(|error| CoreInputError::new(format!("core source jurisdiction: {error}")))?;
         let digest = jurisdiction
@@ -250,6 +257,7 @@ impl CoreSource {
             digest,
             claim,
             actor,
+            git_controls,
             git,
             latches: latches.to_vec(),
         })
@@ -282,6 +290,11 @@ impl CoreSource {
     #[must_use]
     pub const fn actor(&self) -> &ActorCapture {
         &self.actor
+    }
+
+    /// Prove allocator-owned merge controls still name the captured Git instant.
+    pub(crate) fn verify_git_controls(&self) -> Result<(), CoreInputError> {
+        self.git_controls.verify()
     }
 
     /// Git's exact tree for a clean two-parent synthesis, when one was proven.
@@ -1391,6 +1404,17 @@ mod tests {
             })
         ));
         assert!(observations.clean_merge_tree.is_some());
+        assert_eq!(snapshot(root), common_before);
+        assert_eq!(snapshot(&linked), linked_before);
+
+        let controls = GitControlSeal::capture(&linked).expect("seal linked merge controls");
+        let message = linked_repository.git_dir().join("MERGE_MSG");
+        let original = fs::read(&message).expect("read linked merge message");
+        fs::write(&message, "moved then restored\n").expect("move linked merge message");
+        fs::write(&message, original).expect("restore linked merge message bytes");
+        controls
+            .verify()
+            .expect_err("linked write-restore movement must invalidate the seal");
         assert_eq!(snapshot(root), common_before);
         assert_eq!(snapshot(&linked), linked_before);
 
