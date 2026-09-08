@@ -10,14 +10,15 @@ function environmentCounts(text) {
   const line = text.split("\n").find((candidate) => candidate.startsWith("environment "));
   assert.ok(line, `task status names its environment: ${text}`);
   const matched = line.match(
-    /^environment journal-schema required=(\S+) observed=(\d+) satisfied=(\d+) blocked=(\d+)$/,
+    /^environment journal-schema required=(\S+) observed=(\d+) trust-grant required=(\S+) satisfied=(\d+) blocked=(\d+)$/,
   );
   assert.ok(matched, `task status environment is canonical: ${line}`);
   return {
     required: matched[1],
     observed: Number(matched[2]),
-    satisfied: Number(matched[3]),
-    blocked: Number(matched[4]),
+    trustRequired: matched[3],
+    satisfied: Number(matched[4]),
+    blocked: Number(matched[5]),
   };
 }
 
@@ -68,6 +69,7 @@ export async function assertEnvironmentTaskRollout(page, fixture) {
     {
       required: String(futureSchema),
       observed: journal.body.schema,
+      trustRequired: baselineStatus.trustRequired,
       satisfied: baselineStatus.satisfied,
       blocked: baselineStatus.blocked + 1,
     },
@@ -107,6 +109,7 @@ export async function assertEnvironmentTaskRollout(page, fixture) {
     {
       required: String(journal.body.schema),
       observed: journal.body.schema,
+      trustRequired: baselineStatus.trustRequired,
       satisfied: baselineStatus.satisfied + 1,
       blocked: baselineStatus.blocked,
     },
