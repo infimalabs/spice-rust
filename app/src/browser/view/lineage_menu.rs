@@ -36,7 +36,7 @@ fn render_axis(
         ),
         Axis::Topology => (
             "lineages",
-            "Org connects resident organizations, seats, capabilities, and current ownership.",
+            "Team connects resident organizations, seats, capabilities, and current ownership.",
         ),
     };
     html! {
@@ -112,7 +112,7 @@ fn render_lanes(
         <div class="canvas-menu-page" data-menu-page="lanes">
             {render_global_settings(Some(runtime), sender)}
             <section class="canvas-menu-section canvas-open-organizations">
-                <h2>{"Open Org"}</h2>
+                <h2>{"Open Team"}</h2>
                 if grouped_lineages.is_empty() {
                     <p class="canvas-menu-empty">{"No open organizations"}</p>
                 } else {
@@ -241,7 +241,7 @@ fn render_lineage(
         >
             <header>
                 <div>
-                    <strong>{format!("Org {}", watchband::short(lineage.lane))}</strong>
+                    <strong>{format!("Team {}", watchband::short(lineage.lane))}</strong>
                     <span>{format!(
                         "open any member; {} agents open together",
                         lineage.members.len()
@@ -256,7 +256,7 @@ fn render_lineage(
                                 lineage: target,
                             });
                         })}
-                    >{"Open organization"}</button>
+                    >{"Open team"}</button>
                 }
             </header>
             <div class="canvas-organization-members">
@@ -326,7 +326,7 @@ fn render_member(
                     onclick={Callback::from(move |_| {
                         reopen.dispatch(LineageControlAction::OpenLineage { lineage: source });
                     })}
-                >{"Open organization"}</button>
+                >{"Open team"}</button>
             }
         </article>
     }
@@ -342,7 +342,7 @@ fn render_new_lineage_drop(
     let ondrop = drop_into_new_lineage(sender.clone(), target, can_configure, topology_revision);
     html! {
         <section class="canvas-menu-section canvas-organization-drop" {ondragover} {ondrop}>
-            <header><h2>{"New Org"}</h2><span>{"drop agent to create"}</span></header>
+            <header><h2>{"New Team"}</h2><span>{"drop agent to create"}</span></header>
             <div class="canvas-drop-target" data-organization-drop="new">{"Drop agent here"}</div>
         </section>
     }
@@ -371,8 +371,8 @@ fn render_solo_members_drop(
     html! {
         <section class="canvas-menu-section canvas-unassigned" {ondragover} {ondrop}>
             <header>
-                <h2>{"Agents Without Org"}</h2>
-                <span>{"drop here to remove from organization"}</span>
+                <h2>{"Agents Without Team"}</h2>
+                <span>{"drop here to remove from team"}</span>
             </header>
             <div class="canvas-organization-members" data-organization-drop="unassigned">
                 if members.is_empty() {

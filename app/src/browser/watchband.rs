@@ -161,7 +161,7 @@ fn render_compose(
     controls: &view::AgentControls,
 ) -> Html {
     if lineage.members.is_empty() {
-        return empty("No agents are assigned. Open Org to add one.");
+        return empty("No agents are assigned. Open Team to add one.");
     }
     let authoritative_life = lineage.subscription;
     let control = lineage_controls.current(lineage.lane, authoritative_life);

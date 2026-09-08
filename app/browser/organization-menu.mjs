@@ -895,13 +895,20 @@ export async function assertOrgMenu(page, fixture, artifacts) {
   }
   assert.equal(await panel.locator(".canvas-organization").count(), 1, "the four agents begin together");
   assert.equal(await panel.locator(".canvas-organization-member").count(), 4);
+  await panel.getByRole("heading", { name: "Open Team", exact: true }).waitFor();
+  await panel.getByRole("heading", { name: "New Team", exact: true }).waitFor();
+  assert.match(
+    (await panel.locator(".canvas-organization > header strong").innerText()).trim(),
+    /^Team [0-9a-f]{8}$/,
+    "the live team card presents its short internal identity without exposing Org vocabulary",
+  );
   assert.equal(
     await panel.locator('[data-organization-drop="new"]').innerText(),
     "DROP AGENT HERE",
   );
   assert.match(
     await panel.locator(".canvas-unassigned").innerText(),
-    /Agents Without Org[\s\S]*No unassigned agents/i,
+    /Agents Without Team[\s\S]*drop here to remove from team[\s\S]*No unassigned agents/i,
   );
 
   const initial = await reply(fixture, ["lane"]);
@@ -992,7 +999,7 @@ export async function assertOrgMenu(page, fixture, artifacts) {
   );
   await createdOrg.waitFor({ timeout: TRANSITION_MS });
   const created = await createdOrg.getAttribute("data-organization-lineage");
-  assert.notEqual(created, host, "the New Org target mints a distinct lineage identity");
+  assert.notEqual(created, host, "the New Team target mints a distinct lineage identity");
   assert.notEqual(created, moved, "a new one-agent organization stays distinct from an unassigned agent");
   assert.equal(await panel.locator(".canvas-organization").count(), 2);
   await assertResidentLineage(fixture, moved, created, host, "creating an organization by drop");
