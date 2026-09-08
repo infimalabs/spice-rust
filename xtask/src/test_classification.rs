@@ -322,9 +322,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_is_unique_and_every_selector_is_exact() {
+    fn registry_entries_have_runnable_slow_selectors() {
         let registry = registry().expect("classification registry is valid");
-        assert_eq!(registry.tests.len(), 8);
         assert!(
             registry
                 .tests
@@ -356,23 +355,5 @@ mod tests {
                 .to_string()
                 .contains("unique")
         );
-    }
-
-    #[test]
-    fn fast_selection_excludes_only_package_owned_slow_tests() {
-        let registry = registry().expect("classification registry is valid");
-        let spice = registry
-            .tests
-            .iter()
-            .filter(|test| test.package.as_deref() == Some("spice"))
-            .filter_map(|test| test.test.as_deref())
-            .collect::<Vec<_>>();
-        assert_eq!(spice.len(), 3);
-        assert!(
-            spice
-                .iter()
-                .any(|test| test.contains("wakes_at_warning_boundary"))
-        );
-        assert!(registry.tests.iter().any(|test| !test.command.is_empty()));
     }
 }

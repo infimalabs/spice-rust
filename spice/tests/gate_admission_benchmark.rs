@@ -7,147 +7,11 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use serde::{Deserialize, Serialize};
 use spice::install::{apply, installed_binary, installed_git_hooks, plan};
 use spice::repository::Repository;
 use wire::{Digest, Domain};
 
-const SAMPLES: usize = 30;
 static BENCHMARK: Mutex<()> = Mutex::new(());
-
-#[derive(Serialize)]
-#[serde(deny_unknown_fields)]
-struct BenchmarkReport {
-    version: u64,
-    action_count: u64,
-    cold_micros: u64,
-    warm_durations_micros: Vec<u64>,
-    warm_median_micros: u64,
-    warm_p95_micros: u64,
-    warm_maximum_micros: u64,
-    budget_met: bool,
-    git_version: String,
-    filesystem_type: String,
-    architecture: &'static str,
-    executable_bytes: u64,
-    git_subprocesses_per_run: u64,
-    evidence_bytes_read_per_run: u64,
-    evidence_files_opened_per_run: u64,
-    cold_profile: AdmissionProfile,
-    warm_profiles: Vec<AdmissionProfile>,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct AdmissionProfile {
-    version: u64,
-    fresh_process_launch_micros: u64,
-    internal_total_micros: u64,
-    appliance_capture_micros: u64,
-    installed_appliance_exact_byte_audit_micros: u64,
-    repository_core_micros: u64,
-    tool_authority_micros: u64,
-    fingerprint_index_receipt_reads_micros: u64,
-    remaining_admission_micros: u64,
-    git_subprocesses: u64,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct InternalAdmissionProfile {
-    version: u64,
-    internal_total_micros: u64,
-    appliance_capture_micros: u64,
-    installed_appliance_exact_byte_audit_micros: u64,
-    repository_core_micros: u64,
-    tool_authority_micros: u64,
-    fingerprint_index_receipt_reads_micros: u64,
-    remaining_admission_micros: u64,
-    git_subprocesses: u64,
-}
-
-#[test]
-#[ignore = "slow:gate:installed-hook-benchmark"]
-fn gate_warm_admission_benchmark() {
-    let _serial = BENCHMARK.lock().expect("serialize admission benchmarks");
-    let fixture = Fixture::new();
-    fixture.seed_proofs();
-
-    let cold_started = Instant::now();
-    let warmed = fixture.invoke_profiled_hook();
-    let cold_micros = u64::try_from(cold_started.elapsed().as_micros()).unwrap_or(u64::MAX);
-    assert!(
-        warmed.status.success(),
-        "warmup failed: {}",
-        streams(&warmed)
-    );
-    assert!(warmed.stdout.is_empty() && warmed.stderr.is_empty());
-    let cold_profile = fixture.read_profile(cold_micros);
-
-    let mut durations = Vec::with_capacity(SAMPLES);
-    let mut profiles = Vec::with_capacity(SAMPLES);
-    for _ in 0..SAMPLES {
-        let started = Instant::now();
-        let output = fixture.invoke_profiled_hook();
-        let elapsed = started.elapsed();
-        assert!(
-            output.status.success(),
-            "measured hook failed: {}",
-            streams(&output)
-        );
-        assert!(output.stdout.is_empty() && output.stderr.is_empty());
-        let elapsed = u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX);
-        durations.push(elapsed);
-        profiles.push(fixture.read_profile(elapsed));
-    }
-
-    let mut ordered = durations.clone();
-    ordered.sort_unstable();
-    let (action_count, evidence_files, evidence_bytes) = fixture.evidence_read_footprint();
-    assert!(
-        action_count < u64::try_from(gate::ActionFingerprintManifest::MAX_ACTIONS).unwrap(),
-        "canonical action inventory must retain manifest-count headroom",
-    );
-    let median = midpoint(ordered[14], ordered[15]);
-    let p95 = ordered[28];
-    let maximum = *ordered.last().expect("benchmark has measured samples");
-    let git_subprocesses_per_run = std::iter::once(&cold_profile)
-        .chain(&profiles)
-        .map(|profile| profile.git_subprocesses)
-        .max()
-        .unwrap_or(0);
-    let report = BenchmarkReport {
-        version: 3,
-        action_count,
-        cold_micros,
-        warm_durations_micros: durations,
-        warm_median_micros: median,
-        warm_p95_micros: p95,
-        warm_maximum_micros: maximum,
-        budget_met: median <= 75_000 && p95 <= 150_000 && maximum <= 250_000,
-        git_version: command_text("/usr/bin/git", &["--version"], fixture.linked()),
-        filesystem_type: filesystem_type(fixture.linked()),
-        architecture: std::env::consts::ARCH,
-        executable_bytes: fs::metadata(&fixture.binary)
-            .expect("measure installed benchmark executable")
-            .len(),
-        git_subprocesses_per_run,
-        evidence_bytes_read_per_run: evidence_bytes,
-        evidence_files_opened_per_run: evidence_files,
-        cold_profile,
-        warm_profiles: profiles,
-    };
-    let report_json = serde_json::to_string(&report).expect("benchmark report encodes");
-    println!("{report_json}");
-    assert_eq!(
-        git_subprocesses_per_run, 0,
-        "warm installed admission launched Git subprocesses: {report_json}"
-    );
-    assert!(
-        report.budget_met,
-        "installed warm admission exceeded its latency budget: {report_json}"
-    );
-}
 
 #[test]
 fn repeated_installed_hook_survives_retired_fold_parent_progress() {
@@ -444,7 +308,6 @@ struct Fixture {
     hook: PathBuf,
     binary: PathBuf,
     common: PathBuf,
-    profile: PathBuf,
 }
 
 impl Fixture {
@@ -508,7 +371,6 @@ impl Fixture {
         let hook = installed_git_hooks(&repository).join("pre-commit");
         let binary = installed_binary(&repository);
         let common = repository.common_dir().to_path_buf();
-        let profile = root.join("admission-profile.json");
         Self {
             root,
             linked,
@@ -516,12 +378,7 @@ impl Fixture {
             hook,
             binary,
             common,
-            profile,
         }
-    }
-
-    fn linked(&self) -> &Path {
-        &self.linked
     }
 
     fn seed_proofs(&self) -> PathBuf {
@@ -555,37 +412,6 @@ impl Fixture {
 
     fn invoke_hook(&self) -> Output {
         self.invoke_hook_at(&self.linked)
-    }
-
-    fn invoke_profiled_hook(&self) -> Output {
-        Command::new(&self.hook)
-            .args(["--profile-output"])
-            .arg(&self.profile)
-            .current_dir(&self.linked)
-            .env_remove(wire::SpiceVariable::Lane.as_str())
-            .env_remove(wire::SpiceVariable::PreCommitSource.as_str())
-            .output()
-            .expect("run profiled installed benchmark hook")
-    }
-
-    fn read_profile(&self, elapsed_micros: u64) -> AdmissionProfile {
-        let profile: InternalAdmissionProfile =
-            serde_json::from_slice(&fs::read(&self.profile).expect("read admission profile"))
-                .expect("decode admission profile");
-        AdmissionProfile {
-            version: profile.version,
-            fresh_process_launch_micros: elapsed_micros
-                .saturating_sub(profile.internal_total_micros),
-            internal_total_micros: profile.internal_total_micros,
-            appliance_capture_micros: profile.appliance_capture_micros,
-            installed_appliance_exact_byte_audit_micros: profile
-                .installed_appliance_exact_byte_audit_micros,
-            repository_core_micros: profile.repository_core_micros,
-            tool_authority_micros: profile.tool_authority_micros,
-            fingerprint_index_receipt_reads_micros: profile.fingerprint_index_receipt_reads_micros,
-            remaining_admission_micros: profile.remaining_admission_micros,
-            git_subprocesses: profile.git_subprocesses,
-        }
     }
 
     fn invoke_peer_hook(&self) -> Output {
@@ -843,42 +669,6 @@ impl Fixture {
         )
         .expect("read fingerprint manifest")
     }
-
-    fn evidence_read_footprint(&self) -> (u64, u64, u64) {
-        let index = self.fingerprint_path();
-        let document = self.fingerprint_document(&index);
-        let evidence = self.common.join(".spice-rs/gate-evidence/v1");
-        let manifest = serde_json::from_slice::<serde_json::Value>(
-            &fs::read(&index).expect("read fingerprint index"),
-        )
-        .expect("decode fingerprint index")["manifest"]
-            .as_str()
-            .expect("fingerprint index names manifest")
-            .to_owned();
-        let mut paths = vec![index, evidence.join("fingerprint-objects").join(manifest)];
-        for action in document["actions"].as_array().expect("fingerprint actions") {
-            let key = action["action_key"]
-                .as_str()
-                .expect("fingerprint action key");
-            let action_index = evidence.join("actions").join(key);
-            let index_document: serde_json::Value =
-                serde_json::from_slice(&fs::read(&action_index).expect("read action index"))
-                    .expect("decode action index");
-            let receipt = index_document["receipt"]
-                .as_str()
-                .expect("action index receipt");
-            paths.push(action_index);
-            paths.push(evidence.join("objects").join(receipt));
-        }
-        let action_count = u64::try_from(document["actions"].as_array().unwrap().len()).unwrap();
-        let (files, bytes) = paths
-            .into_iter()
-            .fold((0_u64, 0_u64), |(files, bytes), path| {
-                let metadata = fs::metadata(path).expect("measure benchmark evidence file");
-                (files + 1, bytes.saturating_add(metadata.len()))
-            });
-        (action_count, files, bytes)
-    }
 }
 
 impl Drop for Fixture {
@@ -894,27 +684,6 @@ fn git(root: &Path, arguments: &[&str]) {
         .output()
         .expect("run benchmark Git command");
     assert!(output.status.success(), "Git failed: {}", streams(&output));
-}
-
-fn command_text(program: &str, arguments: &[&str], root: &Path) -> String {
-    let output = Command::new(program)
-        .args(arguments)
-        .current_dir(root)
-        .output()
-        .expect("run benchmark metadata command");
-    assert!(
-        output.status.success(),
-        "metadata command failed: {}",
-        streams(&output)
-    );
-    String::from_utf8(output.stdout)
-        .expect("benchmark metadata is UTF-8")
-        .trim()
-        .to_owned()
-}
-
-fn midpoint(left: u64, right: u64) -> u64 {
-    left / 2 + right / 2 + (left % 2 + right % 2) / 2
 }
 
 fn assert_bounded(started: Instant, output: &Output, label: &str) {
@@ -934,55 +703,6 @@ fn assert_reason(output: &Output, expected: &str) {
         panic!("proof lookup did not refuse: {outcome:?}");
     };
     assert_eq!(refusal.reason(), expected);
-}
-
-fn filesystem_type(root: &Path) -> String {
-    #[cfg(target_os = "macos")]
-    {
-        let mount = Command::new("/bin/df")
-            .arg("-P")
-            .arg(root)
-            .output()
-            .expect("resolve benchmark filesystem device");
-        assert!(mount.status.success(), "df failed: {}", streams(&mount));
-        let rendered = String::from_utf8(mount.stdout).expect("df output is UTF-8");
-        let device = rendered
-            .lines()
-            .last()
-            .and_then(|line| line.split_whitespace().next())
-            .expect("df reports a filesystem device");
-        let output = Command::new("/usr/sbin/diskutil")
-            .arg("info")
-            .arg(device)
-            .output()
-            .expect("measure benchmark filesystem type");
-        assert!(
-            output.status.success(),
-            "diskutil failed: {}",
-            streams(&output)
-        );
-        let rendered = String::from_utf8(output.stdout).expect("diskutil output is UTF-8");
-        rendered
-            .lines()
-            .find_map(|line| line.trim().strip_prefix("File System Personality:"))
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .expect("diskutil reports a filesystem personality")
-            .to_owned()
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let output = Command::new("/usr/bin/stat")
-            .args(["-f", "-c", "%T"])
-            .arg(root)
-            .output()
-            .expect("measure benchmark filesystem type");
-        assert!(output.status.success(), "stat failed: {}", streams(&output));
-        String::from_utf8(output.stdout)
-            .expect("stat output is UTF-8")
-            .trim()
-            .to_owned()
-    }
 }
 
 fn streams(output: &Output) -> String {

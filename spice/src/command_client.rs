@@ -791,20 +791,6 @@ fn acquisition_deadline(bound: Duration, prior: &str) -> Outcome<CommandAnswer> 
     )
 }
 
-#[cfg(test)]
-fn request(
-    contract: &Contract,
-    mapped: MappedCommand,
-    discovery: DiscoveryRead,
-) -> Outcome<CommandAnswer> {
-    let timeout = answer_bound(mapped.kind, &discovery.path);
-    let session = match open_session(contract, discovery, timeout) {
-        Ok(session) => session,
-        Err(outcome) => return outcome,
-    };
-    submit(contract, &mapped, session)
-}
-
 fn submit(
     contract: &Contract,
     mapped: &MappedCommand,

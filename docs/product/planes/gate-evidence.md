@@ -209,31 +209,3 @@ not producer attribution. They therefore enter the manifest as typed non-file
 inputs. An implementation that cannot prove a complete dependency closure or
 name every mutable decision input marks the action live-only; it never emits an
 under-keyed reusable receipt.
-
-## Warm-hook budget
-
-The warm path means: the executable and filesystem cache are warm; the index
-is unchanged; every owed action receipt exists; no proof producer is active;
-the repository is not merging; and live checks pass. Measure the installed
-hook end to end, including process startup, candidate-tree capture, selection,
-batch verification, live checks, index revalidation, and admission publication.
-
-The acceptance budget is median at most 75 ms, p95 at most 150 ms, and no
-sample above 250 ms over 30 sequential runs. Report all 30 durations, median,
-p95, maximum, Git version, filesystem type, machine architecture, and counts of
-Git subprocesses, bytes read, and files opened. Correctness tests do not assert
-wall-clock thresholds; the ignored benchmark fixture owns this environmental
-measurement.
-
-The reproducible command is:
-
-```sh
-spice dev cargo -- test --locked -p spice gate_warm_admission_benchmark -- --ignored --nocapture
-```
-
-The fixture creates a temporary linked-worktree repository, seeds valid action
-objects and one action index per owed action, warms one unmeasured invocation,
-then runs 30 measured installed-hook invocations against the unchanged index.
-It emits one canonical JSON report. A budget miss blocks the pre-commit
-admission task; it does not weaken evidence validation or move work into the
-reference-transaction hook.
