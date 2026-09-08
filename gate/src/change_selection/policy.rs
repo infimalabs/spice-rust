@@ -403,6 +403,7 @@ fn repository_selection_authority(path: &str) -> bool {
             | ".githooks/pre-commit"
             | "Cargo.lock"
             | "Cargo.toml"
+            | "dist/proof-image/Dockerfile"
             | "rust-toolchain"
             | "rust-toolchain.toml"
     )

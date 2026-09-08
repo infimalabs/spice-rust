@@ -251,6 +251,7 @@ pub(crate) fn selector_authority(path: &str) -> bool {
             | "rust-toolchain.toml"
             | "Cargo.lock"
             | "Cargo.toml"
+            | "dist/proof-image/Dockerfile"
             | "gate/src/battery/manifest.toml"
             | "gate/src/change_selection.rs"
             | "gate/src/lib.rs"

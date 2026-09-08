@@ -16,6 +16,7 @@ const REFUSAL: u8 = 65;
 const TOOL_CHECK: &str = concat!(
     "test \"$(uname -m)\" = x86_64; ",
     "test \"$(rustc --version)\" = \"rustc 1.97.1 (8bab26f4f 2026-07-14)\"; ",
+    "test \"$(cargo clippy --version)\" = \"clippy 0.1.97 (8bab26f4f6 2026-07-14)\"; ",
     "test \"$(rustfmt --version)\" = \"rustfmt 1.9.0-stable (8bab26f4f6 2026-07-14)\"; ",
     "test \"$(trunk --version)\" = \"trunk 0.21.14\"; ",
     "test \"$(cargo-mutants mutants --version)\" = \"cargo-mutants 27.1.0\"; ",
@@ -659,7 +660,7 @@ mod tests {
     use super::*;
 
     const IDENTITY: &str =
-        "sha256:137ff4af79c15277648a78ad85d53e490b897d60e2c30ade6da5ecea8d34305f";
+        "sha256:2d5976ad79b7a4e929a115d8d10ab7b8bd00bb633b5ad6d459d048eb2f817f8a";
 
     #[test]
     fn build_records_the_streamed_archive_checksum_and_admitted_identity() {
