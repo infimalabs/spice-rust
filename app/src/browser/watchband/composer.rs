@@ -30,10 +30,10 @@ pub(super) fn keyboard_submit(
     Callback::from(move |event: KeyboardEvent| {
         if event.key() == "Enter" && (event.meta_key() || event.ctrl_key()) {
             event.prevent_default();
-            if event.repeat() {
-                return;
-            }
             if event.shift_key() {
+                if event.repeat() {
+                    return;
+                }
                 let source_is_primary = event
                     .target()
                     .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
