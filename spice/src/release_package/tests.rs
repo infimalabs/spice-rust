@@ -1,0 +1,279 @@
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use wire::manifest::{
+    BuildPins, ProofEnvironment, ProofReceipt, ProofStanding, RELEASE_MANIFEST_VERSION,
+    ReleaseManifestTarget, TargetPayload,
+};
+
+use super::*;
+
+static NEXT: AtomicU64 = AtomicU64::new(0);
+
+#[test]
+fn package_preview_and_materialization_read_only_content_addressed_executables() {
+    let fixture = Fixture::new();
+    let preview = preview(
+        &fixture.root,
+        &fixture.version,
+        fixture.notes_identity.clone(),
+        &fixture.notes,
+        &fixture.manifest,
+    )
+    .unwrap_or_else(|error| panic!("content-addressed package preview failed: {error}"));
+    let materialized = materialize(
+        &fixture.root,
+        &fixture.version,
+        fixture.notes_identity.clone(),
+        &fixture.notes,
+        &fixture.manifest,
+    )
+    .unwrap_or_else(|error| panic!("content-addressed package materialization failed: {error}"));
+
+    assert_eq!(materialized, preview);
+    for target in [
+        ReleaseTarget::Aarch64AppleDarwin,
+        ReleaseTarget::X86_64UnknownLinuxMusl,
+    ] {
+        assert!(
+            !fixture
+                .root
+                .join("dist/stage/targets")
+                .join(target.as_str())
+                .join("bin/spice")
+                .exists()
+        );
+    }
+}
+
+#[test]
+fn package_preview_refuses_missing_and_mismatched_executable_objects() {
+    let fixture = Fixture::new();
+    fs::write(&fixture.executables[0], b"changed").expect("replace executable object");
+    let mismatch = preview(
+        &fixture.root,
+        &fixture.version,
+        fixture.notes_identity.clone(),
+        &fixture.notes,
+        &fixture.manifest,
+    )
+    .expect_err("mismatched executable object must refuse");
+    assert!(
+        mismatch
+            .to_string()
+            .contains("object disagrees with its payload inventory")
+    );
+
+    let fixture = Fixture::new();
+    fs::remove_file(&fixture.executables[0]).expect("remove executable object");
+    let missing = preview(
+        &fixture.root,
+        &fixture.version,
+        fixture.notes_identity.clone(),
+        &fixture.notes,
+        &fixture.manifest,
+    )
+    .expect_err("missing executable object must refuse");
+    assert!(missing.to_string().contains("cannot read staged"));
+}
+
+struct Fixture {
+    root: PathBuf,
+    version: ProductVersion,
+    notes: Vec<u8>,
+    notes_identity: Digest,
+    manifest: Vec<u8>,
+    executables: Vec<PathBuf>,
+}
+
+impl Fixture {
+    fn new() -> Self {
+        let root = std::env::temp_dir().join(format!(
+            "spice-release-package-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).expect("create package fixture root");
+        git(&root, &["init", "--quiet"]);
+        let stage = root.join("dist/stage");
+        fs::create_dir_all(stage.join("objects")).expect("create object stage");
+        let source = Digest::compute(Domain::DistSourceCommit, b"source");
+        let app = Digest::compute(Domain::DistArtifact, b"Canvas generation");
+        let pins = BuildPins {
+            rust: "rustc 1.97.1".to_owned(),
+            wasm_target: "wasm32-unknown-unknown".to_owned(),
+            trunk: "trunk 0.21.14".to_owned(),
+            cargo_mutants: "cargo-mutants 27.1.0".to_owned(),
+            proof_container: format!("sha256:{}", "1".repeat(64)),
+        };
+        let app_members = CANVAS_APP_FILES
+            .iter()
+            .map(|file| (format!("app/{file}"), format!("asset:{file}").into_bytes()))
+            .collect::<Vec<_>>();
+        let battery = Digest::compute(Domain::ProofBattery, b"battery");
+        let staged = [
+            ReleaseTarget::Aarch64AppleDarwin,
+            ReleaseTarget::X86_64UnknownLinuxMusl,
+        ]
+        .map(|target| stage_target(&stage, target, &source, &app, &pins, &app_members, &battery));
+        let targets = staged
+            .iter()
+            .map(|target| target.manifest.clone())
+            .collect();
+        let executables = staged.into_iter().map(|target| target.executable).collect();
+        let manifest = wire::encode(&ReleaseManifest {
+            version: RELEASE_MANIFEST_VERSION,
+            source,
+            targets,
+        })
+        .expect("manifest encodes");
+        let notes = b"release notes\n".to_vec();
+        let notes_identity = Digest::compute(Domain::DistReleaseNotes, &notes);
+        Self {
+            root,
+            version: ProductVersion::parse("0.1.0").expect("version is canonical"),
+            notes,
+            notes_identity,
+            manifest,
+            executables,
+        }
+    }
+}
+
+struct StagedFixtureTarget {
+    manifest: ReleaseManifestTarget,
+    executable: PathBuf,
+}
+
+fn stage_target(
+    stage: &Path,
+    target: ReleaseTarget,
+    source: &Digest,
+    app: &Digest,
+    pins: &BuildPins,
+    app_members: &[(String, Vec<u8>)],
+    battery: &Digest,
+) -> StagedFixtureTarget {
+    let executable = format!("native:{target}").into_bytes();
+    let inventory = stage_inventory(stage, app_members, &executable);
+    let payload = TargetPayload {
+        version: wire::manifest::TARGET_PAYLOAD_VERSION,
+        target,
+        source: source.clone(),
+        app: app.clone(),
+        native: Digest::compute(Domain::DistArtifact, &executable),
+        pins: pins.clone(),
+        pins_digest: Digest::compute(Domain::DistPins, &wire::encode(pins).expect("pins encode")),
+        inventory_digest: Digest::compute(
+            Domain::DistInventory,
+            &wire::encode(&inventory).expect("inventory encodes"),
+        ),
+        inventory,
+    };
+    let payload = wire::encode(&payload).expect("payload encodes");
+    let payload_identity = Digest::compute(Domain::DistTargetPayload, &payload);
+    fs::write(
+        stage.join(format!("objects/payload-{payload_identity}.json")),
+        &payload,
+    )
+    .expect("write payload object");
+    let replay = Digest::compute(Domain::ProofReplayV3, target.as_str().as_bytes());
+    let environment = match target {
+        ReleaseTarget::Aarch64AppleDarwin => {
+            ProofEnvironment::native(Digest::compute(Domain::ProofNativeRunner, b"runner"))
+        }
+        ReleaseTarget::X86_64UnknownLinuxMusl => {
+            ProofEnvironment::oci(&pins.proof_container).expect("image is pinned")
+        }
+    };
+    let proof = wire::encode(&ProofReceipt {
+        version: wire::manifest::PROOF_RECEIPT_VERSION,
+        target,
+        payload: payload_identity.clone(),
+        battery: battery.clone(),
+        replay: replay.clone(),
+        environment: environment.clone(),
+        standing: ProofStanding::Clean,
+    })
+    .expect("proof encodes");
+    let proof_identity = Digest::compute(Domain::ProofReceiptV3, &proof);
+    fs::write(
+        stage.join(format!("objects/receipt-{proof_identity}.json")),
+        proof,
+    )
+    .expect("write proof object");
+    StagedFixtureTarget {
+        executable: stage.join(format!(
+            "objects/{}-0755",
+            Digest::compute(Domain::DistArtifact, &executable)
+        )),
+        manifest: ReleaseManifestTarget {
+            target,
+            payload: payload_identity,
+            receipt: proof_identity,
+            battery: battery.clone(),
+            replay,
+            environment,
+            standing: ProofStanding::Clean,
+        },
+    }
+}
+
+fn stage_inventory(
+    stage: &Path,
+    app_members: &[(String, Vec<u8>)],
+    executable: &[u8],
+) -> Vec<InventoryEntry> {
+    let mut inventory = app_members
+        .iter()
+        .map(|(path, bytes)| InventoryEntry {
+            path: path.clone(),
+            mode: 0o644,
+            bytes: bytes.len() as u64,
+            digest: Digest::compute(Domain::DistArtifact, bytes),
+        })
+        .collect::<Vec<_>>();
+    inventory.push(InventoryEntry {
+        path: "bin/spice".to_owned(),
+        mode: 0o755,
+        bytes: executable.len() as u64,
+        digest: Digest::compute(Domain::DistArtifact, executable),
+    });
+    inventory.sort_by(|left, right| left.path.cmp(&right.path));
+    for entry in &inventory {
+        let bytes = if entry.path == "bin/spice" {
+            executable
+        } else {
+            app_members
+                .iter()
+                .find(|(path, _)| path == &entry.path)
+                .map(|(_, bytes)| bytes.as_slice())
+                .expect("inventory app path has fixture bytes")
+        };
+        write_object_file(stage, entry, bytes);
+    }
+    inventory
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        fs::remove_dir_all(&self.root).expect("remove package fixture");
+    }
+}
+
+fn write_object_file(stage: &Path, entry: &InventoryEntry, bytes: &[u8]) {
+    fs::write(
+        stage.join(format!("objects/{}-{:04o}", entry.digest, entry.mode)),
+        bytes,
+    )
+    .expect("write staged object");
+}
+
+fn git(root: &Path, arguments: &[&str]) {
+    let status = Command::new("git")
+        .args(arguments)
+        .current_dir(root)
+        .status()
+        .expect("git launches");
+    assert!(status.success(), "git {arguments:?} failed");
+}
