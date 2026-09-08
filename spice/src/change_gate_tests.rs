@@ -250,7 +250,7 @@ fn budget_publication_warns_only_above_the_exact_advisory_share() {
 }
 
 #[test]
-fn measured_twelve_cpu_budget_caps_one_gate_at_three_direct_workers() {
+fn measured_twelve_cpu_budget_caps_each_ordinary_gate_at_three_direct_workers() {
     let budget = CargoBudget::from_capacity(12, 4);
     let published = published_budget(budget);
 
