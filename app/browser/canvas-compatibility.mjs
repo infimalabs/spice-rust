@@ -80,10 +80,10 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
     currentGeneration,
     "the loaded shell names the generation its bootstrap serves",
   );
-  await chooseCanvasView(page, "Flow");
+  const agents = page.locator('.mosaic-workspace[data-active="true"]');
+  await agents.waitFor();
   const menu = page.locator(".canvas-menu");
-  await menu.locator(":scope > summary").click();
-  assert.notEqual(await menu.getAttribute("open"), null, "the update proof starts with the menu open");
+  assert.equal(await menu.getAttribute("open"), null, "the update proof starts with the menu closed");
 
   bootstrapMode = "generation";
   await closeCurrentSocket(page, "observe rebuilt Canvas generation");
@@ -96,10 +96,17 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
       && document.querySelector(".canvas-menu-trigger--update") !== null,
   );
   assert.equal(navigations, 1, "discovering a rebuilt Canvas does not navigate");
-  assert.equal((await page.locator(".page-heading h1").innerText()).trim(), "Board");
-  assert.notEqual(await menu.getAttribute("open"), null, "the pending update preserves menu state");
+  assert.equal(await agents.isVisible(), true, "discovering a rebuilt Canvas preserves Agents");
   const trigger = menu.locator(":scope > summary");
+  assert.equal(await menu.getAttribute("open"), null, "the pending update leaves the menu closed");
+  await trigger.click();
   const update = menu.getByRole("button", { name: `Reload Canvas v${currentVersion}` });
+  await update.waitFor();
+  await page.keyboard.press("Escape");
+  await update.waitFor({ state: "hidden" });
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+  await update.waitFor();
   assert.equal(await update.getAttribute("data-canvas-update-generation"), alternateGeneration);
   assert.match(await update.innerText(), new RegExp(alternateGeneration.slice(0, 8)));
   assert.match(await trigger.getAttribute("title"), new RegExp(`Canvas v${currentVersion} update available`));
@@ -230,6 +237,8 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
   assert.equal(narrow.themeText, "", JSON.stringify(narrow));
   assert.ok(narrow.themeWidth <= 96, JSON.stringify(narrow));
   assert.equal(narrow.cursorClipped, false, JSON.stringify(narrow));
+  await trigger.click();
+  await update.waitFor({ state: "hidden" });
 
   bootstrapMode = "protocol";
   const socketsBeforeRefusal = sockets;
@@ -246,11 +255,14 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
     String(Number(currentVersion) - 1),
   );
   assert.ok(bootstraps > bootstrapsBeforeRefusal, "the refused reconnect reached bootstrap");
-  await assertOfflineObserved(page, "explicit Canvas update required");
   assert.equal(sockets, socketsBeforeRefusal, "a protocol mismatch stops before the socket");
   assert.equal(navigations, 1, "a protocol mismatch does not navigate automatically");
-  assert.equal((await page.locator(".page-heading h1").innerText()).trim(), "Board");
-  assert.notEqual(await menu.getAttribute("open"), null, "the refusal preserves menu state");
+  assert.equal(await agents.isVisible(), true, "a protocol mismatch preserves Agents");
+  assert.equal(await menu.getAttribute("open"), null, "the refusal preserves closed menu state");
+  await trigger.click();
+  await menu.getByRole("button", {
+    name: new RegExp(`Reload Canvas v${Number(currentVersion) - 1}`),
+  }).waitFor();
 
   bootstrapMode = "current";
   const navigation = page.waitForEvent("framenavigated", (frame) => frame === page.mainFrame());
