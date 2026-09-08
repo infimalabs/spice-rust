@@ -41,6 +41,16 @@ async fn bootstrap_names_the_exact_operator_generation_and_is_not_cached() {
             .any(|window| window == expected_version.as_bytes()),
         "bootstrap response omitted {expected_version:?}"
     );
+    let expected_generation = format!(
+        "{}: {FIXTURE_GENERATION}\r\n",
+        wire::hello::CANVAS_GENERATION_HEADER,
+    );
+    assert!(
+        response[..split]
+            .windows(expected_generation.len())
+            .any(|window| window == expected_generation.as_bytes()),
+        "bootstrap response omitted {expected_generation:?}"
+    );
     let discovery: wire::CanvasBootstrap =
         wire::decode(&response[split..]).expect("bootstrap decodes");
     assert_eq!(discovery.endpoint, format!("http://{address}"));

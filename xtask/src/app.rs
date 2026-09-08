@@ -15,6 +15,7 @@ mod source;
 
 const REMAPPED_CARGO_HOME: &str = "/cargo-home";
 const APP_SOURCE_IDENTITY_ENV: &str = "SPICE_APP_SOURCE_IDENTITY"; // env-policy: allow
+const APP_GENERATION_PLACEHOLDER: &str = "__SPICE_CANVAS_GENERATION__";
 const GENERATED_MODULE_REFERENCES: usize = 2;
 const GENERATED_REFERENCES: [(&str, usize); 7] = [
     ("/app.module", 2),
@@ -362,7 +363,13 @@ fn finalize_stage(stage: &Path, source_identity: &Digest) -> Result<Digest, AppB
     })?;
     validate_inventory(stage)?;
     let identity = generation_digest(stage)?;
-    let mut qualified = html;
+    let placeholders = html.matches(APP_GENERATION_PLACEHOLDER).count();
+    if placeholders != 1 {
+        return Err(AppBuildError::GeneratedStage(format!(
+            "canvas-app.html carried {placeholders} app generation placeholders, expected one"
+        )));
+    }
+    let mut qualified = html.replace(APP_GENERATION_PLACEHOLDER, identity.as_str());
     for asset in spice::canvas::APP
         .assets()
         .iter()

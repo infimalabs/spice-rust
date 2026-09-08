@@ -46,7 +46,7 @@ fn write_raw_generation(stage: &Path, label: &str, source_identity: &Digest, val
              <link href=\"/composer.css\"><link href=\"/responsive.css\">\
              <script src=\"/app.js\"></script>\
              <link href=\"/app.js\"><link href=\"/app_bg.wasm\">{second_wasm}\
-             <main>{label}</main>"
+             <main id=\"app\" data-canvas-generation=\"{APP_GENERATION_PLACEHOLDER}\">{label}</main>"
         ),
     )
     .expect("write shell");
@@ -351,6 +351,11 @@ fn finalization_produces_the_closed_worktree_stage_inventory() {
         .map(std::ffi::OsString::from)
     );
     let shell = fs::read_to_string(root.join("canvas-app.html")).expect("read shell");
+    assert!(
+        shell.contains(&format!("data-canvas-generation=\"{identity}\"")),
+        "the shell does not name its loaded generation: {shell}"
+    );
+    assert!(!shell.contains(APP_GENERATION_PLACEHOLDER));
     for asset in spice::canvas::APP
         .assets()
         .iter()

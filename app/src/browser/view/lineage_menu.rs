@@ -7,29 +7,33 @@ use crate::watchband;
 
 const MEMBER_MIME: &str = "application/x-spice-lineage-member";
 
+pub(super) struct Context<'a> {
+    pub(super) cursor: &'a str,
+    pub(super) update: Option<&'a CanvasUpdate>,
+    pub(super) sender: &'a SenderHandle,
+    pub(super) lineage_controls: &'a UseReducerHandle<LineageControls>,
+}
+
 pub(super) fn render(
     mosaic: bool,
     active_axis: Axis,
     axis_count: usize,
     runtime: Option<&CanvasRuntime>,
-    cursor: &str,
-    sender: &SenderHandle,
-    lineage_controls: &UseReducerHandle<LineageControls>,
+    context: &Context<'_>,
 ) -> Html {
     if !mosaic {
-        return render_axis(active_axis, axis_count, runtime, cursor, sender);
+        return render_axis(active_axis, axis_count, runtime, context);
     }
-    render_lanes(runtime, cursor, sender, lineage_controls)
+    render_lanes(runtime, context)
 }
 
 fn render_axis(
     axis: Axis,
     count: usize,
     runtime: Option<&CanvasRuntime>,
-    cursor: &str,
-    sender: &SenderHandle,
+    context: &Context<'_>,
 ) -> Html {
-    let (noun, context) = match axis {
+    let (noun, description) = match axis {
         Axis::Flow => (
             "active tasks",
             "Tasks follows ready, active, deferred, and completed work across projects.",
@@ -41,41 +45,36 @@ fn render_axis(
     };
     html! {
         <div class="canvas-menu-page" data-menu-page={axis.as_str()}>
-            {render_global_settings(runtime, sender)}
+            {render_global_settings(runtime, context.sender)}
             <section class="canvas-menu-section canvas-menu-context">
                 <h2>{super::axis_label(axis)}</h2>
                 <div class="canvas-menu-setting">
                     <strong>{axis.question()}</strong>
                     <span>{format!("{count} {noun}")}</span>
                 </div>
-                <p class="canvas-menu-context-copy">{context}</p>
+                <p class="canvas-menu-context-copy">{description}</p>
             </section>
-            {render_version_footer(cursor)}
+            {render_version_footer(context.cursor, context.update)}
         </div>
     }
 }
 
-fn render_lanes(
-    runtime: Option<&CanvasRuntime>,
-    cursor: &str,
-    sender: &SenderHandle,
-    lineage_controls: &UseReducerHandle<LineageControls>,
-) -> Html {
+fn render_lanes(runtime: Option<&CanvasRuntime>, context: &Context<'_>) -> Html {
     let Some(runtime) = runtime else {
         return html! {
             <div class="canvas-menu-page" data-menu-page="lanes">
-                {render_global_settings(None, sender)}
+                {render_global_settings(None, context.sender)}
                 <p>{"Waiting for resident organizations…"}</p>
-                {render_version_footer(cursor)}
+                {render_version_footer(context.cursor, context.update)}
             </div>
         };
     };
     let Some(lanes) = runtime.lanes() else {
         return html! {
             <div class="canvas-menu-page" data-menu-page="lanes">
-                {render_global_settings(Some(runtime), sender)}
+                {render_global_settings(Some(runtime), context.sender)}
                 <p>{"Waiting for agent state…"}</p>
-                {render_version_footer(cursor)}
+                {render_version_footer(context.cursor, context.update)}
             </div>
         };
     };
@@ -103,14 +102,14 @@ fn render_lanes(
         super::super::random_uuid().expect("browser crypto mints a new lineage identity");
     let solo_render = SoloDropRender {
         waiting,
-        sender,
+        sender: context.sender,
         can_configure,
         topology_revision: lanes.topology_revision,
-        lineage_controls,
+        lineage_controls: context.lineage_controls,
     };
     html! {
         <div class="canvas-menu-page" data-menu-page="lanes">
-            {render_global_settings(Some(runtime), sender)}
+            {render_global_settings(Some(runtime), context.sender)}
             <section class="canvas-menu-section canvas-open-organizations">
                 <h2>{"Open Team"}</h2>
                 if grouped_lineages.is_empty() {
@@ -120,17 +119,17 @@ fn render_lanes(
                         render_lineage(
                             lineage,
                             waiting,
-                            sender,
+                            context.sender,
                             can_configure,
                             lanes.topology_revision,
-                            lineage_controls,
+                            context.lineage_controls,
                         )
                     })}
                 }
             </section>
             {render_new_lineage_drop(
                 new_lineage,
-                sender,
+                context.sender,
                 can_configure,
                 lanes.topology_revision,
             )}
@@ -139,7 +138,7 @@ fn render_lanes(
                 solo_member_ids,
                 &solo_render,
             )}
-            {render_version_footer(cursor)}
+            {render_version_footer(context.cursor, context.update)}
         </div>
     }
 }
@@ -186,14 +185,34 @@ fn render_global_settings(runtime: Option<&CanvasRuntime>, sender: &SenderHandle
     }
 }
 
-fn render_version_footer(cursor: &str) -> Html {
+fn render_version_footer(cursor: &str, update: Option<&CanvasUpdate>) -> Html {
     let version = wire::CanvasVersion::CURRENT;
+    let reload = Callback::from(move |_| {
+        web_sys::window()
+            .expect("Canvas update action has a browser window")
+            .location()
+            .reload()
+            .expect("Canvas update action reloads the current document");
+    });
     html! {
         <footer class="canvas-menu-footer">
-            <strong
-                class="canvas-menu-version"
-                data-canvas-version={version.to_string()}
-            >{format!("Canvas v{version}")}</strong>
+            <div class="canvas-menu-version-group">
+                <strong
+                    class="canvas-menu-version"
+                    data-canvas-version={version.to_string()}
+                >{format!("Canvas v{version}")}</strong>
+                if let Some(update) = update {
+                    <button
+                        class="canvas-menu-update"
+                        type="button"
+                        aria-label={format!("Reload Canvas v{}", update.version)}
+                        title={format!("Reload Canvas v{}", update.version)}
+                        data-canvas-update-version={update.version.to_string()}
+                        data-canvas-update-generation={update.generation.to_string()}
+                        onclick={reload}
+                    >{"Update"}</button>
+                }
+            </div>
             <span class="bar-meta canvas-menu-cursor" aria-label="Global cursor">
                 {format!("cursor {cursor}")}
             </span>

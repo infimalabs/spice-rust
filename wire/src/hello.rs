@@ -12,6 +12,8 @@ use crate::reply::{Fault, FaultClass, Refusal, RefusalDiagnostic};
 /// strict document an already-running Canvas application has to decode before
 /// it can decide whether to replace itself.
 pub const CANVAS_VERSION_HEADER: &str = "x-spice-canvas-version";
+/// HTTP response header carrying the immutable browser-app generation identity.
+pub const CANVAS_GENERATION_HEADER: &str = "x-spice-canvas-generation";
 
 /// The browser/resident protocol version, independent of durable journal wire.
 ///
@@ -31,10 +33,10 @@ pub struct CanvasVersion(pub u32);
 impl CanvasVersion {
     /// The one Canvas protocol this build speaks.
     ///
-    /// Version 4 carries typed environmental requirements in actor-facing task
-    /// statements. A version-3 document cannot decode that strict added field,
-    /// so the pre-socket clock reloads it before a board answer crosses.
-    pub const CURRENT: Self = Self(4);
+    /// Version 5 advertises the immutable served app generation before opening
+    /// a socket, allowing the browser to offer an explicit update while its
+    /// currently loaded workspace remains alive.
+    pub const CURRENT: Self = Self(5);
 
     /// True when this is the Canvas protocol this build speaks.
     #[must_use]
