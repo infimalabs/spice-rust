@@ -1,7 +1,8 @@
 use super::*;
 
-/// The vendor identifier an operator must never be shown.
+/// Raw event identity retained only when no typed call preview is available.
 const VENDOR_ID: &str = "toolu_01ABCdefGHIjklMNOpqrs";
+const COMPACT_VENDOR_ID: &str = "toolu_01A…lMNOpqrs";
 
 const BASH_INPUT: &str = r#"{"command":"git status --short","description":"read the tree"}"#;
 
@@ -79,6 +80,31 @@ mod presentation {
             decoded: listen::decode(dialect, bytes, locus)
                 .expect("fixture transcript record decodes"),
         }
+    }
+
+    #[test]
+    fn completed_codex_tool_publishes_its_operation_before_the_outcome() {
+        let publisher = Messages::default();
+        let mut state = MessageState::default();
+        let bytes = br#"{"type":"item.completed","item":{"id":"item-command","type":"command_execution","command":"cargo test -p spice","aggregated_output":"ok","exit_code":0,"status":"completed"}}"#;
+        let record = capture_record(bytes, 0);
+
+        publish_agent_messages(&publisher, &record, &mut state, None)
+            .expect("completed tool record publishes");
+
+        let messages = publisher.0.lock().expect("message lock");
+        assert_eq!(
+            messages.len(),
+            2,
+            "one record carries its operation and outcome"
+        );
+        assert_eq!(messages[0].text, "cargo test -p spice");
+        assert_eq!(messages[1].text, "cargo test -p spice succeeded");
+        assert!(
+            messages
+                .iter()
+                .all(|message| message.activity == wire::AgentActivityKind::Tool),
+        );
     }
 
     #[test]
@@ -969,13 +995,13 @@ fn each_reported_outcome_reaches_the_strip_beside_the_call_it_answers() {
     }
 }
 
-/// A result whose call was never seen is anonymous, not opaque.
+/// A result whose call was never seen retains its bounded source identity.
 ///
 /// A call outstanding across a resident restart, or one whose record this lane
-/// never selected, leaves nothing to correlate against. The strip still must
-/// not fall back to the vendor id.
+/// never selected, leaves nothing to correlate against. The raw identity is
+/// more useful than claiming every such operation was the same generic tool.
 #[test]
-fn an_uncorrelated_result_reads_as_an_anonymous_tool() {
+fn an_uncorrelated_result_reads_as_its_bounded_event_identity() {
     let mut previews = CallPreviews::default();
 
     let result = activity(
@@ -984,10 +1010,10 @@ fn an_uncorrelated_result_reads_as_an_anonymous_tool() {
         &mut previews,
     );
 
-    assert_eq!(result, "tool failed");
+    assert_eq!(result, format!("{COMPACT_VENDOR_ID} failed"));
     assert!(
         !result.contains(VENDOR_ID),
-        "an unmatched result must stay anonymous rather than opaque: {result}"
+        "the full opaque id stays bounded: {result}"
     );
 }
 
@@ -1007,7 +1033,7 @@ fn one_call_identifier_reused_by_two_lanes_keeps_its_lanes_apart() {
 
     assert_eq!(
         activity(lane(2), &tool(VENDOR_ID, succeeded()), &mut previews),
-        "tool succeeded",
+        format!("{COMPACT_VENDOR_ID} succeeded"),
         "another lane's call must not name this lane's result"
     );
     assert_eq!(
@@ -1037,7 +1063,7 @@ fn a_call_preview_is_forgotten_once_its_result_has_landed() {
     );
     assert_eq!(
         activity(lane(1), &tool(VENDOR_ID, succeeded()), &mut previews),
-        "tool succeeded",
+        format!("{COMPACT_VENDOR_ID} succeeded"),
         "a redelivered result must not resurrect a call already answered"
     );
 }
@@ -1084,7 +1110,9 @@ fn the_argument_preview_follows_the_shape_the_vendor_sent() {
         (r#""a bare string payload""#, "a bare string payload"),
         ("{}", ""),
         ("", ""),
-        (r#"{"depth":3}"#, ""),
+        (r#"{"depth":3}"#, "depth=3"),
+        ("null", "null"),
+        ("17", "17"),
         ("not json at all\nsecond line", "not json at all"),
     ] {
         assert_eq!(
@@ -1184,8 +1212,8 @@ fn generic_command_execution_names_suppress_only_informative_commands() {
         activity_preview("unknown_command", r#"{"command":"cargo test:all"}"#),
         "unknown command: cargo test:all",
     );
-    assert_eq!(activity_preview("exec", "null"), "exec command");
-    assert_eq!(activity_preview("exec_command", "17"), "exec command");
+    assert_eq!(activity_preview("exec", "null"), "exec: null");
+    assert_eq!(activity_preview("exec_command", "17"), "exec command: 17");
     assert_eq!(activity_preview("exec", "{malformed"), "exec command");
     assert_eq!(
         activity_preview("exec_command", "{malformed"),
@@ -1198,16 +1226,21 @@ fn generic_command_execution_names_suppress_only_informative_commands() {
 }
 
 #[test]
-fn every_generic_preview_keeps_two_informative_tokens() {
+fn every_generic_activity_keeps_two_informative_tokens() {
     for (name, arguments, expected) in [
         ("exec", "", "exec command"),
         ("exec", r#"{"cmd":"pwd"}"#, "exec: pwd"),
         ("Read", "", "Read tool"),
-        ("tool", "", "tool activity"),
-        ("", r#""status""#, "status tool"),
-        ("", "", "tool activity"),
+        ("tool", "", "event-raw activity"),
+        ("", r#""status""#, "event-raw: status"),
+        ("", "", "event-raw activity"),
+        ("tool", r#"{"depth":3}"#, "event-raw: depth=3"),
     ] {
-        let preview = activity_preview(name, arguments);
+        let preview = activity(
+            lane(1),
+            &tool("event-raw", call(name, arguments)),
+            &mut CallPreviews::default(),
+        );
         assert_eq!(preview, expected, "{name:?} {arguments:?}");
         assert!(
             informative_tokens(&preview) >= MIN_INFORMATIVE_TOKENS,

@@ -146,49 +146,57 @@ fn tool(
     locus: Locus,
 ) -> Events {
     let call_id = string(item, "id")?.to_owned();
-    let moment = match moment {
-        ItemMoment::Started => {
+    let moments = match moment {
+        ItemMoment::Started => vec![{
             if matches!(status_policy, StatusPolicy::Reported) {
                 require_in_progress(item)?;
             }
             ToolMoment::Call { name, arguments }
-        }
-        ItemMoment::Updated => {
+        }],
+        ItemMoment::Updated => vec![{
             if matches!(status_policy, StatusPolicy::Reported) {
                 require_in_progress(item)?;
             }
             ToolMoment::Update { name, arguments }
-        }
-        ItemMoment::Completed => ToolMoment::Result(ToolOutcome {
-            result: match status_policy {
-                StatusPolicy::Reported => tool_result(item)?,
-                StatusPolicy::Unreported => ToolResult::Unreported,
-            },
-            output: item
-                .get("aggregated_output")
-                .and_then(Value::as_str)
-                .map(str::to_owned),
-            exit_code: item
-                .get("exit_code")
-                .and_then(Value::as_i64)
-                .and_then(|code| i32::try_from(code).ok()),
-            media: item
-                .get("aggregated_output")
-                .map(|output| {
-                    media::decompose(OwnedContent::ProviderValue {
-                        value: output,
-                        default_name: "tool-image",
+        }],
+        ItemMoment::Completed => vec![
+            ToolMoment::Call { name, arguments },
+            ToolMoment::Result(ToolOutcome {
+                result: match status_policy {
+                    StatusPolicy::Reported => tool_result(item)?,
+                    StatusPolicy::Unreported => ToolResult::Unreported,
+                },
+                output: item
+                    .get("aggregated_output")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                exit_code: item
+                    .get("exit_code")
+                    .and_then(Value::as_i64)
+                    .and_then(|code| i32::try_from(code).ok()),
+                media: item
+                    .get("aggregated_output")
+                    .map(|output| {
+                        media::decompose(OwnedContent::ProviderValue {
+                            value: output,
+                            default_name: "tool-image",
+                        })
                     })
-                })
-                .transpose()?
-                .map_or_else(Vec::new, |content| content.media),
-        }),
+                    .transpose()?
+                    .map_or_else(Vec::new, |content| content.media),
+            }),
+        ],
     };
-    Ok(vec![Event::Tool(Tool {
-        call_id,
-        moment,
-        locus,
-    })])
+    Ok(moments
+        .into_iter()
+        .map(|moment| {
+            Event::Tool(Tool {
+                call_id: call_id.clone(),
+                moment,
+                locus,
+            })
+        })
+        .collect())
 }
 
 fn require_in_progress(item: &Object) -> Result<(), ResidueKind> {

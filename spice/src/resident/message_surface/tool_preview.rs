@@ -18,6 +18,7 @@ mod tests;
 /// Longest preview one strip line carries before it is elided.
 pub(in crate::resident) const MAX_CHARS: usize = 120;
 const MIN_INFORMATIVE_TOKENS: usize = 2;
+const MAX_EVENT_IDENTITY_CHARS: usize = 18;
 
 /// Argument fields worth showing, most recognizable first.
 ///
@@ -63,12 +64,12 @@ pub(super) fn activity(
     let key = (lane, tool.call_id.clone());
     match &tool.moment {
         listen::ToolMoment::Call { name, arguments } => {
-            let preview = activity_preview(name, arguments);
+            let preview = identified_preview(name, arguments, &tool.call_id);
             previews.by_call.insert(key, preview.clone());
             preview
         }
         listen::ToolMoment::Update { name, arguments } => {
-            let preview = activity_preview(name, arguments);
+            let preview = identified_preview(name, arguments, &tool.call_id);
             previews.by_call.insert(key, preview.clone());
             flatten(&format!("{preview} update"))
         }
@@ -78,16 +79,42 @@ pub(super) fn activity(
                 listen::ToolResult::Failed => "failed",
                 listen::ToolResult::Unreported => "completed",
             };
-            // An unmatched result still must not paint `toolu_01...`: the id is
-            // vendor bookkeeping an operator cannot act on. A call whose record
-            // was never selected, or one outstanding across a resident restart,
-            // reads as the anonymous tool it is.
             previews.by_call.remove(&key).map_or_else(
-                || format!("tool {outcome}"),
+                || flatten(&format!("{} {outcome}", event_identity(&tool.call_id))),
                 |preview| flatten(&format!("{preview} {outcome}")),
             )
         }
     }
+}
+
+fn identified_preview(name: &str, arguments: &str, call_id: &str) -> String {
+    let normalized = normalized_name(name);
+    if normalized.is_empty() || normalized.eq_ignore_ascii_case("tool") {
+        return named_preview(
+            &event_identity(call_id),
+            &flatten(&argument_preview(arguments)),
+            "activity",
+        );
+    }
+    activity_preview(name, arguments)
+}
+
+fn event_identity(call_id: &str) -> String {
+    let identity = flatten(call_id);
+    let count = identity.chars().count();
+    if count == 0 {
+        return "activity".to_owned();
+    }
+    if count <= MAX_EVENT_IDENTITY_CHARS {
+        return identity;
+    }
+    let leading = MAX_EVENT_IDENTITY_CHARS / 2;
+    let trailing = MAX_EVENT_IDENTITY_CHARS - leading - 1;
+    format!(
+        "{}…{}",
+        identity.chars().take(leading).collect::<String>(),
+        identity.chars().skip(count - trailing).collect::<String>(),
+    )
 }
 
 pub(super) fn message_text(tool: &listen::Tool, activity: String, media: &[wire::Media]) -> String {
@@ -185,7 +212,8 @@ fn argument_preview(raw: &str) -> String {
         Value::Object(fields) => object_preview(&fields),
         Value::Array(items) => joined(&items),
         Value::String(text) => text,
-        _ => String::new(),
+        Value::Null => "null".to_owned(),
+        scalar => scalar.to_string(),
     }
 }
 
@@ -209,6 +237,17 @@ fn object_preview(fields: &Map<String, Value>) -> String {
         {
             return text.clone();
         }
+    }
+    for (key, value) in fields {
+        let summary = match value {
+            Value::Number(number) => format!("{key}={number}"),
+            Value::Bool(boolean) => format!("{key}={boolean}"),
+            Value::Array(items) => format!("{key}[{}]", items.len()),
+            Value::Object(nested) => format!("{key}{{{}}}", nested.len()),
+            Value::Null => format!("{key}=null"),
+            Value::String(_) => continue,
+        };
+        return summary;
     }
     String::new()
 }
