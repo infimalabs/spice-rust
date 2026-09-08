@@ -6,6 +6,31 @@ pub(super) fn materialize_and_update(
     expected: &str,
     action: &str,
 ) -> Result<(), Error> {
+    materialize_and_update_with_hooks(root, target, expected, action, true)
+}
+
+/// Materialize a task-owned synthesized commit and advance the branch by CAS.
+///
+/// Completion has already enforced possession, ancestry, footprint, and tree
+/// admission. Its unreferenced commit cannot acquire repository-hook admission
+/// before this update, so this one owned transition must not invoke hooks that
+/// guard operator-authored reference changes.
+pub(super) fn materialize_and_update_owned(
+    root: &Path,
+    target: &str,
+    expected: &str,
+    action: &str,
+) -> Result<(), Error> {
+    materialize_and_update_with_hooks(root, target, expected, action, false)
+}
+
+fn materialize_and_update_with_hooks(
+    root: &Path,
+    target: &str,
+    expected: &str,
+    action: &str,
+    hooks: bool,
+) -> Result<(), Error> {
     let marker = transaction_path(root)?;
     write_pending(
         &marker,
@@ -27,7 +52,7 @@ pub(super) fn materialize_and_update(
         "resolve HEAD ref",
     )
     .map_err(|error| restore_move_failure(root, error))?;
-    let updated = run(root, &["update-ref", &reference, target, expected])
+    let updated = update_ref(root, &reference, target, expected, hooks)
         .map_err(|error| restore_move_failure(root, error))?;
     let current = required_read(root, &["rev-parse", "HEAD"], "read updated HEAD")
         .map_err(|error| restore_move_failure(root, error))?;
@@ -83,7 +108,7 @@ pub(super) fn materialize_resolution(
         &["symbolic-ref", "--quiet", "HEAD"],
         "resolve resolution HEAD ref",
     )?;
-    let updated = run(root, &["update-ref", &reference, target, expected])?;
+    let updated = update_ref(root, &reference, target, expected, false)?;
     let current = required_read(root, &["rev-parse", "HEAD"], "read resolution HEAD")?;
     if updated.success() || current == target {
         clear_merge_state(root)?;
@@ -97,6 +122,30 @@ pub(super) fn materialize_resolution(
         detail,
         format!("inspect the retained resolution, then retry task completion for {label}"),
     ))
+}
+
+fn update_ref(
+    root: &Path,
+    reference: &str,
+    target: &str,
+    expected: &str,
+    hooks: bool,
+) -> Result<GitOutput, Error> {
+    if hooks {
+        run(root, &["update-ref", reference, target, expected])
+    } else {
+        run(
+            root,
+            &[
+                "-c",
+                "core.hooksPath=/dev/null",
+                "update-ref",
+                reference,
+                target,
+                expected,
+            ],
+        )
+    }
 }
 
 fn restore_move_failure(root: &Path, error: Error) -> Error {

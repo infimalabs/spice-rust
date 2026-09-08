@@ -23,25 +23,39 @@ pub(super) fn try_read(root: &Path, args: &[&str]) -> Result<Option<String>, Err
 }
 
 pub(super) fn run(root: &Path, args: &[&str]) -> Result<GitOutput, Error> {
-    run_bounded(root, args, None)
+    run_bounded(root, args, None, &[])
 }
 
 pub(super) fn run_with_input(root: &Path, args: &[&str], input: &[u8]) -> Result<GitOutput, Error> {
-    run_bounded(root, args, Some(input))
+    run_bounded(root, args, Some(input), &[])
 }
 
-fn run_bounded(root: &Path, args: &[&str], input: Option<&[u8]>) -> Result<GitOutput, Error> {
-    run_bounded_observed(root, args, input, None)
+pub(super) fn run_with_environment(
+    root: &Path,
+    args: &[&str],
+    environment: &[(&str, &str)],
+) -> Result<GitOutput, Error> {
+    run_bounded(root, args, None, environment)
+}
+
+fn run_bounded(
+    root: &Path,
+    args: &[&str],
+    input: Option<&[u8]>,
+    environment: &[(&str, &str)],
+) -> Result<GitOutput, Error> {
+    run_bounded_observed(root, args, input, environment, None)
 }
 
 fn run_bounded_observed(
     root: &Path,
     args: &[&str],
     input: Option<&[u8]>,
+    environment: &[(&str, &str)],
     descendant_grace_started: Option<&mut dyn FnMut()>,
 ) -> Result<GitOutput, Error> {
     let limit = command_limit(args);
-    let mut process = spawn_git(root, args, input.is_some())?;
+    let mut process = spawn_git(root, args, input.is_some(), environment)?;
     let workers = match CommandWorkers::start(&mut process, input) {
         Ok(workers) => workers,
         Err(error) => {
@@ -58,7 +72,12 @@ fn run_bounded_observed(
     })
 }
 
-fn spawn_git(root: &Path, args: &[&str], piped_input: bool) -> Result<GitProcess, Error> {
+fn spawn_git(
+    root: &Path,
+    args: &[&str],
+    piped_input: bool,
+    environment: &[(&str, &str)],
+) -> Result<GitProcess, Error> {
     let mut command = Command::new("git");
     command
         .arg("-C")
@@ -69,6 +88,7 @@ fn spawn_git(root: &Path, args: &[&str], piped_input: bool) -> Result<GitProcess
             "GIT_SSH_COMMAND",
             "ssh -o BatchMode=yes -o ConnectTimeout=5",
         )
+        .envs(environment.iter().copied())
         .stdin(if piped_input {
             Stdio::piped()
         } else {

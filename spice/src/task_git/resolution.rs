@@ -61,19 +61,8 @@ pub(super) fn complete(
     let seal = preflight.complete(root, target, agent, upstream, message)?;
     require_tree_within_footprint(root, meta.label, upstream, &seal.tree, agent)?;
     seal.verify(root, target)?;
-    let created = run(
-        root,
-        &[
-            "commit-tree",
-            &seal.tree,
-            "-p",
-            &seal.upstream,
-            "-p",
-            &seal.agent,
-            "-m",
-            &seal.message,
-        ],
-    )?;
+    let created =
+        create_merge_commit(root, &seal.tree, &seal.upstream, &seal.agent, &seal.message)?;
     if !created.success() || created.stdout.trim().is_empty() {
         return Err(Error::fault(
             "git::resolution-commit-failed",

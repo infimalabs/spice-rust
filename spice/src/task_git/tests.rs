@@ -2,6 +2,9 @@ use super::*;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
+
 use wire::{
     Actor, CanonicalUuid, ClaimCell, ClaimDisposition, ClaimHead, Instant, LeaseHead, Phase, Seq,
     TaskHead, TaskStamp, WorkflowHead,
@@ -325,6 +328,231 @@ fn commit_local_plan_implementation(root: &Path) {
             "-m",
             "local plan implementation",
         ],
+    );
+}
+
+fn commit_task_change(root: &Path) -> String {
+    fs::write(root.join("task.txt"), "task change\n").expect("write task change");
+    git(root, &["add", "task.txt"]);
+    git(
+        root,
+        &[
+            "-c",
+            "user.name=Spice Test",
+            "-c",
+            "user.email=spice@example.invalid",
+            "commit",
+            "--no-verify",
+            "-m",
+            "task change",
+        ],
+    );
+    required_read(root, &["rev-parse", "HEAD"], "read task commit").expect("task commit reads")
+}
+
+#[cfg(unix)]
+fn install_rejecting_branch_hook(root: &Path) -> PathBuf {
+    let marker = root.join("reference-hook-ran");
+    let hook = root.join(".git/hooks/reference-transaction");
+    fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\nwhile read old new reference; do\n  case \"$reference\" in\n    refs/heads/*) printf invoked > '{}'; exit 1;;\n  esac\ndone\n",
+            marker.display(),
+        ),
+    )
+    .expect("write rejecting reference hook");
+    let mut permissions = fs::metadata(&hook)
+        .expect("read reference hook metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&hook, permissions).expect("make reference hook executable");
+    marker
+}
+
+#[cfg(unix)]
+#[test]
+fn synthesized_todo_and_review_landings_are_stable_and_hook_free() {
+    for phase in ["todo", "review"] {
+        let fixture = RepositoryFixture::new(&format!("hook-free-{phase}"));
+        configure_peer_integrations(&fixture.root);
+        let upstream = required_read(
+            &fixture.root,
+            &["rev-parse", "origin/main"],
+            "read publication baseline",
+        )
+        .expect("publication baseline reads");
+        let agent = commit_task_change(&fixture.root);
+        let marker = install_rejecting_branch_hook(&fixture.root);
+        let (entry, actor, now) = fixture.active_entry(phase);
+        let active = board::Active::admit(&entry, &actor, now).expect("claim is active");
+
+        let first = publish_claimed(&fixture.repository, metadata(phase), &active, None)
+            .unwrap_or_else(|error| panic!("first {phase} publication failed: {error}"));
+        assert_eq!(
+            merge_first_parent(&fixture.root, &first.integrated)
+                .expect("read first landing parent"),
+            Some(upstream.clone()),
+        );
+        assert_eq!(
+            merge_second_parent(&fixture.root, &first.integrated)
+                .expect("read second landing parent"),
+            Some(agent.clone()),
+        );
+        assert!(!marker.exists(), "task-owned ref update invoked the hook");
+
+        let remote_reset = format!("{upstream}:refs/heads/main");
+        git(
+            &fixture.root,
+            &[
+                "-c",
+                "core.hooksPath=/dev/null",
+                "push",
+                "--force",
+                "origin",
+                &remote_reset,
+            ],
+        );
+        git(
+            &fixture.root,
+            &["-c", "core.hooksPath=/dev/null", "reset", "--hard", &agent],
+        );
+
+        let second = publish_claimed(&fixture.repository, metadata(phase), &active, None)
+            .unwrap_or_else(|error| panic!("retried {phase} publication failed: {error}"));
+        assert_eq!(second.integrated, first.integrated);
+        assert!(!marker.exists(), "retried ref update invoked the hook");
+    }
+}
+
+struct ScratchDirectory(PathBuf);
+
+impl ScratchDirectory {
+    fn new(label: &str) -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "spice-task-git-{label}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed),
+        ));
+        fs::create_dir(&path).expect("create scratch directory");
+        Self(path)
+    }
+}
+
+impl Drop for ScratchDirectory {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn completion_fetches_when_bare_head_names_the_remote_tracking_branch() {
+    let scratch = ScratchDirectory::new("bare-head-fetch");
+    let seed = scratch.0.join("seed");
+    let remote = scratch.0.join("origin.git");
+    let common = scratch.0.join("common.git");
+    let lane = scratch.0.join("lane");
+    let seed_text = seed.to_str().expect("seed path is UTF-8");
+    let remote_text = remote.to_str().expect("remote path is UTF-8");
+    let common_text = common.to_str().expect("common path is UTF-8");
+    let lane_text = lane.to_str().expect("lane path is UTF-8");
+
+    git(&scratch.0, &["init", "-b", "main", seed_text]);
+    git(&seed, &["config", "user.name", "Spice Test"]);
+    git(&seed, &["config", "user.email", "spice@example.invalid"]);
+    fs::write(seed.join("tracked.txt"), "opening\n").expect("write opening file");
+    git(&seed, &["add", "tracked.txt"]);
+    git(&seed, &["commit", "--no-verify", "-m", "opening"]);
+    git(&scratch.0, &["init", "--bare", remote_text]);
+    git(&seed, &["remote", "add", "origin", remote_text]);
+    git(&seed, &["push", "-u", "origin", "main"]);
+
+    git(&scratch.0, &["init", "--bare", common_text]);
+    git(&common, &["remote", "add", "origin", remote_text]);
+    git(&common, &["fetch", "origin"]);
+    git(&common, &["branch", "lane", "origin/main"]);
+    git(&common, &["worktree", "add", lane_text, "lane"]);
+    git(&lane, &["config", "branch.lane.remote", "origin"]);
+    git(&lane, &["config", "branch.lane.merge", "refs/heads/main"]);
+
+    fs::write(seed.join("tracked.txt"), "arrived\n").expect("write arriving change");
+    git(&seed, &["add", "tracked.txt"]);
+    git(&seed, &["commit", "--no-verify", "-m", "arriving change"]);
+    git(&seed, &["push", "origin", "main"]);
+    let arrived = required_read(&seed, &["rev-parse", "HEAD"], "read arriving commit")
+        .expect("arriving commit reads");
+
+    git(
+        &common,
+        &["symbolic-ref", "HEAD", "refs/remotes/origin/main"],
+    );
+    let repository = Repository::discover(&lane).expect("discover linked worktree");
+    let boundary = prepare_claim(&repository).expect("bare-HEAD completion fetch succeeds");
+
+    assert_eq!(boundary.integrated, arrived);
+    assert_eq!(
+        required_read(&lane, &["rev-parse", "HEAD"], "read advanced lane")
+            .expect("advanced lane reads"),
+        arrived,
+    );
+    assert_eq!(
+        required_read(&common, &["symbolic-ref", "HEAD"], "read bare HEAD")
+            .expect("bare HEAD reads"),
+        "refs/remotes/origin/main",
+    );
+}
+
+#[test]
+fn publication_race_rebuilds_once_against_the_fetched_origin_identity() {
+    let fixture = RepositoryFixture::new("moving-origin");
+    configure_peer_integrations(&fixture.root);
+    let stale = required_read(
+        &fixture.root,
+        &["rev-parse", "origin/main"],
+        "read stale publication baseline",
+    )
+    .expect("stale baseline reads");
+    let agent = commit_task_change(&fixture.root);
+    let message = compose_message(metadata("todo"));
+    let admission = Admission::resolve(&fixture.repository, &agent).expect("resolve admission");
+    let initial = integrate(&fixture.root, &agent, &stale, &message, "PHASE-1kRLWYyD")
+        .expect("synthesize initial landing");
+
+    publish_peer_integrations(&fixture.root);
+    let remote = fixture.root.join(".git/fixture-origin.git");
+    let fresh = required_read(&remote, &["rev-parse", "main"], "read moved origin")
+        .expect("moved origin reads");
+    let target = Target {
+        remote: "origin".to_owned(),
+        baseline: "origin/main".to_owned(),
+        branch: "main".to_owned(),
+    };
+
+    let (integrated, published) = publish_with_retry(
+        &fixture.root,
+        &target,
+        initial,
+        stale,
+        Publication {
+            repository: &fixture.repository,
+            agent_head: &agent,
+            message: &message,
+            label: "PHASE-1kRLWYyD",
+            admission: &admission,
+        },
+    )
+    .expect("moving-origin publication retries");
+
+    assert_eq!(published, fresh);
+    assert_eq!(
+        merge_first_parent(&fixture.root, &integrated).expect("read raced first parent"),
+        Some(fresh),
+    );
+    assert_eq!(
+        required_read(&remote, &["rev-parse", "main"], "read published origin")
+            .expect("published origin reads"),
+        integrated,
     );
 }
 
