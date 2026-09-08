@@ -1022,7 +1022,11 @@ html[data-command-modifier-held="true"]
   vertical-align: baseline;
   padding: 0 4px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--message-inline-pill-accent) 90%, transparent);
+  background: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--message-inline-pill-accent) 85%, var(--ink)) 85%,
+    transparent
+  );
   color: var(--panel);
   font-size: .8125em;
   font-weight: 400;
@@ -1048,6 +1052,12 @@ html[data-command-modifier-held="true"]
 }
 .organization-surface .message-review-pill {
   --message-inline-pill-accent: var(--ink);
+}
+.organization-surface .markdown-body blockquote .message-task-chip,
+.organization-surface .markdown-body blockquote .message-taste-pill,
+.organization-surface .markdown-body blockquote .message-review-pill {
+  background: color-mix(in srgb, var(--message-inline-pill-accent) 6%, transparent);
+  color: var(--message-inline-pill-accent);
 }
 .organization-surface .mosaic-message-card footer .card-action {
   width: 32px;
