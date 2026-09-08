@@ -730,12 +730,15 @@ async function messageStateColors(card) {
       return {
         text: badge.textContent,
         display: badgeStyle.display,
+        clientWidth: badge.clientWidth,
+        scrollWidth: badge.scrollWidth,
         height: bounds.height,
         minHeight: badgeStyle.minHeight,
         padding: badgeStyle.padding,
         borderWidth: badgeStyle.borderWidth,
         borderRadius: badgeStyle.borderRadius,
         fontSize: badgeStyle.fontSize,
+        fontFamily: badgeStyle.fontFamily,
         fontWeight: badgeStyle.fontWeight,
         left: bounds.left,
         right: bounds.right,
@@ -743,6 +746,8 @@ async function messageStateColors(card) {
         bottom: bounds.bottom,
         count: count && {
           text: count.textContent,
+          clientWidth: count.clientWidth,
+          scrollWidth: count.scrollWidth,
           height: countBounds.height,
           left: countBounds.left,
           right: countBounds.right,
@@ -750,6 +755,7 @@ async function messageStateColors(card) {
           bottom: countBounds.bottom,
           padding: countStyle.padding,
           fontSize: countStyle.fontSize,
+          fontFamily: countStyle.fontFamily,
           boxShadow: countStyle.boxShadow,
         },
       };
@@ -884,6 +890,7 @@ async function captureFinalMessageStates(
         borderWidth: badge.borderWidth,
         borderRadius: badge.borderRadius,
         fontSize: badge.fontSize,
+        fontFamily: badge.fontFamily,
         fontWeight: badge.fontWeight,
       },
       {
@@ -894,6 +901,7 @@ async function captureFinalMessageStates(
         borderWidth: "0px",
         borderRadius: "999px",
         fontSize: "12px",
+        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
         fontWeight: "700",
       },
       `${mode} ${viewport.label} gives ${badge.text} the shared inline-badge geometry`,
@@ -907,9 +915,16 @@ async function captureFinalMessageStates(
       text: ackGeometry.count?.text,
       padding: ackGeometry.count?.padding,
       fontSize: ackGeometry.count?.fontSize,
+      fontFamily: ackGeometry.count?.fontFamily,
       boxShadow: ackGeometry.count?.boxShadow,
     },
-    { text: "1", padding: "0px 5px", fontSize: "9px", boxShadow: "none" },
+    {
+      text: "1",
+      padding: "0px 5px",
+      fontSize: "9px",
+      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+      boxShadow: "none",
+    },
     `${mode} ${viewport.label} keeps the attached ACK count legible and borderless`,
   );
   assert.ok(
@@ -918,6 +933,11 @@ async function captureFinalMessageStates(
       && ackGeometry.count.top >= ackGeometry.top
       && ackGeometry.count.bottom <= ackGeometry.bottom,
     `${mode} ${viewport.label} contains the ACK count inside its badge`,
+  );
+  assert.ok(
+    final.badgeGeometry.every((badge) => badge.scrollWidth <= badge.clientWidth + 1)
+      && ackGeometry.count.scrollWidth <= ackGeometry.count.clientWidth + 1,
+    `${mode} ${viewport.label} keeps every footer classifier label and count unclipped`,
   );
   assert.ok(
     finalGeometry.right <= ackGeometry.left

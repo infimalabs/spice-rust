@@ -956,6 +956,13 @@ html[data-command-modifier-held="true"]
   gap: 4px;
   min-width: 0;
 }
+.organization-surface .message-task-chip,
+.organization-surface .message-taste-pill,
+.organization-surface .message-broadcast-pill,
+.organization-surface .message-review-pill,
+.organization-surface .message-badge {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
 .organization-surface .message-badge {
   --message-badge-accent: var(--accent);
   display: inline-flex;
@@ -966,7 +973,6 @@ html[data-command-modifier-held="true"]
   border-radius: 999px;
   background: var(--message-badge-accent);
   color: var(--panel);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
