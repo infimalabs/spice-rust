@@ -82,7 +82,7 @@
 .markdown-body blockquote p:last-child { margin-bottom: 0; }
 .markdown-body blockquote ul,
 .markdown-body blockquote ol { margin: 0 0 6px; padding-left: 18px; }
-.markdown-body blockquote:has(.message-taste-pill) {
+.markdown-body blockquote:has(> p > .message-taste-pill) {
   border-left-color: var(--accent-2);
   background: color-mix(in srgb, var(--accent-2) 6%, transparent);
 }
