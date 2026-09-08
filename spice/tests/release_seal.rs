@@ -115,6 +115,21 @@ fn release_seal_refuses_a_moved_head_without_publishing_a_manifest_pointer() {
 }
 
 #[test]
+fn release_seal_refuses_an_untracked_non_manifest_stage_file() {
+    let fixture = Fixture::new();
+    fs::write(
+        fixture.root.join("dist/stage/unexpected.txt"),
+        "unexpected stage file\n",
+    )
+    .expect("write unexpected stage file");
+
+    let output = fixture.invoke(&["--json", "release", "seal"]);
+
+    assert_refusal(&output, "release::seal-source-refused");
+    assert!(!fixture.root.join("dist/stage/release").exists());
+}
+
+#[test]
 fn release_seal_refuses_a_moved_canvas_and_preserves_the_existing_pointer() {
     let fixture = Fixture::new();
     let pointer = fixture.root.join("dist/stage/release/manifest.json");
@@ -145,8 +160,11 @@ impl Fixture {
         ));
         fs::create_dir(&root).expect("fixture root");
         git(&root, &["init", "--quiet"]);
-        fs::write(&root.join(".gitignore"), "/dist/stage\n/dist/stage-app\n")
-            .expect("fixture ignores release output");
+        fs::write(
+            root.join(".gitignore"),
+            "/dist/stage/objects/\n/dist/stage/targets/\n/dist/stage-app/\n",
+        )
+        .expect("fixture ignores only generated release output");
         fs::write(root.join("source.txt"), "source\n").expect("fixture source");
         git(&root, &["add", ".gitignore", "source.txt"]);
         git(

@@ -375,10 +375,19 @@ pub(crate) struct ProofSourceIdentity {
     pub digest: Digest,
 }
 
+const RELEASE_MANIFEST_STATUS: &str = "?? dist/stage/release/manifest.json";
+
 pub(crate) fn proof_source_identity(root: &Path) -> Result<ProofSourceIdentity, String> {
     let status = git_line(root, &["status", "--porcelain=v1", "--untracked-files=all"])?;
-    if !status.is_empty() {
-        return Err(format!("proof source is not clean: {status}"));
+    let unexpected = status
+        .lines()
+        .filter(|line| *line != RELEASE_MANIFEST_STATUS)
+        .collect::<Vec<_>>();
+    if !unexpected.is_empty() {
+        return Err(format!(
+            "proof source is not clean: {}",
+            unexpected.join("\n")
+        ));
     }
     let commit = git_line(root, &["rev-parse", "--verify", "HEAD^{commit}"])?;
     let tree = git_line(root, &["rev-parse", "--verify", "HEAD^{tree}"])?;
@@ -388,6 +397,32 @@ pub(crate) fn proof_source_identity(root: &Path) -> Result<ProofSourceIdentity, 
         tree,
         digest,
     })
+}
+
+#[cfg(test)]
+mod proof_source_tests {
+    use super::*;
+
+    #[test]
+    fn only_the_generated_release_manifest_is_absent_from_source_differences() {
+        fn differences(status: &str) -> Vec<&str> {
+            status
+                .lines()
+                .filter(|line| *line != RELEASE_MANIFEST_STATUS)
+                .collect::<Vec<_>>()
+        }
+
+        assert!(differences("").is_empty());
+        assert!(differences(RELEASE_MANIFEST_STATUS).is_empty());
+        assert_eq!(
+            differences("?? dist/stage/release/unexpected.json"),
+            ["?? dist/stage/release/unexpected.json"]
+        );
+        assert_eq!(
+            differences(&format!("{RELEASE_MANIFEST_STATUS}\n M source.rs")),
+            [" M source.rs"]
+        );
+    }
 }
 
 pub(crate) fn admit_stage(
