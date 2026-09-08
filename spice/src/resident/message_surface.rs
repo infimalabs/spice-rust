@@ -773,11 +773,26 @@ fn message_badges(
                 .is_some_and(|directive| directive.taste)
         })
         .count();
+    let broadcasts = acknowledged
+        .iter()
+        .filter(|key| {
+            directives
+                .0
+                .get(*key)
+                .is_some_and(|directive| !directive.taste && has_broadcast_marker(&directive.text))
+        })
+        .count();
     wire::AgentMessageBadges {
-        acknowledgements: u32::try_from(acknowledged.len().saturating_sub(tastes))
+        acknowledgements: u32::try_from(acknowledged.len().saturating_sub(tastes + broadcasts))
             .unwrap_or(u32::MAX),
         tastes: u32::try_from(tastes).unwrap_or(u32::MAX),
+        broadcasts: u32::try_from(broadcasts).unwrap_or(u32::MAX),
     }
+}
+
+fn has_broadcast_marker(text: &str) -> bool {
+    text.strip_prefix(wire::stream::BROADCAST_MARKER)
+        .is_some_and(|suffix| suffix.starts_with(char::is_whitespace))
 }
 
 #[derive(Clone, Copy, Debug)]

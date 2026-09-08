@@ -764,7 +764,7 @@ mod tests {
             uuid(FANOUT),
             uuid(LANE_A),
             (uuid(OCCUPANT), uuid(EPOCH)),
-            "broadcast".to_owned(),
+            "[BROADCAST] broadcast".to_owned(),
             Vec::new(),
             draft("broadcast"),
         );
@@ -773,11 +773,30 @@ mod tests {
             uuid(FANOUT),
             uuid(LANE_B),
             (uuid(OCCUPANT), uuid(EPOCH)),
-            "broadcast".to_owned(),
+            "[BROADCAST] broadcast".to_owned(),
             Vec::new(),
             uuid(LANE_A),
         );
         queue.enqueue_all(vec![source, copy]).unwrap();
+        let broadcast_messages = queue
+            .ready()
+            .iter()
+            .map(|submission| submission.message.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            broadcast_messages,
+            ["[BROADCAST] broadcast", "[BROADCAST] broadcast"]
+        );
+        queue.reconnect();
+        assert_eq!(
+            queue
+                .ready()
+                .iter()
+                .map(|submission| submission.message.as_str())
+                .collect::<Vec<_>>(),
+            ["[BROADCAST] broadcast", "[BROADCAST] broadcast"],
+            "broadcast replay preserves each target payload byte-for-byte"
+        );
         assert_eq!(queue.restore_lane(uuid(ID_A)).unwrap(), uuid(LANE_A));
         assert_eq!(queue.restore_lane(uuid(ID_B)).unwrap(), uuid(LANE_A));
         assert!(

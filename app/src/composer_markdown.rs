@@ -22,8 +22,34 @@ pub(crate) fn render_received(markdown: &str) -> RenderedMarkdown {
     render_received_with_tastes(markdown, 0)
 }
 
+/// Prefix one composed document with the canonical broadcast marker.
+pub(crate) fn mark_broadcast(markdown: &str) -> String {
+    if has_marker_prefix(markdown, wire::stream::BROADCAST_MARKER) {
+        markdown.to_owned()
+    } else {
+        format!("{} {markdown}", wire::stream::BROADCAST_MARKER)
+    }
+}
+
+/// Render received text using resident-authenticated semantic classifications.
+pub(crate) fn render_received_with_badges(
+    markdown: &str,
+    badges: wire::AgentMessageBadges,
+) -> RenderedMarkdown {
+    render_received_with_classifications(markdown, badges.tastes, badges.broadcasts)
+}
+
 /// Render received text and replace authenticated quoted taste markers inline.
+#[cfg(test)]
 pub(crate) fn render_received_with_tastes(markdown: &str, tastes: u32) -> RenderedMarkdown {
+    render_received_with_classifications(markdown, tastes, 0)
+}
+
+fn render_received_with_classifications(
+    markdown: &str,
+    tastes: u32,
+    broadcasts: u32,
+) -> RenderedMarkdown {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
         | Options::ENABLE_STRIKETHROUGH
@@ -40,6 +66,7 @@ pub(crate) fn render_received_with_tastes(markdown: &str, tastes: u32) -> Render
     let mut block_quote_depth = 0usize;
     let mut remaining_review = has_marker_prefix(markdown, "[REVIEW]");
     let mut remaining_tastes = usize::try_from(tastes).unwrap_or(usize::MAX);
+    let mut remaining_broadcasts = usize::try_from(broadcasts).unwrap_or(usize::MAX);
     let events = decorate_markdown_images(events, image_only)
         .into_iter()
         .flat_map(|event| {
@@ -59,6 +86,7 @@ pub(crate) fn render_received_with_tastes(markdown: &str, tastes: u32) -> Render
                     event,
                     &mut remaining_review,
                     (block_quote_depth > 0).then_some(&mut remaining_tastes),
+                    (block_quote_depth > 0).then_some(&mut remaining_broadcasts),
                 );
                 events.into_iter().flat_map(inline_task_chips).collect()
             }
@@ -88,6 +116,7 @@ fn inline_classification_marker<'a>(
     event: MarkdownEvent<'a>,
     remaining_review: &mut bool,
     remaining_tastes: Option<&mut usize>,
+    remaining_broadcasts: Option<&mut usize>,
 ) -> Vec<MarkdownEvent<'a>> {
     let MarkdownEvent::Text(text) = event else {
         return vec![event];
@@ -97,6 +126,15 @@ fn inline_classification_marker<'a>(
     {
         return vec![
             MarkdownEvent::InlineHtml(review_pill_html().into()),
+            MarkdownEvent::Text(suffix.into()),
+        ];
+    }
+    if let Some(remaining) = remaining_broadcasts.filter(|remaining| **remaining > 0)
+        && let Some(suffix) = marker_suffix(&text, wire::stream::BROADCAST_MARKER)
+    {
+        *remaining -= 1;
+        return vec![
+            MarkdownEvent::InlineHtml(broadcast_pill_html().into()),
             MarkdownEvent::Text(suffix.into()),
         ];
     }
@@ -139,6 +177,11 @@ fn taste_guidance_suffix(suffix: &str) -> String {
 fn taste_pill_html() -> &'static str {
     "<span class=\"message-taste-pill\" data-message-classification=\"taste\" \
      aria-label=\"Taste classification\">TASTE</span>"
+}
+
+fn broadcast_pill_html() -> &'static str {
+    "<span class=\"message-broadcast-pill\" data-message-classification=\"broadcast\" \
+     aria-label=\"Broadcast classification\">BROADCAST</span>"
 }
 
 fn review_pill_html() -> &'static str {
@@ -816,6 +859,49 @@ mod tests {
             rendered
                 .html
                 .contains("ACK: ordinary [TASTE] prose stays text.")
+        );
+    }
+
+    #[test]
+    fn broadcast_marker_is_idempotent_and_requires_authenticated_quote_metadata() {
+        let marked = mark_broadcast("Send this to every occupied agent.");
+        assert_eq!(marked, "[BROADCAST] Send this to every occupied agent.");
+        assert_eq!(mark_broadcast(&marked), marked);
+
+        let classified = render_received_with_badges(
+            "> [BROADCAST] Send this to every occupied agent.\n\n\
+             > [BROADCAST] A second marker remains literal.\n\n\
+             `[BROADCAST]` remains code.",
+            wire::AgentMessageBadges {
+                broadcasts: 1,
+                ..wire::AgentMessageBadges::default()
+            },
+        );
+        assert_eq!(
+            classified
+                .html
+                .matches("class=\"message-broadcast-pill\"")
+                .count(),
+            1,
+        );
+        assert!(
+            classified
+                .html
+                .contains("Send this to every occupied agent.")
+        );
+        assert!(
+            classified
+                .html
+                .contains("[BROADCAST] A second marker remains literal.")
+        );
+        assert!(classified.html.contains("<code>[BROADCAST]</code>"));
+
+        let unclassified = render_received("> [BROADCAST] Remains ordinary quoted prose.");
+        assert!(!unclassified.html.contains("message-broadcast-pill"));
+        assert!(
+            unclassified
+                .html
+                .contains("[BROADCAST] Remains ordinary quoted prose.")
         );
     }
 

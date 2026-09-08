@@ -1256,6 +1256,7 @@ fn submit_broadcast(
     let Some(prepared) = drafts.0.prepare_primary(source_key) else {
         return false;
     };
+    let message = crate::composer_markdown::mark_broadcast(&prepared.message);
     let Ok(fanout) = random_uuid() else {
         return false;
     };
@@ -1271,7 +1272,7 @@ fn submit_broadcast(
                 fanout,
                 target.lane,
                 residency,
-                prepared.message.clone(),
+                message.clone(),
                 prepared.attachments.clone(),
                 prepared.snapshot.clone(),
             )
@@ -1281,7 +1282,7 @@ fn submit_broadcast(
                 fanout,
                 target.lane,
                 residency,
-                prepared.message.clone(),
+                message.clone(),
                 prepared.attachments.clone(),
                 source_lane,
             )

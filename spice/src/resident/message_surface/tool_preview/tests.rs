@@ -305,6 +305,7 @@ mod presentation {
             wire::AgentMessageBadges {
                 acknowledgements: 1,
                 tastes: 0,
+                broadcasts: 0,
             },
         );
         for text in [
@@ -317,6 +318,22 @@ mod presentation {
                 "unearned badge for {text:?}",
             );
         }
+    }
+
+    #[test]
+    fn acknowledged_broadcast_marker_earns_its_own_semantic_badge() {
+        let directives =
+            directives(&[("1kQnrzNZ", "[BROADCAST] Send this to every occupied agent.")]);
+
+        assert_eq!(
+            message_badges("ACK 1kQnrzNZ: applied.", Some(&directives), event()),
+            wire::AgentMessageBadges {
+                acknowledgements: 0,
+                tastes: 0,
+                broadcasts: 1,
+            },
+        );
+        assert!(message_badges("NACK 1kQnrzNZ: refused.", Some(&directives), event()).is_empty());
     }
 
     #[test]
@@ -494,6 +511,7 @@ mod presentation {
             wire::AgentMessageBadges {
                 acknowledgements: 1,
                 tastes: 0,
+                broadcasts: 0,
             },
         );
     }
@@ -557,6 +575,7 @@ mod presentation {
             wire::AgentMessageBadges {
                 acknowledgements: 1,
                 tastes: 0,
+                broadcasts: 0,
             },
         );
         assert!(messages[0].automatic_speech.is_none());
@@ -682,6 +701,7 @@ mod presentation {
             wire::AgentMessageBadges {
                 acknowledgements: 0,
                 tastes: 1,
+                broadcasts: 0,
             },
         );
     }
@@ -734,6 +754,7 @@ mod presentation {
             wire::AgentMessageBadges {
                 acknowledgements: 1,
                 tastes: 1,
+                broadcasts: 0,
             },
         );
         assert_eq!(
@@ -796,6 +817,7 @@ mod presentation {
             wire::AgentMessageBadges {
                 acknowledgements: 2,
                 tastes: 0,
+                broadcasts: 0,
             },
         );
     }

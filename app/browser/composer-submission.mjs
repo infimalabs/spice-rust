@@ -332,12 +332,21 @@ export async function assertCompleteComposerSubmission({
   assert.equal(await secondPrimary.getByRole("textbox").inputValue(), "all-agents second primary");
   assert.equal(await secondAllQuote.getByRole("textbox").inputValue(), "all-agents second quote reply");
   assert.equal(await secondPrimary.getByRole("img", { name: "all-second.png" }).count(), 1);
+  let broadcastText = null;
   for (const targetLane of targetLanes) {
     const targetInbox = await reply(fixture, ["inbox", targetLane]);
     const delivered = targetInbox.body.lanes[0].pending.find(
       (directive) => directive.text.includes("broadcast primary body"),
     );
     assert.ok(delivered, `broadcast reaches occupied target ${targetLane}`);
+    assert.match(delivered.text, /^\[BROADCAST\] broadcast primary body(?:\n|$)/u);
+    assert.equal(
+      delivered.text.match(/\[BROADCAST\]/gu)?.length,
+      1,
+      `broadcast target ${targetLane} receives exactly one canonical marker`,
+    );
+    broadcastText ??= delivered.text;
+    assert.equal(delivered.text, broadcastText, "broadcast fanout preserves one identical document");
     assert.deepEqual(delivered.attachments.map((attachment) => attachment.name), ["broadcast.png"]);
     assert.equal(delivered.text.includes("all-agents first quote reply"), false);
   }
