@@ -60,8 +60,8 @@ fn the_documented_seed_block_decodes_as_a_complete_tracked_document() {
 
     assert_eq!(
         bag.tastes().len(),
-        7,
-        "TASTES.md publishes a seed set of seven; a seed was added or dropped",
+        6,
+        "TASTES.md publishes a seed set of six; a seed was added or dropped",
     );
 }
 
