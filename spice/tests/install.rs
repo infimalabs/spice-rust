@@ -361,6 +361,7 @@ fn linked_worktrees_share_one_common_install_and_receipt() {
     let common = scratch.join(".git");
     let linked = scratch.join("linked");
     git_repository::link(scratch.path(), &linked, "linked");
+    git_repository::seed_canvas_stage(&linked);
     let first_repository = Repository::discover(scratch.path()).unwrap();
     let linked_repository = Repository::discover(&linked).unwrap();
     let source = Path::new(env!("CARGO_BIN_EXE_spice"));
@@ -415,6 +416,19 @@ fn linked_worktrees_share_one_common_install_and_receipt() {
         "{diagnostic}"
     );
     assert!(common.join(".spice-rs/install.json").is_file());
+    let app = common.join(".spice-install/app");
+    let generation = fs::read_to_string(app.join("current"))
+        .unwrap()
+        .trim()
+        .to_owned();
+    for file in wire::manifest::CANVAS_APP_FILES {
+        assert!(
+            app.join("generations")
+                .join(&generation)
+                .join(file)
+                .is_file()
+        );
+    }
     let record: serde_json::Value =
         serde_json::from_slice(&fs::read(common.join(".spice-rs/install.json")).unwrap()).unwrap();
     assert!(record["repository"].get("worktree").is_none());
@@ -427,7 +441,45 @@ fn linked_worktrees_share_one_common_install_and_receipt() {
         InstallStatus::Uninstalled
     );
     assert!(!installed_binary(&first_repository).exists());
+    assert!(!app.exists());
     assert!(common.join(".spice-rs/install.json").is_file());
+}
+
+#[test]
+fn canvas_refresh_carries_immutable_generations_and_unapplies_them_together() {
+    let scratch = Scratch::new("canvas-refresh");
+    let repository = scratch.repository();
+    let binary = Path::new(env!("CARGO_BIN_EXE_spice"));
+    let first = plan(&repository, Some(binary)).unwrap();
+    apply(&repository, Some(binary), &first.digest().unwrap()).unwrap();
+
+    git_repository::seed_canvas_stage_as(scratch.path(), b"refreshed fixture app");
+    assert_eq!(
+        audit_appliance(&repository, binary).unwrap().state(),
+        ApplianceState::AnotherBuild,
+    );
+    let refreshed = plan(&repository, Some(binary)).unwrap();
+    assert_ne!(refreshed.digest().unwrap(), first.digest().unwrap());
+    apply(&repository, Some(binary), &refreshed.digest().unwrap()).unwrap();
+
+    let app = repository.common_dir().join(".spice-install/app");
+    let generations = fs::read_dir(app.join("generations"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    assert_eq!(generations.len(), 2);
+    let current = fs::read_to_string(app.join("current")).unwrap();
+    assert_eq!(current.trim(), refreshed.app_generation().unwrap().as_str());
+    assert_eq!(
+        unapply(&repository).unwrap().status(),
+        InstallStatus::Uninstalled,
+    );
+    assert!(!app.join("current").exists());
+    for generation in generations {
+        for file in wire::manifest::CANVAS_APP_FILES {
+            assert!(!generation.join(file).exists());
+        }
+    }
 }
 
 #[test]

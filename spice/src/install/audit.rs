@@ -7,9 +7,9 @@ use wire::Digest;
 
 use super::record::{RefreshRecord, read_record_for_refresh};
 use super::{
-    Asset, BINARY_PATH, EXECUTABLE_MODE, GIT_COMMIT_MESSAGE_PATH, GIT_PRE_COMMIT_PATH,
-    GIT_REFERENCE_TRANSACTION_PATH, GeneratedImage, InstallError, InstallStatus, Repository,
-    installed_binary, read_binary, verify_progress,
+    Asset, BINARY_PATH, GIT_COMMIT_MESSAGE_PATH, GIT_PRE_COMMIT_PATH,
+    GIT_REFERENCE_TRANSACTION_PATH, InstallError, InstallStatus, Repository, current_build_differs,
+    installed_binary, verify_progress,
 };
 
 /// Deterministic relationship between one repository and its installed appliance.
@@ -177,13 +177,12 @@ pub fn audit_appliance(
             current_binary,
         ));
     }
-    let current = GeneratedImage::new(EXECUTABLE_MODE, &read_binary(current_binary)?);
-    if current != binary.generated {
+    if current_build_differs(repository, &record.plan, Some(current_binary))? {
         return Ok(report(
             ApplianceState::AnotherBuild,
             format!(
-                "installed binary digest {} differs from current build digest {}",
-                binary.generated.digest, current.digest
+                "installed appliance generation differs from current build; installed binary digest {}",
+                binary.generated.digest,
             ),
             Some(preview),
             Some(receipt),

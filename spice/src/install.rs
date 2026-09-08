@@ -11,6 +11,7 @@ use wire::{Digest, Domain};
 
 use crate::repository::Repository;
 
+mod app;
 mod audit;
 mod binding;
 mod error;
@@ -98,6 +99,7 @@ const BASH_HOOK_PATH: &str = ".spice-install/hooks/shell/bash_env";
 const WRAPPER_SPICE_PATH: &str = ".spice-install/hooks/wrappers/spice";
 const SKILL_PATH: &str = ".spice-install/agents/skills/spice/SKILL.md";
 const BINARY_PATH: &str = ".spice-install/bin/spice";
+const APP_CURRENT_PATH: &str = ".spice-install/app/current";
 const RETIRED_XTASK_PATH: &str = ".spice-install/bin/xtask";
 const RETIRED_XTASK_GUARD_PATH: &str = ".spice-install/bin/xtask.guard";
 const RETIRED_FOLD_STORE_PATH: &str = ".spice-rs/data/spicefolds.sqlite3";
@@ -158,6 +160,8 @@ pub struct InstallPlan {
     repository: RepositoryIdentity,
     record: BoundDestination,
     operations: Vec<Operation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    app: Option<Digest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     retirements: Vec<Retirement>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -183,6 +187,12 @@ impl InstallPlan {
     #[must_use]
     pub fn operations(&self) -> &[Operation] {
         &self.operations
+    }
+
+    /// Canvas generation published by an appliance-bearing plan.
+    #[must_use]
+    pub const fn app_generation(&self) -> Option<&Digest> {
+        self.app.as_ref()
     }
 
     /// Legacy paths this plan removes only after all live assets publish.
@@ -309,7 +319,7 @@ impl InstallPlan {
                 .plan
                 .operations
                 .iter()
-                .find(|prior| prior.asset == operation.asset)
+                .find(|prior| same_operation(prior, operation))
                 .map_or_else(
                     || image.as_ref().is_none_or(FileImage::validate),
                     |prior| {
@@ -427,7 +437,11 @@ impl InstallPlan {
     /// Whether an embedded hook or skill identity belongs to another build.
     fn fixed_content_differs_from_current_build(&self) -> Result<bool, InstallError> {
         for operation in &self.operations {
-            if fixed_content_differs_from_current_build(operation, &self.repository.common_git)? {
+            if fixed_content_differs_from_current_build(
+                operation,
+                &self.repository.common_git,
+                self.app.as_ref(),
+            )? {
                 return Ok(true);
             }
         }
@@ -500,7 +514,7 @@ fn plan_from_refresh(
     }
     if record.status == InstallStatus::Complete
         && (repairable
-            || current_build_differs(&record.plan, spice_binary)?
+            || current_build_differs(repository, &record.plan, spice_binary)?
             || hook_activation::topology_changed(repository, &record.plan)?)
     {
         // A rebuilt executable over a complete install is a refresh, not a
@@ -558,63 +572,54 @@ fn build_plan_over(
     rollback_record: Option<&FileImage>,
     rollback_archive: Option<&RollbackArchive>,
 ) -> Result<InstallPlan, InstallError> {
+    let app = spice_binary
+        .map(|binary| app::Source::resolve(repository, binary))
+        .transpose()?;
     let mut virtual_directories = BTreeSet::new();
     let mut operations = Vec::new();
     let mut observed_operations = Vec::new();
     let compacting = rollback_record.is_some();
     let archiving = compacting || rollback_archive.is_some();
 
-    for asset in [
-        Asset::GitPreCommit,
-        Asset::GitCommitMessage,
-        Asset::GitReferenceTransaction,
-        Asset::HookEntry,
-        Asset::HookStatic,
-        Asset::HookZsh,
-        Asset::HookBash,
-        Asset::HookWrapperSpice,
-        Asset::Skill,
-    ] {
-        let (_, path, mode) = asset_contract(asset);
-        let bytes = fixed_asset_bytes(asset, repository.common_dir())?
-            .expect("the fixed asset inventory contains no variable asset");
-        let (bound, observed) = destination_state(repository, Location::CommonGit, path)?;
-        if archiving {
-            observed_operations.push(observed.as_ref().map(|observed| observed.image.clone()));
-        }
-        let (previous, superseded) = reversal_context(installed, asset, observed, None, archiving);
-        operations.push(operation(
+    append_fixed_operations(
+        repository,
+        installed,
+        app.as_ref().map(app::Source::generation),
+        archiving,
+        (
             &mut virtual_directories,
-            asset,
-            bound,
-            previous,
-            superseded,
-            GeneratedImage::new(mode, &bytes),
-        )?);
+            &mut operations,
+            &mut observed_operations,
+        ),
+    )?;
+
+    if let Some(app) = &app {
+        append_app_operations(
+            repository,
+            installed,
+            app,
+            archiving,
+            (
+                &mut virtual_directories,
+                &mut operations,
+                &mut observed_operations,
+            ),
+        )?;
     }
 
-    if let Some(binary) = spice_binary {
-        let bytes = read_binary(binary)?;
-        let (bound, observed) = destination_state(repository, Location::CommonGit, BINARY_PATH)?;
-        if archiving {
-            observed_operations.push(observed.as_ref().map(|observed| observed.image.clone()));
-        }
-        let (previous, superseded) = reversal_context(
-            installed,
-            Asset::Binary,
-            observed,
-            binary_superseded,
-            archiving,
-        );
-        operations.push(operation(
+    append_binary_operation(
+        repository,
+        installed,
+        spice_binary,
+        binary_superseded,
+        app.as_ref().map(app::Source::generation),
+        archiving,
+        (
             &mut virtual_directories,
-            Asset::Binary,
-            bound,
-            previous,
-            superseded,
-            GeneratedImage::new(EXECUTABLE_MODE, &bytes),
-        )?);
-    }
+            &mut operations,
+            &mut observed_operations,
+        ),
+    )?;
 
     let record = bind_destination(repository.common_dir(), RECORD_PATH)?;
     let planned_retirements = [
@@ -658,6 +663,7 @@ fn build_plan_over(
         repository: RepositoryIdentity::capture(repository),
         record,
         operations,
+        app: app.as_ref().map(|app| app.generation().clone()),
         retirements,
         rollback_archive,
         hook_activation,
@@ -703,7 +709,7 @@ fn current_rollback_archive(
             installed
                 .operations
                 .iter()
-                .position(|installed| installed.asset == operation.asset)
+                .position(|installed| same_operation(installed, operation))
                 .map_or_else(
                     || observed.clone(),
                     |index| rollback.operations[index].clone(),
@@ -799,14 +805,15 @@ fn retirement(
 fn reversal_context(
     installed: Option<&InstallPlan>,
     asset: Asset,
+    path: &str,
     observed: Option<ObservedFile>,
     reconciled: Option<&GeneratedImage>,
     compacting: bool,
 ) -> (Option<ObservedFile>, Option<GeneratedImage>) {
     match installed.and_then(|plan| {
-        plan.operations
-            .iter()
-            .find(|operation| operation.asset == asset)
+        plan.operations.iter().find(|operation| {
+            operation.asset == asset && (app::file(asset).is_none() || operation.path == path)
+        })
     }) {
         Some(superseded) => (
             if compacting {
@@ -825,9 +832,177 @@ fn reversal_context(
     }
 }
 
+fn same_operation(left: &Operation, right: &Operation) -> bool {
+    left.asset == right.asset && (app::file(left.asset).is_none() || left.path == right.path)
+}
+
+struct PlannedAppAsset {
+    asset: Asset,
+    generation: Digest,
+    generated: GeneratedImage,
+}
+
+fn planned_app_assets(
+    installed: Option<&InstallPlan>,
+    source: &app::Source,
+) -> Result<Vec<PlannedAppAsset>, InstallError> {
+    let prior = installed
+        .into_iter()
+        .flat_map(|plan| &plan.operations)
+        .filter_map(|operation| app::operation_generation(operation.asset, &operation.path))
+        .filter(|generation| generation != source.generation())
+        .collect::<BTreeSet<_>>();
+    let mut planned = Vec::new();
+    for generation in prior {
+        for (asset, _) in app::ASSETS {
+            let (_, path, _) = asset_contract(asset, Some(&generation))?;
+            let generated = installed
+                .and_then(|plan| {
+                    plan.operations
+                        .iter()
+                        .find(|operation| operation.path == path)
+                })
+                .expect("a retained Canvas generation is complete")
+                .generated
+                .clone();
+            planned.push(PlannedAppAsset {
+                asset,
+                generation: generation.clone(),
+                generated,
+            });
+        }
+    }
+    for (asset, _) in app::ASSETS
+        .into_iter()
+        .chain([(Asset::CanvasCurrent, "current")])
+    {
+        let bytes = source
+            .bytes(asset)
+            .expect("the complete app source carries every asset");
+        planned.push(PlannedAppAsset {
+            asset,
+            generation: source.generation().clone(),
+            generated: GeneratedImage::new(DATA_MODE, &bytes),
+        });
+    }
+    Ok(planned)
+}
+
+type AppPlanState<'a> = (
+    &'a mut BTreeSet<(Location, String)>,
+    &'a mut Vec<Operation>,
+    &'a mut Vec<Option<FileImage>>,
+);
+
+fn append_fixed_operations(
+    repository: &Repository,
+    installed: Option<&InstallPlan>,
+    app: Option<&Digest>,
+    archiving: bool,
+    (directories, operations, observed_operations): AppPlanState<'_>,
+) -> Result<(), InstallError> {
+    for asset in [
+        Asset::GitPreCommit,
+        Asset::GitCommitMessage,
+        Asset::GitReferenceTransaction,
+        Asset::HookEntry,
+        Asset::HookStatic,
+        Asset::HookZsh,
+        Asset::HookBash,
+        Asset::HookWrapperSpice,
+        Asset::Skill,
+    ] {
+        let (_, path, mode) = asset_contract(asset, None)?;
+        let bytes = fixed_asset_bytes(asset, repository.common_dir())?
+            .expect("the fixed asset inventory contains no variable asset");
+        let (bound, observed) = destination_state(repository, Location::CommonGit, &path)?;
+        if archiving {
+            observed_operations.push(observed.as_ref().map(|observed| observed.image.clone()));
+        }
+        let (previous, superseded) =
+            reversal_context(installed, asset, &path, observed, None, archiving);
+        operations.push(operation(
+            directories,
+            asset,
+            app,
+            bound,
+            previous,
+            superseded,
+            GeneratedImage::new(mode, &bytes),
+        )?);
+    }
+    Ok(())
+}
+
+fn append_app_operations(
+    repository: &Repository,
+    installed: Option<&InstallPlan>,
+    source: &app::Source,
+    archiving: bool,
+    (directories, operations, observed_operations): AppPlanState<'_>,
+) -> Result<(), InstallError> {
+    for planned in planned_app_assets(installed, source)? {
+        let (_, path, _) = asset_contract(planned.asset, Some(&planned.generation))?;
+        let (bound, observed) = destination_state(repository, Location::CommonGit, &path)?;
+        if archiving {
+            observed_operations.push(observed.as_ref().map(|observed| observed.image.clone()));
+        }
+        let (previous, superseded) =
+            reversal_context(installed, planned.asset, &path, observed, None, archiving);
+        operations.push(operation(
+            directories,
+            planned.asset,
+            Some(&planned.generation),
+            bound,
+            previous,
+            superseded,
+            planned.generated,
+        )?);
+    }
+    Ok(())
+}
+
+fn append_binary_operation(
+    repository: &Repository,
+    installed: Option<&InstallPlan>,
+    binary: Option<&Path>,
+    reconciled: Option<&GeneratedImage>,
+    app: Option<&Digest>,
+    archiving: bool,
+    (directories, operations, observed_operations): AppPlanState<'_>,
+) -> Result<(), InstallError> {
+    let Some(binary) = binary else {
+        return Ok(());
+    };
+    let bytes = read_binary(binary)?;
+    let (bound, observed) = destination_state(repository, Location::CommonGit, BINARY_PATH)?;
+    if archiving {
+        observed_operations.push(observed.as_ref().map(|observed| observed.image.clone()));
+    }
+    let (previous, superseded) = reversal_context(
+        installed,
+        Asset::Binary,
+        BINARY_PATH,
+        observed,
+        reconciled,
+        archiving,
+    );
+    operations.push(operation(
+        directories,
+        Asset::Binary,
+        app,
+        bound,
+        previous,
+        superseded,
+        GeneratedImage::new(EXECUTABLE_MODE, &bytes),
+    )?);
+    Ok(())
+}
+
 fn operation(
     virtual_directories: &mut BTreeSet<(Location, String)>,
     asset: Asset,
+    app: Option<&Digest>,
     bound: BoundDestination,
     previous: Option<ObservedFile>,
     superseded: Option<GeneratedImage>,
@@ -835,7 +1010,7 @@ fn operation(
 ) -> Result<Operation, InstallError> {
     // The asset fixes where it lands; `validate_operation_contract` refuses any
     // operation whose location and path disagree with this same contract.
-    let (location, path, _) = asset_contract(asset);
+    let (location, path, _) = asset_contract(asset, app)?;
     let mut introduced_parents = Vec::new();
     for parent in bound.introduced_parents {
         let key = (location, parent.clone());
@@ -846,7 +1021,7 @@ fn operation(
     Ok(Operation {
         asset,
         location,
-        path: path.to_owned(),
+        path,
         destination: bound.destination,
         parent: bound.parent,
         previous,
@@ -902,6 +1077,7 @@ fn rebuilt_binary(plan: &InstallPlan, spice_binary: Option<&Path>) -> Result<boo
 
 /// Whether a completed installed appliance belongs to another build.
 fn current_build_differs(
+    repository: &Repository,
     plan: &InstallPlan,
     spice_binary: Option<&Path>,
 ) -> Result<bool, InstallError> {
@@ -911,7 +1087,11 @@ fn current_build_differs(
     if plan.version != PLAN_VERSION {
         return Ok(true);
     }
-    Ok(binary_differs || plan.fixed_content_differs_from_current_build()?)
+    let app_differs = spice_binary
+        .map(|binary| app::Source::resolve(repository, binary))
+        .transpose()?
+        .is_some_and(|app| plan.app.as_ref() != Some(app.generation()));
+    Ok(binary_differs || app_differs || plan.fixed_content_differs_from_current_build()?)
 }
 
 fn fixed_asset_bytes(asset: Asset, common_git: &Path) -> Result<Option<Vec<u8>>, InstallError> {
@@ -929,7 +1109,17 @@ fn fixed_asset_bytes(asset: Asset, common_git: &Path) -> Result<Option<Vec<u8>>,
         Asset::HookBash => steer::hook::STAGES[3].bytes().as_bytes().to_vec(),
         Asset::HookWrapperSpice => steer::hook::STAGES[4].bytes().as_bytes().to_vec(),
         Asset::Skill => SKILL.as_bytes().to_vec(),
-        Asset::Exclusions | Asset::Binary => return Ok(None),
+        Asset::Exclusions
+        | Asset::CanvasAppModule
+        | Asset::CanvasWasm
+        | Asset::CanvasHtml
+        | Asset::CanvasChrome
+        | Asset::CanvasComposer
+        | Asset::CanvasMosaic
+        | Asset::CanvasResponsive
+        | Asset::CanvasStyle
+        | Asset::CanvasCurrent
+        | Asset::Binary => return Ok(None),
     };
     Ok(Some(bytes))
 }

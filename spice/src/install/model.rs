@@ -22,6 +22,15 @@ pub enum Asset {
     HookBash,
     HookWrapperSpice,
     Skill,
+    CanvasAppModule,
+    CanvasWasm,
+    CanvasHtml,
+    CanvasChrome,
+    CanvasComposer,
+    CanvasMosaic,
+    CanvasResponsive,
+    CanvasStyle,
+    CanvasCurrent,
     Binary,
 }
 

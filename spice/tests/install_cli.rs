@@ -438,7 +438,8 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
     assert_eq!(text_digest, json_digest);
     assert_eq!(preview.digest().as_str(), text_digest);
     let operation_count = preview.plan().operation_count();
-    assert_eq!(operation_count, 14);
+    assert_eq!(operation_count, 23);
+    assert_canvas_preview(&preview);
     assert!(!fixture.installed_binary().exists());
     assert!(!fixture.record().exists());
     assert!(fixture.root.join(".git/.spice-rs").is_dir());
@@ -484,6 +485,29 @@ fn preview_is_zero_write_and_apply_requires_its_exact_digest() {
     );
     assert!(fixture.record().is_file());
     fixture.assert_state_unchanged();
+}
+
+fn assert_canvas_preview(preview: &InstallPreview) {
+    let app = preview
+        .plan()
+        .operations()
+        .iter()
+        .filter(|operation| operation.path().starts_with(".spice-install/app/"))
+        .collect::<Vec<_>>();
+    assert_eq!(app.len(), 9);
+    assert!(app.iter().all(|operation| {
+        operation.location() == Location::CommonGit
+            && operation.index()
+                < preview
+                    .plan()
+                    .hook_activation()
+                    .expect("binary install activates hooks")
+                    .index()
+    }));
+    assert_eq!(
+        app.last().map(|operation| operation.path()),
+        Some(".spice-install/app/current"),
+    );
 }
 
 #[test]

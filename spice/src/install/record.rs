@@ -105,11 +105,13 @@ impl InstallRecord {
         &mut self,
         repository: &Repository,
     ) -> Result<(), InstallError> {
-        let assets = [
+        let mut assets = vec![
             super::Asset::HookZsh,
             super::Asset::HookBash,
             super::Asset::HookWrapperSpice,
         ];
+        assets.extend(super::app::ASSETS.into_iter().map(|(asset, _)| asset));
+        assets.push(super::Asset::CanvasCurrent);
         let mut indices = assets
             .iter()
             .map(|asset| {
@@ -147,16 +149,21 @@ impl InstallRecord {
             self.installed_parents.remove(index);
             self.restored.remove(index);
         }
+        let app = self.plan.app.take();
         self.completed = self.plan.operation_count();
         self.plan_digest = self.plan.digest()?;
 
         for asset in assets {
-            let (_, relative, _) = super::asset_contract(asset);
+            let (_, relative, _) = super::asset_contract(asset, app.as_ref())?;
             let path = repository.common_dir().join(relative);
             fs::remove_file(&path).map_err(|source| {
                 InstallError::io("remove future hook test asset", path, source)
             })?;
         }
+        let app_root = repository.common_dir().join(".spice-install/app");
+        fs::remove_dir_all(&app_root).map_err(|source| {
+            InstallError::io("remove future Canvas test assets", app_root, source)
+        })?;
         for relative in [
             ".spice-install/hooks/shell",
             ".spice-install/hooks/wrappers",
