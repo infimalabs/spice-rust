@@ -449,7 +449,7 @@ fn codex_web_search_ends_resolve_only_their_own_calls_before_compaction() {
     assert_eq!(records.len(), 1);
     assert_eq!(
         records[0].unavailable_tool_terminals,
-        ["exec command: cargo test"],
+        ["exec_command: cargo test"],
         "missing and reordered search companions neither remain pending nor resolve neighboring calls",
     );
 }
@@ -474,7 +474,7 @@ fn typed_image_result_resolves_only_its_own_call_before_compaction() {
     assert_eq!(records.len(), 1);
     assert_eq!(
         records[0].unavailable_tool_terminals,
-        ["exec command: cargo test"],
+        ["exec_command: cargo test"],
         "media bytes neither become a command nor disturb the unrelated pending call",
     );
 }
@@ -537,7 +537,7 @@ fn codex_earlier_same_length_result_replacement_rebuilds_pending_calls() {
     assert_eq!(records.len(), 1);
     assert_eq!(
         records[0].unavailable_tool_terminals,
-        ["exec command: cargo test"],
+        ["exec_command: cargo test"],
     );
     assert_boundary_publishes_once(&transcript, listen::Dialect::Codex, records);
 }
