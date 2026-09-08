@@ -23,7 +23,6 @@ pub(super) use session_compaction::{
 };
 pub(super) use tool_preview::CallPreviews;
 #[cfg(test)]
-pub(in crate::resident) use tool_preview::MAX_CHARS as TOOL_PREVIEW_MAX_CHARS;
 
 /// Captured-generation policy and disposable publishers used after one record
 /// passes occupant admission.
