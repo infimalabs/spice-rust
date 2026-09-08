@@ -242,7 +242,7 @@ body:has(.shell--mosaic),
 .canvas-menu-setting--action:disabled { cursor: wait; opacity: .66; }
 .canvas-menu-footer {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 12px;
   min-width: 0;
@@ -251,6 +251,28 @@ body:has(.shell--mosaic),
   border-top: 1px solid var(--line-soft);
   color: var(--muted);
   font: .66rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.canvas-theme-selector {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: var(--page);
+}
+.canvas-theme-option {
+  min-height: 21px;
+  padding: 0 5px;
+  border-color: transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: 600 .55rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.canvas-theme-option[aria-pressed="true"] {
+  border-color: var(--line);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .canvas-menu-version {
   flex: 1 1 auto;
@@ -278,6 +300,7 @@ body:has(.shell--mosaic),
 .canvas-menu-update:hover { border-color: var(--focus); }
 .canvas-menu-cursor {
   min-width: 0;
+  max-width: 10ch;
   overflow: hidden;
   color: var(--muted);
   text-align: right;

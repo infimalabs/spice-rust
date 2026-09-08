@@ -29,8 +29,7 @@
   letter-spacing: 0;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
+:root[data-canvas-effective-theme="dark"] {
     --page: #101411;
     --panel: #181d19;
     --control: #141915;
@@ -51,7 +50,6 @@
     --accent-3: #e0734f;
     --accent-4: #5fd6d0;
     --accent-5: #d1a3ff;
-  }
 }
 
 * { box-sizing: border-box; }

@@ -661,6 +661,18 @@ try {
               .querySelector('[role="menuitemcheckbox"]')
               ?.getAttribute("aria-checked") === "true",
           );
+          const darkTheme = settingsMenu.getByRole("button", { name: "Use Dark theme" });
+          await darkTheme.click();
+          assert.equal(
+            await lightPage.locator("html").getAttribute("data-canvas-effective-theme"),
+            "dark",
+            "explicit theme applies before resident restart",
+          );
+          assert.equal(
+            await lightPage.evaluate(() => localStorage.getItem("spice:canvas-theme")),
+            "dark",
+            "explicit theme persists independently of resident authority",
+          );
         });
         await run.phase("resident-shutdown", async () => {
           lightMonitor.expectNetworkInterruption(true);
@@ -710,6 +722,18 @@ try {
               .getAttribute("aria-checked"),
             "true",
             "resident restart restores fast mode from durable journal authority",
+          );
+          assert.equal(
+            await lightPage.locator("html").getAttribute("data-canvas-effective-theme"),
+            "dark",
+            "resident reconnect preserves the explicit browser-local theme",
+          );
+          assert.equal(
+            await settingsMenu
+              .getByRole("button", { name: "Use Dark theme" })
+              .getAttribute("aria-pressed"),
+            "true",
+            "resident reconnect preserves the selected theme state",
           );
           await assertAgentSpacingRejectsFallbackOnlyMarkup(
             lightPage,

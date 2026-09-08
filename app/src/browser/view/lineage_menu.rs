@@ -223,10 +223,47 @@ fn render_version_footer(cursor: &str, update: Option<&CanvasUpdate>) -> Html {
                     >{format!("Update {generation}")}</button>
                 }
             </div>
+            {render_theme_selector()}
             <span class="bar-meta canvas-menu-cursor" aria-label="Global cursor">
                 {format!("cursor {cursor}")}
             </span>
         </footer>
+    }
+}
+
+fn render_theme_selector() -> Html {
+    let document = web_sys::window().and_then(|window| window.document());
+    let selected = document
+        .as_ref()
+        .and_then(|document| document.document_element())
+        .and_then(|root| root.get_attribute("data-canvas-theme"))
+        .unwrap_or_else(|| "system".to_owned());
+    html! {
+        <div class="canvas-theme-selector" role="group" aria-label="Canvas theme">
+            {for [("system", "System"), ("light", "Light"), ("dark", "Dark")]
+                .into_iter()
+                .map(|(mode, label)| {
+                    let choose = Callback::from(move |_| {
+                        let Some(window) = web_sys::window() else { return; };
+                        let Ok(setter) = js_sys::Reflect::get(
+                            &window,
+                            &JsValue::from_str("__spiceCanvasSetTheme"),
+                        ) else { return; };
+                        let Ok(setter) = setter.dyn_into::<js_sys::Function>() else { return; };
+                        let _ = setter.call1(&JsValue::NULL, &JsValue::from_str(mode));
+                    });
+                    html! {
+                        <button
+                            class="canvas-theme-option"
+                            type="button"
+                            aria-label={format!("Use {label} theme")}
+                            aria-pressed={(selected == mode).to_string()}
+                            data-canvas-theme={mode}
+                            onclick={choose}
+                        >{label}</button>
+                    }
+                })}
+        </div>
     }
 }
 

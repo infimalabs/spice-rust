@@ -103,6 +103,63 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
   assert.equal(await update.getAttribute("data-canvas-update-generation"), alternateGeneration);
   assert.match(await update.innerText(), new RegExp(alternateGeneration.slice(0, 8)));
   assert.match(await trigger.getAttribute("title"), new RegExp(`Canvas v${currentVersion} update available`));
+  const themes = menu.getByRole("group", { name: "Canvas theme" });
+  const systemTheme = themes.getByRole("button", { name: "Use System theme" });
+  const lightTheme = themes.getByRole("button", { name: "Use Light theme" });
+  const darkTheme = themes.getByRole("button", { name: "Use Dark theme" });
+  assert.equal(await themes.getByRole("button").count(), 3);
+  assert.equal(await systemTheme.getAttribute("aria-pressed"), "true");
+  await darkTheme.focus();
+  assert.equal(await darkTheme.evaluate((button) => button === document.activeElement), true);
+  await page.keyboard.press("Enter");
+  assert.equal(await page.locator("html").getAttribute("data-canvas-effective-theme"), "dark");
+  assert.equal(await darkTheme.getAttribute("aria-pressed"), "true");
+  assert.equal(await page.evaluate(() => localStorage.getItem("spice:canvas-theme")), "dark");
+  const selectedPresentation = await darkTheme.evaluate((button) => {
+    const selected = getComputedStyle(button);
+    const unselected = getComputedStyle(button.parentElement.querySelector('[data-canvas-theme="light"]'));
+    const luminance = (color) => {
+      const values = color.match(/[\d.]+/g).slice(0, 3).map(Number);
+      const scale = Math.max(...values) > 1 ? 255 : 1;
+      return values.map((value) => value / scale).map(
+        (value) => (value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4),
+      ).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+    };
+    const foreground = luminance(selected.color);
+    const background = luminance(selected.backgroundColor);
+    return {
+      backgroundDiffers: selected.backgroundColor !== unselected.backgroundColor,
+      borderDiffers: selected.borderColor !== unselected.borderColor,
+      colorDiffers: selected.color !== unselected.color,
+      contrast: (Math.max(foreground, background) + 0.05)
+        / (Math.min(foreground, background) + 0.05),
+      outlineStyle: selected.outlineStyle,
+      outlineWidth: selected.outlineWidth,
+    };
+  });
+  const { contrast, ...presentation } = selectedPresentation;
+  assert.deepEqual(presentation, {
+    backgroundDiffers: true,
+    borderDiffers: true,
+    colorDiffers: true,
+    outlineStyle: "solid",
+    outlineWidth: "2px",
+  });
+  assert.ok(contrast >= 4.5, `selected dark theme contrast is ${contrast}`);
+  await page.emulateMedia({ colorScheme: "light" });
+  assert.equal(await page.locator("html").getAttribute("data-canvas-effective-theme"), "dark");
+  await systemTheme.click();
+  assert.equal(await systemTheme.getAttribute("aria-pressed"), "true");
+  assert.equal(await page.evaluate(() => localStorage.getItem("spice:canvas-theme")), null);
+  assert.equal(await page.locator("html").getAttribute("data-canvas-effective-theme"), "light");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await waitForPageFunction(
+    page,
+    "System theme follows a live dark OS preference",
+    CONNECT_MS,
+    () => document.documentElement.dataset.canvasEffectiveTheme === "dark",
+  );
+  await darkTheme.click();
 
   const fastMode = menu.getByRole("menuitemcheckbox", { name: /Fast mode/ });
   const initiallyFast = await fastMode.getAttribute("aria-checked") === "true";
@@ -124,13 +181,19 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
   await page.setViewportSize({ width: 332, height: 720 });
   const narrow = await menu.locator(".canvas-menu-footer").evaluate((footer) => {
     const button = footer.querySelector(".canvas-menu-update").getBoundingClientRect();
+    const themes = footer.querySelector(".canvas-theme-selector").getBoundingClientRect();
+    const cursor = footer.querySelector(".canvas-menu-cursor").getBoundingClientRect();
     const bounds = footer.getBoundingClientRect();
     return {
       contained: button.left >= bounds.left - 0.5 && button.right <= bounds.right + 0.5,
       height: button.height,
+      ordered: button.right <= themes.left + 0.5 && themes.right <= cursor.left + 0.5,
+      positions: [bounds.left, button.right, themes.left, themes.right, cursor.left, bounds.right],
     };
   });
-  assert.deepEqual(narrow, { contained: true, height: 23 });
+  assert.equal(narrow.contained, true, JSON.stringify(narrow));
+  assert.equal(narrow.height, 23, JSON.stringify(narrow));
+  assert.equal(narrow.ordered, true, JSON.stringify(narrow));
 
   bootstrapMode = "protocol";
   const socketsBeforeRefusal = sockets;
@@ -168,6 +231,13 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
   assert.equal(navigations, 2, "one update click causes exactly one document reload");
   assert.equal(new URL(page.url()).pathname, "/", "the explicit update loads the current app root");
   assert.equal(new URL(page.url()).hash, `#${auth}`, "the explicit update retains Canvas authentication");
+  assert.equal(await page.locator("html").getAttribute("data-canvas-effective-theme"), "dark");
+  await page.getByLabel("Open Spice Canvas menu").click();
+  assert.equal(
+    await page.getByRole("button", { name: "Use Dark theme" }).getAttribute("aria-pressed"),
+    "true",
+    "the explicit theme persists through the Canvas update reload",
+  );
   monitor.assertClean();
   await context.close();
 }

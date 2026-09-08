@@ -191,7 +191,7 @@ fn seed_app_generation(root: &std::path::Path, label: &str) -> std::path::PathBu
     for asset in APP.assets() {
         let bytes = if asset.path() == "/" {
             format!(
-                "{label} {}{INLINE_MODULE_OPEN}\nconsole.log({label:?});\n{INLINE_MODULE_CLOSE}",
+                "{label} {}{INLINE_THEME_OPEN}\ntheme();\n{INLINE_MODULE_CLOSE}{INLINE_MODULE_OPEN}\nconsole.log({label:?});\n{INLINE_MODULE_CLOSE}",
                 asset.file()
             )
         } else {
@@ -248,16 +248,27 @@ fn app_fixture_directory_does_not_outlive_its_owner() {
 }
 
 #[test]
-fn app_policy_hashes_the_exact_inline_loader_bytes() {
-    let policy =
-        app_content_security_policy(b"<!doctype html><script type=\"module\">alert(1)</script>")
-            .expect("one inline module loader produces a policy");
+fn app_policy_hashes_the_exact_inline_theme_and_loader_bytes() {
+    let policy = app_content_security_policy(
+        b"<!doctype html><script data-canvas-theme>theme()</script><script type=\"module\">alert(1)</script>",
+    )
+    .expect("the theme resolver and module loader produce one policy");
 
-    assert!(
-        policy
-            .to_str()
-            .expect("policy is ASCII")
-            .contains("'sha256-bhHHL3z2vDgxUt0W3dWQOrprscmda2Y5pLsLg4GF+pI='")
+    let policy = policy.to_str().expect("policy is ASCII");
+    assert!(policy.contains("'sha256-Rfr3GgHZFiXm+TmNr+li+0sZ4J9FGllo8jsXcJF5XZ8='"));
+    assert!(policy.contains("'sha256-bhHHL3z2vDgxUt0W3dWQOrprscmda2Y5pLsLg4GF+pI='"));
+}
+
+#[test]
+fn app_policy_refuses_any_script_outside_the_two_hashed_entries() {
+    let error = app_content_security_policy(
+        b"<script data-canvas-theme>theme()</script><script src=\"/other.js\"></script><script type=\"module\">alert(1)</script>",
+    )
+    .expect_err("an unexpected script element is refused");
+
+    assert_eq!(
+        error,
+        "canvas app unavailable: canvas-app.html carried unexpected script elements"
     );
 }
 

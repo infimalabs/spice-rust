@@ -4,8 +4,40 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" content="#f4f5f2">
+  <meta name="theme-color" content="#f7f8f4">
   <title>Spice Canvas</title>
+  <script data-canvas-theme>
+    (() => {
+      const key = "spice:canvas-theme";
+      const root = document.documentElement;
+      const media = window.matchMedia("(prefers-color-scheme: dark)");
+      let stored = null;
+      try { stored = window.localStorage.getItem(key); } catch {}
+      const mode = stored === "light" || stored === "dark" ? stored : "system";
+      const apply = (next) => {
+        const effective = next === "system" ? (media.matches ? "dark" : "light") : next;
+        root.dataset.canvasTheme = next;
+        root.dataset.canvasEffectiveTheme = effective;
+        root.style.colorScheme = effective;
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.content = effective === "dark" ? "#101411" : "#f7f8f4";
+        document.querySelectorAll(".canvas-theme-option").forEach((button) => {
+          button.setAttribute("aria-pressed", String(button.dataset.canvasTheme === next));
+        });
+      };
+      window.__spiceCanvasSetTheme = (next) => {
+        try {
+          if (next === "system") window.localStorage.removeItem(key);
+          else window.localStorage.setItem(key, next);
+        } catch {}
+        apply(next);
+      };
+      media.addEventListener("change", () => {
+        if (root.dataset.canvasTheme === "system") apply("system");
+      });
+      apply(mode);
+    })();
+  </script>
   <link data-trunk rel="css" href="style.css">
   <link data-trunk rel="css" data-inline href="mosaic.css">
   <link data-trunk rel="css" data-inline href="chrome.css">
