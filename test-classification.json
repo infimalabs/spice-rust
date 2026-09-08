@@ -2,60 +2,6 @@
   "version": 1,
   "tests": [
     {
-      "id": "gate:durable-source-selection",
-      "class": "slow",
-      "package": "gate",
-      "target": ["--lib"],
-      "test": "workspace_tests::selection::tests::durable_sources_add_named_proofs_to_bounded_public_reach",
-      "ignored": false,
-      "reason": "17.10 s self-time: uniquely binds durable-source proof edges to the complete live 158-target Cargo and public-module provenance inventory"
-    },
-    {
-      "id": "gate:durable-source-registry-refusals",
-      "class": "slow",
-      "package": "gate",
-      "target": ["--lib"],
-      "test": "workspace_tests::selection::tests::durable_registry_refuses_unknown_private_duplicate_and_incomplete_rows",
-      "ignored": false,
-      "reason": "16.83 s self-time: uniquely applies every durable-source registry refusal to the complete live Cargo and module-provenance inventory"
-    },
-    {
-      "id": "gate:canvas-action-registry",
-      "class": "slow",
-      "package": "gate",
-      "target": ["--lib"],
-      "test": "canvas_actions::tests::repository_registry_derives_build_and_every_shard_action",
-      "ignored": false,
-      "reason": "16.49 s self-time: uniquely derives the complete Canvas build and shard action inventory from current repository sources and Cargo reach"
-    },
-    {
-      "id": "gate:canvas-wasm-cold-cache",
-      "class": "slow",
-      "package": "gate",
-      "target": ["--test", "canvas_direct"],
-      "test": "canvas_wasm_typecheck_uses_only_the_app_unit_graph_from_a_cold_cache",
-      "ignored": false,
-      "reason": "370 ms measured self-time: uniquely launches a cold-cache Canvas WASM typecheck and attributes its external compiler boundary"
-    },
-    {
-      "id": "gate:canvas-public-process",
-      "class": "slow",
-      "package": "gate",
-      "target": ["--test", "toolchain_process"],
-      "test": "canvas_public_acquisition_retains_unparsed_nonzero_without_running_trunk",
-      "ignored": false,
-      "reason": "480 ms measured self-time: uniquely proves public Canvas acquisition preserves a real child-process failure without launching Trunk"
-    },
-    {
-      "id": "gate:csharp-nested-binding",
-      "class": "slow",
-      "package": "gate",
-      "target": ["--test", "toolchain_csharp_nested"],
-      "test": "csharp_unused_binds_a_nested_member_to_its_innermost_enclosing_type",
-      "ignored": false,
-      "reason": "170 ms measured self-time: uniquely exercises nested C# type ownership through the external scanner boundary"
-    },
-    {
       "id": "canvas:browser-unit",
       "class": "slow",
       "command": [
