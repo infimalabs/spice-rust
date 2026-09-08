@@ -489,9 +489,9 @@ fn selection_authority_source(path: &str) -> bool {
         || matches!(
             path,
             // These codecs are durable, cross-crate identity authority. A
-            // change to either can affect every stored fact and operator
+            // change to any can affect every stored fact and operator
             // surface, so its Cargo selection is intentionally exhaustive.
-            "steer/src/ack/keys.rs" | "wire/src/witness.rs"
+            "steer/src/ack/keys.rs" | "wire/src/environment.rs" | "wire/src/witness.rs"
         )
         || matches!(
             Path::new(path).file_name().and_then(OsStr::to_str),
@@ -696,18 +696,6 @@ fn package_wide_source(changed: &str, package: &PackageInventory, absolute: &Pat
             && absolute.parent() == Some(package.root.as_path()))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::routine_selection;
-
-    #[test]
-    fn durable_identity_codecs_select_as_workspace_authority() {
-        assert!(!routine_selection(&["wire/src/witness.rs".to_owned()]));
-        assert!(!routine_selection(&["steer/src/ack/keys.rs".to_owned()]));
-        assert!(routine_selection(&["wire/src/ident.rs".to_owned()]));
-    }
-}
-
 fn select_package_targets(
     package: &PackageInventory,
     changed: &str,
@@ -768,4 +756,17 @@ fn target_reaches_dependent_tests(target: &TargetIdentity, source: &Path) -> boo
                     .iter()
                     .find(|declared| declared.path == source)
                     .is_none_or(|declared| declared.dependent_tests)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::routine_selection;
+
+    #[test]
+    fn durable_identity_codecs_select_as_workspace_authority() {
+        assert!(!routine_selection(&["wire/src/environment.rs".to_owned()]));
+        assert!(!routine_selection(&["wire/src/witness.rs".to_owned()]));
+        assert!(!routine_selection(&["steer/src/ack/keys.rs".to_owned()]));
+        assert!(routine_selection(&["wire/src/ident.rs".to_owned()]));
+    }
 }

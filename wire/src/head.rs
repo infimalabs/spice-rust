@@ -43,6 +43,13 @@ pub struct TaskHead {
     /// Criteria that decide whether the work is done.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub acceptance: Vec<String>,
+    /// Typed facts the execution environment must satisfy together.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::EnvironmentRequirements::is_empty",
+        deserialize_with = "crate::EnvironmentRequirements::present"
+    )]
+    pub requirements: crate::EnvironmentRequirements,
     /// Scheduler project grouping.
     pub project: String,
     /// Authored task labels.

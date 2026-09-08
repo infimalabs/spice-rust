@@ -46,6 +46,7 @@ fn every_crossing_type_obeys_the_identity_law() {
     cover_spellings(&mut covered);
     cover_config_scalars(&mut covered);
     cover_doctor_vocabularies(&mut covered);
+    cover_environment_requirements(&mut covered);
     cover_journal_frames(&mut covered);
     cover_task_heads(&mut covered);
     cover_claim_heads(&mut covered);
@@ -63,6 +64,20 @@ fn every_crossing_type_obeys_the_identity_law() {
     cover_vocabularies(&mut covered);
 
     assert_coverage_is_complete(&covered);
+}
+
+/// Canonical task constraints whose fact variants own their value semantics.
+fn cover_environment_requirements(covered: &mut BTreeSet<String>) {
+    law(
+        covered,
+        "EnvironmentRequirements",
+        &[
+            EnvironmentRequirements::default(),
+            EnvironmentRequirements::one(
+                EnvironmentRequirement::journal_schema(15).expect("positive schema"),
+            ),
+        ],
+    );
 }
 
 fn cover_message_badges(covered: &mut BTreeSet<String>) {
@@ -341,6 +356,7 @@ fn cover_task_heads(covered: &mut BTreeSet<String>) {
                 title: "Build the gate".to_owned(),
                 description: None,
                 acceptance: Vec::new(),
+                requirements: EnvironmentRequirements::default(),
                 project: "gate".to_owned(),
                 tags: vec!["guard".to_owned()],
                 dependencies: Vec::new(),
@@ -356,6 +372,9 @@ fn cover_task_heads(covered: &mut BTreeSet<String>) {
                 title: "Review the gate".to_owned(),
                 description: Some("Confirm every edge".to_owned()),
                 acceptance: vec!["The gate passes".to_owned()],
+                requirements: EnvironmentRequirements::one(
+                    EnvironmentRequirement::journal_schema(15).expect("positive schema"),
+                ),
                 project: "gate".to_owned(),
                 tags: vec!["guard".to_owned(), "review".to_owned()],
                 dependencies: vec![stamp("1kKRRsDQ")],

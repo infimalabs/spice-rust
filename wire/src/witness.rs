@@ -3,6 +3,13 @@
 //! A command witnesses only its own subjects. A global journal position is
 //! forbidden here: unrelated traffic cannot lose a race because it is not
 //! witnessed. Whole-snapshot reads are the only place a global `seq` appears.
+//!
+//! Environmental requirements are not command witnesses. A witness re-proves
+//! transactional authority before one proposed mutation; a requirement asks
+//! the allocator whether its current observed environment satisfies the
+//! compiled predicate on a pending task. Keeping those vocabularies separate
+//! prevents a caller from turning an environmental observation into authority
+//! or supplying its own evaluator through a command precondition.
 
 use std::fmt;
 use std::str::FromStr;

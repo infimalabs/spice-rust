@@ -173,6 +173,7 @@ fn statement() -> TaskHead {
         title: "Run full verification".to_owned(),
         description: None,
         acceptance: Vec::new(),
+        requirements: wire::EnvironmentRequirements::default(),
         project: "gate.selection".to_owned(),
         tags: Vec::new(),
         dependencies: Vec::new(),
