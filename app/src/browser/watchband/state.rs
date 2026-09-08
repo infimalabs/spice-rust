@@ -54,6 +54,9 @@ pub(in crate::browser) enum ComposerAction {
     Clear {
         lane: String,
     },
+    ClearPrimary {
+        lane: String,
+    },
     RestoreAll {
         lane: String,
         drafts: Vec<ComposerDraft>,
@@ -126,6 +129,9 @@ impl Reducible for ComposerDrafts {
             }
             ComposerAction::Clear { lane } => {
                 next.0.clear(&lane);
+            }
+            ComposerAction::ClearPrimary { lane } => {
+                next.0.clear_primary(&lane);
             }
             ComposerAction::RestoreAll { lane, drafts } => {
                 next.0.restore_all(lane, drafts.into_iter());

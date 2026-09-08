@@ -145,6 +145,38 @@ impl DraftStore {
         })
     }
 
+    /// Detach only the primary body and its direct attachments for broadcast.
+    pub(crate) fn prepare_primary(&self, target: &str) -> Option<PreparedSubmission> {
+        let draft = self.get(target)?;
+        if draft.body.trim().is_empty() {
+            return None;
+        }
+        let snapshot = ComposerDraft {
+            body: draft.body.clone(),
+            quotes: Vec::new(),
+            attachments: draft.attachments.clone(),
+            issue: draft.issue.clone(),
+        };
+        Some(PreparedSubmission {
+            message: compose(&snapshot),
+            attachments: snapshot.attachments.clone(),
+            snapshot,
+        })
+    }
+
+    /// Clear the primary broadcast source without disturbing its quote shards.
+    pub(crate) fn clear_primary(&mut self, target: &str) {
+        let remove = self.0.get_mut(target).is_some_and(|draft| {
+            draft.body.clear();
+            draft.attachments.clear();
+            draft.issue = None;
+            draft.quotes.is_empty()
+        });
+        if remove {
+            self.0.remove(target);
+        }
+    }
+
     /// Restore a refused snapshot ahead of anything typed since its send.
     pub(crate) fn restore(&mut self, target: String, snapshot: ComposerDraft) {
         let current = self.0.remove(&target).unwrap_or_default();
@@ -568,6 +600,54 @@ mod tests {
             ["quote-sent", "quote-newer"]
         );
         assert_eq!(store.get("agent-b").unwrap().body, "untouched");
+    }
+
+    #[test]
+    fn broadcast_preparation_detaches_only_primary_content_and_restores_it_once() {
+        let mut store = DraftStore::default();
+        store.set_body("agent-a".to_owned(), "broadcast body".to_owned());
+        store
+            .draft_mut("agent-a".to_owned())
+            .attachments
+            .push(attachment("primary"));
+        store.add_quote(
+            "agent-a".to_owned(),
+            "quote".to_owned(),
+            1,
+            1_000,
+            "quoted source".to_owned(),
+            None,
+        );
+        store.set_quote_body("agent-a".to_owned(), "quote", "local reply".to_owned());
+        store
+            .draft_mut("agent-a".to_owned())
+            .quotes
+            .first_mut()
+            .expect("the quote exists")
+            .attachments
+            .push(attachment("quoted"));
+
+        let prepared = store
+            .prepare_primary("agent-a")
+            .expect("primary body prepares");
+        assert!(prepared.message.starts_with("broadcast body"));
+        assert!(prepared.message.contains("![primary]"));
+        assert!(!prepared.message.contains("quoted source"));
+        assert!(!prepared.message.contains("local reply"));
+        assert_eq!(prepared.attachments.len(), 1);
+
+        store.clear_primary("agent-a");
+        let remaining = store.get("agent-a").expect("quote draft remains");
+        assert!(remaining.body.is_empty());
+        assert!(remaining.attachments.is_empty());
+        assert_eq!(remaining.quotes.len(), 1);
+
+        store.restore("agent-a".to_owned(), prepared.snapshot);
+        let restored = store.get("agent-a").expect("source snapshot restores");
+        assert_eq!(restored.body, "broadcast body");
+        assert_eq!(restored.attachments.len(), 1);
+        assert_eq!(restored.quotes.len(), 1);
+        assert_eq!(restored.quotes[0].body, "local reply");
     }
 
     #[test]

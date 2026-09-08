@@ -44,6 +44,13 @@ enum SubmissionTarget {
     Wake,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct BroadcastTarget {
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    epoch: CanonicalUuid,
+}
+
 /// Render every live lineage as one packed surface.
 ///
 /// This is the sole Lanes conversation path: each lineage owns exactly one
@@ -175,6 +182,8 @@ fn render_compose(
         drafts.clone(),
         submissions.clone(),
     );
+    let broadcast_targets = broadcast_targets(&lineage.members, epoch, can_send);
+    let broadcast_help = format!("composer-broadcast-help-{}", lineage.lane);
     let ready = can_send
         && control.pending_life.is_none()
         && lineage.members.iter().any(|member| {
@@ -221,6 +230,8 @@ fn render_compose(
                             sender,
                             drafts,
                             submissions,
+                            &broadcast_targets,
+                            &broadcast_help,
                             header.stream,
                             header.prose,
                         )
@@ -237,6 +248,9 @@ fn render_compose(
                     can_configure,
                     ready,
                 )}
+                <span id={broadcast_help} class="visually-hidden">
+                    {"Control or Command plus Shift and Enter broadcasts this primary message and its direct images to every occupied agent in this team."}
+                </span>
             </form>
             {render_activity(
                 lineage,
@@ -253,6 +267,26 @@ fn render_compose(
             )}
         </div>
     }
+}
+
+fn broadcast_targets(
+    members: &[crate::runtime::LaneMember],
+    epoch: CanonicalUuid,
+    can_send: bool,
+) -> Vec<BroadcastTarget> {
+    if !can_send {
+        return Vec::new();
+    }
+    members
+        .iter()
+        .filter_map(|member| {
+            member.occupant.map(|occupant| BroadcastTarget {
+                lane: member.lane,
+                occupant,
+                epoch,
+            })
+        })
+        .collect()
 }
 
 /// Every stable assistant-authored record the lineage can render in total chronology.
@@ -780,6 +814,8 @@ fn render_agent_composer(
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
     submissions: &SubmissionHandle,
+    broadcast_targets: &[BroadcastTarget],
+    broadcast_help: &str,
     stream: ComposerStreamLink,
     prose: String,
 ) -> Html {
@@ -793,6 +829,10 @@ fn render_agent_composer(
         .map(|occupant| SubmissionTarget::Resident { occupant, epoch })
         .or_else(|| wake.then_some(SubmissionTarget::Wake));
     let command_submit_eligible = target.is_some() && !draft.body.trim().is_empty();
+    let broadcast_target_eligible = broadcast_targets
+        .iter()
+        .any(|target| target.lane == lane_id);
+    let broadcast_source_eligible = broadcast_target_eligible && !draft.body.trim().is_empty();
     let renewal =
         watchband::agent_renewal_control(&standing.label, occupant.is_some(), can_send, renewal);
     let renew = renewal_callback(
@@ -809,6 +849,7 @@ fn render_agent_composer(
         sender.clone(),
         drafts.clone(),
         submissions.clone(),
+        broadcast_targets.to_vec(),
     );
     let ondragover = copy_dragover();
     let ondrop = drop_on_lane(
@@ -845,6 +886,9 @@ fn render_agent_composer(
                     &lane_key,
                     &draft,
                     command_submit_eligible,
+                    broadcast_target_eligible,
+                    broadcast_source_eligible,
+                    broadcast_help,
                     standing,
                     status,
                     pending,
@@ -878,6 +922,9 @@ fn render_composer_body(
     lane_key: &str,
     draft: &ComposerDraft,
     command_submit_eligible: bool,
+    broadcast_target_eligible: bool,
+    broadcast_source_eligible: bool,
+    broadcast_help: &str,
     standing: &Standing,
     status: crate::runtime::LaneStatus,
     pending: usize,
@@ -906,6 +953,8 @@ fn render_composer_body(
             data-shard-target-id={lane.to_string()}
             data-primary-composer-draggable={drag_enabled.to_string()}
             data-command-submit-eligible={command_submit_eligible.to_string()}
+            data-broadcast-target-eligible={broadcast_target_eligible.to_string()}
+            data-broadcast-source-eligible={broadcast_source_eligible.to_string()}
             data-draft-unsafe={(
                 !draft.body.is_empty()
                     || !draft.quotes.is_empty()
@@ -930,6 +979,8 @@ fn render_composer_body(
                 id={primary_textarea_id(lane_key)}
                 aria-label={format!("Message for agent {lane}")}
                 data-primary-composer-target-id={lane.to_string()}
+                aria-keyshortcuts="Control+Shift+Enter Meta+Shift+Enter"
+                aria-describedby={broadcast_help.to_owned()}
                 rows="4"
                 value={draft.body.clone()}
                 placeholder={composer_placeholder(standing, pending)}
@@ -1187,6 +1238,61 @@ fn submit_draft(
     }
     drafts.dispatch(ComposerAction::Clear {
         lane: lane_key.to_owned(),
+    });
+    true
+}
+
+fn submit_broadcast(
+    source_lane: CanonicalUuid,
+    source_key: &str,
+    targets: &[BroadcastTarget],
+    sender: &SenderHandle,
+    drafts: &UseReducerHandle<ComposerDrafts>,
+    submissions: &SubmissionHandle,
+) -> bool {
+    if !targets.iter().any(|target| target.lane == source_lane) {
+        return false;
+    }
+    let Some(prepared) = drafts.0.prepare_primary(source_key) else {
+        return false;
+    };
+    let Ok(fanout) = random_uuid() else {
+        return false;
+    };
+    let mut batch = Vec::with_capacity(targets.len());
+    for target in targets {
+        let Ok(id) = random_uuid() else {
+            return false;
+        };
+        let residency = (target.occupant, target.epoch);
+        let submission = if target.lane == source_lane {
+            Submission::new(
+                id,
+                fanout,
+                target.lane,
+                residency,
+                prepared.message.clone(),
+                prepared.attachments.clone(),
+                prepared.snapshot.clone(),
+            )
+        } else {
+            Submission::broadcast_copy(
+                id,
+                fanout,
+                target.lane,
+                residency,
+                prepared.message.clone(),
+                prepared.attachments.clone(),
+                source_lane,
+            )
+        };
+        batch.push(submission);
+    }
+    if !queue_submissions(sender, submissions, batch) {
+        return false;
+    }
+    drafts.dispatch(ComposerAction::ClearPrimary {
+        lane: source_key.to_owned(),
     });
     true
 }

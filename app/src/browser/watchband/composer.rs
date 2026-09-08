@@ -25,10 +25,33 @@ pub(super) fn keyboard_submit(
     sender: SenderHandle,
     drafts: UseReducerHandle<ComposerDrafts>,
     submissions: SubmissionHandle,
+    broadcast_targets: Vec<BroadcastTarget>,
 ) -> Callback<KeyboardEvent> {
     Callback::from(move |event: KeyboardEvent| {
         if event.key() == "Enter" && (event.meta_key() || event.ctrl_key()) {
             event.prevent_default();
+            if event.repeat() {
+                return;
+            }
+            if event.shift_key() {
+                let source_is_primary = event
+                    .target()
+                    .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+                    .is_some_and(|target| target.has_attribute("data-primary-composer-target-id"));
+                if source_is_primary
+                    && submit_broadcast(
+                        lane,
+                        &lane_key,
+                        &broadcast_targets,
+                        &sender,
+                        &drafts,
+                        &submissions,
+                    )
+                {
+                    focus_after_render(primary_textarea_id(&lane_key));
+                }
+                return;
+            }
             let Ok(fanout) = random_uuid() else {
                 return;
             };

@@ -30,6 +30,25 @@ async function assertCommandPreview(send, expected, label) {
   assert.equal(observed, expected, label);
 }
 
+async function assertBroadcastPreview(form, expected, label) {
+  const targets = form.locator(
+    '.composer-shard--primary[data-broadcast-target-eligible="true"]',
+  );
+  assert.ok(await targets.count() >= 2, "the broadcast fixture has multiple occupied targets");
+  const outlined = await targets.evaluateAll((nodes) => nodes.map((node) => {
+    const style = getComputedStyle(node);
+    return style.outlineStyle === "solid" && style.outlineWidth === "2px";
+  }));
+  assert.equal(outlined.every((value) => value === expected), true, label);
+  assert.equal(
+    await form.locator('.composer-shard--quote').evaluateAll((nodes) => nodes.some((node) => (
+      getComputedStyle(node).outlineStyle === "solid"
+    ))),
+    false,
+    "quoted composers never receive the broadcast preview",
+  );
+}
+
 async function setTextareaValue(textbox, value) {
   await textbox.evaluate((textarea, next) => {
     textarea.value = next;
@@ -90,6 +109,25 @@ export async function assertCompleteComposerSubmission({
     idleComposerBorder,
     "the focused composer keeps its visible perimeter while the action preview is shown",
   );
+  assert.equal(
+    await primaryTextbox.getAttribute("aria-keyshortcuts"),
+    "Control+Shift+Enter Meta+Shift+Enter",
+    "the primary composer exposes the broadcast shortcut accessibly",
+  );
+  const broadcastHelp = await primaryTextbox.getAttribute("aria-describedby");
+  assert.ok(broadcastHelp, "the primary composer names its broadcast help");
+  assert.match(
+    await page.locator(`#${broadcastHelp}`).innerText(),
+    /broadcasts this primary message.*every occupied agent/i,
+  );
+  await page.keyboard.down("Shift");
+  await assertBroadcastPreview(
+    form,
+    true,
+    "command plus Shift previews every occupied team destination",
+  );
+  await page.keyboard.up("Shift");
+  await assertBroadcastPreview(form, false, "releasing Shift clears every broadcast preview");
   await page.keyboard.up("Control");
   await assertCommandPreview(send, false, "releasing the command modifier clears the preview");
 
@@ -185,9 +223,9 @@ export async function assertCompleteComposerSubmission({
   await quoteSource.getByRole("button", { name: "Quote this message" }).click();
   const firstAllQuote = lane.locator(".composer-shard--quote");
   await firstAllQuote.getByRole("textbox").fill("all-agents first quote reply");
-  await composer.getByRole("textbox").fill("all-agents first primary");
-  await pasteImages(composer, ["all-first.png"]);
-  await composer.getByRole("img", { name: "all-first.png" }).waitFor();
+  await composer.getByRole("textbox").fill("broadcast primary body");
+  await pasteImages(composer, ["broadcast.png"]);
+  await composer.getByRole("img", { name: "broadcast.png" }).waitFor();
 
   const secondAllQuote = quoteLane.locator(".composer-shard--quote").first();
   const secondPrimary = quoteLane.locator(".composer-shard--primary");
@@ -195,6 +233,60 @@ export async function assertCompleteComposerSubmission({
   await secondPrimary.getByRole("textbox").fill("all-agents second primary");
   await pasteImages(secondPrimary, ["all-second.png"]);
   await secondPrimary.getByRole("img", { name: "all-second.png" }).waitFor();
+
+  const source = composer.getByRole("textbox");
+  const repeatedPrevented = await source.evaluate((textarea) => {
+    const repeated = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      key: "Enter",
+      repeat: true,
+      shiftKey: true,
+    });
+    textarea.dispatchEvent(repeated);
+    document.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "Control" }));
+    return repeated.defaultPrevented;
+  });
+  assert.equal(repeatedPrevented, true, "a repeated broadcast keydown is consumed");
+  assert.equal(await source.inputValue(), "broadcast primary body");
+
+  const broadcastTargets = form.locator(
+    '.composer-shard--primary[data-broadcast-target-eligible="true"]',
+  );
+  const targetLanes = await broadcastTargets.evaluateAll((nodes) => (
+    nodes.map((node) => node.dataset.shardTargetId)
+  ));
+  await source.focus();
+  await page.keyboard.down("Control");
+  await page.keyboard.down("Shift");
+  await assertBroadcastPreview(form, true, "the submitted broadcast previews every target");
+  await page.keyboard.press("Enter");
+  await page.keyboard.up("Shift");
+  await page.keyboard.up("Control");
+  await source.evaluate((textarea) => {
+    if (document.activeElement === textarea && textarea.value === "") return;
+    return new Promise((resolve) => textarea.addEventListener("focus", resolve, { once: true }));
+  });
+  assert.equal(await source.inputValue(), "", "broadcast clears only the source primary body");
+  assert.equal(await composer.getByRole("img", { name: "broadcast.png" }).count(), 0);
+  assert.equal(await firstAllQuote.getByRole("textbox").inputValue(), "all-agents first quote reply");
+  assert.equal(await secondPrimary.getByRole("textbox").inputValue(), "all-agents second primary");
+  assert.equal(await secondAllQuote.getByRole("textbox").inputValue(), "all-agents second quote reply");
+  assert.equal(await secondPrimary.getByRole("img", { name: "all-second.png" }).count(), 1);
+  for (const targetLane of targetLanes) {
+    const targetInbox = await reply(fixture, ["inbox", targetLane]);
+    const delivered = targetInbox.body.lanes[0].pending.find(
+      (directive) => directive.text.includes("broadcast primary body"),
+    );
+    assert.ok(delivered, `broadcast reaches occupied target ${targetLane}`);
+    assert.deepEqual(delivered.attachments.map((attachment) => attachment.name), ["broadcast.png"]);
+    assert.equal(delivered.text.includes("all-agents first quote reply"), false);
+  }
+
+  await composer.getByRole("textbox").fill("all-agents first primary");
+  await pasteImages(composer, ["all-first.png"]);
+  await composer.getByRole("img", { name: "all-first.png" }).waitFor();
 
   await lane.locator("xpath=ancestor::form[1]").locator(".organization-send").click();
   await firstAllQuote.waitFor({ state: "detached", timeout: 10_000 });
