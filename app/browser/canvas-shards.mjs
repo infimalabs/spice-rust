@@ -24,7 +24,7 @@ const EXPECTED_SCENARIOS = [
   "media-exchange",
   "variant-surfaces",
   "socket-resilience",
-  "team-lifecycle",
+  "organization-lifecycle",
   "resident-restart",
 ];
 

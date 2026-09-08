@@ -321,7 +321,7 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
         "session": "session-old",
         "thread": "thread-old"
       },
-      "team_slot": 2
+      "org_slot": 2
     }
   }
 }"#,

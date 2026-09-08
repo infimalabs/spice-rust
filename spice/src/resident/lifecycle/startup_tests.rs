@@ -2,11 +2,11 @@ use super::super::lane_surface::AdvisoryRtkFixture;
 use super::*;
 
 #[test]
-fn resident_startup_leaves_a_vacant_drain_team_idle_without_work() {
+fn resident_startup_leaves_a_vacant_drain_org_idle_without_work() {
     let fixture = AdvisoryRtkFixture::new();
     let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
         .expect("fixture bus starts");
-    seed_vacant_team(&bus, &fixture, wire::intent::LineageLife::Drain);
+    seed_vacant_org(&bus, &fixture, wire::intent::LineageLife::Drain);
     let repository = Repository::discover(&fixture.root).expect("fixture repository resolves");
     let surface =
         super::super::load_startup_surface(&repository).expect("fixture startup policy resolves");
@@ -51,7 +51,7 @@ fn resident_startup_leaves_a_vacant_drain_team_idle_without_work() {
 }
 
 #[test]
-fn changing_team_policy_to_drain_waits_until_work_arrives() {
+fn changing_org_policy_to_drain_waits_until_work_arrives() {
     let fixture = AdvisoryRtkFixture::new();
     initialize_git(&fixture.root);
     let sibling: CanonicalUuid = "018f82d4-6f59-7d06-92e3-000000000005"
@@ -59,7 +59,7 @@ fn changing_team_policy_to_drain_waits_until_work_arrives() {
         .expect("fixture sibling lane");
     let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
         .expect("fixture bus starts");
-    seed_vacant_team_members(
+    seed_vacant_org_members(
         &bus,
         &fixture,
         wire::intent::LineageLife::Drive,
@@ -103,7 +103,7 @@ fn changing_team_policy_to_drain_waits_until_work_arrives() {
     assert!(runtime.observe_topology(&command));
     assert!(
         runtime.backoff.parked.is_empty(),
-        "team policy change re-enables members parked under prior authority"
+        "organization policy change re-enables members parked under prior authority"
     );
     assert!(matches!(
         lane_surface::configure(
@@ -128,7 +128,7 @@ fn changing_team_policy_to_drain_waits_until_work_arrives() {
             &surface.config,
             &mut Vec::new(),
         )
-        .expect("updated Drain team reconciles");
+        .expect("updated Drain organization reconciles");
     assert!(
         !seats.occupied(fixture.lane),
         "changing policy without work remains idle"
@@ -332,11 +332,11 @@ fn initialize_git(root: &std::path::Path) {
     crate::test_repository::commit(root, "fixture opening");
 }
 
-fn seed_vacant_team(bus: &Bus, fixture: &AdvisoryRtkFixture, policy: wire::intent::LineageLife) {
-    seed_vacant_team_members(bus, fixture, policy, &[fixture.lane]);
+fn seed_vacant_org(bus: &Bus, fixture: &AdvisoryRtkFixture, policy: wire::intent::LineageLife) {
+    seed_vacant_org_members(bus, fixture, policy, &[fixture.lane]);
 }
 
-fn seed_vacant_team_members(
+fn seed_vacant_org_members(
     bus: &Bus,
     fixture: &AdvisoryRtkFixture,
     policy: wire::intent::LineageLife,

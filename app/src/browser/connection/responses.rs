@@ -125,7 +125,7 @@ fn apply_command_response(
         }
         // A read of the lane table and an arrangement of it answer with the
         // same authoritative table, so successful replies apply identically.
-        // Teams move only when that answer lands. A refused mutation differs:
+        // Orgs move only when that answer lands. A refused mutation differs:
         // it means this client lost its optimistic revision, so it immediately
         // re-reads the winning table rather than retaining the stale render.
         PendingKind::Lanes { wakes } => {

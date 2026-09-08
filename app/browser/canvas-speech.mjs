@@ -152,11 +152,11 @@ async function assertAutomaticSpeechEngine(engine, endpoint, fixture, lane, arti
   try {
     await page.goto(endpoint, { waitUntil: "networkidle" });
     await chooseCanvasView(page, "Lanes");
-    const surface = page.locator(".team-surface", {
+    const surface = page.locator(".organization-surface", {
       has: page.locator(`[data-agent-lane="${lane}"]`),
     });
     await surface.getByRole("tab", { name: /^Agents/ }).click();
-    const mode = surface.locator('.team-speech input[type="range"]');
+    const mode = surface.locator('.organization-speech input[type="range"]');
     assert.equal(await mode.inputValue(), "1", `${engine} defaults to Speak`);
     assert.equal(await speechCount(page), 0, `${engine} materialized history stays silent`);
 

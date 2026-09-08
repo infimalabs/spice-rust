@@ -124,7 +124,7 @@ fn resolve_request(
             state:
                 wire::LaneRenewalState::LaunchRefused {
                     predecessor,
-                    team_slot,
+                    org_slot,
                     ..
                 },
             ..
@@ -134,7 +134,7 @@ fn resolve_request(
             revision: request.topology_revision,
             state: wire::LaneRenewalState::HandoffPending {
                 predecessor,
-                team_slot,
+                org_slot,
             },
         })),
         Some(record) => Err(unit_outcome(lane_refusal(
@@ -317,7 +317,7 @@ fn requested_record(
             "the durable session does not identify the current lane occupant",
         ));
     }
-    let team_slot = head
+    let org_slot = head
         .lanes
         .iter()
         .filter(|candidate| candidate.lineage_id == row.lineage_id)
@@ -335,7 +335,7 @@ fn requested_record(
         revision: head.topology_revision,
         state: wire::LaneRenewalState::Requested {
             predecessor: identity(occupant, session),
-            team_slot,
+            org_slot,
         },
     })
 }
@@ -384,7 +384,7 @@ pub(super) fn advance_exit(
     };
     let wire::LaneRenewalState::Requested {
         predecessor,
-        team_slot,
+        org_slot,
     } = current.state
     else {
         return Ok(cause);
@@ -406,7 +406,7 @@ pub(super) fn advance_exit(
         revision: next.topology_revision,
         state: wire::LaneRenewalState::HandoffPending {
             predecessor,
-            team_slot,
+            org_slot,
         },
     };
     replace_renewal(next, lane, Some(renewal.clone()));
@@ -624,7 +624,7 @@ pub(super) fn mark_launch_refused(
 ) -> CommandResult<()> {
     let wire::LaneRenewalState::HandoffPending {
         predecessor,
-        team_slot,
+        org_slot,
     } = &renewal.state
     else {
         return Ok(());
@@ -644,7 +644,7 @@ pub(super) fn mark_launch_refused(
         revision: observed.body().topology_revision,
         state: wire::LaneRenewalState::LaunchRefused {
             predecessor: predecessor.clone(),
-            team_slot: *team_slot,
+            org_slot: *org_slot,
             reason,
         },
     };
@@ -673,7 +673,7 @@ pub(super) fn successor_record(
 ) -> CommandResult<wire::LaneRenewalRecord> {
     let wire::LaneRenewalState::HandoffPending {
         predecessor,
-        team_slot,
+        org_slot,
     } = &renewal.state
     else {
         return Err(store_fault(
@@ -688,7 +688,7 @@ pub(super) fn successor_record(
         state: wire::LaneRenewalState::SuccessorStarted {
             predecessor: predecessor.clone(),
             successor: identity(session.occupant, session),
-            team_slot: *team_slot,
+            org_slot: *org_slot,
         },
     })
 }

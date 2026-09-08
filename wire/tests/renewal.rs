@@ -36,20 +36,20 @@ fn states() -> Vec<LaneRenewalState> {
     vec![
         LaneRenewalState::Requested {
             predecessor: predecessor(),
-            team_slot: 2,
+            org_slot: 2,
         },
         LaneRenewalState::HandoffPending {
             predecessor: predecessor(),
-            team_slot: 2,
+            org_slot: 2,
         },
         LaneRenewalState::SuccessorStarted {
             predecessor: predecessor(),
             successor: successor(),
-            team_slot: 2,
+            org_slot: 2,
         },
         LaneRenewalState::LaunchRefused {
             predecessor: predecessor(),
-            team_slot: 2,
+            org_slot: 2,
             reason: "vendor launch refused the selected model".to_owned(),
         },
     ]
@@ -86,7 +86,7 @@ fn every_renewal_state_round_trips_with_its_original_slot_and_identities() {
 
         let encoded: Value = serde_json::from_slice(&wire::encode(&observed).unwrap()).unwrap();
         assert_eq!(encoded["state"]["state"], spelling);
-        assert_eq!(encoded["state"]["team_slot"], 2);
+        assert_eq!(encoded["state"]["org_slot"], 2);
         assert_eq!(encoded["state"]["predecessor"]["occupant"], PREDECESSOR);
         assert_eq!(
             encoded["state"]["predecessor"]["session"],

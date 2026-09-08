@@ -317,27 +317,27 @@ thread the launch answer names, never to one inherited from the environment.
 **Invariant —** The launch prompt is **neutral**. The real ask is recovered from
 live control-plane state, not baked into startup.
 
-### Lane and team
+### Lane and organization
 
 ```mermaid
 flowchart LR
   E["empty"] --> O["occupied"]
-  O -->|"merge teams"| F["fused"]
+  O -->|"merge organizations"| F["fused"]
   O -->|"renewal"| OR["occupied<br/>(successor occupant)"]
-  F -->|"split team"| OS["occupied"]
+  F -->|"split organization"| OS["occupied"]
   F -->|"move or reorder member"| FR["fused<br/>(new member order)"]
-  O -.->|"Close team"| H["hidden<br/>(this browser only)"]
-  F -.->|"Close team"| H
-  H -.->|"Agents → Open team"| V["visible again;<br/>authoritative occupied / fused<br/>topology unchanged"]
+  O -.->|"Close organization"| H["hidden<br/>(this browser only)"]
+  F -.->|"Close organization"| H
+  H -.->|"Agents → Open organization"| V["visible again;<br/>authoritative occupied / fused<br/>topology unchanged"]
 ```
 
-**Invariant —** Fusing is a *team merge*, splitting a *team split*. There is no
+**Invariant —** Fusing is a *organization merge*, splitting a *organization split*. There is no
 client-only grouping.
 
-**Invariant —** `Close team` is a browser-local presentation action. It hides
-the team in that mounted browser reducer; it sends no command, changes no
-topology, and does not hide the team in another browser. A closed grouped
-lineage remains restorable during that mount through **Agents → Open team**.
+**Invariant —** `Close organization` is a browser-local presentation action. It hides
+the organization in that mounted browser reducer; it sends no command, changes no
+topology, and does not hide the organization in another browser. A closed grouped
+lineage remains restorable during that mount through **Agents → Open organization**.
 
 **Invariant —** Browser-local close neither inspects nor erases drafts. Unsafe
 draft or submission state instead installs the page-leave confirmation guard.

@@ -200,7 +200,7 @@ mod tests {
     }
 
     #[test]
-    fn placement_has_no_team_size_limit() {
+    fn placement_has_no_org_size_limit() {
         let stack = PipStack::new(10_001);
 
         assert_eq!(stack.rows(), 2);

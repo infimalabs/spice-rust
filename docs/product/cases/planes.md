@@ -86,7 +86,7 @@
 | Range contains an implement-and-revert pair | suppressed from highlights | [Implement-and-revert pairs in one range are suppressed](../invariants/distribution.md#distribution-implement-and-revert-pairs-in-one-range-are-suppressed) |
 | Gate check, notes draft, and range preview all run | nothing bumped, committed, tagged, pushed, or published | [Inspection is free of consequence](../invariants/distribution.md#distribution-inspection-is-free-of-consequence) |
 | Install unapplied | reverses exactly the canonical receipt and retains that receipt with terminal status | [An install has one canonical status-bearing receipt](../invariants/distribution.md#distribution-an-install-has-one-canonical-status-bearing-receipt) |
-| Observation run over foreign sessions | no repo, team, claim, hook, or steering writes | [Observation initializes nothing](../invariants/distribution.md#conduct-observation-initializes-nothing) |
+| Observation run over foreign sessions | no repo, organization, claim, hook, or steering writes | [Observation initializes nothing](../invariants/distribution.md#conduct-observation-initializes-nothing) |
 | A user stops at the observation tier | fully usable there | [Each capability tier is independently usable](../invariants/distribution.md#conduct-each-capability-tier-is-independently-usable) |
 
 ### Identity and authority
@@ -138,16 +138,16 @@
 
 | Situation | Expected | Ref |
 | --- | --- | --- |
-| A team holds several worktrees | each worktree remains its own lane and send address; the team groups them in one console | [A team groups one or more lanes](../invariants/lifecycle.md#topology-a-team-groups-one-or-more-lanes) |
-| One browser chooses `Close team` | that mounted browser hides the console; topology and other browsers are unchanged | [Close team is browser-local presentation](../invariants/lifecycle.md#topology-close-team-is-browser-local-presentation) |
-| That browser chooses **Agents → Open team** for a closed grouped lineage | the console returns during the same mount; no authority command or topology change occurs | [Close team is browser-local presentation](../invariants/lifecycle.md#topology-close-team-is-browser-local-presentation) |
+| An organization holds several worktrees | each worktree remains its own lane and send address; the organization groups them in one console | [An organization groups one or more lanes](../invariants/lifecycle.md#topology-a-organization-groups-one-or-more-lanes) |
+| One browser chooses `Close organization` | that mounted browser hides the console; topology and other browsers are unchanged | [Close organization is browser-local presentation](../invariants/lifecycle.md#topology-close-organization-is-browser-local-presentation) |
+| That browser chooses **Agents → Open organization** for a closed grouped lineage | the console returns during the same mount; no authority command or topology change occurs | [Close organization is browser-local presentation](../invariants/lifecycle.md#topology-close-organization-is-browser-local-presentation) |
 | New content arrives | it places by insert; nothing already placed is re-decided | [New content places by insert](../invariants/lifecycle.md#surface-new-content-places-by-insert) |
 | A neighbour's content grows | untouched cards keep their column and span | [A card's column and span latch between geometry replays](../invariants/lifecycle.md#surface-a-card-s-column-and-span-latch-between-geometry-replays) |
 | Any motion is observed | it corresponds to a change, not to a re-render | [Movement means change](../invariants/lifecycle.md#surface-movement-means-change) |
 | Compensation adjusts the viewport | it is not read as a user gesture | [Programmatic scroll is excluded from anything that reads user intent](../invariants/lifecycle.md#surface-programmatic-scroll-is-excluded-from-anything-that-reads-user-intent) |
 | Several changed stream frames arrive in one tick | each frame immediately publishes the resulting surface state | [Each changed stream frame publishes immediately](../invariants/lifecycle.md#surface-each-changed-stream-frame-publishes-immediately) |
 | More lane identities exist than palette slots | colours repeat; explicit lane attribution remains unambiguous | [Accent derives from stable lane identity](../invariants/lifecycle.md#surface-accent-derives-from-stable-lane-identity) |
-| Two clients render the same fused team | stable lane-derived accents and explicit attribution agree independently of member order | [Member order controls composition, not identity](../invariants/lifecycle.md#topology-member-order-controls-composition-not-identity) |
+| Two clients render the same fused organization | stable lane-derived accents and explicit attribution agree independently of member order | [Member order controls composition, not identity](../invariants/lifecycle.md#topology-member-order-controls-composition-not-identity) |
 
 ### Checks, session, extension, continued
 

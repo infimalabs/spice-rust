@@ -1,7 +1,7 @@
 use app::runtime::{LaneMember, LaneRow};
 use app::watchband::{
-    ACCENTS, AGE_LABEL_WIDTH, FIELD_BUDGET, LINEAGE_JOIN_GUTTER, LineageDrop, SHORT_LEN,
-    TeamTaskSectionState, UNKNOWN_AGENT_LABEL, accent, arrangement, badge, elapsed_label,
+    ACCENTS, AGE_LABEL_WIDTH, FIELD_BUDGET, LINEAGE_JOIN_GUTTER, LineageDrop, OrgTaskSectionState,
+    SHORT_LEN, UNKNOWN_AGENT_LABEL, accent, arrangement, badge, elapsed_label,
     elapsed_label_deadline_millis, first_nonquoted_prose, leaf, one_line, remaining_label,
     remaining_label_deadline_millis, reported_tasks, response_speech_text, short, split_lineage,
     standing_title, standings, task_mentions, ticker_chunks, ticker_line, topology, truncate,
@@ -107,9 +107,9 @@ fn inbox(id: &str, directives: &[(&str, Option<&str>)]) -> LaneInbox {
 }
 
 #[test]
-fn team_task_sections_distinguish_unavailable_empty_and_ready_snapshots() {
-    let active_unavailable = TeamTaskSectionState::active(false, 0);
-    let direction_ready = TeamTaskSectionState::direction(true, 2);
+fn org_task_sections_distinguish_unavailable_empty_and_ready_snapshots() {
+    let active_unavailable = OrgTaskSectionState::active(false, 0);
+    let direction_ready = OrgTaskSectionState::direction(true, 2);
     assert_eq!(
         active_unavailable.message(),
         Some("Task snapshot unavailable.")
@@ -118,8 +118,8 @@ fn team_task_sections_distinguish_unavailable_empty_and_ready_snapshots() {
     assert_eq!(direction_ready.message(), None);
     assert!(!direction_ready.unavailable());
 
-    let active_ready = TeamTaskSectionState::active(true, 1);
-    let direction_unavailable = TeamTaskSectionState::direction(false, 0);
+    let active_ready = OrgTaskSectionState::active(true, 1);
+    let direction_unavailable = OrgTaskSectionState::direction(false, 0);
     assert_eq!(active_ready.message(), None);
     assert_eq!(
         direction_unavailable.message(),
@@ -128,11 +128,11 @@ fn team_task_sections_distinguish_unavailable_empty_and_ready_snapshots() {
     assert!(direction_unavailable.unavailable());
 
     assert_eq!(
-        TeamTaskSectionState::active(true, 0).message(),
-        Some("No active tasks for this team.")
+        OrgTaskSectionState::active(true, 0).message(),
+        Some("No active tasks for this organization.")
     );
     assert_eq!(
-        TeamTaskSectionState::direction(true, 0).message(),
+        OrgTaskSectionState::direction(true, 0).message(),
         Some("No queued direction.")
     );
 }
@@ -740,9 +740,9 @@ fn agent_surfaces_have_one_bounded_vertical_ownership_chain() {
     for selector in [
         ".mosaic-workspace .content {",
         ".lineage-fleet {",
-        ".team-pane {",
-        ".team-compose {",
-        ".team-activity-grid {",
+        ".organization-pane {",
+        ".organization-compose {",
+        ".organization-activity-grid {",
         "\n.lane-mosaic-plane {",
     ] {
         let rule = STYLESHEET
@@ -769,11 +769,11 @@ fn agent_surfaces_have_one_bounded_vertical_ownership_chain() {
     assert!(fleet.contains("flex-flow: row nowrap"));
     assert!(fleet.contains("overflow: auto hidden"));
     let surface = STYLESHEET
-        .split_once(".team-surface {")
-        .expect("mosaic.css should define team surfaces")
+        .split_once(".organization-surface {")
+        .expect("mosaic.css should define organization surfaces")
         .1
         .split_once('}')
-        .expect("the team surface rule is closed")
+        .expect("the organization surface rule is closed")
         .0;
     assert!(surface.contains("flex:") && surface.contains("min-height: 100%"));
 
@@ -792,7 +792,7 @@ fn agent_surfaces_have_one_bounded_vertical_ownership_chain() {
     let responsive = include_str!("../responsive.css");
     assert!(
         responsive.contains("@media (max-height: 440px)")
-            && !responsive.contains(".team-surface:nth-child(2)"),
+            && !responsive.contains(".organization-surface:nth-child(2)"),
         "only an unsatisfiable block size returns lanes to intrinsic document flow"
     );
 }
@@ -929,7 +929,7 @@ fn tool_ticker_chunks_accent_only_the_first_whitespace_delimited_token() {
     assert!(format!("{prefix} {detail}").chars().count() <= 18);
 }
 
-/// One team holding several agents, so a join has more than one agent to move.
+/// One organization holding several agents, so a join has more than one agent to move.
 fn seated(id: &str, members: &[(&str, &str)]) -> LaneRow {
     LaneRow {
         lane: uuid(id),
@@ -948,13 +948,13 @@ fn arranged(
     drop: LineageDrop,
 ) -> Vec<(CanonicalUuid, Vec<CanonicalUuid>)> {
     arrangement(&topology(lanes), uuid(dragged), uuid(target), drop)
-        .expect("a drop of one live team onto another states an arrangement")
+        .expect("a drop of one live organization onto another states an arrangement")
 }
 
 #[test]
 fn a_reorder_moves_the_dragged_lineage_into_the_target_position_without_moving_an_agent() {
-    // No team is named for one of its own members: a team read off its first
-    // member would arrange the same three teams into the same three orders.
+    // No organization is named for one of its own members: an organization read off its first
+    // member would arrange the same three organizations into the same three orders.
     let lanes = [
         seated(LINEAGE_ONE, &[(LANE_A, "main-a"), (LANE_B, "main-b")]),
         seated(LINEAGE_TWO, &[(LANE_C, "main-c")]),
@@ -969,11 +969,11 @@ fn a_reorder_moves_the_dragged_lineage_into_the_target_position_without_moving_a
             (uuid(LINEAGE_ONE), vec![uuid(LANE_A), uuid(LANE_B)]),
             (uuid(LINEAGE_TWO), vec![uuid(LANE_C)]),
         ],
-        "the dragged team takes the target's position and every agent stays put",
+        "the dragged organization takes the target's position and every agent stays put",
     );
 
     // Dragging the other way is not the mirror image. A reorder always inserts
-    // the dragged team immediately before the target, which only coincides with
+    // the dragged organization immediately before the target, which only coincides with
     // the target's own index when the drag came from later in the row: here
     // LINEAGE_THREE stood third, and LINEAGE_ONE lands second, because removing
     // it first shifts the target one place earlier than the row it was read
@@ -1023,7 +1023,7 @@ fn a_join_gives_the_dragged_agents_to_the_target_and_keeps_its_primary_composer(
             uuid(LINEAGE_ONE),
             vec![uuid(LANE_A), uuid(LANE_C), uuid(LANE_D)]
         )],
-        "the target keeps its agents first and the emptied team is gone",
+        "the target keeps its agents first and the emptied organization is gone",
     );
     assert_eq!(
         joined[0].1.first(),
@@ -1046,17 +1046,17 @@ fn a_split_keeps_the_source_identity_and_makes_every_member_individual() {
             (uuid(LANE_B), vec![uuid(LANE_B)]),
             (uuid(LINEAGE_TWO), vec![uuid(LANE_C)]),
         ]),
-        "the source remains restorable while every member becomes one team",
+        "the source remains restorable while every member becomes one organization",
     );
     assert_eq!(
         split_lineage(&topology(&lanes), uuid(LINEAGE_TWO)),
         None,
-        "an individual team has nothing to split",
+        "an individual organization has nothing to split",
     );
     assert_eq!(
         split_lineage(&topology(&lanes), uuid(LINEAGE_THREE)),
         None,
-        "a retired team cannot be split from a stale menu",
+        "a retired organization cannot be split from a stale menu",
     );
 }
 
@@ -1075,9 +1075,9 @@ fn a_drop_that_states_nothing_sends_nothing() {
             LineageDrop::Reorder
         ),
         None,
-        "a team dropped on itself is not an arrangement",
+        "an organization dropped on itself is not an arrangement",
     );
-    // Two live teams, two distinct identities, and a gesture the up-front
+    // Two live organizations, two distinct identities, and a gesture the up-front
     // guards all admit: only the arrangement it produces shows there is nothing
     // to state. Inserting before the neighbour it already precedes rebuilds the
     // row the canvas is showing, and committing that would write a durable fact
@@ -1090,7 +1090,7 @@ fn a_drop_that_states_nothing_sends_nothing() {
             LineageDrop::Reorder
         ),
         None,
-        "a team dropped in front of the team it already precedes states nothing",
+        "an organization dropped in front of the organization it already precedes states nothing",
     );
     assert_eq!(
         arrangement(
@@ -1100,7 +1100,7 @@ fn a_drop_that_states_nothing_sends_nothing() {
             LineageDrop::ReorderAfter
         ),
         None,
-        "a team moved behind the team it already follows states nothing",
+        "an organization moved behind the organization it already follows states nothing",
     );
     assert_eq!(
         arrangement(
@@ -1110,7 +1110,7 @@ fn a_drop_that_states_nothing_sends_nothing() {
             LineageDrop::Join
         ),
         None,
-        "a team the surface no longer shows cannot be dragged",
+        "an organization the surface no longer shows cannot be dragged",
     );
     assert_eq!(
         arrangement(
@@ -1120,7 +1120,7 @@ fn a_drop_that_states_nothing_sends_nothing() {
             LineageDrop::Join
         ),
         None,
-        "a team the surface no longer shows cannot be dropped on",
+        "an organization the surface no longer shows cannot be dropped on",
     );
     assert_eq!(
         arrangement(
@@ -1130,7 +1130,7 @@ fn a_drop_that_states_nothing_sends_nothing() {
             LineageDrop::Join
         ),
         None,
-        "one member of a team is not the team, and drags nothing",
+        "one member of an organization is not the organization, and drags nothing",
     );
 }
 
@@ -1144,7 +1144,7 @@ fn the_gutter_that_joins_is_the_outer_fifth_of_the_lineage_under_the_pointer() {
     assert_eq!(LineageDrop::at(79.999, 100.0), LineageDrop::Reorder);
     assert_eq!(LineageDrop::at(80.0, 100.0), LineageDrop::Join);
     assert_eq!(LineageDrop::at(100.0, 100.0), LineageDrop::Join);
-    // A team with no width has no gutter, so it can only be reordered. The
+    // An organization with no width has no gutter, so it can only be reordered. The
     // offset outside it is the case that needs stating: dividing by a zero
     // width there is an infinite fraction, which lands in a gutter.
     assert_eq!(LineageDrop::at(0.0, 0.0), LineageDrop::Reorder);

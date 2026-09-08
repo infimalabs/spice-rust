@@ -1,4 +1,4 @@
-//! Team-local actions opened by one lineage toolbar's hamburger.
+//! Org-local actions opened by one lineage toolbar's hamburger.
 
 use super::controls::LineageControl;
 use super::*;
@@ -20,16 +20,16 @@ pub(super) fn trigger(
     let toggle = controls.clone();
     html! {
         <button
-            class="team-menu"
+            class="organization-menu"
             type="button"
-            aria-label={format!("Team actions for {}", watchband::short(lineage))}
+            aria-label={format!("Organization actions for {}", watchband::short(lineage))}
             aria-haspopup="menu"
             aria-expanded={(control.menu_open || control.import_open).to_string()}
-            title="Team actions"
+            title="Organization actions"
             onclick={Callback::from(move |_| {
                 toggle.dispatch(LineageControlAction::ToggleMenu { lineage });
             })}
-        ><span class="team-menu-icon" aria-hidden="true"></span></button>
+        ><span class="organization-menu-icon" aria-hidden="true"></span></button>
     }
 }
 
@@ -67,36 +67,36 @@ pub(super) fn render(
     let topology_revision = context.topology_revision;
     html! {
         <div
-            class="team-action-menu"
+            class="organization-action-menu"
             role="menu"
-            aria-label={format!("Actions for team {}", watchband::short(identity))}
+            aria-label={format!("Actions for organization {}", watchband::short(identity))}
         >
             <button
                 type="button"
-                class="team-action"
+                class="organization-action"
                 role="menuitem"
                 onclick={Callback::from(move |_| {
                     close.dispatch(LineageControlAction::CloseLineage { lineage: identity });
                 })}
             >
-                <span class="team-action-label">{"Close team"}</span>
-                <span class="team-action-detail">{members(member_count)}</span>
+                <span class="organization-action-label">{"Close organization"}</span>
+                <span class="organization-action-detail">{members(member_count)}</span>
             </button>
             <button
                 type="button"
-                class="team-action"
+                class="organization-action"
                 role="menuitem"
                 disabled={!context.can_configure}
                 onclick={Callback::from(move |_| {
                     import.dispatch(LineageControlAction::ToggleImport { lineage: identity });
                 })}
             >
-                <span class="team-action-label">{"Import agent"}</span>
-                <span class="team-action-detail">{"choose agent"}</span>
+                <span class="organization-action-label">{"Import agent"}</span>
+                <span class="organization-action-detail">{"choose agent"}</span>
             </button>
             <button
                 type="button"
-                class="team-action"
+                class="organization-action"
                 role="menuitem"
                 disabled={!split_enabled}
                 onclick={Callback::from(move |_| {
@@ -114,14 +114,14 @@ pub(super) fn render(
                     );
                 })}
             >
-                <span class="team-action-label">{"Split into individuals"}</span>
-                <span class="team-action-detail">{
-                    if split_enabled { "one team per agent" } else { "already individual" }
+                <span class="organization-action-label">{"Split into individuals"}</span>
+                <span class="organization-action-detail">{
+                    if split_enabled { "one organization per agent" } else { "already individual" }
                 }</span>
             </button>
             <button
                 type="button"
-                class="team-action"
+                class="organization-action"
                 role="menuitem"
                 disabled={!restore_enabled}
                 onclick={Callback::from(move |_| {
@@ -138,8 +138,8 @@ pub(super) fn render(
                     );
                 })}
             >
-                <span class="team-action-label">{"Restore previous team"}</span>
-                <span class="team-action-detail">{
+                <span class="organization-action-label">{"Restore previous organization"}</span>
+                <span class="organization-action-detail">{
                     if restore_enabled { members(restore_count) } else { "no saved subgroup".to_owned() }
                 }</span>
             </button>
@@ -168,9 +168,9 @@ fn render_arrangement(lineage: CanonicalUuid, context: &Context<'_>) -> Html {
         .collect::<Vec<_>>();
     html! {
         <div
-            class="team-action-menu team-arrangement-menu"
+            class="organization-action-menu organization-arrangement-menu"
             role="menu"
-            aria-label={format!("Arrange team {}", watchband::short(lineage))}
+            aria-label={format!("Arrange organization {}", watchband::short(lineage))}
         >
             {for choices.into_iter().map(|(kind, verb, target, lineages)| {
                 let sender = context.sender.clone();
@@ -179,7 +179,7 @@ fn render_arrangement(lineage: CanonicalUuid, context: &Context<'_>) -> Html {
                 html! {
                     <button
                         type="button"
-                        class="team-action team-arrangement-action"
+                        class="organization-action organization-arrangement-action"
                         role="menuitem"
                         data-lineage-arrangement={kind}
                         data-lineage-arrangement-target={target.to_string()}
@@ -194,9 +194,9 @@ fn render_arrangement(lineage: CanonicalUuid, context: &Context<'_>) -> Html {
                             controls.dispatch(LineageControlAction::CloseMenus);
                         })}
                     >
-                        <span class="team-action-label">{format!("{verb} team {}", watchband::short(target))}</span>
-                        <span class="team-action-detail">{
-                            if kind == "join" { "combine agents" } else { "reorder teams" }
+                        <span class="organization-action-label">{format!("{verb} organization {}", watchband::short(target))}</span>
+                        <span class="organization-action-detail">{
+                            if kind == "join" { "combine agents" } else { "reorder organizations" }
                         }</span>
                     </button>
                 }
@@ -223,9 +223,9 @@ fn render_import(lineage: &crate::runtime::LaneRow, context: &Context<'_>) -> Ht
     let topology_revision = context.topology_revision;
     html! {
         <div
-            class="team-action-menu team-import-menu"
+            class="organization-action-menu organization-import-menu"
             role="menu"
-            aria-label={format!("Import agent into team {}", watchband::short(identity))}
+            aria-label={format!("Import agent into organization {}", watchband::short(identity))}
         >
             <header>
                 <strong>{"Import agent"}</strong>
@@ -237,7 +237,7 @@ fn render_import(lineage: &crate::runtime::LaneRow, context: &Context<'_>) -> Ht
                 >{"Cancel"}</button>
             </header>
             if candidates.is_empty() {
-                <p class="team-import-empty">{"No available agents"}</p>
+                <p class="organization-import-empty">{"No available agents"}</p>
             } else {
                 {for candidates.into_iter().map(|member| {
                     let sender = context.sender.clone();
@@ -245,7 +245,7 @@ fn render_import(lineage: &crate::runtime::LaneRow, context: &Context<'_>) -> Ht
                     html! {
                         <button
                             type="button"
-                            class="team-import-choice"
+                            class="organization-import-choice"
                             role="menuitem"
                             onclick={Callback::from(move |_| {
                                 send_action(

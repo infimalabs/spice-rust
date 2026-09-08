@@ -272,17 +272,17 @@ fn configure_member(
 
 /// Move one lane through all three membership transitions, in order.
 ///
-/// The lane leaves its team by lane arrangement, is brought back by lineage
+/// The lane leaves its organization by lane arrangement, is brought back by lineage
 /// configuration, and leaves again by lineage rearrangement, so every step
 /// genuinely relocates it and every step writes its own fact. `stay` is the
-/// team-mate that keeps the source lineage populated, which is what stops a
+/// organization-mate that keeps the source lineage populated, which is what stops a
 /// step from also retiring a subscription and changing what the next one moves.
 fn transition_sources(
     fixture: &Arranged,
     moved: CanonicalUuid,
     stay: CanonicalUuid,
 ) -> [Option<serde_json::Value>; 3] {
-    let [first_team, second_team] = fixture.teams;
+    let [first_org, second_org] = fixture.organizations;
     let anchor = fixture.lanes[2];
     arrange_lane_for_test(
         &fixture.bus,
@@ -293,13 +293,13 @@ fn transition_sources(
         anchor,
     );
     let arranged = recorded_sources(&fixture.bus, wire::FactKind::LaneArranged);
-    configure_member(fixture, test_uuid(42), first_team, moved);
+    configure_member(fixture, test_uuid(42), first_org, moved);
     let configured = recorded_sources(&fixture.bus, wire::FactKind::LineageConfigured);
     fixture.commit(
         43,
         vec![
-            standing(second_team, &[anchor, moved]),
-            standing(first_team, &[stay]),
+            standing(second_org, &[anchor, moved]),
+            standing(first_org, &[stay]),
         ],
     );
     let rearranged = recorded_sources(&fixture.bus, wire::FactKind::LineageArranged);

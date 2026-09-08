@@ -26,7 +26,7 @@ const referencePalettes = {
 };
 
 async function assertReferencePalette(console, mode) {
-  const measured = await console.locator(".team-surface").first().evaluate((surface) => {
+  const measured = await console.locator(".organization-surface").first().evaluate((surface) => {
     const background = (selector) => getComputedStyle(
       selector ? surface.querySelector(selector) : surface,
     ).backgroundColor;
@@ -45,13 +45,13 @@ async function assertReferencePalette(console, mode) {
       controlSoft: token("--control-surface-soft"),
       body: getComputedStyle(document.body).backgroundColor,
       surface: background(),
-      toolbar: background(".team-toolbar"),
-      rail: background(".team-mode-rail"),
-      selectedMode: background(".team-mode.selected"),
-      menu: background(".team-menu"),
+      toolbar: background(".organization-toolbar"),
+      rail: background(".organization-mode-rail"),
+      selectedMode: background(".organization-mode.selected"),
+      menu: background(".organization-menu"),
       ticker: background(".ticker"),
-      pane: background('.team-pane:not([hidden])'),
-      agent: background(".team-agent"),
+      pane: background('.organization-pane:not([hidden])'),
+      agent: background(".organization-agent"),
       card: background('.mosaic-message-card[data-layout-phase="committed"]'),
       cardAction: background(".mosaic-message-card .card-action"),
     };
@@ -900,8 +900,8 @@ export async function assertReferenceMessageCard(
     const footer = article.querySelector(".message-footer");
     const agent = article.querySelector(".message-agent-name");
     const actions = article.querySelector(".message-actions");
-    const inlineCode = article.closest(".team-surface")?.querySelector(".message-body code");
-    const grid = article.closest(".team-activity-grid");
+    const inlineCode = article.closest(".organization-surface")?.querySelector(".message-body code");
+    const grid = article.closest(".organization-activity-grid");
     const panelProbe = document.createElement("span");
     panelProbe.style.background = "var(--panel)";
     article.append(panelProbe);

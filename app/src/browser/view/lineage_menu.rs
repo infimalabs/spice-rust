@@ -36,7 +36,7 @@ fn render_axis(
         ),
         Axis::Topology => (
             "lineages",
-            "Team connects resident teams, seats, capabilities, and current ownership.",
+            "Org connects resident organizations, seats, capabilities, and current ownership.",
         ),
     };
     html! {
@@ -65,7 +65,7 @@ fn render_lanes(
         return html! {
             <div class="canvas-menu-page" data-menu-page="lanes">
                 {render_global_settings(None, sender)}
-                <p>{"Waiting for resident teams…"}</p>
+                <p>{"Waiting for resident organizations…"}</p>
                 {render_version_footer(cursor)}
             </div>
         };
@@ -111,10 +111,10 @@ fn render_lanes(
     html! {
         <div class="canvas-menu-page" data-menu-page="lanes">
             {render_global_settings(Some(runtime), sender)}
-            <section class="canvas-menu-section canvas-open-teams">
-                <h2>{"Open Team"}</h2>
+            <section class="canvas-menu-section canvas-open-organizations">
+                <h2>{"Open Org"}</h2>
                 if grouped_lineages.is_empty() {
-                    <p class="canvas-menu-empty">{"No open teams"}</p>
+                    <p class="canvas-menu-empty">{"No open organizations"}</p>
                 } else {
                     {for grouped_lineages.into_iter().map(|lineage| {
                         render_lineage(
@@ -234,14 +234,14 @@ fn render_lineage(
     let reopen = lineage_controls.clone();
     html! {
         <article
-            class="canvas-team"
-            data-team-lineage={lineage.lane.to_string()}
+            class="canvas-organization"
+            data-organization-lineage={lineage.lane.to_string()}
             {ondragover}
             {ondrop}
         >
             <header>
                 <div>
-                    <strong>{format!("Team {}", watchband::short(lineage.lane))}</strong>
+                    <strong>{format!("Org {}", watchband::short(lineage.lane))}</strong>
                     <span>{format!(
                         "open any member; {} agents open together",
                         lineage.members.len()
@@ -250,16 +250,16 @@ fn render_lineage(
                 if closed {
                     <button
                         type="button"
-                        class="canvas-team-open"
+                        class="canvas-organization-open"
                         onclick={Callback::from(move |_| {
                             reopen.dispatch(LineageControlAction::OpenLineage {
                                 lineage: target,
                             });
                         })}
-                    >{"Open team"}</button>
+                    >{"Open organization"}</button>
                 }
             </header>
-            <div class="canvas-team-members">
+            <div class="canvas-organization-members">
                 {for lineage.members.iter().enumerate().map(|(position, member)| {
                     render_member(
                         member,
@@ -300,10 +300,10 @@ fn render_member(
     let reopen = lineage_controls.clone();
     html! {
         <article
-            class="canvas-team-member"
+            class="canvas-organization-member"
             draggable={can_configure.to_string()}
             aria-disabled={(!can_configure).to_string()}
-            data-team-member={member.lane.to_string()}
+            data-organization-member={member.lane.to_string()}
             data-source-lineage={source.to_string()}
             data-accent={accent.to_string()}
             {ondragstart}
@@ -322,11 +322,11 @@ fn render_member(
             if closed && show_reopen {
                 <button
                     type="button"
-                    class="canvas-team-open"
+                    class="canvas-organization-open"
                     onclick={Callback::from(move |_| {
                         reopen.dispatch(LineageControlAction::OpenLineage { lineage: source });
                     })}
-                >{"Open team"}</button>
+                >{"Open organization"}</button>
             }
         </article>
     }
@@ -341,9 +341,9 @@ fn render_new_lineage_drop(
     let ondragover = allow_drop(can_configure);
     let ondrop = drop_into_new_lineage(sender.clone(), target, can_configure, topology_revision);
     html! {
-        <section class="canvas-menu-section canvas-team-drop" {ondragover} {ondrop}>
-            <header><h2>{"New Team"}</h2><span>{"drop agent to create"}</span></header>
-            <div class="canvas-drop-target" data-team-drop="new">{"Drop agent here"}</div>
+        <section class="canvas-menu-section canvas-organization-drop" {ondragover} {ondrop}>
+            <header><h2>{"New Org"}</h2><span>{"drop agent to create"}</span></header>
+            <div class="canvas-drop-target" data-organization-drop="new">{"Drop agent here"}</div>
         </section>
     }
 }
@@ -369,14 +369,14 @@ fn render_solo_members_drop(
         render.topology_revision,
     );
     html! {
-        <section class="canvas-menu-section canvas-unteamed" {ondragover} {ondrop}>
+        <section class="canvas-menu-section canvas-unassigned" {ondragover} {ondrop}>
             <header>
-                <h2>{"Agents Without Team"}</h2>
-                <span>{"drop here to remove from team"}</span>
+                <h2>{"Agents Without Org"}</h2>
+                <span>{"drop here to remove from organization"}</span>
             </header>
-            <div class="canvas-team-members" data-team-drop="unteamed">
+            <div class="canvas-organization-members" data-organization-drop="unassigned">
                 if members.is_empty() {
-                    <p class="canvas-menu-empty">{"No unteamed agents"}</p>
+                    <p class="canvas-menu-empty">{"No unassigned agents"}</p>
                 } else {
                     {for members.iter().map(|member| {
                         render_member(

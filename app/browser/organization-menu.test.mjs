@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { captureCursorFailureArtifact } from "./team-menu.mjs";
+import { captureCursorFailureArtifact } from "./organization-menu.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 

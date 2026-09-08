@@ -115,7 +115,7 @@ export async function assertCompleteComposerSubmission({
   await pasteImages(secondPrimary, ["all-second.png"]);
   await secondPrimary.getByRole("img", { name: "all-second.png" }).waitFor();
 
-  await lane.locator("xpath=ancestor::form[1]").locator(".team-send").click();
+  await lane.locator("xpath=ancestor::form[1]").locator(".organization-send").click();
   await firstAllQuote.waitFor({ state: "detached", timeout: 10_000 });
   await secondAllQuote.waitFor({ state: "detached", timeout: 10_000 });
   const allFirstInbox = await reply(fixture, ["inbox", seeded.lane]);

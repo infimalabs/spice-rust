@@ -150,7 +150,7 @@ impl Arranged {
 #[test]
 fn two_clients_share_one_revision_authority_across_every_topology_mutation() {
     let fixture = Arranged::seat("topology-revision-concurrency", &[0, 0, 1, 1]);
-    let [first_team, second_team] = fixture.teams;
+    let [first_org, second_org] = fixture.organizations;
     let lanes = fixture.lanes.clone();
 
     let shared = fixture.head().topology_revision;
@@ -158,14 +158,14 @@ fn two_clients_share_one_revision_authority_across_every_topology_mutation() {
         40,
         shared,
         vec![
-            standing(second_team, &[lanes[2], lanes[3]]),
-            standing(first_team, &[lanes[0], lanes[1]]),
+            standing(second_org, &[lanes[2], lanes[3]]),
+            standing(first_org, &[lanes[0], lanes[1]]),
         ],
     );
     assert_eq!(reordered.topology_revision, shared + 1);
     let after_reorder = fixture.head();
     Arranged::stale(
-        fixture.arrange_at(41, shared, vec![standing(first_team, &lanes)]),
+        fixture.arrange_at(41, shared, vec![standing(first_org, &lanes)]),
         shared,
         after_reorder.topology_revision,
     );
@@ -175,8 +175,8 @@ fn two_clients_share_one_revision_authority_across_every_topology_mutation() {
         42,
         after_reorder.topology_revision,
         vec![
-            standing(second_team, &[lanes[2], lanes[3], lanes[1]]),
-            standing(first_team, &[lanes[0]]),
+            standing(second_org, &[lanes[2], lanes[3], lanes[1]]),
+            standing(first_org, &[lanes[0]]),
         ],
     );
     assert_eq!(
@@ -189,8 +189,8 @@ fn two_clients_share_one_revision_authority_across_every_topology_mutation() {
             43,
             after_reorder.topology_revision,
             vec![
-                standing(second_team, &[lanes[2], lanes[3]]),
-                standing(first_team, &[lanes[0], lanes[1]]),
+                standing(second_org, &[lanes[2], lanes[3]]),
+                standing(first_org, &[lanes[0], lanes[1]]),
             ],
         ),
         after_reorder.topology_revision,
@@ -202,8 +202,8 @@ fn two_clients_share_one_revision_authority_across_every_topology_mutation() {
         44,
         after_join.topology_revision,
         vec![
-            standing(second_team, &[lanes[2], lanes[3]]),
-            standing(first_team, &[lanes[0], lanes[1]]),
+            standing(second_org, &[lanes[2], lanes[3]]),
+            standing(first_org, &[lanes[0], lanes[1]]),
         ],
     );
     assert_eq!(split.topology_revision, after_join.topology_revision + 1);
@@ -232,7 +232,7 @@ fn two_clients_share_one_revision_authority_across_every_topology_mutation() {
     let configured = Arranged::committed(fixture.configure_at(
         47,
         policy_shared,
-        first_team,
+        first_org,
         wire::intent::LineageLife::Drain,
     ));
     assert_eq!(configured.topology_revision, policy_shared + 1);
@@ -241,7 +241,7 @@ fn two_clients_share_one_revision_authority_across_every_topology_mutation() {
         fixture.configure_at(
             48,
             policy_shared,
-            second_team,
+            second_org,
             wire::intent::LineageLife::Steer,
         ),
         policy_shared,
@@ -252,8 +252,8 @@ fn two_clients_share_one_revision_authority_across_every_topology_mutation() {
         after_policy
             .subscriptions
             .iter()
-            .find(|subscription| subscription.lineage_id == second_team)
-            .expect("second team keeps a subscription")
+            .find(|subscription| subscription.lineage_id == second_org)
+            .expect("second organization keeps a subscription")
             .policy,
         wire::intent::LineageLife::Drive,
     );
@@ -264,18 +264,18 @@ fn two_clients_share_one_revision_authority_across_every_topology_mutation() {
 #[test]
 fn membership_only_configuration_preserves_existing_lifetimes() {
     let fixture = Arranged::seat("membership-configuration-preserves-life", &[0, 0, 1, 1]);
-    let [first_team, second_team] = fixture.teams;
+    let [first_org, second_org] = fixture.organizations;
     let lanes = fixture.lanes.clone();
     let configured = Arranged::committed(fixture.configure_at(
         49,
         fixture.head().topology_revision,
-        first_team,
+        first_org,
         wire::intent::LineageLife::Drain,
     ));
     let moved = Arranged::committed(fixture.configure_member_at(
         50,
         configured.topology_revision,
-        first_team,
+        first_org,
         lanes[2],
     ));
     assert_eq!(
@@ -285,14 +285,14 @@ fn membership_only_configuration_preserves_existing_lifetimes() {
             .find(|row| row.lane == lanes[2])
             .expect("moved member remains seated")
             .lineage_id,
-        first_team,
+        first_org,
     );
     assert_eq!(
         moved
             .subscriptions
             .iter()
-            .find(|subscription| subscription.lineage_id == first_team)
-            .expect("configured team keeps a subscription")
+            .find(|subscription| subscription.lineage_id == first_org)
+            .expect("configured organization keeps a subscription")
             .policy,
         wire::intent::LineageLife::Drain,
         "a membership-only patch cannot restate a stale lifetime",
@@ -301,8 +301,8 @@ fn membership_only_configuration_preserves_existing_lifetimes() {
         moved
             .subscriptions
             .iter()
-            .find(|subscription| subscription.lineage_id == second_team)
-            .expect("source team keeps a subscription")
+            .find(|subscription| subscription.lineage_id == second_org)
+            .expect("source organization keeps a subscription")
             .policy,
         wire::intent::LineageLife::Drive,
     );

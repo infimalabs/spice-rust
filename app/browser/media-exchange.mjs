@@ -161,10 +161,10 @@ async function cardIdentity(card) {
 
 async function reopenLane(page, lineage, lane) {
   await chooseCanvasView(page, "Lanes");
-  const surface = page.locator(`.team-surface[data-lineage-id="${lineage}"]`);
+  const surface = page.locator(`.organization-surface[data-lineage-id="${lineage}"]`);
   await surface.waitFor({ timeout: TRANSITION_MS * 4 });
   await surface.getByRole("tab", { name: /^Agents(?:\s|$)/ }).click();
-  await surface.locator(`.team-agent[data-agent-lane="${lane}"]`).waitFor();
+  await surface.locator(`.organization-agent[data-agent-lane="${lane}"]`).waitFor();
   return surface;
 }
 
@@ -204,7 +204,7 @@ export async function assertBidirectionalMediaExchange(page, fixture, worktree) 
   assert.equal(wake.body.to, "occupied", "the Codex media stand-in becomes live");
   let surface = await reopenLane(page, member.lineage_id, member.lane);
   const composer = surface.locator(
-    `.team-agent[data-agent-lane="${member.lane}"] .composer-shard--primary`,
+    `.organization-agent[data-agent-lane="${member.lane}"] .composer-shard--primary`,
   );
   await composer.getByRole("textbox").fill("Inspect the attached operator pixel.");
   await pasteImages(composer, ["operator-pixel.png"]);
@@ -215,7 +215,7 @@ export async function assertBidirectionalMediaExchange(page, fixture, worktree) 
     "the real Canvas attachment submission clears its composer",
     TRANSITION_MS,
     (lane) => document
-      .querySelector(`.team-agent[data-agent-lane="${lane}"] textarea`)
+      .querySelector(`.organization-agent[data-agent-lane="${lane}"] textarea`)
       ?.value === "",
     member.lane,
   );
@@ -285,7 +285,7 @@ export async function assertBidirectionalMediaExchange(page, fixture, worktree) 
     "one production Codex image result reaches Canvas",
     TRANSITION_MS * 4,
     (lane) => document.querySelectorAll(
-      `.team-surface .mosaic-message-card[data-agent-lane="${lane}"] img[alt="tool-image"]`,
+      `.organization-surface .mosaic-message-card[data-agent-lane="${lane}"] img[alt="tool-image"]`,
     ).length === 1,
     member.lane,
   );

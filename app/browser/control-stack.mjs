@@ -80,17 +80,17 @@ function describeStack(node) {
       labelTransform: labelStyle.textTransform,
     };
   };
-  const button = node.querySelector(".team-send");
+  const button = node.querySelector(".organization-send");
   const buttonStyle = getComputedStyle(button);
-  const composer = node.closest(".team-composer");
+  const composer = node.closest(".organization-composer");
   const activity = composer?.nextElementSibling;
-  if (!composer || !activity?.classList.contains("team-activity-grid")) {
+  if (!composer || !activity?.classList.contains("organization-activity-grid")) {
     throw new Error("the reference control stack has no adjacent activity lane");
   }
   return {
     tokens,
-    speech: slider(".team-speech"),
-    lifetime: slider(".team-lifetime"),
+    speech: slider(".organization-speech"),
+    lifetime: slider(".organization-lifetime"),
     send: {
       ...measure(button),
       text: button.textContent.trim(),
@@ -102,7 +102,7 @@ function describeStack(node) {
     edge: {
       controls: measure(node),
       activity: measure(activity),
-      agents: [...composer.querySelectorAll(".team-agent")].map(measure),
+      agents: [...composer.querySelectorAll(".organization-agent")].map(measure),
     },
   };
 }
@@ -242,7 +242,7 @@ async function assertNarrowStack(page, controls, viewport) {
   await page.setViewportSize({ width: 680, height: viewport.height });
   try {
     await controls
-      .locator(".team-speech")
+      .locator(".organization-speech")
       .evaluate(
         (node, expected) =>
           new Promise((settle, fail) => {
@@ -295,21 +295,21 @@ export async function assertReferenceControlStack(page, console_, artifacts) {
   const viewport = page.viewportSize();
   const width = viewport?.width ?? 0;
   assert.ok(width > 720, "the reference control stack is measured above the narrow breakpoint");
-  const controls = console_.locator(".team-composer-controls").first();
+  const controls = console_.locator(".organization-composer-controls").first();
   await controls.waitFor({ timeout: 15_000 });
-  const draft = console_.locator(".team-surface .mosaic-composer textarea").first();
+  const draft = console_.locator(".organization-surface .mosaic-composer textarea").first();
   const restored = await draft.inputValue();
   await draft.fill("reference control capture");
-  const speech = controls.locator('.team-speech input[type="range"]');
-  const lifetime = controls.locator('.team-lifetime input[type="range"]');
-  const send = controls.locator(".team-send");
+  const speech = controls.locator('.organization-speech input[type="range"]');
+  const lifetime = controls.locator('.organization-lifetime input[type="range"]');
+  const send = controls.locator(".organization-send");
 
   for (const state of states) {
     await speech.fill(state.speech);
     await lifetime.fill(state.lifetime);
     for (const expected of expectations.get(state.name)) {
       await controls
-        .locator(`.team-${expected.control} span`)
+        .locator(`.organization-${expected.control} span`)
         .filter({ hasText: expected.label })
         .waitFor({ timeout: 10_000 });
     }

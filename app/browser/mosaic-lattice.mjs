@@ -8,7 +8,7 @@ import {
 export async function assertMosaicLattice(page, requireBothReadPaths) {
   await waitForMosaicReady(page);
   const snapshot = await page.locator('[data-pane="agent-console"]').evaluate((console) => ({
-    activities: [...console.querySelectorAll(".team-activity-grid")].map((activity) => ({
+    activities: [...console.querySelectorAll(".organization-activity-grid")].map((activity) => ({
       columnCount: getComputedStyle(activity).columnCount,
       columnWidth: getComputedStyle(activity).columnWidth,
     })),

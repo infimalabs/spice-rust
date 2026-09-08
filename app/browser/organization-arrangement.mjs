@@ -1,16 +1,16 @@
-/// Prove team lanes are arranged by dragging one team onto another.
+/// Prove organization lanes are arranged by dragging one organization onto another.
 ///
 /// Two gestures share one durable command, and the fixture keeps them apart
-/// the way the operator does: where inside the target the team is dropped.
+/// the way the operator does: where inside the target the organization is dropped.
 /// A drop in the middle takes the target's place, a drop in either outer
 /// fifth gives the target its agents. Both are read back from the resident
-/// rather than the DOM, because the predecessor reordered teams with a bare
+/// rather than the DOM, because the predecessor reordered organizations with a bare
 /// `insertBefore` that no reload survived.
 ///
 /// The third assertion is the one that keeps the gesture honest. A member is
 /// dragged by its primary composer too, and that gesture commits `lane::arrange`
-/// against the very same lane table. Moving a member inside its own team must
-/// therefore leave the teams exactly where this fixture just put them: the two
+/// against the very same lane table. Moving a member inside its own organization must
+/// therefore leave the organizations exactly where this fixture just put them: the two
 /// arrangement laws share a table, and neither may stand in for the other.
 
 import assert from "node:assert/strict";
@@ -19,69 +19,69 @@ import { join } from "node:path";
 
 import { reply, waitForPageFunction, TRANSITION_MS } from "./canvas-fixture.mjs";
 
-/// The private media a dragged team carries, and the only one a team accepts.
-const TEAM_MEDIA = "application/x-spice-team";
+/// The private media a dragged organization carries, and the only one an organization accepts.
+const ORG_MEDIA = "application/x-spice-organization";
 
 /// The one draggable composer a member exposes, by the lane it belongs to.
 function primaryComposer(agents, lane) {
   return agents.locator(`.composer-shard--primary[data-shard-target-id="${lane}"]`);
 }
 
-/// The members the canvas drew inside one team, in the order it drew them.
+/// The members the canvas drew inside one organization, in the order it drew them.
 async function waitForMemberOrder(page, label, lineage, order) {
   await waitForPageFunction(page, label, TRANSITION_MS, ({ lineage, expected }) => {
     const drawn = [...document.querySelectorAll(
-      `.team-surface[data-lineage-id="${lineage}"] .team-agent`,
+      `.organization-surface[data-lineage-id="${lineage}"] .organization-agent`,
     )].map((member) => member.dataset.agentLane);
     return drawn.length === expected.length
       && drawn.every((lane, at) => lane === expected[at]);
   }, { lineage, expected: order });
 }
 
-/// The teams the resident calls durable, in the order it states them.
-function durableTeams(lanes) {
-  const teams = [];
+/// The organizations the resident calls durable, in the order it states them.
+function durableOrgs(lanes) {
+  const organizations = [];
   for (const lane of lanes) {
-    const team = teams.find((row) => row.lineage === lane.lineage_id);
-    if (team) {
-      team.lanes.push(lane.lane);
+    const organization = organizations.find((row) => row.lineage === lane.lineage_id);
+    if (organization) {
+      organization.lanes.push(lane.lane);
     } else {
-      teams.push({ lineage: lane.lineage_id, lanes: [lane.lane] });
+      organizations.push({ lineage: lane.lineage_id, lanes: [lane.lane] });
     }
   }
-  return teams;
+  return organizations;
 }
 
-/// The teams the canvas drew, in the order it drew them.
-function renderedTeams(agents) {
-  return agents.locator(".team-surface").evaluateAll((surfaces) => surfaces.map((surface) => ({
+/// The organizations the canvas drew, in the order it drew them.
+function renderedOrgs(agents) {
+  return agents.locator(".organization-surface").evaluateAll((surfaces) => surfaces.map((surface) => ({
     lineage: surface.dataset.lineageId,
-    lanes: [...surface.querySelectorAll(".team-agent")].map((agent) => agent.dataset.agentLane),
+    lanes: [...surface.querySelectorAll(".organization-agent")].map((agent) => agent.dataset.agentLane),
   })));
 }
 
-/// Wait for the canvas to redraw the team order the resident now states.
-async function waitForTeamOrder(page, label, order) {
+/// Wait for the canvas to redraw the organization order the resident now states.
+async function waitForOrgOrder(page, label, order) {
   await waitForPageFunction(page, label, TRANSITION_MS, (expected) => {
-    const drawn = [...document.querySelectorAll(".team-surface")]
+    const drawn = [...document.querySelectorAll(".organization-surface")]
       .map((surface) => surface.dataset.lineageId);
     return drawn.length === expected.length
       && drawn.every((lineage, at) => lineage === expected[at]);
   }, order);
 }
 
-/// Drag one team by its pip stack and drop it across the target at `fraction`.
+/// Drag one organization by its pip stack and drop it across the target at `fraction`.
 ///
 /// The pip stack's real `dragstart` fills the transfer, so a handle that carried
 /// nothing would fail here rather than be papered over by a transfer the
 /// fixture wrote itself.
-function dragTeam(page, gesture) {
+function dragOrg(page, gesture) {
   return page.evaluate(({ dragged, target, fraction }) => {
     const pips = document.querySelector(
-      `.team-surface[data-lineage-id="${dragged}"] .team-lights[data-lane-drag-handle]`,
+      `.organization-surface[data-lineage-id="${dragged}"] .organization-lights[data-lane-drag-handle]`,
     );
-    const surface = document.querySelector(`.team-surface[data-lineage-id="${target}"]`);
-    if (!pips || !surface) throw new Error("arranging teams needs pips and both teams rendered");
+    const surface = document.querySelector(`.organization-surface[data-lineage-id="${target}"]`);
+    if (!pips || !surface) throw new Error("arranging organizations needs pips and both organizations rendered");
     const transfer = new DataTransfer();
     pips.dispatchEvent(new DragEvent("dragstart", {
       bubbles: true,
@@ -108,7 +108,7 @@ function dragTeam(page, gesture) {
     });
     surface.dispatchEvent(drop);
     return {
-      carried: transfer.getData("application/x-spice-team"),
+      carried: transfer.getData("application/x-spice-organization"),
       types: [...transfer.types],
       offered: over.defaultPrevented,
       taken: drop.defaultPrevented,
@@ -116,23 +116,23 @@ function dragTeam(page, gesture) {
   }, gesture);
 }
 
-function teamPips(agents, lineage) {
+function organizationPips(agents, lineage) {
   return agents.locator(
-    `.team-surface[data-lineage-id="${lineage}"] .team-lights[data-lane-drag-handle]`,
+    `.organization-surface[data-lineage-id="${lineage}"] .organization-lights[data-lane-drag-handle]`,
   );
 }
 
 function arrangementMenu(agents, lineage) {
   return agents.locator(
-    `.team-surface[data-lineage-id="${lineage}"] .team-arrangement-menu`,
+    `.organization-surface[data-lineage-id="${lineage}"] .organization-arrangement-menu`,
   );
 }
 
 async function assertKeyboardArrangement(page, fixture, agents, primary, secondary) {
-  const primaryPips = teamPips(agents, primary.lineage);
+  const primaryPips = organizationPips(agents, primary.lineage);
   await primaryPips.focus();
   assert.equal(await primaryPips.evaluate((node) => document.activeElement === node), true,
-    "the team pips accept keyboard focus");
+    "the organization pips accept keyboard focus");
   await primaryPips.press("Enter");
   const primaryMenu = arrangementMenu(agents, primary.lineage);
   await primaryMenu.waitFor();
@@ -140,7 +140,7 @@ async function assertKeyboardArrangement(page, fixture, agents, primary, seconda
   assert.equal(
     await primaryMenu.locator(`[data-lineage-arrangement="after"][data-lineage-arrangement-target="${secondary.lineage}"]`).count(),
     1,
-    "the first team offers its non-noop move-after action",
+    "the first organization offers its non-noop move-after action",
   );
   assert.equal(
     await primaryMenu.locator(`[data-lineage-arrangement="join"][data-lineage-arrangement-target="${secondary.lineage}"]`).count(),
@@ -148,7 +148,7 @@ async function assertKeyboardArrangement(page, fixture, agents, primary, seconda
     "the keyboard menu offers a join action",
   );
   await agents.locator(
-    `.team-surface[data-lineage-id="${primary.lineage}"] .team-mode-rail`,
+    `.organization-surface[data-lineage-id="${primary.lineage}"] .organization-mode-rail`,
   ).click({ position: { x: 4, y: 4 } });
   await primaryMenu.waitFor({ state: "detached" });
   assert.equal(await primaryPips.getAttribute("aria-expanded"), "false",
@@ -160,7 +160,7 @@ async function assertKeyboardArrangement(page, fixture, agents, primary, seconda
   assert.equal(await primaryPips.evaluate((node) => document.activeElement === node), true,
     "Escape closes the arrangement menu and returns focus to its pips");
 
-  const secondaryPips = teamPips(agents, secondary.lineage);
+  const secondaryPips = organizationPips(agents, secondary.lineage);
   await secondaryPips.focus();
   await secondaryPips.press("Space");
   const secondaryMenu = arrangementMenu(agents, secondary.lineage);
@@ -172,19 +172,19 @@ async function assertKeyboardArrangement(page, fixture, agents, primary, seconda
   await page.keyboard.press("Enter");
   await secondaryMenu.waitFor({ state: "detached" });
   const reordered = [secondary, primary];
-  await waitForTeamOrder(page, "keyboard arrangement moves the selected team", [
+  await waitForOrgOrder(page, "keyboard arrangement moves the selected organization", [
     secondary.lineage,
     primary.lineage,
   ]);
   assert.deepEqual(
-    durableTeams((await reply(fixture, ["lane"])).body.lanes),
+    durableOrgs((await reply(fixture, ["lane"])).body.lanes),
     reordered,
     "keyboard arrangement is durable resident state",
   );
   return reordered;
 }
 
-async function touchJoinTeam(page, fixture, dragged, target) {
+async function touchJoinOrg(page, fixture, dragged, target) {
   const browser = page.context().browser();
   assert.ok(browser, "touch arrangement requires the live browser");
   const context = await browser.newContext({
@@ -196,43 +196,43 @@ async function touchJoinTeam(page, fixture, dragged, target) {
   try {
     await touch.goto(page.url(), { waitUntil: "networkidle" });
     const agents = touch.locator('[data-pane="agent-console"]');
-    const pips = teamPips(agents, dragged);
+    const pips = organizationPips(agents, dragged);
     await pips.tap();
     assert.equal(await pips.getAttribute("aria-expanded"), "true",
       "a touch tap opens the pip arrangement menu");
     await arrangementMenu(agents, dragged).locator(
       `[data-lineage-arrangement="join"][data-lineage-arrangement-target="${target}"]`,
     ).tap();
-    await waitForTeamOrder(touch, "touch arrangement joins the selected team", [target]);
-    const teams = durableTeams((await reply(fixture, ["lane"])).body.lanes);
-    assert.equal(teams.length, 1, "touch arrangement persists one joined team");
-    assert.equal(teams[0].lineage, target, "touch join preserves its target team identity");
+    await waitForOrgOrder(touch, "touch arrangement joins the selected organization", [target]);
+    const organizations = durableOrgs((await reply(fixture, ["lane"])).body.lanes);
+    assert.equal(organizations.length, 1, "touch arrangement persists one joined organization");
+    assert.equal(organizations[0].lineage, target, "touch join preserves its target organization identity");
     const inertPips = agents.locator(
-      `.team-surface[data-lineage-id="${target}"] .team-lights`,
+      `.organization-surface[data-lineage-id="${target}"] .organization-lights`,
     );
     await inertPips.tap();
-    assert.equal(await agents.locator(".team-arrangement-menu").count(), 0,
+    assert.equal(await agents.locator(".organization-arrangement-menu").count(), 0,
       "touch activation cannot open an unavailable arrangement menu");
   } finally {
     await context.close();
   }
 }
 
-/// Dragging a team reorders teams; dropping on an edge joins them.
-export async function assertTeamArrangement(page, fixture, worktrees, artifacts) {
+/// Dragging an organization reorders organizations; dropping on an edge joins them.
+export async function assertOrgArrangement(page, fixture, worktrees, artifacts) {
   const agents = page.locator('[data-pane="agent-console"]');
   await agents.getByRole("tab", { name: /^Agents/ }).first().click();
-  const seated = durableTeams((await reply(fixture, ["lane"])).body.lanes);
-  assert.equal(seated.length, 2, "arranging teams needs two durable teams");
+  const seated = durableOrgs((await reply(fixture, ["lane"])).body.lanes);
+  assert.equal(seated.length, 2, "arranging organizations needs two durable organizations");
   const [primary, secondary] = seated;
-  assert.deepEqual(await renderedTeams(agents), seated, "the canvas draws the durable order");
+  assert.deepEqual(await renderedOrgs(agents), seated, "the canvas draws the durable order");
   assert.equal(
-    await agents.locator(".team-lights[data-lane-drag-handle]").count(),
+    await agents.locator(".organization-lights[data-lane-drag-handle]").count(),
     2,
-    "every arrangeable team is dragged by its own pip stack",
+    "every arrangeable organization is dragged by its own pip stack",
   );
   assert.equal(
-    await agents.locator(".team-drag-handle").count(),
+    await agents.locator(".organization-drag-handle").count(),
     0,
     "the pip stack replaces the standalone drag symbol",
   );
@@ -241,37 +241,37 @@ export async function assertTeamArrangement(page, fixture, worktrees, artifacts)
     page, fixture, agents, primary, secondary,
   );
 
-  const reorder = await dragTeam(page, {
+  const reorder = await dragOrg(page, {
     dragged: primary.lineage,
     target: secondary.lineage,
     fraction: 0.5,
   });
-  assert.deepEqual(reorder.types, [TEAM_MEDIA], "a dragged team carries only its own media");
-  assert.equal(reorder.carried, primary.lineage, "the pips carry the team they belong to");
+  assert.deepEqual(reorder.types, [ORG_MEDIA], "a dragged organization carries only its own media");
+  assert.equal(reorder.carried, primary.lineage, "the pips carry the organization they belong to");
   assert.deepEqual(
     [reorder.offered, reorder.taken],
     [true, true],
-    "a team surface offers itself as a drop target and takes the drop",
+    "an organization surface offers itself as a drop target and takes the drop",
   );
-  await waitForTeamOrder(page, "mouse drag moves the team back before its target",
-    seated.map((team) => team.lineage));
+  await waitForOrgOrder(page, "mouse drag moves the organization back before its target",
+    seated.map((organization) => organization.lineage));
   assert.deepEqual(
-    durableTeams((await reply(fixture, ["lane"])).body.lanes),
+    durableOrgs((await reply(fixture, ["lane"])).body.lanes),
     seated,
-    "the drag changes the durable order and moves no agent between teams",
+    "the drag changes the durable order and moves no agent between organizations",
   );
-  assert.equal(await agents.locator(".team-arrangement-menu").count(), 0,
+  assert.equal(await agents.locator(".organization-arrangement-menu").count(), 0,
     "mouse dragging does not accidentally activate the pip menu");
-  await dragTeam(page, {
+  await dragOrg(page, {
     dragged: secondary.lineage,
     target: primary.lineage,
     fraction: 0.5,
   });
-  await waitForTeamOrder(page, "mouse drag restores the keyboard arrangement",
-    reordered.map((team) => team.lineage));
+  await waitForOrgOrder(page, "mouse drag restores the keyboard arrangement",
+    reordered.map((organization) => organization.lineage));
 
-  const crowded = reordered.find((team) => team.lanes.length >= 2);
-  assert.ok(crowded, "proving the two laws apart needs one team holding two members");
+  const crowded = reordered.find((organization) => organization.lanes.length >= 2);
+  assert.ok(crowded, "proving the two laws apart needs one organization holding two members");
   const [leading, following] = crowded.lanes;
   const moved = [following, leading, ...crowded.lanes.slice(2)];
   await primaryComposer(agents, following).locator(".composer-shard-prose")
@@ -281,19 +281,19 @@ export async function assertTeamArrangement(page, fixture, worktrees, artifacts)
   });
   await waitForMemberOrder(page, "the dragged member takes its target's place",
     crowded.lineage, moved);
-  const afterMember = durableTeams((await reply(fixture, ["lane"])).body.lanes);
+  const afterMember = durableOrgs((await reply(fixture, ["lane"])).body.lanes);
   assert.deepEqual(
-    afterMember.map((team) => team.lineage),
-    reordered.map((team) => team.lineage),
-    "arranging a member never rearranges the teams",
+    afterMember.map((organization) => organization.lineage),
+    reordered.map((organization) => organization.lineage),
+    "arranging a member never rearranges the organizations",
   );
   assert.deepEqual(
-    afterMember.map((team) => [...team.lanes].sort()),
-    reordered.map((team) => [...team.lanes].sort()),
-    "a member dragged inside its own team joins no other team",
+    afterMember.map((organization) => [...organization.lanes].sort()),
+    reordered.map((organization) => [...organization.lanes].sort()),
+    "a member dragged inside its own organization joins no other organization",
   );
   assert.deepEqual(
-    afterMember.find((team) => team.lineage === crowded.lineage).lanes,
+    afterMember.find((organization) => organization.lineage === crowded.lineage).lanes,
     moved,
     "the member drag is durable, so the two laws wrote the one lane table in turn",
   );
@@ -302,11 +302,11 @@ export async function assertTeamArrangement(page, fixture, worktrees, artifacts)
   const laneRows = (await reply(fixture, ["lane"])).body.lanes;
   const primaryNarrator = laneRows.find((lane) => lane.lane === primary.lanes[0]);
   const secondaryNarrator = laneRows.find((lane) => lane.lane === secondary.lanes[0]);
-  assert.ok(primaryNarrator && secondaryNarrator, "both teams expose a live narrator worktree");
-  await agents.locator(`.team-surface[data-lineage-id="${primary.lineage}"]`)
-    .locator('.team-speech input[type="range"]').fill("2");
-  await agents.locator(`.team-surface[data-lineage-id="${secondary.lineage}"]`)
-    .locator('.team-speech input[type="range"]').fill("2");
+  assert.ok(primaryNarrator && secondaryNarrator, "both organizations expose a live narrator worktree");
+  await agents.locator(`.organization-surface[data-lineage-id="${primary.lineage}"]`)
+    .locator('.organization-speech input[type="range"]').fill("2");
+  await agents.locator(`.organization-surface[data-lineage-id="${secondary.lineage}"]`)
+    .locator('.organization-speech input[type="range"]').fill("2");
   await page.evaluate(() => {
     window.__speechLog = [];
     window.__speechUtterances = [];
@@ -322,7 +322,7 @@ export async function assertTeamArrangement(page, fixture, worktrees, artifacts)
   let before = await primaryCards.count();
   await writeFile(join(primaryNarrator.worktree, ".spice-prose-trigger"), "emit\n");
   await primaryCards.nth(before).waitFor({ timeout: TRANSITION_MS * 4 });
-  await waitForPageFunction(page, "the surviving team owns narration", TRANSITION_MS,
+  await waitForPageFunction(page, "the surviving organization owns narration", TRANSITION_MS,
     () => window.__speechLog.filter((row) => row.action === "speak").length === 1);
   before = await secondaryCards.count();
   await writeFile(join(secondaryNarrator.worktree, ".spice-prose-trigger"), "emit\n");
@@ -337,21 +337,21 @@ export async function assertTeamArrangement(page, fixture, worktrees, artifacts)
   );
 
   const primarySurface = agents.locator(
-    `.team-surface[data-lineage-id="${primary.lineage}"]`,
+    `.organization-surface[data-lineage-id="${primary.lineage}"]`,
   );
   const secondarySurface = agents.locator(
-    `.team-surface[data-lineage-id="${secondary.lineage}"]`,
+    `.organization-surface[data-lineage-id="${secondary.lineage}"]`,
   );
-  const selectedMode = (surface) => surface.locator(".team-pane").getAttribute("data-team-mode");
+  const selectedMode = (surface) => surface.locator(".organization-pane").getAttribute("data-organization-mode");
   await primarySurface.getByRole("tab", { name: /^Tasks/ }).click();
-  await secondarySurface.getByRole("tab", { name: /^Team/ }).click();
+  await secondarySurface.getByRole("tab", { name: /^Org/ }).click();
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
-    ["Tasks", "Team"],
-    "the teams hold distinct views immediately before one lineage retires",
+    ["Tasks", "Org"],
+    "the organizations hold distinct views immediately before one lineage retires",
   );
 
-  const gathered = await dragTeam(page, {
+  const gathered = await dragOrg(page, {
     dragged: secondary.lineage,
     target: primary.lineage,
     fraction: 0.1,
@@ -361,28 +361,28 @@ export async function assertTeamArrangement(page, fixture, worktrees, artifacts)
     [true, true],
     "the joining edge takes the drop",
   );
-  await waitForTeamOrder(page, "the joined teams draw as one", [primary.lineage]);
+  await waitForOrgOrder(page, "the joined organizations draw as one", [primary.lineage]);
   const joined = await reply(fixture, ["lane"]);
   assert.deepEqual(
-    durableTeams(joined.body.lanes),
+    durableOrgs(joined.body.lanes),
     [{ lineage: primary.lineage, lanes: [...primary.lanes, ...secondary.lanes] }],
-    "the dropped team's agents join the target behind its own primary composer",
+    "the dropped organization's agents join the target behind its own primary composer",
   );
   assert.deepEqual(
     joined.body.subscriptions.map((subscription) => subscription.lineage_id),
     [primary.lineage],
-    "the emptied team keeps no task policy of its own",
+    "the emptied organization keeps no task policy of its own",
   );
   assert.equal(
     await selectedMode(primarySurface),
     "Tasks",
-    "retiring a sibling preserves the surviving team's selected view",
+    "retiring a sibling preserves the surviving organization's selected view",
   );
   await primarySurface.getByRole("tab", { name: /^Agents/ }).click();
   assert.deepEqual(
-    await renderedTeams(agents),
+    await renderedOrgs(agents),
     [{ lineage: primary.lineage, lanes: [...primary.lanes, ...secondary.lanes] }],
-    "the canvas draws one team whose first composer never moved",
+    "the canvas draws one organization whose first composer never moved",
   );
   await primarySurface.getByRole("tab", { name: /^Tasks/ }).click();
 
@@ -393,7 +393,7 @@ export async function assertTeamArrangement(page, fixture, worktrees, artifacts)
     "--vendor", "claude",
   ]);
   const recreatedSurface = agents.locator(
-    `.team-surface[data-lineage-id="${secondary.lineage}"]`,
+    `.organization-surface[data-lineage-id="${secondary.lineage}"]`,
   );
   await recreatedSurface.waitFor({ timeout: TRANSITION_MS });
   assert.deepEqual(
@@ -406,7 +406,7 @@ export async function assertTeamArrangement(page, fixture, worktrees, artifacts)
     if (!utterance?.onend) throw new Error("the narration head has no completion callback");
     utterance.onend(new Event("end"));
   });
-  await waitForPageFunction(page, "only the surviving team's queued narration advances",
+  await waitForPageFunction(page, "only the surviving organization's queued narration advances",
     TRANSITION_MS, () =>
       window.__speechLog.filter((row) => row.action === "speak").length === 2);
   assert.equal(
@@ -426,10 +426,10 @@ export async function assertTeamArrangement(page, fixture, worktrees, artifacts)
     2,
     "lane removal abandons only that lane's queued entry",
   );
-  await touchJoinTeam(page, fixture, secondary.lineage, primary.lineage);
-  await waitForTeamOrder(page, "the primary page observes the touch join", [primary.lineage]);
+  await touchJoinOrg(page, fixture, secondary.lineage, primary.lineage);
+  await waitForOrgOrder(page, "the primary page observes the touch join", [primary.lineage]);
   const inertPips = agents.locator(
-    `.team-surface[data-lineage-id="${primary.lineage}"] .team-lights`,
+    `.organization-surface[data-lineage-id="${primary.lineage}"] .organization-lights`,
   );
   assert.deepEqual(await inertPips.evaluate((node) => ({
     dragHandle: node.hasAttribute("data-lane-drag-handle"),
@@ -441,9 +441,9 @@ export async function assertTeamArrangement(page, fixture, worktrees, artifacts)
     hasPopup: false,
     role: "group",
     tabIndex: -1,
-  }, "a team with no eligible peer exposes inert status pips");
+  }, "an organization with no eligible peer exposes inert status pips");
   await page.screenshot({
-    path: join(artifacts, "canvas-light-team-arrangement.png"),
+    path: join(artifacts, "canvas-light-organization-arrangement.png"),
     fullPage: true,
   });
 }

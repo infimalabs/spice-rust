@@ -49,7 +49,7 @@ pub struct LineageConfigured {
         deserialize_with = "crate::optional::present"
     )]
     pub from_lineage: Option<CanonicalUuid>,
-    /// Replacement identity assigned to a source team when its host left.
+    /// Replacement identity assigned to a source organization when its host left.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

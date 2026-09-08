@@ -19,7 +19,7 @@ user with its own surface: a briefing on arrival, a live state line on its own
 command output, reminders while it works, refusals that tell it what to run
 next. That surface has a required tone — capability, not restriction.
 
-**The Fleet** — emergent rather than personal: teams, allocation, cross-worktree
+**The Fleet** — emergent rather than personal: organizations, allocation, cross-worktree
 claims, coordinated pressure on shared files. Its stories are about agents not
 colliding.
 
@@ -109,18 +109,18 @@ expected answer here rather than work that was missed.
 
 *As the operator, I want the lane to be mine, so replacing the agent costs me
 nothing.* — Renewal swaps the occupant; lane history, drafts, and scroll
-survive, while the team's shared task policy remains because the lineage is
+survive, while the organization's shared task policy remains because the lineage is
 unchanged.
 
 *As the operator, I want to compose lanes into one surface by direct
-manipulation.* — Fusing lanes merges teams; every message retains its exact
+manipulation.* — Fusing lanes merges organizations; every message retains its exact
 occupant author and stable lane attribution while every member remains its own
 send address.
 
 *As the operator, I want two browsers to agree.* — Membership, ordering, and
-topology revision are server truth. A browser may independently hide a team
-with `Close team`; that presentation choice does not mutate topology, and the
-same mount can restore a closed grouped lineage through **Agents → Open team**.
+topology revision are server truth. A browser may independently hide an organization
+with `Close organization`; that presentation choice does not mutate topology, and the
+same mount can restore a closed grouped lineage through **Agents → Open organization**.
 
 ### Reading
 
@@ -226,7 +226,7 @@ flowchart LR
 | Live lanes vanish on a transient error | an empty enumeration was read as absence | a failed enumeration is not evidence |
 | Messages arrive minutes late under load | interactive replies queued behind bulk work | interactive and bulk paths never share a queue |
 | One client starves another | a cursor was shared across connections | per-connection read state |
-| Teams explode into singletons | topology was mutated from the interface | topology is a server transition the interface renders |
+| Orgs explode into singletons | topology was mutated from the interface | topology is a server transition the interface renders |
 | A render aborts mid-board | an index grew past a fixed palette | reduce indices into range at their source |
 | An active claim sits forever after its occupant exits | no wake arm could see a possessed but ineligible row | launch a successor onto the task already possessed |
 | An agent hunts for work that is not there | a dry allocator pointed at a populated board | report the board, and name a populated board as expected |

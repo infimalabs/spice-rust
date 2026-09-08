@@ -246,7 +246,7 @@ between a board and a landfill.
 
 ```mermaid
 flowchart LR
-  T["team / lineage"] --> L
+  T["organization / lineage"] --> L
   L["lane (operator's)"] --> CurrentOccupant["occupant: thread Ash"]
   CurrentOccupant -- renewal --> Successor["occupant: thread Elm"]
   L --> H["history, drafts,<br/>scroll position survive"]
@@ -367,38 +367,38 @@ flowchart LR
 Agents is the conversation surface. Flow and Topology are the complete closed
 analytical vocabulary; every analytical pane stands on one of those two axes.
 The rail changes the question asked of the whole Canvas,
-not the mode of one lane or team.
+not the mode of one lane or organization.
 
-### The team console
+### The organization console
 
-The Agents view tiles one console per live team or lineage. A console contains
+The Agents view tiles one console per live organization or lineage. A console contains
 one or more member lanes, and every row answers a question the operator would
 otherwise have to go and ask.
 
 ```mermaid
 block-beta
   columns 2
-  T["team row<br/>member lights, mode rail, team menu"] q1["which lineage is this,<br/>and who is alive?"]
-  V["team view<br/>compose | tasks | metrics | info"] q2["what can I do with the team<br/>without leaving?"]
+  T["organization row<br/>member lights, mode rail, organization menu"] q1["which lineage is this,<br/>and who is alive?"]
+  V["organization view<br/>compose | tasks | metrics | info"] q2["what can I do with the organization<br/>without leaving?"]
   S["member surfaces<br/>lane/worktree address identity;<br/>pane-specific standing fields"] q3["where is each lane addressed,<br/>and what does this pane expose?"]
-  M["merged message stream<br/>newest first, explicit lane attribution"] q4["what did the team<br/>just say?"]
+  M["merged message stream<br/>newest first, explicit lane attribution"] q4["what did the organization<br/>just say?"]
 ```
 
 The whole strip is scannable top to bottom in about a second, and the order is
 deliberate: liveness before routing, routing before state, state before words.
-An operator sweeping several teams reads the first two rows of each and stops at
-whichever team needs attention.
+An operator sweeping several organizations reads the first two rows of each and stops at
+whichever organization needs attention.
 
 The member row describes the cross-mode surface, not one field bundle. Compose,
 Metrics, and Info expose lane/worktree identity and their own applicable agent,
 liveness or age, pending, and held-work fields; no pane repeats the whole set.
 
-**Why it's the right unit:** the server-owned team topology is exactly what the
-operator arranged. The team tiles as one surface while each member lane remains
-the concrete address of one worktree. That keeps a fused team together without
+**Why it's the right unit:** the server-owned organization topology is exactly what the
+operator arranged. The organization tiles as one surface while each member lane remains
+the concrete address of one worktree. That keeps a fused organization together without
 turning its members into a broadcast address.
 
-### Lane, team, occupant
+### Lane, organization, occupant
 
 Three objects that are easy to conflate and expensive to conflate. The thing
 that separates them is not what they contain — it is **how long each one
@@ -406,11 +406,11 @@ lives**.
 
 ```mermaid
 classDiagram
-  class Team["TEAM — server truth"] {
+  class Org["ORG — server truth"] {
     <<authority>>
     one or more lanes
     shared task policy
-    fusing merges teams
+    fusing merges organizations
     membership converges across browsers
     visibility may differ locally
   }
@@ -426,15 +426,15 @@ classDiagram
     one thread at a time
     renewal swaps THIS and nothing else
   }
-  Team "1" *-- "1..*" Lane
+  Org "1" *-- "1..*" Lane
   Lane "1" o-- "0..1" Occupant
 ```
 
-Read the two relationships as lifetimes. A lane belongs to exactly one team at
-a time and may move between teams, while the team is the unit that the current
-browser's `Close team` presentation action hides. That action does not alter
-the relationship, and **Agents → Open team** can restore a closed grouped
-lineage during the same mount. The team owns the task policy shared by its members: renewal
+Read the two relationships as lifetimes. A lane belongs to exactly one organization at
+a time and may move between organizations, while the organization is the unit that the current
+browser's `Close organization` presentation action hides. That action does not alter
+the relationship, and **Agents → Open organization** can restore a closed grouped
+lineage during the same mount. The organization owns the task policy shared by its members: renewal
 leaves that policy in place because the lineage is unchanged, while a lane moved
 to another lineage takes the destination policy rather than carrying one with
 it. An occupant is held loosely and may be absent entirely —
@@ -443,16 +443,16 @@ that absence makes the lane vacant, while the UI independently presents it as
 renders one merged newest-first stream while every member stays its own concrete
 send address.
 
-**Value:** the operator manipulates topology directly — drag a team onto
-another team's edge to fuse — and the server remains authority for membership,
-ordering, and revision. Browsers can intentionally differ in which teams they
+**Value:** the operator manipulates topology directly — drag an organization onto
+another organization's edge to fuse — and the server remains authority for membership,
+ordering, and revision. Browsers can intentionally differ in which organizations they
 hide without disagreeing about that topology. Because the occupant is the only
 replaceable part, replacing it is cheap enough to do casually, which is the
 entire point of the separation.
 
 ### Closed loop: The fused composer
 
-A team presents as one control surface: an ordered **strip of composer
+An organization presents as one control surface: an ordered **strip of composer
 columns**, one per member. The operator reads it across, with east/west overflow
 when needed; it is not a set of tabs they switch between.
 
@@ -478,7 +478,7 @@ The loop is the point. Member order lays out the shards; it does not order
 messages or assign identity. Each lane's stable identifier derives its accent,
 so reordering never recolours history. The finite palette may repeat, therefore
 cards carry explicit lane and worktree attribution and colour is only
-presentation continuity. Drag a shard to reorder within the team; drag it out to
+presentation continuity. Drag a shard to reorder within the organization; drag it out to
 move that lane to another. A member that momentarily fails to resolve keeps its
 seat rather than being dropped from the stack.
 
@@ -487,7 +487,7 @@ is broadcast — every message still goes to exactly one worktree, through that
 member's own concrete address. The merged stream is a reading convenience laid
 over unchanged addressing, never a shared mailbox.
 
-**Without it:** a team is either three separate surfaces the operator switches
+**Without it:** an organization is either three separate surfaces the operator switches
 between, or one surface that broadcasts. The first does not scale past a couple
 of agents; the second makes every message everyone's problem.
 
@@ -510,18 +510,18 @@ requested as well as the eventual authoritative value.
 approve each thing" and "go find work". The pending presentation makes the
 operator's request immediate without pretending it has already settled.
 
-### The team mode rail and its scroll ownership
+### The organization mode rail and its scroll ownership
 
 ```mermaid
 flowchart TD
   R["mode rail: compose, tasks, metrics, info"] --> P["selected pane replaces content"]
   P -- "tasks, metrics, info" --> X["exclusive mode content<br/>no message plane mounted"]
-  P -- "compose" --> C["bounded team-compose<br/>outer vertical scroll"]
+  P -- "compose" --> C["bounded organization-compose<br/>outer vertical scroll"]
   C --> H["composer columns<br/>horizontal overflow"]
   C --> S["nested mosaic plane<br/>its own vertical scroll"]
 ```
 
-Four views per live team appear on one rail, with the selected mode retained per
+Four views per live organization appear on one rail, with the selected mode retained per
 lineage. Selecting a mode directly replaces pane content; there is no slide
 transition. Tasks, Metrics, and Info replace Compose completely and do not mount
 the message plane. Compose places its form, ticker, and activity inside one
@@ -530,7 +530,7 @@ and the mosaic plane owns a nested vertical scroller. Moving the outer Compose
 scroll may move the whole message plane, while scrolling the nested plane moves
 only its cards.
 
-**Value:** a team console is narrow by construction. Exclusive modes spend the
+**Value:** an organization console is narrow by construction. Exclusive modes spend the
 available surface on one job, while Compose keeps wide member columns contained
 and gives the dense message lattice a local reading viewport once it is in view.
 
@@ -559,7 +559,7 @@ the board reflows, so every reading-contract rule is load-bearing on its own.
 ```mermaid
 flowchart LR
   P["status pip<br/>per agent liveness"] --> L["saturation = recency"]
-  G["lane lights<br/>per member in a team"] --> L
+  G["lane lights<br/>per member in an organization"] --> L
   F["task pills<br/>per project stem"] --> V["public: ready · active · unavailable counts"]
   F --> H["hidden system: one aggregate count"]
   V --> T["base, active, or dormant presentation"]

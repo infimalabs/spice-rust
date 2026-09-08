@@ -21,16 +21,16 @@ export async function assertPrimaryComposerDragging(
   const secondaryRows = laneSnapshot.body.lanes.filter(
     (lane) => lane.lineage_id === secondaryLineage,
   );
-  assert.ok(primaryRows.length >= 3, "same-team drag has three durable members to distinguish");
-  assert.ok(secondaryRows.length >= 1, "cross-team drag has one durable target member");
+  assert.ok(primaryRows.length >= 3, "same-organization drag has three durable members to distinguish");
+  assert.ok(secondaryRows.length >= 1, "cross-organization drag has one durable target member");
   const source = primaryRows[2];
-  const sameTeamTarget = primaryRows[0];
-  const crossTeamTarget = secondaryRows[0];
+  const sameOrgTarget = primaryRows[0];
+  const crossOrgTarget = secondaryRows[0];
   const primarySurface = console.locator(
-    `.team-surface[data-lineage-id="${primaryLineage}"]`,
+    `.organization-surface[data-lineage-id="${primaryLineage}"]`,
   );
   const secondarySurface = console.locator(
-    `.team-surface[data-lineage-id="${secondaryLineage}"]`,
+    `.organization-surface[data-lineage-id="${secondaryLineage}"]`,
   );
   const primaryComposer = (lane) => console.locator(
     `.composer-shard--primary[data-shard-target-id="${lane}"]`,
@@ -97,26 +97,26 @@ export async function assertPrimaryComposerDragging(
     "the editable body has no native drag ancestor or lane-transfer handler",
   );
 
-  const sameTeamOrder = primaryRows.map((lane) => lane.lane);
-  sameTeamOrder.splice(sameTeamOrder.indexOf(source.lane), 1);
-  sameTeamOrder.splice(sameTeamOrder.indexOf(sameTeamTarget.lane), 0, source.lane);
-  await dragHandle(source.lane).dragTo(primaryComposer(sameTeamTarget.lane), composerTarget);
+  const sameOrgOrder = primaryRows.map((lane) => lane.lane);
+  sameOrgOrder.splice(sameOrgOrder.indexOf(source.lane), 1);
+  sameOrgOrder.splice(sameOrgOrder.indexOf(sameOrgTarget.lane), 0, source.lane);
+  await dragHandle(source.lane).dragTo(primaryComposer(sameOrgTarget.lane), composerTarget);
   await waitForPage(
     page,
-    "same-team primary composer drag reorders members",
+    "same-organization primary composer drag reorders members",
     TRANSITION_MS,
     ({ lineage, expected }) => JSON.stringify([...document.querySelectorAll(
-      `.team-surface[data-lineage-id="${lineage}"] .team-agent`,
+      `.organization-surface[data-lineage-id="${lineage}"] .organization-agent`,
     )].map((member) => member.dataset.agentLane)) === JSON.stringify(expected),
-    { lineage: primaryLineage, expected: sameTeamOrder },
+    { lineage: primaryLineage, expected: sameOrgOrder },
   );
-  const sameTeamDurable = await reply(fixture, ["lane"]);
+  const sameOrgDurable = await reply(fixture, ["lane"]);
   assert.deepEqual(
-    sameTeamDurable.body.lanes
+    sameOrgDurable.body.lanes
       .filter((lane) => lane.lineage_id === primaryLineage)
       .map((lane) => lane.lane),
-    sameTeamOrder,
-    "same-team drag changes the resident's durable member order",
+    sameOrgOrder,
+    "same-organization drag changes the resident's durable member order",
   );
 
   const stableIdentity = {
@@ -125,24 +125,24 @@ export async function assertPrimaryComposerDragging(
     session: source.session,
     worktree: source.worktree,
   };
-  const sameTeamTopologyRevision = laneSnapshot.body.topology_revision;
-  const retainedDraft = "draft follows the primary composer across teams";
+  const sameOrgTopologyRevision = laneSnapshot.body.topology_revision;
+  const retainedDraft = "draft follows the primary composer across organizations";
   await primaryComposer(source.lane).getByRole("textbox").fill(retainedDraft);
   await dragHandle(source.lane).dragTo(
-    primaryComposer(crossTeamTarget.lane),
+    primaryComposer(crossOrgTarget.lane),
     composerTarget,
   );
   const destinationOrder = [source.lane, ...secondaryRows.map((lane) => lane.lane)];
   await waitForPage(
     page,
-    "cross-team primary composer drag transfers the member",
+    "cross-organization primary composer drag transfers the member",
     TRANSITION_MS,
     ({ lineage, sourceLane, expected }) => {
       const destination = document.querySelector(
-        `.team-surface[data-lineage-id="${lineage}"]`,
+        `.organization-surface[data-lineage-id="${lineage}"]`,
       );
       return destination
-        && JSON.stringify([...destination.querySelectorAll(".team-agent")]
+        && JSON.stringify([...destination.querySelectorAll(".organization-agent")]
           .map((member) => member.dataset.agentLane)) === JSON.stringify(expected)
         && destination.querySelector(
           `.composer-shard--primary[data-shard-target-id="${sourceLane}"]`,
@@ -150,9 +150,9 @@ export async function assertPrimaryComposerDragging(
     },
     { lineage: secondaryLineage, sourceLane: source.lane, expected: destinationOrder },
   );
-  const crossTeamDurable = await reply(fixture, ["lane"]);
-  const crossTeamTopologyRevision = sameTeamDurable.body.topology_revision;
-  const transferred = crossTeamDurable.body.lanes.find((lane) => lane.lane === source.lane);
+  const crossOrgDurable = await reply(fixture, ["lane"]);
+  const crossOrgTopologyRevision = sameOrgDurable.body.topology_revision;
+  const transferred = crossOrgDurable.body.lanes.find((lane) => lane.lane === source.lane);
   assert.ok(transferred, "the transferred member keeps its stable lane identity");
   assert.deepEqual(
     {
@@ -162,11 +162,11 @@ export async function assertPrimaryComposerDragging(
       worktree: transferred.worktree,
     },
     stableIdentity,
-    "cross-team transfer changes lineage and order without replacing the primary composer target",
+    "cross-organization transfer changes lineage and order without replacing the primary composer target",
   );
   assert.equal(transferred.lineage_id, secondaryLineage);
   assert.deepEqual(
-    crossTeamDurable.body.lanes
+    crossOrgDurable.body.lanes
       .filter((lane) => lane.lineage_id === secondaryLineage)
       .map((lane) => lane.lane),
     destinationOrder,
@@ -184,20 +184,20 @@ export async function assertPrimaryComposerDragging(
       .locator(`.composer-shard--primary[data-shard-target-id="${source.lane}"]`)
       .count(),
     0,
-    "the source team no longer renders a duplicate primary composer",
+    "the source organization no longer renders a duplicate primary composer",
   );
   assert.deepEqual(
     await page.evaluate(() => window.__laneArrangeCommands),
     [
       {
         lane: source.lane,
-        before: sameTeamTarget.lane,
-        topology_revision: sameTeamTopologyRevision,
+        before: sameOrgTarget.lane,
+        topology_revision: sameOrgTopologyRevision,
       },
       {
         lane: source.lane,
-        before: crossTeamTarget.lane,
-        topology_revision: crossTeamTopologyRevision,
+        before: crossOrgTarget.lane,
+        topology_revision: crossOrgTopologyRevision,
       },
     ],
     "each primary-composer drop sends exactly one lane arrangement command",
@@ -261,11 +261,11 @@ export async function assertPrimaryComposerDragging(
       .every((cursor) => cursor !== "grab" && cursor !== "grabbing"),
     "message-card styling never suggests that cards can be reordered",
   );
-  const beforeCardDrag = crossTeamDurable.body.lanes.map((lane) => ({
+  const beforeCardDrag = crossOrgDurable.body.lanes.map((lane) => ({
     lane: lane.lane,
     lineage: lane.lineage_id,
   }));
-  await cards.first().dragTo(primaryComposer(crossTeamTarget.lane));
+  await cards.first().dragTo(primaryComposer(crossOrgTarget.lane));
   const afterCardDrag = await reply(fixture, ["lane"]);
   assert.deepEqual(
     afterCardDrag.body.lanes.map((lane) => ({ lane: lane.lane, lineage: lane.lineage_id })),

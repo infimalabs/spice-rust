@@ -78,7 +78,7 @@ async function productionTaskContract() {
     return match[1];
   };
   const missingLease = renderer.match(
-    /lease_countdown\(standing\.expires_at, "team-task-age", "([^"]+)"\)/,
+    /lease_countdown\(standing\.expires_at, "organization-task-age", "([^"]+)"\)/,
   );
   assert.ok(missingLease, "production task card exposes missing-lease copy");
   assert.match(
@@ -110,25 +110,25 @@ async function responsiveDocument(taskContract) {
 }
 
 function surface(weight, taskContract) {
-  return `<section class="team-surface" data-lineage-weight="${weight}">
-    <header class="team-toolbar">
-      <span class="team-lights"><span class="team-light"></span></span>
-      <nav class="team-mode-rail" role="tablist">
-        ${["Team", "Tasks", "Agents"].map((label) => `<button class="team-mode">
-          <span class="team-mode-label">${label}</span><span class="team-mode-badge">88</span>
+  return `<section class="organization-surface" data-lineage-weight="${weight}">
+    <header class="organization-toolbar">
+      <span class="organization-lights"><span class="organization-light"></span></span>
+      <nav class="organization-mode-rail" role="tablist">
+        ${["Org", "Tasks", "Agents"].map((label) => `<button class="organization-mode">
+          <span class="organization-mode-label">${label}</span><span class="organization-mode-badge">88</span>
         </button>`).join("")}
       </nav>
-      <button class="team-menu" aria-label="Team details">•••</button>
+      <button class="organization-menu" aria-label="Organization details">•••</button>
     </header>
-    <main class="team-task-workspace" aria-label="Team tasks">
-      <section class="team-task-section"><header><h3>Active tasks</h3></header>
-        <ol class="team-task-list">
+    <main class="organization-task-workspace" aria-label="Organization tasks">
+      <section class="organization-task-section"><header><h3>Active tasks</h3></header>
+        <ol class="organization-task-list">
           ${taskCard(TASK_HANDLES[0], "A long active task title wraps without hiding its operational meaning", "Extraordinarily long agent identity", "review", "19m")}
           ${taskCard(TASK_HANDLES[1], "Renewal countdown geometry", "Agent two", "todo", "999d+", "expiring")}
           ${taskCard(TASK_HANDLES[2], "Missing lease remains explicit", "Agent three", "plan", taskContract.missingLease, "missing")}
         </ol>
-      </section><section class="team-task-section"><header><h3>Direction queue</h3></header>
-        <p class="team-task-empty">No queued direction.</p></section>
+      </section><section class="organization-task-section"><header><h3>Direction queue</h3></header>
+        <p class="organization-task-empty">No queued direction.</p></section>
     </main>
     <div class="composer-shard-heading">
       <span class="composer-shard-link">48m</span>
@@ -140,12 +140,12 @@ function surface(weight, taskContract) {
 }
 
 function taskCard(handle, title, agent, phase, lease, state = "ordinary") {
-  return `<li class="team-task-row" data-accent="0" data-task-handle="${handle}">
-    <div class="team-task-row-main"><code>${handle}</code>
-      <strong class="team-task-title">${title}</strong></div>
-    <div class="team-task-row-meta"><span class="team-task-member">
-      <span class="agent-presence"></span><span class="team-task-member-name">${agent}</span></span>
-      <span class="team-task-phase">${phase}</span><span class="team-task-renewed">expires <span class="team-task-age" data-test-lease="${state}">${lease}</span></span></div>
+  return `<li class="organization-task-row" data-accent="0" data-task-handle="${handle}">
+    <div class="organization-task-row-main"><code>${handle}</code>
+      <strong class="organization-task-title">${title}</strong></div>
+    <div class="organization-task-row-meta"><span class="organization-task-member">
+      <span class="agent-presence"></span><span class="organization-task-member-name">${agent}</span></span>
+      <span class="organization-task-phase">${phase}</span><span class="organization-task-renewed">expires <span class="organization-task-age" data-test-lease="${state}">${lease}</span></span></div>
   </li>`;
 }
 
@@ -164,16 +164,16 @@ async function geometry(page) {
     const surfaces = [...fleet.children].map((surface) => {
       const rect = surface.getBoundingClientRect();
       const surfaceStyle = getComputedStyle(surface);
-      const toolbar = surface.querySelector(".team-toolbar");
+      const toolbar = surface.querySelector(".organization-toolbar");
       const identity = surface.querySelector(".composer-shard-heading strong");
-      const workspace = surface.querySelector(".team-task-workspace");
+      const workspace = surface.querySelector(".organization-task-workspace");
       const workspaceBounds = workspace.getBoundingClientRect();
-      const taskRows = [...surface.querySelectorAll(".team-task-row")];
+      const taskRows = [...surface.querySelectorAll(".organization-task-row")];
       const tasks = taskRows.map((task) => {
         const taskBounds = task.getBoundingClientRect();
-        const age = task.querySelector(".team-task-age");
-        const metadata = task.querySelector(".team-task-row-meta");
-        const title = task.querySelector(".team-task-title");
+        const age = task.querySelector(".organization-task-age");
+        const metadata = task.querySelector(".organization-task-row-meta");
+        const title = task.querySelector(".organization-task-title");
         return {
           bottom: taskBounds.bottom,
           ageOverflow: age.scrollWidth - age.clientWidth,
@@ -217,7 +217,7 @@ async function geometry(page) {
           textOverflow: getComputedStyle(identity).textOverflow,
           whiteSpace: getComputedStyle(identity).whiteSpace,
         },
-        labels: [...surface.querySelectorAll(".team-mode-label")].map((label) => ({
+        labels: [...surface.querySelectorAll(".organization-mode-label")].map((label) => ({
           box: label.getBoundingClientRect().toJSON(),
           button: label.parentElement.getBoundingClientRect().toJSON(),
           overflow: getComputedStyle(label).overflow,
@@ -228,7 +228,7 @@ async function geometry(page) {
         tasks: {
           borderRadius: getComputedStyle(taskRows[0]).borderRadius,
           handles: tasks.map(({ handle }) => handle),
-          listTag: surface.querySelector(".team-task-list")?.tagName,
+          listTag: surface.querySelector(".organization-task-list")?.tagName,
           rows: tasks,
           workspaceOverflow: workspace.scrollWidth - workspace.clientWidth,
         },
@@ -372,7 +372,7 @@ async function assertTaskCardMatrix(page, engine, width, taskContract) {
   const label = `${engine} ${width}px three-card matrix`;
   const before = await geometry(page);
   assertTrack(before, label, false);
-  const surface = page.locator(".team-surface").first();
+  const surface = page.locator(".organization-surface").first();
   assert.equal(
     (await surface.locator('[data-test-lease="missing"]').innerText()).trim(),
     taskContract.missingLease,
@@ -395,11 +395,11 @@ async function assertTaskCardMatrix(page, engine, width, taskContract) {
 }
 
 async function assertTaskSectionStates(page, engine, taskContract) {
-  const workspace = page.locator(".team-task-workspace").first();
-  const active = workspace.locator(":scope > .team-task-section").first();
+  const workspace = page.locator(".organization-task-workspace").first();
+  const active = workspace.locator(":scope > .organization-task-section").first();
   const original = await active.innerHTML();
   assert.deepEqual(
-    await workspace.locator(":scope > .team-task-section h3").allTextContents(),
+    await workspace.locator(":scope > .organization-task-section h3").allTextContents(),
     ["Active tasks", "Direction queue"],
     `${engine} keeps active ownership before queued direction`,
   );
@@ -408,11 +408,11 @@ async function assertTaskSectionStates(page, engine, taskContract) {
     { copy: taskContract.unavailable, role: "status" },
   ]) {
     await active.evaluate((section, next) => {
-      section.innerHTML = `<header><h3>Active tasks</h3></header><p class="team-task-empty"${
+      section.innerHTML = `<header><h3>Active tasks</h3></header><p class="organization-task-empty"${
         next.role ? ` role="${next.role}"` : ""
       }>${next.copy}</p>`;
     }, state);
-    const message = active.locator(".team-task-empty");
+    const message = active.locator(".organization-task-empty");
     assert.equal((await message.innerText()).trim(), state.copy);
     assert.equal(await message.getAttribute("role"), state.role);
     assert.ok(

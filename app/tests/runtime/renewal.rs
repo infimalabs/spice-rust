@@ -16,7 +16,7 @@ fn lane_snapshots_project_exact_member_renewal_state() {
         revision: 9,
         state: wire::LaneRenewalState::Requested {
             predecessor,
-            team_slot: 0,
+            org_slot: 0,
         },
     };
     let lanes = lane_response_with_renewals(

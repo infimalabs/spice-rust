@@ -392,7 +392,7 @@ export async function installActivityReplay(
           prose: observedProse,
           cards: await cards.count(),
           tickers: await console.locator(".ticker").allTextContents(),
-          members: await console.locator(".team-agent").evaluateAll((nodes) => nodes.map(
+          members: await console.locator(".organization-agent").evaluateAll((nodes) => nodes.map(
             (node) => ({ lane: node.dataset.agentLane, text: node.textContent }),
           )),
         };
@@ -406,7 +406,7 @@ export async function installActivityReplay(
         "four live agent messages remain visible before the capacity snapshot arrives",
       );
     },
-    async assertOlderToolIgnored(page, team) {
+    async assertOlderToolIgnored(page, organization) {
       assert.ok(captured, "the route captured the production tool activity frame");
       assert.equal(replayed, false, "the older tool activity is replayed exactly once");
       replayed = true;
@@ -414,7 +414,7 @@ export async function installActivityReplay(
         lane: captured.frame.message.lane,
         locus: captured.frame.message.locus,
       };
-      const ticker = team.locator(".ticker");
+      const ticker = organization.locator(".ticker");
       const before = await ticker.evaluate(tickerIdentity);
       await page.evaluate((expected) => {
         const socket = window.__canvasSockets.at(-1);

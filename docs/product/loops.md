@@ -28,7 +28,7 @@ their own typed states; this map is a navigation aid, not a closed-world schema.
 
 ```mermaid
 erDiagram
-    TEAM ||--|{ LANE : "groups — both governed by L-LANE"
+    ORG ||--|{ LANE : "groups — both governed by L-LANE"
     LANE ||--o| AGENT : "hosts as occupant — 0..1 at a time"
     AGENT ||--o| TASK : "claims — at most one active"
     AGENT ||--o{ MESSAGE : "emits"
@@ -37,11 +37,11 @@ erDiagram
     AGENT ||--o{ STEERING_ITEM : "must answer"
 ```
 
-Read it as: a **team** groups **lanes**; each lane is an independently steerable
+Read it as: a **organization** groups **lanes**; each lane is an independently steerable
 worktree seat and hosts an **agent** as its
 occupant, which claims a **task** and emits **messages**; the operator forms a
 **draft** in that lane, which becomes a **steering item** the agent must answer.
-Team topology and lane lifecycle meet on the same console without becoming the
+Org topology and lane lifecycle meet on the same console without becoming the
 same entity.
 
 ---
@@ -356,19 +356,19 @@ burst at once: occupants still come up one decision at a time.
 ## L-LANE — the place
 
 **Intent.** A lane is an independently steerable worktree seat, not the agent.
-It is the stable address for attention, drafts, and history; a team or lineage
+It is the stable address for attention, drafts, and history; an organization or lineage
 groups one or more lanes into one console and owns their shared task policy.
 
 ```mermaid
 flowchart LR
-  C["team created"] --> E["empty"]
+  C["organization created"] --> E["empty"]
   E -->|"agent imported or started"| O["occupied"]
   O -->|"renewal"| OR["occupied<br/>(successor replaces occupant)"]
-  O -->|"team merged"| F["fused"]
-  F -->|"team split"| OS["occupied"]
-  O -.->|"Close team"| H["hidden<br/>(this browser only)"]
-  F -.->|"Close team"| H
-  H -.->|"Agents → Open team"| V["visible again;<br/>authoritative occupied / fused<br/>topology unchanged"]
+  O -->|"organization merged"| F["fused"]
+  F -->|"organization split"| OS["occupied"]
+  O -.->|"Close organization"| H["hidden<br/>(this browser only)"]
+  F -.->|"Close organization"| H
+  H -.->|"Agents → Open organization"| V["visible again;<br/>authoritative occupied / fused<br/>topology unchanged"]
 ```
 
 **Invariants**
@@ -377,22 +377,22 @@ flowchart LR
    position survive. The lineage and its shared task policy also remain because
    renewal does not move the lane. Moving a lane to another lineage subjects it
    to that lineage's policy; policy never follows the lane across that move.
-- A lane names exactly one worktree seat. A team may hold one or many lanes;
-   the singular team is the degenerate topology, not a different type.
+- A lane names exactly one worktree seat. An organization may hold one or many lanes;
+   the singular organization is the degenerate topology, not a different type.
 - Topology is server truth. The client never mounts a lane from local storage;
    local storage holds only bounded narration cursors, while in-memory reducers
    hold presentation preferences.
-- A fused team renders one merged stream on one host; every member
+- A fused organization renders one merged stream on one host; every member
    remains its own concrete send address.
 - Member order controls composer order only. Message chronology, accent, and
    attribution do not derive from position. Accent derives from stable lane
    identity, may repeat, and never substitutes for explicit lane attribution. A
    member that momentarily fails to resolve keeps its seat rather than
    re-entering at the tail.
-- `Close team` only inserts the lineage into that browser reducer's hidden set.
+- `Close organization` only inserts the lineage into that browser reducer's hidden set.
    It sends no authority command, changes no membership, and neither inspects
    nor erases a draft. A closed grouped lineage remains restorable during that
-   mount through **Agents → Open team**; a fresh mount independently renders the
+   mount through **Agents → Open organization**; a fresh mount independently renders the
    authoritative subscription set again.
 - Message order is a pure function of the messages, never of member
    order. Reordering composers must not reorder the stream.
@@ -410,7 +410,7 @@ composers: no card moves. Kill the server: the topology returns identically.
 ## L-DRAFT — the watchband
 
 **Intent.** One strip that is simultaneously the *status face* of every agent in
-the team and the *writing surface* for all of them. You read it like a watch and
+the organization and the *writing surface* for all of them. You read it like a watch and
 you write into it without leaving it.
 
 ```mermaid
@@ -435,7 +435,7 @@ stateDiagram-v2
 
 - One horizontal composer column per member, in member order; the strip owns
    east/west overflow. Each shard is a concrete send address. Nothing is ever
-   broadcast to a team.
+   broadcast to an organization.
 - A draft is detached at submit. A typed wake, residency, or write refusal or
    fault restores it intact — including attachments and quote drafts,
    concatenated newest-last. Transport loss requeues in memory instead.
@@ -447,7 +447,7 @@ stateDiagram-v2
    timeout.
 - Unsubmitted intent is protected on page exit: an unsafe draft or queued
    submission installs the browser's `beforeunload` confirmation guard.
-   Browser-local `Close team` only suppresses rendering and does not erase it.
+   Browser-local `Close organization` only suppresses rendering and does not erase it.
 - A late completion never steals focus the operator has since moved.
 - Shard order follows member order. Accent follows stable lane identity and may
    repeat, so every card explicitly names the lane that would answer it.
@@ -463,7 +463,7 @@ and the age, run-state, pending-count, and claimed-task field set are fixed.
 **Acceptance** — after the browser accepts the submission action, a transport
 loss requeues the submission for socket replay rather than returning it to the
 composer. A typed wake, residency, or write refusal restores the affected text.
-Submit a fused team with several nonempty shards: the gesture enqueues one
+Submit a fused organization with several nonempty shards: the gesture enqueues one
 concrete-addressed submission per nonempty shard. Each resulting message
 reaches exactly one worktree and is never broadcast. Reorder shards: neither
 the stream nor existing accents change.
@@ -590,8 +590,8 @@ What the operator actually manipulates, stated as a component contract.
 block-beta
   columns 1
   G["CANVAS VIEW RAIL, agents | flow | topology"]
-  C["AGENTS VIEW, one console per live team"]
-  R["team mode rail, compose | tasks | info, badges are live counts"]
+  C["AGENTS VIEW, one console per live organization"]
+  R["organization mode rail, compose | tasks | info, badges are live counts"]
   W["COMPOSE, one member shard per lane, status face + composer"]
   A["AUTONOMY, speech | lifetime | submit, submit names the lifetime"]
   S["status line, age + latest action"]
@@ -603,14 +603,14 @@ block-beta
 - **The Canvas rail is the global view vocabulary.** Agents is the conversation
    surface; Flow and Topology are the complete closed analytical axes. A pane
    belongs to one of those axes rather than inventing a third.
-- **The team console is the unit of tiling in Agents.** Consoles sit side by
+- **The organization console is the unit of tiling in Agents.** Consoles sit side by
    side; each is the complete operator surface for one live lineage containing
-   one or more member lanes. Adding an agent widens its team console through the
+   one or more member lanes. Adding an agent widens its organization console through the
    six-share visual ceiling; later members retain that maximum rather than
    narrowing it. Membership never adds another peer console.
-- **The team rail's badges are the summary.** Compose shows pending direction,
+- **The organization rail's badges are the summary.** Compose shows pending direction,
    Tasks shows active work, and Info shows member count. A badge is only present when its
-   count is non-zero, so an empty rail means a quiet team.
+   count is non-zero, so an empty rail means a quiet organization.
 - **The member shards are the identity and composer-address summary.** Across
    Compose and Info they expose the concrete lane/worktree address, agent label,
    vendor identity, liveness or age, pending direction, and held task as

@@ -4,7 +4,7 @@ import { mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { seatAgentTeam } from "./agent-conversation.mjs";
+import { seatAgentOrg } from "./agent-conversation.mjs";
 import { longWorktreeBasename } from "./agent-conversation.mjs";
 import { settleMosaicActivity } from "./agent-conversation-mosaic.mjs";
 import {
@@ -368,7 +368,7 @@ async function runEngine(endpoint, fixture, worktrees, engine, seat) {
   try {
     await page.goto(endpoint, { waitUntil: "networkidle" });
     await chooseCanvasView(page, "Lanes");
-    if (seat) await seatAgentTeam(page, fixture, worktrees);
+    if (seat) await seatAgentOrg(page, fixture, worktrees);
     await page.locator('[data-pane="agent-console"]').getByRole("tab", { name: /^Agents/ }).click();
     await page.locator(".lane-mosaic-plane").waitFor();
     const profile = {

@@ -886,10 +886,10 @@ fn paired_tool_capture_becomes_one_media_card_while_distinct_tape_events_stay_di
 fn lineage_activity_orders_tool_and_prose_without_admitting_snapshot_receipts() {
     let runtime = lineage_runtime_with_activity_and_receipts();
     let lanes = runtime.lanes().expect("refreshed lane snapshot");
-    let team = runtime
+    let organization = runtime
         .newest_lineage_activity(&lanes.lanes[0])
-        .expect("team activity survives receipts");
-    assert_eq!(team.lane(), uuid(SECOND_LANE));
+        .expect("organization activity survives receipts");
+    assert_eq!(organization.lane(), uuid(SECOND_LANE));
     assert_eq!(
         runtime
             .newest_lane_activity(uuid(SECOND_LANE))
@@ -897,9 +897,9 @@ fn lineage_activity_orders_tool_and_prose_without_admitting_snapshot_receipts() 
             .display_millis(),
         instant_ms("2030-04-12T18:44:10.271Z")
     );
-    assert_eq!(team.class(), "prose");
-    assert_eq!(team.title(), "assistant");
-    assert_eq!(team.detail(), "newer teammate prose");
+    assert_eq!(organization.class(), "prose");
+    assert_eq!(organization.title(), "assistant");
+    assert_eq!(organization.detail(), "newer organization member prose");
     let other = runtime
         .newest_lineage_activity(&lanes.lanes[1])
         .expect("other lineage keeps its own activity");
@@ -956,7 +956,7 @@ fn lineage_runtime_with_activity_and_receipts() -> CanvasRuntime {
         0,
         "2030-04-12T18:44:10.271Z",
         None,
-        "newer teammate prose",
+        "newer organization member prose",
     );
     runtime.apply_stream(&admitted_stream(&session, &prose));
 
