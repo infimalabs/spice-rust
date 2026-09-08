@@ -219,6 +219,7 @@ async function geometry(page) {
           buttons: [...modeRail.children].map((button) => (
             button.getBoundingClientRect().toJSON()
           )),
+          paddingInline: [modeRailStyle.paddingLeft, modeRailStyle.paddingRight],
           contentLeft: modeRailBounds.left + modeRail.clientLeft
             + Number.parseFloat(modeRailStyle.paddingLeft),
           contentRight: modeRailBounds.left + modeRail.clientLeft + modeRail.clientWidth
@@ -646,6 +647,16 @@ test("lineage minima govern weighted fleet layout in Chromium and Firefox", asyn
         assertTrack(floorActive, `${engine} floor-active weighted row`, false);
         assert.ok(floorActive.surfaces[0].width <= 321, `${engine} solo lane holds its floor`);
         assert.ok(floorActive.surfaces[1].width > floorActive.surfaces[0].width);
+        assert.deepEqual(
+          floorActive.surfaces[0].modeRail.paddingInline,
+          ["4px", "4px"],
+          `${engine} small team lane retains standard mode-rail padding`,
+        );
+        assert.deepEqual(
+          floorActive.surfaces[1].modeRail.paddingInline,
+          ["4px", "4px"],
+          `${engine} wider team lane retains standard mode-rail padding`,
+        );
 
         await setWidth(page, 600);
         await expectRightEdge(page, `${engine} two-lane floor overflow`);

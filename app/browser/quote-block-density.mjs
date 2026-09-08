@@ -170,30 +170,29 @@ export async function assertQuoteBlockDensity(cards, label) {
         quote.marginBottom >= 0 && quote.marginBottom <= 6 + PIXEL_TOLERANCE,
         `${label} ${kind} quote ${index} has compact bottom rhythm: ${quote.marginBottom}`,
       );
-      const expectedLeftMargin = index === 0 ? 0 : index === 1 ? -1 : 1;
       assert.ok(
-        near(quote.marginLeft, expectedLeftMargin),
-        `${label} ${kind} quote ${index} preserves its left indentation: ${quote.marginLeft}`,
+        near(quote.marginLeft, 0),
+        `${label} ${kind} quote ${index} does not accumulate left margin: ${quote.marginLeft}`,
       );
       assert.ok(
-        near(quote.marginRight, index === 0 ? 0 : 2),
-        `${label} ${kind} quote ${index} exposes a slight right edge: ${quote.marginRight}`,
+        near(quote.marginRight, 0),
+        `${label} ${kind} quote ${index} does not accumulate right margin: ${quote.marginRight}`,
       );
       assert.ok(near(quote.paddingTop, 7) && near(quote.paddingBottom, 7),
         `${label} ${kind} quote ${index} replaces the removed horizontal edges with inset`);
-      const expectedLeft = index === 0 ? 7 : 5;
+      const expectedLeft = 5;
       const expectedRight = expectedLeft + 2;
       assert.ok(near(quote.paddingLeft, expectedLeft) && near(quote.paddingRight, expectedRight),
-        `${label} ${kind} quote ${index} preserves content width after removing the right edge`);
+        `${label} ${kind} quote ${index} keeps compact inline content spacing`);
       assert.ok(quote.scrollWidth <= quote.clientWidth + 1,
         `${label} ${kind} quote ${index} wraps without horizontal overflow`);
       if (quote.railOffset !== null) {
-        assert.ok(near(quote.railOffset, 8),
-          `${label} ${kind} quote ${index} advances one 8px nesting step: ${quote.railOffset}`);
+        assert.ok(near(quote.railOffset, 7),
+          `${label} ${kind} quote ${index} advances only by its parent rail and inset: ${quote.railOffset}`);
         assert.ok(quote.parentWidth - quote.width <= 20 + PIXEL_TOLERANCE,
           `${label} ${kind} quote ${index} retains usable line width: ${quote.parentWidth - quote.width}`);
-        assert.ok(quote.rightEdgeInset >= 9 - PIXEL_TOLERANCE,
-          `${label} ${kind} quote ${index} reveals the parent layer at the right edge`);
+        assert.ok(near(quote.rightEdgeInset, 7),
+          `${label} ${kind} quote ${index} keeps only its parent inset at the right edge`);
       }
     }
     assert.ok(observed.paragraphs.every(({ fontSize, lineHeight, marginBottom }) => (
