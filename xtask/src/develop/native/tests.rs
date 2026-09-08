@@ -26,6 +26,25 @@ fn executable_rollback_requires_the_journal_schema_to_be_proven_unchanged() {
 }
 
 #[test]
+fn no_resident_refresh_does_not_inspect_journal_schema() {
+    let fixture = Fixture::new("no-resident-schema");
+    let repository = fixture.repository();
+    let journal = repository
+        .admit_state()
+        .expect("repository state")
+        .journal()
+        .to_path_buf();
+    fs::create_dir_all(journal.parent().expect("journal parent")).expect("journal parent exists");
+    fs::write(&journal, b"not a SQLite journal").expect("invalid journal writes");
+
+    assert_eq!(
+        schema_recovery_boundary(&repository, false).expect("no-resident boundary skips"),
+        None,
+    );
+    assert!(schema_recovery_boundary(&repository, true).is_err());
+}
+
+#[test]
 fn a_committed_schema_advance_preserves_the_successor_executable() {
     let fixture = Fixture::new("schema-advance");
     let repository = fixture.repository();
