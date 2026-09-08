@@ -444,17 +444,25 @@ pub(super) fn derive_dependency_flow(
             && heads.workflow.body.completion.is_none();
         witnesses.push(workflow_witness(heads));
     }
+    omit_review_phase(flow, all_review)?;
+    Ok(witnesses)
+}
+
+pub(super) fn omit_review_phase(
+    flow: &mut Vec<wire::Phase>,
+    all_review: bool,
+) -> Result<(), Outcome<CommandAnswer>> {
     if all_review {
         flow.retain(|phase| phase.as_str() != "review");
         if flow.is_empty() {
             return Err(refusal(
                 "task::flow-empty",
                 Some("review".to_owned()),
-                "name at least one non-review workflow phase when every dependency is in review",
+                "name at least one non-review workflow phase when creation omits review",
             ));
         }
     }
-    Ok(witnesses)
+    Ok(())
 }
 
 fn add_oops_note(
