@@ -5,30 +5,6 @@ use base64::Engine as _;
 
 type ClientMapping = (CommandKind, Vec<Witness>, serde_json::Value);
 
-pub(super) fn submit_add(
-    repository: &Repository,
-    contract: &Contract,
-    title: String,
-    project: Option<String>,
-    description: Option<String>,
-    acceptance: Vec<String>,
-    origin: Option<wire::Origin>,
-) -> Outcome<CommandAnswer> {
-    submit_task_add(
-        repository,
-        contract,
-        TaskAdd {
-            title,
-            project,
-            description,
-            acceptance,
-            origin,
-            flow: None,
-            depends: Vec::new(),
-        },
-    )
-}
-
 pub(super) fn submit_oops_add(
     repository: &Repository,
     contract: &Contract,

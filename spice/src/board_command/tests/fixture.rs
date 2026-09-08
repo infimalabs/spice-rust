@@ -258,6 +258,7 @@ pub(super) fn add_project_with_acceptance(
             project: Some(project.to_owned()),
             description: None,
             acceptance: acceptance.iter().map(|item| (*item).to_owned()).collect(),
+            requirements: wire::EnvironmentRequirements::default(),
             origin: Some(origin),
             flow: flow
                 .or_else(|| acceptance.is_empty().then_some("todo,review"))

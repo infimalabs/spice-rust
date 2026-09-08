@@ -404,6 +404,36 @@ pub(in crate::board_command) fn task_show(
     if has_taste_review(&statement.tags) {
         lines.push("taste_review required".to_owned());
     }
+    lines.push("requirements:".to_owned());
+    if statement.requirements.is_empty() {
+        lines.push("  -".to_owned());
+    } else {
+        for requirement in statement.requirements.as_slice() {
+            match requirement {
+                wire::EnvironmentRequirement::JournalSchema { value: required } => {
+                    let observed = board.schema;
+                    let observation = wire::EnvironmentObservation::journal_schema(observed)
+                        .expect("an admitted journal schema is positive");
+                    lines.push(format!(
+                        "  - journal-schema required={} observed={observed} satisfied={}",
+                        required,
+                        requirement.is_satisfied_by(observation),
+                    ));
+                }
+            }
+        }
+    }
+    lines.push(format!(
+        "environment {}",
+        if statement
+            .requirements
+            .are_satisfied_by(&board::environment())
+        {
+            "satisfied"
+        } else {
+            "blocked"
+        }
+    ));
     lines.push("acceptance:".to_owned());
     if !substantive_acceptance(&statement.acceptance) {
         lines.push("  -".to_owned());
@@ -784,6 +814,29 @@ pub(in crate::board_command) fn task_status(
                 .any(|dependency| !satisfied.contains(dependency))
         })
         .count();
+    let environment_blocked = rows
+        .iter()
+        .filter(|entry| !board::environment_satisfied(entry))
+        .count();
+    let environment_satisfied = rows.len() - environment_blocked;
+    let mut required_schemas = rows
+        .iter()
+        .flat_map(|entry| entry.statement().requirements.as_slice())
+        .map(|requirement| match requirement {
+            wire::EnvironmentRequirement::JournalSchema { value } => value.get(),
+        })
+        .collect::<Vec<_>>();
+    required_schemas.sort_unstable();
+    required_schemas.dedup();
+    let required_schemas = if required_schemas.is_empty() {
+        "-".to_owned()
+    } else {
+        required_schemas
+            .into_iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    };
     let ready = rows
         .iter()
         .copied()
@@ -812,10 +865,13 @@ pub(in crate::board_command) fn task_status(
         "claim {claim}\nactor {}\nfilter {}\npublic task project depth {}..{} dotted segments\n\
          active {active_count}\nready {ready}\n\
          review {review}\nblocked {blocked}\nwaiting {waiting}\n\
+         environment journal-schema required={required_schemas} observed={} \
+         satisfied={environment_satisfied} blocked={environment_blocked}\n\
          stale {stale}\noops {oops}",
         board.actor_route.actor,
         actor_route_filter(board),
         board.project_policy.public_min_depth,
         board.project_policy.public_max_depth,
+        board.schema,
     ))
 }

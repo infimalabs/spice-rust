@@ -33,6 +33,13 @@ pub struct TaskAdd {
     /// Criteria that decide whether the work is done.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub acceptance: Vec<String>,
+    /// Typed environmental facts required before allocation.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::EnvironmentRequirements::is_empty",
+        deserialize_with = "crate::EnvironmentRequirements::present"
+    )]
+    pub requirements: crate::EnvironmentRequirements,
     /// Caller-authored creation provenance, or server-resolved causal authority.
     #[serde(
         default,
@@ -163,6 +170,13 @@ pub struct TaskEdit {
     /// Replacement criteria, when they move.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub acceptance: Vec<String>,
+    /// Dedicated replacement or clearing of environmental requirements.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub requirements: Option<TaskRequirementsEdit>,
     /// Replacement priority, when the allocator's ranking of this task moves.
     #[serde(
         default,
@@ -177,6 +191,43 @@ pub struct TaskEdit {
         deserialize_with = "crate::optional::present"
     )]
     pub project: Option<String>,
+}
+
+/// One explicit environmental-requirement mutation.
+///
+/// The dedicated action keeps omission as "unchanged", a nonempty canonical
+/// collection as "replace", and clearing as its own spelling. No empty array
+/// can be normalized into either intent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "lowercase", deny_unknown_fields)]
+pub enum TaskRequirementsEdit {
+    /// Replace the complete AND-composed collection.
+    Set {
+        /// Nonempty canonical requirements in environmental-fact order.
+        #[serde(deserialize_with = "crate::EnvironmentRequirements::present")]
+        requirements: crate::EnvironmentRequirements,
+    },
+    /// Remove every environmental requirement.
+    Clear {},
+}
+
+impl TaskRequirementsEdit {
+    /// Replace requirements with one necessarily canonical fact.
+    #[must_use]
+    pub fn one(requirement: crate::EnvironmentRequirement) -> Self {
+        Self::Set {
+            requirements: crate::EnvironmentRequirements::one(requirement),
+        }
+    }
+
+    /// Complete replacement collection, or empty when clearing.
+    #[must_use]
+    pub fn requirements(&self) -> crate::EnvironmentRequirements {
+        match self {
+            Self::Set { requirements } => requirements.clone(),
+            Self::Clear {} => crate::EnvironmentRequirements::default(),
+        }
+    }
 }
 
 /// Withdraw a task from the board with a recorded reason.

@@ -260,7 +260,7 @@ impl Law {
     /// Exact task statement head.
     pub const EDIT: Self = Self {
         required: &[WitnessKind::Task],
-        optional: &[],
+        optional: &[WitnessKind::Claim],
         authority: Authority::Connected,
     };
     /// Exact task statement and workflow heads plus the current claim
@@ -786,6 +786,12 @@ impl CommandKind {
                 WitnessKind::Task,
             ];
         }
+        if matches!(
+            (self, body),
+            (Self::TaskEdit, Intent::TaskEdit(edit)) if edit.requirements.is_some()
+        ) {
+            return &[WitnessKind::Task, WitnessKind::Claim];
+        }
         self.law().required
     }
 
@@ -816,6 +822,35 @@ impl CommandKind {
                     kind: WitnessKind::Task,
                     target: wake.task.to_string(),
                 });
+            }
+        }
+        if let (
+            Self::TaskEdit,
+            Intent::TaskEdit(
+                edit @ crate::intent::TaskEdit {
+                    requirements: Some(_),
+                    ..
+                },
+            ),
+        ) = (self, body)
+        {
+            let target = edit.task.born().ok();
+            for kind in [WitnessKind::Task, WitnessKind::Claim] {
+                let target_is_witnessed = expected.iter().any(|witness| {
+                    matches!(
+                        (kind, witness, target.as_ref()),
+                        (WitnessKind::Task, Witness::Task { task, .. }, Some(target))
+                            | (WitnessKind::Claim, Witness::Claim { task, .. }, Some(target))
+                            if task == target
+                    )
+                });
+                if !target_is_witnessed {
+                    return Err(LawError::SubjectMismatch {
+                        command: self,
+                        kind,
+                        target: edit.task.to_string(),
+                    });
+                }
             }
         }
         Ok(())

@@ -309,6 +309,7 @@ fn board_task(label: &str, _id: &str, title: &str, project: &str) -> wire::inten
                 queue_origin: seq(1),
                 description: None,
                 acceptance: Vec::new(),
+                requirements: wire::EnvironmentRequirements::default(),
                 project: project.to_owned(),
                 tags: Vec::new(),
                 dependencies: Vec::new(),

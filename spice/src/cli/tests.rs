@@ -106,7 +106,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
 
 #[test]
 fn every_contract_has_an_executable_landing_disposition() {
-    assert_eq!(contracts().len(), 106);
+    assert_eq!(contracts().len(), 107);
 
     let unaccounted = contracts()
         .iter()
@@ -119,7 +119,7 @@ fn every_contract_has_an_executable_landing_disposition() {
         .iter()
         .filter(|contract| landing(contract.path) == Landing::Landed)
         .count();
-    assert_eq!(landed, 106);
+    assert_eq!(landed, 107);
     assert_eq!(landing(&["gate", "commit-msg"]), Landing::Landed);
     assert_eq!(landing(&["gate", "prove"]), Landing::Landed);
     assert_eq!(landing(&["gate", "reference-transaction"]), Landing::Landed);
@@ -141,6 +141,7 @@ fn every_contract_has_an_executable_landing_disposition() {
     assert_eq!(landing(&["steer", "recover"]), Landing::Landed);
     assert_eq!(landing(&["steer", "resend"]), Landing::Landed);
     assert_eq!(landing(&["task", "modify"]), Landing::Landed);
+    assert_eq!(landing(&["task", "require"]), Landing::Landed);
     assert_eq!(landing(&["task", "delete"]), Landing::Landed);
     assert_eq!(landing(&["task", "reclaim"]), Landing::Landed);
     assert_eq!(landing(&["task", "list"]), Landing::Landed);
@@ -873,6 +874,16 @@ fn contract_syntax_drives_argument_registration() {
         &["spice", "doctor"][..],
         &["spice", "watch", "root"],
         &["spice", "task", "add", "title", "--project", "rim.cli"],
+        &[
+            "spice",
+            "task",
+            "add",
+            "title",
+            "--requires-journal-schema",
+            "16",
+        ],
+        &["spice", "task", "require", "TASK", "--journal-schema", "16"],
+        &["spice", "task", "require", "TASK", "--clear"],
         &["spice", "task", "depends", "TASK", "FIRST", "SECOND"],
         &["spice", "lane", "add", "--life", "Drive"],
         &["spice", "hook", "codex"],

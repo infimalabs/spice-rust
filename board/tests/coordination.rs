@@ -579,6 +579,55 @@ fn stealing_waives_possession_alone_and_waits_on_no_lease() {
 }
 
 #[test]
+fn environment_is_the_final_eligibility_filter_and_never_ranking_or_task_state() {
+    let actor = Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e408"));
+    let current_schema = journal::SCHEMA_VERSION;
+    let required_schema = current_schema
+        .checked_add(1)
+        .expect("fixture schema advances");
+    let mut blocked_head = statement("BOARD-environment-blocked");
+    blocked_head.tags.push("priority:critical".to_owned());
+    blocked_head.requirements = wire::EnvironmentRequirements::one(
+        wire::EnvironmentRequirement::journal_schema(required_schema)
+            .expect("future schema is positive"),
+    );
+    let blocked = admitted(blocked_head, workflow("todo"), None, None).expect("blocked entry");
+    let ordinary = entry("BOARD-environment-ready");
+    let entries = vec![blocked.clone(), ordinary.clone()];
+
+    assert!(!board::environment_satisfied(&blocked));
+    assert!(!board::eligible_entry(&entries, &blocked, &actor));
+    assert!(!board::capturable_entry(&entries, &blocked, &actor));
+    assert!(!board::selectable_entry(
+        &entries,
+        &blocked,
+        &actor,
+        &all_projects()
+    ));
+    assert!(!board::stealable_entry(&entries, &blocked, &actor));
+    assert_eq!(
+        select(&entries, &actor, &all_projects(), 2)
+            .expect("ordinary eligible work remains")
+            .entry()
+            .handle(),
+        ordinary.handle(),
+        "an environment-blocked critical task never enters ranking"
+    );
+
+    let observed_before =
+        wire::Environment::journal_schema(current_schema).expect("current schema is positive");
+    let observed_after =
+        wire::Environment::journal_schema(required_schema).expect("future schema is positive");
+    assert!(!board::environment_satisfied_by(&blocked, &observed_before));
+    assert!(board::environment_satisfied_by(&blocked, &observed_after));
+    assert_eq!(
+        blocked.statement().requirements.as_slice(),
+        entries[0].statement().requirements.as_slice(),
+        "observation movement does not mutate task authority"
+    );
+}
+
+#[test]
 fn policy_snapshot_retains_hidden_rows_as_explicit_evidence() {
     let projects =
         board::ProjectPolicy::new(["board".to_owned()], Vec::new(), 2, 3).expect("fixture policy");

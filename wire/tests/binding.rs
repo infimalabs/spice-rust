@@ -538,6 +538,7 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
                     "the row decodes".to_owned(),
                     "the row re-encodes unchanged".to_owned(),
                 ],
+                requirements: wire::EnvironmentRequirements::default(),
                 project: "wire.binding".to_owned(),
                 tags: vec!["binding".to_owned()],
                 dependencies: vec!["1kKRRsDQ".parse().expect("a task stamp")],

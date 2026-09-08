@@ -199,12 +199,12 @@ fn the_opening_a_session_offers_is_the_one_a_resident_admits() {
 }
 
 #[test]
-fn the_global_message_bound_canvas_generation_is_stopped_at_discovery() {
-    let fault = Session::admit_canvas(Some(wire::CanvasVersion(2)))
-        .expect_err("the global-bound browser application does not cross current Canvas DTOs");
+fn the_requirement_unaware_canvas_generation_is_stopped_at_discovery() {
+    let fault = Session::admit_canvas(Some(wire::CanvasVersion(3)))
+        .expect_err("a requirement-unaware browser does not cross current Canvas DTOs");
     assert_eq!(fault.reason, "bootstrap::canvas-mismatch");
     assert!(
-        fault.detail.contains("protocol 2") && fault.detail.contains("speaks 3"),
+        fault.detail.contains("protocol 3") && fault.detail.contains("speaks 4"),
         "{}",
         fault.detail
     );

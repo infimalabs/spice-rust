@@ -31,12 +31,10 @@ pub struct CanvasVersion(pub u32);
 impl CanvasVersion {
     /// The one Canvas protocol this build speaks.
     ///
-    /// Version 3 makes the advertised visible-card bound per lane, keeps status
-    /// outside that budget, and restores each lane's durable backlog before
-    /// publication. A version-2 document applies the bound globally, so the
-    /// pre-socket clock must reload it rather than let one busy lane evict every
-    /// sibling lane's Mosaic history.
-    pub const CURRENT: Self = Self(3);
+    /// Version 4 carries typed environmental requirements in actor-facing task
+    /// statements. A version-3 document cannot decode that strict added field,
+    /// so the pre-socket clock reloads it before a board answer crosses.
+    pub const CURRENT: Self = Self(4);
 
     /// True when this is the Canvas protocol this build speaks.
     #[must_use]

@@ -79,8 +79,8 @@ fn canvas_version_has_one_http_header_spelling() {
     assert_eq!(wire::hello::CANVAS_VERSION_HEADER, "x-spice-canvas-version");
     assert_eq!(
         CanvasVersion::CURRENT,
-        CanvasVersion(3),
-        "generation 3 restores one bounded Mosaic backlog per lane"
+        CanvasVersion(4),
+        "generation 4 carries environmental requirements in task statements"
     );
     assert_eq!(
         CanvasVersion::CURRENT.to_string().parse(),
