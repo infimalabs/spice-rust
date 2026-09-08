@@ -6,7 +6,7 @@ use std::str::FromStr;
 use wire::manifest::CANVAS_APP_FILES;
 use wire::{Digest, Domain};
 
-use super::{Asset, InstallError, Repository};
+use super::{Asset, DATA_MODE, GeneratedImage, InstallError, InstallPlan, Repository};
 
 pub(super) const ASSETS: [(Asset, &str); 8] = [
     (Asset::CanvasAppModule, "app.module"),
@@ -45,6 +45,29 @@ impl Source {
             return Some(format!("{}\n", self.generation).into_bytes());
         }
         self.files.get(&asset).cloned()
+    }
+
+    pub(super) fn differs_from(&self, plan: &InstallPlan) -> bool {
+        if plan.app.as_ref() != Some(&self.generation) {
+            return true;
+        }
+        ASSETS
+            .into_iter()
+            .map(|(asset, _)| asset)
+            .chain([Asset::CanvasCurrent])
+            .any(|asset| {
+                let path = operation_path(asset, Some(&self.generation))
+                    .expect("the source generation is present")
+                    .expect("the source inventory contains only Canvas operations");
+                let expected = self
+                    .bytes(asset)
+                    .map(|bytes| GeneratedImage::new(DATA_MODE, &bytes));
+                plan.operations
+                    .iter()
+                    .find(|operation| operation.path == path)
+                    .map(|operation| &operation.generated)
+                    != expected.as_ref()
+            })
     }
 }
 
