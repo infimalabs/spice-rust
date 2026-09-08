@@ -335,6 +335,35 @@ vocabulary! {
     ReleasePublished = "release::published" by ResidentRecognition;
 }
 
+impl FactKind {
+    /// Fact kinds that can create or change steering authority.
+    ///
+    /// Recovery reads this inventory directly, and the steering reducer
+    /// refuses any inventoried kind it does not handle. Keeping the domain
+    /// classification here prevents a selective journal query from drifting
+    /// away from the reducer that interprets its results.
+    pub const STEERING_AUTHORITY: &[Self] = &[
+        Self::ClaimLeaseWarned,
+        Self::SteerSent,
+        Self::SteerEscalated,
+        Self::SteerRecovered,
+        Self::SteerAcked,
+        Self::SteerDeclined,
+        Self::SteerMissed,
+        Self::SteerLapsed,
+        Self::SteerDeadLettered,
+        Self::SteerCanceled,
+        Self::TasteJudged,
+        Self::TasteReminded,
+    ];
+
+    /// Whether this kind participates in the steering authority fold.
+    #[must_use]
+    pub fn affects_steering(self) -> bool {
+        Self::STEERING_AUTHORITY.contains(&self)
+    }
+}
+
 impl fmt::Display for FactKind {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())

@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use rusqlite::Connection;
+use rusqlite::{Connection, params_from_iter, types::Value};
 
 use crate::{Journal, JournalReader};
 
@@ -155,19 +155,24 @@ fn read_steering_snapshot(connection: &Connection) -> Result<SteeringSnapshot, S
         seq: Some(horizon.get()),
         detail: "journal cursor exceeds SQLite integer range".to_owned(),
     })?;
-    let mut statement = connection
-        .prepare(
-            "SELECT seq, kind, envelope FROM fact_envelopes \
-             WHERE seq <= ?1 AND kind IN (\
-                 'steer::sent', 'steer::escalated', 'steer::recovered', \
-                 'steer::acked', 'steer::declined', 'steer::missed', \
-                 'steer::lapsed', 'steer::deadlettered', 'steer::canceled', \
-                 'taste::reminded', 'taste::judged', 'claim::warned'\
-             ) ORDER BY seq",
-        )
-        .map_err(SnapshotError::Sqlite)?;
+    let placeholders = (2..=wire::FactKind::STEERING_AUTHORITY.len() + 1)
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT seq, kind, envelope FROM fact_envelopes \
+         WHERE seq <= ?1 AND kind IN ({placeholders}) ORDER BY seq"
+    );
+    let mut parameters = Vec::with_capacity(wire::FactKind::STEERING_AUTHORITY.len() + 1);
+    parameters.push(Value::Integer(sql_horizon));
+    parameters.extend(
+        wire::FactKind::STEERING_AUTHORITY
+            .iter()
+            .map(|kind| Value::Text(kind.as_str().to_owned())),
+    );
+    let mut statement = connection.prepare(&sql).map_err(SnapshotError::Sqlite)?;
     let rows = statement
-        .query_map([sql_horizon], |row| {
+        .query_map(params_from_iter(&parameters), |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,

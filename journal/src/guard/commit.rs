@@ -249,6 +249,13 @@ fn validate_steering_updates(write: &JournalWrite) -> Result<(), CommitError> {
             subjects.insert(subject, index);
         } else if proposed.fact.kind() == wire::FactKind::SteerMissed {
             misses.push(index);
+        } else if proposed.fact.kind() == wire::FactKind::TasteJudged {
+            // A cleared judgment records evidence but opens no directive.
+        } else if proposed.fact.kind().affects_steering() {
+            return Err(CommitError::Refused(GuardRefusal::new(format!(
+                "steering authority fact {} has no indexed subject classification",
+                proposed.fact.kind()
+            ))));
         }
     }
     let mut final_subjects = subjects.into_values().collect::<Vec<_>>();
