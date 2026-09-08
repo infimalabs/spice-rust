@@ -3,9 +3,9 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use wire::manifest::{
-    BuildPins, CANVAS_APP_FILES, InventoryEntry, PROOF_RECEIPT_VERSION, ProductVersion,
-    ProofEnvironment, ProofReceipt, ProofStanding, RELEASE_MANIFEST_VERSION, ReleaseManifest,
-    ReleaseManifestTarget, ReleaseTarget, TARGET_PAYLOAD_VERSION, TargetPayload,
+    BuildPins, CANVAS_APP_FILES, CANVAS_APP_HTML, InventoryEntry, PROOF_RECEIPT_VERSION,
+    ProductVersion, ProofEnvironment, ProofReceipt, ProofStanding, RELEASE_MANIFEST_VERSION,
+    ReleaseManifest, ReleaseManifestTarget, ReleaseTarget, TARGET_PAYLOAD_VERSION, TargetPayload,
 };
 use wire::{Digest, Domain};
 
@@ -28,10 +28,19 @@ impl PackageFixture {
         let mut app = CANVAS_APP_FILES
             .iter()
             .map(|file| {
-                (
-                    (*file).to_owned(),
-                    format!("package Canvas asset {file}\n").into_bytes(),
-                )
+                let bytes = if *file == CANVAS_APP_HTML {
+                    concat!(
+                        "<!doctype html><html><body>",
+                        "<script data-canvas-theme>theme();</script>",
+                        "<script type=\"module\">boot();</script>",
+                        "</body></html>\n"
+                    )
+                    .as_bytes()
+                    .to_vec()
+                } else {
+                    format!("package Canvas asset {file}\n").into_bytes()
+                };
+                ((*file).to_owned(), bytes)
             })
             .collect::<Vec<_>>();
         app.sort_by(|left, right| left.0.cmp(&right.0));

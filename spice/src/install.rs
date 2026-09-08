@@ -118,6 +118,10 @@ pub const TEST_PAUSE_PATH: &str = "SPICE_INSTALL_TEST_PAUSE_PATH"; // env-policy
 #[cfg(debug_assertions)]
 #[doc(hidden)]
 pub const TEST_EXECUTABLE: &str = "SPICE_INSTALL_TEST_EXECUTABLE"; // env-policy: allow
+/// Explicitly selects the worktree app stage for debug-only resident process tests.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub const TEST_CANVAS_STAGE_ARGUMENT: &str = "--spice-test-canvas-stage";
 /// Configures the process-test mutation rendezvous before installation starts.
 #[cfg(debug_assertions)]
 #[doc(hidden)]
@@ -457,6 +461,45 @@ pub fn inspect(repository: &Repository) -> Result<Option<InstallReceipt>, Instal
     };
     verify_progress(repository, &loaded.record)?;
     Ok(Some(loaded.record.receipt()))
+}
+
+/// Admit the receipt-owned Canvas publication for the selected Spice executable.
+///
+/// This is the production resident boundary: the current receipt, every
+/// installed destination, the executable bytes, and the Git-common Canvas
+/// generation must all agree before an app source is returned. It never reads
+/// the managed worktree's development stage.
+pub fn installed_canvas_source(
+    repository: &Repository,
+    executable: &Path,
+) -> Result<canvas::AppSource, InstallError> {
+    let loaded = read_record(repository)?.ok_or(InstallError::RecordMissing)?;
+    let record = loaded.record;
+    match record.status {
+        InstallStatus::Complete => {}
+        InstallStatus::Applying => return Err(InstallError::ApplyInProgress),
+        InstallStatus::Unapplying => return Err(InstallError::UnapplyInProgress),
+        InstallStatus::Uninstalled => return Err(InstallError::RecordMissing),
+    }
+    verify_binary_context(&record.plan, Some(executable))?;
+    verify_progress(repository, &record)?;
+    let expected = record.plan.app.as_ref().ok_or_else(|| {
+        InstallError::InvalidRecord("installed appliance owns no Canvas generation".to_owned())
+    })?;
+    let source =
+        canvas::AppSource::resolve_installed(repository.common_dir()).map_err(|error| {
+            InstallError::InvalidRecord(format!("installed Canvas publication: {error}"))
+        })?;
+    let observed = source.current_generation().map_err(|error| {
+        InstallError::InvalidRecord(format!("installed Canvas publication: {error}"))
+    })?;
+    if observed.identity() != expected {
+        return Err(InstallError::InvalidRecord(format!(
+            "installed Canvas pointer names {}, receipt names {expected}",
+            observed.identity()
+        )));
+    }
+    Ok(source)
 }
 
 /// Capture the canonical installation generation without validating owned assets.

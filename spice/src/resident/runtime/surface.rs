@@ -66,16 +66,15 @@ pub(super) async fn start_surface<'a>(
 ) -> CommandResult<StartedSurface<'a>> {
     let operator = new_uuid();
     let capabilities = surface_capabilities(operator, residency)?;
-    let app = canvas::AppSource::resolve(&paths.worktree)
-        .map_err(|error| environment_fault("canvas::app-source-invalid", &error.to_string()))?;
-    let app_description = app.to_string();
     let SurfaceLaunch {
+        app,
         binding,
         open,
         progress,
         endpoint,
         daemon,
     } = launch;
+    let app_description = app.to_string();
     let CanvasBinding { listen, access } = binding;
     let CanvasAccess { policy, token } = access;
     let (server, control) = canvas::axum::Server::bind_streaming(

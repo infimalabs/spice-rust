@@ -88,6 +88,7 @@ impl Resident {
             // shared machine cannot all have it.
             .args(["--json", "up", "--foreground", "--port", "0"])
             .current_dir(&fixture.root)
+            .arg(spice::install::TEST_CANVAS_STAGE_ARGUMENT)
             // The fixture resident serves this root in operator context, never
             // as a seat of the launching agent shell.
             .env_remove(spice::agent_launch::SPICE_RS_LANE)

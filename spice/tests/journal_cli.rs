@@ -104,6 +104,7 @@ impl RunningResident {
             // shared machine cannot all have it.
             .args(["--json", "up", "--foreground", "--port", "0"])
             .current_dir(&fixture.root)
+            .arg(spice::install::TEST_CANVAS_STAGE_ARGUMENT)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()

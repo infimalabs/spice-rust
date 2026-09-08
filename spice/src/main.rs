@@ -160,7 +160,12 @@ fn main() {
         Form::Text
     };
     #[cfg(not(target_arch = "wasm32"))]
-    let arguments = std::env::args_os().collect::<Vec<_>>();
+    let mut arguments = std::env::args_os().collect::<Vec<_>>();
+    #[cfg(not(target_arch = "wasm32"))]
+    let test_canvas_stage = match extract_test_canvas_stage(&mut arguments) {
+        Ok(selected) => selected,
+        Err(fault) => deliver(&Outcome::<()>::Fault(fault), bootstrap_form),
+    };
     #[cfg(not(target_arch = "wasm32"))]
     let bootstrap_configuration_owner =
         cli::bootstrap_configuration_owner_selected(arguments.iter().cloned());
@@ -232,7 +237,17 @@ fn main() {
     deliver_target_refusal(contract.path, form);
     #[cfg(not(target_arch = "wasm32"))]
     if contract.path == ["up"] {
-        resident_up(leaf, form);
+        resident_up(leaf, form, test_canvas_stage);
+    } else if test_canvas_stage {
+        deliver_fault(
+            Fault {
+                class: FaultClass::Environment,
+                reason: "canvas::test-app-selection-invalid".to_owned(),
+                detail: "the debug-only Canvas stage argument is valid only for `spice up`"
+                    .to_owned(),
+            },
+            form,
+        );
     }
     #[cfg(not(target_arch = "wasm32"))]
     let outcome = match contract.path {
@@ -242,6 +257,32 @@ fn main() {
     #[cfg(target_arch = "wasm32")]
     let outcome = not_landed(contract);
     deliver(&outcome, form);
+}
+
+#[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+fn extract_test_canvas_stage(arguments: &mut Vec<OsString>) -> Result<bool, Fault> {
+    let mut occurrences = 0;
+    arguments.retain(|argument| {
+        if argument == spice::install::TEST_CANVAS_STAGE_ARGUMENT {
+            occurrences += 1;
+            false
+        } else {
+            true
+        }
+    });
+    if occurrences > 1 {
+        return Err(Fault {
+            class: FaultClass::Environment,
+            reason: "canvas::test-app-selection-invalid".to_owned(),
+            detail: "the debug-only Canvas stage argument may appear only once".to_owned(),
+        });
+    }
+    Ok(occurrences == 1)
+}
+
+#[cfg(all(not(target_arch = "wasm32"), not(debug_assertions)))]
+const fn extract_test_canvas_stage(_arguments: &mut Vec<OsString>) -> Result<bool, Fault> {
+    Ok(false)
 }
 
 #[cfg(not(target_arch = "wasm32"))]

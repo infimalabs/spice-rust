@@ -268,25 +268,10 @@ fn build_lane_fixture_refuses_a_symlink_escape_without_writing_the_external_tree
 
 #[test]
 fn staged_app_seed_callers_are_fully_inventoried() {
-    let tests = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
-    let marker = ["staged_app", "::seed("].concat();
-    let mut callers = fs::read_dir(&tests)
-        .expect("read Spice integration tests")
-        .filter_map(|entry| {
-            let path = entry.expect("read Spice integration test entry").path();
-            (path.extension().is_some_and(|extension| extension == "rs")
-                && fs::read_to_string(&path)
-                    .expect("read Spice integration test source")
-                    .contains(&marker))
-            .then(|| path.file_name().expect("test file name").to_owned())
-        })
-        .collect::<Vec<_>>();
-    callers.sort();
-
     // `demo_cli.rs` is the sole real-worktree consumer. Every other caller
     // seeds an owned temporary scratch root unconditionally and removes it.
     assert_eq!(
-        callers,
+        staged_app_callers("seed"),
         [
             "claim_refresh_cli.rs",
             "cli.rs",
@@ -300,6 +285,25 @@ fn staged_app_seed_callers_are_fully_inventoried() {
         ]
         .map(std::ffi::OsString::from)
     );
+    assert!(staged_app_callers("install").is_empty());
+}
+
+fn staged_app_callers(method: &str) -> Vec<std::ffi::OsString> {
+    let tests = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    let marker = ["staged_app", "::", method, "("].concat();
+    let mut callers = fs::read_dir(tests)
+        .expect("read Spice integration tests")
+        .filter_map(|entry| {
+            let path = entry.expect("read Spice integration test entry").path();
+            (path.extension().is_some_and(|extension| extension == "rs")
+                && fs::read_to_string(&path)
+                    .expect("read Spice integration test source")
+                    .contains(&marker))
+            .then(|| path.file_name().expect("test file name").to_owned())
+        })
+        .collect::<Vec<_>>();
+    callers.sort();
+    callers
 }
 
 fn stage_snapshot(stage: &Path) -> Option<Vec<(PathBuf, Vec<u8>)>> {
