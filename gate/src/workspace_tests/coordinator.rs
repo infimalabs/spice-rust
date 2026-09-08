@@ -793,14 +793,7 @@ impl ShardTemporaryRoot {
 }
 
 fn shard_temporary_parent() -> PathBuf {
-    #[cfg(unix)]
-    {
-        PathBuf::from("/tmp")
-    }
-    #[cfg(not(unix))]
-    {
-        std::env::temp_dir()
-    }
+    std::env::temp_dir()
 }
 
 impl Drop for ShardTemporaryRoot {
