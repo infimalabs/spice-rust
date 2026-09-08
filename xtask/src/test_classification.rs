@@ -340,6 +340,33 @@ mod tests {
     }
 
     #[test]
+    fn fast_selection_excludes_every_package_owned_slow_test() {
+        let registry = registry().expect("classification registry is valid");
+        let packages = registry
+            .tests
+            .iter()
+            .filter_map(|test| test.package.as_deref())
+            .collect::<BTreeSet<_>>();
+        for package in packages {
+            let argv = fast_argv(package).expect("package fast selection");
+            for test in registry
+                .tests
+                .iter()
+                .filter(|test| test.package.as_deref() == Some(package))
+            {
+                let name = test.test.as_ref().expect("package entry has a test name");
+                assert!(
+                    argv.windows(2).any(|pair| {
+                        pair[0] == "--skip" && pair[1] == std::ffi::OsStr::new(name)
+                    }),
+                    "fast selection for {package:?} did not exclude {:?}",
+                    test.id,
+                );
+            }
+        }
+    }
+
+    #[test]
     fn slow_execution_requires_explicit_unique_ids() {
         let mut output = Vec::new();
         assert!(
