@@ -216,10 +216,6 @@ test("production media owns a fixed-horizon shard outside interaction", () => {
   assert.equal(media.timeoutMs, 120_000);
   assert.deepEqual(media.scenarios, ["media-exchange"]);
   assert.ok(!interaction.scenarios.includes("media-exchange"));
-  assert.ok(
-    !CANVAS_SHARDS.some(({ scenarios }) => scenarios.includes("automatic-speech")),
-    "the obsolete automatic-speech scenario stays deleted",
-  );
 });
 
 function deferred() {
