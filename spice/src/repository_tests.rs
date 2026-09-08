@@ -142,6 +142,7 @@ fn linked_worktree_resolves_relative_gitdir_and_commondir_with_spaces() {
             .expect("canonical Rust inbox parent")
             .join(".spice-rs/inbox")
     );
+    assert_common_steering_media(&repository, &common, &state);
     assert_eq!(
         proof::Layout::new(
             repository.worktree_root(),
@@ -192,6 +193,23 @@ fn linked_worktree_resolves_relative_gitdir_and_commondir_with_spaces() {
         state.journal(),
         absolute_state.journal(),
         "linked worktrees share one durable ACK authority"
+    );
+}
+
+fn assert_common_steering_media(repository: &Repository, common: &Path, state: &StatePaths) {
+    assert_eq!(
+        state.steering_media(),
+        fs::canonicalize(common)
+            .expect("canonical Rust media parent")
+            .join(".spice-rs/steering-media"),
+        "linked worktree media uses the stable common runtime rather than Git administration",
+    );
+    assert_eq!(
+        repository
+            .admit_steering_delivery()
+            .expect("admit linked hook delivery")
+            .projections(),
+        state.steering_media(),
     );
 }
 
