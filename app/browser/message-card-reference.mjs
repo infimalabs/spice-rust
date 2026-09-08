@@ -664,19 +664,26 @@ async function retainNoActionCard(page, console, activityReplay, lane) {
 
 async function retainFinalCard(page, console, activityReplay, lane) {
   const text = "Final message color reference";
-  const message = await activityReplay.injectAgentProse(page, lane, text);
+  const message = await activityReplay.injectClassifiedAgentProse(page, lane, text, {
+    acknowledgements: 1,
+    tastes: 0,
+  });
   const card = console.locator(`[data-mosaic-card-key="${message.key}"]`);
   await card.waitFor({ state: "attached", timeout: 10_000 });
   await waitForPage(page, "ordinary precursor commits", TRANSITION_MS, (key) => {
     const candidate = document.querySelector(`[data-mosaic-card-key="${key}"]`);
     return candidate?.dataset.layoutPhase === "committed"
       && candidate.dataset.messageFinal === "false"
-      && !candidate.classList.contains("final");
+      && !candidate.classList.contains("final")
+      && candidate.querySelector(".message-badge--final") === null;
   }, message.key);
   await activityReplay.reviseAgentFinal(page, message.key);
   await waitForPage(page, "final message commits", TRANSITION_MS, (key) => {
     const candidate = document.querySelector(`[data-mosaic-card-key="${key}"]`);
-    return candidate?.dataset.layoutPhase === "committed" && candidate.classList.contains("final");
+    return candidate?.dataset.layoutPhase === "committed"
+      && candidate.classList.contains("final")
+      && [...candidate.querySelectorAll(".message-badge")]
+        .map((badge) => badge.textContent).join(",") === "FINAL,ACK1";
   }, message.key);
   return card;
 }
@@ -708,6 +715,11 @@ async function messageStateColors(card) {
       return resolved;
     };
     const style = getComputedStyle(article);
+    const finalBadge = article.querySelector(".message-badge--final");
+    const badgeBounds = finalBadge?.getBoundingClientRect();
+    const footerBounds = finalBadge?.closest(".message-footer")?.getBoundingClientRect();
+    const footerRightBounds = finalBadge?.closest(".message-footer")
+      ?.querySelector(".message-footer-right")?.getBoundingClientRect();
     const result = {
       key: article.dataset.mosaicCardKey,
       classes: [...article.classList],
@@ -723,6 +735,25 @@ async function messageStateColors(card) {
       producerAccent: color("var(--accent-slot, var(--accent))"),
       speechBorder: color("color-mix(in srgb, var(--warning) 70%, var(--line))"),
       speechAccent: color("var(--warning)"),
+      finalBadge: finalBadge && {
+        text: finalBadge.textContent,
+        ariaLabel: finalBadge.getAttribute("aria-label"),
+        role: finalBadge.getAttribute("role"),
+        background: getComputedStyle(finalBadge).backgroundColor,
+        color: getComputedStyle(finalBadge).color,
+        count: finalBadge.querySelectorAll(".message-badge-count").length,
+        left: badgeBounds.left,
+        right: badgeBounds.right,
+        top: badgeBounds.top,
+        bottom: badgeBounds.bottom,
+        footerLeft: footerBounds.left,
+        footerRight: footerBounds.right,
+        footerTop: footerBounds.top,
+        footerBottom: footerBounds.bottom,
+        footerRightLeft: footerRightBounds.left,
+      },
+      badgeTexts: [...article.querySelectorAll(".message-badge")]
+        .map((badge) => badge.textContent),
     };
     probe.remove();
     return result;
@@ -755,6 +786,7 @@ async function captureFinalMessageStates(
     `${mode} ${viewport.label} compares adjacent ordinary and final cards`,
   );
   assert.ok(!ordinary.classes.includes("final"), `${mode} ${viewport.label} comparator is ordinary`);
+  assert.equal(ordinary.finalBadge, null, `${mode} ${viewport.label} ordinary card has no FINAL badge`);
   assert.equal(ordinary.background, ordinary.panel, `${mode} ordinary preserves the panel background`);
   assert.equal(
     ordinary.borderRight,
@@ -762,6 +794,38 @@ async function captureFinalMessageStates(
     `${mode} ordinary preserves producer identity`,
   );
   assert.ok(final.classes.includes("final"), `${mode} ${viewport.label} retains final state`);
+  assert.deepEqual(
+    {
+      text: final.finalBadge?.text,
+      ariaLabel: final.finalBadge?.ariaLabel,
+      role: final.finalBadge?.role,
+      background: final.finalBadge?.background,
+      color: final.finalBadge?.color,
+      count: final.finalBadge?.count,
+    },
+    {
+      text: "FINAL",
+      ariaLabel: "FINAL message classification",
+      role: "listitem",
+      background: final.finalAccent,
+      color: final.panel,
+      count: 0,
+    },
+    `${mode} ${viewport.label} renders one accessible uncounted blue FINAL badge`,
+  );
+  assert.deepEqual(
+    final.badgeTexts,
+    ["FINAL", "ACK1"],
+    `${mode} ${viewport.label} keeps FINAL distinct from an existing ACK classification`,
+  );
+  assert.ok(
+    final.finalBadge.left >= final.finalBadge.footerLeft
+      && final.finalBadge.right <= final.finalBadge.footerRight
+      && final.finalBadge.top >= final.finalBadge.footerTop
+      && final.finalBadge.bottom <= final.finalBadge.footerBottom
+      && final.finalBadge.right <= final.finalBadge.footerRightLeft,
+    `${mode} ${viewport.label} contains the FINAL badge without obscuring attribution or actions`,
+  );
   assert.ok(!final.classes.includes("now-playing"), `${mode} ${viewport.label} starts silent`);
   assert.ok(
     backgroundDelta > 0,
@@ -787,6 +851,7 @@ async function captureFinalMessageStates(
   assert.equal(speaking.borderRight, speaking.producerAccent, `${mode} speech preserves producer identity`);
   assert.ok(speaking.boxShadow.includes(speaking.speechAccent), `${mode} speech paints its left inset rule`);
   assert.ok(speaking.boxShadow.includes(speaking.finalAccent), `${mode} speech preserves the final top rule`);
+  assert.equal(speaking.finalBadge?.background, speaking.finalAccent, `${mode} speech preserves the FINAL badge`);
   await card.screenshot({
     path: join(artifacts, `canvas-message-speaking-${viewport.label}-${mode}.png`),
   });
