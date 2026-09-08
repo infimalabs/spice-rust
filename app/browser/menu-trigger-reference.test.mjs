@@ -52,6 +52,7 @@ async function appearance(trigger) {
       flameAnimation: flame.animationName,
       flameOpacity: flame.opacity,
       accent: style.getPropertyValue("--canvas-menu-accent").trim(),
+      focus: getComputedStyle(document.documentElement).getPropertyValue("--focus").trim(),
       warning: getComputedStyle(document.documentElement).getPropertyValue("--warning").trim(),
       name: node.getAttribute("aria-label"),
       hasTextLabel: Boolean(node.querySelector(".canvas-menu-label")),
@@ -59,7 +60,7 @@ async function appearance(trigger) {
   });
 }
 
-function assertCutout(observed, label) {
+function assertCutout(observed, label, name = "Open Spice Canvas menu") {
   assert.deepEqual([observed.trigger.width, observed.trigger.height], [35, 30], `${label} outer size`);
   assert.deepEqual([observed.stamp.width, observed.stamp.height], [31, 25], `${label} stamp size`);
   assert.deepEqual(observed.padding, ["0px", "0px", "0px", "0px"], `${label} balanced padding`);
@@ -70,7 +71,7 @@ function assertCutout(observed, label) {
     observed.pepper.left + observed.pepper.width / 2
       - observed.stamp.left - observed.stamp.width / 2,
   ) <= 0.5, `${label} pepper centers in its stamp`);
-  assert.equal(observed.name, "Open Spice Canvas menu");
+  assert.equal(observed.name, name);
   assert.equal(observed.hasTextLabel, false, `${label} remains wordless`);
 }
 
@@ -118,16 +119,31 @@ test("Spice trigger stays centered across modes and interaction states", async (
               );
               assert.equal(active.flameAnimation, "canvas-fast-mode-pulse");
 
+              const updateName = "Open Spice Canvas menu - Canvas v5 update available; fast mode on";
+              await trigger.evaluate((node, name) => {
+                node.classList.add("canvas-menu-trigger--update");
+                node.setAttribute("aria-label", name);
+                node.title = name;
+              }, updateName);
+              const updating = await appearance(trigger);
+              assertCutout(updating, `${label} update and fast`, updateName);
+              assert.equal(updating.accent, updating.focus, `${label} update blue takes accent precedence`);
+              assert.equal(
+                updating.flameAnimation,
+                "canvas-fast-mode-pulse",
+                `${label} Fast mode retains its established animation`,
+              );
+
               await page.emulateMedia({ reducedMotion: "reduce" });
               const reduced = await appearance(trigger);
-              assertCutout(reduced, `${label} reduced motion`);
+              assertCutout(reduced, `${label} reduced motion`, updateName);
               assert.equal(reduced.flameAnimation, "none");
               assert.equal(reduced.flameOpacity, "0.82");
               await page.emulateMedia({ reducedMotion: "no-preference" });
 
               await trigger.evaluate((node) => { node.parentElement.open = true; });
               const pressed = await appearance(trigger);
-              assertCutout(pressed, `${label} pressed`);
+              assertCutout(pressed, `${label} pressed`, updateName);
               assert.notDeepEqual([pressed.background, pressed.border], [inactive.background, inactive.border]);
             } finally {
               await context.close();

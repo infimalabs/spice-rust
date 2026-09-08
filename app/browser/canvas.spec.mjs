@@ -40,7 +40,7 @@ import {
   assertCanvas,
   captureReportedAgentPage,
 } from "./canvas-readiness.mjs";
-import { assertCanvasProtocolRefresh } from "./canvas-compatibility.mjs";
+import { assertCanvasExplicitUpdate } from "./canvas-compatibility.mjs";
 import { assertAuthoritySurface } from "./canvas-authority.mjs";
 import {
   assertPerOrgWatchbands,
@@ -452,7 +452,7 @@ try {
           assertHandshakeTimeout(browser, resident.discovery.endpoint)
         ));
         await run.phase("protocol-refresh", () => (
-          assertCanvasProtocolRefresh(browser, resident.discovery.endpoint)
+          assertCanvasExplicitUpdate(browser, resident.discovery.endpoint)
         ));
         await run.phase("lineage-isolation", () => assertLineageLifeIsolation(browser));
         await run.phase("composer-strip", () => assertSevenMemberComposerStrip(browser));

@@ -95,9 +95,16 @@ struct SurfaceHandles {
     connection: UseStateHandle<Connection>,
     surface: UseStateHandle<SurfaceData>,
     speech: UseStateHandle<wire::SpeechPlayback>,
+    canvas_update: UseStateHandle<Option<CanvasUpdate>>,
     lineage_controls: UseReducerHandle<LineageControls>,
     composer_drafts: UseReducerHandle<ComposerDrafts>,
     submissions: SubmissionHandle,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct CanvasUpdate {
+    version: wire::CanvasVersion,
+    generation: wire::Digest,
 }
 
 #[derive(Clone, PartialEq)]
@@ -502,6 +509,7 @@ fn canvas_app() -> Html {
     let axis = use_state(|| Axis::Topology);
     let mosaic = use_state(|| true);
     let canvas_menu_open = use_state(|| false);
+    let canvas_update = use_state(|| None::<CanvasUpdate>);
     let lineage_controls = use_reducer(LineageControls::restore);
     let lineage_fleet = use_node_ref();
     let composer_drafts = use_reducer(ComposerDrafts::default);
@@ -539,6 +547,7 @@ fn canvas_app() -> Html {
             connection: connection.clone(),
             surface: surface.clone(),
             speech: speech.clone(),
+            canvas_update: canvas_update.clone(),
             lineage_controls: lineage_controls.clone(),
             composer_drafts: composer_drafts.clone(),
             submissions: submissions.clone(),
@@ -569,6 +578,7 @@ fn canvas_app() -> Html {
         axis: &axis,
         mosaic: &mosaic,
         canvas_menu_open: &canvas_menu_open,
+        canvas_update: &canvas_update,
         lineage_controls: &lineage_controls,
         composer_drafts: &composer_drafts,
         submissions: &submissions,

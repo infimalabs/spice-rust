@@ -78,9 +78,13 @@ fn canvas_bootstrap_has_one_strict_body_shape() {
 fn canvas_version_has_one_http_header_spelling() {
     assert_eq!(wire::hello::CANVAS_VERSION_HEADER, "x-spice-canvas-version");
     assert_eq!(
+        wire::hello::CANVAS_GENERATION_HEADER,
+        "x-spice-canvas-generation"
+    );
+    assert_eq!(
         CanvasVersion::CURRENT,
-        CanvasVersion(4),
-        "generation 4 carries environmental requirements in task statements"
+        CanvasVersion(5),
+        "generation 5 carries explicit Canvas app updates"
     );
     assert_eq!(
         CanvasVersion::CURRENT.to_string().parse(),

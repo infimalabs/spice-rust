@@ -68,6 +68,7 @@ async fn run_connection(
             &handles.connection,
             &handles.surface,
             &handles.speech,
+            &handles.canvas_update,
             data,
             &signal,
         )
@@ -426,10 +427,11 @@ async fn establish_connection(
     connection: &UseStateHandle<Connection>,
     surface: &UseStateHandle<SurfaceData>,
     speech: &UseStateHandle<wire::SpeechPlayback>,
+    canvas_update: &UseStateHandle<Option<CanvasUpdate>>,
     data: &SurfaceData,
     signal: &web_sys::AbortSignal,
 ) -> Result<EstablishedConnection, String> {
-    let (session, writer, mut reader) = open_socket(speech, signal).await?;
+    let (session, writer, mut reader) = open_socket(speech, canvas_update, signal).await?;
     let principal = admit_runtime(&session, &mut reader, connection, surface, data).await?;
     let pending = BTreeMap::new();
     Ok(EstablishedConnection {
@@ -444,6 +446,7 @@ async fn establish_connection(
 /// Discover the resident endpoint and open the socket its bootstrap names.
 async fn open_socket(
     speech: &UseStateHandle<wire::SpeechPlayback>,
+    canvas_update: &UseStateHandle<Option<CanvasUpdate>>,
     signal: &web_sys::AbortSignal,
 ) -> Result<(Session, SocketWriter, SocketReader), String> {
     let response = Request::get(&authenticated_path(
@@ -463,14 +466,22 @@ async fn open_socket(
                 .map_err(|error| format!("bootstrap Canvas version header was invalid: {error}"))
         })
         .transpose()?;
+    let generation = response
+        .headers()
+        .get(wire::hello::CANVAS_GENERATION_HEADER)
+        .ok_or_else(|| "bootstrap carried no Canvas app generation".to_owned())?
+        .parse::<wire::Digest>()
+        .map_err(|error| format!("bootstrap Canvas app generation was invalid: {error}"))?;
+    let loaded_generation = loaded_canvas_generation()?;
+    canvas_update.set(canvas.and_then(|version| {
+        (!version.is_current() || generation != loaded_generation).then(|| CanvasUpdate {
+            version,
+            generation: generation.clone(),
+        })
+    }));
     if let Err(fault) = Session::admit_canvas(canvas) {
-        web_sys::window()
-            .ok_or_else(|| "browser window is unavailable".to_owned())?
-            .location()
-            .reload()
-            .map_err(|_| "browser could not load the current Canvas application".to_owned())?;
         return Err(format!(
-            "{}: {}; loading the current Canvas application",
+            "{}: {}; explicit Canvas update required",
             fault.reason, fault.detail
         ));
     }
@@ -497,6 +508,16 @@ async fn open_socket(
         .await
         .map_err(websocket_error)?;
     Ok((session, writer, reader))
+}
+
+fn loaded_canvas_generation() -> Result<wire::Digest, String> {
+    web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.get_element_by_id("app"))
+        .and_then(|root| root.get_attribute("data-canvas-generation"))
+        .ok_or_else(|| "loaded Canvas app carried no generation identity".to_owned())?
+        .parse()
+        .map_err(|error| format!("loaded Canvas app generation was invalid: {error}"))
 }
 
 /// Admit the acceptance frame and publish the runtime that frame names.

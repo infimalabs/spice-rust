@@ -23,6 +23,7 @@ pub(super) struct CommandBarRender<'a> {
     pub(super) axis: &'a UseStateHandle<Axis>,
     pub(super) mosaic: &'a UseStateHandle<bool>,
     pub(super) menu_open: &'a UseStateHandle<bool>,
+    pub(super) canvas_update: &'a UseStateHandle<Option<CanvasUpdate>>,
     pub(super) active_axis: Axis,
     pub(super) surface: &'a SurfaceData,
     pub(super) cursor: &'a str,
@@ -125,6 +126,19 @@ fn render_canvas_menu(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunt
         .and_then(CanvasRuntime::settings)
         .is_some_and(|settings| settings.fast_mode);
     let menu_open = render.menu_open.clone();
+    let update = (**render.canvas_update).as_ref();
+    let trigger_label = match (update, fast_mode) {
+        (Some(update), true) => format!(
+            "Open Spice Canvas menu - Canvas v{} update available; fast mode on",
+            update.version
+        ),
+        (Some(update), false) => format!(
+            "Open Spice Canvas menu - Canvas v{} update available",
+            update.version
+        ),
+        (None, true) => "Open Spice Canvas menu - fast mode on".to_owned(),
+        (None, false) => "Open Spice Canvas menu".to_owned(),
+    };
     let toggle = Callback::from(move |event: MouseEvent| {
         event.prevent_default();
         menu_open.set(!*menu_open);
@@ -132,15 +146,14 @@ fn render_canvas_menu(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunt
     html! {
         <details class="canvas-menu" open={**render.menu_open}>
             <summary
-                class={fast_mode.then_some("canvas-menu-trigger--fast")}
-                aria-label="Open Spice Canvas menu"
+                class={classes!(
+                    fast_mode.then_some("canvas-menu-trigger--fast"),
+                    update.is_some().then_some("canvas-menu-trigger--update"),
+                )}
+                aria-label={trigger_label.clone()}
                 aria-haspopup="menu"
                 aria-expanded={(**render.menu_open).to_string()}
-                title={if fast_mode {
-                    "Open Spice Canvas menu - fast mode on"
-                } else {
-                    "Open Spice Canvas menu"
-                }}
+                title={trigger_label}
                 onclick={toggle}
             >
                 <span class="canvas-menu-flame" aria-hidden="true">{"🔥"}</span>
@@ -156,9 +169,12 @@ fn render_canvas_menu(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunt
                         render.active_axis,
                         axis_count(render.active_axis, runtime),
                         runtime,
-                        render.cursor,
-                        render.sender,
-                        render.lineage_controls,
+                        &super::lineage_menu::Context {
+                            cursor: render.cursor,
+                            update,
+                            sender: render.sender,
+                            lineage_controls: render.lineage_controls,
+                        },
                     )}
                 </div>
             </div>

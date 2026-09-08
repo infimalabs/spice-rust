@@ -14,6 +14,16 @@ pub(super) async fn bootstrap(
     let Some(capability) = state.capabilities.operator() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
+    let app_generation = match state.app.current_generation() {
+        Ok(generation) => generation,
+        Err(error) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("canvas app unavailable: {error}"),
+            )
+                .into_response();
+        }
+    };
     // The socket this names has to be one the asking client can reach, which
     // the published endpoint is not when a remote browser is on the other end
     // of a wildcard bind. It reached this surface somehow; that is the address.
@@ -38,6 +48,11 @@ pub(super) async fn bootstrap(
         wire::hello::CANVAS_VERSION_HEADER,
         HeaderValue::from_str(&wire::CanvasVersion::CURRENT.to_string())
             .expect("the numeric Canvas version is a valid header value"),
+    );
+    response.headers_mut().insert(
+        wire::hello::CANVAS_GENERATION_HEADER,
+        HeaderValue::from_str(app_generation.identity().as_str())
+            .expect("the canonical app generation is a valid header value"),
     );
     install_browser_headers(&mut response);
     response
