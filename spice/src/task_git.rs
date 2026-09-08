@@ -411,8 +411,9 @@ fn publish_inner(
         }
         _ => None,
     };
+    let open_merge_target = resolution.as_ref().and(open_merge.as_deref());
     let Some((target, upstream_head)) =
-        prepare_completion_target(root, meta.phase, opening, &observed_head)?
+        prepare_completion_target(root, meta.phase, opening, &observed_head, open_merge_target)?
     else {
         return Ok(boundary(
             observed_head.clone(),
@@ -423,11 +424,10 @@ fn publish_inner(
         ));
     };
     if let Some((active, preflight)) = resolution {
-        let local_commits = ahead_count(root, &target.baseline)?;
+        let local_commits = ahead_count(root, &upstream_head)?;
         let message = compose_message(meta);
         let integrated = resolution::complete(
             root,
-            &target,
             meta,
             active,
             resolution::Parents {
@@ -464,7 +464,7 @@ fn publish_inner(
     } else {
         observed_head
     };
-    let local_commits = ahead_count(root, &target.baseline)?;
+    let local_commits = ahead_count(root, &upstream_head)?;
     let message = compose_message(meta);
     // Bind the authored tree and any non-empty lane command before the merge.
     // An empty lane declaration deliberately defers to each integrated tree.
@@ -497,13 +497,18 @@ fn prepare_completion_target(
     phase: &str,
     opening: Option<&GitBoundary>,
     observed_head: &str,
+    open_merge_target: Option<&str>,
 ) -> Result<Option<(Target, String)>, Error> {
     let Some(target) = resolve_target(root)? else {
         require_plan_synchronization(root, phase, opening, observed_head, None)?;
         return Ok(None);
     };
-    fetch(root, &target)?;
-    let upstream_head = required_read(root, &["rev-parse", &target.baseline], "read baseline")?;
+    let upstream_head = if let Some(upstream) = open_merge_target {
+        upstream.to_owned()
+    } else {
+        fetch(root, &target)?;
+        required_read(root, &["rev-parse", &target.baseline], "read baseline")?
+    };
     require_plan_synchronization(
         root,
         phase,
@@ -666,8 +671,17 @@ fn resolve_target(root: &Path) -> Result<Option<Target>, Error> {
 fn fetch(root: &Path, target: &Target) -> Result<(), Error> {
     // The Git common directory is bare and may name this remote-tracking ref
     // as its own HEAD while linked worktrees carry independent branch HEADs.
-    // Fetch owns this explicit update and does not materialize the bare tree.
-    let fetched = run(root, &["fetch", "--update-head-ok", &target.remote])?;
+    // Fetch owns this one explicit update and ignores configured refspecs that
+    // could otherwise use --update-head-ok to target a checked-out lane ref.
+    let refspec = format!(
+        "+refs/heads/{branch}:refs/remotes/{remote}/{branch}",
+        branch = target.branch,
+        remote = target.remote,
+    );
+    let fetched = run(
+        root,
+        &["fetch", "--update-head-ok", &target.remote, &refspec],
+    )?;
     if fetched.success() {
         Ok(())
     } else {
@@ -894,8 +908,6 @@ fn publish_with_retry(
         if fresh != upstream_head {
             integrated = integrate_retry(root, &integrated, &fresh, message, label)?;
             upstream_head = fresh;
-            // The race produced a tree nothing has read yet. Every other path
-            // out of this loop pushes the commit admitted above it.
             admission.admit(repository, &integrated, label)?;
         }
         pushed = push(root, target, &integrated, &upstream_head)?;
@@ -954,6 +966,13 @@ fn integrate_retry(
 }
 
 fn push(root: &Path, target: &Target, commit: &str, expected: &str) -> Result<GitOutput, Error> {
+    if !is_ancestor(root, expected, commit)? {
+        return Err(Error::refusal(
+            "git::publish-non-fast-forward",
+            format!("task landing {commit} does not retain expected upstream {expected}"),
+            "inspect the task landing parents before retrying completion",
+        ));
+    }
     run(
         root,
         &[

@@ -504,6 +504,35 @@ fn completion_fetches_when_bare_head_names_the_remote_tracking_branch() {
 }
 
 #[test]
+fn agent_resolution_reuses_merge_head_without_fetching_again() {
+    let fixture = RepositoryFixture::new("resolution-no-fetch");
+    configure_peer_integrations(&fixture.root);
+    let upstream = required_read(
+        &fixture.root,
+        &["rev-parse", "origin/main"],
+        "read resolved merge target",
+    )
+    .expect("resolved merge target reads");
+    fs::rename(
+        fixture.root.join(".git/fixture-origin.git"),
+        fixture.root.join(".git/unavailable-origin.git"),
+    )
+    .expect("make origin unavailable");
+
+    let (_, resolved) = prepare_completion_target(
+        &fixture.root,
+        "todo",
+        None,
+        &fixture.opening.head,
+        Some(&upstream),
+    )
+    .expect("agent resolution does not fetch")
+    .expect("resolution retains its configured publication target");
+
+    assert_eq!(resolved, upstream);
+}
+
+#[test]
 fn publication_race_rebuilds_once_against_the_fetched_origin_identity() {
     let fixture = RepositoryFixture::new("moving-origin");
     configure_peer_integrations(&fixture.root);
