@@ -278,12 +278,8 @@ pub fn plan_cargo_gate_shards_at(
                 sources
             },
         );
-        let test_packages = partition_with_target_limit(&selected, SELECTED_TARGETS_PER_SHARD);
-        validate_partition_with_target_limit(
-            &selected,
-            &test_packages,
-            SELECTED_TARGETS_PER_SHARD,
-        )?;
+        let test_packages = partition_with_target_limit(&selected, PROOF_TARGETS_PER_SHARD);
+        validate_partition_with_target_limit(&selected, &test_packages, PROOF_TARGETS_PER_SHARD)?;
         test_packages
             .iter()
             .map(|package| {

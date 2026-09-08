@@ -98,11 +98,15 @@ pub fn cargo_workspace_base_inventory_required(
 /// Targets are source-weight balanced across the minimum shard count so one
 /// cluster of larger integration targets cannot pin the coordinator tail.
 const TARGETS_PER_SHARD: usize = 8;
-/// A selected run has already compiled every reached target in one shared
+/// A selected local run has already compiled every reached target in one shared
 /// prebuild, so its remaining Cargo frontends are launch coordinators rather
 /// than compiler work. Keep each package in fewer, broader groups to avoid
 /// spending the enclosing gate deadline on shared build-directory lock waves.
-const SELECTED_TARGETS_PER_SHARD: usize = 24;
+const SELECTED_PREBUILT_TARGETS_PER_SHARD: usize = 24;
+/// Proof actions are independently bounded Cargo commands, not launches over
+/// the local coordinator's shared prebuild. Reuse the ordinary target cap so a
+/// large package cannot put a long integration tail under one shard deadline.
+const PROOF_TARGETS_PER_SHARD: usize = TARGETS_PER_SHARD;
 /// Exact selected prebuild batches share one Cargo graph and output authority.
 /// Admit only two package batches and divide the aggregate compiler grant
 /// between their stable worker lanes. This retains package overlap without
@@ -876,8 +880,8 @@ fn prepare_selected_execution(
     )
     .map_err(output_error)?;
     let target_partition_started = Instant::now();
-    let shards = partition_with_target_limit(&selected, SELECTED_TARGETS_PER_SHARD);
-    validate_partition_with_target_limit(&selected, &shards, SELECTED_TARGETS_PER_SHARD)?;
+    let shards = partition_with_target_limit(&selected, SELECTED_PREBUILT_TARGETS_PER_SHARD);
+    validate_partition_with_target_limit(&selected, &shards, SELECTED_PREBUILT_TARGETS_PER_SHARD)?;
     writeln!(
         output,
         "[rust-test] stage=selected-target-partition-terminal elapsed_ms={} disposition=success shards={}",
@@ -1203,4 +1207,76 @@ fn count_differences<T: Ord + fmt::Debug>(
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod partition_tests {
+    use super::*;
+
+    #[test]
+    fn proof_target_cap_splits_one_large_package_without_losing_determinism_or_targets() {
+        let target_count = PROOF_TARGETS_PER_SHARD * 2 + 1;
+        let targets = (0..target_count)
+            .map(|index| TargetIdentity {
+                package: "fixture".to_owned(),
+                kind: "test".to_owned(),
+                name: format!("target-{index:02}"),
+                required_features: Vec::new(),
+                source: PathBuf::from(format!("target-{index:02}.rs")),
+                declared_path_sources: Vec::new(),
+                source_bytes: u64::try_from(index + 1).expect("fixture weight fits u64"),
+            })
+            .collect::<Vec<_>>();
+        let inventory = Inventory {
+            packages: vec![PackageInventory {
+                id: "fixture 0.0.0".to_owned(),
+                name: "fixture".to_owned(),
+                root: PathBuf::from("fixture"),
+                dependencies: Vec::new(),
+                namespace_context: FileMacroCrateContext::from_metadata("fixture", "2024", &[])
+                    .expect("fixture namespace is current"),
+                compile_time_authority: None,
+                declared_targets: targets.clone(),
+                removed_targets: Vec::new(),
+                targets,
+            }],
+            resolution: CargoResolution::default(),
+            binary_outputs: Vec::new(),
+            target_directory: PathBuf::from("target"),
+            build_directory: PathBuf::from("target/cargo-build"),
+        };
+
+        let shards = partition_with_target_limit(&inventory, PROOF_TARGETS_PER_SHARD);
+        let repeated = partition_with_target_limit(&inventory, PROOF_TARGETS_PER_SHARD);
+
+        assert_eq!(shards.len(), 3);
+        assert!(
+            shards
+                .iter()
+                .all(|shard| shard.targets.len() <= PROOF_TARGETS_PER_SHARD)
+        );
+        let projection = |shards: &[PackageInventory]| {
+            shards
+                .iter()
+                .map(|shard| {
+                    shard
+                        .targets
+                        .iter()
+                        .map(|target| target.name.clone())
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(projection(&shards), projection(&repeated));
+        let observed = shards
+            .iter()
+            .flat_map(|shard| shard.targets.iter().map(|target| target.name.clone()))
+            .collect::<BTreeSet<_>>();
+        let expected = inventory.packages[0]
+            .targets
+            .iter()
+            .map(|target| target.name.clone())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(observed, expected);
+    }
 }
