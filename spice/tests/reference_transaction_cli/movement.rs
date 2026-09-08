@@ -72,13 +72,14 @@ impl Movement {
 }
 
 #[test]
-fn task_done_lands_an_admitted_divergent_agent_commit_and_refusal_is_atomic() {
+fn task_done_lands_owned_divergent_commits_and_hook_refusal_is_atomic() {
     exercise_task_done("worktree-alpha", "agent-one", true);
     exercise_task_done("worktree-beta", "nested/agent-two", true);
     exercise_task_done("worktree-mismatch", "mismatched-agent", false);
+    exercise_hook_guarded_mismatch();
 }
 
-fn exercise_task_done(worktree_label: &str, branch: &str, admitted: bool) {
+fn exercise_task_done(worktree_label: &str, branch: &str, reference_admission_matches: bool) {
     let scratch = completion_repository(worktree_label);
     let root = scratch.path();
     let base = git(root, &["rev-parse", "HEAD"]);
@@ -121,7 +122,11 @@ fn exercise_task_done(worktree_label: &str, branch: &str, admitted: bool) {
         root,
         &integrated_tree,
         branch,
-        Some(if admitted { &upstream } else { &base }),
+        Some(if reference_admission_matches {
+            &upstream
+        } else {
+            &base
+        }),
     );
     staged_app::seed(root);
     let resident = Resident::start(root);
@@ -157,34 +162,61 @@ fn exercise_task_done(worktree_label: &str, branch: &str, admitted: bool) {
     git(root, &["update-ref", "refs/heads/main", &upstream, &base]);
     git(root, &["fetch", "origin"]);
 
-    let before = repository_state(root, &task, &lane);
     let done = spice_run(
         root,
         &["task", "done", "--validation", "fixture completion"],
         Some(&lane),
     );
-    if admitted {
-        assert_success(&done, "task completion");
-        let landing = git(root, &["rev-parse", "HEAD"]);
-        assert_ne!(landing, agent);
-        assert_eq!(
-            git(root, &["rev-list", "--parents", "-n", "1", &landing]),
-            format!("{landing} {upstream} {agent}")
-        );
-        assert_eq!(git(root, &["status", "--porcelain"]), "");
-        let shown = task_text(root, &task, &lane);
-        assert!(shown.contains("phase review"), "{shown}");
-    } else {
-        assert_eq!(done.status.code(), Some(2), "{}", streams(&done));
-        assert!(
-            String::from_utf8_lossy(&done.stderr)
-                .contains("gate-evidence::admission-candidate-mismatch"),
-            "{}",
-            streams(&done),
-        );
-        assert_eq!(repository_state(root, &task, &lane), before);
-    }
+    assert_success(&done, "task completion");
+    let landing = git(root, &["rev-parse", "HEAD"]);
+    assert_ne!(landing, agent);
+    assert_eq!(
+        git(root, &["rev-list", "--parents", "-n", "1", &landing]),
+        format!("{landing} {upstream} {agent}")
+    );
+    assert_eq!(git(root, &["status", "--porcelain"]), "");
+    let shown = task_text(root, &task, &lane);
+    assert!(shown.contains("phase review"), "{shown}");
     resident.stop(root);
+}
+
+fn exercise_hook_guarded_mismatch() {
+    let fixture = Movement::new("hook-guarded-mismatch");
+    publish_admission(
+        fixture.scratch.path(),
+        &fixture.tree,
+        "refs/heads/main",
+        None,
+    );
+    fixture.install_hook();
+    let before = repository_git_state(fixture.scratch.path());
+    let update = Command::new("/usr/bin/git")
+        .args([
+            "update-ref",
+            "refs/heads/main",
+            &fixture.candidate,
+            &fixture.head,
+        ])
+        .current_dir(fixture.scratch.path())
+        .output()
+        .unwrap();
+    assert_eq!(update.status.code(), Some(128), "{}", streams(&update));
+    assert!(
+        String::from_utf8_lossy(&update.stderr)
+            .contains("gate-evidence::admission-candidate-mismatch"),
+        "{}",
+        streams(&update),
+    );
+    assert_eq!(repository_git_state(fixture.scratch.path()), before);
+}
+
+fn repository_git_state(root: &Path) -> Vec<String> {
+    vec![
+        git(root, &["rev-parse", "HEAD"]),
+        git(root, &["for-each-ref", "--format=%(refname) %(objectname)"]),
+        git(root, &["write-tree"]),
+        git(root, &["status", "--porcelain"]),
+    ]
 }
 
 fn completion_repository(label: &str) -> Scratch {
@@ -259,16 +291,6 @@ fn task_text(root: &Path, task: &str, lane: &str) -> String {
         .as_str()
         .expect("task show returns text")
         .to_owned()
-}
-
-fn repository_state(root: &Path, task: &str, lane: &str) -> Vec<String> {
-    vec![
-        git(root, &["rev-parse", "HEAD"]),
-        git(root, &["write-tree"]),
-        git(root, &["status", "--porcelain"]),
-        git(root, &["rev-parse", "refs/remotes/origin/main"]),
-        task_text(root, task, lane),
-    ]
 }
 
 #[test]
