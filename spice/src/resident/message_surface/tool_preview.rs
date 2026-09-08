@@ -162,7 +162,7 @@ pub(super) fn call_preview(name: &str, arguments: &str) -> String {
 }
 
 fn normalized_name(name: &str) -> String {
-    flatten(&name.trim().replace('_', " "))
+    flatten(name.trim())
 }
 
 fn named_preview(name: &str, arguments: &str, fallback: &str) -> String {

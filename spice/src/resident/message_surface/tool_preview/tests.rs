@@ -1210,14 +1210,14 @@ fn generic_command_execution_names_suppress_only_informative_commands() {
     );
     assert_eq!(
         activity_preview("unknown_command", r#"{"command":"cargo test:all"}"#),
-        "unknown command: cargo test:all",
+        "unknown_command: cargo test:all",
     );
     assert_eq!(activity_preview("exec", "null"), "exec: null");
-    assert_eq!(activity_preview("exec_command", "17"), "exec command: 17");
+    assert_eq!(activity_preview("exec_command", "17"), "exec_command: 17");
     assert_eq!(activity_preview("exec", "{malformed"), "exec command");
     assert_eq!(
         activity_preview("exec_command", "{malformed"),
-        "exec command"
+        "exec_command command"
     );
     assert_eq!(
         activity_preview("command_execution", "cargo test --locked"),
