@@ -156,6 +156,10 @@ const CASES: &[Case] = &[
         ],
     ),
     case(
+        "task require",
+        &["task", "require", "READY-12345678", "--clear"],
+    ),
+    case(
         "task artifact add",
         &["task", "artifact", "add", "READY-12345678", "missing"],
     ),
