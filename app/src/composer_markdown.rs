@@ -757,13 +757,20 @@ mod tests {
              [REVIEW] A later paragraph remains unchanged.\n\n\
              > [REVIEW] Quoted context remains unchanged.\n\n\
              > [TASTE] compatibility: Keep one tested path.\n\n\
+             > > [TASTE] fallbacks: Nested guidance keeps its own accent.\n\n\
              > [TASTE] polling: Wait for completion.\n\n\
              ACK: ordinary [TASTE] prose stays text.",
-            2,
+            3,
         );
         assert!(!rendered.html.contains("compatibility:"));
+        assert!(!rendered.html.contains("fallbacks:"));
         assert!(!rendered.html.contains("polling:"));
         assert!(rendered.html.contains("Keep one tested path."));
+        assert!(
+            rendered
+                .html
+                .contains("Nested guidance keeps its own accent.")
+        );
         assert!(rendered.html.contains("Wait for completion."));
         assert!(rendered.html.contains("Peer feedback remains unchanged."));
         assert!(
@@ -794,7 +801,7 @@ mod tests {
                 .html
                 .matches("class=\"message-taste-pill\"")
                 .count(),
-            2,
+            3,
             "{}",
             rendered.html,
         );
@@ -803,7 +810,7 @@ mod tests {
                 .html
                 .matches("aria-label=\"Taste classification\">TASTE</span>")
                 .count(),
-            2,
+            3,
         );
         assert!(
             rendered
