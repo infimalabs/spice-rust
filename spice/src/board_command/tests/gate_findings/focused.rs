@@ -34,6 +34,10 @@ pub(super) fn focused_dispatch_in(
                 tree,
                 anchor: format!("anchor-{marker}"),
                 kind: wire::intent::GateFindingSourceKind::StagedIndex,
+                mainline: Some(wire::intent::GateFindingMainline {
+                    reference: "refs/remotes/origin/main".to_owned(),
+                    merge_base: format!("mainline-base-{marker}"),
+                }),
             },
         },
         findings: finding_names.iter().map(|name| finding(name)).collect(),
