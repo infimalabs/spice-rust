@@ -386,6 +386,9 @@ impl<'trace> RepositoryExecutor<'trace> {
 
     /// Preserve index movement as a signal for a reservation-scoped semantic recapture.
     pub(super) fn verify_refreshable_source(&self) -> Result<RefreshableSourceState, BatteryError> {
+        self.core_source
+            .verify_git_controls()
+            .map_err(|error| BatteryError::new(error.to_string()))?;
         self.tree
             .verify_refreshable_source()
             .map_err(|error| BatteryError::new(error.to_string()))
