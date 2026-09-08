@@ -89,6 +89,10 @@ fn ambiguous_missing_and_noncanonical_slots_refuse_and_roll_back() {
         ("both", add_current_slot),
         ("neither", remove_retired_slot),
         ("noncanonical", make_fact_noncanonical),
+        (
+            "noncanonical-receipt-answer",
+            make_receipt_answer_noncanonical,
+        ),
     ];
     for &(name, corrupt) in cases {
         let scratch = Scratch::new();
@@ -567,6 +571,31 @@ fn make_fact_noncanonical(connection: &Connection) {
             [noncanonical],
         )
         .expect("store noncanonical fact");
+}
+
+fn make_receipt_answer_noncanonical(connection: &Connection) {
+    let command = CommandKind::BoardRead.as_str();
+    let bytes: Vec<u8> = connection
+        .query_row(
+            "SELECT response FROM command_receipts WHERE command_kind = ?1",
+            [command],
+            |row| row.get(0),
+        )
+        .expect("read board response for corruption");
+    let mut document: Value = serde_json::from_slice(&bytes).expect("decode board response JSON");
+    document["outcome"]["body"]["residency"]["body"]["subscriptions"][0]
+        .as_object_mut()
+        .expect("board response lineage subscription")
+        .insert("manual_projects".to_owned(), json!([]));
+    connection
+        .execute(
+            "UPDATE command_receipts SET response = ?1 WHERE command_kind = ?2",
+            params![
+                serde_json::to_vec(&document).expect("encode noncanonical board response"),
+                command,
+            ],
+        )
+        .expect("store noncanonical board response");
 }
 
 fn replace_all(bytes: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {

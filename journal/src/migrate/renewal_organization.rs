@@ -371,28 +371,38 @@ fn canonical_response(row: &str, kind: &str, value: &Value) -> Result<Vec<u8>, O
 
 fn canonical_receipt<B>(row: &str, value: &Value) -> Result<Vec<u8>, OpenError>
 where
-    B: DeserializeOwned,
+    B: DeserializeOwned + Serialize,
 {
     let bytes = intermediate("command_receipts", row, value)?;
-    wire::decode::<wire::Response<B>>(&bytes).map_err(|error| {
+    let response: wire::Response<B> = wire::decode(&bytes).map_err(|error| {
         invalid(
             "command_receipts",
             row,
             &format!("migrated response is not its command-kind wire: {error}"),
         )
     })?;
-    let response: wire::Response<Value> = wire::decode(&bytes).map_err(|error| {
-        invalid(
-            "command_receipts",
-            row,
-            &format!("migrated response is not generic receipt wire: {error}"),
-        )
-    })?;
-    wire::encode(&response).map_err(|error| {
+    let canonical = wire::encode(&response).map_err(|error| {
         invalid(
             "command_receipts",
             row,
             &format!("migrated response cannot encode canonically: {error}"),
+        )
+    })?;
+    // Receipts are stored and verified through the generic envelope. Project
+    // only after the typed round trip so command-specific defaults and
+    // validation govern the body while the durable envelope keeps its wire.
+    let generic: wire::Response<Value> = wire::decode(&canonical).map_err(|error| {
+        invalid(
+            "command_receipts",
+            row,
+            &format!("typed response cannot project predecessor wire: {error}"),
+        )
+    })?;
+    wire::encode(&generic).map_err(|error| {
+        invalid(
+            "command_receipts",
+            row,
+            &format!("typed response cannot encode canonical receipt wire: {error}"),
         )
     })
 }
