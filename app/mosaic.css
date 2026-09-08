@@ -533,7 +533,12 @@
   background: var(--control);
   box-shadow: inset 0 0 0 1px var(--line-soft);
 }
-.composer-shard:focus-within {
+.composer-shard:focus-within,
+html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
+  .organization-composer:has(
+    .composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus
+  )
+  .composer-shard--primary[data-broadcast-target-eligible="true"] {
   border-color: color-mix(in srgb, var(--accent-slot, var(--accent)) 62%, var(--line));
 }
 /* Quote shards are the context leading into the primary draft, so the visible
@@ -752,14 +757,6 @@ html[data-command-modifier-held="true"]
   .organization-send:not(:disabled) {
   outline: 3px solid var(--focus);
   outline-offset: 3px;
-}
-html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
-  .organization-composer:has(
-    .composer-shard--primary[data-broadcast-source-eligible="true"] textarea:focus
-  )
-  .composer-shard--primary[data-broadcast-target-eligible="true"] {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
 }
 .organization-control-issue {
   width: calc(var(--organization-control-track-width) + 16px); margin: 0;

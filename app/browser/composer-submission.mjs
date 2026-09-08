@@ -30,22 +30,29 @@ async function assertCommandPreview(send, expected, label) {
   assert.equal(observed, expected, label);
 }
 
-async function assertBroadcastPreview(form, expected, label) {
-  const targets = form.locator(
-    '.composer-shard--primary[data-broadcast-target-eligible="true"]',
-  );
-  assert.ok(await targets.count() >= 2, "the broadcast fixture has multiple occupied targets");
-  const outlined = await targets.evaluateAll((nodes) => nodes.map((node) => {
-    const style = getComputedStyle(node);
-    return style.outlineStyle === "solid" && style.outlineWidth === "2px";
-  }));
-  assert.equal(outlined.every((value) => value === expected), true, label);
+function borderColors(locator) {
+  return locator.evaluateAll((nodes) => nodes.map((node) => getComputedStyle(node).borderColor));
+}
+
+async function focusedBroadcastBorders(targets, source) {
+  const borders = [];
+  for (let index = 0; index < await targets.count(); index += 1) {
+    const target = targets.nth(index);
+    await target.getByRole("textbox").focus();
+    borders.push(await target.evaluate((node) => getComputedStyle(node).borderColor));
+  }
+  await source.focus();
+  return borders;
+}
+
+async function assertBroadcastPreview(targets, expectedBorders, label) {
+  assert.deepEqual(await borderColors(targets), expectedBorders, label);
   assert.equal(
-    await form.locator('.composer-shard--quote').evaluateAll((nodes) => nodes.some((node) => (
-      getComputedStyle(node).outlineStyle === "solid"
+    await targets.evaluateAll((nodes) => nodes.every((node) => (
+      getComputedStyle(node).outlineStyle === "none"
     ))),
-    false,
-    "quoted composers never receive the broadcast preview",
+    true,
+    "broadcast receivers use their composer accent without a shared outline",
   );
 }
 
@@ -86,6 +93,17 @@ export async function assertCompleteComposerSubmission({
   const send = form.locator(".organization-send");
   await primaryTextbox.fill("canvas primary body");
   await primaryTextbox.focus();
+  const previewTargets = form.locator(
+    '.composer-shard--primary[data-broadcast-target-eligible="true"]',
+  );
+  assert.ok(await previewTargets.count() >= 2, "the broadcast fixture has multiple occupied targets");
+  const idleReceiverBorders = await borderColors(previewTargets);
+  const quoteBorders = await borderColors(form.locator(".composer-shard--quote"));
+  const focusedReceiverBorders = await focusedBroadcastBorders(previewTargets, primaryTextbox);
+  assert.ok(
+    new Set(focusedReceiverBorders).size >= 2,
+    `broadcast receivers retain distinct accent colors: ${JSON.stringify(focusedReceiverBorders)}`,
+  );
   await assertCommandPreview(send, false, "focus alone does not preview a keyboard submission");
   await page.keyboard.down("Control");
   await assertCommandPreview(
@@ -122,12 +140,21 @@ export async function assertCompleteComposerSubmission({
   );
   await page.keyboard.down("Shift");
   await assertBroadcastPreview(
-    form,
-    true,
-    "command plus Shift previews every occupied team destination",
+    previewTargets,
+    focusedReceiverBorders,
+    "command plus Shift gives every destination its own focus-equivalent accent",
+  );
+  assert.deepEqual(
+    await borderColors(form.locator(".composer-shard--quote")),
+    quoteBorders,
+    "broadcast preview leaves quoted composers unchanged",
   );
   await page.keyboard.up("Shift");
-  await assertBroadcastPreview(form, false, "releasing Shift clears every broadcast preview");
+  await assertBroadcastPreview(
+    previewTargets,
+    idleReceiverBorders,
+    "releasing Shift restores the ordinary focused and idle composer borders",
+  );
   await page.keyboard.up("Control");
   await assertCommandPreview(send, false, "releasing the command modifier clears the preview");
 
@@ -140,7 +167,19 @@ export async function assertCompleteComposerSubmission({
     "the empty primary draft becomes ineligible before preview styling",
   );
   await assertCommandPreview(send, false, "empty focused text clears the preview");
+  await page.keyboard.down("Shift");
+  await assertBroadcastPreview(
+    previewTargets,
+    idleReceiverBorders,
+    "an empty source cannot light broadcast receivers",
+  );
   await setTextareaValue(primaryTextbox, "canvas primary body");
+  await assertBroadcastPreview(
+    previewTargets,
+    focusedReceiverBorders,
+    "restoring source text recomputes every receiver accent while modifiers remain held",
+  );
+  await page.keyboard.up("Shift");
   await assertCommandPreview(send, true, "restoring eligible focused text restores the preview");
   await quotedTextbox.focus();
   await assertCommandPreview(send, false, "a quoted composer never previews the primary action");
@@ -275,7 +314,11 @@ export async function assertCompleteComposerSubmission({
   await source.focus();
   await page.keyboard.down("Control");
   await page.keyboard.down("Shift");
-  await assertBroadcastPreview(form, true, "the submitted broadcast previews every target");
+  await assertBroadcastPreview(
+    broadcastTargets,
+    focusedReceiverBorders,
+    "the submitted broadcast previews every target with its own accent",
+  );
   await page.keyboard.press("Enter");
   await page.keyboard.up("Shift");
   await page.keyboard.up("Control");
