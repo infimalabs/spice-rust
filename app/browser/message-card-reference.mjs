@@ -754,6 +754,10 @@ async function messageStateColors(card) {
       },
       badgeTexts: [...article.querySelectorAll(".message-badge")]
         .map((badge) => badge.textContent),
+      badgeBorderWidths: [...article.querySelectorAll(".message-badge")]
+        .map((badge) => getComputedStyle(badge).borderWidth),
+      badgeCountShadows: [...article.querySelectorAll(".message-badge-count")]
+        .map((count) => getComputedStyle(count).boxShadow),
     };
     probe.remove();
     return result;
@@ -817,6 +821,16 @@ async function captureFinalMessageStates(
     final.badgeTexts,
     ["FINAL", "ACK1"],
     `${mode} ${viewport.label} keeps FINAL distinct from an existing ACK classification`,
+  );
+  assert.deepEqual(
+    final.badgeBorderWidths,
+    ["0px", "0px"],
+    `${mode} ${viewport.label} keeps FINAL and ACK borderless inside the card`,
+  );
+  assert.deepEqual(
+    final.badgeCountShadows,
+    ["none"],
+    `${mode} ${viewport.label} keeps the ACK count free of an inset border`,
   );
   assert.ok(
     final.finalBadge.left >= final.finalBadge.footerLeft
