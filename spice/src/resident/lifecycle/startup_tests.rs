@@ -134,40 +134,98 @@ fn changing_org_policy_to_drain_waits_until_work_arrives() {
         "changing policy without work remains idle"
     );
 
-    let task = seed_selectable_task(&bus);
+    assert_fresh_drain_settle_then_launch(
+        &mut runtime,
+        &bus,
+        &repository,
+        &fixture,
+        &mut seats,
+        &lane_runtime,
+        &surface.config,
+        sibling,
+    );
+    bus.verify().expect("policy update authority verifies");
+    bus.shutdown().expect("fixture bus stops");
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the deterministic startup phase retains one complete resident effect boundary"
+)]
+fn assert_fresh_drain_settle_then_launch(
+    runtime: &mut Runtime,
+    bus: &Bus,
+    repository: &Repository,
+    fixture: &AdvisoryRtkFixture,
+    seats: &mut Seats,
+    lane_runtime: &lane_surface::Runtime<'_>,
+    config: &SurfaceConfig,
+    sibling: CanonicalUuid,
+) {
+    let (task, ready_at) = seed_selectable_task(bus);
+    let before = bus
+        .task_snapshot()
+        .expect("pre-settle snapshot reads")
+        .cursor();
     let mut diagnostic = Vec::new();
-    runtime
-        .reconcile(
-            &bus,
-            &repository,
+    let deadline = runtime
+        .reconcile_at(
+            ready_at,
+            bus,
+            repository,
             &fixture.paths,
             fixture.epoch,
-            &mut seats,
-            &lane_runtime,
-            &surface.config,
+            seats,
+            lane_runtime,
+            config,
             &mut diagnostic,
         )
         .expect("newly available Drain work reconciles");
-    assert_drain_launch(&bus, &task, fixture.lane, sibling, &seats, &diagnostic);
+    assert_eq!(
+        deadline,
+        Some(WakeDeadline {
+            lane: fixture.lane,
+            at: after(ready_at, SETTLE_SECONDS).expect("first Drain deadline computes"),
+            kind: WakeKind::Task,
+        })
+    );
+    assert!(!seats.occupied(fixture.lane));
+    assert!(!seats.occupied(sibling));
+    assert_eq!(active_claim_count(bus), 0);
+    assert!(diagnostic.is_empty());
+    assert_eq!(
+        bus.task_snapshot()
+            .expect("post-settle snapshot reads")
+            .cursor(),
+        before,
+        "pre-deadline reconciliation writes no task or lifecycle fact"
+    );
+    assert!(
+        bus.task_snapshot()
+            .expect("unclaimed task snapshot reads")
+            .tasks()
+            .iter()
+            .find(|heads| heads.statement().body().born == task)
+            .is_some_and(|heads| heads.claim().is_none()),
+        "the selected task remains organically claimable during the settle interval"
+    );
 
+    let mut launch_diagnostic = Vec::new();
     runtime
-        .reconcile(
-            &bus,
-            &repository,
+        .reconcile_at(
+            after(ready_at, SETTLE_SECONDS).expect("settled first Drain instant computes"),
+            bus,
+            repository,
             &fixture.paths,
             fixture.epoch,
-            &mut seats,
-            &lane_runtime,
-            &surface.config,
-            &mut Vec::new(),
+            seats,
+            lane_runtime,
+            config,
+            &mut launch_diagnostic,
         )
-        .expect("second idle Drain reconciliation succeeds");
-    assert!(seats.occupied(fixture.lane));
-    assert!(!seats.occupied(sibling));
-    assert_eq!(active_claim_count(&bus), 1);
-    stop(fixture.lane, &mut seats, "updated Drain member");
-    bus.verify().expect("policy update authority verifies");
-    bus.shutdown().expect("fixture bus stops");
+        .expect("settled first Drain work reconciles");
+    assert_drain_launch(bus, &task, fixture.lane, sibling, seats, &launch_diagnostic);
+    stop(fixture.lane, seats, "updated Drain member");
 }
 
 fn drain_configuration(
@@ -232,7 +290,7 @@ fn assert_drain_launch(
     );
 }
 
-fn seed_selectable_task(bus: &Bus) -> wire::TaskStamp {
+fn seed_selectable_task(bus: &Bus) -> (wire::TaskStamp, Instant) {
     let task = wire::TaskStamp::for_micros(1_900_000_000_000).expect("fixture task stamp");
     let handle = wire::TaskHandle::for_project("task.lifecycle", &task);
     let origin = format!("task:{handle}")
@@ -294,7 +352,7 @@ fn seed_selectable_task(bus: &Bus) -> wire::TaskStamp {
         completion: None,
     });
     commit(bus, proposal).expect("fixture task commits");
-    task
+    (task, at)
 }
 
 fn assert_automatic_claim(bus: &Bus, task: &wire::TaskStamp, lane: CanonicalUuid, seats: &Seats) {
