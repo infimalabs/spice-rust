@@ -4,8 +4,6 @@ use super::*;
 
 use gloo_timers::callback::Timeout;
 
-const RESIZE_DEBOUNCE_MILLIS: u32 = 200;
-
 fn resolve_image(image: web_sys::HtmlImageElement) {
     let outcome = if image.natural_width() > 0 {
         "loaded"
@@ -189,41 +187,23 @@ pub(super) fn use_element_width(host: NodeRef) -> UseStateHandle<f64> {
             let registration = host.cast::<web_sys::Element>().and_then(|element| {
                 let initial = element_content_width(&element)?;
                 width.set(initial);
-                let observed_width = Rc::new(Cell::new(initial));
-                let pending = Rc::new(RefCell::new(None::<Timeout>));
                 let observed = element.clone();
                 let width = width.clone();
-                let callback_width = observed_width.clone();
-                let callback_pending = pending.clone();
                 let callback = Closure::<dyn FnMut(js_sys::Array, web_sys::ResizeObserver)>::new(
                     move |_, _| {
                         if let Some(measured) = element_content_width(&observed) {
-                            let previous = callback_width.replace(measured);
-                            if measured < f64::from(MIN_MEASURABLE_WIDTH_PX)
-                                || previous < f64::from(MIN_MEASURABLE_WIDTH_PX)
-                            {
-                                callback_pending.borrow_mut().take();
-                                width.set(measured);
-                            } else if (measured - previous).abs() > 0.5 {
-                                let settled_width = width.clone();
-                                callback_pending
-                                    .borrow_mut()
-                                    .replace(Timeout::new(RESIZE_DEBOUNCE_MILLIS, move || {
-                                        settled_width.set(measured)
-                                    }));
-                            }
+                            width.set(measured);
                         }
                     },
                 );
                 let observer =
                     web_sys::ResizeObserver::new(callback.as_ref().unchecked_ref()).ok()?;
                 observer.observe(&element);
-                Some((observer, callback, pending))
+                Some((observer, callback))
             });
             move || {
-                if let Some((observer, _callback, pending)) = registration {
+                if let Some((observer, _callback)) = registration {
                     observer.disconnect();
-                    pending.borrow_mut().take();
                 }
             }
         });

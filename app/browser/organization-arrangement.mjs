@@ -38,6 +38,13 @@ async function waitForMemberOrder(page, label, lineage, order) {
   }, { lineage, expected: order });
 }
 
+async function waitForMemberLineage(page, label, lane, lineage) {
+  await waitForPageFunction(page, label, TRANSITION_MS, ({ lane, lineage }) => (
+    document.querySelector(`.organization-agent[data-agent-lane="${lane}"]`)
+      ?.closest(".organization-surface")?.dataset.lineageId === lineage
+  ), { lane, lineage });
+}
+
 /// The organizations the resident calls durable, in the order it states them.
 function durableOrgs(lanes) {
   const organizations = [];
@@ -125,6 +132,112 @@ function organizationPips(agents, lineage) {
 function arrangementMenu(agents, lineage) {
   return agents.locator(
     `.organization-surface[data-lineage-id="${lineage}"] .organization-arrangement-menu`,
+  );
+}
+
+async function mosaicGeometry(agents) {
+  return agents.locator(".organization-surface").evaluateAll((surfaces) => surfaces.map((surface) => {
+    const plane = surface.querySelector(".lane-mosaic-plane");
+    const track = surface.querySelector(".lane-mosaic-track");
+    const cards = [...surface.querySelectorAll(".mosaic-message-card")]
+      .filter((card) => getComputedStyle(card).visibility !== "hidden").map((card) => {
+      const box = card.getBoundingClientRect();
+      return {
+        key: card.dataset.mosaicCardKey,
+        box: [box.left, box.top, box.right, box.bottom],
+      };
+    });
+    const overlaps = [];
+    for (let left = 0; left < cards.length; left += 1) {
+      for (let right = left + 1; right < cards.length; right += 1) {
+        const [aLeft, aTop, aRight, aBottom] = cards[left].box;
+        const [bLeft, bTop, bRight, bBottom] = cards[right].box;
+        if (aLeft < bRight && bLeft < aRight && aTop < bBottom && bTop < aBottom) {
+          overlaps.push([cards[left].key, cards[right].key]);
+        }
+      }
+    }
+    return {
+      lineage: surface.dataset.lineageId,
+      members: [...surface.querySelectorAll(".organization-agent")]
+        .map((member) => member.dataset.agentLane),
+      actualWidth: Math.round(track?.getBoundingClientRect().width ?? 0),
+      observedWidth: Number(plane?.dataset.observedWidth ?? 0),
+      committedWidth: Number(plane?.dataset.committedWidth ?? 0),
+      transition: plane?.dataset.planeTransition,
+      overlaps,
+    };
+  }));
+}
+
+async function moveMember(page, agents, lane, before, targetLineage, label) {
+  await primaryComposer(agents, lane).locator(".composer-shard-prose")
+    .dragTo(primaryComposer(agents, before));
+  await waitForMemberLineage(page, label, lane, targetLineage);
+}
+
+async function assertCrossTeamSwapGeometry(page, fixture, agents, organizations) {
+  const [larger, smaller] = [...organizations]
+    .sort((left, right) => right.lanes.length - left.lanes.length);
+  assert.ok(smaller, "the cross-team swap has a distinct target organization");
+  while (smaller.lanes.length > 1) {
+    const donor = smaller.lanes[0];
+    await moveMember(page, agents, donor, larger.lanes[0], larger.lineage,
+      "the asymmetric swap fixture moves one donor to the larger organization");
+    const current = durableOrgs((await reply(fixture, ["lane"])).body.lanes);
+    for (const organization of organizations) {
+      organization.lanes = current.find((row) => row.lineage === organization.lineage).lanes;
+    }
+  }
+  const emigrant = larger.lanes.at(-1);
+  const returnee = smaller.lanes[0];
+
+  await moveMember(page, agents, emigrant, returnee, smaller.lineage,
+    "the first cross-team move reaches its target organization");
+  const balanced = durableOrgs((await reply(fixture, ["lane"])).body.lanes);
+  for (const organization of organizations) {
+    organization.lanes = balanced.find((row) => row.lineage === organization.lineage).lanes;
+  }
+
+  const expected = organizations.map(({ lineage, lanes }) => ({ lineage, lanes: [...lanes] }));
+  const expectedLarger = expected.find((organization) => organization.lineage === larger.lineage);
+  const expectedSmaller = expected.find((organization) => organization.lineage === smaller.lineage);
+  expectedSmaller.lanes.splice(expectedSmaller.lanes.indexOf(returnee), 1);
+  expectedLarger.lanes.splice(expectedLarger.lanes.indexOf(larger.lanes[0]), 0, returnee);
+  await moveMember(page, agents, returnee, larger.lanes[0], larger.lineage,
+    "the second cross-team move returns to the source organization");
+  const swapped = durableOrgs((await reply(fixture, ["lane"])).body.lanes);
+  await page.evaluate(() => new Promise(requestAnimationFrame));
+
+  assert.deepEqual(
+    swapped,
+    expected,
+    "two member moves preserve both teams while swapping their selected agents",
+  );
+  for (const organization of organizations) {
+    organization.lanes = swapped.find((row) => row.lineage === organization.lineage).lanes;
+  }
+  const geometry = await mosaicGeometry(agents);
+  assert.ok(
+    geometry.every((surface) => Math.abs(surface.actualWidth - surface.observedWidth) <= 1),
+    `each Mosaic observes its first post-swap CSS width: ${JSON.stringify(geometry)}`,
+  );
+  assert.ok(
+    geometry.every((surface) => surface.overlaps.length === 0),
+    `the swapped organizations contain no visible card intersections: ${JSON.stringify(geometry)}`,
+  );
+  await waitForPageFunction(page, "the swapped Mosaics commit their current CSS widths",
+    TRANSITION_MS, () => [...document.querySelectorAll(".organization-surface")].every((surface) => {
+      const plane = surface.querySelector(".lane-mosaic-plane");
+      const actual = Math.round(surface.querySelector(".lane-mosaic-track")
+        ?.getBoundingClientRect().width ?? 0);
+      return Math.abs(actual - Number(plane?.dataset.observedWidth ?? 0)) <= 1
+        && Math.abs(actual - Number(plane?.dataset.committedWidth ?? 0)) <= 1;
+    }));
+  const settled = await mosaicGeometry(agents);
+  assert.ok(
+    settled.every((surface) => surface.overlaps.length === 0),
+    `current-width Mosaic placement remains disjoint: ${JSON.stringify(settled)}`,
   );
 }
 
@@ -269,6 +382,8 @@ export async function assertOrgArrangement(page, fixture, worktrees, artifacts) 
   });
   await waitForOrgOrder(page, "mouse drag restores the keyboard arrangement",
     reordered.map((organization) => organization.lineage));
+
+  await assertCrossTeamSwapGeometry(page, fixture, agents, reordered);
 
   const crowded = reordered.find((organization) => organization.lanes.length >= 2);
   assert.ok(crowded, "proving the two laws apart needs one organization holding two members");
