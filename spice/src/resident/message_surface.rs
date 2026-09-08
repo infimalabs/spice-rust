@@ -22,7 +22,6 @@ pub(super) use session_compaction::{
     POLL_INTERVAL as SESSION_COMPACTION_POLL_INTERVAL, SessionCompactions,
 };
 pub(super) use tool_preview::CallPreviews;
-#[cfg(test)]
 
 /// Captured-generation policy and disposable publishers used after one record
 /// passes occupant admission.
