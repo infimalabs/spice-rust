@@ -578,22 +578,20 @@ fn plan_gate_findings(
         .map(|finding| finding.identity.clone())
         .collect::<std::collections::BTreeSet<_>>();
     let mut planned = Vec::with_capacity(findings.len().saturating_add(open_instrument.len()));
-    let mut minted = std::collections::BTreeSet::new();
-    for (index, finding) in findings.iter().enumerate() {
+    let matches = matched_gate_findings(findings, snapshot)?;
+    let creation_count = matches
+        .iter()
+        .filter(|matched| !matched.iter().any(|entry| gate_finding_task_open(entry)))
+        .count();
+    let mut minted =
+        allocate_task_stamps(&snapshot.answer, birth_micros, creation_count)?.into_iter();
+    for (finding, matches) in findings.iter().zip(matches) {
         let tag = gate_finding_tag(&finding.identity);
-        let matches = matching_gate_finding_tasks(snapshot, &tag);
         let open = matches
             .iter()
             .copied()
             .filter(|entry| gate_finding_task_open(entry))
             .collect::<Vec<_>>();
-        if open.len() > 1 {
-            return Err(refusal(
-                "gate::finding-ambiguous",
-                Some(finding.identity.to_string()),
-                "settle duplicate open gate finding tasks before redispatching",
-            ));
-        }
         let predecessor = matches
             .iter()
             .filter(|entry| {
@@ -627,7 +625,9 @@ fn plan_gate_findings(
                 }
             }
         } else {
-            let task = mint_gate_finding_stamp(snapshot, &mut minted, birth_micros, index);
+            let task = minted
+                .next()
+                .expect("every new gate finding owns one allocated task stamp");
             GateFindingAction::Created {
                 task,
                 finding: finding.clone(),
@@ -954,27 +954,30 @@ fn gate_finding_task_open(entry: &Entry) -> bool {
     entry.workflow().status == "pending" && entry.workflow().completion.is_none()
 }
 
-fn mint_gate_finding_stamp(
-    snapshot: &ValidatedSnapshot,
-    minted: &mut std::collections::BTreeSet<wire::TaskStamp>,
-    base_micros: i64,
-    index: usize,
-) -> wire::TaskStamp {
-    // Existing heads and tasks prepared in this write share one stamp collision domain.
-    let occupied = snapshot
-        .entries
+fn matched_gate_findings<'a>(
+    findings: &[FindingRow],
+    snapshot: &'a ValidatedSnapshot,
+) -> Result<Vec<Vec<&'a Entry>>, Outcome<CommandAnswer>> {
+    findings
         .iter()
-        .map(|entry| entry.born().clone())
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut offset = index as i64;
-    loop {
-        let candidate = wire::TaskStamp::for_micros(base_micros.saturating_add(offset))
-            .expect("the current timestamp fits the task stamp codec");
-        if !occupied.contains(&candidate) && minted.insert(candidate.clone()) {
-            return candidate;
-        }
-        offset = offset.saturating_add(1);
-    }
+        .map(|finding| {
+            let matched =
+                matching_gate_finding_tasks(snapshot, &gate_finding_tag(&finding.identity));
+            if matched
+                .iter()
+                .filter(|entry| gate_finding_task_open(entry))
+                .count()
+                > 1
+            {
+                return Err(refusal(
+                    "gate::finding-ambiguous",
+                    Some(finding.identity.to_string()),
+                    "settle duplicate open gate finding tasks before redispatching",
+                ));
+            }
+            Ok(matched)
+        })
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
