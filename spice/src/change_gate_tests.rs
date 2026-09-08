@@ -59,6 +59,69 @@ fn malformed_staged_policy_refuses_before_any_compiled_inventory_is_selected() {
 }
 
 #[test]
+fn zero_config_selection_keeps_unclassified_sources_local_and_known_sources_specialized() {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "spice-change-policy-zero-config-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed),
+    ));
+    fs::create_dir(&root).expect("create zero-config fixture");
+    let paths = ["index.qmd", "render.lua", "verify.pl", "README.md"].map(str::to_owned);
+    let environment = ambient_environment().expect("capture test environment");
+    let policy = packaged_selection_policy(&root, &paths, &environment)
+        .expect("compile zero-config packaged policy");
+
+    let generic = gate::select_change_gates(
+        wire::Digest::compute(wire::Domain::GateTree, b"unclassified external sources"),
+        &paths[..3],
+        &policy,
+    )
+    .expect("unclassified ordinary sources retain generic checks");
+    assert_eq!(
+        generic.gate_ids(),
+        [
+            GateId::MergeIntegrity,
+            GateId::PlanPhase,
+            GateId::Staging,
+            GateId::LocalPaths,
+        ]
+    );
+
+    let markdown = gate::select_change_gates(
+        wire::Digest::compute(wire::Domain::GateTree, b"known markdown source"),
+        &["README.md".to_owned()],
+        &policy,
+    )
+    .expect("known Markdown source retains specialized checks");
+    assert!(markdown.gate_ids().contains(&GateId::Taste));
+    assert!(markdown.gate_ids().contains(&GateId::MarkdownLinks));
+
+    fs::write(root.join("spice-rust.toml"), gate::NARROWEST_FILE_CLASSES)
+        .expect("write configured policy");
+    let configured_paths = paths
+        .iter()
+        .cloned()
+        .chain(["spice-rust.toml".to_owned()])
+        .collect::<Vec<_>>();
+    let configured = packaged_selection_policy(&root, &configured_paths, &environment)
+        .expect("compile configured packaged policy");
+    let error = gate::select_change_gates(
+        wire::Digest::compute(wire::Domain::GateTree, b"configured unknown source"),
+        &["index.qmd".to_owned()],
+        &configured,
+    )
+    .expect_err("configured policy still refuses an undeclared source class");
+    assert!(
+        error
+            .detail()
+            .contains("no repository-declared packaged policy class")
+    );
+
+    fs::remove_dir_all(root).expect("remove zero-config fixture");
+}
+
+#[test]
 fn packaged_policy_admits_a_declared_build_module() {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
