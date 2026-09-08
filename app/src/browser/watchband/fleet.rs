@@ -100,7 +100,7 @@ pub(super) fn render_empty_fleet(
                 <div class="organization-pane" data-organization-mode={mode.key()}>
                     {match mode {
                         LineageMode::Lanes => {
-                            empty("No agents are assigned. Open Org to add one.")
+                            empty("No agents are assigned. Open Team to add one.")
                         }
                         LineageMode::Tasks => render_tasks(runtime, &empty_lineage, &[]),
                         LineageMode::Org => {

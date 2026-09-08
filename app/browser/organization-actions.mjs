@@ -75,7 +75,7 @@ export async function assertOrgActions(page, primary, secondary, primaryLineage)
   const globalOrg = page.locator(
     `.canvas-menu-panel .canvas-organization[data-organization-lineage="${primaryLineage}"]`,
   );
-  const reopen = globalOrg.getByRole("button", { name: "Open organization", exact: true });
+  const reopen = globalOrg.getByRole("button", { name: "Open team", exact: true });
   await reopen.waitFor({ timeout: TRANSITION_MS });
   await reopen.click();
   await primary.waitFor({ timeout: TRANSITION_MS });
