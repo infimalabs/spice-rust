@@ -2,51 +2,6 @@
   "version": 1,
   "tests": [
     {
-      "id": "gate:workspace-discovery-timeout",
-      "class": "slow",
-      "package": "gate",
-      "target": ["--lib"],
-      "test": "workspace_tests::prebuild::tests::real_discovery_timeout_reaps_child",
-      "ignored": false,
-      "reason": "waits for a real supervised child to cross its two-second discovery deadline"
-    },
-    {
-      "id": "spice:canvas-response-bound",
-      "class": "slow",
-      "package": "spice",
-      "target": ["--bin", "spice"],
-      "test": "command_client::tests::task_done_admits_a_response_after_three_seconds_and_rejects_one_after_twenty",
-      "ignored": true,
-      "reason": "exercises the real four-second success and twenty-one-second timeout boundaries"
-    },
-    {
-      "id": "spice:session-warning-boundary",
-      "class": "slow",
-      "package": "spice",
-      "target": ["--test", "session_cli"],
-      "test": "authority::real_run_stream_reports_working_state_and_wakes_at_warning_boundary",
-      "ignored": false,
-      "reason": "holds a real child for six seconds to cross the session warning boundary"
-    },
-    {
-      "id": "gate:installed-hook-benchmark",
-      "class": "slow",
-      "package": "spice",
-      "target": ["--test", "gate_admission_benchmark"],
-      "test": "gate_warm_admission_benchmark",
-      "ignored": true,
-      "reason": "runs thirty independent installed-hook admission samples"
-    },
-    {
-      "id": "vendor:codex-live-compaction",
-      "class": "slow",
-      "package": "vendor",
-      "target": ["--test", "codex_compaction_live"],
-      "test": "headless_codex_compacts_then_resumes_without_an_overflow_loop",
-      "ignored": true,
-      "reason": "makes three authenticated model calls and crosses a live compaction boundary"
-    },
-    {
       "id": "canvas:browser-unit",
       "class": "slow",
       "command": [

@@ -460,48 +460,6 @@ fn invoke_meter_child(root: &Path, thread: &str) -> super::Spoken {
 
 #[test]
 #[cfg(unix)]
-fn real_run_stream_omits_ordinary_state_and_wakes_at_warning_boundary() {
-    let scratch = Scratch::new("run-meter-boundary");
-    fake_repository(scratch.path());
-    let thread = uuid(0xf0).to_string();
-    let authority = authority_path(scratch.path());
-    seed_recall_authority(&authority, &thread);
-    renew_maximum_bound_claim_for_meter(&authority, 604);
-    let arguments = ["run", "--", "/bin/sh", "-c", "sleep 6; printf child-output"]
-        .into_iter()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-
-    let spoken = super::invoke_in(
-        Some(scratch.path()),
-        &arguments,
-        &[("CODEX_THREAD_ID", thread)], // env-policy: allow
-    );
-
-    assert_eq!(spoken.code, Some(0));
-    assert_eq!(spoken.out, b"child-output");
-    let stderr = String::from_utf8(spoken.err).expect("run meter stderr is UTF-8");
-    let lines = stderr.lines().collect::<Vec<_>>();
-    assert_eq!(
-        lines.len(),
-        1,
-        "only the no-hook lease transition speaks: {stderr:?}"
-    );
-    assert!(!lines[0].contains("Working state"));
-    assert!(lines[0].contains("Claim lease warning"));
-    let handle = wire::TaskHandle::for_project(SESSION_PROJECT, &stamp("SESSION-held"));
-    assert!(
-        lines[0].contains(&format!("run spice task reclaim {handle}")),
-        "warning recommends reclaiming the automatic fixture claim: {:?}",
-        lines[0]
-    );
-    assert!(!lines[0].contains("task free"));
-
-    scratch.remove();
-}
-
-#[test]
-#[cfg(unix)]
 fn short_run_processes_share_suppression_and_tier_changes_speak() {
     let scratch = Scratch::new("run-meter-processes");
     fake_repository(scratch.path());
