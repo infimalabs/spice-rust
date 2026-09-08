@@ -13,12 +13,15 @@ use wire::{CanonicalUuid, Digest, Domain};
 
 mod routing_authority;
 
-const ROUTING: [wire::SpiceVariable; 6] = [
+const ROUTING: [wire::SpiceVariable; 9] = [
+    wire::SpiceVariable::AgentVendor,
     wire::SpiceVariable::Hooks,
     wire::SpiceVariable::Inbox,
     wire::SpiceVariable::Lane,
+    wire::SpiceVariable::NativeShell,
     wire::SpiceVariable::PreCommitPaths,
     wire::SpiceVariable::PreCommitSource,
+    wire::SpiceVariable::RtkExecutable,
     wire::SpiceVariable::WrapperSpice,
 ];
 const SEMANTIC_INPUT: &str = "SPICE_PROOF"; // env-policy: allow
@@ -40,7 +43,7 @@ fn lane_bound_hook_reuses_lane_free_proof_without_alternate_planning() {
     );
     assert!(
         elapsed < Duration::from_secs(2),
-        "six-variable routed lookup took {elapsed:?}: {}",
+        "nine-variable routed lookup took {elapsed:?}: {}",
         streams(&routed_lookup),
     );
 
@@ -84,16 +87,6 @@ fn semantic_tool_and_environment_inputs_move_fingerprint_authority() {
             "bootstrap Cargo home",
             wire::SpiceVariable::BootstrapCargoHome.as_str(),
             changed_home,
-        ),
-        (
-            "native shell",
-            wire::SpiceVariable::NativeShell.as_str(),
-            PathBuf::from("/bin/bash"),
-        ),
-        (
-            "RTK executable",
-            wire::SpiceVariable::RtkExecutable.as_str(),
-            PathBuf::from("/bin/false"),
         ),
         (
             "arbitrary semantic input",

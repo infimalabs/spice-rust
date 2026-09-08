@@ -79,6 +79,16 @@ metadata. They affect the receipt object's digest but never the `action_key`.
 This lets identical work receive credit without making the producer part of the
 technical result.
 
+Trust standing is likewise authorization state, not proof identity. A
+configured pre-commit checks the current grant before executing repository
+commands, while reusable action keys remain bound to the executable
+configuration and policy content they prove. Pended, granted, and revoked
+transitions do not change those content identities. Agent-runtime variables
+(`CODEX_*`, `CLAUDE_CODE_*`, and `SPICE_AGENT_VENDOR`), shell-hook variables,
+and Spice command-routing executables are producer or invocation context and
+are excluded from compiler environments. Arbitrary build inputs and native
+compiler/tool paths remain retained.
+
 Only the proof-aware runner may publish `PassReceipt` objects and action-index
 entries. A shell transcript, Canvas text marker, arbitrary `cargo test` output,
 exit status copied from another process, or a hand-written receipt is not proof

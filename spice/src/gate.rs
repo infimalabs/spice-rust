@@ -41,7 +41,7 @@ use environment::compiler_environment;
 pub use environment::git_local_environment;
 #[cfg(test)]
 use environment::{
-    SHELL_HOOK_PREFIX, SHELL_LAST_COMMAND, compiler_environment_from,
+    AGENT_RUNTIME_PREFIXES, SHELL_HOOK_PREFIX, SHELL_LAST_COMMAND, compiler_environment_from,
     compiler_environment_from_with_cargo_home,
 };
 
