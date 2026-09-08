@@ -540,6 +540,7 @@ async function measureTaskChipFixture(fixture) {
     }
     const inspectChip = (node) => {
       const style = getComputedStyle(node);
+      const parentStyle = getComputedStyle(node.parentElement);
       const label = node.querySelector(".message-task-chip-label");
       if (!label) throw new Error("task-chip fixture requires a label");
       const labelStyle = getComputedStyle(label);
@@ -555,6 +556,9 @@ async function measureTaskChipFixture(fixture) {
         text: textRect(label),
         fontSize: Number.parseFloat(style.fontSize),
         lineHeight: Number.parseFloat(style.lineHeight),
+        parentFontSize: Number.parseFloat(parentStyle.fontSize),
+        parentLineHeight: Number.parseFloat(parentStyle.lineHeight),
+        borderWidth: style.borderWidth,
         overflowX: style.overflowX,
         textOverflow: style.textOverflow,
         verticalAlign: style.verticalAlign,
@@ -574,6 +578,7 @@ async function measureTaskChipFixture(fixture) {
     };
     const inspectTaste = (node) => {
       const style = getComputedStyle(node);
+      const parentStyle = getComputedStyle(node.parentElement);
       return {
         ariaLabel: node.getAttribute("aria-label"),
         classification: node.dataset.messageClassification,
@@ -582,7 +587,14 @@ async function measureTaskChipFixture(fixture) {
         textBox: textRect(node),
         fontSize: Number.parseFloat(style.fontSize),
         lineHeight: Number.parseFloat(style.lineHeight),
+        parentFontSize: Number.parseFloat(parentStyle.fontSize),
+        parentLineHeight: Number.parseFloat(parentStyle.lineHeight),
+        borderWidth: style.borderWidth,
         verticalAlign: style.verticalAlign,
+        marginTop: style.marginTop,
+        marginRight: style.marginRight,
+        marginBottom: style.marginBottom,
+        marginLeft: style.marginLeft,
         paddingTop: style.paddingTop,
         paddingRight: style.paddingRight,
         paddingBottom: style.paddingBottom,
@@ -654,10 +666,11 @@ function assertTaskChipMeasurement(label, measured) {
       assert.equal(chip.labelTextOverflow, "ellipsis", `${label} ${chip.handle} label paints ellipsis`);
       assert.equal(chip.labelOverflowX, "hidden", `${label} ${chip.handle} label clips its text`);
       assert.equal(chip.verticalAlign, "baseline", `${label} ${chip.handle} follows prose baseline`);
+      assert.equal(chip.borderWidth, "0px", `${label} ${chip.handle} is borderless inside its card`);
       assert.deepEqual(
         [chip.marginTop, chip.marginRight, chip.marginBottom, chip.marginLeft],
-        ["2px", "0px", "2px", "0px"],
-        `${label} ${chip.handle} uses the requested block-only margin`,
+        ["0px", "0px", "0px", "0px"],
+        `${label} ${chip.handle} adds no pill-specific margin`,
       );
       assert.deepEqual(
         [chip.paddingTop, chip.paddingRight, chip.paddingBottom, chip.paddingLeft],
@@ -666,8 +679,10 @@ function assertTaskChipMeasurement(label, measured) {
       );
       assert.ok(
         Math.abs(chip.fontSize - measured.quote.fontSize) <= 0.01
-          && Math.abs(chip.lineHeight - measured.quote.lineHeight) <= 0.01,
-        `${label} ${chip.handle} matches quoted prose type: ${JSON.stringify({ chip, quote: measured.quote })}`,
+          && Math.abs(
+            chip.lineHeight / chip.fontSize - chip.parentLineHeight / chip.parentFontSize
+          ) <= 0.01,
+        `${label} ${chip.handle} keeps compact type and inherits its line-height ratio: ${JSON.stringify({ chip, quote: measured.quote })}`,
       );
       assert.ok(
         chip.box.left >= measured.body.box.left - tolerance
@@ -723,10 +738,21 @@ function assertTaskChipMeasurement(label, measured) {
     assert.equal(pill.ariaLabel, "Taste classification");
     assert.equal(pill.classification, "taste");
     assert.equal(pill.color, measured.quote.borderLeftColor, `${label} taste pill and quote share gold`);
-    assert.equal(pill.borderColor, pill.color, `${label} taste pill border shares its gold accent`);
+    assert.equal(pill.borderWidth, "0px", `${label} taste pill is borderless inside its card`);
     assert.notEqual(pill.backgroundColor, "rgba(0, 0, 0, 0)");
     assert.notEqual(measured.quote.backgroundColor, "rgba(0, 0, 0, 0)");
     assert.equal(pill.verticalAlign, "baseline", `${label} taste pill follows prose baseline`);
+    assert.deepEqual(
+      [pill.marginTop, pill.marginRight, pill.marginBottom, pill.marginLeft],
+      ["0px", "0px", "0px", "0px"],
+      `${label} taste pill adds no pill-specific margin`,
+    );
+    assert.ok(
+      Math.abs(
+        pill.lineHeight / pill.fontSize - pill.parentLineHeight / pill.parentFontSize
+      ) <= 0.01,
+      `${label} taste pill inherits its surrounding line-height ratio`,
+    );
     assert.deepEqual(
       [pill.paddingTop, pill.paddingRight, pill.paddingBottom, pill.paddingLeft],
       ["0px", "4px", "0px", "4px"],
