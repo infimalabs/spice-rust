@@ -111,7 +111,7 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
   assert.deepEqual(await themes.getByRole("button").allTextContents(), ["", "", ""]);
   assert.deepEqual(
     await themes.getByRole("button").evaluateAll((buttons) => buttons.map((button) => button.title)),
-    ["Use System theme", "Use Light theme", "Use Dark theme"],
+    ["Use Light theme", "Use System theme", "Use Dark theme"],
   );
   assert.equal(await systemTheme.getAttribute("aria-pressed"), "true");
   await darkTheme.focus();
@@ -188,18 +188,32 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
   if (!initiallyFast) await fastMode.click();
 
   await page.setViewportSize({ width: 332, height: 720 });
-  const narrow = await menu.locator(".canvas-menu-footer").evaluate((footer) => {
+  const narrow = await menu.evaluate((menuNode) => {
+    const footer = menuNode.querySelector(".canvas-menu-footer");
     const button = footer.querySelector(".canvas-menu-update").getBoundingClientRect();
-    const themeNode = footer.querySelector(".canvas-theme-selector");
+    const global = menuNode.querySelector(".canvas-menu-global-controls");
+    const globalBounds = global.getBoundingClientRect();
+    const fast = global.querySelector(".canvas-fast-setting").getBoundingClientRect();
+    const themeNode = global.querySelector(".canvas-theme-selector");
     const themes = themeNode.getBoundingClientRect();
+    const options = [...themeNode.querySelectorAll(".canvas-theme-option")]
+      .map((option) => option.getBoundingClientRect());
+    const marker = themeNode.querySelector('[aria-pressed="true"] .canvas-theme-position')
+      .getBoundingClientRect();
     const cursorNode = footer.querySelector(".canvas-menu-cursor");
     const cursor = cursorNode.getBoundingClientRect();
     const bounds = footer.getBoundingClientRect();
     return {
       contained: button.left >= bounds.left - 0.5 && button.right <= bounds.right + 0.5,
       height: button.height,
-      ordered: button.right <= themes.left + 0.5 && themes.right <= cursor.left + 0.5,
-      positions: [bounds.left, button.right, themes.left, themes.right, cursor.left, bounds.right],
+      ordered: button.right <= cursor.left + 0.5,
+      noFooterTheme: footer.querySelector(".canvas-theme-selector") === null,
+      globalContained: fast.left >= globalBounds.left - 0.5
+        && themes.right <= globalBounds.right + 0.5,
+      globalOrdered: fast.right <= themes.left + 0.5,
+      circles: options.every((option) => Math.abs(option.width - option.height) <= 0.5
+        && option.width >= 28),
+      markerCircular: Math.abs(marker.width - marker.height) <= 0.5,
       themeText: themeNode.innerText,
       themeWidth: themes.width,
       cursorClipped: cursorNode.scrollWidth > cursorNode.clientWidth,
@@ -208,8 +222,13 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
   assert.equal(narrow.contained, true, JSON.stringify(narrow));
   assert.equal(narrow.height, 23, JSON.stringify(narrow));
   assert.equal(narrow.ordered, true, JSON.stringify(narrow));
+  assert.equal(narrow.noFooterTheme, true, JSON.stringify(narrow));
+  assert.equal(narrow.globalContained, true, JSON.stringify(narrow));
+  assert.equal(narrow.globalOrdered, true, JSON.stringify(narrow));
+  assert.equal(narrow.circles, true, JSON.stringify(narrow));
+  assert.equal(narrow.markerCircular, true, JSON.stringify(narrow));
   assert.equal(narrow.themeText, "", JSON.stringify(narrow));
-  assert.ok(narrow.themeWidth <= 50, JSON.stringify(narrow));
+  assert.ok(narrow.themeWidth <= 96, JSON.stringify(narrow));
   assert.equal(narrow.cursorClipped, false, JSON.stringify(narrow));
 
   bootstrapMode = "protocol";
