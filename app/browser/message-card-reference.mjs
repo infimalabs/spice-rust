@@ -715,11 +715,45 @@ async function messageStateColors(card) {
       return resolved;
     };
     const style = getComputedStyle(article);
+    const footer = article.querySelector(".message-footer");
+    const footerBounds = footer.getBoundingClientRect();
+    const footerRight = footer.querySelector(".message-footer-right");
+    const footerRightBounds = footerRight.getBoundingClientRect();
     const finalBadge = article.querySelector(".message-badge--final");
     const badgeBounds = finalBadge?.getBoundingClientRect();
-    const footerBounds = finalBadge?.closest(".message-footer")?.getBoundingClientRect();
-    const footerRightBounds = finalBadge?.closest(".message-footer")
-      ?.querySelector(".message-footer-right")?.getBoundingClientRect();
+    const badgeGeometry = [...article.querySelectorAll(".message-badge")].map((badge) => {
+      const bounds = badge.getBoundingClientRect();
+      const badgeStyle = getComputedStyle(badge);
+      const count = badge.querySelector(".message-badge-count");
+      const countBounds = count?.getBoundingClientRect();
+      const countStyle = count && getComputedStyle(count);
+      return {
+        text: badge.textContent,
+        display: badgeStyle.display,
+        height: bounds.height,
+        minHeight: badgeStyle.minHeight,
+        padding: badgeStyle.padding,
+        borderWidth: badgeStyle.borderWidth,
+        borderRadius: badgeStyle.borderRadius,
+        fontSize: badgeStyle.fontSize,
+        fontWeight: badgeStyle.fontWeight,
+        left: bounds.left,
+        right: bounds.right,
+        top: bounds.top,
+        bottom: bounds.bottom,
+        count: count && {
+          text: count.textContent,
+          height: countBounds.height,
+          left: countBounds.left,
+          right: countBounds.right,
+          top: countBounds.top,
+          bottom: countBounds.bottom,
+          padding: countStyle.padding,
+          fontSize: countStyle.fontSize,
+          boxShadow: countStyle.boxShadow,
+        },
+      };
+    });
     const result = {
       key: article.dataset.mosaicCardKey,
       classes: [...article.classList],
@@ -735,6 +769,13 @@ async function messageStateColors(card) {
       producerAccent: color("var(--accent-slot, var(--accent))"),
       speechBorder: color("color-mix(in srgb, var(--warning) 70%, var(--line))"),
       speechAccent: color("var(--warning)"),
+      footerGeometry: {
+        height: footerBounds.height,
+        clientWidth: footer.clientWidth,
+        scrollWidth: footer.scrollWidth,
+        rightStart: footerRightBounds.left,
+      },
+      badgeGeometry,
       finalBadge: finalBadge && {
         text: finalBadge.textContent,
         ariaLabel: finalBadge.getAttribute("aria-label"),
@@ -831,6 +872,66 @@ async function captureFinalMessageStates(
     final.badgeCountShadows,
     ["none"],
     `${mode} ${viewport.label} keeps the ACK count free of an inset border`,
+  );
+  assert.equal(final.badgeGeometry.length, 2, `${mode} ${viewport.label} measures FINAL and ACK`);
+  for (const badge of final.badgeGeometry) {
+    assert.deepEqual(
+      {
+        display: badge.display,
+        height: badge.height,
+        minHeight: badge.minHeight,
+        padding: badge.padding,
+        borderWidth: badge.borderWidth,
+        borderRadius: badge.borderRadius,
+        fontSize: badge.fontSize,
+        fontWeight: badge.fontWeight,
+      },
+      {
+        display: "flex",
+        height: 17,
+        minHeight: "17px",
+        padding: "0px 4px",
+        borderWidth: "0px",
+        borderRadius: "999px",
+        fontSize: "12px",
+        fontWeight: "700",
+      },
+      `${mode} ${viewport.label} gives ${badge.text} the shared inline-badge geometry`,
+    );
+  }
+  const [finalGeometry, ackGeometry] = final.badgeGeometry;
+  assert.equal(finalGeometry.text, "FINAL", `${mode} ${viewport.label} measures FINAL first`);
+  assert.equal(ackGeometry.text, "ACK1", `${mode} ${viewport.label} measures counted ACK second`);
+  assert.deepEqual(
+    {
+      text: ackGeometry.count?.text,
+      padding: ackGeometry.count?.padding,
+      fontSize: ackGeometry.count?.fontSize,
+      boxShadow: ackGeometry.count?.boxShadow,
+    },
+    { text: "1", padding: "0px 5px", fontSize: "9px", boxShadow: "none" },
+    `${mode} ${viewport.label} keeps the attached ACK count legible and borderless`,
+  );
+  assert.ok(
+    ackGeometry.count.left >= ackGeometry.left
+      && ackGeometry.count.right <= ackGeometry.right
+      && ackGeometry.count.top >= ackGeometry.top
+      && ackGeometry.count.bottom <= ackGeometry.bottom,
+    `${mode} ${viewport.label} contains the ACK count inside its badge`,
+  );
+  assert.ok(
+    finalGeometry.right <= ackGeometry.left
+      && ackGeometry.right <= final.footerGeometry.rightStart,
+    `${mode} ${viewport.label} keeps ordered badges clear of adjacent metadata`,
+  );
+  assert.equal(
+    final.footerGeometry.height,
+    ordinary.footerGeometry.height,
+    `${mode} ${viewport.label} badges do not expand the message footer`,
+  );
+  assert.ok(
+    final.footerGeometry.scrollWidth <= final.footerGeometry.clientWidth + 1,
+    `${mode} ${viewport.label} footer keeps its responsive contents contained`,
   );
   assert.ok(
     final.finalBadge.left >= final.finalBadge.footerLeft
@@ -959,22 +1060,35 @@ export async function assertReferenceMessageCard(
   await assertActionInteraction(page, card);
 
   const original = page.viewportSize();
-  for (const mode of ["dark", "light"]) {
-    await page.emulateMedia({ colorScheme: mode });
-    await captureReferenceView(page, console, artifacts, {
-      label: "reference", width: 648, height: 726,
-    }, mode, agentLabels);
-    await captureReferenceView(page, console, artifacts, {
-      label: "mobile", width: 390, height: 720,
-    }, mode, agentLabels);
-    await captureFinalMessageStates(page, console, ordinaryCard, finalCard, artifacts, mode, {
-      label: "reference", width: 648, height: 726,
+  const rootFontSize = await page.evaluate(() => document.documentElement.style.fontSize);
+  try {
+    for (const mode of ["dark", "light"]) {
+      await page.emulateMedia({ colorScheme: mode });
+      await captureReferenceView(page, console, artifacts, {
+        label: "reference", width: 648, height: 726,
+      }, mode, agentLabels);
+      await captureReferenceView(page, console, artifacts, {
+        label: "mobile", width: 390, height: 720,
+      }, mode, agentLabels);
+      await captureFinalMessageStates(page, console, ordinaryCard, finalCard, artifacts, mode, {
+        label: "reference", width: 648, height: 726,
+      });
+      await captureFinalMessageStates(page, console, ordinaryCard, finalCard, artifacts, mode, {
+        label: "mobile", width: 390, height: 720,
+      });
+    }
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.evaluate(() => { document.documentElement.style.fontSize = "20px"; });
+    await captureFinalMessageStates(page, console, ordinaryCard, finalCard, artifacts, "dark", {
+      label: "zoomed", width: 648, height: 726,
     });
-    await captureFinalMessageStates(page, console, ordinaryCard, finalCard, artifacts, mode, {
-      label: "mobile", width: 390, height: 720,
-    });
+    await finalCard.screenshot({ path: join(artifacts, "canvas-message-final-zoomed-dark.png") });
+  } finally {
+    await page.evaluate((fontSize) => {
+      document.documentElement.style.fontSize = fontSize;
+    }, rootFontSize);
+    await page.emulateMedia({ colorScheme: null });
   }
   await waitForCommittedResize(page, console, { label: "restored reference", ...original });
   await assertMessageCardLayout(console, "restored reference");
-  await page.emulateMedia({ colorScheme: null });
 }
