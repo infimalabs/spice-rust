@@ -1041,6 +1041,8 @@ export async function assertOrgMenu(page, fixture, artifacts) {
   assert.equal(await panel.locator(".canvas-menu-page").getAttribute("data-menu-page"), "lanes");
   await panel.getByRole("heading", { name: "Global", exact: true }).waitFor();
   const fastMode = panel.getByRole("menuitemcheckbox", { name: /Fast mode/i });
+  const themeRail = panel.getByRole("group", { name: "Canvas theme" });
+  const offThemeRight = await themeRail.evaluate((node) => node.getBoundingClientRect().right);
   const trigger = page.locator(".canvas-menu > summary");
   const offAppearance = await trigger.evaluate((node) => {
     const style = getComputedStyle(node);
@@ -1085,6 +1087,11 @@ export async function assertOrgMenu(page, fixture, artifacts) {
     });
     assert.notDeepEqual(onAppearance.slice(0, 2), offAppearance.slice(0, 2));
     assert.equal(onAppearance[2], offAppearance[2], "mode color changes without shifting the cut-out");
+    assert.equal(
+      await themeRail.evaluate((node) => node.getBoundingClientRect().right),
+      offThemeRight,
+      "Fast label changes leave the right-aligned theme rail fixed",
+    );
     await trigger.screenshot({ path: join(artifacts, "canvas-fast-mode-active-control.png") });
     await page.emulateMedia({ reducedMotion: "reduce" });
     assert.equal(
