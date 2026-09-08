@@ -697,8 +697,8 @@ export const RECONNECT_MS = RECONNECT_BASE_MS + HANDSHAKE_TIMEOUT_MS + RENDER_SL
 export async function chooseCanvasView(page, name) {
   const visibleName = {
     Flow: "Tasks",
-    Topology: "Org",
-    Lanes: "Agents",
+    Topology: "Team",
+    Lanes: "Threads",
   }[name] ?? name;
   const navigation = page.getByRole("navigation", { name: "Canvas views" });
   if (!(await navigation.isVisible())) {
@@ -714,7 +714,7 @@ export async function chooseCanvasView(page, name) {
   }
   // The destination button leaves the DOM when selection closes the disclosure,
   // so observe the durable destination rather than an ephemeral selected pill.
-  const applied = visibleName === "Agents"
+  const applied = visibleName === "Threads"
     ? page.locator('.mosaic-workspace[data-active="true"]')
     : page.locator(".page-heading h1", { hasText: visibleName });
   await applied.waitFor({ timeout: TRANSITION_MS });

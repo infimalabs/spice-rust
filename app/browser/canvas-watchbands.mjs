@@ -104,7 +104,7 @@ export async function assertPerOrgWatchbands(
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Lanes");
   const console = page.locator('[data-pane="agent-console"]');
-  await console.getByRole("tab", { name: /^Agents/ }).first().click();
+  await console.getByRole("tab", { name: /^Threads/ }).first().click();
   await waitForElement(page, "second organization renders after reload", CONNECT_MS,
     console.locator(".organization-surface").nth(1));
 
@@ -139,13 +139,13 @@ export async function assertPerOrgWatchbands(
     ["Lanes", "Lanes"],
     "each newly rendered organization begins in Lanes",
   );
-  await primarySurface.getByRole("tab", { name: /^Org/ }).click();
+  await primarySurface.getByRole("tab", { name: /^Team/ }).click();
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
     ["Org", "Lanes"],
     "switching the primary organization to Org leaves its sibling in Lanes",
   );
-  await secondarySurface.getByRole("tab", { name: /^Org/ }).click();
+  await secondarySurface.getByRole("tab", { name: /^Team/ }).click();
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
     ["Org", "Org"],
@@ -158,13 +158,13 @@ export async function assertPerOrgWatchbands(
     "a subsequent primary switch preserves the secondary selection",
   );
   await assertLineageResponsiveLayout(page, console);
-  await secondarySurface.getByRole("tab", { name: /^Agents/ }).click();
+  await secondarySurface.getByRole("tab", { name: /^Threads/ }).click();
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
     ["Tasks", "Lanes"],
     "a subsequent secondary switch preserves the primary selection",
   );
-  await primarySurface.getByRole("tab", { name: /^Agents/ }).click();
+  await primarySurface.getByRole("tab", { name: /^Threads/ }).click();
   const noCardDestination = await primaryDestination(secondarySurface, secondary.lane);
   assert.equal(
     noCardDestination.rendered.length,
@@ -226,7 +226,7 @@ export async function assertPerOrgWatchbands(
     null,
     "ordinary emptiness is not announced as an unavailable snapshot",
   );
-  await secondarySurface.getByRole("tab", { name: /^Agents/ }).click();
+  await secondarySurface.getByRole("tab", { name: /^Threads/ }).click();
   assert.equal(await console.locator(".organization-surface").count(), 2);
   assert.equal(await console.locator(".organization-speech").count(), 2);
   assert.equal(await console.locator(".organization-lifetime").count(), 2);
@@ -440,7 +440,7 @@ export async function assertPerOrgWatchbands(
   });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
-  await primarySurface.getByRole("tab", { name: /^Agents/ }).click();
+  await primarySurface.getByRole("tab", { name: /^Threads/ }).click();
   assert.equal(
     await secondarySurface.getByRole("button", { name: "Drive", exact: true }).count(),
     1,
@@ -464,8 +464,8 @@ export async function assertPerOrgWatchbands(
   assert.equal(await secondarySpeech.inputValue(), "2");
   assert.equal(await primarySurface.locator(".organization-speech span").innerText(), "quiet");
   assert.equal(await secondarySurface.locator(".organization-speech span").innerText(), "narrate");
-  await console.getByRole("tab", { name: /^Org/ }).first().click();
-  await console.getByRole("tab", { name: /^Agents/ }).first().click();
+  await console.getByRole("tab", { name: /^Team/ }).first().click();
+  await console.getByRole("tab", { name: /^Threads/ }).first().click();
   assert.equal(await primarySpeech.inputValue(), "0", "Quiet survives an organization redraw");
   assert.equal(await secondarySpeech.inputValue(), "2", "Narrate survives an organization redraw");
   assert.equal(await primarySurface.locator(".organization-speech span").innerText(), "quiet");
@@ -748,7 +748,7 @@ export async function assertPerOrgWatchbands(
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Lanes");
   const reconnected = page.locator('[data-pane="agent-console"]');
-  await reconnected.getByRole("tab", { name: /^Agents/ }).first().click();
+  await reconnected.getByRole("tab", { name: /^Threads/ }).first().click();
   const restoredPrimary = reconnected.locator(
     `.organization-surface[data-lineage-id="${primary.lineage_id}"]`,
   );
@@ -768,8 +768,8 @@ export async function assertPerOrgWatchbands(
   );
   await restoredPrimarySpeech.fill("2");
   await restoredSecondarySpeech.fill("2");
-  await reconnected.getByRole("tab", { name: /^Org/ }).first().click();
-  await reconnected.getByRole("tab", { name: /^Agents/ }).first().click();
+  await reconnected.getByRole("tab", { name: /^Team/ }).first().click();
+  await reconnected.getByRole("tab", { name: /^Threads/ }).first().click();
   await page.evaluate(() => new Promise((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(resolve))));
   assert.deepEqual(
@@ -792,7 +792,7 @@ export async function assertPerOrgWatchbands(
 export async function captureReferenceViewport(page, artifacts) {
   await chooseCanvasView(page, "Lanes");
   const organization = page.locator('[data-pane="agent-console"]');
-  await organization.getByRole("tab", { name: /^Org/ }).click();
+  await organization.getByRole("tab", { name: /^Team/ }).click();
   for (const name of agentNames) {
     await organization.locator(".organization-detail-card").getByText(name, { exact: true }).waitFor();
   }
@@ -802,7 +802,7 @@ export async function captureReferenceViewport(page, artifacts) {
     path: join(artifacts, "canvas-reference-agent-details-dark.png"),
     fullPage: false,
   });
-  await organization.getByRole("tab", { name: /^Agents/ }).click();
+  await organization.getByRole("tab", { name: /^Threads/ }).click();
   await organization.locator(".mosaic-message-card").nth(3).waitFor({ timeout: 10_000 });
   assert.equal(
     await page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches),

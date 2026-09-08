@@ -65,7 +65,7 @@ async function openFirefoxTransitionWitness(endpoint) {
     await page.goto(endpoint, { waitUntil: "networkidle" });
     await chooseCanvasView(page, "Lanes");
     const organization = page.locator('[data-pane="agent-console"]');
-    await organization.getByRole("tab", { name: /^Agents/ }).click();
+    await organization.getByRole("tab", { name: /^Threads/ }).click();
     const plane = organization.locator(".lane-mosaic-plane");
     await waitForMosaicReady(page);
     await settleMosaicActivity(page, plane);

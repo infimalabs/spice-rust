@@ -117,9 +117,9 @@ impl CanvasDestination {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Org => "Org",
+            Self::Org => "Team",
             Self::Tasks => "Tasks",
-            Self::Agents => "Agents",
+            Self::Agents => "Threads",
         }
     }
 
@@ -252,7 +252,7 @@ mod tests {
     fn canvas_destinations_own_the_complete_presentation_order() {
         assert_eq!(
             CanvasDestination::ALL.map(CanvasDestination::label),
-            ["Org", "Tasks", "Agents"],
+            ["Team", "Tasks", "Threads"],
         );
         assert_eq!(
             OrgDestination::ALL.map(OrgDestination::canvas),

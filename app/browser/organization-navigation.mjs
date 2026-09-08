@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 
 export const ORG_DESTINATION_LABELS = Object.freeze([
-  "Org",
+  "Team",
   "Tasks",
-  "Agents",
+  "Threads",
 ]);
 
 export const GLOBAL_DESTINATION_LABELS = Object.freeze([

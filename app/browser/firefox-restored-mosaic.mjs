@@ -52,14 +52,14 @@ export async function assertFirefoxRestoredMosaic(endpoint) {
     await page.goto(endpoint, { waitUntil: "networkidle" });
     await chooseCanvasView(page, "Lanes");
     const console = page.locator('[data-pane="agent-console"]');
-    await console.getByRole("tab", { name: /^Agents/ }).click();
+    await console.getByRole("tab", { name: /^Threads/ }).click();
     const initial = await settledMosaicCards(page, "before tool-media delivery");
     assert.ok(initial.length > 0, "Firefox receives restored Mosaic cards");
     await assertCandidateMeasurementPaintAtomic(page, "firefox");
 
     await page.reload({ waitUntil: "networkidle" });
     await chooseCanvasView(page, "Lanes");
-    await console.getByRole("tab", { name: /^Agents/ }).click();
+    await console.getByRole("tab", { name: /^Threads/ }).click();
     const restored = await settledMosaicCards(page, "after reload");
     assert.equal(restored.length, initial.length, "Firefox reload restores every Mosaic card");
 

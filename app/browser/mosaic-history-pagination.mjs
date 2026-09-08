@@ -71,7 +71,7 @@ async function assertChronology(plane, expected, label) {
 }
 
 async function readOrgWorktrees(organization) {
-  await organization.getByRole("tab", { name: /^Org/ }).click();
+  await organization.getByRole("tab", { name: /^Team/ }).click();
   const cards = organization.locator(".organization-detail-card");
   await cards.nth(3).waitFor();
   const worktrees = await cards.evaluateAll((elements) => elements.map((card) => {
@@ -83,7 +83,7 @@ async function readOrgWorktrees(organization) {
   assert.equal(worktrees.length, 4, "the progressive organization exposes four fixture worktrees");
   assert.ok(worktrees.every((worktree) => worktree.startsWith("/")),
     "each progressive fixture worktree is an absolute path");
-  await organization.getByRole("tab", { name: /^Agents/ }).click();
+  await organization.getByRole("tab", { name: /^Threads/ }).click();
   return worktrees;
 }
 
@@ -259,7 +259,7 @@ export async function assertStagedMosaicHydration(
   const hiddenProbe = await armPlacementProbe(plane);
   await surface.getByRole("tab", { name: /^Tasks/ }).click();
   history.sendLive();
-  await surface.getByRole("tab", { name: /^Agents/ }).click();
+  await surface.getByRole("tab", { name: /^Threads/ }).click();
   await waitForCard(page, history.keys.live, "live work received while Lanes is hidden appears");
   const revealed = await finishPlacementProbe(plane, hiddenProbe);
   assertPlacementStable(hiddenProbe, revealed, "the hidden live append reveal");
@@ -345,7 +345,7 @@ export async function assertStagedMosaicHydration(
   const restoredSurface = replayOrg.locator(
     `.organization-surface[data-lineage-id="${lineage}"]`,
   );
-  await restoredSurface.getByRole("tab", { name: /^Agents/ }).click();
+  await restoredSurface.getByRole("tab", { name: /^Threads/ }).click();
   history.sendHeads("reload", history.lanes, reloadGeneration);
   const reloadRequests = await history.waitForRequests(
     history.lanes, reloadGeneration, reloadRequestStart,

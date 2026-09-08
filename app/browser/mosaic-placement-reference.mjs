@@ -193,7 +193,7 @@ export async function assertCompactionBoundaryPersistence(page, seeded, boundary
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Lanes");
   const restoredOrg = page.locator('[data-pane="agent-console"]');
-  await restoredOrg.getByRole("tab", { name: /^Agents/ }).click();
+  await restoredOrg.getByRole("tab", { name: /^Threads/ }).click();
   const restoredUnresolved = restoredOrg.locator(
     `[data-mosaic-card-key="${boundaryKeys.unresolved}"]`,
   );

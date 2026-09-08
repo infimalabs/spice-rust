@@ -161,7 +161,7 @@ async function assertDistinctWaitCallSites(page) {
 async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
   await chooseCanvasView(page, "Lanes");
   const organization = page.locator('[data-pane="agent-console"]');
-  await organization.getByRole("tab", { name: /^Agents/ }).click();
+  await organization.getByRole("tab", { name: /^Threads/ }).click();
   const lane = page.locator(`.organization-agent[data-agent-lane="${seeded.lane}"]`);
   const activity = organization.locator(`.mosaic-message-card[data-agent-lane="${seeded.lane}"]`);
   const quoteLane = page.locator(`.organization-agent[data-agent-lane="${seeded.quoteLane}"]`);
@@ -494,7 +494,7 @@ try {
           "organization-seat",
           () => seatAgentOrg(lightPage, fixture, worktrees),
         );
-        await organization.console.getByRole("tab", { name: /^Agents/ }).click();
+        await organization.console.getByRole("tab", { name: /^Threads/ }).click();
         const surface = organization.console.locator(
           `.organization-surface[data-lineage-id="${organization.host.lineage_id}"]`,
         );
@@ -638,7 +638,7 @@ try {
           quoteProse: organization.quoteProse,
           primaryHeadings: organization.primaryHeadings,
         });
-        await organization.console.getByRole("tab", { name: /^Agents/ }).first().click();
+        await organization.console.getByRole("tab", { name: /^Threads/ }).first().click();
         primary = organization.console.locator(
           `.organization-surface[data-lineage-id="${organization.host.lineage_id}"]`,
         );
@@ -824,7 +824,7 @@ try {
           assertOrgArrangement(lightPage, fixture, worktrees, artifacts)
         ));
         const renewedOrg = lightPage.locator('[data-pane="agent-console"]');
-        await renewedOrg.getByRole("tab", { name: /^Agents/ }).first().click();
+        await renewedOrg.getByRole("tab", { name: /^Threads/ }).first().click();
         await run.phase("agent-renewal", () => (
           assertAgentRenewalRequest(
             lightPage,
