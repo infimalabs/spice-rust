@@ -1,5 +1,4 @@
 use super::*;
-
 /// Every current leaf. Parser registration and help are generated from these rows.
 pub(super) const CONTRACTS: &[Contract] = &[
     local_direct!(
@@ -502,7 +501,8 @@ pub(super) const CONTRACTS: &[Contract] = &[
     row!(
         ["task", "add"],
         "task add TITLE [--project PROJECT] [--description DESCRIPTION] \
-         [--acceptance ACCEPTANCE...] [--requires-journal-schema SCHEMA] [--origin ORIGIN]",
+         [--acceptance ACCEPTANCE...] [--requires-journal-schema SCHEMA] \
+         [--requires-trust-grant DIGEST] [--origin ORIGIN]",
         OperatorOrLane,
         Command,
         [TaskAdded, TaskNoted],
@@ -617,7 +617,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "require"],
-        "task require HANDLE [--journal-schema SCHEMA] [--clear]",
+        "task require HANDLE [--journal-schema SCHEMA] [--trust-grant DIGEST] [--clear]",
         OperatorOrLane,
         Command,
         [TaskEdited],

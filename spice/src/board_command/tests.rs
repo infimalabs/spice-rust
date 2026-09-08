@@ -10,12 +10,10 @@ use serde::Serialize;
 use wire::{Accepted, CanonicalUuid, ResidencyHead, ResidentState};
 
 mod subscription;
-
 // Shared board and journal construction stays separate from the scenarios
 // so both source files remain inside the structural review bound.
 mod fixture;
 use fixture::*;
-
 // Renewal and restart assertions are one bounded reclaim scenario seam.
 mod reclaim;
 use reclaim::*;
@@ -383,6 +381,7 @@ fn capture_claims_one_exact_eligible_non_allocator_task() {
                 .expect("fixture lane subscription"),
             available.allocation_band,
             available.recent_cell.as_ref(),
+            &available.environment(),
         )
         .expect("allocator winner")
         .entry()
@@ -453,6 +452,7 @@ fn exact_recovery_names_one_ready_task_and_journals_its_transaction() {
                 .expect("fixture lane subscription"),
             available.allocation_band,
             available.recent_cell.as_ref(),
+            &available.environment(),
         )
         .expect("allocator winner")
         .entry()

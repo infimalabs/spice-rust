@@ -164,14 +164,7 @@ pub(in crate::board_command) fn commit_claim(
         grant.at,
         Producer::CommandDoor,
     );
-    guard_claim(
-        &mut write,
-        &snapshot,
-        command,
-        possession.named(),
-        &task,
-        projects,
-    );
+    guard_claim(&mut write, &snapshot, command, possession, &task, projects);
     if let Err(outcome) = append_claim_heads(
         &mut write,
         command,
@@ -276,49 +269,66 @@ fn claim_selection<'a>(
     command: &wire::AdmittedCommand,
     possession: Possession,
 ) -> Result<&'a Entry, Outcome<CommandAnswer>> {
-    if !possession.named() {
-        let subscription =
-            allocation_subscription(&snapshot.answer.residency.body, command.actor())?;
-        let selected = board::select(
-            &snapshot.entries,
-            command.actor(),
-            subscription,
-            snapshot.answer.allocation_band,
-            snapshot.answer.recent_cell.as_ref(),
+    if possession.named() {
+        named_claim_selection(snapshot, command, possession)
+    } else {
+        allocator_claim_selection(snapshot, command)
+    }
+}
+
+fn allocator_claim_selection<'a>(
+    snapshot: &'a ValidatedSnapshot,
+    command: &wire::AdmittedCommand,
+) -> Result<&'a Entry, Outcome<CommandAnswer>> {
+    let subscription = allocation_subscription(&snapshot.answer.residency.body, command.actor())?;
+    let environment = snapshot.answer.environment();
+    let selected = board::select(
+        &snapshot.entries,
+        command.actor(),
+        subscription,
+        snapshot.answer.allocation_band,
+        snapshot.answer.recent_cell.as_ref(),
+        &environment,
+    )
+    .map(|selected| selected.entry())
+    .ok_or_else(|| {
+        refusal(
+            "board::allocator-empty",
+            None,
+            concat!("add or wake eligible work before ", "requesting task next",),
         )
-        .map(|selected| selected.entry())
+    })?;
+    let witnessed = command
+        .expected()
+        .iter()
+        .find_map(|witness| match witness {
+            Witness::Task { task, .. } => Some(task),
+            _ => None,
+        })
         .ok_or_else(|| {
-            refusal(
-                "board::allocator-empty",
-                None,
-                concat!("add or wake eligible work before ", "requesting task next",),
+            protocol_fault(
+                "board::allocator-task-witness",
+                "task next has no selected task witness",
             )
         })?;
-        let witnessed = command
-            .expected()
-            .iter()
-            .find_map(|witness| match witness {
-                Witness::Task { task, .. } => Some(task),
-                _ => None,
-            })
-            .ok_or_else(|| {
-                protocol_fault(
-                    "board::allocator-task-witness",
-                    "task next has no selected task witness",
-                )
-            })?;
-        if witnessed != selected.born() {
-            return Err(refusal(
-                "board::witness-moved",
-                Some(format!(
-                    "witnessed {witnessed}; selected {}",
-                    selected.handle()
-                )),
-                "read the current board subscription and retry task next",
-            ));
-        }
-        return Ok(selected);
+    if witnessed != selected.born() {
+        return Err(refusal(
+            "board::witness-moved",
+            Some(format!(
+                "witnessed {witnessed}; selected {}",
+                selected.handle()
+            )),
+            "read the current board subscription and retry task next",
+        ));
     }
+    Ok(selected)
+}
+
+fn named_claim_selection<'a>(
+    snapshot: &'a ValidatedSnapshot,
+    command: &wire::AdmittedCommand,
+    possession: Possession,
+) -> Result<&'a Entry, Outcome<CommandAnswer>> {
     let task = command
         .expected()
         .iter()
@@ -343,19 +353,20 @@ fn claim_selection<'a>(
                 "capture into one current pending task",
             )
         })?;
+    let environment = snapshot.answer.environment();
     let (admitted, reason, remedy) = match possession {
         Possession::Steal => (
-            board::stealable_entry(&snapshot.entries, entry, command.actor()),
+            board::stealable_entry(&snapshot.entries, entry, command.actor(), &environment),
             "claim::steal-ineligible",
             "steal only a ready, pending task",
         ),
         Possession::Recover => (
-            board::eligible_entry(&snapshot.entries, entry, command.actor()),
+            board::eligible_entry(&snapshot.entries, entry, command.actor(), &environment),
             "git::recovery-task-ineligible",
             "recover only an unclaimed, ready, pending task",
         ),
         Possession::Capture => (
-            board::capturable_entry(&snapshot.entries, entry, command.actor()),
+            board::capturable_entry(&snapshot.entries, entry, command.actor(), &environment),
             "claim::capture-ineligible",
             "capture only an unclaimed, ready, pending task",
         ),
@@ -571,14 +582,22 @@ fn guard_claim(
     write: &mut JournalWrite,
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,
-    named: bool,
+    possession: Possession,
     task: &TaskHandle,
     projects: &ProjectPolicy,
 ) {
     let expected = command.expected().to_vec();
     let heads = allocation_heads(&snapshot.answer);
-    if named {
-        guard_capture(write, expected, heads, command.actor().clone());
+    if possession.named() {
+        guard_capture(
+            write,
+            expected,
+            heads,
+            command.actor().clone(),
+            task.clone(),
+            projects.clone(),
+            possession,
+        );
     } else {
         guard_allocation(
             write,

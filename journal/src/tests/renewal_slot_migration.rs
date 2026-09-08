@@ -34,7 +34,10 @@ fn schema_sixteen_rewrites_every_renewal_carrier_and_replays_once() {
         journal.migration().map(|step| (step.from(), step.to())),
         Some((16, SCHEMA_VERSION))
     );
-    assert_eq!(version_records(&journal.connection), (17, 17));
+    assert_eq!(
+        version_records(&journal.connection),
+        (SCHEMA_VERSION, SCHEMA_VERSION)
+    );
     let after = carrier_snapshot(&journal.connection);
     assert_eq!(after, before.with_current_slots());
     assert_current_carriers(&journal.connection);
@@ -265,6 +268,7 @@ fn insert_receipts(
         allocation_band: 0,
         recent_cell: None,
         tasks: Vec::new(),
+        trust: Vec::new(),
         residency: wire::intent::Positioned {
             position: seq(6),
             body: residency.clone(),

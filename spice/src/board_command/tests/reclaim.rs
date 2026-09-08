@@ -603,6 +603,7 @@ pub(super) fn assert_reclaim_survives_restart(
                 .expect("restarted lane subscription"),
             after_restart.allocation_band,
             after_restart.recent_cell.as_ref(),
+            &after_restart.environment(),
         )
         .expect("allocator still has unclaimed work")
         .entry()

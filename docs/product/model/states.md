@@ -31,6 +31,7 @@ flowchart LR
   F["no deferral"] --> E
   A["assignment admits actor"] --> E
   D["dependencies settled<br/>(completed or withdrawn)"] --> E
+  R["environment requirements satisfied<br/>(journal schema and exact trust grant)"] --> E
   U["no claim whose<br/>disposition = active"] --> E
   C["claim.disposition = active"] --> H["actively possessed / claimed<br/>(derived)"]
 ```
@@ -56,6 +57,15 @@ a row must not reset it. Starvation fairness depends on this.
 task transition. A pending task with an unsettled dependency stays pending but
 is ineligible. Completing or withdrawing the dependency settles the edge and
 can make the dependent eligible without writing its workflow fact.
+
+**Invariant —** Environmental blocking is also a read-time allocation
+predicate, distinct from dependency blocking and from workflow state. A
+`journal-schema` requirement needs at least that admitted schema. A
+`trust-grant` requirement needs the exact digest's current `granted` head with
+recorded producer-worktree provenance; the producing worktree is evidence, not
+lane or repository scope. Missing, pended, revoked, or unbound heads leave the
+task pending but ineligible. A matching grant can make it eligible immediately
+without editing, waking, freeing, or rescheduling the task.
 
 **Invariant —** Deferral is a distinct durable fact and workflow-head field;
 `workflow.status` remains `pending`. Its timestamp is advisory and wakeable, not

@@ -3,6 +3,8 @@ use super::*;
 mod guard;
 pub(super) use guard::dependency_claim_authority;
 use guard::{refuse_active_claim_conflict, witnesses_hold};
+mod capture;
+pub(super) use capture::guard_capture;
 
 pub(super) fn phase(name: &str) -> wire::Phase {
     name.parse()
@@ -150,11 +152,16 @@ fn validated_snapshot_from_with_occupant(
             allocation_band: allocation.band(),
             recent_cell,
             tasks,
+            trust: positioned_trust(observed),
             residency,
         },
         entries,
         review_history,
     })
+}
+
+fn positioned_trust(observed: &bus::TaskSnapshot) -> Vec<Positioned<wire::TrustHead>> {
+    observed.trust().iter().map(positioned).collect()
 }
 
 type ClaimContexts =
@@ -1145,6 +1152,13 @@ pub(super) fn guard_allocation(
             ));
         }
         let heads = read.task_heads()?;
+        let environment = wire::Environment::journal_schema(journal::SCHEMA_VERSION)
+            .expect("the compiled journal schema is positive")
+            .with_trust_heads(
+                read.trust_heads()?
+                    .into_iter()
+                    .map(journal::JournalHead::into_body),
+            );
         let current = heads
             .iter()
             .map(|task| {
@@ -1187,6 +1201,7 @@ pub(super) fn guard_allocation(
             &observed.subscription,
             observed.band,
             observed.recent_cell.as_ref(),
+            &environment,
         )
         .is_some_and(|selected| selected.entry().handle() == &observed.winner)
         {
@@ -1194,41 +1209,6 @@ pub(super) fn guard_allocation(
         } else {
             Err(GuardError::refused(
                 "board::witness-moved: allocator winner changed",
-            ))
-        }
-    }));
-}
-
-pub(super) fn guard_capture(
-    write: &mut JournalWrite,
-    expected: Vec<Witness>,
-    observed: AllocationHeads,
-    actor: Actor,
-) {
-    write.guard(JournalGuard::new(move |read| {
-        witnesses_hold(read, &expected)?;
-        let heads = read.task_heads()?;
-        let current = heads
-            .iter()
-            .map(|task| {
-                (
-                    TaskHandle::for_project(
-                        &task.statement().body().project,
-                        &task.statement().body().born,
-                    ),
-                    task.statement().position(),
-                    task.workflow().position(),
-                    task.claim().map(journal::JournalHead::position),
-                    task.lease().map(journal::JournalHead::position),
-                )
-            })
-            .collect::<AllocationHeads>();
-        if current == observed {
-            refuse_active_claim_conflict(&heads, &actor)?;
-            Ok(())
-        } else {
-            Err(GuardError::refused(
-                "board::witness-moved: capture head set changed",
             ))
         }
     }));

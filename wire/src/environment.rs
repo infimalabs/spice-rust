@@ -5,6 +5,7 @@
 //! fact requires adding its semantics to this crate and recompiling every
 //! consumer.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::num::NonZeroU32;
 
@@ -17,17 +18,20 @@ use serde::{Deserialize, Serialize};
 pub enum EnvironmentFact {
     /// Finalized schema of the journal authority visible to the evaluator.
     JournalSchema,
+    /// Exact executable-configuration digest with a current bound grant.
+    TrustGrant,
 }
 
 impl EnvironmentFact {
     /// Every environmental fact, in canonical collection order.
-    pub const ALL: &[Self] = &[Self::JournalSchema];
+    pub const ALL: &[Self] = &[Self::JournalSchema, Self::TrustGrant];
 
     /// Stable wire spelling of this fact.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::JournalSchema => "journal-schema",
+            Self::TrustGrant => "trust-grant",
         }
     }
 }
@@ -43,13 +47,18 @@ impl fmt::Display for EnvironmentFact {
 /// The tagged variant is the fact and its `value` field is the sole typed
 /// operand. There is deliberately no operator, expression, evaluator name, or
 /// nesting point in this shape.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "fact", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum EnvironmentRequirement {
     /// Require an authority whose observed journal schema is at least `value`.
     JournalSchema {
         /// Inclusive minimum journal schema. Zero is not a schema.
         value: NonZeroU32,
+    },
+    /// Require one exact executable-configuration digest to be currently granted.
+    TrustGrant {
+        /// Exact configuration digest whose bound grant is required.
+        value: crate::Digest,
     },
 }
 
@@ -66,11 +75,18 @@ impl EnvironmentRequirement {
         }
     }
 
+    /// Construct an exact trust-grant requirement.
+    #[must_use]
+    pub const fn trust_grant(value: crate::Digest) -> Self {
+        Self::TrustGrant { value }
+    }
+
     /// Fact this requirement constrains.
     #[must_use]
-    pub const fn fact(self) -> EnvironmentFact {
+    pub const fn fact(&self) -> EnvironmentFact {
         match self {
             Self::JournalSchema { .. } => EnvironmentFact::JournalSchema,
+            Self::TrustGrant { .. } => EnvironmentFact::TrustGrant,
         }
     }
 
@@ -79,12 +95,27 @@ impl EnvironmentRequirement {
     /// The comparison is selected entirely by the fact variant. Callers can
     /// provide observations, but cannot replace or parameterize the evaluator.
     #[must_use]
-    pub const fn is_satisfied_by(self, observed: EnvironmentObservation) -> bool {
+    pub fn is_satisfied_by(&self, observed: &EnvironmentObservation) -> bool {
         match (self, observed) {
             (
                 Self::JournalSchema { value: required },
                 EnvironmentObservation::JournalSchema { value: observed },
             ) => observed.get() >= required.get(),
+            (
+                Self::TrustGrant { value: required },
+                EnvironmentObservation::TrustGrant {
+                    value: observed,
+                    state,
+                    worktree,
+                },
+            ) => {
+                observed == required
+                    && *state == crate::TrustState::Granted
+                    && worktree
+                        .as_ref()
+                        .is_some_and(|worktree| !worktree.is_empty())
+            }
+            _ => false,
         }
     }
 }
@@ -111,12 +142,14 @@ impl std::error::Error for EnvironmentValueError {}
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Environment {
     journal_schema: Option<NonZeroU32>,
+    trust: BTreeMap<crate::Digest, crate::TrustHead>,
 }
 
 impl Environment {
     /// An environment in which no fact was observed.
     pub const EMPTY: Self = Self {
         journal_schema: None,
+        trust: BTreeMap::new(),
     };
 
     /// Observe one finalized journal schema.
@@ -128,17 +161,34 @@ impl Environment {
         match NonZeroU32::new(value) {
             Some(value) => Ok(Self {
                 journal_schema: Some(value),
+                trust: BTreeMap::new(),
             }),
             None => Err(EnvironmentValueError),
         }
     }
 
-    const fn observation(&self, fact: EnvironmentFact) -> Option<EnvironmentObservation> {
-        match fact {
-            EnvironmentFact::JournalSchema => match self.journal_schema {
-                Some(value) => Some(EnvironmentObservation::JournalSchema { value }),
-                None => None,
-            },
+    /// Add current trust heads observed at the same authority barrier.
+    #[must_use]
+    pub fn with_trust_heads(mut self, heads: impl IntoIterator<Item = crate::TrustHead>) -> Self {
+        self.trust
+            .extend(heads.into_iter().map(|head| (head.digest.clone(), head)));
+        self
+    }
+
+    fn observation(&self, requirement: &EnvironmentRequirement) -> Option<EnvironmentObservation> {
+        match requirement {
+            EnvironmentRequirement::JournalSchema { .. } => self
+                .journal_schema
+                .map(|value| EnvironmentObservation::JournalSchema { value }),
+            EnvironmentRequirement::TrustGrant { value } => {
+                self.trust
+                    .get(value)
+                    .map(|head| EnvironmentObservation::TrustGrant {
+                        value: head.digest.clone(),
+                        state: head.state,
+                        worktree: head.worktree.clone(),
+                    })
+            }
         }
     }
 }
@@ -146,12 +196,21 @@ impl Environment {
 /// One typed observation from the environment being evaluated.
 ///
 /// identity-law: non-crossing - process-local input to compiled requirement evaluation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EnvironmentObservation {
     /// Finalized journal schema observed from authority.
     JournalSchema {
         /// Positive observed schema value.
         value: NonZeroU32,
+    },
+    /// Current trust head observed for one exact digest.
+    TrustGrant {
+        /// Digest naming this trust head.
+        value: crate::Digest,
+        /// Current approval standing.
+        state: crate::TrustState,
+        /// Worktree that produced the executable configuration, when bound.
+        worktree: Option<String>,
     },
 }
 
@@ -170,9 +229,10 @@ impl EnvironmentObservation {
 
     /// Fact this observation describes.
     #[must_use]
-    pub const fn fact(self) -> EnvironmentFact {
+    pub const fn fact(&self) -> EnvironmentFact {
         match self {
             Self::JournalSchema { .. } => EnvironmentFact::JournalSchema,
+            Self::TrustGrant { .. } => EnvironmentFact::TrustGrant,
         }
     }
 }
@@ -235,8 +295,8 @@ impl EnvironmentRequirements {
     pub fn are_satisfied_by(&self, environment: &Environment) -> bool {
         self.0.iter().all(|requirement| {
             environment
-                .observation(requirement.fact())
-                .is_some_and(|observation| requirement.is_satisfied_by(observation))
+                .observation(requirement)
+                .is_some_and(|observation| requirement.is_satisfied_by(&observation))
         })
     }
 

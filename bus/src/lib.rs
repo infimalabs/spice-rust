@@ -113,6 +113,7 @@ mod runtime {
         cursor: Option<journal::crossing::Seq>,
         facts: TaskFacts,
         tasks: Arc<[TaskHeads]>,
+        trust: Arc<[JournalHead<journal::crossing::TrustHead>]>,
         residency: Option<JournalHead<journal::crossing::ResidencyHead>>,
     }
 
@@ -163,6 +164,20 @@ mod runtime {
         #[must_use]
         pub fn tasks(&self) -> &[TaskHeads] {
             &self.tasks
+        }
+
+        /// Current trust heads captured at the same board barrier.
+        #[must_use]
+        pub fn trust(&self) -> &[JournalHead<journal::crossing::TrustHead>] {
+            &self.trust
+        }
+
+        /// Closed environment derived from the heads captured at this barrier.
+        #[must_use]
+        pub fn environment(&self) -> journal::crossing::Environment {
+            journal::crossing::Environment::journal_schema(journal::SCHEMA_VERSION)
+                .expect("the compiled journal schema is positive")
+                .with_trust_heads(self.trust.iter().map(|head| head.body().clone()))
         }
 
         #[must_use]

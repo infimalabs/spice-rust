@@ -254,7 +254,8 @@ fn finding_command_replays_once_and_allocator_selects_its_correction() {
     assert!(!board::eligible_entry(
         &entries,
         reviewed,
-        &review.implementer
+        &review.implementer,
+        &available.environment(),
     ));
     let subscription = allocation_subscription(&available.residency.body, &review.implementer)
         .expect("implementer has an allocation subscription");
@@ -264,6 +265,7 @@ fn finding_command_replays_once_and_allocator_selects_its_correction() {
         subscription,
         available.allocation_band,
         available.recent_cell.as_ref(),
+        &available.environment(),
     )
     .expect("the correction is allocatable");
     assert_eq!(selected.entry().handle(), &correction);
@@ -374,7 +376,7 @@ fn repeated_finding_reuses_one_completed_correction_without_a_duplicate_edge() {
         .find(|entry| entry.handle() == &review.reviewed)
         .expect("reviewed task remains visible");
     assert!(
-        board::eligible_entry(&entries, entry, &review.reviewer),
+        board::eligible_entry(&entries, entry, &review.reviewer, &pending.environment()),
         "a finding whose already-related correction is complete is reviewable again",
     );
     review.finish();

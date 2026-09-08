@@ -71,7 +71,7 @@ fn schema_sixteen_renames_every_renewal_state_across_all_durable_carriers_once()
     let journal = Journal::open(&path).expect("schema sixteen renewal authority migrates");
     assert_eq!(
         journal.migration().map(|step| (step.from(), step.to())),
-        Some((16, 17))
+        Some((16, SCHEMA_VERSION))
     );
     let facts = journal.fact_snapshot().expect("migrated facts decode");
     let renewal_states = facts

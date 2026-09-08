@@ -57,7 +57,6 @@ fn automatic_claim_heartbeat_rolls_one_hundred_seconds_and_rearms_lapse() {
         .expect("automatic heartbeat arms");
     assert_eq!(timers.renewals.len(), 1);
     assert!(timers.directives.is_empty());
-
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .expect("fixture async runtime builds");
@@ -69,7 +68,6 @@ fn automatic_claim_heartbeat_rolls_one_hundred_seconds_and_rearms_lapse() {
     timers
         .synchronize(&fixture.bus)
         .expect("renewed heartbeat re-arms");
-
     let lease = fixture
         .bus
         .read({
@@ -431,7 +429,6 @@ fn finite_task_deferral_wakes_at_its_live_deadline() {
     let mut timers =
         Runtime::start(projects(), steer::Config::default()).expect("timer runtime starts");
     timers.synchronize(&bus).expect("live task deferral arms");
-
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .expect("fixture async runtime builds");
@@ -452,11 +449,15 @@ fn finite_task_deferral_wakes_at_its_live_deadline() {
     let entry = Entry::new(statement, workflow, claim, lease, &projects())
         .expect("woken task remains valid");
     assert!(
-        board::eligible_entry(std::slice::from_ref(&entry), &entry, &Actor::Lane(uuid(49))),
+        board::eligible_entry(
+            std::slice::from_ref(&entry),
+            &entry,
+            &Actor::Lane(uuid(49)),
+            &wire::Environment::journal_schema(journal::SCHEMA_VERSION).expect("positive schema"),
+        ),
         "the elapsed deferral becomes allocator-eligible",
     );
     assert_eq!(task_woken_count(&bus), 1);
-
     drop(timers);
     bus.shutdown().expect("fixture bus stops");
 }
@@ -1238,7 +1239,6 @@ fn lapsed_heads(fixture: &Fixture) -> TaskHeads {
         .expect("fixture task remains")
         .clone()
 }
-
 fn assert_lapsed_and_eligible(fixture: &Fixture, heads: &TaskHeads) {
     assert_eq!(
         heads
@@ -1256,11 +1256,11 @@ fn assert_lapsed_and_eligible(fixture: &Fixture, heads: &TaskHeads) {
             std::slice::from_ref(&entry),
             &entry,
             &Actor::Lane(fixture.authority.lane),
+            &wire::Environment::journal_schema(journal::SCHEMA_VERSION).expect("positive schema"),
         ),
         "the commit-bearing task is eligible for stale-claim adoption"
     );
 }
-
 fn capture_lapsed_task(
     fixture: &Fixture,
     heads: &TaskHeads,

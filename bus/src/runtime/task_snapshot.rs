@@ -160,6 +160,7 @@ pub(super) fn load_task_snapshot(journal: &Journal) -> Result<TaskSnapshot, BusR
                     read.fact_snapshot().map_err(BusReadError::Snapshot)?,
                 ),
                 tasks: Arc::from(read.task_heads().map_err(BusReadError::Head)?),
+                trust: Arc::from(read.trust_heads().map_err(BusReadError::Head)?),
                 residency: read.residency_head().map_err(BusReadError::Head)?,
             })
         })
@@ -187,7 +188,7 @@ fn advance_task_snapshot(
     let last = journal::crossing::Seq::new(commit.last)
         .expect("a durable commit ends at a nonzero position");
     let limit = usize::try_from(commit.last - commit.first + 1).unwrap_or(usize::MAX);
-    let (cursor, packed, changed, residency) = journal
+    let (cursor, packed, changed, trust, residency) = journal
         .read_with(|read| {
             let cursor = read.cursor().map_err(BusReadError::Head)?;
             if cursor != Some(last) {
@@ -201,8 +202,9 @@ fn advance_task_snapshot(
             let changed = read
                 .changed_task_heads(first, last)
                 .map_err(BusReadError::Head)?;
+            let trust = read.trust_heads().map_err(BusReadError::Head)?;
             let residency = read.residency_head().map_err(BusReadError::Head)?;
-            Ok((cursor, packed, changed, residency))
+            Ok((cursor, packed, changed, trust, residency))
         })
         .map_err(map_read_error)?;
     if packed.overflow.is_some() || packed.rows.len() != limit {
@@ -232,6 +234,7 @@ fn advance_task_snapshot(
         cursor,
         facts,
         tasks,
+        trust: Arc::from(trust),
         residency,
     })
 }

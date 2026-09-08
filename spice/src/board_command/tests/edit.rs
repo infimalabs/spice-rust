@@ -1,5 +1,7 @@
 use super::*;
 
+mod environment;
+
 /// Drive one correction through the door the CLI leaf reaches.
 ///
 /// The witnesses are read from the board immediately before the command, so
@@ -484,100 +486,6 @@ fn a_correction_to_an_unknown_task_is_refused() {
     assert!(edit_facts(&bus, &missing).is_empty());
 }
 
-#[test]
-fn environmental_requirements_add_set_clear_and_report_under_claim_witness_authority() {
-    let (_root, bus, epoch, seats) = fixture("task-environment-requirements", 1);
-    let actor = Actor::Lane(seats[0].lane);
-    let born = stamp("ENVTEST-1kKfYW06");
-    let task = TaskHandle::for_project("board.test", &born);
-    let required = journal::SCHEMA_VERSION
-        .checked_add(1)
-        .expect("fixture schema advances");
-    let requirements = wire::EnvironmentRequirements::one(
-        wire::EnvironmentRequirement::journal_schema(required).expect("positive schema"),
-    );
-    assert_committed(issue(
-        &bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::TaskAdd,
-        vec![Witness::Absence { task: born }],
-        &TaskAdd {
-            title: "Require a future journal".to_owned(),
-            project: Some("board.test".to_owned()),
-            description: None,
-            acceptance: Vec::new(),
-            requirements: requirements.clone(),
-            origin: Some("fixture:environment".parse().expect("fixture origin")),
-            flow: Some("todo".to_owned()),
-            depends: Vec::new(),
-        },
-    ));
-
-    let blocked = board(&bus, epoch, actor.clone());
-    let shown = task_show(&blocked, at(&blocked, &task), &[]);
-    assert!(shown.contains(&format!(
-        "journal-schema required={required} observed={} satisfied=false",
-        journal::SCHEMA_VERSION
-    )));
-    assert!(shown.contains("environment blocked"));
-    let status = task_status(&blocked).expect("status renders");
-    assert!(status.contains("blocked 0"));
-    assert!(status.contains("waiting 0"));
-    assert!(status.contains(&format!(
-        "environment journal-schema required={required} observed={} satisfied=0 blocked=1",
-        journal::SCHEMA_VERSION
-    )));
-    assert!(allocated(&bus, epoch, &actor).is_none());
-
-    let heads = at(&blocked, &task);
-    let workflow_position = heads.workflow.position;
-    assert_committed(issue(
-        &bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::TaskEdit,
-        vec![statement_witness(heads), claim_witness(heads)],
-        &TaskEdit {
-            requirements: Some(wire::intent::TaskRequirementsEdit::Clear {}),
-            ..only(&task)
-        },
-    ));
-    let cleared = board(&bus, epoch, actor.clone());
-    assert!(at(&cleared, &task).statement.body.requirements.is_empty());
-    assert_eq!(at(&cleared, &task).workflow.position, workflow_position);
-    assert_eq!(
-        allocated(&bus, epoch, &actor)
-            .expect("cleared task becomes eligible")
-            .0,
-        task.to_string()
-    );
-
-    let heads = at(&cleared, &task);
-    assert_committed(issue(
-        &bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::TaskEdit,
-        vec![statement_witness(heads), claim_witness(heads)],
-        &TaskEdit {
-            requirements: Some(wire::intent::TaskRequirementsEdit::one(
-                wire::EnvironmentRequirement::journal_schema(journal::SCHEMA_VERSION)
-                    .expect("current schema is positive"),
-            )),
-            ..only(&task)
-        },
-    ));
-    let satisfied = board(&bus, epoch, actor);
-    assert!(task_show(&satisfied, at(&satisfied, &task), &[]).contains("environment satisfied"));
-    let status = task_status(&satisfied).expect("status renders");
-    assert!(status.contains(&format!(
-        "environment journal-schema required={} observed={} satisfied=1 blocked=0",
-        journal::SCHEMA_VERSION,
-        journal::SCHEMA_VERSION
-    )));
-}
-
 /// A correction naming one field, with every other field left alone.
 fn only(task: &TaskHandle) -> TaskEdit {
     TaskEdit {
@@ -607,6 +515,7 @@ pub(super) fn allocated(bus: &Bus, epoch: CanonicalUuid, actor: &Actor) -> Optio
         subscription,
         answer.allocation_band,
         answer.recent_cell.as_ref(),
+        &answer.environment(),
     )
     .map(|selection| {
         (

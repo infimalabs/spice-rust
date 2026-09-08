@@ -784,7 +784,6 @@ fn fact_body<T: serde::de::DeserializeOwned>(
         .map_err(|error| store_fault("lifecycle::fact-invalid", &error.to_string()))?;
     wire::decode(&bytes).map_err(|error| store_fault("lifecycle::fact-invalid", &error.to_string()))
 }
-
 fn available_deadline(
     snapshot: &bus::TaskSnapshot,
     entries: &[Entry],
@@ -802,7 +801,6 @@ fn available_deadline(
         allocation,
     )?)
 }
-
 fn drain_available(
     snapshot: &bus::TaskSnapshot,
     entries: &[Entry],
@@ -827,12 +825,14 @@ fn selected_ready(
     allocation: &board::NextConfig,
 ) -> CommandResult<Option<SelectedReady>> {
     let recent_cell = board::recent_claim_cell(entries, snapshot.facts().iter(), actor);
+    let environment = snapshot.environment();
     let Some(selected) = board::select(
         entries,
         actor,
         subscription,
         allocation.band(),
         recent_cell.as_ref(),
+        &environment,
     ) else {
         return Ok(None);
     };
@@ -850,7 +850,7 @@ fn selected_ready(
         })?;
     let eligible = entries
         .iter()
-        .filter(|entry| board::selectable_entry(entries, entry, actor, subscription))
+        .filter(|entry| board::selectable_entry(entries, entry, actor, subscription, &environment))
         .count();
     Ok(Some(SelectedReady { at, eligible }))
 }
