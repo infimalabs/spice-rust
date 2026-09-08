@@ -9,22 +9,46 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 
 static APP_ASSETS: [AppAsset; 8] = [
-    AppAsset::new("/", "canvas-app.html", "text/html; charset=utf-8"),
+    AppAsset::new(
+        "/",
+        wire::manifest::CANVAS_APP_HTML,
+        "text/html; charset=utf-8",
+    ),
     AppAsset::new(
         "/app.module",
-        "app.module",
+        wire::manifest::CANVAS_APP_MODULE,
         "text/javascript; charset=utf-8",
     ),
-    AppAsset::new("/style.css", "style.css", "text/css; charset=utf-8"),
-    AppAsset::new("/mosaic.css", "mosaic.css", "text/css; charset=utf-8"),
-    AppAsset::new("/chrome.css", "chrome.css", "text/css; charset=utf-8"),
-    AppAsset::new("/composer.css", "composer.css", "text/css; charset=utf-8"),
     AppAsset::new(
-        "/responsive.css",
-        "responsive.css",
+        "/style.css",
+        wire::manifest::CANVAS_STYLE,
         "text/css; charset=utf-8",
     ),
-    AppAsset::new("/app_bg.wasm", "app_bg.wasm", "application/wasm"),
+    AppAsset::new(
+        "/mosaic.css",
+        wire::manifest::CANVAS_MOSAIC_STYLE,
+        "text/css; charset=utf-8",
+    ),
+    AppAsset::new(
+        "/chrome.css",
+        wire::manifest::CANVAS_CHROME_STYLE,
+        "text/css; charset=utf-8",
+    ),
+    AppAsset::new(
+        "/composer.css",
+        wire::manifest::CANVAS_COMPOSER_STYLE,
+        "text/css; charset=utf-8",
+    ),
+    AppAsset::new(
+        "/responsive.css",
+        wire::manifest::CANVAS_RESPONSIVE_STYLE,
+        "text/css; charset=utf-8",
+    ),
+    AppAsset::new(
+        "/app_bg.wasm",
+        wire::manifest::CANVAS_WASM,
+        "application/wasm",
+    ),
 ];
 
 /// The sole browser app generation store, built and served per worktree.
@@ -151,7 +175,7 @@ impl AppSource {
     ///
     /// The current pointer remains the only stage freshness check on the hot
     /// path. A new identity is admitted under the generation-cache lock: its
-    /// closed inventory is validated, then all six files and their digests are
+    /// closed inventory is validated, then all eight files and their digests are
     /// loaded exactly once. Requests for an admitted identity clone shared byte
     /// handles and never reopen or rehash its files.
     ///

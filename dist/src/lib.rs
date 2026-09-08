@@ -25,7 +25,7 @@ pub use release::{
     ReleaseExecutor, ReleaseJournal, ReleaseObservations, ReleasePlan, SealedTarget, plan_release,
 };
 pub use stage::{
-    BuildError, BuildStep, Builder, FilePublisher, Pipeline, PublishError, Publisher, StageError,
-    StagedTarget,
+    AppBundle, AppFile, BuildError, BuildStep, Builder, FilePublisher, Pipeline, PublishError,
+    Publisher, StageError, StagedTarget,
 };
 pub use wire::manifest::ProductVersion;

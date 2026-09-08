@@ -1117,11 +1117,10 @@ mod tests {
         .expect("fixture replay");
         let digest = || Digest::compute(Domain::DistArtifact, b"fixture");
         let payload = TargetPayload {
-            version: 1,
+            version: wire::manifest::TARGET_PAYLOAD_VERSION,
             target: ReleaseTarget::Aarch64AppleDarwin,
             source: digest(),
             app: digest(),
-            embedded_app: digest(),
             native: digest(),
             pins: BuildPins {
                 rust: String::new(),

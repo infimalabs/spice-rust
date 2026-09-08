@@ -47,7 +47,35 @@ pub struct JournalBackupManifest {
 /// The sole current detached proof receipt schema.
 pub const PROOF_RECEIPT_VERSION: u16 = 3;
 /// The sole current target payload schema.
-pub const TARGET_PAYLOAD_VERSION: u16 = 1;
+pub const TARGET_PAYLOAD_VERSION: u16 = 2;
+
+/// Complete browser-app file inventory carried by every current appliance target.
+pub const CANVAS_APP_FILES: [&str; 8] = [
+    CANVAS_APP_HTML,
+    CANVAS_APP_MODULE,
+    CANVAS_STYLE,
+    CANVAS_MOSAIC_STYLE,
+    CANVAS_CHROME_STYLE,
+    CANVAS_COMPOSER_STYLE,
+    CANVAS_RESPONSIVE_STYLE,
+    CANVAS_WASM,
+];
+/// Browser application HTML shell.
+pub const CANVAS_APP_HTML: &str = "canvas-app.html";
+/// Browser application JavaScript module.
+pub const CANVAS_APP_MODULE: &str = "app.module";
+/// Shared browser application stylesheet.
+pub const CANVAS_STYLE: &str = "style.css";
+/// Mosaic workspace stylesheet.
+pub const CANVAS_MOSAIC_STYLE: &str = "mosaic.css";
+/// Browser chrome stylesheet.
+pub const CANVAS_CHROME_STYLE: &str = "chrome.css";
+/// Composer stylesheet.
+pub const CANVAS_COMPOSER_STYLE: &str = "composer.css";
+/// Responsive-layout stylesheet.
+pub const CANVAS_RESPONSIVE_STYLE: &str = "responsive.css";
+/// Browser application WebAssembly module.
+pub const CANVAS_WASM: &str = "app_bg.wasm";
 /// The sole current multi-target release manifest schema.
 pub const RELEASE_MANIFEST_VERSION: u16 = 1;
 /// The sole current deterministic release-note document schema.
@@ -382,8 +410,8 @@ pub struct TargetPayload {
     pub target: ReleaseTarget,
     /// Domain-separated identity of the immutable Git commit built.
     pub source: Digest,
+    /// Identity of the complete immutable Canvas generation.
     pub app: Digest,
-    pub embedded_app: Digest,
     pub native: Digest,
     pub pins: BuildPins,
     pub pins_digest: Digest,

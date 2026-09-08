@@ -363,7 +363,8 @@ mod tests {
 
 pub(crate) fn app_digest(worktree: &Path) -> Result<Digest, String> {
     canvas::AppSource::resolve(worktree)
-        .and_then(|source| source.digest())
+        .and_then(|source| source.current_generation())
+        .map(|generation| generation.identity().clone())
         .map_err(|error| error.to_string())
 }
 

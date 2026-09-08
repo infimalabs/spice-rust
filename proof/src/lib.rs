@@ -52,8 +52,8 @@ pub use manifest::{
 };
 pub use native::{NativeError, NativeRunner};
 pub use package::{
-    AdmittedPackage, PackageError, PackageInput, PackageMember, PackageTargetInput, PackageTree,
-    admit_package_tree, build_package, build_package_index,
+    AdmittedPackage, PackageAppInput, PackageError, PackageInput, PackageMember,
+    PackageTargetInput, PackageTree, admit_package_tree, build_package, build_package_index,
 };
 pub use payload::{AdmittedPayload, PayloadError, admit};
 pub use rederive::{RederiveError, rederive};

@@ -73,11 +73,10 @@ fn journal_backup_manifests_have_one_strict_current_wire_shape() {
 fn payload(target: ReleaseTarget, marker: &str) -> TargetPayload {
     let artifact = digest(marker);
     TargetPayload {
-        version: 1,
+        version: wire::manifest::TARGET_PAYLOAD_VERSION,
         target,
         source: digest("source"),
         app: artifact.clone(),
-        embedded_app: digest("embedded-app"),
         native: digest("native"),
         pins: BuildPins {
             rust: "rustc 1.97.1".to_owned(),
