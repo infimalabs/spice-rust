@@ -19,6 +19,8 @@ use wire::Outcome;
 
 #[path = "support/git_repository.rs"]
 mod git_repository;
+#[path = "support/install_package.rs"]
+mod install_package_fixture;
 
 /// How long a paused install is given to reach its mutation rendezvous.
 ///
@@ -541,6 +543,66 @@ fn refused_package_preview_changes_no_repository_authority() {
     assert!(!fixture.installed_binary().exists());
     assert!(!fixture.record().exists());
     fixture.assert_state_unchanged();
+}
+
+#[test]
+fn package_preview_apply_and_unapply_use_the_verified_canvas_authority() {
+    let fixture = Fixture::new("package-lifecycle");
+    let linked = fixture.root.join("linked");
+    git_repository::link(&fixture.root, &linked, "linked");
+    let package = install_package_fixture::PackageFixture::create(
+        fixture.root.join("release-package"),
+        std::path::Path::new(env!("CARGO_BIN_EXE_spice")),
+    );
+    let package_root = package.root().to_str().expect("package root is UTF-8");
+    let invoke = |arguments: &[&str]| {
+        let output = fixture
+            .command(arguments)
+            .current_dir(&linked)
+            .env_remove(spice::install::TEST_EXECUTABLE)
+            .output()
+            .expect("package install launches");
+        Spoken {
+            code: output.status.code(),
+            out: output.stdout,
+            err: output.stderr,
+        }
+    };
+
+    let preview: InstallPreview =
+        reply_body(invoke(&["--json", "install", "--package", package_root]));
+    assert_canvas_preview(&preview);
+    assert!(!fixture.record().exists());
+    assert!(!fixture.root.join(".git/.spice-install").exists());
+
+    let receipt: InstallReceipt = reply_body(invoke(&[
+        "--json",
+        "install",
+        "--package",
+        package_root,
+        &format!("--apply={}", preview.digest()),
+    ]));
+    assert_eq!(receipt.status(), InstallStatus::Complete);
+    let app = fixture.root.join(".git/.spice-install/app");
+    let generation =
+        fs::read_to_string(app.join("current")).expect("read installed Canvas pointer");
+    for file in wire::manifest::CANVAS_APP_FILES {
+        assert_eq!(
+            fs::read(app.join("generations").join(generation.trim()).join(file)).unwrap(),
+            package.app_bytes(file),
+        );
+    }
+    assert_eq!(
+        fs::read(fixture.installed_binary()).unwrap(),
+        fs::read(env!("CARGO_BIN_EXE_spice")).unwrap(),
+    );
+    assert!(!fixture.root.join(".spice-install").exists());
+    assert!(!linked.join(".spice-install").exists());
+
+    let removed: InstallReceipt = reply_body(invoke(&["--json", "install", "--unapply"]));
+    assert_eq!(removed.status(), InstallStatus::Uninstalled);
+    assert!(!fixture.installed_binary().exists());
+    assert!(!app.exists());
 }
 
 #[test]
