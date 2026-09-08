@@ -10,6 +10,7 @@ mod claim_index;
 mod creation_context;
 mod identity_stamp;
 mod release_notes;
+mod renewal_organization;
 mod residency_lineage;
 mod steering_identity;
 mod steering_microseconds;
@@ -503,6 +504,7 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (13, MigrationStep::Rust(steering_microseconds::migrate)),
     (14, MigrationStep::Sql(MIGRATE_14_TO_15_SQL)),
     (15, MigrationStep::Sql(MIGRATE_15_TO_16_SQL)),
+    (16, MigrationStep::Rust(renewal_organization::migrate)),
 ];
 
 /// Schema 15 to 16: environmental-requirement rollout boundary.
@@ -749,8 +751,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 16, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 17, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 16;
+PRAGMA user_version = 17;
 "#;
