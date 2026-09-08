@@ -80,18 +80,32 @@ pub(super) fn use_history_paging(
             let observed_requested = requested.clone();
             let observed_request = request.clone();
             let inspect = Rc::new(move || {
+                let at_edge = crate::mosaic::history_edge_is_near(
+                    f64::from(observed.scroll_top()),
+                    f64::from(observed.client_height()),
+                    f64::from(observed.scroll_height()),
+                    None,
+                );
                 let viewport = observed.get_bounding_client_rect();
                 for target in &observed_targets {
                     let selector = format!("[data-mosaic-card-key=\"{}\"]", target.key);
-                    let Ok(Some(card)) = observed.query_selector(&selector) else {
+                    let target_is_near = observed
+                        .query_selector(&selector)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|card| {
+                            let bounds = card.get_bounding_client_rect();
+                            bounds.top() <= viewport.bottom() + 400.0
+                                && bounds.bottom() >= viewport.top() - 400.0
+                        });
+                    // Keep visible-cursor prefetching, but let the merged plane's
+                    // trailing edge page a cursor buried above a deeper sibling column.
+                    if !at_edge && !target_is_near {
                         continue;
-                    };
-                    let bounds = card.get_bounding_client_rect();
-                    if bounds.top() > viewport.bottom() + 400.0
-                        || bounds.bottom() < viewport.top() - 400.0
-                        || !observed_requested
-                            .borrow_mut()
-                            .insert(target.request_key.clone())
+                    }
+                    if !observed_requested
+                        .borrow_mut()
+                        .insert(target.request_key.clone())
                     {
                         continue;
                     }

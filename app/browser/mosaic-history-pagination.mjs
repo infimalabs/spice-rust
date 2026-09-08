@@ -37,13 +37,20 @@ async function waitForCard(page, key, label) {
 }
 
 async function revealHistoryEdge(plane, key) {
-  const card = plane.locator(`[data-mosaic-card-key="${key}"]`);
-  await card.waitFor();
-  await card.scrollIntoViewIfNeeded();
-  await plane.evaluate((element) => new Promise((resolve) => requestAnimationFrame(() => {
+  await plane.locator(`[data-mosaic-card-key="${key}"]`).waitFor();
+  const geometry = await plane.evaluate((element) => new Promise((resolve) => requestAnimationFrame(() => {
+    element.scrollTop = element.scrollHeight;
     element.dispatchEvent(new Event("scroll"));
-    resolve();
+    resolve({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+      scrollTop: element.scrollTop,
+    });
   })));
+  assert.ok(
+    geometry.scrollHeight - geometry.clientHeight - geometry.scrollTop <= 1,
+    `history traversal reaches the trailing scroll edge: ${JSON.stringify(geometry)}`,
+  );
 }
 
 async function placement(plane) {
@@ -238,6 +245,11 @@ export async function assertStagedMosaicHydration(
   const backfilled = await finishPlacementProbe(plane, backfillProbe);
   assert.equal(backfilled.transition, "backfill", "the older first page is a prefix backfill");
   assertPlacementStable(backfillProbe, backfilled, "the independent prefix backfill");
+  assert.equal(
+    history.records.firstOlder.activity,
+    undefined,
+    "the repeated history cursor is ordinary prose rather than a compaction boundary",
+  );
   await revealHistoryEdge(plane, history.keys.firstOlder);
   const firstNext = await history.waitForRequest(firstLane, history.records.firstOlder.locus);
 
@@ -298,6 +310,7 @@ export async function assertStagedMosaicHydration(
   );
   await assertChronology(plane, history.expectedKeys(), "organization removal and join");
 
+  await revealHistoryEdge(plane, history.keys.thirdBeforeBoundary);
   const reconnectProbe = await armPlacementProbe(plane);
   const beforeReconnect = history.generation;
   const reconnectRequestStart = history.requestCount();

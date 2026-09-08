@@ -3,8 +3,9 @@ use std::cell::Cell;
 use app::mosaic::{
     Candidate, Card, FREEZE_DEPTH, Geometry, Lifecycle, MIN_CARD_ROWS, Reservation,
     TALL_THRESHOLD_PX, TRACK_COUNT, boundary_rows_for, burial_depth, content_box_width,
-    css_row_start, extent, full_replay, pack, pane_is_scrolled, replay_liquid,
-    resolve_frozen_resize, ripple_rows, rows_for, scroll_compensation, span_candidates,
+    css_row_start, extent, full_replay, history_edge_is_near, pack, pane_is_scrolled,
+    replay_liquid, resolve_frozen_resize, ripple_rows, rows_for, scroll_compensation,
+    span_candidates,
 };
 
 fn candidates(span: usize, rows: i32) -> Vec<Candidate> {
@@ -287,6 +288,13 @@ fn extent_grid_rows_and_scroll_compensation_share_the_module() {
     assert_eq!(scroll_compensation(4, 6, 60, true, false), Some(120.0));
     assert_eq!(scroll_compensation(4, 6, 60, false, false), None);
     assert_eq!(scroll_compensation(4, 6, 60, true, true), None);
+}
+
+#[test]
+fn history_paging_admits_the_trailing_scroll_edge_without_a_cursor_card() {
+    assert!(!history_edge_is_near(199.0, 400.0, 1_000.0, None));
+    assert!(history_edge_is_near(200.0, 400.0, 1_000.0, None));
+    assert!(history_edge_is_near(0.0, 400.0, 400.0, None));
 }
 
 /// Two seated lanes are two planes, not one skyline they take turns landing on.
