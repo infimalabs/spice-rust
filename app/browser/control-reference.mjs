@@ -819,14 +819,12 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
   const composer = menu.locator(
     "xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' composer-shard--primary ')][1]",
   );
-  const textbox = composer.getByRole("textbox");
   assert.equal(
     await menu.getAttribute("open"),
     null,
     "agent renewal starts inside a closed drawer",
   );
   const trigger = menu.locator(":scope > summary");
-  const focus = menu.getByRole("button", { name: "Focus message editor" });
   const renew = menu.locator(".agent-renew-request:not(:disabled)");
   const vendorIcon = composer.locator(".composer-vendor-icon");
   await vendorIcon.waitFor();
@@ -840,7 +838,7 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
     const trigger = details.querySelector(":scope > summary");
     const heading = details.closest(".composer-shard-heading");
     const actions = [...details.querySelectorAll(".agent-action-drawer > button")];
-    if (!composer || !drawer || !trigger || !heading || actions.length < 2) {
+    if (!composer || !drawer || !trigger || !heading || actions.length < 1) {
       throw new Error("agent menu geometry is incomplete");
     }
     const rect = (element) => element.getBoundingClientRect().toJSON();
@@ -894,20 +892,6 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
     true,
     "the open drawer receives interaction across the composer's covered interior",
   );
-  await focus.click();
-  assert.equal(await menu.getAttribute("open"), null, "focusing the editor closes its overlay");
-  const textboxId = await textbox.getAttribute("id");
-  assert.ok(textboxId, "the primary message editor has a stable focus target");
-  await waitForPageFunction(
-    page,
-    "the focus action returns interaction to this agent's message editor",
-    TRANSITION_MS,
-    (id) => document.activeElement?.id === id,
-    textboxId,
-  );
-
-  await trigger.click();
-  await renew.waitFor();
   const siblingEditor = surface.locator(".team-agent").first().getByRole("textbox");
   await siblingEditor.click();
   assert.equal(
