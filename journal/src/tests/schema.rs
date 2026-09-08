@@ -827,6 +827,52 @@ fn schema_probe_reads_finalized_identity_without_changing_the_store() {
 }
 
 #[test]
+fn stored_schema_probe_observes_finalized_versions_without_admitting_them() {
+    for version in [SCHEMA_VERSION - 1, SCHEMA_VERSION + 1] {
+        let scratch = Scratch::new();
+        let path = scratch.path().join(format!("schema-{version}.db"));
+        drop(schema_file_fixture(
+            &path,
+            version,
+            "finalized",
+            None,
+            None,
+            None,
+        ));
+        let before = directory_bytes(scratch.path());
+
+        assert_eq!(
+            Journal::inspect_stored_schema(&path).expect("stored version observes"),
+            version
+        );
+        assert_eq!(directory_bytes(scratch.path()), before);
+    }
+}
+
+#[test]
+fn stored_schema_probe_still_refuses_unfinalized_state_without_mutation() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("prepared.db");
+    drop(schema_file_fixture(
+        &path,
+        SCHEMA_VERSION - 1,
+        "prepared",
+        Some(SCHEMA_VERSION - 1),
+        Some(SCHEMA_VERSION),
+        Some("plan:upgrade"),
+    ));
+    let before = directory_bytes(scratch.path());
+
+    let error = Journal::inspect_stored_schema(&path).expect_err("prepared state refuses");
+
+    assert!(matches!(
+        error,
+        OpenError::Migration(MigrationError::Unfinalized { .. })
+    ));
+    assert_eq!(directory_bytes(scratch.path()), before);
+}
+
+#[test]
 fn schema_probe_refuses_unfinalized_and_forward_state_without_changing_the_store() {
     for (name, version, state, from, to, digest, expected) in [
         (

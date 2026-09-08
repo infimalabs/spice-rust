@@ -30,3 +30,12 @@ impl std::error::Error for InspectionError {
 pub fn inspect(path: impl AsRef<Path>) -> Result<u32, InspectionError> {
     journal::Journal::inspect_schema(path).map_err(InspectionError)
 }
+
+/// Observe one finalized stored schema for upgrade before/after comparison.
+///
+/// Unlike [`inspect`], this does not require the version to be readable by the
+/// calling build. It still refuses malformed, unversioned, or unfinalized state
+/// and never creates or migrates the authority.
+pub fn inspect_stored(path: impl AsRef<Path>) -> Result<u32, InspectionError> {
+    journal::Journal::inspect_stored_schema(path).map_err(InspectionError)
+}

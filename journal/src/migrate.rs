@@ -111,6 +111,24 @@ pub(crate) fn inspect_version(connection: &Connection) -> Result<u32, OpenError>
     finalized_version(connection)
 }
 
+/// Observe a finalized stored schema identity without admitting its version.
+///
+/// Upgrade orchestration needs the exact before/after version even when this
+/// build would refuse to read that version's authority. The identity still has
+/// to be finalized and agree with SQLite's independent version record.
+pub(crate) fn inspect_stored_version(connection: &Connection) -> Result<u32, OpenError> {
+    if !table_exists(connection, "journal_schema")? {
+        let object_count = authority_object_count(connection)?;
+        return Err(if object_count == 0 {
+            MigrationError::MissingSchema
+        } else {
+            MigrationError::UnversionedAuthority { object_count }
+        }
+        .into());
+    }
+    finalized_stored_state(connection, stored_state(connection)?)
+}
+
 /// Admit a schema identity for a caller that will not migrate it.
 ///
 /// Read-only opens and post-open verification land here, so a version behind the
@@ -142,6 +160,19 @@ fn admit_state(connection: &Connection, state: SchemaState) -> Result<u32, OpenE
 /// disagreement between the row and the pragma is corruption at any version, so
 /// it is answered before anything decides to write to the database.
 fn admit_readable_state(connection: &Connection, state: SchemaState) -> Result<u32, OpenError> {
+    let version = finalized_stored_state(connection, state)?;
+    if version > SCHEMA_VERSION {
+        return Err(MigrationError::ForwardSchema {
+            found: version,
+            current: SCHEMA_VERSION,
+        }
+        .into());
+    }
+
+    Ok(version)
+}
+
+fn finalized_stored_state(connection: &Connection, state: SchemaState) -> Result<u32, OpenError> {
     if state.state == PREPARED {
         return Err(MigrationError::Unfinalized {
             from: state.from_version,
@@ -151,13 +182,6 @@ fn admit_readable_state(connection: &Connection, state: SchemaState) -> Result<u
     }
     if state.state != FINALIZED {
         return Err(MigrationError::UnknownState { state: state.state }.into());
-    }
-    if state.version > SCHEMA_VERSION {
-        return Err(MigrationError::ForwardSchema {
-            found: state.version,
-            current: SCHEMA_VERSION,
-        }
-        .into());
     }
 
     let pragma: u32 = connection
