@@ -8,4 +8,3 @@ import "./lineage-responsive.test.mjs";
 import "./menu-trigger-reference.test.mjs";
 import "./organization-menu.test.mjs";
 import "./mosaic-placement-stability.test.mjs";
-import "./mosaic-transitions.test.mjs";

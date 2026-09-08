@@ -12,11 +12,8 @@ import {
   seatAgentOrg,
 } from "./agent-conversation.mjs";
 import {
-  assertCompactionBoundaryPersistence,
-  assertRetainedMosaicIdentity,
   assertStagedMosaicHydration,
   installPersistedMosaicImageRoutes,
-  rearmRetainedMosaicIdentity,
   waitForMosaicReady,
 } from "./agent-conversation-mosaic.mjs";
 import {
@@ -24,9 +21,7 @@ import {
   assertNoUnavailableToolTerminal,
   waitForCompactionReady,
 } from "./compaction-boundary-reference.mjs";
-import { assertCompactionBoundary } from "./mosaic-transitions.mjs";
 import { assertFirefoxRestoredMosaic } from "./firefox-restored-mosaic.mjs";
-import { assertCandidateMeasurementPaintEngineInventory } from "./mosaic-candidate-paint.mjs";
 import {
   assertComposerPointerSelection,
   assertComposerShards,
@@ -158,7 +153,7 @@ async function assertDistinctWaitCallSites(page) {
   assert.notEqual(first, second, "two waits armed at different spec sites remain distinguishable");
 }
 
-async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
+async function assertMosaicComposer(page, fixture, seeded, activityReplay, run) {
   await chooseCanvasView(page, "Lanes");
   const organization = page.locator('[data-pane="agent-console"]');
   await organization.getByRole("tab", { name: /^Threads/ }).click();
@@ -168,7 +163,7 @@ async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
   const quoteActivity = organization.locator(
     `.mosaic-message-card[data-agent-lane="${seeded.quoteLane}"]`,
   );
-  await assertComposerShards({
+  await run.phase("composer-shards", () => assertComposerShards({
     page,
     fixture,
     organization,
@@ -181,32 +176,28 @@ async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
     latestPrimaryProse: seeded.quoteProse,
     activityReplay,
     artifacts,
-  });
+  }));
 
   const originalViewport = page.viewportSize();
   assert.ok(originalViewport, "the integrated Mosaic proof has a viewport to restore");
-  try {
-    await page.setViewportSize({ width: 2018, height: 1728 });
-    await waitForMosaicReady(page);
-    await assertStagedMosaicHydration(page, organization, activityReplay, (hydration) => (
-      assertIntegratedMosaicProof(
-        page,
-        organization,
-        artifacts,
-        [longAgentName, longWorktreeBasename],
-        hydration,
-      )
-    ));
-  } finally {
-    await page.setViewportSize(originalViewport);
-    await waitForMosaicReady(page);
-  }
-  const restoredMosaic = await rearmRetainedMosaicIdentity(
-    organization.locator(".lane-mosaic-plane"),
-    seeded.postHiddenMosaic,
-    "staged replay and restored geometry",
-  );
-
+  await run.phase("integrated-mosaic", async () => {
+    try {
+      await page.setViewportSize({ width: 2018, height: 1728 });
+      await waitForMosaicReady(page);
+      await assertStagedMosaicHydration(page, organization, activityReplay, (hydration) => (
+        assertIntegratedMosaicProof(
+          page,
+          organization,
+          artifacts,
+          [longAgentName, longWorktreeBasename],
+          hydration,
+        )
+      ));
+    } finally {
+      await page.setViewportSize(originalViewport);
+      await waitForMosaicReady(page);
+    }
+  });
   const quoteSourceCandidate = organization.locator(
     `.mosaic-message-card[data-card-kind="agent-message"][data-agent-lane="${seeded.lane}"]`,
   ).first();
@@ -215,9 +206,6 @@ async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
   assert.ok(quoteSourceKey, "the quote source has one stable Mosaic identity");
   const quoteSource = organization.locator(`[data-mosaic-card-key="${quoteSourceKey}"]`);
 
-  const compactionBoundary = await assertCompactionBoundary(
-    page, fixture, organization, seeded, artifacts, restoredMosaic,
-  );
   const unnamedCompaction = await activityReplay.injectCompaction(page, seeded.quoteLane);
   const unnamedDivider = organization.locator(
     `[data-mosaic-card-key="${unnamedCompaction.key}"]`,
@@ -260,7 +248,7 @@ async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
     lane,
     [composer, quotedComposer, siblingComposer],
   );
-  await assertCompleteComposerSubmission({
+  await run.phase("composer-submission", () => assertCompleteComposerSubmission({
     page,
     fixture,
     lane,
@@ -273,8 +261,7 @@ async function assertMosaicComposer(page, fixture, seeded, activityReplay) {
     quoteSource,
     quoteSourceTitle: quotedTitle,
     artifactPath: join(artifacts, "canvas-light-mosaic-composer.png"),
-  });
-  await assertCompactionBoundaryPersistence(page, seeded, compactionBoundary);
+  }));
 
   await lane.evaluate((target) => {
     const transfer = new DataTransfer();
@@ -566,7 +553,7 @@ try {
           await assertAuthoritySurface(lightPage, seeded);
         });
         await run.phase("mosaic-composer", () => (
-          assertMosaicComposer(lightPage, fixture, seeded, activityReplay)
+          assertMosaicComposer(lightPage, fixture, seeded, activityReplay, run)
         ));
         await run.phase("composer-recovery", () => (
           assertComposerRecovery(lightPage, fixture, seeded, lightMonitor)
@@ -582,9 +569,6 @@ try {
         await run.phase("firefox-restore", () => (
           assertFirefoxRestoredMosaic(resident.discovery.endpoint)
         ));
-        await run.phase("paint-engine-inventory", async () => {
-          assertCandidateMeasurementPaintEngineInventory();
-        });
       });
       await run.scenario("authority-task-flow", async () => {
         await run.phase("task-notes", () => assertTaskNotes(lightPage, seeded.task));

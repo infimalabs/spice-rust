@@ -5,6 +5,7 @@
 //! this module, which keeps replay deterministic and lets native tests prove
 //! the same decisions the Wasm view applies.
 
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Number of tracks in every Mosaic lattice.
@@ -355,7 +356,7 @@ fn commit(floor: &[i32], card: &Card, track_count: usize) -> Vec<i32> {
     next
 }
 
-/// Insert measured cards in creation order and latch frozen cards after each insertion.
+/// Insert measured cards in creation order and latch frozen cards after placement.
 #[must_use]
 pub fn pack(candidate_sets: &[Vec<Candidate>], track_count: usize) -> Vec<Card> {
     let tracks = normalize_tracks(track_count);
@@ -374,9 +375,8 @@ pub fn pack(candidate_sets: &[Vec<Candidate>], track_count: usize) -> Vec<Card> 
         };
         floor = commit(&floor, &card, tracks);
         cards.push(card);
-        cards = recompute_frozen(&cards, FREEZE_DEPTH);
     }
-    cards
+    recompute_frozen(&cards, FREEZE_DEPTH)
 }
 
 /// Append newly measured cards without re-deciding any committed placement.
@@ -386,6 +386,9 @@ pub fn pack(candidate_sets: &[Vec<Candidate>], track_count: usize) -> Vec<Card> 
 /// lifecycle latches and content-resize history that make a live plane stable.
 #[must_use]
 pub fn append(cards: &[Card], candidate_sets: &[Vec<Candidate>], track_count: usize) -> Vec<Card> {
+    if candidate_sets.is_empty() {
+        return cards.to_vec();
+    }
     let tracks = normalize_tracks(track_count);
     let mut appended = cards.to_vec();
     let mut floor = derive_row_floor(cards, tracks);
@@ -413,9 +416,8 @@ pub fn append(cards: &[Card], candidate_sets: &[Vec<Candidate>], track_count: us
         };
         floor = commit(&floor, &card, tracks);
         appended.push(card);
-        appended = recompute_frozen(&appended, FREEZE_DEPTH);
     }
-    appended
+    recompute_frozen(&appended, FREEZE_DEPTH)
 }
 
 /// Place older backfill below a committed plane without moving its cards.
@@ -476,10 +478,43 @@ pub fn burial_depth(card: &Card, cards: &[Card]) -> usize {
 /// Latch cards whose burial depth reaches the configured threshold.
 #[must_use]
 pub fn recompute_frozen(cards: &[Card], freeze_depth: usize) -> Vec<Card> {
+    let mut order = (0..cards.len()).collect::<Vec<_>>();
+    order.sort_by_key(|index| Reverse(cards[*index].creation_index));
+    let track_count = cards
+        .iter()
+        .map(|card| card.track.saturating_add(card.span))
+        .max()
+        .unwrap_or(0);
+    let mut later_coverage = vec![0_usize; track_count];
+    let mut depths = vec![0_usize; cards.len()];
+    let mut group_start = 0;
+    while group_start < order.len() {
+        let creation_index = cards[order[group_start]].creation_index;
+        let group_end = order[group_start..]
+            .iter()
+            .position(|index| cards[*index].creation_index != creation_index)
+            .map_or(order.len(), |offset| group_start + offset);
+        for index in &order[group_start..group_end] {
+            let card = &cards[*index];
+            depths[*index] = later_coverage[card.track..card.track + card.span]
+                .iter()
+                .copied()
+                .min()
+                .unwrap_or(0);
+        }
+        for index in &order[group_start..group_end] {
+            let card = &cards[*index];
+            for coverage in &mut later_coverage[card.track..card.track + card.span] {
+                *coverage += 1;
+            }
+        }
+        group_start = group_end;
+    }
     cards
         .iter()
-        .map(|card| {
-            if card.lifecycle == Lifecycle::Frozen || burial_depth(card, cards) >= freeze_depth {
+        .enumerate()
+        .map(|(index, card)| {
+            if card.lifecycle == Lifecycle::Frozen || depths[index] >= freeze_depth {
                 let mut frozen = card.clone();
                 frozen.lifecycle = Lifecycle::Frozen;
                 frozen

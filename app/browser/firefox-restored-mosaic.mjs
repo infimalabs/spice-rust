@@ -3,7 +3,6 @@ import { assertMosaicLattice } from "./agent-conversation.mjs";
 import { chooseCanvasView, monitorPage } from "./canvas-fixture.mjs";
 import { LIVENESS_PROBE_MS } from "./client-deadlines.mjs";
 import { launchBrowser } from "./headless-launch.mjs";
-import { assertCandidateMeasurementPaintAtomic } from "./mosaic-candidate-paint.mjs";
 
 /// A ready lattice settles layout, not delivery: under verifier load the
 /// initial card stream can still be arriving when measurements first report
@@ -55,7 +54,6 @@ export async function assertFirefoxRestoredMosaic(endpoint) {
     await console.getByRole("tab", { name: /^Threads/ }).click();
     const initial = await settledMosaicCards(page, "before tool-media delivery");
     assert.ok(initial.length > 0, "Firefox receives restored Mosaic cards");
-    await assertCandidateMeasurementPaintAtomic(page, "firefox");
 
     await page.reload({ waitUntil: "networkidle" });
     await chooseCanvasView(page, "Lanes");

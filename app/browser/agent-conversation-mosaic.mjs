@@ -31,7 +31,6 @@ import { assertRuntimeToolMediaCards } from "./tool-media-reference.mjs";
 
 export {
   armPlacementProbe,
-  assertCompactionBoundaryPersistence,
   assertModeSwitchPreservesDeferredMosaic,
   assertMosaicAnchorPreserved,
   assertMosaicLifecycleAdvanced,
@@ -42,7 +41,6 @@ export {
   assertUnmoved,
   finishPlacementProbe,
   mosaicScrollSnapshot,
-  rearmRetainedMosaicIdentity,
   scrollMosaicAwayFromTop,
   settleMosaicActivity,
   waitForMosaicReady,

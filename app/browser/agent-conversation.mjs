@@ -1000,7 +1000,6 @@ export async function assertAgentConversation(
     agentAttribution: organization.agentAttribution,
     quoteProse: restoredQuoteProse,
     acknowledgementReply,
-    postHiddenMosaic,
     primaryHeadings: restoredProse,
     organizationWorktrees,
   };

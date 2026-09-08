@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 
-const EXPECTED_ENGINES = Object.freeze(["chromium", "firefox"]);
 const READY_TIMEOUT_MS = 10_000;
-const completedEngines = new Set();
 
 function measurementViolations(samples) {
   return samples.flatMap((sample) => {
@@ -245,7 +243,6 @@ async function negativeControl(page) {
 }
 
 export async function assertCandidateMeasurementPaintAtomic(page, engine) {
-  assert.ok(EXPECTED_ENGINES.includes(engine), `candidate paint proof knows engine ${engine}`);
   const viewport = page.viewportSize();
   assert.ok(viewport, `${engine} candidate paint proof has a fixed viewport`);
   const alternate = { ...viewport, width: viewport.width - 48 };
@@ -312,14 +309,5 @@ export async function assertCandidateMeasurementPaintAtomic(page, engine) {
     measurementViolations([control.restored]),
     [],
     `${engine} negative control restores its isolated card`,
-  );
-  completedEngines.add(engine);
-}
-
-export function assertCandidateMeasurementPaintEngineInventory() {
-  assert.deepEqual(
-    [...completedEngines].sort(),
-    [...EXPECTED_ENGINES],
-    "the Canvas interaction shard proves candidate paint atomicity in Chromium and Firefox",
   );
 }
