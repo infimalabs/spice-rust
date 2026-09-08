@@ -102,8 +102,8 @@ test("retained lifecycle dividers preserve compact accent geometry in Chromium a
         assert.equal(geometry.rules.length, 2, `${engine} divider has two rules`);
         assert.deepEqual(
           [geometry.labelChildren, geometry.labelGap],
-          [["mosaic-compaction-age", "mosaic-compaction-context"], "0px"],
-          `${engine} age slot flows directly into lifecycle context`,
+          [["mosaic-compaction-age", "mosaic-compaction-context"], "4.2px"],
+          `${engine} age and lifecycle context share the internal text rhythm`,
         );
         assert.ok(geometry.rules.every((rule) => rule.width >= 32 && rule.height >= 1));
         assert.ok(Math.abs(geometry.rules[0].left - geometry.card.left) <= 0.5);

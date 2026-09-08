@@ -138,7 +138,7 @@
 .mosaic-compaction-label {
   display: inline-flex;
   align-items: center;
-  gap: 0;
+  gap: .35em;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
