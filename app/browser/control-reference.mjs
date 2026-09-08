@@ -425,7 +425,7 @@ export async function assertCanonicalInlineTaskCode(surface) {
   });
   assert.ok(geometry.borderRadius >= geometry.height / 2 - 1, "the task marker is a chip");
   assert.equal(geometry.color, darkPalette.panel, "the task chip uses inverse panel text");
-  assert.equal(geometry.fontWeight, "400", "the task chip uses regular text");
+  assert.equal(geometry.fontWeight, "700", "the task chip uses bold text");
   assert.notEqual(geometry.backgroundColor, "rgba(0, 0, 0, 0)");
   assert.ok(geometry.scrollWidth <= geometry.clientWidth + 1, "the reported handle is not clipped");
 }
@@ -738,8 +738,8 @@ function assertTaskChipMeasurement(label, measured) {
     if (pill.quoteDepth === 0) {
       assert.equal(pill.color, measured.palette.panel, `${label} top-level ${kind} uses inverse text`);
       assert.ok(
-        alpha >= 215 && alpha <= 219,
-        `${label} top-level ${kind} exposes a controlled 15% of its card: ${JSON.stringify(pill)}`,
+        alpha >= 202 && alpha <= 206,
+        `${label} top-level ${kind} exposes a controlled 20% of its card: ${JSON.stringify(pill)}`,
       );
     } else {
       assert.equal(
@@ -780,7 +780,7 @@ function assertTaskChipMeasurement(label, measured) {
       assert.equal(chip.labelOverflowX, "hidden", `${label} ${chip.handle} label clips its text`);
       assert.equal(chip.verticalAlign, "baseline", `${label} ${chip.handle} follows prose baseline`);
       assert.equal(chip.borderWidth, "0px", `${label} ${chip.handle} is borderless inside its card`);
-      assert.equal(chip.fontWeight, "400", `${label} ${chip.handle} uses regular text`);
+      assert.equal(chip.fontWeight, "700", `${label} ${chip.handle} uses bold text`);
       assert.notEqual(chip.backgroundColor, "rgba(0, 0, 0, 0)");
       assertPillEmphasis("task pill", chip, measured.palette.accent);
       assert.deepEqual(
@@ -859,7 +859,7 @@ function assertTaskChipMeasurement(label, measured) {
         assert.equal(pill.count, null, `${label} ${classification} pill has no count element`);
         assert.equal(pill.ariaLabel, ariaLabel);
         assert.equal(pill.classification, classification);
-        assert.equal(pill.fontWeight, "400", `${label} ${classification} pill uses regular text`);
+        assert.equal(pill.fontWeight, "700", `${label} ${classification} pill uses bold text`);
         assert.equal(
           pill.borderWidth,
           "0px",
