@@ -223,6 +223,24 @@
 .mosaic-message-card--image-only .message-image {
   --message-image-size: var(--mosaic-image-large-size);
 }
+.mosaic-message-card:not(.mosaic-message-card--image-only)
+  > .message-body:has(> p.message-image-stack + p.message-image-stack) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 7px;
+}
+.mosaic-message-card:not(.mosaic-message-card--image-only)
+  > .message-body:has(> p.message-image-stack + p.message-image-stack)
+  > :not(.message-image-stack) {
+  flex: 0 0 100%;
+  min-width: 0;
+}
+.mosaic-message-card:not(.mosaic-message-card--image-only)
+  > .message-body:has(> p.message-image-stack + p.message-image-stack)
+  > p.message-image-stack {
+  display: contents;
+}
 
 .mosaic-message-empty {
   padding: 28px 12px;
