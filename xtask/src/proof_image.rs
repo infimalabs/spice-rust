@@ -10,6 +10,7 @@ use std::process::Command;
 use sha2::{Digest as _, Sha256};
 
 const BUILD_TAG: &str = "spice-proof-image:build";
+const VENDOR_OPERATION: &str = "cargo vendor --locked --respect-source-config";
 const DEFAULT_FAILURE: u8 = 1;
 const REFUSAL: u8 = 65;
 const TOOL_CHECK: &str = concat!(
@@ -100,17 +101,18 @@ fn prepare_build_context<R: Runner>(
 
     let vendor = context.join("vendor");
     let vendor_run = runner.run(
-        "cargo vendor --locked",
+        VENDOR_OPERATION,
         OsStr::new("cargo"),
         &[
             OsString::from("vendor"),
             OsString::from("--locked"),
+            OsString::from("--respect-source-config"),
             vendor.into_os_string(),
         ],
         root,
     )?;
     emit(&vendor_run, output, diagnostic)?;
-    require_success("cargo vendor --locked", &vendor_run)?;
+    require_success(VENDOR_OPERATION, &vendor_run)?;
 
     for (source, destination) in [
         ("Dockerfile", "Dockerfile"),
@@ -701,6 +703,20 @@ mod tests {
                 .contains("proof image sha256:")
         );
         assert_eq!(runner.calls.len(), 5);
+        assert_eq!(runner.calls[0].operation, VENDOR_OPERATION);
+        assert_eq!(runner.calls[0].program, OsString::from("cargo"));
+        assert_eq!(
+            runner.calls[0].arguments,
+            [
+                OsString::from("vendor"),
+                OsString::from("--locked"),
+                OsString::from("--respect-source-config"),
+                fixture
+                    .root
+                    .join("target/proof-image/context/vendor")
+                    .into_os_string(),
+            ]
+        );
     }
 
     #[test]
@@ -842,7 +858,13 @@ mod tests {
 
     struct FakeRunner {
         outcomes: VecDeque<ProcessOutput>,
-        calls: Vec<&'static str>,
+        calls: Vec<ProcessCall>,
+    }
+
+    struct ProcessCall {
+        operation: &'static str,
+        program: OsString,
+        arguments: Vec<OsString>,
     }
 
     impl FakeRunner {
@@ -858,11 +880,15 @@ mod tests {
         fn run(
             &mut self,
             operation: &'static str,
-            _program: &OsStr,
-            _arguments: &[OsString],
+            program: &OsStr,
+            arguments: &[OsString],
             _root: &Path,
         ) -> Result<ProcessOutput, ProofImageError> {
-            self.calls.push(operation);
+            self.calls.push(ProcessCall {
+                operation,
+                program: program.to_owned(),
+                arguments: arguments.to_vec(),
+            });
             Ok(self
                 .outcomes
                 .pop_front()
