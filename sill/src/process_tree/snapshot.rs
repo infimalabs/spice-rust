@@ -10,25 +10,46 @@ pub(super) use linux::process_snapshot;
 
 #[cfg(target_os = "macos")]
 pub(super) fn process_snapshot() -> io::Result<Vec<Process>> {
-    use std::mem::{MaybeUninit, size_of};
-    use std::process::Command;
+    use std::mem::{MaybeUninit, size_of, size_of_val};
 
-    let output = Command::new("ps")
-        .args(["-Ao", "pid=,ppid=,pgid=,stat="])
-        .output()?;
-    if !output.status.success() {
-        return Err(io::Error::other(format!(
-            "ps exited {:?} while discovering supervised descendants",
-            output.status.code()
-        )));
+    // A null destination asks libproc how many process identifiers to reserve.
+    // Reading the same native table here avoids launching the setuid `ps`
+    // executable, which macOS deliberately refuses inside `sandbox-exec`.
+    // SAFETY: a null destination requests a size without writing memory.
+    let required = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) };
+    let required = usize::try_from(required).map_err(|_| {
+        io::Error::other(format!(
+            "libproc could not size the process table: {}",
+            io::Error::last_os_error()
+        ))
+    })?;
+    let capacity = required.checked_mul(2).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, "process table size overflowed")
+    })?;
+    let mut identifiers = vec![0 as libc::pid_t; capacity];
+    let bytes = libc::c_int::try_from(size_of_val(identifiers.as_slice())).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "process table exceeds libproc width",
+        )
+    })?;
+    // SAFETY: the PID destination is writable for its complete byte capacity.
+    let found = unsafe { libc::proc_listallpids(identifiers.as_mut_ptr().cast(), bytes) };
+    let found = usize::try_from(found).map_err(|_| {
+        io::Error::other(format!(
+            "libproc could not list the process table: {}",
+            io::Error::last_os_error()
+        ))
+    })?;
+    if found >= capacity {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "process table changed while libproc filled its snapshot",
+        ));
     }
-    let listing = String::from_utf8(output.stdout).map_err(io::Error::other)?;
+
     let mut processes = Vec::new();
-    for line in listing.lines().filter(|line| !line.trim().is_empty()) {
-        let mut process = parse_darwin_row(line)?;
-        let pid = libc::pid_t::try_from(process.pid).map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidData, "process identity exceeds pid_t")
-        })?;
+    for pid in identifiers.into_iter().take(found).filter(|pid| *pid > 0) {
         let mut information = MaybeUninit::<libc::proc_bsdinfo>::uninit();
         let information_size =
             libc::c_int::try_from(size_of::<libc::proc_bsdinfo>()).map_err(|_| {
@@ -51,10 +72,7 @@ pub(super) fn process_snapshot() -> io::Result<Vec<Process>> {
         if read == 0 {
             match error.raw_os_error() {
                 Some(libc::ESRCH) => continue,
-                Some(libc::EPERM) => {
-                    processes.push(process);
-                    continue;
-                }
+                Some(libc::EPERM) => continue,
                 _ => {
                     return Err(io::Error::other(format!(
                         "libproc could not read process {pid}: {error}"
@@ -70,73 +88,34 @@ pub(super) fn process_snapshot() -> io::Result<Vec<Process>> {
         }
         // SAFETY: the exact-size result initialized the complete record.
         let information = unsafe { information.assume_init() };
-        if information.pbi_pid != process.pid
-            || information.pbi_ppid != process.parent
-            || information.pbi_pgid != process.group
-        {
-            // The PID changed between the two coherent reads. Neither generation
-            // can authenticate the other's parentage, so this row contributes no
-            // authority to this snapshot.
-            continue;
-        }
         if information.pbi_start_tvusec >= 1_000_000 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("libproc returned an invalid generation for process {pid}"),
             ));
         }
-        process.terminal = information.pbi_status == libc::SZOMB;
-        process.generation = Some(ProcessGeneration {
-            seconds: information.pbi_start_tvsec,
-            subsecond: information.pbi_start_tvusec,
-        });
+        let process = Process {
+            pid: information.pbi_pid,
+            parent: information.pbi_ppid,
+            group: information.pbi_pgid,
+            terminal: information.pbi_status == libc::SZOMB,
+            generation: Some(ProcessGeneration {
+                seconds: information.pbi_start_tvsec,
+                subsecond: information.pbi_start_tvusec,
+            }),
+        };
+        if process.pid != u32::try_from(pid).expect("positive pid_t fits u32") {
+            continue;
+        }
+        if process.group == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("libproc returned a zero process group for process {pid}"),
+            ));
+        }
         processes.push(process);
     }
     Ok(processes)
-}
-
-#[cfg(target_os = "macos")]
-fn parse_darwin_row(line: &str) -> io::Result<Process> {
-    let mut fields = line.split_whitespace();
-    let pid = parse_darwin_pid(fields.next(), "PID", line, false)?;
-    let parent = parse_darwin_pid(fields.next(), "parent PID", line, true)?;
-    let group = parse_darwin_pid(fields.next(), "process group", line, false)?;
-    let state = fields
-        .next()
-        .and_then(|state| state.as_bytes().first())
-        .copied()
-        .ok_or_else(|| invalid_darwin_row("process state", line))?;
-    if fields.next().is_some() {
-        return Err(invalid_darwin_row("exactly four fields", line));
-    }
-    Ok(Process {
-        pid,
-        parent,
-        group,
-        terminal: matches!(state, b'Z' | b'X' | b'x'),
-        generation: None,
-    })
-}
-
-#[cfg(target_os = "macos")]
-fn parse_darwin_pid(
-    value: Option<&str>,
-    name: &str,
-    line: &str,
-    zero_allowed: bool,
-) -> io::Result<u32> {
-    value
-        .and_then(|value| value.parse::<u32>().ok())
-        .filter(|value| zero_allowed || *value > 0)
-        .ok_or_else(|| invalid_darwin_row(name, line))
-}
-
-#[cfg(target_os = "macos")]
-fn invalid_darwin_row(expected: &str, line: &str) -> io::Error {
-    io::Error::new(
-        io::ErrorKind::InvalidData,
-        format!("ps row {line:?} has no valid {expected}"),
-    )
 }
 
 #[cfg(any(target_os = "linux", test))]
