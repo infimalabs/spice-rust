@@ -1,8 +1,9 @@
 use std::cell::Cell;
+use std::time::{Duration, Instant};
 
 use app::mosaic::{
     Candidate, Card, FREEZE_DEPTH, Geometry, Lifecycle, MIN_CARD_ROWS, Reservation,
-    TALL_THRESHOLD_PX, TRACK_COUNT, boundary_rows_for, burial_depth, content_box_width,
+    TALL_THRESHOLD_PX, TRACK_COUNT, append, boundary_rows_for, burial_depth, content_box_width,
     css_row_start, extent, full_replay, history_edge_is_near, pack, pane_is_scrolled,
     replay_liquid, resolve_frozen_resize, ripple_rows, rows_for, scroll_compensation,
     span_candidates,
@@ -96,6 +97,33 @@ fn repeated_base_cards_fill_columns_before_advancing_the_skyline() {
 }
 
 #[test]
+fn a_large_stream_packs_inside_the_native_interaction_budget() {
+    const CARD_COUNT: usize = 2_048;
+    const BUDGET: Duration = Duration::from_millis(100);
+    let started = Instant::now();
+
+    let cards = pack(&vec![candidates(3, 3); CARD_COUNT], TRACK_COUNT);
+    let elapsed = started.elapsed();
+
+    assert_eq!(cards.len(), CARD_COUNT);
+    assert_eq!(
+        cards.last().map(|card| card.creation_index),
+        Some(CARD_COUNT - 1)
+    );
+    assert_eq!(
+        cards
+            .iter()
+            .filter(|card| card.lifecycle == Lifecycle::Frozen)
+            .count(),
+        CARD_COUNT - 8,
+    );
+    assert!(
+        elapsed < BUDGET,
+        "packing {CARD_COUNT} cards took {elapsed:?}"
+    );
+}
+
+#[test]
 fn equal_height_anchors_choose_the_least_waste_before_the_leftmost_track() {
     let cards = pack(
         &[candidates(2, 2), candidates(6, 3), candidates(6, 2)],
@@ -186,6 +214,45 @@ fn freeze_is_a_latch_driven_by_minimum_burial_depth() {
     assert_eq!(cards[2].lifecycle, Lifecycle::Liquid);
     assert_eq!(Lifecycle::Liquid.as_str(), "liquid");
     assert_eq!(Lifecycle::Frozen.as_str(), "frozen");
+}
+
+#[test]
+fn an_empty_append_preserves_every_existing_lifecycle() {
+    let cards = vec![
+        card(0, 0, 12, 0, 2),
+        card(1, 0, 12, 2, 2),
+        card(2, 0, 12, 4, 2),
+    ];
+
+    assert_eq!(append(&cards, &[], TRACK_COUNT), cards);
+}
+
+#[test]
+fn one_reverse_coverage_pass_matches_strict_later_card_depth() {
+    let mut cards = vec![
+        card(4, 0, 3, 0, 2),
+        card(1, 0, 6, 0, 2),
+        card(4, 3, 3, 0, 2),
+        card(2, 0, 3, 0, 2),
+        card(3, 0, 6, 0, 2),
+    ];
+    cards[1].lifecycle = Lifecycle::Frozen;
+    let expected = cards
+        .iter()
+        .map(|candidate| {
+            candidate.lifecycle == Lifecycle::Frozen || burial_depth(candidate, &cards) >= 2
+        })
+        .collect::<Vec<_>>();
+
+    let frozen = app::mosaic::recompute_frozen(&cards, 2);
+
+    assert_eq!(
+        frozen
+            .iter()
+            .map(|candidate| candidate.lifecycle == Lifecycle::Frozen)
+            .collect::<Vec<_>>(),
+        expected,
+    );
 }
 
 #[test]

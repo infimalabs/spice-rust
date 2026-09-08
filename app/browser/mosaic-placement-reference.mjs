@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 
 import {
   chooseCanvasView,
-  RECONNECT_MS,
   TRANSITION_MS,
   waitForPageFunction as waitForPage,
 } from "./canvas-fixture.mjs";
@@ -10,9 +9,6 @@ import {
   assertCanonicalPlacementsStable,
   captureCanonicalPlacements,
 } from "./mosaic-placement-stability.mjs";
-import {
-  assertNoUnavailableToolTerminal,
-} from "./compaction-boundary-reference.mjs";
 
 const PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 // Span the fixture's one-second delivery cadence before arming exact lattice probes.
@@ -189,77 +185,6 @@ export function assertMosaicLifecycleAdvanced(before, after, label) {
   );
 }
 
-export async function assertCompactionBoundaryPersistence(page, seeded, boundaryKeys) {
-  await page.reload({ waitUntil: "networkidle" });
-  await chooseCanvasView(page, "Lanes");
-  const restoredOrg = page.locator('[data-pane="agent-console"]');
-  await restoredOrg.getByRole("tab", { name: /^Threads/ }).click();
-  const restoredUnresolved = restoredOrg.locator(
-    `[data-mosaic-card-key="${boundaryKeys.unresolved}"]`,
-  );
-  const restoredEmpty = restoredOrg.locator(
-    `[data-mosaic-card-key="${boundaryKeys.empty}"]`,
-  );
-  await Promise.all([
-    restoredUnresolved.waitFor({ timeout: RECONNECT_MS }),
-    restoredEmpty.waitFor({ timeout: RECONNECT_MS }),
-  ]);
-  assert.equal(
-    await restoredOrg.locator(
-      `.mosaic-message-card[data-card-kind="compaction"][data-agent-lane="${seeded.lane}"]`,
-    ).count(),
-    2,
-    "reload restores both compaction boundaries exactly once",
-  );
-  for (const boundary of [restoredUnresolved, restoredEmpty]) {
-    assert.equal(await boundary.getAttribute("data-span"), "12");
-    assert.equal(
-      (await boundary.locator(".message-key").innerText()).trim(),
-      "compacted context",
-    );
-  }
-  await assertNoUnavailableToolTerminal(
-    restoredUnresolved,
-    "reloaded unresolved compaction boundary",
-    seeded.agentName,
-    "Bash: cargo test --locked -p spice",
-  );
-  await assertNoUnavailableToolTerminal(
-    restoredEmpty,
-    "reloaded empty compaction boundary",
-    seeded.agentName,
-  );
-
-  const socketCount = await page.evaluate(() => window.__canvasSockets?.length ?? 0);
-  assert.ok(socketCount > 0, "the browser fixture captures the active Canvas socket");
-  await page.evaluate(() => window.__canvasSockets.at(-1).close(4000, "compaction reconnect"));
-  await waitForPage(
-    page,
-    "compaction boundary survives an in-place reconnect",
-    RECONNECT_MS,
-    ({ expectedKeys, previousSockets }) => (
-      (window.__canvasSockets?.length ?? 0) > previousSockets
-      && expectedKeys.every((expectedKey) => (
-        document.querySelectorAll(`[data-mosaic-card-key="${expectedKey}"]`).length === 1
-        && document.querySelector(`[data-mosaic-card-key="${expectedKey}"]`)
-          ?.dataset.layoutPhase === "committed"
-      ))
-    ),
-    { expectedKeys: Object.values(boundaryKeys), previousSockets: socketCount },
-  );
-  await assertNoUnavailableToolTerminal(
-    restoredUnresolved,
-    "reconnected unresolved compaction boundary",
-    seeded.agentName,
-    "Bash: cargo test --locked -p spice",
-  );
-  await assertNoUnavailableToolTerminal(
-    restoredEmpty,
-    "reconnected empty compaction boundary",
-    seeded.agentName,
-  );
-}
-
 export async function assertModeSwitchPreservesDeferredMosaic(
   page,
   console,
@@ -419,27 +344,6 @@ export async function assertRetainedMosaicIdentity(plane, armed, label) {
     armed.cards.map((card) => ({ ...card, retained: true })),
     `${label} retains post-hidden card nodes and semantic creation indexes`,
   );
-}
-
-export async function rearmRetainedMosaicIdentity(plane, prior, label) {
-  const current = await plane.evaluate((element, expected) => {
-    const token = crypto.randomUUID();
-    const cards = expected.prior.cards.map((retained) => {
-      const card = element.querySelector(`[data-mosaic-card-key="${retained.key}"]`);
-      if (!card || card.dataset.layoutPhase !== "committed") {
-        throw new Error(`${expected.label} is missing restored card ${retained.key}`);
-      }
-      card.__mosaicPostHiddenIdentity = token;
-      return { key: retained.key, creationIndex: card.dataset.creationIndex };
-    });
-    return { token, cards };
-  }, { prior, label });
-  assert.deepEqual(
-    current.cards,
-    prior.cards,
-    `${label} restores the same semantic creation indexes before rearming node identity`,
-  );
-  return current;
 }
 
 export async function armPlacementProbe(plane, excluded = []) {

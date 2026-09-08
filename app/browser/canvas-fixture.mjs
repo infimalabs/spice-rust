@@ -48,7 +48,6 @@ export { monitorPage } from "./canvas-monitor.mjs";
 /// reads it back to decide exactly which processes this run is responsible for.
 export const VENDOR_PID_LEDGER = ".spice-vendor-pids";
 const PRIMARY_FIXTURE_SESSION = "018f7777-7777-7444-8888-999999999999";
-const UNAVAILABLE_TOOL_CALL_RECORD = '{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"tool_use","id":"call-compacted-verifier","name":"Bash","input":{"command":"cargo test --locked -p spice"}}]}}\n';
 
 const execute = promisify(execFile);
 const SHUTDOWN_COMMAND_MS = 25_000;
@@ -67,46 +66,6 @@ export function fixtureCommandEnv(lane, fixture) {
     delete env.CLAUDE_CONFIG_DIR;
   }
   return env;
-}
-
-async function appendPrimaryCompactionRecords(fixture, prefix) {
-  const transcript = join(
-    fixture,
-    ".git/spice-home/.claude/projects/canvas",
-    `${PRIMARY_FIXTURE_SESSION}.jsonl`,
-  );
-  const boundary = Buffer.from(`${JSON.stringify({
-    timestamp: new Date().toISOString(),
-    type: "system",
-    subtype: "compact_boundary",
-  })}\n`);
-  const record = Buffer.concat([prefix, boundary]);
-  const file = await open(transcript, "a");
-  let offset;
-  try {
-    offset = (await file.stat()).size;
-    const { bytesWritten } = await file.write(record);
-    assert.equal(bytesWritten, record.length, "the fixture authors the complete compaction record");
-    await file.sync();
-  } finally {
-    await file.close();
-  }
-  const authored = (await readFile(transcript)).subarray(offset, offset + record.length);
-  assert.deepEqual(authored, record, "the preserved session contains the exact authored record");
-  return { transcript, offset: offset + prefix.length, length: boundary.length };
-}
-
-/// Author one unresolved call plus its real preserved-session compaction record.
-export async function appendPrimaryCompactionBoundary(fixture) {
-  return appendPrimaryCompactionRecords(
-    fixture,
-    Buffer.from(UNAVAILABLE_TOOL_CALL_RECORD),
-  );
-}
-
-/// Author a real preserved-session compaction record with no unresolved calls.
-export async function appendPrimaryEmptyCompactionBoundary(fixture) {
-  return appendPrimaryCompactionRecords(fixture, Buffer.alloc(0));
 }
 
 export async function appendSubstantialPrimaryHistory(fixture, bytes = 64 * 1_024 * 1_024) {
@@ -138,30 +97,6 @@ export async function appendSubstantialPrimaryHistory(fixture, bytes = 64 * 1_02
     await file.close();
   }
   return written;
-}
-
-/// Trigger one exact assistant record through the running fixture vendor.
-export async function triggerPrimaryAgentProse(worktree, text, timestamp = null) {
-  const record = {
-    timestamp: timestamp ?? new Date().toISOString(),
-    type: "assistant",
-    message: {
-      type: "message",
-      role: "assistant",
-      content: [{ type: "text", text }],
-      usage: {
-        input_tokens: 1,
-        cache_read_input_tokens: 0,
-        cache_creation_input_tokens: 0,
-        output_tokens: 1,
-      },
-    },
-  };
-  await writeFile(
-    join(worktree, ".spice-authored-prose-trigger"),
-    `${JSON.stringify(record)}\n`,
-  );
-  return { text, timestamp: record.timestamp };
 }
 
 /// Stream one exact assistant message through a fixture vendor.
@@ -422,10 +357,6 @@ export async function configureFixture(
     "    timestamp=$(date -u '+%Y-%m-%dT%H:%M:%S.000Z')",
     `    printf '{"timestamp":"%s",%s\\n' "$timestamp" '${triggeredActivityTail}'`,
     "  fi",
-    "  if [ -f .spice-authored-prose-trigger ]; then",
-    "    cat .spice-authored-prose-trigger",
-    "    rm -f .spice-authored-prose-trigger",
-    "  fi",
     "  if [ -f .spice-ack-trigger ]; then",
     "    key=$(cat .spice-ack-trigger)",
     "    rm -f .spice-ack-trigger",
@@ -497,7 +428,6 @@ export async function configureFixture(
       "dist/stage-app",
       ".spice-tool-trigger",
       ".spice-prose-trigger",
-      ".spice-authored-prose-trigger",
       ".spice-authored-prose-pipe",
       ".spice-ack-trigger",
       ".spice-codex-read-trigger",
