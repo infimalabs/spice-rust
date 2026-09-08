@@ -130,10 +130,7 @@ pub(super) fn prepare(
     repository: &Path,
     common: &Path,
 ) -> Result<Vec<PreparedAction>, ProveFailure> {
-    let selected = staged
-        .selection()
-        .gate_ids()
-        .contains(&GateId::CanvasWebTypecheck);
+    let selected = canvas_actions_selected(staged.selection());
     if !selected {
         if request.action.is_some_and(registered) {
             return Err(ProveFailure::refusal(
@@ -232,6 +229,42 @@ pub(super) fn prepare(
         }
     }
     Ok(actions)
+}
+
+fn canvas_actions_selected(selection: &gate::ChangeSelectionReport) -> bool {
+    selection.edges().iter().any(|edge| {
+        edge.gate_id() == GateId::CanvasWebTypecheck && canvas_action_source(edge.source())
+    })
+}
+
+fn canvas_action_source(path: &str) -> bool {
+    path.starts_with("app/")
+        || path.starts_with("canvas/")
+        || path.starts_with("gate/src/canvas_actions/")
+        || path.starts_with("gate/src/change_selection/")
+        || path.starts_with("spice/src/change_gate/")
+        || path.starts_with("spice/src/gate_command/prove/canvas/")
+        || matches!(
+            path,
+            ".cargo/config"
+                | ".cargo/config.toml"
+                | "Cargo.lock"
+                | "Cargo.toml"
+                | "gate/src/canvas_actions.rs"
+                | "gate/src/change_selection.rs"
+                | "package-lock.json"
+                | "package.json"
+                | "rust-toolchain"
+                | "rust-toolchain.toml"
+                | "spice-rust.toml"
+                | "spice/src/change_gate.rs"
+                | "spice/src/gate_command/prove.rs"
+                | "spice/src/gate_command/prove/canvas.rs"
+                | "xtask/Cargo.toml"
+                | "xtask/src/app.rs"
+                | "xtask/src/lib.rs"
+                | "xtask/src/main.rs"
+        )
 }
 
 fn canvas_plan(
@@ -871,6 +904,17 @@ mod tests {
             action: Some("formatters"),
             missing: true,
         }));
+        let source = |path: &str| {
+            gate::select_current_source_change_gates(
+                wire::Digest::compute(wire::Domain::GateTree, path.as_bytes()),
+                &[path.to_owned()],
+            )
+            .expect("current source path selects")
+        };
+        assert!(!canvas_actions_selected(&source("spice/src/task_git.rs")));
+        assert!(canvas_actions_selected(&source("app/src/lib.rs")));
+        assert!(canvas_actions_selected(&source("canvas/src/lib.rs")));
+        assert!(canvas_actions_selected(&source("Cargo.lock")));
     }
 
     #[test]
