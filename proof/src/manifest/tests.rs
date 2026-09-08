@@ -178,7 +178,7 @@ fn mixed_sources_mismatched_evidence_and_non_clean_proofs_refuse_without_writes(
     assert!(matches!(mixed, ManifestError::Mixed { .. }));
     assert!(publisher.writes.is_empty());
 
-    let mismatched = ManifestInput::new(&darwin.payload, &linux.receipt, &linux.replay);
+    let mismatched = ManifestInput::new(&darwin.payload, &linux.receipt);
     let mut publisher = MemoryPublisher::default();
     let mismatch = publish_manifest([mismatched, input(&linux)], &mut publisher)
         .expect_err("cross-target evidence refuses");
@@ -204,15 +204,14 @@ fn every_receipt_binding_is_rechecked_before_the_first_write() {
     let darwin = prepared(ReleaseTarget::Aarch64AppleDarwin, source.clone(), true);
     let linux = prepared(ReleaseTarget::X86_64UnknownLinuxMusl, source, true);
 
-    for field in 0..5 {
+    for field in 0..4 {
         let mut receipt: ProofReceipt =
             wire::decode(&linux.receipt).expect("fixture receipt decodes");
         match field {
             0 => receipt.target = ReleaseTarget::Aarch64AppleDarwin,
             1 => receipt.payload = digest(Domain::DistTargetPayload, b"other payload"),
             2 => receipt.battery = digest(Domain::ProofBattery, b"other battery"),
-            3 => receipt.replay = digest(Domain::ProofReplayV3, b"other replay"),
-            4 => {
+            3 => {
                 receipt.environment = ProofEnvironment::native(digest(
                     Domain::ProofNativeRunner,
                     b"wrong environment",
@@ -221,7 +220,7 @@ fn every_receipt_binding_is_rechecked_before_the_first_write() {
             _ => unreachable!("the field sweep is closed"),
         }
         let receipt = wire::encode(&receipt).expect("tampered receipt remains canonical");
-        let tampered = ManifestInput::new(&linux.payload, &receipt, &linux.replay);
+        let tampered = ManifestInput::new(&linux.payload, &receipt);
         let mut publisher = MemoryPublisher::default();
 
         let error = publish_manifest([input(&darwin), tampered], &mut publisher)
@@ -440,7 +439,7 @@ fn inputs<'a>(darwin: &'a Prepared, linux: &'a Prepared) -> [ManifestInput<'a>; 
 }
 
 fn input(prepared: &Prepared) -> ManifestInput<'_> {
-    ManifestInput::new(&prepared.payload, &prepared.receipt, &prepared.replay)
+    ManifestInput::new(&prepared.payload, &prepared.receipt)
 }
 
 fn prepared(target: ReleaseTarget, source: Digest, clean: bool) -> Prepared {

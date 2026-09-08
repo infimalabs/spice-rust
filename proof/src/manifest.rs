@@ -14,7 +14,7 @@ use wire::manifest::{
 use wire::{Digest, Domain};
 
 use crate::evidence::admit_receipt;
-use crate::{Battery, EvidenceError, PayloadError, ReplayVerdict, admit, verify};
+use crate::{Battery, EvidenceError, PayloadError, admit, verify_stored};
 
 const DATA_MODE: u32 = 0o644;
 const MANIFEST_POINTER: &str = "release/manifest.json";
@@ -23,22 +23,17 @@ const TARGETS: [ReleaseTarget; 2] = [
     ReleaseTarget::X86_64UnknownLinuxMusl,
 ];
 
-/// One exact payload, detached receipt, and replay submitted for release.
+/// One exact payload and detached receipt submitted for release.
 #[derive(Clone, Copy, Debug)]
 pub struct ManifestInput<'a> {
     payload: &'a [u8],
     receipt: &'a [u8],
-    replay: &'a ReplayVerdict,
 }
 
 impl<'a> ManifestInput<'a> {
     #[must_use]
-    pub const fn new(payload: &'a [u8], receipt: &'a [u8], replay: &'a ReplayVerdict) -> Self {
-        Self {
-            payload,
-            receipt,
-            replay,
-        }
+    pub const fn new(payload: &'a [u8], receipt: &'a [u8]) -> Self {
+        Self { payload, receipt }
     }
 }
 
@@ -121,6 +116,28 @@ pub fn admit_manifest(
     native_target: ReleaseTarget,
     native: &Digest,
 ) -> Result<PublishedManifest, ManifestAdmissionError> {
+    admit_manifest_with(root, app, Some((native_target, native)))
+}
+
+/// Admit the complete proof manifest without selecting one invoking binary.
+///
+/// Proof recognition runs in the resident rather than either target binary.
+/// It therefore validates both payloads, receipts, the current Canvas, and the
+/// complete shared release closure, while the later target-native release
+/// command retains the executable-identity check performed by
+/// [`admit_manifest`].
+pub fn admit_proof_manifest(
+    root: &Path,
+    app: &Digest,
+) -> Result<PublishedManifest, ManifestAdmissionError> {
+    admit_manifest_with(root, app, None)
+}
+
+fn admit_manifest_with(
+    root: &Path,
+    app: &Digest,
+    native: Option<(ReleaseTarget, &Digest)>,
+) -> Result<PublishedManifest, ManifestAdmissionError> {
     let root = admit_stage_root(root)?;
     let published = admit_pointer(&root)?;
     let battery = Battery::current();
@@ -135,7 +152,6 @@ pub fn admit_manifest(
             expected_target,
             index,
             app,
-            native_target,
             native,
             battery.digest(),
         )?;
@@ -205,8 +221,7 @@ fn admit_target(
     expected_target: ReleaseTarget,
     index: usize,
     app: &Digest,
-    native_target: ReleaseTarget,
-    native: &Digest,
+    native: Option<(ReleaseTarget, &Digest)>,
     battery: &Digest,
 ) -> Result<TargetPayload, ManifestAdmissionError> {
     if entry.target != expected_target {
@@ -216,7 +231,7 @@ fn admit_target(
             observed: entry.target,
         });
     }
-    let payload = admit_target_payload(root, manifest, entry, index, app, native_target, native)?;
+    let payload = admit_target_payload(root, manifest, entry, index, app, native)?;
     admit_target_receipt(root, entry, index, &payload, battery)?;
     Ok(payload)
 }
@@ -228,8 +243,7 @@ fn admit_target_payload(
     entry: &ReleaseManifestTarget,
     index: usize,
     app: &Digest,
-    native_target: ReleaseTarget,
-    native: &Digest,
+    native: Option<(ReleaseTarget, &Digest)>,
 ) -> Result<TargetPayload, ManifestAdmissionError> {
     let bytes = read_regular(
         root,
@@ -243,11 +257,13 @@ fn admit_target_payload(
     require_binding(value.target == entry.target, index, "payload target")?;
     require_binding(value.source == manifest.source, index, "payload source")?;
     require_binding(value.app == *app, index, "Canvas generation identity")?;
-    require_binding(
-        value.target != native_target || value.native == *native,
-        index,
-        "native executable identity",
-    )?;
+    if let Some((native_target, native)) = native {
+        require_binding(
+            value.target != native_target || value.native == *native,
+            index,
+            "native executable identity",
+        )?;
+    }
     Ok(value.clone())
 }
 
@@ -484,7 +500,7 @@ where
             first_payload = Some(admitted.value().clone());
         }
 
-        let verified = verify(&admitted, input.receipt, input.replay)
+        let verified = verify_stored(&admitted, input.receipt)
             .map_err(|source| ManifestError::Evidence { index, source })?;
         let payload_digest = verified.payload_digest().clone();
         let receipt_digest = verified.receipt_digest().clone();
@@ -494,7 +510,7 @@ where
             receipt: receipt_digest.clone(),
             battery: verified.battery_digest().clone(),
             replay: verified.replay_digest().clone(),
-            environment: input.replay.environment().clone(),
+            environment: verified.environment().clone(),
             standing: ProofStanding::Clean,
         });
         objects.push((object_path("payload", &payload_digest), input.payload));

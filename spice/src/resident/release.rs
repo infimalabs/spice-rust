@@ -1,5 +1,8 @@
 use super::*;
 
+mod proof_recognition;
+pub(super) use proof_recognition::dispatch_proof_recognize;
+
 pub(super) fn dispatch_release_publish(
     bus: &Bus,
     paths: &RuntimePaths,

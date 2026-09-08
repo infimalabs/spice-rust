@@ -21,6 +21,7 @@ pub struct VerifiedEvidence {
     receipt: Digest,
     battery: Digest,
     replay: Digest,
+    environment: ProofEnvironment,
 }
 
 /// One canonical current receipt admitted before replay execution.
@@ -70,6 +71,11 @@ impl VerifiedEvidence {
     pub const fn replay_digest(&self) -> &Digest {
         &self.replay
     }
+
+    #[must_use]
+    pub const fn environment(&self) -> &ProofEnvironment {
+        &self.environment
+    }
 }
 
 impl From<VerifiedEvidence> for ProofEvidence {
@@ -99,6 +105,60 @@ pub fn verify(
 ) -> Result<VerifiedEvidence, EvidenceError> {
     let receipt = admit_receipt(receipt_bytes)?;
     verify_admitted(admitted, &receipt, replay)
+}
+
+/// Verify one stored detached receipt against its admitted payload.
+///
+/// This is the durable half of [`verify`]: the proof leaf already derived and
+/// published the canonical receipt from its complete replay, while the later
+/// two-target manifest seal no longer has that process-local replay value. The
+/// stored receipt must still bind the exact payload, current battery, selected
+/// target environment, and clean standing before it can enter a release.
+pub fn verify_stored(
+    admitted: &AdmittedPayload,
+    receipt_bytes: &[u8],
+) -> Result<VerifiedEvidence, EvidenceError> {
+    let receipt = admit_receipt(receipt_bytes)?;
+    let value = receipt.value();
+    let payload = admitted.value();
+    if value.target != payload.target {
+        return Err(EvidenceError::Target {
+            payload: payload.target,
+            receipt: value.target,
+        });
+    }
+    if value.payload != *admitted.digest() {
+        return Err(EvidenceError::PayloadDigest);
+    }
+    let environment_matches = match (&value.environment, payload.target) {
+        (ProofEnvironment::Oci { image }, ReleaseTarget::X86_64UnknownLinuxMusl) => {
+            image.as_str() == payload.pins.proof_container
+        }
+        (ProofEnvironment::Native { .. }, ReleaseTarget::Aarch64AppleDarwin) => true,
+        _ => false,
+    };
+    if !environment_matches {
+        return Err(EvidenceError::Environment {
+            target: payload.target,
+            payload_pin: payload.pins.proof_container.clone(),
+            receipt: value.environment.clone(),
+            replay: value.environment.clone(),
+        });
+    }
+    if value.battery != *Battery::current().digest() {
+        return Err(EvidenceError::BatteryDigest);
+    }
+    if value.standing != ProofStanding::Clean {
+        return Err(EvidenceError::Refused);
+    }
+    Ok(VerifiedEvidence {
+        target: payload.target,
+        payload: admitted.digest().clone(),
+        receipt: receipt.digest().clone(),
+        battery: value.battery.clone(),
+        replay: value.replay.clone(),
+        environment: value.environment.clone(),
+    })
 }
 
 pub(crate) fn admit_receipt(receipt_bytes: &[u8]) -> Result<AdmittedReceipt, EvidenceError> {
@@ -191,6 +251,7 @@ pub(crate) fn verify_admitted(
         receipt: admitted_receipt.digest.clone(),
         battery: receipt.battery.clone(),
         replay: receipt.replay.clone(),
+        environment: receipt.environment.clone(),
     })
 }
 

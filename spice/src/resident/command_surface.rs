@@ -9,9 +9,9 @@ use wire::intent::{CommandAnswer, Intent};
 use wire::{Actor, CanonicalUuid, CommandKind, Outcome, Refusal, Reply};
 
 use super::{
-    RuntimePaths, SurfaceConfig, dispatch_release_publish, dispatch_up_change, lane_recovery,
-    lane_surface, lifecycle, policy_surface, read_materializations::CurrentReads, settings_surface,
-    steering,
+    RuntimePaths, SurfaceConfig, dispatch_proof_recognize, dispatch_release_publish,
+    dispatch_up_change, lane_recovery, lane_surface, lifecycle, policy_surface,
+    read_materializations::CurrentReads, settings_surface, steering,
 };
 
 pub(super) struct Surface<'a> {
@@ -137,6 +137,9 @@ impl<'a> Surface<'a> {
             )),
             (CommandKind::ReleasePublish, Intent::ReleasePublish(publish)) => Some(
                 dispatch_release_publish(self.bus, self.paths, self.epoch, command, publish),
+            ),
+            (CommandKind::ProofRecognize, Intent::Recognize(recognize)) => Some(
+                dispatch_proof_recognize(self.bus, self.paths, self.epoch, command, recognize),
             ),
             (CommandKind::LaneRead, Intent::LaneRead(_)) => Some(lane_surface::read(
                 self.bus, self.paths, self.epoch, seats, command,

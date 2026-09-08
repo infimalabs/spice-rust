@@ -596,6 +596,50 @@ fn trust_pend_maps_the_current_digest_to_the_existing_pended_witness() {
 }
 
 #[test]
+fn proof_manifest_maps_to_the_current_observation_head() {
+    let contract = crate::cli::contract(&["release", "seal"])
+        .expect("the generated CLI registry carries release seal");
+    let digest = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        .parse::<wire::Digest>()
+        .expect("fixture digest is canonical");
+    let head = Seq::new(17).expect("fixture position is positive");
+    let manifest = proof::PublishedManifest {
+        manifest: wire::manifest::ReleaseManifest {
+            version: wire::manifest::RELEASE_MANIFEST_VERSION,
+            source: digest.clone(),
+            targets: Vec::new(),
+        },
+        bytes: Vec::new(),
+        digest: digest.clone(),
+        pointer: "release/manifest.json".into(),
+    };
+    let mapped = MappedCommand::selected(
+        contract,
+        SelectedCommand::ProofRecognize {
+            manifest: &manifest,
+            head,
+        },
+    )
+    .expect("proof recognition maps before resident discovery");
+
+    assert_eq!(mapped.kind, CommandKind::ProofRecognize);
+    assert_eq!(
+        mapped.expected,
+        [Witness::Observation {
+            key: digest.clone(),
+            head,
+        }],
+    );
+    assert_eq!(
+        wire::decode::<wire::intent::Recognize>(
+            &wire::encode(&mapped.body).expect("mapped body encodes")
+        )
+        .expect("mapped body retains Recognize"),
+        wire::intent::Recognize { key: digest },
+    );
+}
+
+#[test]
 fn task_contract_notice_key_retains_the_exact_acknowledgment_directive() {
     let directive = uuid(45);
     let key = "1kL5y53c"
