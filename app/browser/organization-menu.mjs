@@ -314,6 +314,12 @@ export async function assertCursorRelocation(page, artifacts, engine) {
           navigationClientWidth: navigation.clientWidth,
           navigationOverflowX: navigationStyle.overflowX,
           navigationScrollWidth: navigation.scrollWidth,
+          navigationButtons: Array.from(navigation.querySelectorAll(":scope > .axis-button"))
+            .map((button) => ({
+              ...box(button),
+              clientWidth: button.clientWidth,
+              scrollWidth: button.scrollWidth,
+            })),
         };
       });
       assert.deepEqual(
@@ -371,6 +377,31 @@ export async function assertCursorRelocation(page, artifacts, engine) {
         expandedGeometry.navigationScrollWidth <= expandedGeometry.navigationClientWidth + 1
           && !["auto", "scroll"].includes(expandedGeometry.navigationOverflowX),
         `${label} wraps navigation without a transient scrollbar`,
+      );
+      assert.equal(
+        expandedGeometry.navigationButtons.length,
+        3,
+        `${label} lays out every current navigation button`,
+      );
+      const navigationWidths = expandedGeometry.navigationButtons
+        .map((button) => button.right - button.left);
+      assert.ok(
+        Math.abs(
+          expandedGeometry.navigationButtons[0].left - expandedGeometry.navigation.left,
+        ) <= 0.5
+          && Math.abs(
+            expandedGeometry.navigationButtons.at(-1).right - expandedGeometry.navigation.right,
+          ) <= 0.5
+          && Math.max(...navigationWidths) - Math.min(...navigationWidths) <= 1,
+        `${label} distributes current navigation evenly across the full rail`,
+      );
+      assert.ok(
+        expandedGeometry.navigationButtons.every((button) => (
+          button.top >= expandedGeometry.navigation.top - 0.5
+            && button.bottom <= expandedGeometry.navigation.bottom + 0.5
+            && button.scrollWidth <= button.clientWidth
+        )),
+        `${label} keeps every full-width navigation button usable without label overflow`,
       );
       assert.deepEqual(
         [expandedGeometry.summary.right - expandedGeometry.summary.left,
