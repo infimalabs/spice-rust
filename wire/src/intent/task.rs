@@ -145,6 +145,19 @@ pub struct GateFindingSource {
     pub anchor: String,
     /// Whether the selected source was the staged index or one revision.
     pub kind: GateFindingSourceKind,
+    /// Mainline lineage captured beside the exact measured source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mainline: Option<GateFindingMainline>,
+}
+
+/// Canonical mainline coordinates captured with one focused finding source.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GateFindingMainline {
+    /// Full remote-tracking reference naming the repository's mainline.
+    pub reference: String,
+    /// Exact merge base shared by the measured anchor and observed mainline.
+    pub merge_base: String,
 }
 
 /// Replace an unsettled task statement.

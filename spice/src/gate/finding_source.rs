@@ -6,11 +6,13 @@ use std::os::unix::ffi::OsStrExt as _;
 use std::process::Command;
 
 use ::gate::Selector;
-use wire::intent::{GateFindingSource, GateFindingSourceKind};
+use wire::intent::{GateFindingMainline, GateFindingSource, GateFindingSourceKind};
 use wire::{Digest, Domain};
 
 use super::{GIT, RunError, git_os};
 use crate::repository::Repository;
+
+const MAINLINE_SYMBOLIC_REF: &str = "refs/remotes/origin/HEAD";
 
 /// Repository and immutable Git selection captured around one focused report.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -19,6 +21,7 @@ pub struct GateFindingAnchor {
     selection: Digest,
     anchor: String,
     kind: GateFindingSourceKind,
+    mainline: GateFindingMainline,
 }
 
 impl GateFindingAnchor {
@@ -31,6 +34,7 @@ impl GateFindingAnchor {
             tree,
             anchor: self.anchor,
             kind: self.kind,
+            mainline: Some(self.mainline),
         }
     }
 }
@@ -78,11 +82,13 @@ pub fn capture_gate_finding_anchor(
     selection_evidence.extend_from_slice(anchor.as_bytes());
     selection_evidence.push(0);
     selection_evidence.extend_from_slice(&selected);
+    let mainline = capture_mainline(repository, &anchor)?;
     Ok(GateFindingAnchor {
         repository: repository_authority,
         selection: Digest::compute(Domain::GateSelection, &selection_evidence),
         anchor,
         kind,
+        mainline,
     })
 }
 
@@ -96,6 +102,12 @@ pub fn validate_gate_finding_source(
     repository: &Repository,
     source: &GateFindingSource,
 ) -> Result<(), RunError> {
+    if source.mainline.is_none() {
+        return Err(RunError::refusal(
+            "gate::finding-mainline-missing",
+            "focused finding source requires gate-finding-mainline-v1 lineage",
+        ));
+    }
     let selector = match source.kind {
         GateFindingSourceKind::StagedIndex => Selector::staged(),
         GateFindingSourceKind::Revision => Selector::revision(source.anchor.clone()),
@@ -117,6 +129,10 @@ fn validate_gate_finding_source_against(
     if current.selection != source.selection
         || current.anchor != source.anchor
         || current.kind != source.kind
+        || source.mainline.as_ref().is_some_and(|mainline| {
+            mainline.reference != current.mainline.reference
+                || mainline.merge_base != current.mainline.merge_base
+        })
     {
         return Err(RunError::refusal(
             "gate::finding-source-moved",
@@ -144,8 +160,53 @@ pub fn require_gate_finding_source_forward(
 ) -> Result<(), RunError> {
     validate_gate_finding_source(repository, candidate)?;
     require_forward_envelope(prior, candidate)?;
-    require_commit_ancestor(repository, &prior.anchor, &candidate.anchor)?;
+    if !commit_is_ancestor(repository, &prior.anchor, &candidate.anchor)? {
+        require_orphaned_mainline_recovery(repository, prior, candidate, recovery)?;
+    }
     require_recovery_movement(prior, candidate, recovery)
+}
+
+fn require_orphaned_mainline_recovery(
+    repository: &Repository,
+    prior: &GateFindingSource,
+    candidate: &GateFindingSource,
+    recovery: bool,
+) -> Result<(), RunError> {
+    if !recovery {
+        return Err(source_regressed(&prior.anchor, &candidate.anchor));
+    }
+    let prior_mainline = prior.mainline.as_ref().ok_or_else(|| {
+        RunError::refusal(
+            "gate::finding-mainline-migration-required",
+            "retained finding source predates gate-finding-mainline-v1",
+        )
+    })?;
+    let candidate_mainline = candidate.mainline.as_ref().ok_or_else(|| {
+        RunError::refusal(
+            "gate::finding-mainline-missing",
+            "candidate finding source carries no mainline lineage",
+        )
+    })?;
+    validate_mainline(repository, &prior.anchor, prior_mainline)?;
+    if prior_mainline.reference != candidate_mainline.reference {
+        return Err(RunError::refusal(
+            "gate::finding-mainline-moved",
+            format!(
+                "mainline reference moved from {:?} to {:?}",
+                prior_mainline.reference, candidate_mainline.reference
+            ),
+        ));
+    }
+    if candidate.kind != GateFindingSourceKind::Revision
+        || candidate.anchor != canonical_commit(repository, &candidate_mainline.reference)?
+    {
+        return Err(RunError::refusal(
+            "gate::finding-mainline-required",
+            "orphaned finding recovery requires an exact report at the current mainline revision",
+        ));
+    }
+    require_commit_ancestor(repository, &prior_mainline.merge_base, &candidate.anchor)?;
+    Ok(())
 }
 
 fn require_forward_envelope(
@@ -213,11 +274,130 @@ fn canonical_commit(repository: &Repository, revision: &str) -> Result<String, R
     Ok(commit.to_owned())
 }
 
+fn capture_mainline(
+    repository: &Repository,
+    measured_anchor: &str,
+) -> Result<GateFindingMainline, RunError> {
+    let reference = git_text(
+        repository,
+        &["symbolic-ref", "--quiet", MAINLINE_SYMBOLIC_REF],
+        "mainline reference",
+    )?;
+    let branch = reference
+        .strip_prefix("refs/remotes/origin/")
+        .filter(|branch| !branch.is_empty() && *branch != "HEAD")
+        .ok_or_else(|| {
+            RunError::refusal(
+                "gate::finding-mainline-refused",
+                format!("origin HEAD resolved to non-mainline reference {reference:?}"),
+            )
+        })?;
+    if branch.contains(['\0', '\r', '\n']) {
+        return Err(RunError::refusal(
+            "gate::finding-mainline-refused",
+            format!("origin HEAD resolved to invalid reference {reference:?}"),
+        ));
+    }
+    let head = canonical_commit(repository, &reference)?;
+    let merge_base = unique_merge_base(repository, measured_anchor, &head)?;
+    Ok(GateFindingMainline {
+        reference,
+        merge_base,
+    })
+}
+
+fn validate_mainline(
+    repository: &Repository,
+    measured_anchor: &str,
+    mainline: &GateFindingMainline,
+) -> Result<(), RunError> {
+    let expected = mainline
+        .reference
+        .strip_prefix("refs/remotes/origin/")
+        .filter(|branch| !branch.is_empty() && *branch != "HEAD")
+        .ok_or_else(|| {
+            RunError::refusal(
+                "gate::finding-mainline-refused",
+                format!(
+                    "retained mainline reference is invalid: {:?}",
+                    mainline.reference
+                ),
+            )
+        })?;
+    if expected.contains(['\0', '\r', '\n']) {
+        return Err(RunError::refusal(
+            "gate::finding-mainline-refused",
+            format!(
+                "retained mainline reference is invalid: {:?}",
+                mainline.reference
+            ),
+        ));
+    }
+    let head = canonical_commit(repository, &mainline.reference)?;
+    let merge_base = unique_merge_base(repository, measured_anchor, &head)?;
+    if merge_base != mainline.merge_base {
+        return Err(RunError::refusal(
+            "gate::finding-mainline-moved",
+            format!(
+                "retained merge base {} does not match measured mainline base {merge_base}",
+                mainline.merge_base
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn unique_merge_base(repository: &Repository, left: &str, right: &str) -> Result<String, RunError> {
+    let bases = git_text(
+        repository,
+        &["merge-base", "--all", left, right],
+        "mainline merge base",
+    )?;
+    let bases = bases.lines().collect::<Vec<_>>();
+    let [base] = bases.as_slice() else {
+        return Err(RunError::refusal(
+            "gate::finding-mainline-ambiguous",
+            format!(
+                "measured anchor {left} and mainline {right} have {} merge bases",
+                bases.len()
+            ),
+        ));
+    };
+    canonical_commit(repository, base)
+}
+
+fn git_text(repository: &Repository, arguments: &[&str], label: &str) -> Result<String, RunError> {
+    let arguments = arguments.iter().map(OsString::from).collect::<Vec<_>>();
+    let output = git_os(repository.worktree_root(), &arguments)?;
+    let output = std::str::from_utf8(&output)
+        .map_err(|error| RunError::refusal("gate::finding-git-non-utf8", error))?;
+    let output = output.trim();
+    if output.contains('\0') {
+        return Err(RunError::refusal(
+            "gate::finding-git-invalid",
+            format!("{label} contains NUL"),
+        ));
+    }
+    Ok(output.to_owned())
+}
+
 fn require_commit_ancestor(
     repository: &Repository,
     prior: &str,
     candidate: &str,
 ) -> Result<(), RunError> {
+    if commit_is_ancestor(repository, prior, candidate)? {
+        Ok(())
+    } else {
+        Err(source_regressed(prior, candidate))
+    }
+}
+
+fn commit_is_ancestor(
+    repository: &Repository,
+    prior: &str,
+    candidate: &str,
+) -> Result<bool, RunError> {
     let prior = canonical_commit(repository, prior)?;
     let candidate = canonical_commit(repository, candidate)?;
     let output = Command::new(GIT)
@@ -227,11 +407,8 @@ fn require_commit_ancestor(
         .output()
         .map_err(|error| RunError::fault("gate::git-unavailable", error))?;
     match output.status.code() {
-        Some(0) => Ok(()),
-        Some(1) => Err(RunError::refusal(
-            "gate::finding-source-regressed",
-            format!("candidate anchor {candidate} is not a descendant of retained anchor {prior}"),
-        )),
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
         code => Err(RunError::fault(
             "gate::finding-lineage-unavailable",
             format!(
@@ -242,9 +419,24 @@ fn require_commit_ancestor(
     }
 }
 
+fn source_regressed(prior: &str, candidate: &str) -> RunError {
+    RunError::refusal(
+        "gate::finding-source-regressed",
+        format!("candidate anchor {candidate} is not a descendant of retained anchor {prior}"),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn write_mainline(root: &std::path::Path, head: &str) {
+        let remote = root.join(".git/refs/remotes/origin");
+        fs::create_dir_all(&remote).expect("create fixture mainline refs");
+        fs::write(remote.join("main"), format!("{head}\n")).expect("write fixture mainline");
+        fs::write(remote.join("HEAD"), "ref: refs/remotes/origin/main\n")
+            .expect("write fixture origin HEAD");
+    }
 
     fn digest(domain: Domain, label: &str) -> Digest {
         Digest::compute(domain, label.as_bytes())
@@ -263,6 +455,7 @@ mod tests {
             tree: digest(Domain::GateTree, tree),
             anchor: anchor.to_owned(),
             kind,
+            mainline: None,
         }
     }
 
@@ -272,6 +465,10 @@ mod tests {
             selection: source.selection.clone(),
             anchor: source.anchor.clone(),
             kind: source.kind,
+            mainline: GateFindingMainline {
+                reference: "refs/remotes/origin/main".to_owned(),
+                merge_base: "merge-base".to_owned(),
+            },
         }
     }
 
@@ -365,5 +562,50 @@ mod tests {
         );
         require_recovery_movement(&prior, &candidate, false)
             .expect("refresh does not require tree movement");
+    }
+
+    #[test]
+    fn orphaned_revision_recovers_only_from_current_mainline() {
+        let root = std::env::temp_dir().join(format!(
+            "spice-gate-finding-mainline-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir(&root).expect("create fixture repository");
+        crate::test_repository::initialize(&root);
+        fs::write(root.join("source.txt"), "base\n").expect("write base source");
+        crate::test_repository::stage(&root, &["source.txt"]);
+        let base = crate::test_repository::commit(&root, "base");
+        write_mainline(&root, &base);
+
+        fs::write(root.join("source.txt"), "finding\n").expect("write finding source");
+        crate::test_repository::stage(&root, &["source.txt"]);
+        let finding = crate::test_repository::commit(&root, "temporary finding");
+        let repository = Repository::discover(&root).expect("discover fixture repository");
+        let prior = capture_gate_finding_anchor(&repository, &Selector::revision(finding.clone()))
+            .expect("capture finding source")
+            .bind(digest(Domain::GateTree, "finding-tree"));
+
+        fs::write(root.join(".git/refs/heads/main"), format!("{base}\n"))
+            .expect("abandon finding revision");
+        fs::write(root.join("source.txt"), "mainline\n").expect("write mainline source");
+        crate::test_repository::stage(&root, &["source.txt"]);
+        let mainline = crate::test_repository::commit(&root, "mainline repair");
+        write_mainline(&root, &mainline);
+        let clean = capture_gate_finding_anchor(&repository, &Selector::revision(mainline.clone()))
+            .expect("capture current mainline")
+            .bind(digest(Domain::GateTree, "clean-tree"));
+
+        require_gate_finding_source_forward(&repository, &prior, &clean, true)
+            .expect("current mainline reconciles abandoned finding");
+
+        let mut legacy = prior;
+        legacy.mainline = None;
+        assert_eq!(
+            require_gate_finding_source_forward(&repository, &legacy, &clean, true)
+                .unwrap_err()
+                .reason(),
+            "gate::finding-mainline-migration-required"
+        );
+        fs::remove_dir_all(root).expect("remove finding source fixture");
     }
 }

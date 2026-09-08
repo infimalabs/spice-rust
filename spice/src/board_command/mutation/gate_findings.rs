@@ -13,6 +13,8 @@ const GATE_SELECTION_TAG_PREFIX: &str = "gate-selection:";
 const GATE_SOURCE_TREE_TAG_PREFIX: &str = "gate-source-tree:";
 const GATE_SOURCE_ANCHOR_TAG_PREFIX: &str = "gate-source-anchor:";
 const GATE_SOURCE_KIND_TAG_PREFIX: &str = "gate-source-kind:";
+const GATE_MAINLINE_REF_TAG_PREFIX: &str = "gate-mainline-ref:";
+const GATE_MAINLINE_BASE_TAG_PREFIX: &str = "gate-mainline-base:";
 const GATE_FINDING_DEFER_UNTIL: &str = "2099-12-31T23:59:59.999Z";
 
 #[derive(Clone)]
@@ -740,13 +742,40 @@ fn gate_finding_task_source(
             ));
         }
     };
+    let mainline = gate_finding_mainline(entry)?;
     Ok(wire::intent::GateFindingSource {
         repository,
         selection,
         tree,
         anchor: anchor.to_owned(),
         kind,
+        mainline: Some(mainline),
     })
+}
+
+fn gate_finding_mainline(
+    entry: &Entry,
+) -> Result<wire::intent::GateFindingMainline, Outcome<CommandAnswer>> {
+    let reference =
+        gate_finding_optional_source_tag(entry, GATE_MAINLINE_REF_TAG_PREFIX, "mainline-ref")?;
+    let merge_base =
+        gate_finding_optional_source_tag(entry, GATE_MAINLINE_BASE_TAG_PREFIX, "mainline-base")?;
+    match (reference, merge_base) {
+        (None, None) => Err(gate_finding_source_refusal(
+            entry,
+            "mainline",
+            "missing gate-finding-mainline-v1 lineage tags",
+        )),
+        (Some(reference), Some(merge_base)) => Ok(wire::intent::GateFindingMainline {
+            reference: reference.to_owned(),
+            merge_base: merge_base.to_owned(),
+        }),
+        _ => Err(gate_finding_source_refusal(
+            entry,
+            "mainline",
+            "expected both canonical lineage tags or neither",
+        )),
+    }
 }
 
 fn gate_finding_source_tag<'a>(
@@ -768,6 +797,31 @@ fn gate_finding_source_tag<'a>(
         ));
     };
     Ok(value)
+}
+
+fn gate_finding_optional_source_tag<'a>(
+    entry: &'a Entry,
+    prefix: &str,
+    label: &str,
+) -> Result<Option<&'a str>, Outcome<CommandAnswer>> {
+    let values = entry
+        .statement()
+        .tags
+        .iter()
+        .filter_map(|tag| tag.strip_prefix(prefix))
+        .collect::<Vec<_>>();
+    match values.as_slice() {
+        [] => Ok(None),
+        [value] if !value.is_empty() => Ok(Some(*value)),
+        _ => Err(gate_finding_source_refusal(
+            entry,
+            label,
+            &format!(
+                "found {} canonical tags; expected at most one",
+                values.len()
+            ),
+        )),
+    }
 }
 
 fn gate_finding_source_refusal(entry: &Entry, field: &str, detail: &str) -> Outcome<CommandAnswer> {
@@ -1042,6 +1096,12 @@ fn gate_finding_description(
         report = report,
         instrument = instrument,
     );
+    if let Some(mainline) = &source.mainline {
+        description.push_str(&format!(
+            "\nMainline reference: {}\nMainline merge base: {}",
+            mainline.reference, mainline.merge_base,
+        ));
+    }
     if let Some(predecessor) = predecessor {
         description.push_str(&format!("\nPrevious completed task: {predecessor}"));
     }
@@ -1091,6 +1151,12 @@ fn gate_finding_tags(
             gate_finding_source_kind(source.kind)
         ),
     ];
+    if let Some(mainline) = &source.mainline {
+        tags.extend([
+            format!("{GATE_MAINLINE_REF_TAG_PREFIX}{}", mainline.reference),
+            format!("{GATE_MAINLINE_BASE_TAG_PREFIX}{}", mainline.merge_base),
+        ]);
+    }
     tags.extend(
         existing
             .iter()
@@ -1104,6 +1170,8 @@ fn gate_finding_tags(
                     && !tag.starts_with(GATE_SOURCE_TREE_TAG_PREFIX)
                     && !tag.starts_with(GATE_SOURCE_ANCHOR_TAG_PREFIX)
                     && !tag.starts_with(GATE_SOURCE_KIND_TAG_PREFIX)
+                    && !tag.starts_with(GATE_MAINLINE_REF_TAG_PREFIX)
+                    && !tag.starts_with(GATE_MAINLINE_BASE_TAG_PREFIX)
             })
             .cloned(),
     );

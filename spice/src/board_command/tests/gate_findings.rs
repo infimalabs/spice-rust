@@ -76,6 +76,8 @@ fn gate_findings_file_exact_deferred_tasks() {
             format!("gate-source-tree:{}", dispatch.body.source.tree),
             format!("gate-source-anchor:{}", dispatch.body.source.anchor),
             "gate-source-kind:staged-index".to_owned(),
+            "gate-mainline-ref:refs/remotes/origin/main".to_owned(),
+            "gate-mainline-base:mainline-base-create-report".to_owned(),
         ] {
             assert!(task.statement.body.tags.contains(&tag), "missing {tag}");
         }
@@ -97,6 +99,8 @@ fn gate_findings_file_exact_deferred_tasks() {
             &format!("Selected tree: {}", dispatch.body.source.tree),
             &format!("Source anchor: {}", dispatch.body.source.anchor),
             "Source kind: staged-index",
+            "Mainline reference: refs/remotes/origin/main",
+            "Mainline merge base: mainline-base-create-report",
         ] {
             assert!(
                 description.contains(evidence),
@@ -231,7 +235,7 @@ fn gate_findings_refuse_ambiguous_legacy_task_instead_of_hiding_it() {
 }
 
 #[test]
-fn gate_findings_refuse_legacy_task_without_typed_source_authority() {
+fn gate_findings_refuse_legacy_task_without_mainline_authority() {
     let (root, bus, epoch, _) = fixture("gate-findings-source-migration", 1);
     let first = focused_dispatch(&root, "source-legacy-first", &["source-legacy"]);
     assert_committed(issue_gate_findings(&bus, epoch, Actor::Operator, &first));
@@ -242,22 +246,23 @@ fn gate_findings_refuse_legacy_task_without_typed_source_authority() {
         .clone();
     revise_gate_task(&bus, &task, |statement| {
         statement.tags.retain(|tag| {
-            !tag.starts_with("gate-repository:")
-                && !tag.starts_with("gate-selection:")
-                && !tag.starts_with("gate-source-tree:")
-                && !tag.starts_with("gate-source-anchor:")
-                && !tag.starts_with("gate-source-kind:")
+            !tag.starts_with("gate-mainline-ref:") && !tag.starts_with("gate-mainline-base:")
         });
     });
     let second = focused_dispatch(&root, "source-legacy-second", &["source-legacy"]);
 
     let outcome = issue_gate_findings(&bus, epoch, Actor::Operator, &second);
 
-    assert!(matches!(
-        outcome,
-        Outcome::Refusal(ref refusal)
-            if refusal.reason() == "gate::finding-source-migration-required"
-    ));
+    let Outcome::Refusal(refusal) = outcome else {
+        panic!("legacy finding source must refuse");
+    };
+    assert_eq!(refusal.reason(), "gate::finding-source-migration-required");
+    assert!(
+        refusal
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed)
+            .is_some_and(|observed| observed.contains("gate-finding-mainline-v1"))
+    );
     clean(&root, bus);
 }
 
