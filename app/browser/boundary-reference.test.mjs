@@ -34,7 +34,6 @@ async function boundaryDocument() {
           <span class="mosaic-compaction-rule" aria-hidden="true"></span>
           <span class="mosaic-compaction-label">
             <span class="mosaic-compaction-age">48m</span>
-            <span aria-hidden="true">&middot;</span>
             <span class="mosaic-compaction-context">
               <span class="mosaic-compaction-agent">Bexley Integration Reliability Operator</span>
               <span class="message-key">runtime timed out; code -1</span>
@@ -63,6 +62,7 @@ test("retained lifecycle dividers preserve compact accent geometry in Chromium a
           const color = (node) => getComputedStyle(node).color;
           const agent = boundary.querySelector(".mosaic-compaction-agent");
           const status = boundary.querySelector(".message-key");
+          const label = boundary.querySelector(".mosaic-compaction-label");
           const accentProbe = document.createElement("span");
           accentProbe.style.color = "var(--accent-slot)";
           boundary.append(accentProbe);
@@ -77,6 +77,8 @@ test("retained lifecycle dividers preserve compact accent geometry in Chromium a
             card: { ...rect(boundary), clientWidth: boundary.clientWidth, scrollWidth: boundary.scrollWidth },
             plane: rect(boundary.parentElement),
             label: boundary.getAttribute("aria-label"),
+            labelChildren: [...label.children].map((child) => child.className),
+            labelGap: getComputedStyle(label).gap,
             agent: {
               ...rect(agent),
               clientWidth: agent.clientWidth,
@@ -98,6 +100,11 @@ test("retained lifecycle dividers preserve compact accent geometry in Chromium a
         assert.equal(geometry.card.width, geometry.plane.width, `${engine} divider is full width`);
         assert.ok(geometry.card.scrollWidth <= geometry.card.clientWidth + 1, `${engine} divider does not overflow`);
         assert.equal(geometry.rules.length, 2, `${engine} divider has two rules`);
+        assert.deepEqual(
+          [geometry.labelChildren, geometry.labelGap],
+          [["mosaic-compaction-age", "mosaic-compaction-context"], "0px"],
+          `${engine} age slot flows directly into lifecycle context`,
+        );
         assert.ok(geometry.rules.every((rule) => rule.width >= 32 && rule.height >= 1));
         assert.ok(Math.abs(geometry.rules[0].left - geometry.card.left) <= 0.5);
         assert.ok(Math.abs(geometry.rules[1].right - geometry.card.right) <= 0.5);

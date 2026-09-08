@@ -1111,7 +1111,6 @@ fn render_lifecycle_boundary(
                     authored={boundary.observed().get().as_millisecond()}
                     class="mosaic-compaction-age"
                 />
-                <span aria-hidden="true">{"\u{b7}"}</span>
                 <span class="mosaic-compaction-context">
                     <span class="mosaic-compaction-agent" title={attribution.clone()}>{attribution}</span>
                     <span class="message-key">{boundary.cause().to_owned()}</span>
