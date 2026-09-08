@@ -35,17 +35,7 @@ pub(super) fn perform(
     let installed = install::installed_binary(&repository);
     let rollback = park(&repository, &installed)?;
     let before = snapshot_install(&repository, &installed)?;
-    let journal = repository
-        .admit_state()
-        .map_err(InstallError::from)?
-        .journal()
-        .to_path_buf();
-    let before_schema =
-        inspect_schema(&journal).map_err(|error| RefreshError::SchemaRecoveryUncertain {
-            before: None,
-            cause: "pre-refresh schema inspection failed".to_owned(),
-            error,
-        })?;
+    let schema = schema_recovery_boundary(&repository, request.restart)?;
     let published = read_endpoint(&repository);
     let endpoint = requested_endpoint(request, published.as_deref());
 
@@ -77,11 +67,14 @@ pub(super) fn perform(
     let endpoint = match restart(&repository, &installed, bound, request, output) {
         Ok(endpoint) => endpoint,
         Err(error) => {
+            let Some((journal, before_schema)) = &schema else {
+                return Err(error);
+            };
             return Err(recover_start_failure(
                 &repository,
                 &unwind,
-                &journal,
-                before_schema,
+                journal,
+                *before_schema,
                 output,
                 error,
             ));
@@ -93,6 +86,27 @@ pub(super) fn perform(
         digest,
         endpoint,
     })
+}
+
+fn schema_recovery_boundary(
+    repository: &Repository,
+    restart: bool,
+) -> Result<Option<(PathBuf, Option<u32>)>, RefreshError> {
+    if !restart {
+        return Ok(None);
+    }
+    let journal = repository
+        .admit_state()
+        .map_err(InstallError::from)?
+        .journal()
+        .to_path_buf();
+    let schema =
+        inspect_schema(&journal).map_err(|error| RefreshError::SchemaRecoveryUncertain {
+            before: None,
+            cause: "pre-refresh schema inspection failed".to_owned(),
+            error,
+        })?;
+    Ok(Some((journal, schema)))
 }
 
 fn inspect_schema(path: &Path) -> Result<Option<u32>, spice::journal_schema::InspectionError> {
