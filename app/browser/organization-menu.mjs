@@ -132,8 +132,10 @@ export async function assertCursorRelocation(page, artifacts, engine) {
         const summary = node.querySelector(".canvas-menu > summary");
         const stamp = summary.querySelector(".canvas-menu-flame");
         const pill = strip.querySelector(".task-pill");
+        const workspaceContent = node.nextElementSibling.querySelector(":scope > .content");
         const style = getComputedStyle(node);
         const summaryStyle = getComputedStyle(summary);
+        const workspaceStyle = getComputedStyle(workspaceContent);
         return {
           viewportWidth: innerWidth,
           bar: box(node),
@@ -149,6 +151,8 @@ export async function assertCursorRelocation(page, artifacts, engine) {
           paddingBottom: style.paddingBottom,
           paddingLeft: style.paddingLeft,
           paddingRight: style.paddingRight,
+          workspacePaddingLeft: workspaceStyle.paddingLeft,
+          workspacePaddingRight: workspaceStyle.paddingRight,
           gap: style.gap,
           stripGap: getComputedStyle(strip).gap,
           pillPaddingTop: getComputedStyle(pill).paddingTop,
@@ -213,17 +217,31 @@ export async function assertCursorRelocation(page, artifacts, engine) {
         `${label} keeps its responsive inline edge`,
       );
       assert.equal(geometry.paddingRight, geometry.paddingLeft, `${label} has symmetric inline edges`);
+      await assertUniversalShelfOuterEdge(page, label);
+      assert.deepEqual(
+        [geometry.workspacePaddingLeft, geometry.workspacePaddingRight],
+        [geometry.paddingLeft, geometry.paddingRight],
+        `${label} gives the header and workspace one shell-owned inline gutter`,
+      );
 
       await strip.evaluate((node) => { node.scrollLeft = 0; });
       const first = await strip.locator(".task-pill").first().boundingBox();
       const stripStart = await strip.boundingBox();
-      assert.ok(first && stripStart && first.x >= stripStart.x - 0.5, `${label} shows the first task pill`);
+      assert.ok(
+        first && stripStart
+          && first.x >= Number.parseFloat(geometry.paddingLeft) - 0.5
+          && first.x >= stripStart.x - 0.5,
+        `${label} shows the first task pill inside the outer gutter`,
+      );
       await strip.evaluate((node) => { node.scrollLeft = node.scrollWidth; });
       const last = await strip.locator(".task-pill").last().boundingBox();
       const stripEnd = await strip.boundingBox();
       assert.ok(
-        last && stripEnd && last.x + last.width <= stripEnd.x + stripEnd.width + 0.5,
-        `${label} can reveal the complete last task pill`,
+        last && stripEnd
+          && last.x + last.width <= geometry.viewportWidth
+            - Number.parseFloat(geometry.paddingRight) + 0.5
+          && last.x + last.width <= stripEnd.x + stripEnd.width + 0.5,
+        `${label} can reveal the complete last task pill inside the outer gutter`,
       );
       await strip.evaluate((node) => { node.scrollLeft = 0; });
 
@@ -731,6 +749,46 @@ async function waitForDisclosure(page, expanded, reason) {
   );
 }
 
+async function assertUniversalShelfOuterEdge(page, label) {
+  const geometry = await page.locator(".commandbar--mosaic").evaluate((bar) => {
+    const activeWorkspace = [...bar.parentElement.querySelectorAll(":scope > .workspace")]
+      .find((workspace) => !workspace.hidden);
+    const content = activeWorkspace?.querySelector(":scope > .content");
+    const firstPill = bar.querySelector(".task-pill-strip > .task-pill");
+    const trigger = bar.querySelector(".canvas-menu > summary");
+    const barStyle = getComputedStyle(bar);
+    const contentStyle = getComputedStyle(content);
+    const first = firstPill.getBoundingClientRect();
+    const summary = trigger.getBoundingClientRect();
+    return {
+      contentPaddingLeft: Number.parseFloat(contentStyle.paddingLeft),
+      contentPaddingRight: Number.parseFloat(contentStyle.paddingRight),
+      documentWidth: document.documentElement.scrollWidth,
+      firstPillLeft: first.left,
+      paddingLeft: Number.parseFloat(barStyle.paddingLeft),
+      paddingRight: Number.parseFloat(barStyle.paddingRight),
+      triggerRight: summary.right,
+      viewportWidth: innerWidth,
+    };
+  });
+  const expected = geometry.viewportWidth <= 720 ? 8 : 10;
+  assert.deepEqual(
+    [geometry.paddingLeft, geometry.paddingRight],
+    [expected, expected],
+    `${label} gives the universal shelf symmetric shell-owned edges`,
+  );
+  assert.ok(
+    geometry.contentPaddingLeft >= expected && geometry.contentPaddingRight >= expected,
+    `${label} keeps active workspace content inside the shell gutter`,
+  );
+  assert.ok(
+    geometry.firstPillLeft >= expected - 0.5
+      && geometry.triggerRight <= geometry.viewportWidth - expected + 0.5
+      && geometry.documentWidth <= geometry.viewportWidth,
+    `${label} keeps shelf controls and document paint inside the outer gutter`,
+  );
+}
+
 async function assertPepperDisclosure(page) {
   const menu = page.locator(".canvas-menu");
   const trigger = menu.locator(":scope > summary");
@@ -849,10 +907,11 @@ async function assertPepperDisclosure(page) {
 
   await trigger.click();
   await waitForDisclosure(page, true, "the pepper disclosure reopens for destination selection");
-  await navigation.getByRole("button", { name: /^Tasks/ }).click();
-  await page.getByRole("heading", { name: "Tasks", exact: true }).waitFor({ timeout: TRANSITION_MS });
-  await waitForDisclosure(page, false, "a Canvas destination closes the pepper disclosure");
-  const panel = await openSpiceMenu(page);
+    await navigation.getByRole("button", { name: /^Tasks/ }).click();
+    await page.getByRole("heading", { name: "Tasks", exact: true }).waitFor({ timeout: TRANSITION_MS });
+    await waitForDisclosure(page, false, "a Canvas destination closes the pepper disclosure");
+    await assertUniversalShelfOuterEdge(page, "narrow Tasks destination");
+    const panel = await openSpiceMenu(page);
   assert.equal(
     await panel.locator(".canvas-menu-page").getAttribute("data-menu-page"),
     "flow",
@@ -869,6 +928,7 @@ async function assertAxisMenu(page, view, copy) {
     Topology: "Team",
   }[view] ?? view;
   await chooseCanvasView(page, view);
+  await assertUniversalShelfOuterEdge(page, `${visibleView} destination`);
   const panel = await openSpiceMenu(page);
   const menuPage = panel.locator(".canvas-menu-page");
   assert.equal(

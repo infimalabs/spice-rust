@@ -281,7 +281,8 @@
   min-height: 0;
   width: 100%;
   max-width: none;
-  padding: 0 var(--canvas-frame-edge-inline) var(--canvas-frame-edge-block-end);
+  padding: 0 0 var(--canvas-frame-edge-block-end);
+  padding-inline: var(--canvas-shell-edge-start) var(--canvas-shell-edge-end);
 }
 
 .mosaic-workspace { display: flex; min-height: 0; }

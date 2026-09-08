@@ -5,12 +5,19 @@
 .commandbar--mosaic {
   min-height: 30px;
   gap: 7px;
-  padding: 8px var(--canvas-chrome-edge-inline);
+  padding-block: 8px;
+  padding-inline: var(--canvas-shell-edge-start) var(--canvas-shell-edge-end);
   background: var(--page);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .commandbar--mosaic .bar-meta { font-size: .6rem; }
+
+.shell {
+  --canvas-shell-edge-inline: 10px;
+  --canvas-shell-edge-start: max(var(--canvas-shell-edge-inline), env(safe-area-inset-left, 0px));
+  --canvas-shell-edge-end: max(var(--canvas-shell-edge-inline), env(safe-area-inset-right, 0px));
+}
 
 html:has(.shell--mosaic),
 body:has(.shell--mosaic),
@@ -20,9 +27,7 @@ body:has(.shell--mosaic),
   overflow: hidden;
 }
 .shell--mosaic {
-  --canvas-chrome-edge-inline: 10px;
   --canvas-frame-edge-block-end: 10px;
-  --canvas-frame-edge-inline: 10px;
   position: fixed;
   inset: 0;
   height: 100vh;
