@@ -80,6 +80,7 @@ struct DurableHistory {
 #[derive(Debug)]
 struct DurableLane {
     tape: std::path::PathBuf,
+    worktree: std::path::PathBuf,
     dialect: listen::Dialect,
     author: CanonicalUuid,
     source: Option<listen::Checkpoint>,
@@ -136,6 +137,7 @@ impl DurableHistory {
                             .tape
                             .join(row.lane.to_string())
                             .join(row.vendor.as_str()),
+                        worktree: row.worktree.clone().into(),
                         dialect,
                         author,
                         source: reader.cursors.get(&row.lane).cloned(),
@@ -302,6 +304,7 @@ impl DurableHistory {
             tail.scan,
             lane,
             source.author,
+            &source.worktree,
             &messages,
             &mut reader,
             &mut diagnostic,
@@ -468,7 +471,15 @@ fn restore_lane(
             return Ok(());
         }
     };
-    publish_scan(scan, row.lane, author, publisher, reader, diagnostic)
+    publish_scan(
+        scan,
+        row.lane,
+        author,
+        Path::new(&row.worktree),
+        publisher,
+        reader,
+        diagnostic,
+    )
 }
 
 fn tape_available(tape: &Path, lane: CanonicalUuid, diagnostic: &mut dyn io::Write) -> bool {
@@ -514,6 +525,7 @@ fn publish_scan(
     scan: listen::Scan,
     lane: CanonicalUuid,
     author: CanonicalUuid,
+    worktree: &Path,
     publisher: &impl AgentMessagePublisher,
     reader: &mut BacklogReader,
     diagnostic: &mut dyn io::Write,
@@ -548,6 +560,7 @@ fn publish_scan(
                 lane,
                 author,
                 source: Some(source),
+                worktree: Some(worktree),
                 context,
                 events: &decoded,
                 observed: None,

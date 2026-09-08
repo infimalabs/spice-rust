@@ -1042,6 +1042,7 @@ fn publish(
             lane,
             author,
             source: None,
+            worktree: None,
             ordinal: record.ordinal,
             decoded: &record.decoded,
             authored: Some(&record.authored),

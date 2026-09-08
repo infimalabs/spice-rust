@@ -108,6 +108,57 @@ mod presentation {
     }
 
     #[test]
+    fn file_change_live_and_replay_share_the_relative_path_summary() {
+        let bytes = br#"{"type":"item.completed","item":{"id":"file-change","type":"file_change","changes":[{"path":"/workspace/spice/src/lib.rs","kind":"update"}],"status":"completed"}}"#;
+        let record = capture_record(bytes, 0);
+        let worktree = std::path::Path::new("/workspace");
+        let live = Messages::default();
+        publish_agent_messages_in(
+            &live,
+            &record,
+            &mut MessageState::default(),
+            None,
+            Some(worktree),
+        )
+        .expect("live file change publishes");
+
+        let context = record.decoded.context().expect("record carries context");
+        let events = record
+            .decoded
+            .events()
+            .iter()
+            .enumerate()
+            .map(|(ordinal, event)| (ordinal as u32, event))
+            .collect::<Vec<_>>();
+        let replay = Messages::default();
+        publish_agent_record(
+            &replay,
+            AgentRecord {
+                lane: record.lane,
+                author: record.occupant,
+                source: Some(lane()),
+                worktree: Some(worktree),
+                context,
+                events: &events,
+                observed: None,
+                unavailable_tool_terminals: &[],
+            },
+            &mut MessageState::default(),
+            None,
+        )
+        .expect("replayed file change publishes");
+
+        let live = live.0.lock().expect("live messages");
+        let replay = replay.0.lock().expect("replayed messages");
+        assert_eq!(*live, *replay);
+        assert_eq!(live[0].text, "file_change: spice/src/lib.rs [update]");
+        assert_eq!(
+            live[1].text,
+            "file_change: spice/src/lib.rs [update] succeeded"
+        );
+    }
+
+    #[test]
     fn successful_codex_cli_turn_promotes_only_its_latest_agent_message() {
         let publisher = Messages::default();
         let mut state = MessageState::default();
@@ -227,6 +278,7 @@ mod presentation {
                 lane: lane(),
                 author: lane(),
                 source: None,
+                worktree: None,
                 ordinal: 0,
                 decoded: &prose,
                 authored: None,
@@ -621,6 +673,7 @@ mod presentation {
                 lane: lane(),
                 author: lane(),
                 source: None,
+                worktree: None,
                 ordinal: 0,
                 decoded: &prose,
                 authored: None,
@@ -1364,6 +1417,87 @@ fn shell_families_remain_visible_without_discarding_their_commands() {
     }
     assert_eq!(activity_preview("Bash", ""), "Bash shell");
     assert_eq!(activity_preview("zsh", ""), "zsh shell");
+}
+
+#[test]
+fn file_changes_sort_paths_and_summarize_every_operation_kind() {
+    let arguments = r#"{"changes":[{"path":"/workspace/z.rs","kind":"update"},{"path":"/workspace/a.rs","kind":"add"},{"path":"/workspace/m.rs","kind":"update"}]}"#;
+
+    assert_eq!(
+        activity_in(
+            lane(1),
+            &tool(VENDOR_ID, call("file_change", arguments)),
+            &mut CallPreviews::default(),
+            Some(Path::new("/workspace")),
+        ),
+        "file_change: a.rs +2 paths [add,update]"
+    );
+}
+
+#[test]
+fn file_change_paths_stay_bounded_and_fail_closed_without_relative_authority() {
+    let long = "segment/".repeat(MAX_CHARS);
+    let arguments = format!(
+        r#"{{"changes":[{{"path":"/workspace/{long}first.rs","kind":"update"}},{{"path":"/workspace/second.rs","kind":"delete"}}]}}"#
+    );
+    let mut previews = CallPreviews::default();
+    let preview = activity_in(
+        lane(1),
+        &tool(VENDOR_ID, call("file_change", &arguments)),
+        &mut previews,
+        Some(Path::new("/workspace")),
+    );
+    let result = activity_in(
+        lane(1),
+        &tool(VENDOR_ID, succeeded()),
+        &mut previews,
+        Some(Path::new("/workspace")),
+    );
+    assert!(preview.chars().count() <= MAX_CHARS);
+    assert!(preview.contains(" +1 paths [delete,update]"));
+    assert!(result.chars().count() <= MAX_CHARS);
+    assert!(result.ends_with(" succeeded"));
+    assert!(!preview.contains("/workspace/"));
+
+    for unsafe_arguments in [
+        r#"{"changes":[{"path":"/outside/secret.rs","kind":"update"}]}"#,
+        r#"{"changes":[{"kind":"update"}]}"#,
+    ] {
+        assert_eq!(
+            activity_in(
+                lane(1),
+                &tool(VENDOR_ID, call("file_change", unsafe_arguments)),
+                &mut CallPreviews::default(),
+                Some(Path::new("/workspace")),
+            ),
+            "file_change: changes[1]"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_non_utf8_worktree_never_leaks_an_absolute_file_change_path() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    use std::path::PathBuf;
+
+    let worktree = PathBuf::from(OsString::from_vec(b"/workspace/\xff".to_vec()));
+    let preview = activity_in(
+        lane(1),
+        &tool(
+            VENDOR_ID,
+            call(
+                "file_change",
+                r#"{"changes":[{"path":"/workspace/secret.rs","kind":"update"}]}"#,
+            ),
+        ),
+        &mut CallPreviews::default(),
+        Some(&worktree),
+    );
+
+    assert_eq!(preview, "file_change: changes[1]");
+    assert!(!preview.contains("/workspace/"));
 }
 
 #[test]

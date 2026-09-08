@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
+use std::path::{Path, PathBuf};
 
 use bus::Bus;
 use lane::occupant::Seats;
@@ -244,7 +245,28 @@ fn accept_capture_record_with<P: AgentMessagePublisher>(
         }
     }
     let steering = steering_ledger(bus, record)?;
-    match publish_agent_messages(surfaces.publisher, record, views.state, steering.as_ref()) {
+    // Residency enriches presentation only. Capture admission already decided
+    // whether the record is current, so absent or unreadable enrichment keeps
+    // the non-disclosing count preview instead of failing the capture path.
+    let worktree = bus
+        .residency_head()
+        .ok()
+        .flatten()
+        .filter(|head| head.body().epoch == epoch)
+        .and_then(|head| {
+            head.body()
+                .lanes
+                .iter()
+                .find(|lane| lane.lane == record.lane)
+                .map(|lane| PathBuf::from(&lane.worktree))
+        });
+    match publish_agent_messages_in(
+        surfaces.publisher,
+        record,
+        views.state,
+        steering.as_ref(),
+        worktree.as_deref(),
+    ) {
         Ok(()) => Ok(()),
         Err(Outcome::Fault(fault)) => {
             let _ = writeln!(
@@ -258,11 +280,22 @@ fn accept_capture_record_with<P: AgentMessagePublisher>(
     }
 }
 
+#[cfg(test)]
 pub(super) fn publish_agent_messages(
     publisher: &impl AgentMessagePublisher,
     record: &lane::capture::CaptureRecord,
     state: &mut MessageState,
     steering: Option<&PresentationDirectives>,
+) -> CommandResult<()> {
+    publish_agent_messages_in(publisher, record, state, steering, None)
+}
+
+fn publish_agent_messages_in(
+    publisher: &impl AgentMessagePublisher,
+    record: &lane::capture::CaptureRecord,
+    state: &mut MessageState,
+    steering: Option<&PresentationDirectives>,
+    worktree: Option<&Path>,
 ) -> CommandResult<()> {
     let Some(context) = record.decoded.context() else {
         return Ok(());
@@ -279,6 +312,7 @@ pub(super) fn publish_agent_messages(
             lane: record.lane,
             author: record.occupant,
             source: None,
+            worktree,
             context,
             events: &events,
             observed: None,
@@ -293,6 +327,7 @@ struct AgentRecord<'a> {
     lane: CanonicalUuid,
     author: CanonicalUuid,
     source: Option<CanonicalUuid>,
+    worktree: Option<&'a Path>,
     context: &'a listen::RecordContext,
     events: &'a [(u32, &'a listen::Event)],
     observed: Option<wire::Instant>,
@@ -303,6 +338,7 @@ struct AgentEvent<'a> {
     lane: CanonicalUuid,
     author: CanonicalUuid,
     source: Option<CanonicalUuid>,
+    worktree: Option<&'a Path>,
     ordinal: u32,
     decoded: &'a listen::Event,
     authored: Option<&'a str>,
@@ -342,6 +378,7 @@ fn publish_agent_record(
                 lane: record.lane,
                 author: record.author,
                 source: record.source,
+                worktree: record.worktree,
                 ordinal,
                 decoded,
                 authored: record.context.timestamp.as_deref(),
@@ -450,6 +487,7 @@ fn project_agent_event(
         lane,
         author,
         source,
+        worktree,
         ordinal,
         decoded,
         authored,
@@ -477,7 +515,7 @@ fn project_agent_event(
             )
         }
         listen::Event::Tool(tool) => {
-            let activity = tool_preview::activity(lane, tool, previews);
+            let activity = tool_preview::activity_in(lane, tool, previews, worktree);
             let media = match &tool.moment {
                 listen::ToolMoment::Result(outcome) => outcome.media.clone(),
                 listen::ToolMoment::Call { .. } | listen::ToolMoment::Update { .. } => Vec::new(),
