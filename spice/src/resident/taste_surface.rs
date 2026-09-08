@@ -937,7 +937,7 @@ fn candidates_with_provenance(
                     line: checked_locus(hit.line())?,
                     column: checked_locus(hit.column())?,
                 },
-                text: taste::reminder_text(hit.taste(), hit.message()),
+                text: taste::reminder_text(hit.message()),
             });
         }
     }

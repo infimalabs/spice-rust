@@ -162,8 +162,8 @@ pub fn is_reminder_echo(prose: &str) -> bool {
 
 /// Render one actionable reminder without rewriting configured content.
 #[must_use]
-pub fn reminder_text(taste: &Name, message: &str) -> String {
-    format!("{REMINDER_MARKER} {}: {message}", taste.as_str())
+pub fn reminder_text(message: &str) -> String {
+    format!("{REMINDER_MARKER} {message}")
 }
 
 fn prose_tokens(text: &str) -> (Vec<Option<String>>, Vec<(usize, usize)>) {

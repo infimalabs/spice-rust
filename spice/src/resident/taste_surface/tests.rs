@@ -345,12 +345,22 @@ fn two_tastes_in_one_prose_record_commit_two_ordinary_directives() {
     );
     let snapshot = fixture.bus.fact_snapshot().expect("snapshot");
     let ledger = steer::Ledger::from_snapshot(&snapshot).expect("reminders replay");
-    assert_eq!(ledger.pending(fixture.lane).len(), 2);
+    assert_eq!(
+        ledger
+            .pending(fixture.lane)
+            .iter()
+            .map(|directive| directive.text())
+            .collect::<Vec<_>>(),
+        [
+            "[TASTE] Wait for the terminal event.",
+            "[TASTE] Keep one current path."
+        ]
+    );
     let inbox = steer::inbox::path(&fixture.paths.inbox, fixture.lane);
     let rendered = fs::read_to_string(&inbox)
         .unwrap_or_else(|error| panic!("post-commit inbox {} renders: {error}", inbox.display()));
-    assert!(rendered.contains("[TASTE] polling: Wait for the terminal event."));
-    assert!(rendered.contains("[TASTE] fallbacks: Keep one current path."));
+    assert!(rendered.contains("[TASTE] Wait for the terminal event."));
+    assert!(rendered.contains("[TASTE] Keep one current path."));
     fixture.finish();
 }
 
@@ -547,7 +557,7 @@ fn enabled_confirmation_records_complete_evidence_and_opens_one_restart_safe_dir
     let wire::body::TasteDecision::Confirmed { key, text, .. } = &evidence.decision else {
         panic!("positive judgment was not confirmed");
     };
-    assert_eq!(text, "[TASTE] polling: Wait for the terminal event.");
+    assert_eq!(text, "[TASTE] Wait for the terminal event.");
     let snapshot = fixture.bus.fact_snapshot().expect("snapshot");
     let ledger = steer::Ledger::from_snapshot(&snapshot).expect("judgment replays");
     assert_eq!(ledger.pending(fixture.lane).len(), 1);
@@ -921,7 +931,7 @@ fn quoted_echo_and_every_non_prose_surface_are_inert() {
     let echo = prose_record(
         fixture.lane,
         fixture.occupant,
-        "> [TASTE] polling: polling is not completion",
+        "> [TASTE] polling is not completion",
     );
     fixture.recognize(&bag, &echo);
 
