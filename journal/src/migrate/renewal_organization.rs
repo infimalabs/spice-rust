@@ -32,12 +32,8 @@ pub(super) fn migrate(connection: &Connection) -> Result<(), OpenError> {
 }
 
 fn migrate_facts(connection: &Connection) -> Result<(), OpenError> {
-    let rows = integer_rows(
-        connection,
-        "SELECT seq, envelope FROM fact_envelopes \
-         WHERE kind = 'lane::renewal' ORDER BY seq",
-    )?;
-    for (seq, original) in rows {
+    let rows = fact_rows(connection)?;
+    for (seq, indexed_kind, original) in rows {
         let row = seq.to_string();
         let mut document = decode("fact_envelopes", &row, &original)?;
         let fact = required_object_field(
@@ -56,7 +52,7 @@ fn migrate_facts(connection: &Connection) -> Result<(), OpenError> {
             "fact.renewal",
             &mut retired,
         )?;
-        let canonical = canonical_fact(&row, &document)?;
+        let canonical = canonical_fact(&row, seq, &indexed_kind, &document)?;
         if let Some(canonical) =
             changed_bytes("fact_envelopes", &row, &original, canonical, &retired)?
         {
@@ -116,52 +112,65 @@ fn migrate_receipts(connection: &Connection) -> Result<(), OpenError> {
             ));
         }
         let mut document = decode("command_receipts", &command, &original)?;
-        let body = reply_body("command_receipts", &command, &mut document)?;
+        let outcome_kind = response_outcome_kind(&command, &mut document)?;
         let mut retired = Vec::new();
-        match kind.as_str() {
-            "board::read" => {
-                let residency = required_object_field(
-                    "command_receipts",
-                    &command,
-                    body,
-                    "residency",
-                    "response.outcome.body.residency",
-                )?;
-                let residency = required_object_field(
-                    "command_receipts",
-                    &command,
-                    residency,
-                    "body",
-                    "response.outcome.body.residency.body",
-                )?;
-                normalize_records(
-                    "command_receipts",
-                    &command,
-                    residency,
-                    "renewals",
-                    "response.outcome.body.residency.body.renewals",
-                    &mut retired,
-                )?;
+        match outcome_kind.as_str() {
+            "refusal" | "fault" => {}
+            "reply" => {
+                let body = reply_body("command_receipts", &command, &mut document)?;
+                match kind.as_str() {
+                    "board::read" => {
+                        let residency = required_object_field(
+                            "command_receipts",
+                            &command,
+                            body,
+                            "residency",
+                            "response.outcome.body.residency",
+                        )?;
+                        let residency = required_object_field(
+                            "command_receipts",
+                            &command,
+                            residency,
+                            "body",
+                            "response.outcome.body.residency.body",
+                        )?;
+                        normalize_records(
+                            "command_receipts",
+                            &command,
+                            residency,
+                            "renewals",
+                            "response.outcome.body.residency.body.renewals",
+                            &mut retired,
+                        )?;
+                    }
+                    "lane::read" | "lane::arrange" | "lineage::configure" | "lineage::arrange" => {
+                        normalize_records(
+                            "command_receipts",
+                            &command,
+                            body,
+                            "renewals",
+                            "response.outcome.body.renewals",
+                            &mut retired,
+                        )?;
+                    }
+                    "lane::renewal" => normalize_optional_record(
+                        "command_receipts",
+                        &command,
+                        body,
+                        "renewal",
+                        "response.outcome.body.renewal",
+                        &mut retired,
+                    )?,
+                    _ => unreachable!("receipt query and registry are the same closed set"),
+                }
             }
-            "lane::read" | "lane::arrange" | "lineage::configure" | "lineage::arrange" => {
-                normalize_records(
+            _ => {
+                return Err(invalid(
                     "command_receipts",
                     &command,
-                    body,
-                    "renewals",
-                    "response.outcome.body.renewals",
-                    &mut retired,
-                )?;
+                    &format!("response outcome kind {outcome_kind:?} is unknown"),
+                ));
             }
-            "lane::renewal" => normalize_optional_record(
-                "command_receipts",
-                &command,
-                body,
-                "renewal",
-                "response.outcome.body.renewal",
-                &mut retired,
-            )?,
-            _ => unreachable!("receipt query and registry are the same closed set"),
         }
         let canonical = canonical_response(&command, &kind, &document)?;
         if let Some(canonical) =
@@ -312,7 +321,12 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-fn canonical_fact(row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
+fn canonical_fact(
+    row: &str,
+    seq: i64,
+    indexed_kind: &str,
+    value: &Value,
+) -> Result<Vec<u8>, OpenError> {
     let bytes = intermediate("fact_envelopes", row, value)?;
     let envelope: wire::Envelope<wire::AnyFact> = wire::decode(&bytes).map_err(|error| {
         invalid(
@@ -321,11 +335,14 @@ fn canonical_fact(row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
             &format!("migrated envelope is not current fact wire: {error}"),
         )
     })?;
-    if envelope.fact.kind() != wire::FactKind::LaneRenewalChanged {
+    if u64::try_from(seq).ok() != Some(envelope.seq.get())
+        || indexed_kind != envelope.fact.kind().as_str()
+        || envelope.fact.kind() != wire::FactKind::LaneRenewalChanged
+    {
         return Err(invalid(
             "fact_envelopes",
             row,
-            "row kind and renewal envelope kind disagree",
+            "indexed renewal fact identity disagrees with its envelope",
         ));
     }
     wire::encode(&envelope).map_err(|error| {
@@ -411,6 +428,23 @@ fn reply_body<'a>(
     required_object_field(table, row, outcome, "body", "response.outcome.body")
 }
 
+fn response_outcome_kind(row: &str, value: &mut Value) -> Result<String, OpenError> {
+    let root = object("command_receipts", row, value)?;
+    let outcome =
+        required_object_field("command_receipts", row, root, "outcome", "response.outcome")?;
+    outcome
+        .get("kind")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            invalid(
+                "command_receipts",
+                row,
+                "response outcome kind is missing or not a string",
+            )
+        })
+}
+
 fn required_object_field<'a>(
     table: &'static str,
     row: &str,
@@ -453,10 +487,17 @@ fn intermediate(table: &'static str, row: &str, value: &Value) -> Result<Vec<u8>
         .map_err(|error| invalid(table, row, &format!("migrated JSON cannot encode: {error}")))
 }
 
-fn integer_rows(connection: &Connection, sql: &str) -> Result<Vec<(i64, Vec<u8>)>, OpenError> {
-    let mut statement = connection.prepare(sql).map_err(OpenError::Sqlite)?;
+type FactRow = (i64, String, Vec<u8>);
+
+fn fact_rows(connection: &Connection) -> Result<Vec<FactRow>, OpenError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT seq, kind, envelope FROM fact_envelopes \
+             WHERE kind = 'lane::renewal' ORDER BY seq",
+        )
+        .map_err(OpenError::Sqlite)?;
     statement
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
         .map_err(OpenError::Sqlite)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(OpenError::Sqlite)

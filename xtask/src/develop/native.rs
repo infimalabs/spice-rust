@@ -113,7 +113,7 @@ fn inspect_schema(path: &Path) -> Result<Option<u32>, spice::journal_schema::Ins
     if !path.exists() {
         return Ok(None);
     }
-    spice::journal_schema::inspect(path).map(Some)
+    spice::journal_schema::inspect_stored(path).map(Some)
 }
 
 fn recover_start_failure(

@@ -117,6 +117,27 @@ impl Journal {
         JournalReader::open(path)?.schema_version()
     }
 
+    /// Observes an existing finalized schema identity without admitting its version.
+    ///
+    /// This is reserved for upgrade orchestration that must compare a journal's
+    /// before and after versions. It never creates, migrates, or grants authority
+    /// reads to a version this build does not otherwise admit.
+    pub fn inspect_stored_schema(path: impl AsRef<Path>) -> Result<u32, OpenError> {
+        let path = path.as_ref();
+        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|source| OpenError::Open {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        connection
+            .pragma_update(None, "query_only", true)
+            .map_err(OpenError::Sqlite)?;
+        connection
+            .pragma_update(None, "trusted_schema", false)
+            .map_err(OpenError::Sqlite)?;
+        migrate::inspect_stored_version(&connection)
+    }
+
     fn from_connection(mut connection: Connection) -> Result<Self, OpenError> {
         connection
             .execute_batch("PRAGMA foreign_keys = ON; PRAGMA trusted_schema = OFF;")
