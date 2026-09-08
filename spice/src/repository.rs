@@ -58,9 +58,12 @@
 //!   tracked `spice.toml` and its own `.spice` configuration.
 //! * **Steering** has no worktree-content authority. Directives and their ACK or
 //!   NACK dispositions are facts in the common-root journal; `inbox/` is a
-//!   disposable rendering beneath each worktree's Git-dir `.spice-rs` root. A
-//!   tracked `<worktree>/.spice-rs` lookalike is ordinary repository content
-//!   that neither authority surface opens.
+//!   disposable rendering beneath each worktree's Git-dir `.spice-rs` root.
+//!   Hook media is projected beneath the Git-common `.spice-rs` root and
+//!   partitioned by lane, so an advertised path is stable and directly readable
+//!   without treating Git's linked-worktree administration directory as
+//!   conversational storage. A tracked `<worktree>/.spice-rs` lookalike is
+//!   ordinary repository content that neither authority surface opens.
 //! * **Artifacts and dynamically named locks** remain Rust-only because their
 //!   parents are below the common exclusive `.spice-rs` root.
 //!   `artifacts/tasks/<BIRTH-STAMP>/` uses the board's sole task identity;
@@ -150,7 +153,7 @@ impl SteeringDeliveryPaths {
         &self.lock
     }
 
-    /// Disposable lane-private media projections for agent hooks.
+    /// Stable, lane-private media projections for agent hooks.
     #[must_use]
     pub fn projections(&self) -> &Path {
         &self.projections
@@ -181,7 +184,7 @@ impl StatePaths {
             inbox: worktree_runtime.join("inbox"),
             steering_delivery: worktree_runtime.join("steering-delivery.json"),
             steering_delivery_lock: worktree_locks.join("steering-delivery"),
-            steering_media: worktree_runtime.join("steering-media"),
+            steering_media: runtime.join("steering-media"),
             install_rollback_blobs: runtime.join("install-rollback"),
             artifact_data,
             runtime,
@@ -221,7 +224,7 @@ impl StatePaths {
         &self.steering_delivery_lock
     }
 
-    /// Worktree-local root for disposable steering media projections.
+    /// Repository-stable root for lane-private steering media projections.
     #[must_use]
     pub fn steering_media(&self) -> &Path {
         &self.steering_media
@@ -616,7 +619,11 @@ impl Repository {
             self.common.join(STATE_DIRECTORY),
             self.git.join(STATE_DIRECTORY),
         );
-        for path in [paths.worktree_runtime(), paths.worktree_locks()] {
+        for path in [
+            paths.runtime(),
+            paths.worktree_runtime(),
+            paths.worktree_locks(),
+        ] {
             admit(path, StateShape::Directory)?;
         }
         admit(paths.steering_media(), StateShape::Directory)?;

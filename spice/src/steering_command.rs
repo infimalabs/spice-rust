@@ -404,13 +404,15 @@ fn filter_hook_lane(
     if existing.is_some_and(|index| compaction < state.lanes[index].compaction) {
         return Ok((None, false));
     }
-    let (row, mut changed) = delivery_row(state, lane.lane, occupant, compaction, existing);
+    let (row, mut changed, generation_changed) =
+        delivery_row(state, lane.lane, occupant, compaction, existing);
     let before = row.projections.clone();
     let projections = media_projection::reconcile(
         lane.lane,
         &lane.pending,
         &mut row.projections,
         projection_root,
+        generation_changed,
     )?;
     changed |= before != row.projections;
     let (filtered, directives_changed) = filter_hook_directives(
@@ -430,8 +432,9 @@ fn delivery_row(
     occupant: CanonicalUuid,
     compaction: u64,
     existing: Option<usize>,
-) -> (&mut LaneDeliveryState, bool) {
+) -> (&mut LaneDeliveryState, bool, bool) {
     let mut changed = false;
+    let mut generation_changed = false;
     let row = match existing {
         Some(index) => &mut state.lanes[index],
         None => {
@@ -455,8 +458,9 @@ fn delivery_row(
         row.working_state = None;
         row.delivered_keys.clear();
         changed = true;
+        generation_changed = true;
     }
-    (row, changed)
+    (row, changed, generation_changed)
 }
 
 fn filter_hook_directives(

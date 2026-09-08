@@ -598,7 +598,7 @@ fn hook_media_references_are_compact_and_preserve_attachment_order() {
 }
 
 #[test]
-fn retiring_media_removes_only_its_exact_disposable_projection() {
+fn retiring_media_survives_the_session_and_next_generation_removes_only_its_projection() {
     let scratch = HookScratch::new();
     let answer = media_inbox_answer(
         OCCUPANT,
@@ -616,7 +616,17 @@ fn retiring_media_removes_only_its_exact_disposable_projection() {
 
     let retired = inbox_answer(OCCUPANT, 64, &[]);
     assert_eq!(deliver(&scratch, &retired), None);
-    assert!(!path.exists(), "retired projection remains");
+    let expected = wire::Media::admit("capture.png", "image/png", PNG_DATA_URL)
+        .expect("expected media admits")
+        .decoded_bytes()
+        .expect("expected media decodes");
+    assert_eq!(
+        fs::read(&path).expect("retired delivery remains readable in its session"),
+        expected,
+    );
+    let next_generation = inbox_answer(OCCUPANT, 65, &[]);
+    assert_eq!(deliver(&scratch, &next_generation), None);
+    assert!(!path.exists(), "previous-session projection remains");
     assert_eq!(fs::read(&sentinel).unwrap(), b"unowned");
     let CommandAnswer::Inbox(original) = answer else {
         panic!("fixture answer remains an inbox")

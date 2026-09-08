@@ -65,6 +65,7 @@ pub(super) fn reconcile(
     pending: &[wire::intent::PendingDirective],
     retained: &mut Vec<Record>,
     root: &Path,
+    retire_previous_generation: bool,
 ) -> Result<BTreeMap<CanonicalUuid, Vec<Projection>>, String> {
     let mut desired = Vec::new();
     let mut projected = BTreeMap::new();
@@ -108,11 +109,39 @@ pub(super) fn reconcile(
         }
         projected.insert(directive.directive, items);
     }
-    for obsolete in retained.iter().filter(|record| !desired.contains(record)) {
-        remove_projection(&projection_path(root, lane, obsolete)?)?;
-    }
+    reconcile_retention(
+        lane,
+        retained,
+        root,
+        &mut desired,
+        retire_previous_generation,
+    )?;
     *retained = desired;
     Ok(projected)
+}
+
+fn reconcile_retention(
+    lane: CanonicalUuid,
+    retained: &[Record],
+    root: &Path,
+    desired: &mut Vec<Record>,
+    retire_previous_generation: bool,
+) -> Result<(), String> {
+    if retire_previous_generation {
+        for obsolete in retained.iter().filter(|record| !desired.contains(record)) {
+            remove_projection(&projection_path(root, lane, obsolete)?)?;
+        }
+    } else {
+        // A path already advertised into this session remains readable after ACK. The next
+        // occupant or compaction generation is the first point that can retire it safely.
+        let still_owned = retained
+            .iter()
+            .filter(|record| !desired.contains(record))
+            .cloned()
+            .collect::<Vec<_>>();
+        desired.extend(still_owned);
+    }
+    Ok(())
 }
 
 impl Record {
@@ -276,14 +305,14 @@ mod tests {
         let lane: CanonicalUuid = LANE.parse().expect("fixture lane");
         let pending = [directive()];
         let mut retained = Vec::new();
-        let projected =
-            reconcile(lane, &pending, &mut retained, &root).expect("initial projection publishes");
+        let projected = reconcile(lane, &pending, &mut retained, &root, false)
+            .expect("initial projection publishes");
         let path =
             PathBuf::from(&projected[&DIRECTIVE.parse().expect("fixture directive")][0].path);
         fs::remove_file(&path).expect("remove initial projection");
         fs::create_dir(&path).expect("substitute a directory");
 
-        let error = reconcile(lane, &pending, &mut retained, &root)
+        let error = reconcile(lane, &pending, &mut retained, &root, false)
             .expect_err("non-regular projection must refuse");
         assert!(error.contains("not a regular file"), "{error}");
         assert!(path.is_dir(), "refusal replaced the substituted path");

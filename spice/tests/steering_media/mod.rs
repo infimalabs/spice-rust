@@ -58,16 +58,29 @@ fn claude_and_codex_hooks_open_private_live_media_projections() {
             .expect("media head remains authoritative");
         assert_eq!(head.body().attachments.len(), 1);
     }
-    let cleanup = invoke_as_lane(&fixture, &target, &["hook", "codex"], false);
+    let after_ack = invoke_as_lane(&fixture, &target, &["hook", "codex"], false);
     assert!(
-        cleanup.status.success(),
-        "cleanup hook failed: {:?}",
-        cleanup.stderr
+        after_ack.status.success(),
+        "post-ack hook failed: {:?}",
+        after_ack.stderr
     );
-    assert!(cleanup.stdout.is_empty());
-    assert!(!codex_path.exists());
-    assert!(!claude_path.exists());
+    assert!(after_ack.stdout.is_empty());
+    assert_same_session_projection_lifetime(&codex_path, &claude_path);
     stop(&fixture, resident);
+}
+
+fn assert_same_session_projection_lifetime(
+    codex_path: &std::path::Path,
+    claude_path: &std::path::Path,
+) {
+    assert!(
+        codex_path.is_file(),
+        "acknowledgment raced the Codex projection away"
+    );
+    assert!(
+        claude_path.is_file(),
+        "acknowledgment raced the Claude projection away"
+    );
 }
 
 fn send_media(
