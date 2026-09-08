@@ -13,6 +13,8 @@ pub const TRACK_COUNT: usize = 12;
 pub const FREEZE_DEPTH: usize = 2;
 /// Scroll distance after which incremental pushes preserve the viewport.
 pub const NEAR_TOP_THRESHOLD_PX: f64 = 80.0;
+/// Distance from the trailing edge that admits another retained-history page.
+pub const HISTORY_EDGE_THRESHOLD_PX: f64 = 400.0;
 /// Base-width height that admits one distinct wider measurement.
 pub const TALL_THRESHOLD_PX: f64 = 230.0;
 /// Smallest readable card height in vertical lattice modules.
@@ -651,6 +653,20 @@ pub fn pane_is_scrolled(scroll_top: f64, threshold: Option<f64>) -> bool {
         > threshold
             .filter(|value| value.is_finite())
             .unwrap_or(NEAR_TOP_THRESHOLD_PX)
+}
+
+/// Whether a scroller is close enough to its trailing edge to page older history.
+#[must_use]
+pub fn history_edge_is_near(
+    scroll_top: f64,
+    client_height: f64,
+    scroll_height: f64,
+    threshold: Option<f64>,
+) -> bool {
+    scroll_height - client_height - scroll_top
+        <= threshold
+            .filter(|value| value.is_finite())
+            .unwrap_or(HISTORY_EDGE_THRESHOLD_PX)
 }
 
 /// Same-frame scroll compensation for an incremental plane shift.
