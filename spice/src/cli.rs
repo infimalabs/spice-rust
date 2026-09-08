@@ -370,6 +370,7 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["task", "oops"]
             | ["task", "depends"]
             | ["task", "modify"]
+            | ["task", "require"]
             | ["task", "delete"]
             | ["task", "artifact", "add"]
             | ["task", "artifact", "list"]

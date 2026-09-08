@@ -15,6 +15,7 @@ fn drain_guidance_follows_lane_ownership_across_add_release_and_wake() {
         project: Some("board.test".to_owned()),
         description: None,
         acceptance: Vec::new(),
+        requirements: wire::EnvironmentRequirements::default(),
         origin: Some(origin.clone()),
         flow: Some("todo".to_owned()),
         depends: Vec::new(),

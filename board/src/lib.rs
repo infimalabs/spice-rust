@@ -29,8 +29,9 @@ pub use config::{Config, NextConfig};
 pub use graph::{Diagram, View};
 pub use inventory::{HiddenInventory, Inventory};
 pub use next::{
-    Selection, capturable_entry, eligible_entry, project_subscription_history, recent_claim_cell,
-    satisfied_tasks, select, selectable_entry, stealable_entry,
+    Selection, capturable_entry, eligible_entry, environment, environment_satisfied,
+    environment_satisfied_by, project_subscription_history, recent_claim_cell, satisfied_tasks,
+    select, selectable_entry, stealable_entry,
 };
 pub use overlap::{ClaimOverlap, claim_overlaps};
 pub use phase::{PhaseRefusal, Transition, TransitionKind};

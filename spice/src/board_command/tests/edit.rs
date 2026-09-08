@@ -101,6 +101,7 @@ fn rehoming_rerenders_the_handle_without_migrating_identity() {
             title: None,
             description: None,
             acceptance: Vec::new(),
+            requirements: None,
             priority: None,
             project: Some("board.beta".to_owned()),
         },
@@ -159,6 +160,7 @@ fn a_correction_publishes_a_new_revision_and_names_each_editor() {
                 title: None,
                 description: Some("what the task actually means".to_owned()),
                 acceptance: Vec::new(),
+                requirements: None,
                 priority: None,
                 project: None,
             },
@@ -178,6 +180,7 @@ fn a_correction_publishes_a_new_revision_and_names_each_editor() {
                     "a clause a reviewer can check".to_owned(),
                     "and a second the first one missed".to_owned(),
                 ],
+                requirements: None,
                 priority: None,
                 project: None,
             },
@@ -258,6 +261,7 @@ fn a_live_claimed_correction_carries_bounded_contract_changes_without_moving_own
                 title: Some("Corrected title".to_owned()),
                 description: Some("Corrected description".to_owned()),
                 acceptance: vec!["corrected acceptance".to_owned()],
+                requirements: None,
                 priority: Some("high".to_owned()),
                 project: Some("board.identity".to_owned()),
             },
@@ -373,6 +377,7 @@ fn a_settled_task_refuses_a_correction() {
             title: Some("Rewrite what already shipped".to_owned()),
             description: None,
             acceptance: Vec::new(),
+            requirements: None,
             priority: None,
             project: None,
         },
@@ -417,6 +422,7 @@ fn a_correction_naming_no_field_is_refused() {
             title: None,
             description: None,
             acceptance: Vec::new(),
+            requirements: None,
             priority: None,
             project: None,
         },
@@ -463,6 +469,7 @@ fn a_correction_to_an_unknown_task_is_refused() {
             title: Some("Correct a task that was never filed".to_owned()),
             description: None,
             acceptance: Vec::new(),
+            requirements: None,
             priority: None,
             project: None,
         },
@@ -477,6 +484,100 @@ fn a_correction_to_an_unknown_task_is_refused() {
     assert!(edit_facts(&bus, &missing).is_empty());
 }
 
+#[test]
+fn environmental_requirements_add_set_clear_and_report_under_claim_witness_authority() {
+    let (_root, bus, epoch, seats) = fixture("task-environment-requirements", 1);
+    let actor = Actor::Lane(seats[0].lane);
+    let born = stamp("ENVTEST-1kKfYW06");
+    let task = TaskHandle::for_project("board.test", &born);
+    let required = journal::SCHEMA_VERSION
+        .checked_add(1)
+        .expect("fixture schema advances");
+    let requirements = wire::EnvironmentRequirements::one(
+        wire::EnvironmentRequirement::journal_schema(required).expect("positive schema"),
+    );
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskAdd,
+        vec![Witness::Absence { task: born }],
+        &TaskAdd {
+            title: "Require a future journal".to_owned(),
+            project: Some("board.test".to_owned()),
+            description: None,
+            acceptance: Vec::new(),
+            requirements: requirements.clone(),
+            origin: Some("fixture:environment".parse().expect("fixture origin")),
+            flow: Some("todo".to_owned()),
+            depends: Vec::new(),
+        },
+    ));
+
+    let blocked = board(&bus, epoch, actor.clone());
+    let shown = task_show(&blocked, at(&blocked, &task), &[]);
+    assert!(shown.contains(&format!(
+        "journal-schema required={required} observed={} satisfied=false",
+        journal::SCHEMA_VERSION
+    )));
+    assert!(shown.contains("environment blocked"));
+    let status = task_status(&blocked).expect("status renders");
+    assert!(status.contains("blocked 0"));
+    assert!(status.contains("waiting 0"));
+    assert!(status.contains(&format!(
+        "environment journal-schema required={required} observed={} satisfied=0 blocked=1",
+        journal::SCHEMA_VERSION
+    )));
+    assert!(allocated(&bus, epoch, &actor).is_none());
+
+    let heads = at(&blocked, &task);
+    let workflow_position = heads.workflow.position;
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskEdit,
+        vec![statement_witness(heads), claim_witness(heads)],
+        &TaskEdit {
+            requirements: Some(wire::intent::TaskRequirementsEdit::Clear {}),
+            ..only(&task)
+        },
+    ));
+    let cleared = board(&bus, epoch, actor.clone());
+    assert!(at(&cleared, &task).statement.body.requirements.is_empty());
+    assert_eq!(at(&cleared, &task).workflow.position, workflow_position);
+    assert_eq!(
+        allocated(&bus, epoch, &actor)
+            .expect("cleared task becomes eligible")
+            .0,
+        task.to_string()
+    );
+
+    let heads = at(&cleared, &task);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskEdit,
+        vec![statement_witness(heads), claim_witness(heads)],
+        &TaskEdit {
+            requirements: Some(wire::intent::TaskRequirementsEdit::one(
+                wire::EnvironmentRequirement::journal_schema(journal::SCHEMA_VERSION)
+                    .expect("current schema is positive"),
+            )),
+            ..only(&task)
+        },
+    ));
+    let satisfied = board(&bus, epoch, actor);
+    assert!(task_show(&satisfied, at(&satisfied, &task), &[]).contains("environment satisfied"));
+    let status = task_status(&satisfied).expect("status renders");
+    assert!(status.contains(&format!(
+        "environment journal-schema required={} observed={} satisfied=1 blocked=0",
+        journal::SCHEMA_VERSION,
+        journal::SCHEMA_VERSION
+    )));
+}
+
 /// A correction naming one field, with every other field left alone.
 fn only(task: &TaskHandle) -> TaskEdit {
     TaskEdit {
@@ -484,6 +585,7 @@ fn only(task: &TaskHandle) -> TaskEdit {
         title: None,
         description: None,
         acceptance: Vec::new(),
+        requirements: None,
         priority: None,
         project: None,
     }

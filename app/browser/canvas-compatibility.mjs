@@ -53,10 +53,10 @@ async function assertPriorProtocolReplacement(browser, endpoint) {
       fulfilledBody = JSON.stringify({ future: "bootstrap-shape" });
       assert.equal(
         headers[CANVAS_VERSION_HEADER],
-        "3",
-        "the current application loads one bounded backlog per lane",
+        "4",
+        "the current application advertises the requirement-aware Canvas protocol",
       );
-      headers[CANVAS_VERSION_HEADER] = "2";
+      headers[CANVAS_VERSION_HEADER] = "3";
     }
     await route.fulfill({
       response,

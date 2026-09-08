@@ -312,6 +312,7 @@ fn insert_legacy_review_receipt(connection: &Connection) {
                     project: Some("task.journal".to_owned()),
                     description: None,
                     acceptance: Vec::new(),
+                    requirements: wire::EnvironmentRequirements::default(),
                     origin: None,
                     flow: Some("todo".to_owned()),
                     depends: Vec::new(),

@@ -22,6 +22,7 @@ fn add_command(epoch: CanonicalUuid, lane: CanonicalUuid) -> wire::AdmittedComma
             project: Some("task.provenance".to_owned()),
             description: None,
             acceptance: Vec::new(),
+            requirements: wire::EnvironmentRequirements::default(),
             origin: Some("fixture:creation-context".parse().expect("fixture origin")),
             flow: Some("todo".to_owned()),
             depends: Vec::new(),

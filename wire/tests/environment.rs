@@ -3,8 +3,9 @@
 use serde_json::{Value, json};
 use wire::body::TaskAdded;
 use wire::{
-    AnyFact, Environment, EnvironmentObservation, EnvironmentRequirement, EnvironmentRequirements,
-    TaskHead,
+    Accepted, Actor, AnyFact, CanonicalUuid, Command, CommandKind, CommandRejection, Environment,
+    EnvironmentObservation, EnvironmentRequirement, EnvironmentRequirements, Seq, TaskHandle,
+    TaskHead, WireVersion, Witness,
 };
 
 const LEGACY_ADDED: &str = r#"{
@@ -151,5 +152,97 @@ fn task_fact_and_head_carry_the_same_canonical_requirements() {
     assert_eq!(
         added.requirements.as_slice(),
         &[EnvironmentRequirement::journal_schema(15).expect("positive schema")]
+    );
+}
+
+#[test]
+fn requirement_edit_has_distinct_set_clear_and_unchanged_spellings() {
+    let set = wire::intent::TaskRequirementsEdit::one(
+        EnvironmentRequirement::journal_schema(15).expect("positive schema"),
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&wire::encode(&set).expect("set encodes"))
+            .expect("set is JSON"),
+        json!({
+            "action": "set",
+            "requirements": [{"fact": "journal-schema", "value": 15}]
+        })
+    );
+    assert_eq!(
+        wire::decode::<wire::intent::TaskRequirementsEdit>(br#"{"action":"clear"}"#)
+            .expect("clear decodes")
+            .requirements(),
+        EnvironmentRequirements::default()
+    );
+    for malformed in [
+        br#"{"action":"set","requirements":[]}"#.as_slice(),
+        br#"{"action":"clear","requirements":[]}"#,
+        br#"{"action":"replace","requirements":[]}"#,
+    ] {
+        assert!(wire::decode::<wire::intent::TaskRequirementsEdit>(malformed).is_err());
+    }
+}
+
+#[test]
+fn requirement_edits_bind_statement_and_claim_witnesses_to_the_same_task() {
+    let task: TaskHandle = "WIRE-1kKRRsDP".parse().expect("task handle");
+    let born = task.born().expect("task stamp");
+    let seq = Seq::new(9).expect("head sequence");
+    let epoch: CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce913116302"
+        .parse()
+        .expect("epoch");
+    let accepted = Accepted {
+        wire: WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch,
+    };
+    let edit = wire::intent::TaskEdit {
+        task,
+        title: None,
+        description: None,
+        acceptance: Vec::new(),
+        requirements: Some(wire::intent::TaskRequirementsEdit::Clear {}),
+        priority: None,
+        project: None,
+    };
+    let command = |expected| Command {
+        v: WireVersion::CURRENT,
+        id: "018f82d4-6f59-7d06-92e3-bce913116303"
+            .parse()
+            .expect("command identity"),
+        epoch,
+        kind: CommandKind::TaskEdit,
+        expected,
+        body: serde_json::to_value(&edit).expect("edit encodes"),
+    };
+    let task_witness = Witness::Task {
+        task: born.clone(),
+        head: seq,
+    };
+    let claim_witness = Witness::Claim {
+        task: born.clone(),
+        head: None,
+    };
+
+    assert!(matches!(
+        command(vec![task_witness.clone()]).admit(&accepted),
+        Err(CommandRejection::Refusal(ref refusal)) if refusal.reason() == "command::witness-law"
+    ));
+    let foreign: wire::TaskStamp = "1kKRRsDQ".parse().expect("foreign task stamp");
+    assert!(matches!(
+        command(vec![
+            task_witness.clone(),
+            Witness::Claim {
+                task: foreign,
+                head: None,
+            },
+        ])
+        .admit(&accepted),
+        Err(CommandRejection::Refusal(ref refusal)) if refusal.reason() == "command::witness-law"
+    ));
+    assert!(
+        command(vec![task_witness, claim_witness])
+            .admit(&accepted)
+            .is_ok()
     );
 }

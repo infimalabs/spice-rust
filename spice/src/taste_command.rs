@@ -320,6 +320,7 @@ pub(crate) fn add(matches: &ArgMatches, contract: &Contract) -> Outcome<TaskAnsw
                 )
                 .to_owned(),
             ],
+            requirements: wire::EnvironmentRequirements::default(),
             origin,
             flow: Some("todo,review".to_owned()),
             depends: Vec::new(),
@@ -429,6 +430,7 @@ pub(crate) fn drop(matches: &ArgMatches, contract: &Contract) -> Outcome<TaskAns
                 "Earlier durable judgments remain history and cannot restore deleted membership."
                     .to_owned(),
             ],
+            requirements: wire::EnvironmentRequirements::default(),
             origin,
             flow: Some("todo,review".to_owned()),
             depends: Vec::new(),

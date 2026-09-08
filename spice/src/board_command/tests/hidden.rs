@@ -435,6 +435,7 @@ fn assert_manual_system_project_refuses(bus: &Bus, epoch: CanonicalUuid, lane: &
                 project: Some(project.to_owned()),
                 description: None,
                 acceptance: Vec::new(),
+                requirements: wire::EnvironmentRequirements::default(),
                 origin: None,
                 flow: None,
                 depends: Vec::new(),

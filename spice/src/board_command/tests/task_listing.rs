@@ -709,6 +709,7 @@ fn task_status_counts_one_snapshot_and_task_add_retains_authored_context() {
                 "Status reports board counts".to_owned(),
                 "Creation provenance survives".to_owned(),
             ],
+            requirements: wire::EnvironmentRequirements::default(),
             origin: Some(origin.clone()),
             flow: Some("todo".to_owned()),
             depends: Vec::new(),

@@ -189,6 +189,13 @@ pub struct BoardStatement {
     /// Criteria that decide whether the work is done.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub acceptance: Vec<String>,
+    /// Typed environmental facts required before allocation.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::EnvironmentRequirements::is_empty",
+        deserialize_with = "crate::EnvironmentRequirements::present"
+    )]
+    pub requirements: crate::EnvironmentRequirements,
     /// Scheduler project grouping.
     pub project: String,
     /// Authored task labels.
@@ -211,6 +218,7 @@ impl From<&crate::TaskHead> for BoardStatement {
             queue_origin: statement.queue_origin,
             description: statement.description.clone(),
             acceptance: statement.acceptance.clone(),
+            requirements: statement.requirements.clone(),
             project: statement.project.clone(),
             tags: statement.tags.clone(),
             dependencies: statement.dependencies.clone(),
@@ -235,7 +243,7 @@ impl BoardStatement {
             title: title.to_owned(),
             description: self.description.clone(),
             acceptance: self.acceptance.clone(),
-            requirements: crate::EnvironmentRequirements::default(),
+            requirements: self.requirements.clone(),
             project: self.project.clone(),
             tags: self.tags.clone(),
             dependencies: self.dependencies.clone(),

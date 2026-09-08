@@ -502,7 +502,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     row!(
         ["task", "add"],
         "task add TITLE [--project PROJECT] [--description DESCRIPTION] \
-         [--acceptance ACCEPTANCE...] [--origin ORIGIN]",
+         [--acceptance ACCEPTANCE...] [--requires-journal-schema SCHEMA] [--origin ORIGIN]",
         OperatorOrLane,
         Command,
         [TaskAdded, TaskNoted],
@@ -614,6 +614,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
         [Resident],
         Reply,
         "board::task_modify"
+    ),
+    row!(
+        ["task", "require"],
+        "task require HANDLE [--journal-schema SCHEMA] [--clear]",
+        OperatorOrLane,
+        Command,
+        [TaskEdited],
+        [Resident],
+        Reply,
+        "board::task_require"
     ),
     row!(
         ["task", "delete"],

@@ -41,6 +41,7 @@ fn dispatch_client(
         ["task", "free"] => client_free(repository, contract, matches),
         ["task", "depends"] => client_depends(repository, contract, matches),
         ["task", "modify"] => client_modify(repository, contract, matches),
+        ["task", "require"] => client_require(repository, contract, matches),
         ["task", "delete"] => client_delete(repository, contract, matches),
         ["task", "done"] => client_done(repository, contract, matches),
         ["task", "review"] => client_review(repository, contract, matches),
@@ -79,7 +80,7 @@ use completion::{client_done, client_review};
 mod submission;
 use submission::{
     artifact_operation_failure, mutate_from_board, mutate_task, mutate_task_from_board,
-    repository_state_failure, submit_add, submit_oops_add,
+    repository_state_failure, submit_oops_add,
 };
 pub(crate) use submission::{current_board, submit_task_add, submit_taste_proposal};
 
@@ -291,18 +292,30 @@ fn client_add(
         .flatten()
         .cloned()
         .collect();
+    let requirements = match matches.get_one::<String>("requires-journal-schema") {
+        Some(written) => match journal_schema_requirements(written) {
+            Ok(requirements) => requirements,
+            Err(outcome) => return outcome,
+        },
+        None => wire::EnvironmentRequirements::default(),
+    };
     let origin = match parse_origin(matches) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
-    submit_add(
+    submit_task_add(
         repository,
         contract,
-        title,
-        project,
-        description,
-        acceptance,
-        origin,
+        TaskAdd {
+            title,
+            project,
+            description,
+            acceptance,
+            requirements,
+            origin,
+            flow: None,
+            depends: Vec::new(),
+        },
     )
 }
 
@@ -371,14 +384,19 @@ fn client_capture(
             };
             let add_contract =
                 crate::cli::contract(&["task", "add"]).expect("task add contract is registered");
-            match submit_add(
+            match submit_task_add(
                 repository,
                 add_contract,
-                title,
-                Some(project),
-                None,
-                Vec::new(),
-                origin,
+                TaskAdd {
+                    title,
+                    project: Some(project),
+                    description: None,
+                    acceptance: Vec::new(),
+                    requirements: wire::EnvironmentRequirements::default(),
+                    origin,
+                    flow: None,
+                    depends: Vec::new(),
+                },
             ) {
                 Outcome::Reply(Reply {
                     body: CommandAnswer::Task(answer),
@@ -646,12 +664,85 @@ fn client_modify(
                 title,
                 description,
                 acceptance,
+                requirements: None,
                 priority,
                 project,
             })
             .expect("typed intent encodes"),
         ))
     })
+}
+
+fn client_require(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Outcome<CommandAnswer> {
+    mutate_task_from_board(repository, contract, matches, |_board, task, heads| {
+        let written = matches.get_one::<String>("journal-schema");
+        let clear = matches.get_flag("clear");
+        let requirements = match (written, clear) {
+            (Some(written), false) => wire::intent::TaskRequirementsEdit::Set {
+                requirements: journal_schema_requirements(written)?,
+            },
+            (None, true) => wire::intent::TaskRequirementsEdit::Clear {},
+            (Some(_), true) => {
+                return Err(refusal(
+                    "task::require-shape",
+                    None,
+                    "name either --journal-schema SCHEMA or --clear, never both",
+                ));
+            }
+            (None, false) => {
+                return Err(refusal(
+                    "task::require-shape",
+                    None,
+                    "name --journal-schema SCHEMA to replace requirements or --clear to remove them",
+                ));
+            }
+        };
+        Ok((
+            CommandKind::TaskEdit,
+            vec![statement_witness(heads), claim_witness(heads)],
+            serde_json::to_value(TaskEdit {
+                task,
+                title: None,
+                description: None,
+                acceptance: Vec::new(),
+                requirements: Some(requirements),
+                priority: None,
+                project: None,
+            })
+            .expect("typed intent encodes"),
+        ))
+    })
+}
+
+fn journal_schema_requirements(
+    written: &str,
+) -> Result<wire::EnvironmentRequirements, Outcome<CommandAnswer>> {
+    let value = written.parse::<u32>().map_err(|_| {
+        refusal(
+            "task::journal-schema-invalid",
+            Some(written.to_owned()),
+            "name one canonical positive decimal journal schema",
+        )
+    })?;
+    if value.to_string() != written {
+        return Err(refusal(
+            "task::journal-schema-invalid",
+            Some(written.to_owned()),
+            "name one canonical positive decimal journal schema",
+        ));
+    }
+    let requirement = wire::EnvironmentRequirement::journal_schema(value).map_err(|error| {
+        refusal(
+            "task::journal-schema-invalid",
+            Some(written.to_owned()),
+            &error.to_string(),
+        )
+    })?;
+    Ok(wire::EnvironmentRequirements::one(requirement))
 }
 
 fn client_delete(
@@ -1038,4 +1129,26 @@ pub(crate) fn dispatch_with_repository(
         _ => return None,
     };
     Some(outcome)
+}
+
+#[cfg(test)]
+mod requirement_cli_tests {
+    use super::journal_schema_requirements;
+
+    #[test]
+    fn journal_schema_cli_values_are_positive_canonical_decimals() {
+        let maximum = u32::MAX.to_string();
+        for admitted in ["1", "15", maximum.as_str()] {
+            assert!(
+                journal_schema_requirements(admitted).is_ok(),
+                "{admitted:?} is canonical"
+            );
+        }
+        for refused in ["", "0", "01", "+1", "-1", "1.0", "4294967296"] {
+            assert!(
+                journal_schema_requirements(refused).is_err(),
+                "{refused:?} must not normalize"
+            );
+        }
+    }
 }

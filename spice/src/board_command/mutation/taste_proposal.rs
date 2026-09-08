@@ -82,6 +82,7 @@ pub(in crate::board_command) fn taste_proposal_add(
         project: None,
         description: Some(add.description.clone()),
         acceptance: add.acceptance.clone(),
+        requirements: wire::EnvironmentRequirements::default(),
         origin: Some(add.origin.clone()),
         flow: Some("todo,review".to_owned()),
         depends: expected_depends,

@@ -93,6 +93,7 @@ pub(super) fn task_oops_add(
         project: None,
         description: Some(add.description.clone()),
         acceptance: Vec::new(),
+        requirements: wire::EnvironmentRequirements::default(),
         origin: add.origin.clone(),
         flow: None,
         depends: Vec::new(),
@@ -227,7 +228,7 @@ where
             title: add.title.clone(),
             description: add.description.clone(),
             acceptance: add.acceptance.clone(),
-            requirements: prepared.statement.requirements.clone(),
+            requirements: add.requirements.clone(),
             project: prepared.project,
             tags,
             depends: prepared.statement.dependencies.clone(),
@@ -320,7 +321,7 @@ fn prepare_task(
         title: add.title.clone(),
         description: add.description.clone(),
         acceptance: add.acceptance.clone(),
-        requirements: wire::EnvironmentRequirements::default(),
+        requirements: add.requirements.clone(),
         project: project_text.clone(),
         tags: Vec::new(),
         dependencies: add
@@ -1273,13 +1274,14 @@ fn corrected_statement(
     if edit.title.is_none()
         && edit.description.is_none()
         && edit.acceptance.is_empty()
+        && edit.requirements.is_none()
         && edit.priority.is_none()
         && edit.project.is_none()
     {
         return Err(refusal(
             "task::edit-empty",
             Some(edit.task.to_string()),
-            "name at least one of title, description, acceptance, priority, or project",
+            "name at least one statement field or an environmental requirement edit",
         ));
     }
     let mut statement = entry.statement().clone();
@@ -1291,6 +1293,9 @@ fn corrected_statement(
     }
     if !edit.acceptance.is_empty() {
         statement.acceptance = edit.acceptance.clone();
+    }
+    if let Some(requirements) = &edit.requirements {
+        statement.requirements = requirements.requirements();
     }
     if let Some(priority) = &edit.priority {
         // A priority the allocator does not score is refused rather than
