@@ -165,6 +165,9 @@ async function geometry(page) {
       const rect = surface.getBoundingClientRect();
       const surfaceStyle = getComputedStyle(surface);
       const toolbar = surface.querySelector(".organization-toolbar");
+      const modeRail = toolbar.querySelector(".organization-mode-rail");
+      const modeRailBounds = modeRail.getBoundingClientRect();
+      const modeRailStyle = getComputedStyle(modeRail);
       const identity = surface.querySelector(".composer-shard-heading strong");
       const workspace = surface.querySelector(".organization-task-workspace");
       const workspaceBounds = workspace.getBoundingClientRect();
@@ -209,6 +212,15 @@ async function geometry(page) {
         toolbar: {
           height: toolbar.getBoundingClientRect().height,
           children: [...toolbar.children].map((child) => child.getBoundingClientRect().toJSON()),
+        },
+        modeRail: {
+          buttons: [...modeRail.children].map((button) => (
+            button.getBoundingClientRect().toJSON()
+          )),
+          contentLeft: modeRailBounds.left + modeRail.clientLeft
+            + Number.parseFloat(modeRailStyle.paddingLeft),
+          contentRight: modeRailBounds.left + modeRail.clientLeft + modeRail.clientWidth
+            - Number.parseFloat(modeRailStyle.paddingRight),
         },
         identity: {
           clientWidth: identity.clientWidth,
@@ -284,6 +296,14 @@ function assertTrack(layout, label, overflow) {
         && child.right <= surface.right + 0.5
         && (index === 0 || children[index - 1].right <= child.left + 0.5)
     )), `${label} toolbar controls remain ordered and contained`);
+    const modeWidths = surface.modeRail.buttons.map(({ width }) => width);
+    assert.ok(
+      modeWidths.length > 0
+        && Math.abs(surface.modeRail.buttons[0].left - surface.modeRail.contentLeft) <= 0.5
+        && Math.abs(surface.modeRail.buttons.at(-1).right - surface.modeRail.contentRight) <= 0.5
+        && Math.max(...modeWidths) - Math.min(...modeWidths) <= 1,
+      `${label} current organization modes fill their rail evenly: ${JSON.stringify(surface.modeRail)}`,
+    );
     assert.ok(surface.labels.every(({ box, button, overflow: inner, fontSize, textOverflow, whiteSpace }) => (
       box.left >= button.left - 0.5
         && box.right <= button.right + 0.5
