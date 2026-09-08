@@ -260,7 +260,7 @@ impl Law {
     /// Exact task statement head.
     pub const EDIT: Self = Self {
         required: &[WitnessKind::Task],
-        optional: &[WitnessKind::Claim],
+        optional: &[WitnessKind::Claim, WitnessKind::Lease],
         authority: Authority::Connected,
     };
     /// Exact task statement and workflow heads plus the current claim

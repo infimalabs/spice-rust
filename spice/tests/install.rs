@@ -296,6 +296,11 @@ fn installed_skill_enforces_review_correction_and_pending_finding_policy() {
         "finding verdict creates or links those corrections as dependencies of the reviewed task",
         "releases the review claim, and leaves the original task pending and unassigned in review",
         "a later reviewer must claim the original task and record a clean verdict before it completes",
+        "gate::pre-commit-configuration-untrusted and this lane owns an active task claim",
+        "spice task require HANDLE --trust-grant DIGEST",
+        "repeating its existing --journal-schema SCHEMA operand when present",
+        "This atomically ices the same claim; retain it and stop that execution path",
+        "With no active claim, report the operator action and change no task",
     ] {
         assert!(
             guidance_text.contains(guidance),

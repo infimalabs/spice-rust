@@ -111,10 +111,16 @@ If continuity is clipped, recover only the detail needed to proceed with
 
 An executable-configuration trust refusal is the one automation stop that
 transfers authority to the operator. Surface its exact digest, provenance, and
-command words, then stop that path. A lane never runs `spice trust grant
-DIGEST` or `spice trust revoke DIGEST`, even after the operator authorizes the
-ruling; it hands the exact current command to the operator to invoke. Continue
-independent allocator work that does not cross the refused path.
+command words. When the refusal reason is
+`gate::pre-commit-configuration-untrusted` and this lane owns an active task
+claim, read that task's current requirements, then visibly run `spice task
+require HANDLE --trust-grant DIGEST`, repeating its existing `--journal-schema
+SCHEMA` operand when present. This atomically ices the same claim; retain it and
+stop that execution path. With no active claim, report the operator action and
+change no task. A lane never runs `spice trust grant DIGEST` or `spice trust
+revoke DIGEST`, even after the operator authorizes the ruling; it hands the
+exact current command to the operator to invoke. Continue independent allocator
+work that does not cross the refused path.
 
 ## Prompt boundary
 

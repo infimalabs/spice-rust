@@ -67,6 +67,22 @@ lane or repository scope. Missing, pended, revoked, or unbound heads leave the
 task pending but ineligible. A matching grant can make it eligible immediately
 without editing, waking, freeing, or rescheduling the task.
 
+An active holder that encounters an unmet trust grant keeps possession rather
+than releasing work another lane would only block on again. One guarded
+requirement edit moves the same lease's expiry and maximum to the repository's
+canonical `2099-12-31T23:59:59.999Z` horizon. This is a representation inside
+the existing lease state—not task deferral, a new claim disposition, or a
+second parking machine. Actor, lane, occupant, epoch, start, renewal, and the
+original win remain unchanged.
+
+While that exact requirement is unsatisfied, a vacant owning lane suppresses
+work-driven held-claim, drain, and available-work starts. Message-driven
+pending-inbox wake remains available, so new operator direction can still
+reach the lane. A matching provenance-bound grant or authorized requirement
+removal makes the sentinel claim thaw-ready; the same-lane carry/rebound
+seating transaction replaces sentinel renewal, expiry, and maximum with
+ordinary bounded automatic values. Explicit holder free remains an escape.
+
 **Invariant —** Deferral is a distinct durable fact and workflow-head field;
 `workflow.status` remains `pending`. Its timestamp is advisory and wakeable, not
 a self-clearing timer. Only an explicit wake clears the deferral, after which

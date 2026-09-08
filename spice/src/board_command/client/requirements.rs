@@ -53,6 +53,17 @@ pub(super) fn environment_requirements(
     })
 }
 
+pub(super) fn witnesses(heads: &BoardTask) -> Vec<Witness> {
+    let mut expected = vec![statement_witness(heads), claim_witness(heads)];
+    if let Some(lease) = heads.lease.as_ref() {
+        expected.push(Witness::Lease {
+            task: heads.statement.body.born.clone(),
+            head: lease.position,
+        });
+    }
+    expected
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

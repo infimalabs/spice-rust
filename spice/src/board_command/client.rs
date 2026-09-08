@@ -719,7 +719,7 @@ fn client_require(
         };
         Ok((
             CommandKind::TaskEdit,
-            vec![statement_witness(heads), claim_witness(heads)],
+            requirements::witnesses(heads),
             serde_json::to_value(TaskEdit {
                 task,
                 title: None,

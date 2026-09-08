@@ -1,0 +1,207 @@
+use super::*;
+
+#[test]
+fn iced_claim_suppresses_work_wakes_but_not_operator_direction_and_grant_thaws_held_work() {
+    let digest = digest();
+    let (bus, projects, mut projection) = iced_fixture(&digest);
+    let snapshot = bus.task_snapshot().expect("iced snapshot reads");
+    let iced_target = target(&snapshot, &projection);
+    assert!(!iced_target.pending_inbox);
+    assert!(!iced_target.held_claim);
+    assert_eq!(iced_target.drain_queue, Available::None);
+    assert_eq!(iced_target.available, Available::None);
+    assert_eq!(
+        resolve(&[iced_target], &Backoff::default(), instant(50)),
+        Resolution::Idle
+    );
+
+    committed(bus.commit(grant_write(&digest)).expect("grant commits"));
+    let granted = bus.task_snapshot().expect("granted snapshot reads");
+    projection
+        .advance(&granted, &projects)
+        .expect("grant projection advances");
+    assert_eq!(
+        resolve(
+            &[target(&granted, &projection)],
+            &Backoff::default(),
+            instant(50)
+        ),
+        Resolution::Attempt {
+            trigger: Trigger::HeldClaim,
+            lane: lane(),
+        }
+    );
+    bus.shutdown().expect("grant fixture stops");
+
+    let (bus, projects, mut projection) = iced_fixture(&digest);
+    committed(
+        bus.commit(operator_direction_write())
+            .expect("operator direction commits"),
+    );
+    let directed = bus.task_snapshot().expect("directed snapshot reads");
+    projection
+        .advance(&directed, &projects)
+        .expect("direction projection advances");
+    assert_eq!(
+        resolve(
+            &[target(&directed, &projection)],
+            &Backoff::default(),
+            instant(50)
+        ),
+        Resolution::Attempt {
+            trigger: Trigger::PendingInbox,
+            lane: lane(),
+        },
+        "message-driven wake remains available while work-driven wake is iced"
+    );
+    bus.shutdown().expect("direction fixture stops");
+}
+
+fn iced_fixture(digest: &wire::Digest) -> (Bus, ProjectPolicy, Projection) {
+    let (bus, projects, mut projection) = policy_fixture(wire::intent::LineageLife::Drive, false);
+    committed(
+        bus.commit(iced_claim_write(&bus, digest))
+            .expect("iced claim commits"),
+    );
+    projection
+        .advance(
+            &bus.task_snapshot().expect("iced snapshot reads"),
+            &projects,
+        )
+        .expect("iced projection advances");
+    (bus, projects, projection)
+}
+
+fn target(snapshot: &bus::TaskSnapshot, projection: &Projection) -> Target {
+    let targets = project_targets(
+        snapshot,
+        projection,
+        instant(50),
+        &Holds::new(3),
+        &board::NextConfig::default(),
+    )
+    .expect("ice targets project");
+    assert_eq!(targets.len(), 1);
+    targets[0]
+}
+
+fn iced_claim_write(bus: &Bus, digest: &wire::Digest) -> JournalWrite {
+    let snapshot = bus.task_snapshot().expect("seed snapshot reads");
+    let heads = &snapshot.tasks()[0];
+    let task = heads.statement().body().born.clone();
+    let phase = heads.workflow().body().phase.clone();
+    let mut statement = heads.statement().body().clone();
+    statement.requirements = wire::EnvironmentRequirements::one(
+        wire::EnvironmentRequirement::trust_grant(digest.clone()),
+    );
+    let horizon = spice::claim_lease::indefinite_horizon();
+    let at = instant(2);
+    let occupant = uuid(9);
+    let mut write = JournalWrite::new(
+        Actor::Lane(lane()),
+        format!("task:{}", handle(TASK_MOMENT))
+            .parse()
+            .expect("fixture task origin"),
+        at,
+        Producer::CommandDoor,
+    );
+    let edited = write
+        .fact(
+            body::TaskEdited {
+                task: task.clone(),
+                revision: 2,
+                notice: None,
+            },
+            FactCause::Root,
+        )
+        .expect("requirement edit builds");
+    let won = write
+        .fact(
+            body::ClaimWon {
+                task: task.clone(),
+                actor: Actor::Lane(lane()),
+                lane: lane(),
+                occupant,
+                epoch: epoch(),
+                cell: Some(wire::ClaimCell {
+                    project: PROJECT.to_owned(),
+                    phase: phase.clone(),
+                }),
+                until: horizon,
+                git: None,
+                recovery: None,
+                source: body::SourceBoundary::Proven { heads: Vec::new() },
+            },
+            FactCause::Pending(edited),
+        )
+        .expect("claim win builds");
+    write.task_head(edited, move |position| TaskHead {
+        revision: position,
+        ..statement
+    });
+    let claim_task = task.clone();
+    write.claim_head(claim_task, won, move |position| wire::ClaimHead {
+        actor: Actor::Lane(lane()),
+        fact: position,
+        claimed: position,
+        cell: wire::ClaimCell {
+            project: PROJECT.to_owned(),
+            phase,
+        },
+        lane: lane(),
+        occupant,
+        epoch: epoch(),
+        recovery: None,
+        disposition: wire::ClaimDisposition::Active,
+    });
+    write.lease_head(task, won, move |_| wire::LeaseHead {
+        start: at,
+        renewal: at,
+        expiry: horizon,
+        maximum: horizon,
+        epoch: epoch(),
+    });
+    write
+}
+
+fn grant_write(digest: &wire::Digest) -> JournalWrite {
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        "repo:genesis".parse().expect("fixture origin"),
+        instant(3),
+        Producer::CommandDoor,
+    );
+    let pended = write
+        .fact(
+            body::TrustPended {
+                surface: "spice".to_owned(),
+                digest: digest.clone(),
+                worktree: Some("/producer/worktree".to_owned()),
+                previous: None,
+            },
+            FactCause::Root,
+        )
+        .expect("trust pend builds");
+    let granted = write
+        .fact(
+            body::TrustGranted {
+                surface: "spice".to_owned(),
+                digest: digest.clone(),
+            },
+            FactCause::Pending(pended),
+        )
+        .expect("trust grant builds");
+    let digest = digest.clone();
+    write.trust_head(granted, move |_| wire::TrustHead {
+        digest,
+        state: wire::TrustState::Granted,
+        worktree: Some("/producer/worktree".to_owned()),
+    });
+    write
+}
+
+fn digest() -> wire::Digest {
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        .parse()
+        .expect("fixture digest")
+}

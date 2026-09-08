@@ -15,7 +15,6 @@ const GATE_SOURCE_ANCHOR_TAG_PREFIX: &str = "gate-source-anchor:";
 const GATE_SOURCE_KIND_TAG_PREFIX: &str = "gate-source-kind:";
 const GATE_MAINLINE_REF_TAG_PREFIX: &str = "gate-mainline-ref:";
 const GATE_MAINLINE_BASE_TAG_PREFIX: &str = "gate-mainline-base:";
-const GATE_FINDING_DEFER_UNTIL: &str = "2099-12-31T23:59:59.999Z";
 
 #[derive(Clone)]
 pub(in crate::board_command) struct FindingRow {
@@ -542,15 +541,7 @@ fn unique_gate_finding_identities(findings: &[FindingRow]) -> Result<(), Digest>
 }
 
 fn gate_finding_defer_until() -> Result<Instant, Outcome<CommandAnswer>> {
-    GATE_FINDING_DEFER_UNTIL
-        .parse::<Instant>()
-        .map_err(|error| {
-            Outcome::Fault(Fault {
-                class: FaultClass::Protocol,
-                reason: "gate::finding-deferral-invalid".to_owned(),
-                detail: error.to_string(),
-            })
-        })
+    Ok(spice::claim_lease::indefinite_horizon())
 }
 
 fn gate_findings_origin(

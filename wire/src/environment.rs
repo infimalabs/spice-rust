@@ -300,6 +300,17 @@ impl EnvironmentRequirements {
         })
     }
 
+    /// Whether this conjunction contains a trust grant the environment does not satisfy.
+    #[must_use]
+    pub fn has_unsatisfied_trust_grant(&self, environment: &Environment) -> bool {
+        self.0.iter().any(|requirement| {
+            matches!(requirement, EnvironmentRequirement::TrustGrant { .. })
+                && environment
+                    .observation(requirement)
+                    .is_none_or(|observed| !requirement.is_satisfied_by(&observed))
+        })
+    }
+
     /// Deserialize a present task field.
     ///
     /// Empty collections are represented only by omission on task facts and
