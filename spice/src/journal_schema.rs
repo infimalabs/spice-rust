@@ -3,6 +3,9 @@
 use std::fmt;
 use std::path::Path;
 
+/// Journal schema owned by this installed appliance generation.
+pub const CURRENT: u32 = journal::SCHEMA_VERSION;
+
 /// A finalized journal schema could not be inspected without mutation.
 #[derive(Debug)]
 pub struct InspectionError(journal::OpenError);

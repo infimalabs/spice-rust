@@ -59,12 +59,6 @@
       "reason": "launches Chromium and Firefox for static layout reference checks"
     },
     {
-      "id": "canvas:live-thread-coalescing",
-      "class": "slow",
-      "command": ["node", "--test", "app/browser/live-thread-coalescing.test.mjs"],
-      "reason": "opens a live resident socket and allows up to ninety seconds for thread settlement"
-    },
-    {
       "id": "canvas:staggered-image-lifecycle",
       "class": "slow",
       "command": ["node", "--test", "app/browser/staggered-image-lifecycle.test.mjs"],

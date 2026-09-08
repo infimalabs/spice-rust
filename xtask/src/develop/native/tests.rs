@@ -17,7 +17,7 @@ fn developer_install_names_its_selected_build_profile() {
 
 #[test]
 fn executable_rollback_requires_the_journal_schema_to_be_proven_unchanged() {
-    const CURRENT: u32 = 15;
+    const CURRENT: u32 = spice::journal_schema::CURRENT;
     assert!(schema_rollback_safe(None, None));
     assert!(schema_rollback_safe(Some(CURRENT), Some(CURRENT)));
     assert!(!schema_rollback_safe(None, Some(CURRENT)));
@@ -64,7 +64,7 @@ fn a_committed_schema_advance_preserves_the_successor_executable() {
     };
     let mut output = Vec::new();
 
-    const SUCCESSOR_SCHEMA: u32 = 15;
+    const SUCCESSOR_SCHEMA: u32 = spice::journal_schema::CURRENT;
     let error = recover_start_failure_after(
         &repository,
         &rollback,
@@ -80,6 +80,58 @@ fn a_committed_schema_advance_preserves_the_successor_executable() {
         b"successor\n"
     );
     assert!(String::from_utf8_lossy(&output).contains("preserving new executable"));
+}
+
+#[test]
+fn uncertain_schema_recovery_preserves_the_successor_and_names_both_causes() {
+    let fixture = Fixture::new("schema-uncertain");
+    let repository = fixture.repository();
+    let installed = install::installed_binary(&repository);
+    let predecessor = fixture.binary("spice-predecessor", b"predecessor\n");
+    let successor = fixture.binary("spice-successor", b"successor\n");
+    refresh_install(&repository, &predecessor).expect("predecessor installs");
+    let parked = park(&repository, &installed)
+        .expect("predecessor parks")
+        .expect("predecessor exists");
+    refresh_install(&repository, &successor).expect("successor installs");
+    let invalid = fixture.0.join("uncertain-journal.sqlite3");
+    fs::write(&invalid, b"not a SQLite authority").expect("uncertain journal writes");
+    let inspection = spice::journal_schema::inspect(&invalid)
+        .expect_err("invalid journal makes recovery uncertain");
+    let mut output = Vec::new();
+
+    let error = recover_start_failure_after(
+        &repository,
+        &Rollback {
+            installed: &installed,
+            executable: Some(&parked),
+            published: None,
+            restart: false,
+        },
+        Some(spice::journal_schema::CURRENT - 1),
+        Err(inspection),
+        &mut output,
+        RefreshError::ResidentUnready,
+    );
+
+    assert!(matches!(
+        error,
+        RefreshError::SchemaRecoveryUncertain {
+            before: Some(before),
+            ref cause,
+            ..
+        } if before == spice::journal_schema::CURRENT - 1
+            && cause.contains("resident never became ready")
+    ));
+    assert_eq!(
+        fs::read(installed).expect("installed successor reads"),
+        b"successor\n",
+        "uncertain recovery never republishes an older schema writer",
+    );
+    assert!(
+        output.is_empty(),
+        "uncertain recovery performs no rollback action"
+    );
 }
 
 /// How many names one fixture tries before giving up on an exclusive root.

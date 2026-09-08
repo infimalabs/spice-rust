@@ -239,7 +239,13 @@ fn fixture_stamp(label: &str) -> wire::TaskStamp {
     wire::TaskStamp::for_micros(value).expect("fixture task stamp")
 }
 
-fn board_task(label: &str, _id: &str, title: &str, project: &str) -> wire::intent::BoardTask {
+fn board_task(
+    label: &str,
+    _id: &str,
+    title: &str,
+    project: &str,
+    requirements: wire::EnvironmentRequirements,
+) -> wire::intent::BoardTask {
     let visibility = if project.starts_with('.') {
         wire::intent::ProjectVisibility::Hidden {
             stem: "oops".to_owned(),
@@ -260,7 +266,7 @@ fn board_task(label: &str, _id: &str, title: &str, project: &str) -> wire::inten
                 queue_origin: seq(1),
                 description: None,
                 acceptance: Vec::new(),
-                requirements: wire::EnvironmentRequirements::default(),
+                requirements,
                 project: project.to_owned(),
                 tags: Vec::new(),
                 dependencies: Vec::new(),
@@ -311,12 +317,22 @@ fn board_response(
             origin_thread: "operator".to_owned(),
         },
         tasks: vec![
-            board_task("HIDDEN-oops1", REQUEST, hidden_title, ".oops.correctness"),
+            board_task(
+                "HIDDEN-oops1",
+                REQUEST,
+                hidden_title,
+                ".oops.correctness",
+                wire::EnvironmentRequirements::default(),
+            ),
             board_task(
                 "PUBLIC-work1",
                 NEXT_CAPABILITY,
                 "Visible allocator work",
                 "board.visibility",
+                wire::EnvironmentRequirements::one(
+                    wire::EnvironmentRequirement::journal_schema(2)
+                        .expect("future fixture schema is positive"),
+                ),
             ),
         ],
         residency: wire::intent::Positioned {
@@ -1093,6 +1109,7 @@ fn browser_state_retains_hidden_evidence_without_hidden_title_prose() {
     runtime.apply_board(&response);
 
     let board = runtime.board().expect("board response is retained");
+    assert_eq!(board.schema, 1);
     let hidden = &board.tasks[0];
     assert_eq!(hidden.presentation_title(), "Hidden task");
     assert_eq!(
@@ -1110,6 +1127,10 @@ fn browser_state_retains_hidden_evidence_without_hidden_title_prose() {
         "Visible allocator work"
     );
     assert!(!board.tasks[1].visibility.is_hidden());
+    assert!(
+        !board.environment_satisfies(&board.tasks[1]),
+        "the Canvas snapshot evaluates requirements against its observed schema",
+    );
     let public_json = serde_json::to_value(&board.tasks[1]).expect("public browser row serializes");
     assert!(public_json["statement"]["body"].get("title").is_none());
 }

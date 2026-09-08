@@ -55,6 +55,7 @@ import { assertBidirectionalMediaExchange } from "./media-exchange.mjs";
 import { assertTeamArrangement } from "./team-arrangement.mjs";
 import { assertTeamMenu } from "./team-menu.mjs";
 import { assertTaskNotes } from "./task-notes.mjs";
+import { assertEnvironmentTaskRollout } from "./schema-rollout.mjs";
 import { assertHandshakeTimeout } from "./handshake-timeout.mjs";
 import { assertHeadlessLaunchSites, launchBrowser } from "./headless-launch.mjs";
 import {
@@ -519,6 +520,7 @@ try {
           pointerLane.locator(".composer-shard--primary"),
         );
         await assertTeamMenu(lightPage, fixture, artifacts);
+        await assertEnvironmentTaskRollout(lightPage, fixture);
       });
       await run.scenario("reference-composer", async () => {
         const reference = await browser.newContext({ colorScheme: "dark", viewport: { width: 1000, height: 568 } });

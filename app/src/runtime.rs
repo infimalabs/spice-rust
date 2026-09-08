@@ -42,6 +42,8 @@ pub(crate) const fn topology_mutation_requires_refresh<T>(outcome: &Outcome<T>) 
 /// Board snapshot fields used by the canvas, excluding residency capabilities.
 #[derive(Clone, PartialEq, Eq)]
 pub struct BoardView {
+    /// Finalized journal schema observed with this task snapshot.
+    pub schema: u32,
     /// Greatest durable position covered by every task head.
     pub cursor: Seq,
     /// Current actor-facing task evidence bundles.
@@ -59,6 +61,7 @@ impl From<&BoardAnswer> for BoardView {
             .map(BoardTask::into_actor_facing)
             .collect();
         Self {
+            schema: answer.schema,
             cursor: answer.cursor,
             tasks,
             resident: answer.residency.body.state,
@@ -70,6 +73,17 @@ impl BoardView {
     /// Pending public work only; hidden rows remain in `tasks` as evidence.
     pub fn active_public_tasks(&self) -> impl Iterator<Item = &BoardTask> {
         self.tasks.iter().filter(|task| task.is_active_public())
+    }
+
+    /// Whether the snapshot's environment satisfies one task's typed requirements.
+    #[must_use]
+    pub fn environment_satisfies(&self, task: &BoardTask) -> bool {
+        let environment =
+            wire::Environment::journal_schema(self.schema).unwrap_or(wire::Environment::EMPTY);
+        task.statement
+            .body
+            .requirements
+            .are_satisfied_by(&environment)
     }
 }
 

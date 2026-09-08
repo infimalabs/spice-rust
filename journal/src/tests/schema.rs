@@ -112,6 +112,8 @@ fn schema_fourteen_crosses_the_requirement_wire_boundary_once_without_rewriting_
     assert_eq!(reopened.migration(), None, "schema step runs exactly once");
 }
 
+mod rollout;
+
 #[test]
 fn schema_nine_steps_through_wire_only_expansions_without_rewriting_authority() {
     let scratch = Scratch::new();
