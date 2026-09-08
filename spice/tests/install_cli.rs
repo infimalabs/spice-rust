@@ -13,7 +13,10 @@ use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use spice::install::{InstallPlanSummary, InstallPreview, InstallReceipt, InstallStatus, Location};
+use spice::install::{
+    InstallPlanSummary, InstallPreview, InstallReceipt, InstallStatus, Location,
+    publish_test_historical_receipt,
+};
 use spice::repository::Repository;
 use wire::Outcome;
 
@@ -606,6 +609,129 @@ fn package_preview_apply_and_unapply_use_the_verified_canvas_authority() {
 }
 
 #[test]
+fn latest_package_directly_upgrades_every_supported_historical_receipt() {
+    let package_home = Fixture::new("package-historical-source");
+    let package = install_package_fixture::PackageFixture::create(
+        package_home.root.join("release-package"),
+        std::path::Path::new(env!("CARGO_BIN_EXE_spice")),
+    );
+    let package_root = package.root().to_str().expect("package root is UTF-8");
+
+    for version in [7, 8, 9, 13] {
+        let fixture = Fixture::new(&format!("package-historical-{version}"));
+        let initial: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
+        let _: InstallReceipt = reply_body(fixture.invoke(&[
+            "--json",
+            "install",
+            &format!("--apply={}", initial.digest()),
+        ]));
+        let repository = Repository::discover(&fixture.root).expect("fixture repository resolves");
+        publish_test_historical_receipt(&repository, version)
+            .expect("supported historical receipt publishes");
+        let historical = fs::read(fixture.record()).expect("historical receipt reads");
+        let invoke = |arguments: &[&str]| {
+            let output = fixture
+                .command(arguments)
+                .env_remove(spice::install::TEST_EXECUTABLE)
+                .output()
+                .expect("package upgrade launches");
+            Spoken {
+                code: output.status.code(),
+                out: output.stdout,
+                err: output.stderr,
+            }
+        };
+
+        let preview: InstallPreview =
+            reply_body(invoke(&["--json", "install", "--package", package_root]));
+        assert_eq!(
+            fs::read(fixture.record()).expect("preview receipt reads"),
+            historical,
+            "schema {version} preview changed its receipt",
+        );
+        let receipt: InstallReceipt = reply_body(invoke(&[
+            "--json",
+            "install",
+            "--package",
+            package_root,
+            &format!("--apply={}", preview.digest()),
+        ]));
+        assert_eq!(receipt.status(), InstallStatus::Complete);
+        let current: Value =
+            serde_json::from_slice(&fs::read(fixture.record()).expect("current receipt reads"))
+                .expect("current receipt decodes");
+        assert_eq!(
+            current["version"], 14,
+            "schema {version} did not reach current"
+        );
+        assert_eq!(
+            fs::read(fixture.installed_binary()).expect("installed package binary reads"),
+            fs::read(env!("CARGO_BIN_EXE_spice")).expect("current package binary reads"),
+        );
+    }
+}
+
+#[test]
+fn every_retired_historical_schema_refuses_without_mutation_and_names_its_owner() {
+    let fixture = Fixture::new("retired-historical-receipts");
+    let preview: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
+    let _: InstallReceipt = reply_body(fixture.invoke(&[
+        "--json",
+        "install",
+        &format!("--apply={}", preview.digest()),
+    ]));
+    let current_bytes = fs::read(fixture.record()).expect("current receipt reads");
+    let current: Value = serde_json::from_slice(&current_bytes).expect("current receipt decodes");
+
+    for (version, owner) in [
+        (1, "SURFACE-1kJQkpFs"),
+        (2, "SURFACE-1kJRGpf2"),
+        (3, "HOOKS-1kJQnmG8"),
+        (4, "INSTALL-1kKQTfBp"),
+        (5, "INSTALL-1kLW2GVN"),
+        (6, "HOOKS-1kMFzkkc"),
+        (10, "WRAPPER-1kNYClbf"),
+        (11, "WRAPPER-1kNYClbf"),
+        (12, "RETIREM-1kSR91Zl"),
+    ] {
+        let mut retired = current.clone();
+        retired["version"] = version.into();
+        fs::write(
+            fixture.record(),
+            serde_json::to_vec(&retired).expect("retired receipt encodes"),
+        )
+        .expect("retired receipt publishes");
+        let before = InstallSnapshot::capture(&fixture, preview.plan());
+
+        let refusal = fixture.invoke(&["--json", "install"]);
+        assert_eq!(refusal.code, Some(2));
+        assert_refusal(&refusal.err, "install::release-owned-state");
+        assert!(
+            String::from_utf8_lossy(&refusal.err).contains(owner),
+            "schema {version} refusal omitted owner {owner}",
+        );
+        assert_eq!(
+            InstallSnapshot::capture(&fixture, preview.plan()),
+            before,
+            "schema {version} refusal changed install state",
+        );
+    }
+
+    let future = String::from_utf8(current_bytes)
+        .expect("current receipt is UTF-8")
+        .replacen("{\"version\":14", "{\"version\":15", 1)
+        .into_bytes();
+    for unsupported in [future, b"{\"version\":".to_vec()] {
+        fs::write(fixture.record(), unsupported).expect("unsupported receipt publishes");
+        let before = InstallSnapshot::capture(&fixture, preview.plan());
+        let fault = fixture.invoke(&["--json", "install"]);
+        assert_eq!(fault.code, Some(1));
+        assert_store_fault(&fault.err, "install::state-failed");
+        assert_eq!(InstallSnapshot::capture(&fixture, preview.plan()), before);
+    }
+}
+
+#[test]
 fn installed_hook_activation_uses_no_cargo_or_xtask_and_reverses_git_config() {
     let fixture = Fixture::new("no-cargo-hook-activation");
     let tools = fixture.root.join("fixture-tools");
@@ -710,6 +836,15 @@ fn assert_refusal(bytes: &[u8], reason: &str) {
         panic!("install must refuse: {outcome:?}");
     };
     assert_eq!(refusal.reason(), reason);
+}
+
+fn assert_store_fault(bytes: &[u8], reason: &str) {
+    let outcome: Outcome<()> = wire::decode(bytes).expect("typed fault decodes");
+    let Outcome::Fault(fault) = outcome else {
+        panic!("install must fault: {outcome:?}");
+    };
+    assert_eq!(fault.class, wire::FaultClass::Store);
+    assert_eq!(fault.reason, reason);
 }
 
 fn alternate_digest(digest: &str) -> String {

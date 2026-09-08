@@ -315,6 +315,11 @@ stored blob. Reversing that migration restores the exact pre-migration assets
 and version-7 receipt as one prior state, rather than running the older shape
 through the current appliance.
 
+The current `0.0.0` product line uses receipt schema 14. Historical install
+support is schema-bounded: complete schemas 7, 8, 9, and 13 migrate directly to
+14, while schemas 1–6 and 10–12 must be unapplied by their named retired owner
+before the current installer proceeds.
+
 The compiled CLI exposes the sole Spice command vocabulary. The active harness
 owns task, session, and steering state; an installed Spice bootstrap explicitly
 authorizes an agent to use the corresponding commands. Native harness authority

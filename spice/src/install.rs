@@ -69,15 +69,35 @@ const INLINE_ROLLBACK_RECORD_VERSION: u16 = 9;
 const PREVIOUS_RECORD_VERSION: u16 = 13;
 /// Environment marker exported only by the installed pre-commit launcher.
 pub const INSTALLED_PRE_COMMIT_ENVIRONMENT: &str = "SPICE_SHELL_HOOK_INSTALLED_APPLIANCE"; // env-policy: allow
-const LEGACY_RECORD_VERSIONS: [(u16, &str); 7] = [
-    (2, "SURFACE-1kJRGpf2"),
-    (3, "HOOKS-1kJQnmG8"),
-    (4, "INSTALL-1kKQTfBp"),
-    (5, "INSTALL-1kLW2GVN"),
-    (6, "HOOKS-1kMFzkkc"),
-    (10, "WRAPPER-1kNYClbf"),
-    (12, "RETIREM-1kSR91Zl"),
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReceiptSupport {
+    Current,
+    Direct,
+    Retired(&'static str),
+}
+
+const RECEIPT_SUPPORT: [(u16, ReceiptSupport); 14] = [
+    (1, ReceiptSupport::Retired("SURFACE-1kJQkpFs")),
+    (2, ReceiptSupport::Retired("SURFACE-1kJRGpf2")),
+    (3, ReceiptSupport::Retired("HOOKS-1kJQnmG8")),
+    (4, ReceiptSupport::Retired("INSTALL-1kKQTfBp")),
+    (5, ReceiptSupport::Retired("INSTALL-1kLW2GVN")),
+    (6, ReceiptSupport::Retired("HOOKS-1kMFzkkc")),
+    (MIGRATABLE_RECORD_VERSION, ReceiptSupport::Direct),
+    (FORWARD_MIGRATABLE_RECORD_VERSION, ReceiptSupport::Direct),
+    (INLINE_ROLLBACK_RECORD_VERSION, ReceiptSupport::Direct),
+    (10, ReceiptSupport::Retired("WRAPPER-1kNYClbf")),
+    (11, ReceiptSupport::Retired("WRAPPER-1kNYClbf")),
+    (12, ReceiptSupport::Retired("RETIREM-1kSR91Zl")),
+    (PREVIOUS_RECORD_VERSION, ReceiptSupport::Direct),
+    (RECORD_VERSION, ReceiptSupport::Current),
 ];
+
+fn receipt_support(version: u16) -> Option<ReceiptSupport> {
+    RECEIPT_SUPPORT
+        .iter()
+        .find_map(|(candidate, support)| (*candidate == version).then_some(*support))
+}
 const RECORD_NAME: &str = "install.json";
 const RECORD_PATH: &str = ".spice-rs/install.json";
 const RECORD_MODE: u32 = 0o600;
@@ -140,20 +160,14 @@ pub fn configure_test_maintenance_now(now: Option<std::ffi::OsString>) {
     maintenance::configure_test_now(now);
 }
 
-/// Rewrites one complete debug fixture receipt into the immediately previous
-/// schema so process tests can exercise the production migration boundary.
+/// Rewrites one complete debug fixture receipt into a directly upgradable schema.
 #[cfg(debug_assertions)]
 #[doc(hidden)]
-pub fn publish_test_version_7_receipt(repository: &Repository) -> Result<(), InstallError> {
-    record::publish_test_version_7_receipt(repository)
-}
-
-/// Rewrites one complete debug fixture receipt into the immediately previous
-/// schema so process tests can exercise the current forward migration.
-#[cfg(debug_assertions)]
-#[doc(hidden)]
-pub fn publish_test_version_13_receipt(repository: &Repository) -> Result<(), InstallError> {
-    record::publish_test_version_13_receipt(repository)
+pub fn publish_test_historical_receipt(
+    repository: &Repository,
+    version: u16,
+) -> Result<(), InstallError> {
+    record::publish_test_historical_receipt(repository, version)
 }
 
 /// Side-effect-free canonical installation plan.

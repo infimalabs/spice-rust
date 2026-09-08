@@ -539,16 +539,34 @@ provenance.
 authenticated by the canonical receipt. Its identity and exact relationship to
 that receipt are validated before it can drive reversal or migration.
 
-**Invariant —** Durable install state admits exact historical receipt versions 7,
-8, 9, and 10 and migrates each admitted shape directly forward into the current
-version-11 canonical receipt. Unknown or inconsistent shapes refuse without
-receipt-owned reversal or mutation and leave the canonical receipt unchanged;
-the preceding admitted maintenance pass may still remove unrelated recognized
-stale Spice-owned temporary publications. No historical representation executes
-through the current appliance. An ordinary in-place refresh retains the original
-pre-first-install images rather than creating a receipt rollback snapshot. Only
-the admitted version-7 migration refresh authenticates a snapshot that restores
-the exact pre-migration assets and receipt during unapply; that is reversal of
-the whole migration.
+**Invariant —** Install support is bounded by receipt schema, not product semantic
+version. The current `dist/VERSION` value `0.0.0` emits schema 14 and directly
+migrates complete schemas 7, 8, 9, and 13; no intermediate package executes.
+Historical schemas 1–6 and 10–12 refuse before receipt-owned mutation and name
+the release change whose executable can unapply them:
+
+| Receipt schema | Current disposition | Retired owner, when unsupported |
+| --- | --- | --- |
+| 1 | Refuse | `SURFACE-1kJQkpFs` |
+| 2 | Refuse | `SURFACE-1kJRGpf2` |
+| 3 | Refuse | `HOOKS-1kJQnmG8` |
+| 4 | Refuse | `INSTALL-1kKQTfBp` |
+| 5 | Refuse | `INSTALL-1kLW2GVN` |
+| 6 | Refuse | `HOOKS-1kMFzkkc` |
+| 7, 8, 9 | Direct migration to 14 | — |
+| 10, 11 | Refuse | `WRAPPER-1kNYClbf` |
+| 12 | Refuse | `RETIREM-1kSR91Zl` |
+| 13 | Direct migration to 14 | — |
+| 14 | Current | — |
+
+Moving a directly migratable schema into the retired set requires adding its
+immutable owner in the same release landing. Release notes derive from that
+landing history, so support cannot disappear as an undocumented execution-arm
+deletion. Malformed, internally inconsistent, and future receipts remain store
+failures rather than being mistaken for retired state. An ordinary in-place
+refresh retains the original pre-first-install images rather than creating a
+receipt rollback snapshot. Only the admitted version-7 migration refresh
+authenticates a snapshot that restores the exact pre-migration assets and receipt
+during unapply; that is reversal of the whole migration.
 
 ---
