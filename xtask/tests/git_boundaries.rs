@@ -78,6 +78,32 @@ const NETWORK_SUBCOMMANDS: [&str; 5] = ["fetch", "push", "pull", "clone", "ls-re
 /// `ls-remote`, but only as inert argv returned to its parent control plane.
 const UNSANCTIONED: [&str; 2] = ["pull", "clone"];
 
+/// Source families that participate in selecting, acquiring, or publishing a proof.
+const PROOF_GIT_PREFIXES: [&str; 5] = [
+    "gate/src/core/",
+    "gate/src/tree/",
+    "gate/src/battery/repository_executor.rs",
+    "spice/src/gate_command.rs",
+    "spice/src/gate_command/",
+];
+
+/// Git operations that transfer caller-state ownership instead of observing it.
+const PROOF_MUTATING_SUBCOMMANDS: [&str; 13] = [
+    "fetch",
+    "pull",
+    "push",
+    "rebase",
+    "stash",
+    "reset",
+    "read-tree",
+    "update-index",
+    "commit-tree",
+    "update-ref",
+    "checkout",
+    "merge",
+    "cherry-pick",
+];
+
 /// The only production sources allowed to name a network subcommand.
 const CONTROL_PLANE_SOURCES: [&str; 3] = [
     "dist/src/authority.rs",
@@ -260,6 +286,56 @@ fn production_names_a_network_subcommand_only_inside_the_control_plane() {
         unsanctioned.is_empty(),
         "production names a network subcommand GIT-01 gives no boundary for: \
          {unsanctioned:#?}"
+    );
+}
+
+/// Proof may inspect caller Git state, but may never take ownership of it.
+#[test]
+fn proof_sources_name_no_caller_mutating_git_operation() {
+    let sources = workspace_rust_sources();
+    let violations = sources
+        .iter()
+        .filter(|(path, _)| {
+            *path == "gate/src/tree.rs"
+                || PROOF_GIT_PREFIXES
+                    .iter()
+                    .any(|prefix| path.starts_with(prefix))
+        })
+        .filter(|(path, _)| !is_fixture(path))
+        .flat_map(|(path, source)| {
+            // These two production modules keep their inline tests in one
+            // terminal module. Test labels may describe a merge without
+            // granting production permission to invoke one.
+            let source = if matches!(
+                path.as_str(),
+                "gate/src/core/acquire.rs" | "gate/src/tree.rs"
+            ) {
+                source
+                    .split_once("#[cfg(test)]\nmod tests")
+                    .map_or(source.as_str(), |(production, _)| production)
+            } else {
+                source.as_str()
+            };
+            PROOF_MUTATING_SUBCOMMANDS
+                .iter()
+                .filter(move |subcommand| source.contains(&format!("\"{subcommand}\"")))
+                .map(move |subcommand| format!("{path} names {subcommand}"))
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        violations.is_empty(),
+        "proof sources name caller-mutating Git operations: {violations:#?}"
+    );
+    assert!(
+        !sources
+            .get("gate/src/core/acquire.rs")
+            .expect("core acquisition source is tracked")
+            .split_once("#[cfg(test)]\nmod tests")
+            .map_or_else(
+                || false,
+                |(production, _)| production.contains("&[\"write-tree\"]")
+            ),
+        "proof must derive the staged tree identity without writing it to the caller object database"
     );
 }
 

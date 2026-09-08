@@ -18,7 +18,7 @@
 //! mutated or swapped after capture has nothing left to reach: there is no
 //! later state that can cross into a report under the captured digest.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -291,13 +291,15 @@ impl CoreSource {
     /// octopus, absent, and unmeasured merges return no tree and therefore grant
     /// no authorship exemption.
     #[must_use]
-    pub(crate) fn clean_merge_tree(&self) -> Option<(&str, &str, &str)> {
-        self.git.clean_merge_tree.as_ref().map(|capture| {
-            (
+    pub(crate) fn clean_merge_tree(&self) -> Option<(&str, &str, &str, &Path)> {
+        self.git.clean_merge_tree.as_ref().and_then(|capture| {
+            let isolation = self.git.isolation.as_ref()?;
+            Some((
                 capture.head.as_str(),
                 capture.merging.as_str(),
                 capture.tree.as_str(),
-            )
+                isolation.root.as_path(),
+            ))
         })
     }
 }
@@ -322,15 +324,17 @@ struct GitObservations {
     merge_integrity: Option<CoreObservation>,
     staging: Option<CoreObservation>,
     clean_merge_tree: Option<CleanMergeTree>,
+    isolation: Option<GitIsolation>,
 }
 
 impl GitObservations {
     fn capture(tree: &SelectedTree, bounds: &Bounds) -> Self {
         let repository = tree.repository();
+        let isolation = GitIsolation::create(tree);
         let ((merge_integrity, staging), clean_merge_tree) = thread::scope(|scope| {
-            let merge_integrity = scope.spawn(|| merge_integrity(repository, bounds));
+            let merge_integrity = scope.spawn(|| merge_integrity(tree, bounds, isolation.as_ref()));
             let staging = scope.spawn(|| staging(tree, bounds));
-            let clean_merge_tree = clean_merge_tree(repository, bounds);
+            let clean_merge_tree = clean_merge_tree(repository, bounds, isolation.as_ref().ok());
             (
                 (
                     merge_integrity
@@ -347,7 +351,126 @@ impl GitObservations {
             merge_integrity: Some(merge_integrity),
             staging: Some(staging),
             clean_merge_tree,
+            isolation: isolation.ok(),
         }
+    }
+}
+
+/// One gate-owned object view for Git plumbing that synthesizes trees.
+///
+/// `merge-tree --write-tree` has no worktree or index mutation, but it normally
+/// appends its result to the caller's object database. This private bare object
+/// view makes the original database read-only through an alternate and gives
+/// every synthesized object a destination below the selected tree's possessed
+/// workspace. The object view stays alive through baseline capture because the
+/// clean-merge authorship reader needs to traverse the synthesized tree.
+#[derive(Debug)]
+struct GitIsolation {
+    root: PathBuf,
+    objects: PathBuf,
+    index: PathBuf,
+    alternates: OsString,
+}
+
+impl GitIsolation {
+    fn create(tree: &SelectedTree) -> Result<Self, String> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let repository = crate::tree::open_repository(tree.repository())
+            .map_err(|error| format!("open repository for isolated Git observation: {error}"))?;
+        let original_objects = repository.common_dir().join("objects");
+        let alternates = std::env::join_paths([&original_objects]).map_err(|error| {
+            format!(
+                "encode caller object database {} as a read-only alternate: {error}",
+                original_objects.display()
+            )
+        })?;
+
+        let mut root = None;
+        for _ in 0..128 {
+            let nonce = NEXT.fetch_add(1, Ordering::Relaxed);
+            let candidate = tree
+                .private_workspace()
+                .join(format!("git-observation-{}-{nonce}", std::process::id()));
+            match fs::create_dir(&candidate) {
+                Ok(()) => {
+                    root = Some(candidate);
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => {
+                    return Err(format!(
+                        "create isolated Git observation {}: {error}",
+                        candidate.display()
+                    ));
+                }
+            }
+        }
+        let root = root.ok_or_else(|| {
+            "isolated Git observation name attempts exhausted in the gate workspace".to_owned()
+        })?;
+        let objects = root.join("objects");
+        let result = (|| {
+            fs::create_dir(&objects).map_err(|error| {
+                format!(
+                    "create isolated Git object database {}: {error}",
+                    objects.display()
+                )
+            })?;
+            fs::create_dir(objects.join("info"))
+                .map_err(|error| format!("create isolated Git alternates directory: {error}"))?;
+            fs::create_dir(root.join("refs"))
+                .map_err(|error| format!("create isolated Git refs directory: {error}"))?;
+            fs::write(root.join("HEAD"), "ref: refs/heads/main\n")
+                .map_err(|error| format!("write isolated Git HEAD: {error}"))?;
+            fs::write(
+                root.join("config"),
+                "[core]\n\tbare = true\n\trepositoryformatversion = 0\n",
+            )
+            .map_err(|error| format!("write isolated Git configuration: {error}"))?;
+            fs::write(
+                objects.join("info/alternates"),
+                format!("{}\n", original_objects.display()),
+            )
+            .map_err(|error| format!("write isolated Git alternate: {error}"))?;
+            Ok::<_, String>(())
+        })();
+        if let Err(error) = result {
+            let _ = fs::remove_dir_all(&root);
+            return Err(error);
+        }
+        Ok(Self {
+            index: root.join("index"),
+            root,
+            objects,
+            alternates,
+        })
+    }
+
+    fn environment(&self) -> Result<Environment, GitRefusal> {
+        Environment::new([
+            (OsString::from("GIT_OPTIONAL_LOCKS"), OsString::from("0")),
+            (OsString::from("GIT_NO_LAZY_FETCH"), OsString::from("1")),
+            (OsString::from("GIT_CONFIG_NOSYSTEM"), OsString::from("1")),
+            (
+                OsString::from("GIT_OBJECT_DIRECTORY"),
+                self.objects.as_os_str().to_owned(),
+            ),
+            (
+                OsString::from("GIT_ALTERNATE_OBJECT_DIRECTORIES"),
+                self.alternates.clone(),
+            ),
+            (
+                OsString::from("GIT_INDEX_FILE"),
+                self.index.as_os_str().to_owned(),
+            ),
+        ])
+        .map_err(|error| GitRefusal::Unmeasured(format!("isolated Git environment: {error}")))
+    }
+}
+
+impl Drop for GitIsolation {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
     }
 }
 
@@ -649,7 +772,12 @@ fn plan_phase(claim: &ClaimCapture) -> CoreObservation {
     }
 }
 
-fn merge_integrity(repository: &Path, bounds: &Bounds) -> CoreObservation {
+fn merge_integrity(
+    tree: &SelectedTree,
+    bounds: &Bounds,
+    isolation: Result<&GitIsolation, &String>,
+) -> CoreObservation {
+    let repository = tree.repository();
     match merge_head_path(repository) {
         Ok(Some(_)) => {}
         Ok(None) => {
@@ -660,9 +788,14 @@ fn merge_integrity(repository: &Path, bounds: &Bounds) -> CoreObservation {
         Err(refusal) => return refusal.into_observation(),
     }
 
-    let staged_tree = match git_tree(repository, bounds, &["write-tree"]) {
-        Ok(tree) => tree,
-        Err(refusal) => return refusal.into_observation(),
+    let staged_tree = match tree.staged_authority() {
+        Some(authority) => authority.candidate_tree_identity().to_owned(),
+        None => {
+            return GitRefusal::Unmeasured(
+                "merge-integrity cannot identify a live index from a revision selection".to_owned(),
+            )
+            .into_observation();
+        }
     };
     let head_tree = match git_tree(repository, bounds, &["rev-parse", "HEAD^{tree}"]) {
         Ok(tree) => tree,
@@ -685,7 +818,13 @@ fn merge_integrity(repository: &Path, bounds: &Bounds) -> CoreObservation {
         "HEAD",
         "MERGE_HEAD",
     ];
-    let (code, output) = match git(repository, bounds, arguments, &[0, 1]) {
+    let isolation = match isolation {
+        Ok(isolation) => isolation,
+        Err(reason) => {
+            return GitRefusal::Unmeasured(reason.clone()).into_observation();
+        }
+    };
+    let (code, output) = match isolated_git(repository, bounds, arguments, &[0, 1], isolation) {
         Ok(pair) => pair,
         Err(refusal) => return refusal.into_observation(),
     };
@@ -715,7 +854,11 @@ fn merge_integrity(repository: &Path, bounds: &Bounds) -> CoreObservation {
 /// public core evidence. Only exit zero proves an automatic clean synthesis.
 /// A conflict, multiple merge heads, unreadable state, or process failure is a
 /// conservative absence: structural arms keep measuring the staged bytes.
-fn clean_merge_tree(repository: &Path, bounds: &Bounds) -> Option<CleanMergeTree> {
+fn clean_merge_tree(
+    repository: &Path,
+    bounds: &Bounds,
+    isolation: Option<&GitIsolation>,
+) -> Option<CleanMergeTree> {
     let merge_head_path = merge_head_path(repository).ok()??;
     let merge_heads = fs::read_to_string(merge_head_path).ok()?;
     let mut merge_heads = merge_heads
@@ -729,11 +872,12 @@ fn clean_merge_tree(repository: &Path, bounds: &Bounds) -> Option<CleanMergeTree
     let (_, head) = git(repository, bounds, &["rev-parse", "HEAD"], &[0]).ok()?;
     let head = head.trim().to_owned();
     validate_git_tree(&head).ok()?;
-    let (code, output) = git(
+    let (code, output) = isolated_git(
         repository,
         bounds,
         &["merge-tree", "--write-tree", &head, merging],
         &[0, 1],
+        isolation?,
     )
     .ok()?;
     if code != 0 {
@@ -919,11 +1063,42 @@ fn git(
     arguments: &[&str],
     accepted: &[i32],
 ) -> Result<(i32, String), GitRefusal> {
+    let environment = Environment::new([
+        ("GIT_OPTIONAL_LOCKS", "0"),
+        ("GIT_NO_LAZY_FETCH", "1"),
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+    ])
+    .map_err(|error| GitRefusal::Unmeasured(format!("git environment: {error}")))?;
+    git_with_environment(repository, bounds, arguments, accepted, environment)
+}
+
+fn isolated_git(
+    repository: &Path,
+    bounds: &Bounds,
+    arguments: &[&str],
+    accepted: &[i32],
+    isolation: &GitIsolation,
+) -> Result<(i32, String), GitRefusal> {
+    git_with_environment(
+        repository,
+        bounds,
+        arguments,
+        accepted,
+        isolation.environment()?,
+    )
+}
+
+fn git_with_environment(
+    repository: &Path,
+    bounds: &Bounds,
+    arguments: &[&str],
+    accepted: &[i32],
+    environment: Environment,
+) -> Result<(i32, String), GitRefusal> {
     let argv = Argv::new(GIT, arguments.iter().map(OsStr::new))
         .map_err(|error| GitRefusal::Unmeasured(format!("git argument vector: {error}")))?;
     let mut spec = bounds.spec(argv, repository);
-    spec.environment = Environment::new([("GIT_OPTIONAL_LOCKS", "0")])
-        .map_err(|error| GitRefusal::Unmeasured(format!("git environment: {error}")))?;
+    spec.environment = environment;
     GIT_SUBPROCESSES.fetch_add(1, Ordering::Relaxed);
     let outcome = spawn(spec)
         .map_err(|error| GitRefusal::Unavailable(format!("git did not start: {error}")))?
@@ -965,6 +1140,7 @@ fn git(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
 
     struct RepositoryFixture {
         root: PathBuf,
@@ -1065,6 +1241,165 @@ mod tests {
     }
 
     #[test]
+    fn clean_merge_observation_preserves_every_caller_repository_byte() {
+        let fixture = RepositoryFixture::new("isolated-merge");
+        let root = &fixture.root;
+        fs::write(root.join("agent.txt"), "base\n").expect("write agent base");
+        fs::write(root.join("upstream.txt"), "base\n").expect("write upstream base");
+        crate::test_repository::stage_all(root);
+        let base = crate::test_repository::commit(root, "base");
+
+        fs::write(root.join("upstream.txt"), "upstream\n").expect("write upstream side");
+        crate::test_repository::stage(root, &["upstream.txt"]);
+        let upstream =
+            crate::test_repository::commit_to(root, "refs/heads/upstream", &base, "upstream side");
+
+        fs::write(root.join("upstream.txt"), "base\n").expect("restore receiver side");
+        crate::test_repository::stage(root, &["upstream.txt"]);
+        fs::write(root.join("agent.txt"), "agent\n").expect("write agent side");
+        crate::test_repository::stage(root, &["agent.txt"]);
+        let agent = crate::test_repository::commit(root, "agent side");
+
+        fs::write(root.join("agent.txt"), "unstaged sentinel\n").expect("write unstaged sentinel");
+        fs::write(root.join("untracked.txt"), "untracked sentinel\n")
+            .expect("write untracked sentinel");
+        for (name, value) in [
+            ("ORIG_HEAD", format!("{agent}\n")),
+            ("MERGE_HEAD", format!("{upstream}\n")),
+            ("MERGE_MODE", "no-ff\n".to_owned()),
+            ("MERGE_MSG", "allocator-installed resolution\n".to_owned()),
+        ] {
+            fs::write(root.join(".git").join(name), value).expect("write merge control");
+        }
+
+        let before = snapshot(root);
+        let tree = crate::Selector::staged()
+            .materialize(root)
+            .expect("materialize allocator-installed index");
+        let deadlines = sill::Deadlines::new(
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_secs(1),
+            std::time::Duration::from_secs(1),
+        )
+        .expect("valid merge observation deadlines");
+        let bounds = Bounds::new(
+            "isolated merge observation",
+            deadlines,
+            std::time::Duration::from_millis(50),
+            64 * 1024,
+        )
+        .expect("valid merge observation bounds");
+        let observations = GitObservations::capture(&tree, &bounds);
+
+        let Some(CoreObservation::Measured {
+            evidence:
+                CoreEvidence::MergeIntegrity(MergeIntegrityEvidence::Compared {
+                    head_tree,
+                    expected_tree,
+                    completion: MergeTreeCompletion::Clean,
+                    conflicted_paths,
+                }),
+        }) = observations.merge_integrity.as_ref()
+        else {
+            panic!(
+                "clean divergent parents must yield compared merge evidence: {:?}",
+                observations.merge_integrity
+            );
+        };
+        assert!(conflicted_paths.is_empty());
+        assert_ne!(
+            head_tree, expected_tree,
+            "fixture must synthesize a new tree"
+        );
+        let clean = observations
+            .clean_merge_tree
+            .as_ref()
+            .expect("clean merge authorship tree");
+        assert_eq!(&clean.tree, expected_tree);
+        let isolated = observations
+            .isolation
+            .as_ref()
+            .expect("merge observation object isolation");
+        let object_view =
+            crate::tree::open_repository(&isolated.root).expect("open isolated merge object view");
+        let tree_id: gix::ObjectId = clean.tree.parse().expect("parse computed merge tree");
+        object_view
+            .find_tree(tree_id)
+            .expect("computed tree exists only in the isolated object view");
+        let baselines = crate::metrics::BaselineCapture::capture_with_paths(
+            root,
+            &[".txt".to_owned()],
+            &[],
+            Some((&clean.head, &clean.merging, &clean.tree, &isolated.root)),
+        );
+        assert!(
+            baselines.merge_inherits("upstream.txt", b"upstream\n"),
+            "clean-merge authorship must traverse the isolated object view"
+        );
+
+        assert_eq!(snapshot(root), before);
+    }
+
+    #[test]
+    fn linked_worktree_merge_observation_uses_common_objects_without_mutation() {
+        let fixture = RepositoryFixture::new("linked-merge");
+        let root = &fixture.root;
+        fs::write(root.join("tracked.txt"), "base\n").expect("write linked base");
+        crate::test_repository::stage_all(root);
+        let head = crate::test_repository::commit(root, "base");
+        let linked = root.with_extension("linked");
+        crate::test_repository::create_linked_worktree(root, &linked, "peer");
+        let linked_repository =
+            crate::tree::open_repository(&linked).expect("open linked worktree");
+        for (name, value) in [
+            ("ORIG_HEAD", format!("{head}\n")),
+            ("MERGE_HEAD", format!("{head}\n")),
+            ("MERGE_MODE", "no-ff\n".to_owned()),
+            ("MERGE_MSG", "linked allocator resolution\n".to_owned()),
+        ] {
+            fs::write(linked_repository.git_dir().join(name), value)
+                .expect("write linked merge control");
+        }
+        let common_before = snapshot(root);
+        let linked_before = snapshot(&linked);
+
+        let tree = crate::Selector::staged()
+            .materialize(&linked)
+            .expect("materialize linked staged index");
+        let deadlines = sill::Deadlines::new(
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_secs(1),
+            std::time::Duration::from_secs(1),
+        )
+        .expect("valid linked observation deadlines");
+        let bounds = Bounds::new(
+            "linked merge observation",
+            deadlines,
+            std::time::Duration::from_millis(50),
+            64 * 1024,
+        )
+        .expect("valid linked observation bounds");
+        let observations = GitObservations::capture(&tree, &bounds);
+
+        assert!(matches!(
+            observations.merge_integrity,
+            Some(CoreObservation::Measured {
+                evidence: CoreEvidence::MergeIntegrity(MergeIntegrityEvidence::Compared {
+                    completion: MergeTreeCompletion::Clean,
+                    ..
+                })
+            })
+        ));
+        assert!(observations.clean_merge_tree.is_some());
+        assert_eq!(snapshot(root), common_before);
+        assert_eq!(snapshot(&linked), linked_before);
+
+        drop(observations);
+        drop(tree);
+        crate::test_repository::remove_linked_worktree(root, &linked);
+    }
+
+    #[test]
     fn merge_head_resolves_from_the_repository_git_directory() {
         let fixture = RepositoryFixture::new("merge");
         let root = &fixture.root;
@@ -1078,5 +1413,42 @@ mod tests {
             merge_head_path(root).unwrap_or_else(|_| panic!("inspect active merge")),
             Some(expected)
         );
+    }
+
+    fn snapshot(root: &Path) -> BTreeMap<String, Vec<u8>> {
+        let mut pending = vec![PathBuf::new()];
+        let mut observed = BTreeMap::new();
+        while let Some(relative) = pending.pop() {
+            let mut entries = fs::read_dir(root.join(&relative))
+                .expect("read repository snapshot directory")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("read repository snapshot entry");
+            entries.sort_by_key(std::fs::DirEntry::file_name);
+            for entry in entries {
+                let path = relative.join(entry.file_name());
+                let kind = entry
+                    .file_type()
+                    .expect("inspect repository snapshot entry");
+                if kind.is_dir() {
+                    observed.insert(format!("{}/", path.to_string_lossy()), Vec::new());
+                    pending.push(path);
+                } else if kind.is_symlink() {
+                    observed.insert(
+                        path.to_string_lossy().into_owned(),
+                        fs::read_link(entry.path())
+                            .expect("read repository snapshot symlink")
+                            .as_os_str()
+                            .as_encoded_bytes()
+                            .to_vec(),
+                    );
+                } else {
+                    observed.insert(
+                        path.to_string_lossy().into_owned(),
+                        fs::read(entry.path()).expect("read repository snapshot file"),
+                    );
+                }
+            }
+        }
+        observed
     }
 }

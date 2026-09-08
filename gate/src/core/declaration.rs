@@ -106,7 +106,6 @@ impl CoreArmDeclaration {
 
 const MERGE_COMMANDS: &[GitCommandContract] = &[
     command(&["rev-parse", "--git-path", "MERGE_HEAD"], &[0]),
-    command(&["write-tree"], &[0]),
     command(&["rev-parse", "HEAD^{tree}"], &[0]),
     command(
         &[
