@@ -54,7 +54,7 @@ const INERT_ABSOLUTE_GIT_TEST_SITES: [(&str, usize); 10] = [
     // These fixture helpers create and stage only their own temporary
     // repositories; absolute resolution keeps the tests independent of PATH.
     ("spice/src/gate_command/prove/tests.rs", 1),
-    ("spice/tests/gate_admission_benchmark.rs", 2),
+    ("spice/tests/gate_admission_benchmark.rs", 1),
     ("spice/tests/gate_routing_admission.rs", 1),
     ("spice/tests/gate_single_flight/fixture.rs", 1),
     // The instrumented rustfmt script deliberately moves its fixture index to
@@ -63,7 +63,7 @@ const INERT_ABSOLUTE_GIT_TEST_SITES: [(&str, usize); 10] = [
     // Reference-transaction fixtures invoke Git only inside disposable
     // repositories to drive real prepared/committed/aborted hook boundaries.
     ("spice/tests/reference_transaction_cli.rs", 1),
-    ("spice/tests/reference_transaction_cli/movement.rs", 2),
+    ("spice/tests/reference_transaction_cli/movement.rs", 3),
 ];
 
 /// Every git subcommand that can reach the network.
@@ -116,7 +116,7 @@ const CONTROL_PLANE_SOURCES: [&str; 3] = [
 /// Counted per occurrence rather than per line, because
 /// `spice/src/task_git/command.rs` names both of the sanctioned subcommands on
 /// one line and a line-counting scan would see one site where there are two.
-const NETWORK_CALL_SITES: [(&str, &str, usize); 13] = [
+const NETWORK_CALL_SITES: [(&str, &str, usize); 10] = [
     // The external release authority constructs exact inert Git argv but owns
     // no process runner. Its parent executes these operations at an existing
     // control-plane boundary after authored release approval. Each count
@@ -132,11 +132,11 @@ const NETWORK_CALL_SITES: [(&str, &str, usize); 13] = [
     // subcommands by name to give them a longer timeout, and issues nothing.
     ("spice/src/task_git/command.rs", "fetch", 1),
     ("spice/src/task_git/command.rs", "push", 1),
-    // The task-git module's own repository-backed fixtures clone and move only
-    // disposable local bare remotes to exercise claim and publication races.
+    // The task-git module's repository-backed fixtures clone, fetch, and push
+    // only against disposable local bare remotes under their owned roots.
     ("spice/src/task_git/tests.rs", "clone", 1),
-    ("spice/src/task_git/tests.rs", "fetch", 1),
-    ("spice/src/task_git/tests.rs", "push", 2),
+    ("spice/src/task_git/tests.rs", "fetch", 2),
+    ("spice/src/task_git/tests.rs", "push", 5),
     // This fixture fetches only from its owned local bare remote after moving
     // the upstream branch, exercising divergent task-completion admission.
     (
@@ -144,12 +144,6 @@ const NETWORK_CALL_SITES: [(&str, &str, usize); 13] = [
         "fetch",
         1,
     ),
-    // The plan-synchronization fixture owns a local bare remote and peer
-    // checkout. Its clone, fetch, initial push, and peer push exercise exact
-    // upstream integration without contacting an external network.
-    ("spice/src/task_git/tests.rs", "clone", 1),
-    ("spice/src/task_git/tests.rs", "fetch", 1),
-    ("spice/src/task_git/tests.rs", "push", 2),
 ];
 
 /// The activation surface, which GIT-06 keeps free of git entirely.
