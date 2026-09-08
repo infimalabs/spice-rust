@@ -178,7 +178,7 @@ fn prime_installed_meter(fixture: &Fixture, installed: &Path, lane: wire::Canoni
         String::from_utf8_lossy(&primed.stdout),
         String::from_utf8_lossy(&primed.stderr),
     );
-    assert!(!String::from_utf8_lossy(&primed.stderr).contains("CLAIM LOST"));
+    assert!(!String::from_utf8_lossy(&primed.stderr).contains("Claim moved"));
 }
 
 fn replace_while_wrapper_waits(
@@ -217,7 +217,7 @@ fn replace_while_wrapper_waits(
         String::from_utf8_lossy(&wrapped.stderr),
     );
     assert!(
-        !String::from_utf8_lossy(&wrapped.stderr).contains("CLAIM LOST"),
+        !String::from_utf8_lossy(&wrapped.stderr).contains("Claim moved"),
         "resident dark interval was misreported as claim loss: {}",
         String::from_utf8_lossy(&wrapped.stderr),
     );

@@ -488,7 +488,7 @@ fn real_run_stream_omits_ordinary_state_and_wakes_at_warning_boundary() {
         "only the no-hook lease transition speaks: {stderr:?}"
     );
     assert!(!lines[0].contains("Working state"));
-    assert!(lines[0].contains("CLAIM LEASE WARNING"));
+    assert!(lines[0].contains("Claim lease warning"));
     let handle = wire::TaskHandle::for_project(SESSION_PROJECT, &stamp("SESSION-held"));
     assert!(
         lines[0].contains(&format!("run spice task reclaim {handle}")),
@@ -526,7 +526,7 @@ fn short_run_processes_share_suppression_and_tier_changes_speak() {
     let warning = String::from_utf8(first.err).expect("warning stderr");
     assert_eq!(warning.lines().count(), 1);
     assert!(!warning.contains("Working state"));
-    assert!(warning.contains("CLAIM LEASE WARNING"));
+    assert!(warning.contains("Claim lease warning"));
     assert!(warning.contains("s remaining"));
     assert!(
         warning.contains(&format!("run spice task reclaim {handle}")),
@@ -538,7 +538,7 @@ fn short_run_processes_share_suppression_and_tier_changes_speak() {
     assert!(second.err.is_empty(), "same tier is durably suppressed");
     let urgent = String::from_utf8(urgent.err).expect("urgent stderr");
     assert_eq!(urgent.lines().count(), 1);
-    assert!(urgent.contains("CLAIM LEASE URGENT"));
+    assert!(urgent.contains("Claim lease urgent"));
     assert!(urgent.contains("s remaining"));
     assert!(
         urgent.contains(&format!("run spice task reclaim {handle}")),
@@ -570,7 +570,7 @@ fn ownership_loss_speaks_once_while_terminal_release_stays_silent() {
 
     let loss_stderr = String::from_utf8(lost.err).expect("loss stderr");
     assert_eq!(loss_stderr.lines().count(), 1);
-    assert!(loss_stderr.contains("CLAIM LOST:"));
+    assert!(loss_stderr.contains("Claim moved:"));
     assert!(loss_stderr.contains("run spice task status"));
     assert!(
         deduplicated.err.is_empty(),
@@ -586,7 +586,7 @@ fn ownership_loss_speaks_once_while_terminal_release_stays_silent() {
     let _initial = invoke_meter_child(terminal.path(), &terminal_thread);
     free_held_claim(&terminal_authority);
     let freed = invoke_meter_child(terminal.path(), &terminal_thread);
-    assert!(!String::from_utf8_lossy(&freed.err).contains("CLAIM LOST:"));
+    assert!(!String::from_utf8_lossy(&freed.err).contains("Claim moved:"));
 
     terminal.remove();
     scratch.remove();

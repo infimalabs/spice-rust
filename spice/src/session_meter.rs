@@ -401,9 +401,9 @@ impl LeaseTier {
     const fn label(self) -> Option<&'static str> {
         match self {
             Self::None => None,
-            Self::Warning => Some("WARNING"),
-            Self::Urgent => Some("URGENT"),
-            Self::Critical => Some("CRITICAL"),
+            Self::Warning => Some("warning"),
+            Self::Urgent => Some("urgent"),
+            Self::Critical => Some("critical"),
         }
     }
 }
@@ -486,9 +486,9 @@ fn render_parts(snapshot: &WorkingState, include_lease: bool, include_inbox: boo
     }
     if snapshot.drain_queue && snapshot.claim.is_none() {
         let direction = if include_inbox && snapshot.pending_inbox_count > 0 {
-            "handle operator direction first, then DRAIN QUEUE ASAP: spice task next"
+            "handle operator direction first, then run spice task next"
         } else {
-            "DRAIN QUEUE ASAP: spice task next"
+            "run spice task next"
         };
         parts.push(direction.to_owned());
     }
@@ -534,7 +534,7 @@ fn render_claim_lease(claim: &ClaimState, handle: &str) -> Option<String> {
         format!("run spice task free {handle}, then spice task next")
     };
     Some(format!(
-        "CLAIM LEASE {label}: {handle} has {}s remaining; {recovery}",
+        "Claim lease {label}: {handle} has {}s remaining; {recovery}",
         remaining.as_secs(),
     ))
 }
@@ -652,7 +652,7 @@ mod tests {
         assert!(status.contains("claim METER-00000001 todo"));
         assert!(status.contains("last taste fallbacks"));
         assert!(!status.contains("held for"));
-        assert!(!status.contains("CLAIM LEASE"));
+        assert!(!status.contains("Claim lease"));
 
         let drain = WorkingState {
             pending_inbox_count: 1,
@@ -661,7 +661,7 @@ mod tests {
         };
         let status = ordinary_status(&drain, false).expect("drain state renders");
         assert!(status.contains("handle operator direction first"));
-        assert!(status.contains("DRAIN QUEUE ASAP: spice task next"));
+        assert!(status.contains("run spice task next"));
         assert_eq!(ordinary_status(&WorkingState::default(), false), None);
     }
 
@@ -701,11 +701,11 @@ mod tests {
             .announcement
             .expect("claim acquisition speaks");
 
-        assert!(idle_line.contains("DRAIN QUEUE ASAP: spice task next"));
+        assert!(idle_line.contains("run spice task next"));
         assert_eq!(
             directed_line,
             "🌶️ Working state: 1 pending inbox; handle operator direction first, then \
-             DRAIN QUEUE ASAP: spice task next."
+             run spice task next."
         );
         assert!(!claimed_line.contains("spice task next"));
         for line in [&idle_line, &directed_line, &claimed_line] {
@@ -787,7 +787,7 @@ mod tests {
             urgent
                 .announcement
                 .as_deref()
-                .is_some_and(|line| line.contains("CLAIM LEASE URGENT"))
+                .is_some_and(|line| line.contains("Claim lease urgent"))
         );
 
         fs::write(&path, b"not-json").expect("corrupt prior announcement");
@@ -824,22 +824,22 @@ mod tests {
         let root = fixture("strict-tiers");
         let cases = [
             (600, None),
-            (599, Some("CLAIM LEASE WARNING")),
-            (299, Some("CLAIM LEASE URGENT")),
-            (59, Some("CLAIM LEASE CRITICAL")),
+            (599, Some("warning")),
+            (299, Some("urgent")),
+            (59, Some("critical")),
         ];
-        for (index, (remaining, warning)) in cases.into_iter().enumerate() {
+        for (index, (remaining, severity)) in cases.into_iter().enumerate() {
             let decision = Meter::new(root.join(format!("boundary-{index}.json")))
                 .evaluate(&state(Some(remaining)), Duration::from_secs(1))
                 .expect("strict boundary evaluates");
             let line = decision.announcement.expect("new state speaks once");
             assert_eq!(
-                ["WARNING", "URGENT", "CRITICAL"]
+                ["warning", "urgent", "critical"]
                     .into_iter()
-                    .find(|label| line.contains(&format!("CLAIM LEASE {label}"))),
-                warning.map(|warning| warning.rsplit_once(' ').expect("label").1),
+                    .find(|label| line.contains(&format!("Claim lease {label}:"))),
+                severity,
             );
-            if warning.is_some() {
+            if severity.is_some() {
                 assert!(line.contains("todo held for 90s"));
                 assert!(!line.contains("todo for 90s"));
                 assert!(line.contains(&format!("has {remaining}s remaining")));
@@ -876,19 +876,19 @@ mod tests {
             urgent
                 .announcement
                 .as_deref()
-                .is_some_and(|line| { line.contains("CLAIM LEASE URGENT") })
+                .is_some_and(|line| { line.contains("Claim lease urgent") })
         );
         assert!(
             warning
                 .announcement
                 .as_deref()
-                .is_some_and(|line| { line.contains("CLAIM LEASE WARNING") })
+                .is_some_and(|line| { line.contains("Claim lease warning") })
         );
         assert!(
             quiet
                 .announcement
                 .as_deref()
-                .is_some_and(|line| !line.contains("CLAIM LEASE"))
+                .is_some_and(|line| !line.contains("Claim lease"))
         );
         assert_eq!(renewed.announcement, None);
         fs::remove_dir_all(root).expect("fixture cleanup");

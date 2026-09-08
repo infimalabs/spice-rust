@@ -168,7 +168,7 @@ impl LiveMeter {
         }
         write_json(&self.loss_path, &loss)?;
         Ok(Some(format!(
-            "CLAIM LOST: {} moved away from this process; run spice task status",
+            "Claim moved: {} is no longer held by this process; run spice task status",
             loss.owner.authority.handle
         )))
     }

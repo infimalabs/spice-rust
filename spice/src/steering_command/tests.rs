@@ -355,7 +355,7 @@ fn ordinary_working_state_is_change_only_hook_status_without_lease_urgency() {
     assert!(context.contains("claim HUD-1kCurrent todo"));
     assert!(!context.contains("held for"));
     assert!(context.contains("last taste polling"));
-    assert!(!context.contains("CLAIM LEASE"));
+    assert!(!context.contains("Claim lease"));
     assert!(!context.contains("Rust Spice steering is pending."));
     assert_eq!(deliver_status(&scratch, &answer, &state), None);
 
@@ -383,7 +383,7 @@ fn authored_steering_owns_inbox_context_while_other_status_stays_change_only() {
     let first = deliver_status(&scratch, &answer, &state).expect("mixed status publishes");
     let context = additional_context(&first);
     assert!(context.contains("Inspect the authored request."));
-    assert!(context.contains("DRAIN QUEUE ASAP: spice task next"));
+    assert!(context.contains("run spice task next"));
     assert!(context.contains("last taste polling"));
     assert!(!context.contains("pending inbox"));
     assert!(!context.contains("handle operator direction first"));
