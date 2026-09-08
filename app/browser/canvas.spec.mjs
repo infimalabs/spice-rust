@@ -598,6 +598,7 @@ try {
     } else if (run.owns("restart")) {
       let organization;
       let primary;
+      let configuredOccupants;
       let configuredPolicy;
       await run.phase("restart-preparation", async () => {
         light = await browser.newContext({
@@ -629,6 +630,9 @@ try {
         await primary.locator('.organization-lifetime input[type="range"]').fill("2");
         await primary.getByRole("button", { name: "Drain", exact: true }).waitFor();
         const configured = await reply(fixture, ["lane"]);
+        configuredOccupants = configured.body.lanes.map(
+          ({ lane, occupant }) => [lane, occupant],
+        );
         configuredPolicy = {
           lineage: organization.host.lineage_id,
           policy: configured.body.subscriptions.find(
@@ -678,6 +682,7 @@ try {
           epoch: firstEpoch,
           capability: firstCapability,
           endpoint: resident.discovery.endpoint,
+          occupants: configuredOccupants,
           policy: configuredPolicy,
         };
         await run.phase("resident-startup", async () => {

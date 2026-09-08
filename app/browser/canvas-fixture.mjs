@@ -855,16 +855,23 @@ export async function assertResidentRestart(fixture, page, previous, options = {
     document.documentElement.dataset.restartDocument = crypto.randomUUID();
     document.querySelector("#app").dataset.restartRoot = crypto.randomUUID();
     window.__restartMinimumSurfaces = document.querySelectorAll(".organization-surface").length;
+    window.__restartPlaceholderSeen = false;
     window.__restartObserver = new MutationObserver(() => {
       window.__restartMinimumSurfaces = Math.min(
         window.__restartMinimumSurfaces,
         document.querySelectorAll(".organization-surface").length,
       );
+      window.__restartPlaceholderSeen ||= document.body.textContent
+        .includes("No agent snapshot is available.");
     });
     window.__restartObserver.observe(document.querySelector("#app"), { childList: true, subtree: true });
     return {
       document: document.documentElement.dataset.restartDocument,
       root: document.querySelector("#app").dataset.restartRoot,
+      surfaces: [...document.querySelectorAll(".organization-surface")].map((surface) => ({
+        lineage: surface.dataset.lineageId,
+        right: surface.getBoundingClientRect().right,
+      })),
     };
   });
   const resident = await startResident(fixture, { ...options, port });
@@ -875,6 +882,11 @@ export async function assertResidentRestart(fixture, page, previous, options = {
     "restart publishes a new operator capability",
   );
   const restarted = await reply(fixture, ["lane"]);
+  assert.deepEqual(
+    restarted.body.lanes.map(({ lane, occupant }) => [lane, occupant]),
+    previous.occupants,
+    "resident restart preserves every supervised lane occupant",
+  );
   assert.equal(
     restarted.body.subscriptions.find(
       (subscription) => subscription.lineage_id === previous.policy.lineage,
@@ -895,6 +907,11 @@ export async function assertResidentRestart(fixture, page, previous, options = {
       document: document.documentElement.dataset.restartDocument,
       root: document.querySelector("#app").dataset.restartRoot,
       minimumSurfaces: window.__restartMinimumSurfaces,
+      placeholderSeen: window.__restartPlaceholderSeen,
+      surfaces: [...document.querySelectorAll(".organization-surface")].map((surface) => ({
+        lineage: surface.dataset.lineageId,
+        right: surface.getBoundingClientRect().right,
+      })),
     };
   });
   assert.deepEqual(
@@ -903,6 +920,22 @@ export async function assertResidentRestart(fixture, page, previous, options = {
     "resident restart preserves the current document and Wasm root",
   );
   assert.ok(after.minimumSurfaces > 0, "resident restart never publishes an empty surface");
+  assert.equal(
+    after.placeholderSeen,
+    false,
+    "resident restart never publishes a partial surface without its agent snapshot",
+  );
+  assert.deepEqual(
+    after.surfaces.map(({ lineage }) => lineage),
+    before.surfaces.map(({ lineage }) => lineage),
+    "resident restart preserves visible lineage order",
+  );
+  assert.ok(
+    after.surfaces.every((surface, index) => (
+      Math.abs(surface.right - before.surfaces[index].right) <= 0.5
+    )),
+    "resident restart preserves the right-origin lineage edge",
+  );
   return resident;
 }
 
