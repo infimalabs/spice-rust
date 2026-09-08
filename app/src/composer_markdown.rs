@@ -54,11 +54,10 @@ pub(crate) fn render_received_with_tastes(markdown: &str, tastes: u32) -> Render
             if code_block {
                 vec![event]
             } else {
-                let events = if block_quote_depth > 0 && remaining_tastes > 0 {
-                    inline_taste_marker(event, &mut remaining_tastes)
-                } else {
-                    vec![event]
-                };
+                let events = inline_classification_marker(
+                    event,
+                    (block_quote_depth > 0).then_some(&mut remaining_tastes),
+                );
                 events.into_iter().flat_map(inline_task_chips).collect()
             }
         });
@@ -83,25 +82,37 @@ fn coalesce_text_events(events: Vec<MarkdownEvent<'_>>) -> Vec<MarkdownEvent<'_>
     coalesced
 }
 
-fn inline_taste_marker<'a>(
+fn inline_classification_marker<'a>(
     event: MarkdownEvent<'a>,
-    remaining: &mut usize,
+    remaining_tastes: Option<&mut usize>,
 ) -> Vec<MarkdownEvent<'a>> {
     let MarkdownEvent::Text(text) = event else {
         return vec![event];
     };
-    const MARKER: &str = "[TASTE]";
-    let Some(suffix) = text
-        .strip_prefix(MARKER)
-        .filter(|suffix| suffix.starts_with(char::is_whitespace))
-    else {
+    if let Some(suffix) = marker_suffix(&text, "[REVIEW]") {
+        return vec![
+            MarkdownEvent::InlineHtml(review_pill_html().into()),
+            MarkdownEvent::Text(suffix.into()),
+        ];
+    }
+    let Some(remaining) = remaining_tastes.filter(|remaining| **remaining > 0) else {
+        return vec![MarkdownEvent::Text(text)];
+    };
+    let Some(suffix) = marker_suffix(&text, "[TASTE]") else {
         return vec![MarkdownEvent::Text(text)];
     };
     *remaining -= 1;
     vec![
         MarkdownEvent::InlineHtml(taste_pill_html().into()),
-        MarkdownEvent::Text(taste_guidance_suffix(suffix).into()),
+        MarkdownEvent::Text(taste_guidance_suffix(&suffix).into()),
     ]
+}
+
+fn marker_suffix(text: &str, marker: &str) -> Option<String> {
+    let suffix = text
+        .strip_prefix(marker)
+        .filter(|suffix| suffix.starts_with(char::is_whitespace))?;
+    Some(suffix.to_owned())
 }
 
 fn taste_guidance_suffix(suffix: &str) -> String {
@@ -118,6 +129,11 @@ fn taste_guidance_suffix(suffix: &str) -> String {
 fn taste_pill_html() -> &'static str {
     "<span class=\"message-taste-pill\" data-message-classification=\"taste\" \
      aria-label=\"Taste classification\">TASTE</span>"
+}
+
+fn review_pill_html() -> &'static str {
+    "<span class=\"message-review-pill\" data-message-classification=\"review\" \
+     aria-label=\"Review classification\">REVIEW</span>"
 }
 
 fn markdown_is_image_only(events: &[MarkdownEvent<'_>]) -> bool {
@@ -724,9 +740,10 @@ mod tests {
     }
 
     #[test]
-    fn authenticated_quoted_tastes_become_one_inline_pill_each() {
+    fn classification_markers_become_inline_pills() {
         let rendered = render_received_with_tastes(
-            "> [TASTE] compatibility: Keep one tested path.\n\n\
+            "[REVIEW] Peer feedback remains unchanged.\n\n\
+             > [TASTE] compatibility: Keep one tested path.\n\n\
              > [TASTE] polling: Wait for completion.\n\n\
              ACK: ordinary [TASTE] prose stays text.",
             2,
@@ -735,6 +752,13 @@ mod tests {
         assert!(!rendered.html.contains("polling:"));
         assert!(rendered.html.contains("Keep one tested path."));
         assert!(rendered.html.contains("Wait for completion."));
+        assert!(rendered.html.contains("Peer feedback remains unchanged."));
+        assert!(rendered.html.contains("class=\"message-review-pill\""));
+        assert!(
+            rendered
+                .html
+                .contains("aria-label=\"Review classification\">REVIEW</span>")
+        );
 
         assert_eq!(
             rendered
