@@ -18,7 +18,6 @@ pub(super) fn classify(
     event: PresentationEvent,
 ) -> Option<AutomaticSpeech> {
     let final_answer = prose.phase.as_deref() == Some("final_answer");
-    let badges = super::message_badges(&prose.text, directives, event);
     let packets: Vec<(Acknowledgement, bool)> = directives.map_or_else(
         || {
             let standing = EmptyStanding;
@@ -38,7 +37,11 @@ pub(super) fn classify(
                             Outcome::Retired {
                                 key,
                                 disposition: Disposition::Acked,
-                            } if standing.recognizes(key, Disposition::Acked, recognition.locus)
+                            } if standing.recognizes_authored(
+                                key,
+                                Disposition::Acked,
+                                recognition.locus,
+                            )
                         )
                     });
                     (packet, acknowledged)
@@ -52,7 +55,6 @@ pub(super) fn classify(
         return prepared_edges(&body).map(|text| AutomaticSpeech {
             kind: AutomaticSpeechKind::Final,
             text,
-            badges,
         });
     }
 
@@ -65,7 +67,6 @@ pub(super) fn classify(
     (!acknowledged.is_empty()).then_some(AutomaticSpeech {
         kind: AutomaticSpeechKind::Acknowledgement,
         text: acknowledged,
-        badges,
     })
 }
 
@@ -428,12 +429,33 @@ mod tests {
                 PresentationDirective {
                     lane: lane(),
                     text: format!("direction for {key}"),
+                    authored: true,
                     taste: false,
                     disposition: Disposition::Live,
                     retirement: None,
                 },
             )
         })))
+    }
+
+    #[test]
+    fn task_contract_acknowledgment_is_not_speech_evidence() {
+        let key = "dRyzkGX8b";
+        let mut directives = directives(&[key]);
+        directives
+            .0
+            .get_mut(&key.parse().expect("current task-contract key parses"))
+            .expect("fixture directive exists")
+            .authored = false;
+
+        assert_eq!(
+            classify(
+                &prose("ACK dRyzkGX8b: Accepted revision 44.", None),
+                Some(&directives),
+                event(),
+            ),
+            None,
+        );
     }
 
     #[test]

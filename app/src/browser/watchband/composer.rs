@@ -261,10 +261,7 @@ fn agent_message_presentation<'a>(
     let footer_label =
         watchband::agent_message_label(&member.worktree, member.name.as_deref()).to_owned();
     let is_compaction = message.activity == wire::AgentActivityKind::Compaction;
-    let badges = message
-        .automatic_speech
-        .as_ref()
-        .map_or_else(wire::AgentMessageBadges::default, |speech| speech.badges);
+    let badges = message.badges;
     let rendered_markdown =
         crate::composer_markdown::render_received_with_tastes(&message.text, badges.tastes);
     let card_label = match message.activity {
@@ -443,12 +440,7 @@ fn render_agent_message_footer(
         <footer class="message-footer">
             <div class="message-footer-left">
                 <Age authored={display_millis} class="message-age" title={locus} />
-                {render_agent_message_badges(
-                    message
-                        .automatic_speech
-                        .as_ref()
-                        .map_or_else(wire::AgentMessageBadges::default, |speech| speech.badges),
-                )}
+                {render_agent_message_badges(message.badges)}
             </div>
             <div class="message-footer-right">
                 {producer_identity}

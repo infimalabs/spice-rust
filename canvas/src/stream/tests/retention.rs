@@ -69,7 +69,6 @@ fn terminal_revision_replaces_one_retained_message_and_broadcasts_the_change() {
     terminal.automatic_speech = Some(wire::AutomaticSpeech {
         kind: wire::AutomaticSpeechKind::Final,
         text: terminal.text.clone(),
-        badges: Default::default(),
     });
     assert!(
         publisher

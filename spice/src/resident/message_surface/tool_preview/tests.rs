@@ -227,6 +227,7 @@ mod presentation {
                         PresentationDirective {
                             lane: lane(),
                             text: (*text).to_owned(),
+                            authored: true,
                             taste: false,
                             disposition: wire::Disposition::Live,
                             retirement: None,
@@ -430,20 +431,109 @@ mod presentation {
     }
 
     #[test]
-    fn task_contract_acknowledgment_remains_system_status_without_a_directive_quote() {
+    fn task_contract_acknowledgment_hides_framing_and_earns_no_authored_context() {
         assert!(!presents_as_authored_steering(Some(
             "task-contract-edit:1kKRRsDP:44:33"
         )));
-        let text = "ACK 1kQwPZtK: Accepted revision 44.";
+        let key = "dRyzkGX8b"
+            .parse::<steer::Key>()
+            .expect("current task-contract key parses");
+        let directives = PresentationDirectives(BTreeMap::from([(
+            key,
+            PresentationDirective {
+                lane: lane(),
+                text: "Accepted task contract revision.".to_owned(),
+                authored: false,
+                taste: false,
+                disposition: wire::Disposition::Acked,
+                retirement: Some(wire::body::TranscriptLocus {
+                    source: None,
+                    member: 1,
+                    offset: 0,
+                    length: 1,
+                    event: 0,
+                    line: 1,
+                    column: 5,
+                }),
+            },
+        )]));
+        let text = "ACK dRyzkGX8b: Accepted revision 44.";
         assert_eq!(
-            present_steering_acknowledgements_with_directives(
-                text,
-                &PresentationDirectives::default(),
-                event(),
-            )
-            .expect("system acknowledgment stays visible"),
-            text,
+            present_steering_acknowledgements_with_directives(text, &directives, event())
+                .expect("system acknowledgment presents"),
+            "Accepted revision 44.",
         );
+        assert_eq!(
+            message_badges(text, Some(&directives), event()),
+            wire::AgentMessageBadges {
+                acknowledgements: 1,
+                tastes: 0,
+            },
+        );
+    }
+
+    #[test]
+    fn task_contract_badge_reaches_canvas_without_speech_eligibility() {
+        let key = "dRyzkGX8b"
+            .parse::<steer::Key>()
+            .expect("current task-contract key parses");
+        let directives = PresentationDirectives(BTreeMap::from([(
+            key,
+            PresentationDirective {
+                lane: lane(),
+                text: "Accepted task contract revision.".to_owned(),
+                authored: false,
+                taste: false,
+                disposition: wire::Disposition::Acked,
+                retirement: Some(wire::body::TranscriptLocus {
+                    source: None,
+                    member: 1,
+                    offset: 0,
+                    length: 1,
+                    event: 0,
+                    line: 1,
+                    column: 5,
+                }),
+            },
+        )]));
+        let prose = listen::Event::Prose(listen::Prose {
+            role: listen::ProseRole::Assistant,
+            text: "ACK dRyzkGX8b: Accepted revision 44.".to_owned(),
+            phase: None,
+            media: Vec::new(),
+            locus: event().locus,
+        });
+        let publisher = Messages::default();
+
+        publish_agent_event(
+            &publisher,
+            AgentEvent {
+                lane: lane(),
+                author: lane(),
+                source: None,
+                ordinal: 0,
+                decoded: &prose,
+                authored: None,
+                observed: None,
+                observations: &MessageObservations::default(),
+                unavailable_tool_terminals: &[],
+            },
+            &mut CallPreviews::default(),
+            Some(&directives),
+        )
+        .expect("system acknowledgment publishes");
+
+        let messages = publisher.0.lock().expect("message lock");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].text, "Accepted revision 44.");
+        assert_eq!(
+            messages[0].badges,
+            wire::AgentMessageBadges {
+                acknowledgements: 1,
+                tastes: 0,
+            },
+        );
+        assert!(messages[0].automatic_speech.is_none());
     }
 
     #[test]
@@ -484,6 +574,7 @@ mod presentation {
             PresentationDirective {
                 lane: lane(),
                 text: "Keep the original response context.".to_owned(),
+                authored: true,
                 taste: false,
                 disposition: wire::Disposition::Acked,
                 retirement: Some(retirement),
@@ -528,6 +619,7 @@ mod presentation {
                 PresentationDirective {
                     lane: lane(),
                     text: "Continue".to_owned(),
+                    authored: true,
                     taste: false,
                     disposition: wire::Disposition::Acked,
                     retirement: Some(retirement(8, 5)),
@@ -538,6 +630,7 @@ mod presentation {
                 PresentationDirective {
                     lane: lane(),
                     text: "[TASTE] fallbacks: Keep one deterministic path.".to_owned(),
+                    authored: true,
                     taste: true,
                     disposition: wire::Disposition::Acked,
                     retirement: Some(retirement(0, 14)),
@@ -568,6 +661,120 @@ mod presentation {
     }
 
     #[test]
+    fn current_task_contract_and_taste_ack_hide_one_shared_protocol_header() {
+        let system = "dRyzkGX8b"
+            .parse::<steer::Key>()
+            .expect("current task-contract key parses");
+        let taste = "dRyzkQp1P"
+            .parse::<steer::Key>()
+            .expect("current taste key parses");
+        let retirement = |column| wire::body::TranscriptLocus {
+            source: None,
+            member: 1,
+            offset: 0,
+            length: 1,
+            event: 0,
+            line: 1,
+            column,
+        };
+        let directives = PresentationDirectives(BTreeMap::from([
+            (
+                system,
+                PresentationDirective {
+                    lane: lane(),
+                    text: "Accepted task contract revision.".to_owned(),
+                    authored: false,
+                    taste: false,
+                    disposition: wire::Disposition::Acked,
+                    retirement: Some(retirement(5)),
+                },
+            ),
+            (
+                taste,
+                PresentationDirective {
+                    lane: lane(),
+                    text: "[TASTE] compatibility: Keep one tested path.".to_owned(),
+                    authored: true,
+                    taste: true,
+                    disposition: wire::Disposition::Acked,
+                    retirement: Some(retirement(15)),
+                },
+            ),
+        ]));
+        let text = "ACK dRyzkGX8b dRyzkQp1P: The current path is applied.";
+
+        assert_eq!(
+            message_badges(text, Some(&directives), event()),
+            wire::AgentMessageBadges {
+                acknowledgements: 1,
+                tastes: 1,
+            },
+        );
+        assert_eq!(
+            present_steering_acknowledgements_with_directives(text, &directives, event())
+                .expect("mixed system and taste acknowledgment presents"),
+            "> [TASTE] compatibility: Keep one tested path.\n\nThe current path is applied.",
+        );
+    }
+
+    #[test]
+    fn inline_current_control_and_retained_direction_share_classification() {
+        let system = "dRyzkGX8b"
+            .parse::<steer::Key>()
+            .expect("current task-contract key parses");
+        let retained = "1kQwPZtK"
+            .parse::<steer::Key>()
+            .expect("retained direction key parses");
+        let retirement = |column| wire::body::TranscriptLocus {
+            source: None,
+            member: 1,
+            offset: 0,
+            length: 1,
+            event: 0,
+            line: 1,
+            column,
+        };
+        let directives = PresentationDirectives(BTreeMap::from([
+            (
+                system,
+                PresentationDirective {
+                    lane: lane(),
+                    text: "Accepted task contract revision.".to_owned(),
+                    authored: false,
+                    taste: false,
+                    disposition: wire::Disposition::Acked,
+                    retirement: Some(retirement(13)),
+                },
+            ),
+            (
+                retained,
+                PresentationDirective {
+                    lane: lane(),
+                    text: "Keep retained direction readable.".to_owned(),
+                    authored: true,
+                    taste: false,
+                    disposition: wire::Disposition::Acked,
+                    retirement: Some(retirement(23)),
+                },
+            ),
+        ]));
+        let text = "Before. ACK dRyzkGX8b 1kQwPZtK: applied. After.";
+
+        assert_eq!(
+            present_steering_acknowledgements_with_directives(text, &directives, event())
+                .expect("inline mixed-width acknowledgment presents"),
+            "Before.\n> Keep retained direction readable.\n\nApplied. After.",
+        );
+        assert_eq!(
+            message_badges(text, Some(&directives), event()),
+            wire::AgentMessageBadges {
+                acknowledgements: 2,
+                tastes: 0,
+            },
+        );
+    }
+
+    #[test]
     fn source_aware_retirement_requires_the_original_tape_generation() {
         let expected_source = "00000000-0000-4000-8000-000000000002"
             .parse()
@@ -580,6 +787,7 @@ mod presentation {
             PresentationDirective {
                 lane: lane(),
                 text: "Keep the original response context.".to_owned(),
+                authored: true,
                 taste: false,
                 disposition: wire::Disposition::Acked,
                 retirement: Some(wire::body::TranscriptLocus {

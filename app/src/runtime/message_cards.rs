@@ -35,6 +35,7 @@ struct MessageCardFingerprint<'a> {
     observed: Option<&'a wire::Instant>,
     text: &'a str,
     final_answer: bool,
+    badges: wire::AgentMessageBadges,
     automatic_speech: Option<&'a wire::AutomaticSpeech>,
     unavailable_tool_terminals: &'a [String],
     media: &'a [wire::Media],
@@ -58,6 +59,7 @@ fn fingerprint(message: &AgentMessage) -> Option<MessageCardFingerprint<'_>> {
         observed: message.observed.as_ref(),
         text: &message.text,
         final_answer: message.final_answer,
+        badges: message.badges,
         automatic_speech: message.automatic_speech.as_ref(),
         unavailable_tool_terminals: &message.unavailable_tool_terminals,
         media: &message.media,
@@ -229,6 +231,7 @@ mod tests {
             activity,
             final_answer: false,
             text: offset.to_string(),
+            badges: Default::default(),
             automatic_speech: None,
             unavailable_tool_terminals: Vec::new(),
             media: Vec::new(),
@@ -255,7 +258,6 @@ mod tests {
         terminal.automatic_speech = Some(wire::AutomaticSpeech {
             kind: wire::AutomaticSpeechKind::Final,
             text: terminal.text.clone(),
-            badges: Default::default(),
         });
         assert!(cards.merge(std::iter::once(&terminal)));
         assert_eq!(cards.entries().len(), 1);
@@ -273,17 +275,14 @@ mod tests {
         cards.snapshot(10, std::slice::from_ref(&ordinary));
 
         let mut badged = ordinary;
-        badged.automatic_speech = Some(wire::AutomaticSpeech {
-            kind: wire::AutomaticSpeechKind::Acknowledgement,
-            text: "applied".to_owned(),
-            badges: wire::AgentMessageBadges {
-                acknowledgements: 1,
-                tastes: 0,
-            },
-        });
+        badged.badges = wire::AgentMessageBadges {
+            acknowledgements: 1,
+            tastes: 0,
+        };
         assert!(cards.merge(std::iter::once(&badged)));
         assert_eq!(cards.entries().len(), 1);
-        assert_eq!(cards.entries()[0].automatic_speech, badged.automatic_speech);
+        assert_eq!(cards.entries()[0].badges, badged.badges);
+        assert!(cards.entries()[0].automatic_speech.is_none());
     }
 
     #[test]

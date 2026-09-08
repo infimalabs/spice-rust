@@ -28,6 +28,7 @@ fn prose_message() -> AgentMessage {
         activity: AgentActivityKind::Prose,
         final_answer: false,
         text: "settled".to_owned(),
+        badges: Default::default(),
         automatic_speech: None,
         unavailable_tool_terminals: Vec::new(),
         media: Vec::new(),
@@ -301,13 +302,13 @@ fn automatic_speech_is_typed_and_has_one_absence_spelling() {
     );
 
     let spoken = AgentMessage {
+        badges: AgentMessageBadges {
+            acknowledgements: 2,
+            tastes: 1,
+        },
         automatic_speech: Some(AutomaticSpeech {
             kind: AutomaticSpeechKind::Final,
             text: "selected final".to_owned(),
-            badges: AgentMessageBadges {
-                acknowledgements: 2,
-                tastes: 1,
-            },
         }),
         ..prose
     };

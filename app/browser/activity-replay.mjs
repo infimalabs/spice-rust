@@ -139,6 +139,7 @@ export async function installActivityReplay(
     {
       activity = undefined,
       automaticSpeech = undefined,
+      badges = undefined,
       media = undefined,
       history = false,
     } = {},
@@ -152,6 +153,8 @@ export async function installActivityReplay(
     else frame.message.activity = activity;
     if (automaticSpeech === undefined) delete frame.message.automatic_speech;
     else frame.message.automatic_speech = automaticSpeech;
+    if (badges === undefined) delete frame.message.badges;
+    else frame.message.badges = badges;
     delete frame.message.final_answer;
     if (media === undefined) delete frame.message.media;
     else frame.message.media = media;
@@ -244,9 +247,7 @@ export async function installActivityReplay(
       return injectAgentMessage(page, lane, text, { media });
     },
     injectClassifiedAgentProse(page, lane, text, badges) {
-      return injectAgentMessage(page, lane, text, {
-        automaticSpeech: { kind: "acknowledgement", text, badges },
-      });
+      return injectAgentMessage(page, lane, text, { badges });
     },
     injectAgentToolMedia(page, lane, media, text = "") {
       return injectAgentMessage(page, lane, text, { activity: "tool", media });
