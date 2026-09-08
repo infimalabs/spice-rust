@@ -1,7 +1,6 @@
 use super::*;
 
 mod guard;
-pub(super) use guard::dependency_claim_authority;
 use guard::{refuse_active_claim_conflict, witnesses_hold};
 mod capture;
 pub(super) use capture::guard_capture;

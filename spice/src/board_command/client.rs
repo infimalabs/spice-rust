@@ -591,27 +591,6 @@ fn client_depends(
             workflow_witness(heads),
             claim_witness(heads),
         ];
-        if let Some(claim) = heads
-            .claim
-            .as_ref()
-            .filter(|claim| claim.body.disposition == ClaimDisposition::Active)
-        {
-            if claim.body.actor != board.principal {
-                return Err(refusal(
-                    "claim::ownership-refused",
-                    Some(claim.body.actor.to_string()),
-                    "append dependencies through the lane capability that owns the active claim",
-                ));
-            }
-            let (lane, occupant) = actor_seat(board)?;
-            expected = progress_witnesses(
-                board,
-                heads,
-                lane,
-                occupant,
-                heads.workflow.body.phase.as_str() == "review",
-            )?;
-        }
         let mut new_edges = Vec::new();
         for dependency in &after {
             let dependency_heads = task_heads(board, dependency)?;

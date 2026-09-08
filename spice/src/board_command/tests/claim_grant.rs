@@ -168,13 +168,13 @@ fn intermediate_dependency_movement_refuses_before_closing_a_cycle() {
 }
 
 #[test]
-fn fresh_absent_lane_authority_refuses_without_an_edge() {
+fn a_lane_without_a_claim_can_edit_dependencies() {
     let (root, bus, epoch, seats) = fixture("dependency-absent-lane", 1);
     let lane = Actor::Lane(seats[0].lane);
     let task = todo_task(&bus, epoch, "AUTH-fresh001", "Target");
     let after = todo_task(&bus, epoch, "AUTH-fresh002", "After");
     let fresh = board(&bus, epoch, lane.clone());
-    let outcome = issue(
+    assert_committed(issue(
         &bus,
         epoch,
         lane,
@@ -182,19 +182,13 @@ fn fresh_absent_lane_authority_refuses_without_an_edge() {
         dependency_witnesses(&fresh, &task, &[&after], None, false),
         &TaskDepends {
             task: task.clone(),
-            after: vec![after],
+            after: vec![after.clone()],
         },
-    );
-    assert!(
-        matches!(outcome, Outcome::Refusal(ref refusal) if refusal.reason() == "claim::ownership-refused"),
-        "fresh absent lane authority must refuse: {outcome:?}",
-    );
-    assert!(
-        at(&board(&bus, epoch, Actor::Operator), &task)
-            .statement
-            .body
-            .dependencies
-            .is_empty()
+    ));
+    let edited = board(&bus, epoch, Actor::Operator);
+    assert_eq!(
+        at(&edited, &task).statement.body.dependencies,
+        [at(&edited, &after).statement.body.born.clone()],
     );
     clean(&root, bus);
 }
