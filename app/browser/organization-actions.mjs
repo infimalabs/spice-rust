@@ -22,6 +22,46 @@ async function closeSpiceMenu(page) {
   }
 }
 
+async function assertSquareActionLayout(actionMenu, label, expectedFirstRow) {
+  const geometry = await actionMenu.evaluate((node) => {
+    const bounds = (element) => {
+      const box = element.getBoundingClientRect();
+      return {
+        bottom: box.bottom,
+        height: box.height,
+        left: box.left,
+        right: box.right,
+        top: box.top,
+        width: box.width,
+      };
+    };
+    return {
+      menu: {
+        ...bounds(node),
+        clientWidth: node.clientWidth,
+        scrollWidth: node.scrollWidth,
+      },
+      items: [...node.querySelectorAll(":scope > .organization-action")].map(bounds),
+    };
+  });
+  const rows = [];
+  for (const item of geometry.items) {
+    const row = rows.find((candidate) => Math.abs(candidate[0].top - item.top) <= 1);
+    if (row) row.push(item);
+    else rows.push([item]);
+  }
+  assert.equal(geometry.menu.scrollWidth <= geometry.menu.clientWidth + 1, true, `${label} stays contained`);
+  assert.equal(rows[0]?.length, expectedFirstRow, `${label} fills available square slots before wrapping`);
+  assert.ok(geometry.items.every((item, index, items) => (
+    item.width >= 136
+      && Math.abs(item.width - item.height) <= 1
+      && item.left >= geometry.menu.left - 1
+      && item.right <= geometry.menu.right + 1
+      && (index === 0 || item.left >= items[index - 1].right - 1
+        || item.top >= items[index - 1].bottom - 1)
+  )), `${label} keeps square, source-ordered controls without overlap: ${JSON.stringify(geometry)}`);
+}
+
 /** Prove each whole-organization hamburger owns one isolated, reversible action menu. */
 export async function assertOrgActions(page, primary, secondary, primaryLineage) {
   const primaryToggle = primary.getByRole("button", { name: /^Organization actions for / });
@@ -64,6 +104,15 @@ export async function assertOrgActions(page, primary, secondary, primaryLineage)
     await secondaryMenu.getByRole("menuitem", { name: /Split into individuals/ }).isDisabled(),
     true,
     "an individual organization cannot be split",
+  );
+  await assertSquareActionLayout(primaryMenu, "the roomy organization menu", 4);
+  await assertSquareActionLayout(secondaryMenu, "the floor-width organization menu", 2);
+  const primaryImport = primaryMenu.getByRole("menuitem", { name: /Import agent/ });
+  await primaryImport.focus();
+  assert.equal(
+    await primaryImport.evaluate((node) => node === document.activeElement),
+    true,
+    "a square organization action remains keyboard focusable",
   );
 
   await primaryMenu.getByRole("menuitem", { name: /Close organization/ }).click();
