@@ -290,7 +290,7 @@ export async function assertCursorRelocation(page, artifacts, engine) {
       await assertGlobalNavigation(page, `${label} open Spice menu`);
       assert.deepEqual(
         await navigation.locator(".pill-label").allTextContents(),
-        ["Team", "Tasks", "Threads"],
+        ["Team", "Board", "Agents"],
         `${label} exposes one ordered navigation rail`,
       );
       assert.deepEqual(
@@ -877,7 +877,7 @@ async function assertPepperDisclosure(page) {
     await waitForDisclosure(page, true, "the pepper disclosure exposes Canvas destinations");
     const destinations = navigation.getByRole("button");
     await destinations.first().focus();
-    for (const [index, label] of ["Team", "Tasks", "Threads"].entries()) {
+    for (const [index, label] of ["Team", "Board", "Agents"].entries()) {
       assert.match(
         (await page.locator(":focus").innerText()).trim(),
         new RegExp(`^${label}`),
@@ -943,7 +943,7 @@ async function assertPepperDisclosure(page) {
 
   await trigger.click();
   await waitForDisclosure(page, true, "the pepper disclosure reopens for Escape dismissal");
-  await navigation.getByRole("button", { name: /^Tasks/ }).focus();
+  await navigation.getByRole("button", { name: /^Board/ }).focus();
   await page.keyboard.press("Escape");
   await waitForDisclosure(page, false, "Escape dismisses the pepper disclosure");
   assert.ok(
@@ -953,24 +953,24 @@ async function assertPepperDisclosure(page) {
 
   await trigger.click();
   await waitForDisclosure(page, true, "the pepper disclosure reopens for destination selection");
-  await navigation.getByRole("button", { name: /^Tasks/ }).click();
-  await page.getByRole("heading", { name: "Tasks", exact: true }).waitFor({ timeout: TRANSITION_MS });
+  await navigation.getByRole("button", { name: /^Board/ }).click();
+  await page.getByRole("heading", { name: "Board", exact: true }).waitFor({ timeout: TRANSITION_MS });
   await waitForDisclosure(page, false, "a Canvas destination closes the pepper disclosure");
-  await assertUniversalShelfOuterEdge(page, "narrow Tasks destination");
+  await assertUniversalShelfOuterEdge(page, "narrow Board destination");
   const panel = await openSpiceMenu(page);
   assert.equal(
     await panel.locator(".canvas-menu-page").getAttribute("data-menu-page"),
     "flow",
     "the reopened pepper panel belongs to the selected destination",
   );
-  await panel.getByRole("heading", { name: "Tasks", exact: true }).waitFor();
+  await panel.getByRole("heading", { name: "Board", exact: true }).waitFor();
   await chooseCanvasView(page, "Lanes");
   await waitForDisclosure(page, false, "the disclosure check restores the Lanes workspace");
 }
 
 async function assertAxisMenu(page, view, copy) {
   const visibleView = {
-    Flow: "Tasks",
+    Flow: "Board",
     Topology: "Team",
   }[view] ?? view;
   await chooseCanvasView(page, view);
@@ -1027,9 +1027,9 @@ export async function assertOrgMenu(page, fixture, artifacts) {
   await openSpiceMenu(page);
   assert.equal(
     await page.getByRole("navigation", { name: "Canvas views" })
-      .getByRole("button", { name: /^Threads/ }).count(),
+      .getByRole("button", { name: /^Agents/ }).count(),
     1,
-    "the analytics pages keep the same route back to live Threads",
+    "the analytics pages keep the same route back to live Agents",
   );
   await assertAxisMenu(page, "Topology", /resident organizations, seats, capabilities/i);
   await chooseCanvasView(page, "Lanes");

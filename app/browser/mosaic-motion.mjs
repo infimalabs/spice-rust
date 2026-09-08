@@ -59,7 +59,7 @@ async function readMotion(browser, endpoint, reducedMotion, artifacts, worktree)
     await page.goto(endpoint, { waitUntil: "networkidle" });
     await chooseCanvasView(page, "Lanes");
     const consolePane = page.locator('[data-pane="agent-console"]');
-    await consolePane.getByRole("tab", { name: /^Threads/ }).click();
+    await consolePane.getByRole("tab", { name: /^Agents/ }).click();
     const lane = await consolePane.locator(".organization-agent").first().getAttribute("data-agent-lane");
     assert.ok(lane, "the motion probe found a seated lane to steer");
     const sourceProse = activityReplay.nextAgentProse(lane);

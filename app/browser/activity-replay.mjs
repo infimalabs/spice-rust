@@ -388,7 +388,7 @@ export async function installActivityReplay(
     },
     async assertBootstrapLiveMessages(console) {
       assert.equal(withheldBootstrap, true, "the route withheld the initial message snapshot");
-      await console.getByRole("tab", { name: /^Threads/ }).click();
+      await console.getByRole("tab", { name: /^Agents/ }).click();
       const cards = console.locator('[data-card-kind="agent-message"]');
       try {
         await cards.nth(3).waitFor({ timeout: 10_000 });

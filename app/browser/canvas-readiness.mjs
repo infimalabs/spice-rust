@@ -23,7 +23,7 @@ const agentGeometryOwners = Object.freeze({
   plane: ":scope > .lane-mosaic-plane",
 });
 const axisPanes = new Map([
-  ["Tasks", ["Tasks", "Claims", "Deferrals", "Reviews"]],
+  ["Board", ["Tasks", "Claims", "Deferrals", "Reviews"]],
   ["Team", ["Agents", "Worktrees", "Lineage", "Occupancy", "Residents"]],
 ]);
 
@@ -425,9 +425,9 @@ export async function assertCanvas(page, scheme) {
   assert.equal(await page.locator(".canvas-navigation").count(), 0, "navigation stays collapsed");
   await page.getByLabel("Open Spice Canvas menu").click();
   assert.equal(
-    await page.locator(".canvas-navigation button.axis-button", { hasText: /^Threads/ }).count(),
+    await page.locator(".canvas-navigation button.axis-button", { hasText: /^Agents/ }).count(),
     1,
-    "one disclosed Threads entry reaches the one conversation surface",
+    "one disclosed Agents entry reaches the one conversation surface",
   );
   assert.equal(
     await page.getByText("Lanes", { exact: true }).count(),
