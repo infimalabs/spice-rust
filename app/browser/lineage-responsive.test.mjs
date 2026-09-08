@@ -586,8 +586,8 @@ async function assertQuotedImageDensity(page, engine, document) {
           && Math.abs(preview.image.height - preview.height) <= 1
           && preview.left >= card.gallery.left - 1
           && preview.right <= card.gallery.right + 1
-          && (index === 0 || preview.top > card.previews[index - 1].top
-            || preview.left > card.previews[index - 1].left)
+          && (index === 0 || preview.left >= card.previews[index - 1].right - 1
+            || preview.top >= card.previews[index - 1].top + card.previews[index - 1].height - 1)
       )), `${label} stays square, contained, and source-ordered: ${JSON.stringify(card)}`);
       if (card.count === 1) {
         assert.ok(Math.abs(card.previews[0].width - 140) <= 1, `${label} keeps one full-size preview`);
