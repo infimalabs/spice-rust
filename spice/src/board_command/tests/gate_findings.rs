@@ -112,6 +112,90 @@ fn gate_findings_file_exact_deferred_tasks() {
 }
 
 #[test]
+fn gate_finding_planning_rewinds_ordered_collisions_and_refuses_underflow() {
+    let (root, bus, epoch, _) = fixture("gate-finding-stamp-plan", 1);
+    let occupied_name = "gate-finding-observation";
+    let observation_micros = occupied_name.bytes().fold(0_i64, |value, byte| {
+        (value * 131 + i64::from(byte)) % 10_000_000_000_000
+    });
+    add_project(
+        &bus,
+        epoch,
+        Actor::Operator,
+        occupied_name,
+        "Occupy the observed task stamp",
+        "board.test",
+        Some("todo,review"),
+    );
+    let projects = gate_projects();
+    let allocation = board::NextConfig::default();
+    let snapshot = validated_snapshot(&bus, Actor::Operator, &projects, &allocation)
+        .expect("gate finding planning snapshot validates");
+    let dispatch = focused_dispatch(&root, "stamp-plan", &["first", "second"]);
+    let planned = plan_gate_finding_creations(
+        &bus,
+        &dispatch.findings,
+        &snapshot,
+        observation_micros,
+        gate::GateId::FileShape,
+        &dispatch.repository,
+        &dispatch.body.source,
+        &dispatch.body.report,
+        &Actor::Operator,
+    )
+    .expect("occupied observation stamp rewinds");
+    assert_eq!(
+        planned,
+        dispatch
+            .findings
+            .iter()
+            .zip([-2_i64, -1])
+            .map(|(finding, offset)| {
+                (
+                    finding.identity.clone(),
+                    wire::TaskStamp::for_micros(observation_micros + offset)
+                        .expect("rewound stamp remains representable"),
+                )
+            })
+            .collect::<Vec<_>>(),
+    );
+    clean(&root, bus);
+
+    let (root, bus, epoch, _) = fixture("gate-finding-stamp-underflow", 1);
+    add_project(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "",
+        "Occupy zero",
+        "board.test",
+        Some("todo,review"),
+    );
+    let projects = gate_projects();
+    let allocation = board::NextConfig::default();
+    let snapshot = validated_snapshot(&bus, Actor::Operator, &projects, &allocation)
+        .expect("underflow planning snapshot validates");
+    let dispatch = focused_dispatch(&root, "stamp-underflow", &["underflow"]);
+    let error = plan_gate_finding_creations(
+        &bus,
+        &dispatch.findings,
+        &snapshot,
+        0,
+        gate::GateId::FileShape,
+        &dispatch.repository,
+        &dispatch.body.source,
+        &dispatch.body.report,
+        &Actor::Operator,
+    )
+    .expect_err("occupied zero cannot rewind");
+    let Outcome::Fault(fault) = error else {
+        panic!("gate-finding stamp underflow must be an environment fault");
+    };
+    assert_eq!(fault.reason, "task::stamp-clock-invalid");
+    clean(&root, bus);
+}
+
+#[test]
 fn gate_findings_refresh_one_open_task_by_identity() {
     // GOV-46 and GOV-47 / CASES 251 and 252.
     let (root, bus, epoch, _) = fixture("gate-findings-reuse", 1);

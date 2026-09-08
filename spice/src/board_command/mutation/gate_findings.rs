@@ -671,6 +671,40 @@ fn plan_gate_findings(
     Ok(planned)
 }
 
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(in crate::board_command) fn plan_gate_finding_creations(
+    bus: &Bus,
+    findings: &[FindingRow],
+    snapshot: &ValidatedSnapshot,
+    birth_micros: i64,
+    instrument: gate::GateId,
+    repository: &Repository,
+    source: &wire::intent::GateFindingSource,
+    report: &Digest,
+    actor: &Actor,
+) -> Result<Vec<(Digest, wire::TaskStamp)>, Outcome<CommandAnswer>> {
+    Ok(plan_gate_findings(
+        bus,
+        findings,
+        snapshot,
+        current_instant()?,
+        birth_micros,
+        instrument,
+        repository,
+        source,
+        report,
+        actor,
+        &require_in_process_source_relation,
+    )?
+    .into_iter()
+    .filter_map(|plan| match plan.action {
+        GateFindingAction::Created { task, .. } => Some((plan.identity, task)),
+        _ => None,
+    })
+    .collect())
+}
+
 fn matching_gate_finding_tasks<'a>(snapshot: &'a ValidatedSnapshot, tag: &str) -> Vec<&'a Entry> {
     snapshot
         .entries
