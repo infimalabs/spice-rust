@@ -452,9 +452,93 @@ function assertRatio(layout, expected, label) {
   assert.equal(layout.overflowX <= 1, true, `${label} does not overflow the fleet`);
 }
 
+async function imageDensityDocument() {
+  const [style, mosaic] = await Promise.all([
+    readFile(resolve(root, "app/style.css"), "utf8"),
+    readFile(resolve(root, "app/mosaic.css"), "utf8"),
+  ]);
+  const card = (count) => `<article
+    class="mosaic-message-card"
+    data-image-count="${count}"
+  ><div class="message-body markdown-body"><p>Context before the gallery.</p>${
+    Array.from({ length: count }, (_, index) => (
+      `<p class="message-image-stack"><a class="message-image message-image--openable" `
+        + `aria-label="Open image ${index + 1} full size"><img alt="image-${index + 1}"></a></p>`
+    )).join("")
+  }</div></article>`;
+  return `<!doctype html><style>${style}\n${mosaic}
+    body { margin: 0; }
+    .image-density-fixture { width: var(--fixture-width); min-width: 0; max-width: none; }
+  </style><main class="organization-surface image-density-fixture">
+    ${[1, 2, 3, 4, 5].map(card).join("")}
+  </main>`;
+}
+
+async function assertTopLevelImageDensity(page, engine, document) {
+  await page.setContent(document);
+  for (const [width, expectedColumns] of [[320, 2], [460, 3], [610, 4]]) {
+    await page.setViewportSize({ width: width + 20, height: 1200 });
+    await page.locator(".image-density-fixture").evaluate((fixture, value) => {
+      fixture.style.setProperty("--fixture-width", `${value}px`);
+    }, width);
+    const cards = await page.locator("[data-image-count]").evaluateAll((elements) => (
+      elements.map((card) => {
+        const bounds = (node) => {
+          const box = node.getBoundingClientRect();
+          return { left: box.left, right: box.right, top: box.top, width: box.width, height: box.height };
+        };
+        const gallery = card.querySelector(".message-body");
+        return {
+          card: { ...bounds(card), client: card.clientWidth, scroll: card.scrollWidth },
+          gallery: { ...bounds(gallery), client: gallery.clientWidth, scroll: gallery.scrollWidth },
+          previews: [...gallery.querySelectorAll(":scope > p.message-image-stack > .message-image")]
+            .map((preview) => ({
+              ...bounds(preview),
+              image: bounds(preview.querySelector("img")),
+              label: preview.getAttribute("aria-label"),
+            })),
+        };
+      })
+    ));
+    const label = `${engine} ${width}px top-level images`;
+    for (const card of cards) {
+      assert.ok(card.card.scroll <= card.card.client + 1, `${label} card does not overflow`);
+      assert.ok(card.gallery.scroll <= card.gallery.client + 1, `${label} gallery does not overflow`);
+      assert.deepEqual(
+        card.previews.map(({ label: accessible }) => accessible),
+        Array.from({ length: card.previews.length }, (_, index) => `Open image ${index + 1} full size`),
+      );
+      assert.ok(card.previews.every((preview) => (
+        Math.abs(preview.width - 140) <= 1
+          && Math.abs(preview.width - preview.height) <= 1
+          && Math.abs(preview.image.width - preview.width) <= 1
+          && Math.abs(preview.image.height - preview.height) <= 1
+          && preview.left >= card.gallery.left - 1
+          && preview.right <= card.gallery.right + 1
+      )), `${label} previews remain square and contained: ${JSON.stringify(card)}`);
+      const rows = [];
+      for (const preview of card.previews) {
+        const row = rows.find((candidate) => Math.abs(candidate[0].top - preview.top) <= 1);
+        if (row) row.push(preview);
+        else rows.push([preview]);
+      }
+      assert.equal(
+        rows[0].length,
+        Math.min(card.previews.length, expectedColumns),
+        `${label} fills every available first-row slot before wrapping: ${JSON.stringify(card)}`,
+      );
+      assert.ok(rows.every((row) => row.length <= expectedColumns));
+      assert.ok(rows.every((row) => row.every((preview, index) => (
+        index === 0 || row[index - 1].left < preview.left
+      ))), `${label} retains source order within each row`);
+    }
+  }
+}
+
 test("lineage minima govern weighted fleet layout in Chromium and Firefox", async (t) => {
   const taskContract = await productionTaskContract();
   const document = await responsiveDocument(taskContract);
+  const imageDocument = await imageDensityDocument();
   for (const engine of ["chromium", "firefox"]) {
     await t.test(engine, async () => {
       const browser = await launchBrowser(engine);
@@ -534,6 +618,7 @@ test("lineage minima govern weighted fleet layout in Chromium and Firefox", asyn
         await page.setViewportSize({ width: 700, height: 700 });
         await setWidth(page, 600);
         await expectRightEdge(page, `${engine} narrow track after removal and resize`);
+        await assertTopLevelImageDensity(page, engine, imageDocument);
       } finally {
         await context.close();
         await browser.close();
