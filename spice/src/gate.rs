@@ -51,16 +51,16 @@ pub use finding_source::{
     validate_gate_finding_source,
 };
 
-/// Resolve the tree object represented by the exact staged-index authority.
+/// Resolve the tree identity represented by the exact staged-index authority.
 ///
 /// The ambient `GIT_INDEX_FILE`, including its absence, is captured before Git
-/// is launched. This keeps pre-commit alternate indexes authoritative while
-/// `-C` preserves the selected ordinary or linked worktree.
+/// source acquisition. Relative alternate indexes are anchored at the selected
+/// ordinary or linked worktree, matching Git's `-C` interpretation.
 ///
 /// # Errors
 ///
-/// Returns a typed gate-rim failure when Git cannot write the staged tree or
-/// emits anything other than one canonical SHA-1 or SHA-256 object identity.
+/// Returns a typed gate-rim failure when the index cannot be sealed, parsed, or
+/// represented as one canonical SHA-1 or SHA-256 tree identity.
 #[expect(
     clippy::disallowed_methods,
     reason = "the canonical gate command rim owns staged-index authority acquisition"
