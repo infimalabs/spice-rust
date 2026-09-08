@@ -46,7 +46,6 @@ pub(super) fn has_state(root: &Path) -> Result<bool, Error> {
 
 pub(super) fn complete(
     root: &Path,
-    target: &Target,
     meta: Metadata<'_>,
     active: &board::Active<'_>,
     parents: Parents<'_>,
@@ -58,9 +57,9 @@ pub(super) fn complete(
         preflight,
     } = parents;
     require_claim(meta, active)?;
-    let seal = preflight.complete(root, target, agent, upstream, message)?;
+    let seal = preflight.complete(root, agent, upstream, message)?;
     require_tree_within_footprint(root, meta.label, upstream, &seal.tree, agent)?;
-    seal.verify(root, target)?;
+    seal.verify(root)?;
     let created =
         create_merge_commit(root, &seal.tree, &seal.upstream, &seal.agent, &seal.message)?;
     if !created.success() || created.stdout.trim().is_empty() {
@@ -70,7 +69,7 @@ pub(super) fn complete(
         ));
     }
     let commit = created.stdout.trim().to_owned();
-    seal.verify(root, target)?;
+    seal.verify(root)?;
     materialize_resolution(root, &commit, &seal.agent, &seal.tree, meta.label)?;
     Ok(commit)
 }
@@ -112,12 +111,11 @@ impl Preflight {
     fn complete(
         self,
         root: &Path,
-        target: &Target,
         agent: &str,
         upstream: &str,
         message: &str,
     ) -> Result<Seal, Error> {
-        let seal = Seal::capture(root, target, agent, upstream, message)?;
+        let seal = Seal::capture(root, agent, upstream, message)?;
         self.require_unchanged(seal)
     }
 
@@ -135,13 +133,7 @@ impl Preflight {
 }
 
 impl Seal {
-    fn capture(
-        root: &Path,
-        target: &Target,
-        agent: &str,
-        upstream: &str,
-        message: &str,
-    ) -> Result<Self, Error> {
+    fn capture(root: &Path, agent: &str, upstream: &str, message: &str) -> Result<Self, Error> {
         require_state_file(root, "MERGE_HEAD", &format!("{upstream}\n"))?;
         require_state_file(root, "ORIG_HEAD", &format!("{agent}\n"))?;
         require_state_file(root, "MERGE_MODE", "no-ff\n")?;
@@ -150,14 +142,6 @@ impl Seal {
         let head = required_read(root, &["rev-parse", "HEAD"], "read resolution HEAD")?;
         if head != agent {
             return Err(moved("HEAD", agent, &head));
-        }
-        let baseline = required_read(
-            root,
-            &["rev-parse", &target.baseline],
-            "read resolution baseline",
-        )?;
-        if baseline != upstream {
-            return Err(moved("baseline", upstream, &baseline));
         }
         let tree = required_read(root, &["write-tree"], "seal resolved index tree")?;
         let head_ref = required_read(
@@ -176,19 +160,13 @@ impl Seal {
         })
     }
 
-    fn verify(&self, root: &Path, target: &Target) -> Result<(), Error> {
+    fn verify(&self, root: &Path) -> Result<(), Error> {
         require_state_file(root, "MERGE_HEAD", &format!("{}\n", self.upstream))?;
         require_state_file(root, "ORIG_HEAD", &format!("{}\n", self.agent))?;
         require_state_file(root, "MERGE_MODE", "no-ff\n")?;
         require_state_file(root, "MERGE_MSG", &format!("{}\n", self.message))?;
         require_resolved_index(root)?;
         require_equal_read(root, &["rev-parse", "HEAD"], "HEAD", &self.agent)?;
-        require_equal_read(
-            root,
-            &["rev-parse", &target.baseline],
-            "baseline",
-            &self.upstream,
-        )?;
         require_equal_read(
             root,
             &["symbolic-ref", "--quiet", "HEAD"],
