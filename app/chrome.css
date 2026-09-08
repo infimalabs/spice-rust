@@ -52,6 +52,7 @@ body:has(.shell--mosaic),
 }
 
 .task-pill-strip {
+  grid-area: 1 / 1;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -84,7 +85,7 @@ body:has(.shell--mosaic),
 }
 .task-pill.dormant .task-pill-count { background: var(--muted); }
 .task-pill.system .task-pill-count { background: var(--warning); }
-.canvas-menu { position: static; }
+.canvas-menu { position: static; grid-area: 1 / 2; }
 .canvas-menu > summary {
   --canvas-menu-accent: var(--accent);
   --canvas-menu-surface: color-mix(in srgb, var(--control-surface-soft) 88%, var(--accent) 12%);
@@ -126,8 +127,7 @@ body:has(.shell--mosaic),
   left: auto;
   z-index: 1;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 8px;
+  grid-template-rows: minmax(0, 1fr);
   width: min(360px, 100%);
   max-height: calc(100vh - 46px - var(--canvas-frame-edge-block-end));
   max-height: calc(100dvh - 46px - var(--canvas-frame-edge-block-end));
@@ -139,16 +139,29 @@ body:has(.shell--mosaic),
   box-shadow: var(--shadow);
 }
 .canvas-navigation {
+  grid-area: 1 / 1;
+  position: relative;
+  z-index: 1;
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  justify-self: end;
   gap: 3px;
+  width: max-content;
+  max-width: min(360px, 100%);
   min-width: 0;
+  padding-left: 7px;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  border-left: 1px solid var(--line);
+  background: var(--page);
+  box-shadow: -6px 0 8px var(--page);
+  scrollbar-width: thin;
 }
 .canvas-navigation .axis-button {
-  flex: 1 1 0;
+  flex: 0 0 auto;
   justify-content: center;
-  min-width: 0;
+  min-width: max-content;
   min-height: 23px;
   padding: 0 8px;
   border-color: color-mix(in srgb, var(--line) 74%, transparent);

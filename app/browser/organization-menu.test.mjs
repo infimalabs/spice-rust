@@ -25,6 +25,29 @@ test("an empty task strip stays quiet without changing populated task pills", as
   assert.match(renderer, /<span class="task-pill-count">\{pill\.count\(\)\}<\/span>/);
 });
 
+test("global destinations mount in the shared header rather than the menu panel", async () => {
+  const renderer = await readFile(resolve(root, "app/src/browser/view/chrome.rs"), "utf8");
+  const header = renderer.slice(
+    renderer.indexOf("pub(super) fn render_command_bar"),
+    renderer.indexOf("fn render_navigation"),
+  );
+  const menu = renderer.slice(
+    renderer.indexOf("fn render_canvas_menu"),
+    renderer.indexOf("fn task_pills"),
+  );
+
+  assert.match(
+    header,
+    /<\/nav>\s*if \*\*render\.menu_open \{\s*\{render_navigation\(&render, runtime\)\}\s*\}\s*\{render_canvas_menu/,
+    "the open-only destination strip is a sibling between task pills and the permanent trigger",
+  );
+  assert.doesNotMatch(
+    menu,
+    /canvas-menu-frame[\s\S]*render_navigation/,
+    "the dropdown frame contains no duplicate destination strip",
+  );
+});
+
 test("cursor assertion failures capture their engine and viewport before rethrow", async () => {
   const captures = [];
   const page = {

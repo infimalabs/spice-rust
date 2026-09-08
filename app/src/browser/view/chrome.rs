@@ -73,6 +73,9 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                         }
                     })}
                 </nav>
+                if **render.menu_open {
+                    {render_navigation(&render, runtime)}
+                }
                 {render_canvas_menu(&render, runtime)}
             </div>
         </header>
@@ -160,9 +163,6 @@ fn render_canvas_menu(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunt
                 <span class="canvas-menu-pepper" aria-hidden="true">{"🌶️"}</span>
             </summary>
             <div class="canvas-menu-frame">
-                if **render.menu_open {
-                    {render_navigation(render, runtime)}
-                }
                 <div class="canvas-menu-panel">
                     {super::lineage_menu::render(
                         **render.mosaic,
