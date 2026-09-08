@@ -231,6 +231,28 @@ fn preview_is_pure_and_spells_the_complete_order() {
     let plan = plan_release(input(ReleaseAction::Publish)).expect("plan");
     assert_eq!(plan.operations, PUBLISH_OPERATIONS);
     assert_eq!(plan.notes, b"## Highlights\n\n- Exact curated prose.\n");
+    assert_eq!(ReleaseAction::Publish.as_str(), "publish");
+    assert_eq!(ReleaseAction::TagAndAnnounce.as_str(), "tag-and-announce");
+    assert_eq!(
+        plan.operations
+            .iter()
+            .map(|operation| operation.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "resolve-preconditions-and-credentials",
+            "run-correctness-gate",
+            "bump-and-verify-version",
+            "create-release-commit",
+            "rebuild-artifacts",
+            "install-and-probe-artifacts",
+            "rehearse-upload",
+            "publish-source",
+            "upload-package",
+            "await-registry-visibility",
+            "create-immutable-tag",
+            "announce",
+        ]
+    );
     plan.verify().expect("identity replays");
 }
 
@@ -350,6 +372,22 @@ fn all_no_effect_preconditions_refuse_during_planning() {
             label: "package object"
         })
     ));
+
+    let mut short_object = input(ReleaseAction::Publish);
+    short_object.package_object = "111111".to_owned();
+    assert!(matches!(
+        plan_release(short_object),
+        Err(PlanError::Object {
+            label: "package object"
+        })
+    ));
+
+    let mut converged = input(ReleaseAction::Publish);
+    converged.observations.source_ref = Some(RELEASE.to_owned());
+    converged.observations.package_ref = Some(PACKAGE_OBJECT.to_owned());
+    converged.observations.tag_ref = Some(RELEASE.to_owned());
+    converged.observations.announcement_ref = Some(RELEASE.to_owned());
+    plan_release(converged).expect("refs already naming the release converge");
 }
 
 #[test]
@@ -483,4 +521,49 @@ fn installed_and_registry_receipts_are_exact_not_recognition_only() {
         .expect_err("wrong installed artifact refuses");
     assert!(matches!(error, ExecuteError::InstalledArtifactMoved));
     assert!(!journal.receipts.contains_key(&Operation::Announce));
+}
+
+#[test]
+fn completed_receipts_remain_bound_to_the_exact_plan_and_result() {
+    let plan = plan_release(input(ReleaseAction::Publish)).expect("plan");
+    let mut journal = MemoryJournal::default();
+    let mut effects = FakeEffects::new(&plan);
+    let execution = ReleaseExecutor::execute(&plan, &plan.key, &mut journal, &mut effects)
+        .expect("fixture execution converges");
+
+    let mut moved_plan = execution.completed.clone();
+    moved_plan[0].plan = digest(Domain::DistReleasePlan, b"another plan");
+    assert!(matches!(
+        ReleaseExecutor::verify_completion(&plan, &moved_plan),
+        Err(ExecuteError::ReceiptMoved(
+            Operation::ResolvePreconditionsAndCredentials
+        ))
+    ));
+
+    let package_index = plan
+        .operations
+        .iter()
+        .position(|operation| *operation == Operation::RebuildArtifacts)
+        .expect("package operation");
+    let mut moved_package = execution.completed.clone();
+    moved_package[package_index].result = OperationState::Package {
+        identity: Some(digest(Domain::DistReleasePackage, b"another package")),
+        object: Some(plan.package_object.clone()),
+    };
+    assert!(matches!(
+        ReleaseExecutor::verify_completion(&plan, &moved_package),
+        Err(ExecuteError::ReceiptMoved(Operation::RebuildArtifacts))
+    ));
+
+    let registry_index = plan
+        .operations
+        .iter()
+        .position(|operation| *operation == Operation::AwaitRegistryVisibility)
+        .expect("registry operation");
+    let mut moved_registry = execution.completed;
+    moved_registry[registry_index].result = OperationState::Registry { evidence: None };
+    assert!(matches!(
+        ReleaseExecutor::verify_completion(&plan, &moved_registry),
+        Err(ExecuteError::RegistryEvidenceMoved)
+    ));
 }
