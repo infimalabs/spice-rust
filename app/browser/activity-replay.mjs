@@ -4,6 +4,11 @@ import { Buffer } from "node:buffer";
 import { TOOL_ACTIVITY_TEXT, TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
 import { createMessageHistoryFixture } from "./message-history-fixture.mjs";
 
+function assignOptional(object, key, value) {
+  if (value === undefined) delete object[key];
+  else object[key] = value;
+}
+
 function decodeServerFrame(message) {
   return JSON.parse(typeof message === "string" ? message : message.toString("utf8"));
 }
@@ -140,6 +145,7 @@ export async function installActivityReplay(
       activity = undefined,
       automaticSpeech = undefined,
       badges = undefined,
+      finalAnswer = undefined,
       media = undefined,
       history = false,
     } = {},
@@ -149,15 +155,11 @@ export async function installActivityReplay(
     assert.ok(activeSocket, "the route retains the current browser WebSocket");
     const frame = JSON.parse(JSON.stringify(source));
     frame.message.text = text;
-    if (activity === undefined) delete frame.message.activity;
-    else frame.message.activity = activity;
-    if (automaticSpeech === undefined) delete frame.message.automatic_speech;
-    else frame.message.automatic_speech = automaticSpeech;
-    if (badges === undefined) delete frame.message.badges;
-    else frame.message.badges = badges;
-    delete frame.message.final_answer;
-    if (media === undefined) delete frame.message.media;
-    else frame.message.media = media;
+    assignOptional(frame.message, "activity", activity);
+    assignOptional(frame.message, "automatic_speech", automaticSpeech);
+    assignOptional(frame.message, "badges", badges);
+    assignOptional(frame.message, "final_answer", finalAnswer);
+    assignOptional(frame.message, "media", media);
     frame.message.authored = new Date().toISOString();
     frame.message.authored_synthetic = false;
     delete frame.message.observed;
@@ -248,6 +250,9 @@ export async function installActivityReplay(
     },
     injectClassifiedAgentProse(page, lane, text, badges) {
       return injectAgentMessage(page, lane, text, { badges });
+    },
+    injectAgentFinal(page, lane, text) {
+      return injectAgentMessage(page, lane, text, { finalAnswer: true });
     },
     injectAgentToolMedia(page, lane, media, text = "") {
       return injectAgentMessage(page, lane, text, { activity: "tool", media });

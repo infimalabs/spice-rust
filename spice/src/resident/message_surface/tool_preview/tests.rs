@@ -166,6 +166,7 @@ mod presentation {
         let publisher = Messages::default();
         let mut state = MessageState::default();
         let records = [
+            br#"{"timestamp":"2030-04-12T18:44:09.270Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","id":"message-1","content":[{"type":"Text","text":"settled final"}],"phase":"final_answer"}}}"#.as_slice(),
             br#"{"timestamp":"2030-04-12T18:44:09.271Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"settled final"}]}}"#.as_slice(),
             br#"{"timestamp":"2030-04-12T18:44:09.272Z","type":"event_msg","payload":{"type":"task_complete","last_agent_message":"settled final"}}"#.as_slice(),
         ];
