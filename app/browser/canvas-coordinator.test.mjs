@@ -34,7 +34,7 @@ test("the canonical registry derives one build action and one action per shard",
   );
   assert.throws(
     () => assertShardInventory(CANVAS_SHARDS.slice(1)),
-    /complete Canvas scenario inventory/,
+    /every scenario declared by the Canvas worker/,
   );
 });
 
@@ -70,6 +70,7 @@ test("nested shard phases emit and validate stable wall and CPU telemetry", asyn
   const events = [];
   const shard = CANVAS_SHARDS[0];
   const run = startShardWorker([SHARD_FLAG, shard.name], (event) => events.push(event));
+  await run.phase("shard-setup", async () => {});
   await run.scenario(shard.scenarios[0], () => run.phase("outer", () => (
     run.phase("inner", async () => {})
   )));
@@ -82,6 +83,7 @@ test("nested shard phases emit and validate stable wall and CPU telemetry", asyn
   assert.deepEqual(
     ledger.phases.map(({ phase, path, outcome }) => ({ phase, path, outcome })),
     [
+      { phase: "shard-setup", path: ["shard-setup"], outcome: "passed" },
       { phase: "inner", path: ["outer", "inner"], outcome: "passed" },
       { phase: "outer", path: ["outer"], outcome: "passed" },
     ],

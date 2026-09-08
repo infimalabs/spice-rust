@@ -233,6 +233,7 @@ async function coordinate() {
   await buildResident({ app: !prebuiltApp });
   const buildElapsedMs = Date.now() - started;
   assert.ok(buildElapsedMs < COORDINATOR_TIMEOUT_MS, "Canvas build leaves time for its shards");
+  process.stdout.write(`canvas coordinator build elapsed_ms=${buildElapsedMs}\n`);
   process.stdout.write(
     `canvas coordinator start concurrency=${concurrency} shards=${CANVAS_SHARDS.length}\n`,
   );

@@ -49,23 +49,6 @@ export async function waitForCompactionReady(page, divider, label) {
   return key;
 }
 
-export async function resizeCompactionViewport(page, divider, viewport, label) {
-  const key = await divider.getAttribute("data-mosaic-card-key");
-  const before = await divider.evaluate((boundary) => (
-    Number(boundary.closest(".lane-mosaic-plane").dataset.committedWidth)
-  ));
-  await page.setViewportSize(viewport);
-  await waitForPage(page, `${label} width commits`, TRANSITION_MS, (expected) => {
-    const boundary = document.querySelector(`[data-mosaic-card-key="${expected.key}"]`);
-    const plane = boundary?.closest(".lane-mosaic-plane");
-    return boundary?.dataset.layoutPhase === "committed"
-      && plane?.dataset.measurementPhase === "ready"
-      && Number(plane.dataset.committedWidth) !== expected.before
-      && Math.abs(Number(plane.dataset.committedWidth)
-        - plane.querySelector(":scope > .lane-mosaic-track").clientWidth) <= 1;
-  }, { key, before });
-}
-
 export async function assertCompactionDivider(
   divider,
   label,

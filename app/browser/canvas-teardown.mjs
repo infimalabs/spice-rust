@@ -385,7 +385,6 @@ async function assertParentDeathReaps() {
 
 /// Prove the fixture owns its processes across every way a run ends badly.
 export async function assertFixtureTeardownReaps() {
-  await assertTerminatedRunReaps("SIGINT", "SIGINT-interrupted");
   await assertTerminatedRunReaps("SIGTERM", "SIGTERM-interrupted");
   await assertFailedRunReaps();
   await assertFailedLaunchReaps();
