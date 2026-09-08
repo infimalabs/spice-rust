@@ -235,9 +235,8 @@ fn apply_lane_response(
                     .queue
                     .borrow_mut()
                     .refuse_woken_lane(*lane)?;
-                restore_lane_submissions(
+                restore_submissions(
                     handles,
-                    *lane,
                     restored,
                     "Agent wake succeeded, but a fresh lane snapshot did not establish an \
                      occupant. Review the lane and retry.",
@@ -260,7 +259,7 @@ fn apply_lane_response(
                 .queue
                 .borrow_mut()
                 .refuse_woken_lane(*lane)?;
-            restore_lane_submissions(handles, *lane, restored, &issue);
+            restore_submissions(handles, restored, &issue);
         }
     }
     if !wake_lanes.is_empty() {
@@ -336,10 +335,16 @@ fn apply_submission_response(
             reply.body.disposition,
         )?,
         wire::Outcome::Refusal(_) | wire::Outcome::Fault(_) => {
+            let restore_lane = handles.submissions.queue.borrow().restore_lane(id)?;
             let restored = handles.submissions.queue.borrow_mut().refuse(id)?;
-            let issue = outcome_issue("Message was not sent", &admitted.get().outcome)
+            let action = if restore_lane == lane {
+                "Message was not sent".to_owned()
+            } else {
+                format!("Broadcast was not sent to agent {lane}")
+            };
+            let issue = outcome_issue(&action, &admitted.get().outcome)
                 .expect("the refused or faulted steering outcome has an issue");
-            restore_lane_submissions(handles, lane, restored, &issue);
+            restore_submissions(handles, restored, &issue);
             None
         }
     };
@@ -354,7 +359,7 @@ fn apply_wake_submission_response(
     session: &Session,
     handles: &SurfaceHandles,
     submission: CanonicalUuid,
-    lane: CanonicalUuid,
+    _lane: CanonicalUuid,
     bytes: &[u8],
 ) -> Result<bool, String> {
     let admitted: crate::Admitted<Response<wire::intent::LaneChangeAnswer>> =
@@ -373,7 +378,7 @@ fn apply_wake_submission_response(
                 .refuse_wake(submission)?;
             let issue = outcome_issue("Could not wake this agent", &admitted.get().outcome)
                 .expect("the refused or faulted wake outcome has an issue");
-            restore_lane_submissions(handles, lane, restored, &issue);
+            restore_submissions(handles, restored, &issue);
         }
     }
     handles.submissions.publish();
@@ -397,6 +402,23 @@ fn restore_lane_submissions(
         quote: None,
         issue: issue.to_owned(),
     });
+}
+
+fn restore_submissions(
+    handles: &SurfaceHandles,
+    restored: Vec<crate::composer_submissions::SubmissionRestore>,
+    issue: &str,
+) {
+    let mut by_lane = BTreeMap::<CanonicalUuid, Vec<crate::composer_drafts::ComposerDraft>>::new();
+    for restoration in restored {
+        by_lane
+            .entry(restoration.lane)
+            .or_default()
+            .push(restoration.draft);
+    }
+    for (lane, drafts) in by_lane {
+        restore_lane_submissions(handles, lane, drafts, issue);
+    }
 }
 
 fn outcome_issue<T>(action: &str, outcome: &wire::Outcome<T>) -> Option<String> {

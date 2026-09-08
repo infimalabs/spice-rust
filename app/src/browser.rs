@@ -1157,6 +1157,36 @@ fn queue_submission(
     false
 }
 
+fn queue_submissions(
+    sender: &SenderHandle,
+    submissions: &SubmissionHandle,
+    batch: Vec<Submission>,
+) -> bool {
+    if batch.is_empty() {
+        return false;
+    }
+    let identities = batch
+        .iter()
+        .map(|submission| submission.id)
+        .collect::<Vec<_>>();
+    if submissions.queue.borrow_mut().enqueue_all(batch).is_err() {
+        return false;
+    }
+    submissions.publish();
+    if send_action(sender, ClientAction::DrainSubmissions) {
+        return true;
+    }
+    for id in identities {
+        let removed = submissions.queue.borrow_mut().rollback(id);
+        assert!(
+            removed.is_some(),
+            "a failed submission wake rolls back every enqueue it just made"
+        );
+    }
+    submissions.publish();
+    false
+}
+
 fn empty(message: &'static str) -> Html {
     html! { <div class="empty">{message}</div> }
 }

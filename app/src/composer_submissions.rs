@@ -5,7 +5,7 @@
 //! socket attempt never owns the record itself, so dropping a reader or writer
 //! cannot drop operator prose with it.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use wire::CanonicalUuid;
 use wire::Disposition;
@@ -23,7 +23,14 @@ pub(crate) struct Submission {
     pub(crate) message: String,
     pub(crate) attachments: Vec<DirectiveAttachment>,
     pub(crate) snapshot: ComposerDraft,
+    restore_lane: CanonicalUuid,
     stage: Stage,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SubmissionRestore {
+    pub(crate) lane: CanonicalUuid,
+    pub(crate) draft: ComposerDraft,
 }
 
 impl Submission {
@@ -44,6 +51,7 @@ impl Submission {
             message,
             attachments,
             snapshot,
+            restore_lane: lane,
             stage: Stage::Queued { occupant, epoch },
         }
     }
@@ -68,8 +76,31 @@ impl Submission {
             message,
             attachments,
             snapshot,
+            restore_lane: lane,
             stage: Stage::WakeQueued,
         }
+    }
+
+    pub(crate) fn broadcast_copy(
+        id: CanonicalUuid,
+        fanout: CanonicalUuid,
+        lane: CanonicalUuid,
+        residency: (CanonicalUuid, CanonicalUuid),
+        message: String,
+        attachments: Vec<DirectiveAttachment>,
+        restore_lane: CanonicalUuid,
+    ) -> Self {
+        let mut submission = Self::new(
+            id,
+            fanout,
+            lane,
+            residency,
+            message,
+            attachments,
+            ComposerDraft::default(),
+        );
+        submission.restore_lane = restore_lane;
+        submission
     }
 
     pub(crate) fn residency(&self) -> Option<(CanonicalUuid, CanonicalUuid)> {
@@ -193,6 +224,40 @@ impl SubmissionQueue {
             .or_default()
             .push_back(submission);
         Ok(())
+    }
+
+    /// Admit a complete fanout batch before publishing any of its destinations.
+    pub(crate) fn enqueue_all(&mut self, submissions: Vec<Submission>) -> Result<(), String> {
+        let mut identities = self
+            .0
+            .values()
+            .flatten()
+            .map(|submission| submission.id)
+            .collect::<BTreeSet<_>>();
+        for submission in &submissions {
+            if !identities.insert(submission.id) {
+                return Err(format!(
+                    "composer submission identity {} is already queued",
+                    submission.id
+                ));
+            }
+        }
+        for submission in submissions {
+            self.0
+                .entry(submission.lane)
+                .or_default()
+                .push_back(submission);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn restore_lane(&self, id: CanonicalUuid) -> Result<CanonicalUuid, String> {
+        self.0
+            .values()
+            .flatten()
+            .find(|submission| submission.id == id)
+            .map(|submission| submission.restore_lane)
+            .ok_or_else(|| format!("composer result named unknown submission {id}"))
     }
 
     /// Remove an enqueue whose wake could not reach the connection vendor.
@@ -387,11 +452,14 @@ impl SubmissionQueue {
     }
 
     /// Restore the refused write and every later write that never became durable.
-    pub(crate) fn refuse(&mut self, id: CanonicalUuid) -> Result<Vec<ComposerDraft>, String> {
+    pub(crate) fn refuse(&mut self, id: CanonicalUuid) -> Result<Vec<SubmissionRestore>, String> {
         self.refuse_when(id, |stage| matches!(stage, Stage::Sent { .. }))
     }
 
-    pub(crate) fn refuse_wake(&mut self, id: CanonicalUuid) -> Result<Vec<ComposerDraft>, String> {
+    pub(crate) fn refuse_wake(
+        &mut self,
+        id: CanonicalUuid,
+    ) -> Result<Vec<SubmissionRestore>, String> {
         self.refuse_when(id, |stage| *stage == Stage::WakeSent)
     }
 
@@ -399,7 +467,7 @@ impl SubmissionQueue {
     pub(crate) fn refuse_woken_lane(
         &mut self,
         lane: CanonicalUuid,
-    ) -> Result<Vec<ComposerDraft>, String> {
+    ) -> Result<Vec<SubmissionRestore>, String> {
         let id = self
             .0
             .get(&lane)
@@ -415,7 +483,7 @@ impl SubmissionQueue {
         &mut self,
         id: CanonicalUuid,
         expected: impl FnOnce(&Stage) -> bool,
-    ) -> Result<Vec<ComposerDraft>, String> {
+    ) -> Result<Vec<SubmissionRestore>, String> {
         let lane = self
             .lane_for(id)
             .ok_or_else(|| format!("composer result named unknown submission {id}"))?;
@@ -434,7 +502,10 @@ impl SubmissionQueue {
         }
         let restored = rows
             .drain(index..)
-            .map(|submission| submission.snapshot)
+            .map(|submission| SubmissionRestore {
+                lane: submission.restore_lane,
+                draft: submission.snapshot,
+            })
             .collect::<Vec<_>>();
         if rows.is_empty() {
             self.0.remove(&lane);
@@ -668,6 +739,72 @@ mod tests {
     }
 
     #[test]
+    fn broadcast_batch_is_all_or_none_and_only_the_source_copy_restores_content() {
+        let mut refused = SubmissionQueue::default();
+        refused
+            .enqueue(submission(ID_A, LANE_A, "existing"))
+            .unwrap();
+        assert!(
+            refused
+                .enqueue_all(vec![
+                    submission(ID_B, LANE_B, "candidate"),
+                    submission(ID_A, LANE_B, "collision"),
+                ])
+                .is_err()
+        );
+        assert_eq!(
+            refused.status().len(),
+            1,
+            "a refused batch inserts no prefix"
+        );
+
+        let mut queue = SubmissionQueue::default();
+        let source = Submission::new(
+            uuid(ID_A),
+            uuid(FANOUT),
+            uuid(LANE_A),
+            (uuid(OCCUPANT), uuid(EPOCH)),
+            "broadcast".to_owned(),
+            Vec::new(),
+            draft("broadcast"),
+        );
+        let copy = Submission::broadcast_copy(
+            uuid(ID_B),
+            uuid(FANOUT),
+            uuid(LANE_B),
+            (uuid(OCCUPANT), uuid(EPOCH)),
+            "broadcast".to_owned(),
+            Vec::new(),
+            uuid(LANE_A),
+        );
+        queue.enqueue_all(vec![source, copy]).unwrap();
+        assert_eq!(queue.restore_lane(uuid(ID_A)).unwrap(), uuid(LANE_A));
+        assert_eq!(queue.restore_lane(uuid(ID_B)).unwrap(), uuid(LANE_A));
+        assert!(
+            queue
+                .ready()
+                .iter()
+                .all(|submission| submission.fanout == uuid(FANOUT))
+        );
+
+        queue
+            .enqueue(submission(ID_C, LANE_B, "later ordinary draft"))
+            .unwrap();
+        queue.sent(uuid(ID_B)).unwrap();
+        let copy_refusal = queue.refuse(uuid(ID_B)).unwrap();
+        assert_eq!(
+            copy_refusal
+                .iter()
+                .map(|restored| (restored.lane, restored.draft.body.as_str()))
+                .collect::<Vec<_>>(),
+            [(uuid(LANE_A), ""), (uuid(LANE_B), "later ordinary draft")],
+            "each drained snapshot retains its own restoration lane"
+        );
+        queue.sent(uuid(ID_A)).unwrap();
+        assert_eq!(queue.refuse(uuid(ID_A)).unwrap()[0].draft.body, "broadcast");
+    }
+
+    #[test]
     fn lanes_drain_independently_and_replay_the_same_identity() {
         let mut queue = SubmissionQueue::default();
         queue.enqueue(submission(ID_A, LANE_A, "first")).unwrap();
@@ -721,7 +858,7 @@ mod tests {
         assert_eq!(
             restored
                 .iter()
-                .map(|draft| draft.body.as_str())
+                .map(|restored| restored.draft.body.as_str())
                 .collect::<Vec<_>>(),
             ["second", "third"]
         );
@@ -937,7 +1074,7 @@ mod tests {
                 .refuse_wake(uuid(ID_A))
                 .unwrap()
                 .into_iter()
-                .map(|draft| draft.body)
+                .map(|restored| restored.draft.body)
                 .collect::<Vec<_>>(),
             ["refused first", "refused second"]
         );
@@ -949,7 +1086,9 @@ mod tests {
         unproven.wake_sent(uuid(ID_C)).unwrap();
         unproven.wake_accepted(uuid(ID_C)).unwrap();
         assert_eq!(
-            unproven.refuse_woken_lane(uuid(LANE_B)).unwrap()[0].body,
+            unproven.refuse_woken_lane(uuid(LANE_B)).unwrap()[0]
+                .draft
+                .body,
             "unproven"
         );
     }
