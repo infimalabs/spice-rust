@@ -570,12 +570,18 @@ async function assertInlineBroadcastPill(page, console, lane, activityReplay) {
         accent,
         quote: getComputedStyle(quote).borderLeftColor,
         pill: getComputedStyle(pill).color,
+        fontFamily: getComputedStyle(pill).fontFamily,
       };
     });
     assert.deepEqual(
       [colors.quote, colors.pill],
       [colors.accent, colors.accent],
       `${colorScheme} broadcast quote and pill use the plum accent`,
+    );
+    assert.equal(
+      colors.fontFamily,
+      "ui-monospace, SFMono-Regular, Menlo, monospace",
+      `${colorScheme} broadcast pill uses the shared semantic monospace stack`,
     );
   }
   await page.emulateMedia({ colorScheme: "light" });

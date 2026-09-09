@@ -615,6 +615,7 @@ async function measureTaskChipFixture(fixture) {
         box: rect(node.getBoundingClientRect()),
         text: textRect(label),
         fontSize: Number.parseFloat(style.fontSize),
+        fontFamily: style.fontFamily,
         fontWeight: style.fontWeight,
         lineHeight: Number.parseFloat(style.lineHeight),
         parentFontSize: Number.parseFloat(parentStyle.fontSize),
@@ -650,9 +651,12 @@ async function measureTaskChipFixture(fixture) {
         ariaLabel: node.getAttribute("aria-label"),
         classification: node.dataset.messageClassification,
         text: node.textContent,
+        clientWidth: node.clientWidth,
+        scrollWidth: node.scrollWidth,
         box: rect(node.getBoundingClientRect()),
         textBox: textRect(node),
         fontSize: Number.parseFloat(style.fontSize),
+        fontFamily: style.fontFamily,
         fontWeight: style.fontWeight,
         lineHeight: Number.parseFloat(style.lineHeight),
         parentFontSize: Number.parseFloat(parentStyle.fontSize),
@@ -677,9 +681,9 @@ async function measureTaskChipFixture(fixture) {
       };
     };
     const rootStyle = getComputedStyle(document.documentElement);
-    const resolveColor = (property) => {
+    const resolveColor = (expression) => {
       const probe = document.createElement("span");
-      probe.style.color = `var(${property})`;
+      probe.style.color = expression;
       card.append(probe);
       const color = getComputedStyle(probe).color;
       probe.remove();
@@ -687,10 +691,10 @@ async function measureTaskChipFixture(fixture) {
     };
     return {
       palette: {
-        accent: resolveColor("--accent"),
-        accent2: resolveColor("--accent-2"),
-        ink: resolveColor("--ink"),
-        panel: resolveColor("--panel"),
+        accent: resolveColor("var(--accent)"),
+        accent2: resolveColor("var(--accent-2)"),
+        ink: resolveColor("var(--ink)"),
+        panel: resolveColor("var(--panel)"),
         scheme: rootStyle.colorScheme,
       },
       card: {
@@ -848,17 +852,21 @@ function assertTaskChipMeasurement(label, measured) {
   const taste = measured.cases.find(({ name }) => name === "taste");
   assert.equal(taste.tastes.length, 2, `${label} repeats one pill for each quoted taste`);
   const classifierKinds = [
-    ["taste", "TASTE", "Taste classification", measured.palette.accent2],
-    ["review", "REVIEW", "Review classification", measured.palette.ink],
+    ["taste", "tastes", "TASTE", "Taste classification", measured.palette.accent2],
+    ["review", "reviews", "REVIEW", "Review classification", measured.palette.ink],
   ];
   for (const row of measured.cases) {
-    for (const [classification, text, ariaLabel, accent] of classifierKinds) {
-      const pills = classification === "taste" ? row.tastes : row.reviews;
+    for (const [classification, collection, text, ariaLabel, accent] of classifierKinds) {
+      const pills = row[collection];
       for (const pill of pills) {
         assert.equal(pill.text, text, `${label} ${classification} pill preserves its text`);
         assert.equal(pill.count, null, `${label} ${classification} pill has no count element`);
         assert.equal(pill.ariaLabel, ariaLabel);
         assert.equal(pill.classification, classification);
+        assert.ok(
+          pill.scrollWidth <= pill.clientWidth + tolerance,
+          `${label} ${classification} preserves its complete semantic label`,
+        );
         assert.equal(pill.fontWeight, "700", `${label} ${classification} pill uses bold text`);
         assert.equal(
           pill.borderWidth,
@@ -911,15 +919,25 @@ function assertTaskChipMeasurement(label, measured) {
     ...row.tastes.map((pill) => ["taste", pill]),
     ...row.reviews.map((pill) => ["review", pill]),
   ]);
-  for (const kind of ["task", "taste", "review"]) {
+  for (const [kind, depths] of [
+    ["task", [0, 1, 2]],
+    ["taste", [0, 1, 2]],
+    ["review", [0, 1, 2]],
+  ]) {
     assert.deepEqual(
       [...new Set(contextualPills
         .filter(([candidate]) => candidate === kind)
         .map(([, pill]) => pill.quoteDepth))].sort(),
-      [0, 1, 2],
+      depths,
       `${label} ${kind} pills cover top-level, quoted, and nested-quoted contexts`,
     );
   }
+  const fontFamilies = new Set(contextualPills.map(([, pill]) => pill.fontFamily));
+  assert.deepEqual(
+    [...fontFamilies],
+    ["ui-monospace, SFMono-Regular, Menlo, monospace"],
+    `${label} every inline semantic pill resolves through the shared monospace stack`,
+  );
   const topLevelAlpha = contextualPills
     .filter(([, pill]) => pill.quoteDepth === 0)
     .map(([, pill]) => pill.backgroundRgba[3]);
