@@ -192,23 +192,23 @@ export async function assertAgentWorkspaceGeometry(page, state) {
   }, { owners: agentGeometryOwners, state });
 
   assert.ok(geometry.surfaces.length > 0, `${state} renders at least one agent surface`);
-  const predecessorEdges = geometry.viewportWidth <= 720
-    ? { chromeInline: 8, frameBottom: 8, frameInline: 4 }
-    : { chromeInline: 10, frameBottom: 10, frameInline: 10 };
+  const expectedEdges = geometry.viewportWidth <= 720
+    ? { frameBottom: 8, shellInline: 8 }
+    : { frameBottom: 10, shellInline: 10 };
   assert.deepEqual(
     geometry.commandbarPaddingInline,
-    [predecessorEdges.chromeInline, predecessorEdges.chromeInline],
-    `${state} keeps the predecessor command-bar edge inset: ${JSON.stringify(geometry)}`,
+    [expectedEdges.shellInline, expectedEdges.shellInline],
+    `${state} keeps the command bar inside the shell edge: ${JSON.stringify(geometry)}`,
   );
   assert.deepEqual(
     geometry.contentPaddingInline,
-    [predecessorEdges.frameInline, predecessorEdges.frameInline],
-    `${state} keeps the predecessor frame side gutters: ${JSON.stringify(geometry)}`,
+    [expectedEdges.shellInline, expectedEdges.shellInline],
+    `${state} gives the frame and header one inline gutter: ${JSON.stringify(geometry)}`,
   );
   assert.equal(
     geometry.contentPaddingBottom,
-    predecessorEdges.frameBottom,
-    `${state} keeps the predecessor frame bottom gutter: ${JSON.stringify(geometry)}`,
+    expectedEdges.frameBottom,
+    `${state} keeps the frame bottom gutter: ${JSON.stringify(geometry)}`,
   );
   assert.equal(geometry.contentPaddingTop, 0, `${state} does not double-pad below the command bar`);
   assert.ok(
@@ -216,11 +216,11 @@ export async function assertAgentWorkspaceGeometry(page, state) {
     `${state} starts the frame directly below its chrome: ${JSON.stringify(geometry)}`,
   );
   assert.ok(
-    Math.abs(geometry.fleet.left - geometry.content.left - predecessorEdges.frameInline) <= 0.5
+    Math.abs(geometry.fleet.left - geometry.content.left - expectedEdges.shellInline) <= 0.5
       && Math.abs(geometry.content.right - geometry.fleet.right
-        - predecessorEdges.frameInline) <= 0.5
+        - expectedEdges.shellInline) <= 0.5
       && Math.abs(geometry.content.bottom - geometry.fleet.bottom
-        - predecessorEdges.frameBottom) <= 0.5,
+        - expectedEdges.frameBottom) <= 0.5,
     `${state} assigns each outer frame gutter exactly once: ${JSON.stringify(geometry)}`,
   );
   assert.ok(

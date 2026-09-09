@@ -35,7 +35,7 @@
   .commandbar { gap: 10px; padding: 8px 12px; }
   .commandbar--mosaic {
     gap: 7px;
-    padding-inline: var(--canvas-chrome-edge-inline);
+    padding-inline: var(--canvas-shell-edge-start) var(--canvas-shell-edge-end);
   }
   .axis-button { padding: 0 11px; }
   .split { grid-template-columns: 1fr; }
@@ -43,10 +43,9 @@
 }
 
 @media (max-width: 720px) {
+  .shell { --canvas-shell-edge-inline: 8px; }
   .shell--mosaic {
-    --canvas-chrome-edge-inline: 8px;
     --canvas-frame-edge-block-end: 8px;
-    --canvas-frame-edge-inline: 4px;
   }
 }
 
