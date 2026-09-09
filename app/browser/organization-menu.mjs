@@ -667,6 +667,8 @@ export async function assertCursorRelocation(page, artifacts, engine) {
         const version = footer.querySelector(".canvas-menu-version");
         const cursor = footer.querySelector(".canvas-menu-cursor");
         const original = [version.textContent, cursor.textContent];
+        cursor.textContent = "cursor 16777216";
+        const roomyCursorClipped = cursor.scrollWidth > cursor.clientWidth;
         version.textContent = "Canvas version authority with a deliberately long build label";
         cursor.textContent = `cursor ${"1234567890".repeat(12)}`;
         const footerBounds = footer.getBoundingClientRect();
@@ -675,6 +677,7 @@ export async function assertCursorRelocation(page, artifacts, engine) {
         const result = {
           contained: versionBounds.left >= footerBounds.left - 0.5
             && cursorBounds.right <= footerBounds.right + 0.5,
+          roomyCursorClipped,
           cursorClipped: cursor.scrollWidth > cursor.clientWidth,
           cursorOverflow: getComputedStyle(cursor).textOverflow,
           nonOverlapping: versionBounds.right <= cursorBounds.left + 0.5,
@@ -688,6 +691,7 @@ export async function assertCursorRelocation(page, artifacts, engine) {
         longFooter,
         {
           contained: true,
+          roomyCursorClipped: false,
           cursorClipped: true,
           cursorOverflow: "ellipsis",
           nonOverlapping: true,

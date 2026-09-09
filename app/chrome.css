@@ -254,7 +254,7 @@ body:has(.shell--mosaic),
 }
 .canvas-menu-footer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
   align-items: center;
   gap: 12px;
   min-width: 0;
@@ -263,6 +263,9 @@ body:has(.shell--mosaic),
   border-top: 1px solid var(--line-soft);
   color: var(--muted);
   font: .66rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.canvas-menu-footer:has(.canvas-menu-update) {
+  grid-template-columns: minmax(min-content, 1fr) minmax(0, auto);
 }
 .canvas-theme-selector {
   display: inline-flex;
@@ -330,7 +333,6 @@ body:has(.shell--mosaic),
 .canvas-menu-update:hover { border-color: var(--focus); }
 .canvas-menu-cursor {
   min-width: 0;
-  max-width: 10ch;
   overflow: hidden;
   color: var(--muted);
   text-align: right;

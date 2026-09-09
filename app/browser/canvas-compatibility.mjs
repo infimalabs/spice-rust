@@ -210,6 +210,17 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
     const cursorNode = footer.querySelector(".canvas-menu-cursor");
     const cursor = cursorNode.getBoundingClientRect();
     const bounds = footer.getBoundingClientRect();
+    const originalCursor = cursorNode.textContent;
+    cursorNode.textContent = `cursor ${"1234567890".repeat(12)}`;
+    const constrainedButton = footer.querySelector(".canvas-menu-update").getBoundingClientRect();
+    const constrainedCursor = cursorNode.getBoundingClientRect();
+    const constrained = {
+      contained: constrainedButton.left >= bounds.left - 0.5
+        && constrainedCursor.right <= bounds.right + 0.5,
+      cursorClipped: cursorNode.scrollWidth > cursorNode.clientWidth,
+      ordered: constrainedButton.right <= constrainedCursor.left + 0.5,
+    };
+    cursorNode.textContent = originalCursor;
     return {
       contained: button.left >= bounds.left - 0.5 && button.right <= bounds.right + 0.5,
       height: button.height,
@@ -224,6 +235,7 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
       themeText: themeNode.innerText,
       themeWidth: themes.width,
       cursorClipped: cursorNode.scrollWidth > cursorNode.clientWidth,
+      constrained,
     };
   });
   assert.equal(narrow.contained, true, JSON.stringify(narrow));
@@ -237,6 +249,11 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
   assert.equal(narrow.themeText, "", JSON.stringify(narrow));
   assert.ok(narrow.themeWidth <= 96, JSON.stringify(narrow));
   assert.equal(narrow.cursorClipped, false, JSON.stringify(narrow));
+  assert.deepEqual(narrow.constrained, {
+    contained: true,
+    cursorClipped: true,
+    ordered: true,
+  });
   await trigger.click();
   await update.waitFor({ state: "hidden" });
 
