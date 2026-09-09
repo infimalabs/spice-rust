@@ -13,6 +13,7 @@ const darkPalette = {
   quiet: "rgb(142, 162, 255)",
   drain: "rgb(230, 180, 78)",
   green: "rgb(116, 198, 157)",
+  panel: "rgb(24, 29, 25)",
   // One ink prints every submit state, the way the predecessor's `.primary`
   // reads a single `--button-accent-fg` and lets only the fill follow the
   // state accent. A maxed-only ink would be a second place to keep in step.
@@ -415,13 +416,17 @@ export async function assertCanonicalInlineTaskCode(surface) {
     return {
       height: box.height,
       borderRadius: Number.parseFloat(style.borderRadius),
-      border: style.borderColor,
+      backgroundColor: style.backgroundColor,
+      color: style.color,
+      fontWeight: style.fontWeight,
       clientWidth: element.clientWidth,
       scrollWidth: element.scrollWidth,
     };
   });
   assert.ok(geometry.borderRadius >= geometry.height / 2 - 1, "the task marker is a chip");
-  assert.equal(geometry.border, darkPalette.green, "the task chip uses the live green accent");
+  assert.equal(geometry.color, darkPalette.panel, "the task chip uses inverse panel text");
+  assert.equal(geometry.fontWeight, "400", "the task chip uses regular text");
+  assert.notEqual(geometry.backgroundColor, "rgba(0, 0, 0, 0)");
   assert.ok(geometry.scrollWidth <= geometry.clientWidth + 1, "the reported handle is not clipped");
 }
 
@@ -555,6 +560,7 @@ async function measureTaskChipFixture(fixture) {
         box: rect(node.getBoundingClientRect()),
         text: textRect(label),
         fontSize: Number.parseFloat(style.fontSize),
+        fontWeight: style.fontWeight,
         lineHeight: Number.parseFloat(style.lineHeight),
         parentFontSize: Number.parseFloat(parentStyle.fontSize),
         parentLineHeight: Number.parseFloat(parentStyle.lineHeight),
@@ -571,6 +577,8 @@ async function measureTaskChipFixture(fixture) {
         paddingRight: style.paddingRight,
         paddingBottom: style.paddingBottom,
         paddingLeft: style.paddingLeft,
+        color: style.color,
+        backgroundColor: style.backgroundColor,
         labelOverflowX: labelStyle.overflowX,
         labelTextOverflow: labelStyle.textOverflow,
         labelWhiteSpace: labelStyle.whiteSpace,
@@ -586,6 +594,7 @@ async function measureTaskChipFixture(fixture) {
         box: rect(node.getBoundingClientRect()),
         textBox: textRect(node),
         fontSize: Number.parseFloat(style.fontSize),
+        fontWeight: style.fontWeight,
         lineHeight: Number.parseFloat(style.lineHeight),
         parentFontSize: Number.parseFloat(parentStyle.fontSize),
         parentLineHeight: Number.parseFloat(parentStyle.lineHeight),
@@ -667,6 +676,9 @@ function assertTaskChipMeasurement(label, measured) {
       assert.equal(chip.labelOverflowX, "hidden", `${label} ${chip.handle} label clips its text`);
       assert.equal(chip.verticalAlign, "baseline", `${label} ${chip.handle} follows prose baseline`);
       assert.equal(chip.borderWidth, "0px", `${label} ${chip.handle} is borderless inside its card`);
+      assert.equal(chip.fontWeight, "400", `${label} ${chip.handle} uses regular text`);
+      assert.equal(chip.color, darkPalette.panel, `${label} ${chip.handle} uses inverse panel text`);
+      assert.notEqual(chip.backgroundColor, "rgba(0, 0, 0, 0)");
       assert.deepEqual(
         [chip.marginTop, chip.marginRight, chip.marginBottom, chip.marginLeft],
         ["0px", "0px", "0px", "0px"],
@@ -737,7 +749,8 @@ function assertTaskChipMeasurement(label, measured) {
     assert.equal(pill.count, null, `${label} taste pill has no count element`);
     assert.equal(pill.ariaLabel, "Taste classification");
     assert.equal(pill.classification, "taste");
-    assert.equal(pill.color, measured.quote.borderLeftColor, `${label} taste pill and quote share gold`);
+    assert.equal(pill.fontWeight, "400", `${label} taste pill uses regular text`);
+    assert.equal(pill.color, darkPalette.panel, `${label} taste pill uses inverse panel text`);
     assert.equal(pill.borderWidth, "0px", `${label} taste pill is borderless inside its card`);
     assert.notEqual(pill.backgroundColor, "rgba(0, 0, 0, 0)");
     assert.notEqual(measured.quote.backgroundColor, "rgba(0, 0, 0, 0)");
