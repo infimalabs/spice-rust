@@ -146,7 +146,11 @@ pub struct GateFindingSource {
     /// Whether the selected source was the staged index or one revision.
     pub kind: GateFindingSourceKind,
     /// Mainline lineage captured beside the exact measured source.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub mainline: Option<GateFindingMainline>,
 }
 
