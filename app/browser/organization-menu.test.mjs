@@ -48,6 +48,32 @@ test("global destinations mount in the shared header rather than the menu panel"
   );
 });
 
+test("the shared shell gutter adds physical safe areas to its responsive base", async () => {
+  const [chrome, mosaic, responsive] = await Promise.all([
+    readFile(resolve(root, "app/chrome.css"), "utf8"),
+    readFile(resolve(root, "app/mosaic.css"), "utf8"),
+    readFile(resolve(root, "app/responsive.css"), "utf8"),
+  ]);
+
+  assert.match(
+    chrome,
+    /--canvas-shell-edge-start:\s*calc\(var\(--canvas-shell-edge-inline\) \+ env\(safe-area-inset-left, 0px\)\)/,
+  );
+  assert.match(
+    chrome,
+    /--canvas-shell-edge-end:\s*calc\(var\(--canvas-shell-edge-inline\) \+ env\(safe-area-inset-right, 0px\)\)/,
+  );
+  assert.doesNotMatch(chrome, /--canvas-shell-edge-(?:start|end):\s*max\(/);
+  assert.match(responsive, /\.shell \{ --canvas-shell-edge-inline: 8px; \}/);
+  for (const stylesheet of [chrome, mosaic]) {
+    assert.match(
+      stylesheet,
+      /padding-inline:\s*var\(--canvas-shell-edge-start\) var\(--canvas-shell-edge-end\)/,
+      "the header and workspace consume the same resolved shell edges",
+    );
+  }
+});
+
 test("cursor assertion failures capture their engine and viewport before rethrow", async () => {
   const captures = [];
   const page = {
