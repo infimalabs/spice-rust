@@ -638,6 +638,55 @@ fn codex_item_completed_variants_are_typed_non_emitting_companions() {
 }
 
 #[test]
+fn codex_final_agent_message_companion_emits_from_its_own_phase() {
+    let bytes = br#"{"timestamp":"2026-09-05T07:11:14.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","id":"message-1","content":[{"type":"Text","text":"settled final\n\n![pixel.png](data:image/png;base64,iVBORw0KGgo=)"}],"phase":"final_answer"}}}"#;
+    let detected = decode_record(None, bytes, locus(bytes)).expect("final companion decodes");
+
+    assert!(matches!(
+        detected.decoded,
+        Decoded::Events { context, events }
+            if context.timestamp.is_some()
+                && matches!(events.as_slice(), [Event::Prose(prose)]
+                    if prose.role == ProseRole::Assistant
+                        && prose.text.starts_with("settled final")
+                        && prose.phase.as_deref() == Some("final_answer")
+                        && prose.media.len() == 1)
+    ));
+
+    for (phase, expected) in [
+        (
+            "analysis",
+            "event_msg:item_completed:AgentMessage:phase:analysis",
+        ),
+        (
+            "future",
+            "event_msg:item_completed:AgentMessage:phase:future",
+        ),
+    ] {
+        let malformed = format!(
+            "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"item_completed\",\"item\":{{\"type\":\"AgentMessage\",\"id\":\"message-1\",\"content\":[],\"phase\":\"{phase}\"}}}}}}"
+        );
+        let detected = decode_record(None, malformed.as_bytes(), locus(malformed.as_bytes()))
+            .expect("unknown phase remains bounded residue");
+        assert!(matches!(
+            detected.decoded,
+            Decoded::Residue(ref residue)
+                if residue.kind == ResidueKind::VersionDrift {
+                    discriminator: expected.to_owned(),
+                }
+        ));
+    }
+
+    let missing = br#"{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","id":"message-1","content":[]}}}"#;
+    let detected = decode_record(None, missing, locus(missing)).expect("missing phase is bounded");
+    assert!(matches!(
+        detected.decoded,
+        Decoded::Residue(ref residue)
+            if residue.kind == ResidueKind::Absent { field: "phase" }
+    ));
+}
+
+#[test]
 fn codex_unified_exec_image_result_retains_one_typed_media_output() {
     const CALL: &str = "call_N4XyMbDlajHB5WdorSMM6UBb";
     const PNG: &str = "iVBORw0KGgo=";

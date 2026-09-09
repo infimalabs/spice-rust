@@ -582,6 +582,82 @@ async function assertInlineBroadcastPill(page, console, lane, activityReplay) {
   return replyText;
 }
 
+async function assertImmediateFinalCard(page, console, lane, activityReplay) {
+  let latestText;
+  for (const reducedMotion of ["no-preference", "reduce"]) {
+    await page.emulateMedia({ reducedMotion });
+    const text = `Immediate final card with ${reducedMotion} motion.`;
+    latestText = text;
+    await page.evaluate(({ lane, text }) => {
+      const witness = { states: [] };
+      window.__canvasFirstFinalFrame = witness;
+      const observer = new MutationObserver(() => {
+        const card = [...document.querySelectorAll(
+          `[data-card-kind="agent-message"][data-agent-lane="${lane}"]`,
+        )].find((candidate) => candidate.textContent?.includes(text));
+        if (!card) return;
+        const style = getComputedStyle(card);
+        const box = card.getBoundingClientRect();
+        witness.states.push({
+          messageFinal: card.dataset.messageFinal,
+          finalClass: card.classList.contains("final"),
+          layoutPhase: card.dataset.layoutPhase,
+          visibility: style.visibility,
+          borderTopColor: style.borderTopColor,
+          backgroundColor: style.backgroundColor,
+          box: [box.x, box.y, box.width, box.height],
+        });
+        observer.disconnect();
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    }, { lane, text });
+    const injected = await activityReplay.injectAgentFinal(page, lane, text);
+    await waitForPage(
+      page,
+      "the first terminal card frame is observed",
+      TRANSITION_MS,
+      () => window.__canvasFirstFinalFrame.states.length > 0,
+    );
+    const [first] = await page.evaluate(() => window.__canvasFirstFinalFrame.states);
+    assert.equal(first.messageFinal, "true");
+    assert.equal(first.finalClass, true);
+    const colors = await console.evaluate((element) => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--accent-1)";
+      probe.style.background = "color-mix(in srgb, var(--accent-1) 8%, var(--panel))";
+      element.append(probe);
+      const style = getComputedStyle(probe);
+      const result = { accent: style.color, tint: style.backgroundColor };
+      probe.remove();
+      return result;
+    });
+    assert.equal(first.borderTopColor, colors.accent);
+    assert.equal(first.backgroundColor, colors.tint);
+    const card = console.locator(`[data-mosaic-card-key="${injected.key}"]`);
+    assert.equal(await card.count(), 1, "the terminal record creates one card identity");
+    assert.equal(await card.getAttribute("data-message-final"), "true");
+    await waitForPage(
+      page,
+      "the immediate final card settles into its mosaic placement",
+      TRANSITION_MS,
+      (key) => document.querySelector(`[data-mosaic-card-key="${key}"]`)
+        ?.dataset.layoutPhase === "committed",
+      injected.key,
+    );
+    const settledBox = await card.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      return [box.x, box.y, box.width, box.height];
+    });
+    if (first.visibility === "hidden") {
+      assert.equal(first.layoutPhase, "measuring");
+    } else {
+      assert.deepEqual(settledBox, first.box, "a visible final card does not shift after insertion");
+    }
+  }
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  return latestText;
+}
+
 export async function assertAgentConversation(
   page,
   fixture,
@@ -1039,12 +1115,21 @@ export async function assertAgentConversation(
     seated[1].lane,
     activityReplay,
   );
+  const finalReply = await assertImmediateFinalCard(
+    page,
+    console,
+    seated[2].lane,
+    activityReplay,
+  );
   const tasteHeading = restoredProse.find((message) => message.lane === seated[0].lane);
   assert.ok(tasteHeading, "the taste response belongs to the primary heading lane");
   tasteHeading.prose = tasteReply;
   const broadcastHeading = restoredProse.find((message) => message.lane === seated[1].lane);
   assert.ok(broadcastHeading, "the broadcast response belongs to its heading lane");
   broadcastHeading.prose = broadcastReply;
+  const finalHeading = restoredProse.find((message) => message.lane === seated[2].lane);
+  assert.ok(finalHeading, "the immediate final response belongs to its heading lane");
+  finalHeading.prose = finalReply;
   const clearedInbox = await reply(fixture, ["inbox", seated[2].lane]);
   for (const pending of clearedInbox.body.lanes[0].pending) {
     await reply(fixture, ["steer", "cancel", pending.directive]);

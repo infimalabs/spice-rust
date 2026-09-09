@@ -276,7 +276,7 @@ fn rollout_event(record: &Object, locus: Locus) -> Events {
         "mcp_tool_call_end" => rollout_mcp_result(payload, locus),
         "web_search_end" => rollout_web_search_end(payload, locus),
         "token_count" => rollout_usage(payload, locus),
-        "item_completed" => rollout_completed_item_companion(payload),
+        "item_completed" => rollout_completed_item_companion(payload, locus),
         "agent_message"
         | "user_message"
         | "thread_settings_applied"
@@ -287,10 +287,11 @@ fn rollout_event(record: &Object, locus: Locus) -> Events {
     }
 }
 
-fn rollout_completed_item_companion(payload: &Object) -> Events {
+fn rollout_completed_item_companion(payload: &Object, locus: Locus) -> Events {
     let item = object(payload, "item")?;
     match string(item, "type")? {
-        "UserMessage" | "AgentMessage" | "Reasoning" | "CommandExecution" => {
+        "AgentMessage" => rollout_completed_agent_message(item, locus),
+        "UserMessage" | "Reasoning" | "CommandExecution" => {
             string(item, "id")?;
             Ok(Vec::new())
         }
@@ -300,6 +301,23 @@ fn rollout_completed_item_companion(payload: &Object) -> Events {
             Ok(Vec::new())
         }
         other => Err(drift(&format!("event_msg:item_completed:{other}"))),
+    }
+}
+
+fn rollout_completed_agent_message(item: &Object, locus: Locus) -> Events {
+    string(item, "id")?;
+    match string(item, "phase")? {
+        "commentary" => Ok(Vec::new()),
+        "final_answer" => rollout_message_content(
+            item,
+            ProseRole::Assistant,
+            Some("final_answer".to_owned()),
+            locus,
+            RolloutMessageShape::CompletedAgent,
+        ),
+        other => Err(drift(&format!(
+            "event_msg:item_completed:AgentMessage:phase:{other}"
+        ))),
     }
 }
 
@@ -368,6 +386,28 @@ fn rollout_message(payload: &Object, locus: Locus) -> Events {
         .get("phase")
         .and_then(Value::as_str)
         .map(str::to_owned);
+    rollout_message_content(
+        payload,
+        role,
+        phase,
+        locus,
+        RolloutMessageShape::ResponseItem,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum RolloutMessageShape {
+    ResponseItem,
+    CompletedAgent,
+}
+
+fn rollout_message_content(
+    payload: &Object,
+    role: ProseRole,
+    phase: Option<String>,
+    locus: Locus,
+    shape: RolloutMessageShape,
+) -> Events {
     let content = array(payload, "content")?;
     let blocks = content
         .iter()
@@ -386,8 +426,12 @@ fn rollout_message(payload: &Object, locus: Locus) -> Events {
     let mut media = Vec::new();
     let mut retained_text = false;
     for (index, (value, block)) in content.iter().zip(&blocks).enumerate() {
-        match block.get("type").and_then(Value::as_str) {
-            Some("text" | "input_text" | "output_text") | None => {
+        match (shape, block.get("type").and_then(Value::as_str)) {
+            (RolloutMessageShape::CompletedAgent, Some("Text"))
+            | (
+                RolloutMessageShape::ResponseItem,
+                Some("text" | "input_text" | "output_text") | None,
+            ) => {
                 if let Some(block_text) = message_text(block) {
                     let block_text = match request {
                         Some((request_index, _)) if index < request_index => continue,
@@ -407,7 +451,7 @@ fn rollout_message(payload: &Object, locus: Locus) -> Events {
                     append_message_text(&mut text, block_text);
                 }
             }
-            Some("image" | "input_image" | "output_image") => {
+            (RolloutMessageShape::ResponseItem, Some("image" | "input_image" | "output_image")) => {
                 media.extend(
                     media::decompose(OwnedContent::ProviderValue {
                         value,
@@ -416,7 +460,12 @@ fn rollout_message(payload: &Object, locus: Locus) -> Events {
                     .media,
                 );
             }
-            Some(other) => return Err(drift(&format!("message:content:{other}"))),
+            (_, Some(other)) => return Err(drift(&format!("message:content:{other}"))),
+            (RolloutMessageShape::CompletedAgent, None) => {
+                return Err(ResidueKind::Absent {
+                    field: "payload.item.content[].type",
+                });
+            }
         }
     }
     let media = crate::media::unique(media)?;
