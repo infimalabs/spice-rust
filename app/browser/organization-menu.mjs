@@ -580,6 +580,7 @@ export async function assertCursorRelocation(page, artifacts, engine) {
         const footerNode = node.querySelector(".canvas-menu-footer");
         const footer = footerNode.getBoundingClientRect();
         const version = node.querySelector(".canvas-menu-version").getBoundingClientRect();
+        const theme = node.querySelector(".canvas-theme-selector").getBoundingClientRect();
         const cursor = node.querySelector(".canvas-menu-cursor").getBoundingClientRect();
         const fastMode = node.querySelector('[role="menuitemcheckbox"]').getBoundingClientRect();
         return {
@@ -611,6 +612,8 @@ export async function assertCursorRelocation(page, artifacts, engine) {
           cursorRight: cursor.right,
           versionLeft: version.left,
           versionRight: version.right,
+          themeLeft: theme.left,
+          themeRight: theme.right,
           fastModeLeft: fastMode.left,
           fastModeRight: fastMode.right,
           cursorInFooter: node.querySelector(".canvas-menu-cursor").parentElement === footerNode,
@@ -642,9 +645,10 @@ export async function assertCursorRelocation(page, artifacts, engine) {
       );
       assert.ok(
         panelGeometry.versionLeft >= panelGeometry.footerLeft - 0.5
-          && panelGeometry.versionRight <= panelGeometry.cursorLeft + 0.5
+          && panelGeometry.versionRight <= panelGeometry.themeLeft + 0.5
+          && panelGeometry.themeRight <= panelGeometry.cursorLeft + 0.5
           && panelGeometry.cursorRight <= panelGeometry.footerRight + 0.5,
-        `${label} keeps version and cursor ordered without overlap inside the footer`,
+        `${label} keeps version, theme, and cursor ordered without overlap inside the footer`,
       );
       assert.ok(
         panelGeometry.globalLeft >= panelGeometry.left - 0.5
@@ -655,19 +659,22 @@ export async function assertCursorRelocation(page, artifacts, engine) {
       );
       const longFooter = await panel.locator(".canvas-menu-footer").evaluate((footer) => {
         const version = footer.querySelector(".canvas-menu-version");
+        const theme = footer.querySelector(".canvas-theme-selector");
         const cursor = footer.querySelector(".canvas-menu-cursor");
         const original = [version.textContent, cursor.textContent];
         version.textContent = "Canvas version authority with a deliberately long build label";
         cursor.textContent = `cursor ${"1234567890".repeat(12)}`;
         const footerBounds = footer.getBoundingClientRect();
         const versionBounds = version.getBoundingClientRect();
+        const themeBounds = theme.getBoundingClientRect();
         const cursorBounds = cursor.getBoundingClientRect();
         const result = {
           contained: versionBounds.left >= footerBounds.left - 0.5
             && cursorBounds.right <= footerBounds.right + 0.5,
           cursorClipped: cursor.scrollWidth > cursor.clientWidth,
           cursorOverflow: getComputedStyle(cursor).textOverflow,
-          nonOverlapping: versionBounds.right <= cursorBounds.left + 0.5,
+          nonOverlapping: versionBounds.right <= themeBounds.left + 0.5
+            && themeBounds.right <= cursorBounds.left + 0.5,
           versionClipped: version.scrollWidth > version.clientWidth,
           versionOverflow: getComputedStyle(version).textOverflow,
         };

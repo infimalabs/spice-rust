@@ -47,8 +47,10 @@ const SPEECH_TEXT_BYTES: usize = 32 * 1_024;
 const SPEECH_AUDIO_BYTES: u64 = 16 * 1_024 * 1_024;
 const SPEECH_DIAGNOSTIC_BYTES: u64 = 8 * 1_024;
 const SPEECH_RUNTIME: Duration = Duration::from_secs(30);
+const INLINE_THEME_OPEN: &str = "<script data-canvas-theme>";
 const INLINE_MODULE_OPEN: &str = "<script type=\"module\">";
 const INLINE_MODULE_CLOSE: &str = "</script>";
+const SCRIPT_OPEN: &str = "<script";
 const DEFAULT_SCRIPT_HASH: &str = "B50SC8VLF+K2T0Re7VCfyZ3PqVhYIkg+OlhW+7PQyTU=";
 
 /// Closed capability-to-principal map for one resident generation.
@@ -995,29 +997,43 @@ fn speech_error(status: StatusCode, message: &'static str) -> Response {
 fn app_content_security_policy(html: &[u8]) -> Result<HeaderValue, &'static str> {
     let html = std::str::from_utf8(html)
         .map_err(|_| "canvas app unavailable: canvas-app.html was not UTF-8")?;
-    let (before, rest) = html
+    let (before_theme, rest) = html
+        .split_once(INLINE_THEME_OPEN)
+        .ok_or("canvas app unavailable: canvas-app.html did not carry one inline theme resolver")?;
+    let (theme, after_theme) = rest
+        .split_once(INLINE_MODULE_CLOSE)
+        .ok_or("canvas app unavailable: canvas-app.html did not close its inline theme resolver")?;
+    let (between, rest) = after_theme
         .split_once(INLINE_MODULE_OPEN)
         .ok_or("canvas app unavailable: canvas-app.html did not carry one inline module loader")?;
-    let (script, after) = rest
+    let (module, after_module) = rest
         .split_once(INLINE_MODULE_CLOSE)
         .ok_or("canvas app unavailable: canvas-app.html did not close its inline module loader")?;
-    if before.contains(INLINE_MODULE_CLOSE)
-        || after.contains(INLINE_MODULE_OPEN)
-        || after.contains(INLINE_MODULE_CLOSE)
+    if [before_theme, between, after_module]
+        .iter()
+        .any(|section| section.contains(SCRIPT_OPEN) || section.contains(INLINE_MODULE_CLOSE))
     {
-        return Err(
-            "canvas app unavailable: canvas-app.html carried multiple inline module loaders",
-        );
+        return Err("canvas app unavailable: canvas-app.html carried unexpected script elements");
     }
-    let hash = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(script.as_bytes()));
-    HeaderValue::from_str(&browser_content_security_policy(&hash))
-        .map_err(|_| "canvas app unavailable: its content security policy was not one HTTP value")
+    let theme_hash =
+        base64::engine::general_purpose::STANDARD.encode(Sha256::digest(theme.as_bytes()));
+    let module_hash =
+        base64::engine::general_purpose::STANDARD.encode(Sha256::digest(module.as_bytes()));
+    HeaderValue::from_str(&browser_content_security_policy(&[
+        &theme_hash,
+        &module_hash,
+    ]))
+    .map_err(|_| "canvas app unavailable: its content security policy was not one HTTP value")
 }
 
-fn browser_content_security_policy(script_hash: &str) -> String {
+fn browser_content_security_policy(script_hashes: &[&str]) -> String {
+    let script_hashes = script_hashes
+        .iter()
+        .map(|hash| format!(" 'sha256-{hash}'"))
+        .collect::<String>();
     format!(
         "default-src 'self'; connect-src 'self' ws:; img-src 'self' data:; object-src 'none'; \
-         script-src 'self' 'wasm-unsafe-eval' 'sha256-{script_hash}'; style-src 'self'; \
+         script-src 'self' 'wasm-unsafe-eval'{script_hashes}; style-src 'self'; \
          media-src 'self' blob:; base-uri 'none'; frame-ancestors 'none'"
     )
 }
@@ -1025,7 +1041,7 @@ fn browser_content_security_policy(script_hash: &str) -> String {
 fn install_browser_headers(response: &mut Response) {
     response.headers_mut().insert(
         "content-security-policy",
-        HeaderValue::from_str(&browser_content_security_policy(DEFAULT_SCRIPT_HASH))
+        HeaderValue::from_str(&browser_content_security_policy(&[DEFAULT_SCRIPT_HASH]))
             .expect("the default browser policy is one static HTTP value"),
     );
     response

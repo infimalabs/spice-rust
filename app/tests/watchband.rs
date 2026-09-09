@@ -404,11 +404,8 @@ fn the_stylesheet_matches_the_reference_accent_palette() {
         .expect("the light root is closed")
         .0;
     let dark = STYLESHEET
-        .split_once("@media (prefers-color-scheme: dark) {")
-        .expect("the stylesheet declares a dark palette")
-        .1
-        .split_once(":root {")
-        .expect("the dark media query declares a root")
+        .split_once(":root[data-canvas-effective-theme=\"dark\"] {")
+        .expect("the stylesheet declares the resolved dark palette")
         .1
         .split_once('}')
         .expect("the dark root is closed")

@@ -74,6 +74,26 @@ test("the shared shell gutter adds physical safe areas to its responsive base", 
   }
 });
 
+test("the theme authority resolves before styles and exposes one current preference path", async () => {
+  const [index, style, renderer] = await Promise.all([
+    readFile(resolve(root, "app/index.html"), "utf8"),
+    readFile(resolve(root, "app/style.css"), "utf8"),
+    readFile(resolve(root, "app/src/browser/view/lineage_menu.rs"), "utf8"),
+  ]);
+  const prepaint = "<script data-canvas-theme>";
+  assert.ok(
+    index.indexOf(prepaint) >= 0
+      && index.indexOf(prepaint) < index.indexOf('<link data-trunk rel="css"'),
+  );
+  assert.match(index, /const key = "spice:canvas-theme";/);
+  assert.match(index, /stored === "light" \|\| stored === "dark" \? stored : "system"/);
+  assert.match(index, /if \(next === "system"\) window\.localStorage\.removeItem\(key\)/);
+  assert.match(index, /media\.addEventListener\("change", \(\) => \{\s*if \(root\.dataset\.canvasTheme === "system"\)/);
+  assert.match(style, /:root\[data-canvas-effective-theme="dark"\]/);
+  assert.doesNotMatch(style, /@media \(prefers-color-scheme: dark\)/);
+  assert.match(renderer, /\[\("system", "System"\), \("light", "Light"\), \("dark", "Dark"\)\]/);
+});
+
 test("cursor assertion failures capture their engine and viewport before rethrow", async () => {
   const captures = [];
   const page = {
