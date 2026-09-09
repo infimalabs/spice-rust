@@ -26,6 +26,99 @@ import {
   waitForPageFunction as waitForPage,
 } from "./canvas-fixture.mjs";
 
+const RANGE_THUMB_INSET_PX = 8;
+const RANGE_DRAG_STEPS = 24;
+
+async function dragRangeToMinimum(page, range) {
+  const bounds = await range.boundingBox();
+  assert.ok(bounds, "the lifetime range has pointer geometry");
+  const y = bounds.y + bounds.height / 2;
+  await page.mouse.move(bounds.x + bounds.width - RANGE_THUMB_INSET_PX, y);
+  await page.mouse.down();
+  await page.mouse.move(bounds.x + RANGE_THUMB_INSET_PX, y, { steps: RANGE_DRAG_STEPS });
+  await page.mouse.up();
+}
+
+async function clickRangeMaximum(range) {
+  const bounds = await range.boundingBox();
+  assert.ok(bounds, "the lifetime range has pointer geometry");
+  await range.click({
+    position: {
+      x: bounds.width - RANGE_THUMB_INSET_PX,
+      y: bounds.height / 2,
+    },
+  });
+}
+
+async function installLifetimeCommandProbe(page, missingLineage) {
+  await page.evaluate((missingLineage) => {
+    window.__canvasLifetimeCommands = [];
+    window.__holdCanvasLifetimeCommand = false;
+    window.__releaseCanvasLifetimeCommand = null;
+    const socket = window.__canvasSockets.at(-1);
+    if (!socket) throw new Error("canvas WebSocket was not captured");
+    const send = socket.send.bind(socket);
+    let intercepted = false;
+    const rewrite = (bytes) => {
+      const command = JSON.parse(new TextDecoder().decode(bytes));
+      const policy = command.kind === "lineage::configure"
+        && Object.hasOwn(command.body, "life");
+      if (policy) window.__canvasLifetimeCommands.push(command.body.life);
+      if (!intercepted && policy) {
+        intercepted = true;
+        command.body.lineage_id = missingLineage;
+        bytes = new TextEncoder().encode(JSON.stringify(command));
+      }
+      return { bytes, policy };
+    };
+    const transmit = (bytes, text) => {
+      const rewritten = rewrite(bytes);
+      const data = text ? new TextDecoder().decode(rewritten.bytes) : rewritten.bytes;
+      if (rewritten.policy && window.__holdCanvasLifetimeCommand) {
+        window.__holdCanvasLifetimeCommand = false;
+        window.__releaseCanvasLifetimeCommand = () => {
+          window.__releaseCanvasLifetimeCommand = null;
+          send(data);
+        };
+        return;
+      }
+      send(data);
+    };
+    socket.send = (data) => {
+      if (typeof data === "string") {
+        transmit(new TextEncoder().encode(data), true);
+      } else if (data instanceof Blob) {
+        void data.arrayBuffer().then((buffer) => transmit(new Uint8Array(buffer), false));
+      } else {
+        transmit(new Uint8Array(data.buffer ?? data, data.byteOffset ?? 0, data.byteLength), false);
+      }
+    };
+  }, missingLineage);
+}
+
+async function assertFinalLifetimePointerChoice(page, range, lineage) {
+  const commandsBeforeGesture = await page.evaluate(() => window.__canvasLifetimeCommands.length);
+  await page.evaluate(() => { window.__holdCanvasLifetimeCommand = true; });
+  await dragRangeToMinimum(page, range);
+  await waitForPage(
+    page,
+    "the final lifetime choice is held while pending",
+    TRANSITION_MS,
+    (lineage) => document
+      .querySelector(`.organization-surface[data-lineage-id="${lineage}"] .organization-composer-controls`)
+      ?.dataset.lifetimePending === "true"
+      && typeof window.__releaseCanvasLifetimeCommand === "function",
+    lineage,
+  );
+  assert.equal(await range.isDisabled(), true, "the pending final choice disables the range");
+  assert.deepEqual(
+    await page.evaluate((before) => window.__canvasLifetimeCommands.slice(before), commandsBeforeGesture),
+    ["steer"],
+    "the complete Drain-to-Steer pointer gesture emits only its final choice",
+  );
+  await page.evaluate(() => window.__releaseCanvasLifetimeCommand());
+}
+
 async function settleLatestSystemSpeech(page, event = "end") {
   await page.evaluate((event) => {
     const utterance = window.__speechUtterances.at(-1);
@@ -284,32 +377,8 @@ export async function assertPerOrgWatchbands(
   assert.ok(initialPrimaryPolicy, "the primary organization has one authoritative task policy");
   const initialPrimaryLabel = `${initialPrimaryPolicy[0].toUpperCase()}${initialPrimaryPolicy.slice(1)}`;
   const initialPrimaryIndex = { steer: "0", drive: "1", drain: "2" }[initialPrimaryPolicy];
-  await page.evaluate((missingLineage) => {
-    const socket = window.__canvasSockets.at(-1);
-    if (!socket) throw new Error("canvas WebSocket was not captured");
-    const send = socket.send.bind(socket);
-    let intercepted = false;
-    const rewrite = (bytes) => {
-      const command = JSON.parse(new TextDecoder().decode(bytes));
-      if (!intercepted && command.kind === "lineage::configure") {
-        intercepted = true;
-        command.body.lineage_id = missingLineage;
-        return new TextEncoder().encode(JSON.stringify(command));
-      }
-      return bytes;
-    };
-    socket.send = (data) => {
-      if (typeof data === "string") {
-        const rewritten = rewrite(new TextEncoder().encode(data));
-        send(new TextDecoder().decode(rewritten));
-      } else if (data instanceof Blob) {
-        void data.arrayBuffer().then((buffer) => send(rewrite(new Uint8Array(buffer))));
-      } else {
-        send(rewrite(new Uint8Array(data.buffer ?? data, data.byteOffset ?? 0, data.byteLength)));
-      }
-    };
-  }, staleEpoch);
-  await primaryLife.fill("2");
+  await installLifetimeCommandProbe(page, staleEpoch);
+  await primaryLife.press("End");
   await waitForPage(
     page,
     "rejected lifetime command settles",
@@ -325,7 +394,7 @@ export async function assertPerOrgWatchbands(
   assert.equal(await primaryLife.inputValue(), initialPrimaryIndex);
   assert.match(await primarySurface.locator(".organization-control-issue").innerText(), /lineage::missing/);
 
-  await primaryLife.fill("2");
+  await primaryLife.press("End");
   await waitForPage(
     page,
     "accepted lifetime command settles",
@@ -614,7 +683,7 @@ export async function assertPerOrgWatchbands(
   // pending directions while proving the exact manual transition, then restore
   // Drain after the existing explicit wake. This makes vacancy observable
   // without weakening either the drain reply or the durable lane snapshot.
-  await primaryLife.fill("0");
+  await assertFinalLifetimePointerChoice(page, primaryLife, primary.lineage_id);
   await waitForPage(
     page,
     "temporary Steer policy settles before manual drain",
@@ -694,7 +763,7 @@ export async function assertPerOrgWatchbands(
     0,
     "a successful manual drain leaves no lifecycle divider in the activity plane",
   );
-  await primaryLife.fill("2");
+  await clickRangeMaximum(primaryLife);
   await waitForPage(
     page,
     "configured Drain policy is restored after manual wake",

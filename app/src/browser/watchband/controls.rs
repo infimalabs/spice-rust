@@ -105,6 +105,7 @@ pub(super) struct LineageControl {
     pub(super) previous_topology: Option<Vec<LineageArrangement>>,
     pub(super) speech: LineageSpeech,
     pub(super) life: LineageLife,
+    preview_life: Option<LineageLife>,
     pub(super) pending_life: Option<LineageLife>,
     authoritative_life: LineageLife,
     issue: Option<String>,
@@ -120,6 +121,7 @@ impl Default for LineageControl {
             previous_topology: None,
             speech: LineageSpeech::Speak,
             life: LineageLife::Steer,
+            preview_life: None,
             pending_life: None,
             authoritative_life: LineageLife::Steer,
             issue: None,
@@ -168,6 +170,14 @@ pub(crate) enum LineageControlAction {
         authoritative_life: wire::intent::LineageLife,
         speech: LineageSpeech,
     },
+    PreviewLife {
+        lineage: CanonicalUuid,
+        authoritative_life: wire::intent::LineageLife,
+        life: LineageLife,
+    },
+    CancelLifePreview {
+        lineage: CanonicalUuid,
+    },
     RequestLife {
         lineage: CanonicalUuid,
         authoritative_life: wire::intent::LineageLife,
@@ -214,6 +224,14 @@ impl Reducible for LineageControls {
                 authoritative_life,
                 speech,
             } => next.set_speech(lineage, authoritative_life, speech),
+            LineageControlAction::PreviewLife {
+                lineage,
+                authoritative_life,
+                life,
+            } => next.preview_life(lineage, authoritative_life, life),
+            LineageControlAction::CancelLifePreview { lineage } => {
+                next.cancel_life_preview(lineage);
+            }
             LineageControlAction::RequestLife {
                 lineage,
                 authoritative_life,
@@ -401,8 +419,38 @@ impl LineageControls {
                 ..LineageControl::default()
             });
         state.life = life;
+        state.preview_life = None;
         state.pending_life = Some(life);
         state.issue = None;
+    }
+
+    fn preview_life(
+        &mut self,
+        lineage: CanonicalUuid,
+        authoritative_life: wire::intent::LineageLife,
+        life: LineageLife,
+    ) {
+        let state = self
+            .lineages
+            .entry(lineage)
+            .or_insert_with(|| LineageControl {
+                life: authoritative_life.into(),
+                authoritative_life: authoritative_life.into(),
+                ..LineageControl::default()
+            });
+        if state.pending_life.is_none() {
+            state.preview_life = (life != state.authoritative_life).then_some(life);
+        }
+    }
+
+    fn cancel_life_preview(&mut self, lineage: CanonicalUuid) {
+        let Some(state) = self.lineages.get_mut(&lineage) else {
+            return;
+        };
+        if state.pending_life.is_none() {
+            state.preview_life = None;
+            state.life = state.authoritative_life;
+        }
     }
 
     /// Reconcile a lane table. Ordinary reads cannot overtake an in-flight
@@ -449,7 +497,7 @@ impl LineageControls {
             let settles_pending = settle.is_some_and(|(settled_lineage, requested)| {
                 settled_lineage == lineage && state.pending_life == Some(requested)
             });
-            if settles_pending || state.pending_life.is_none() {
+            if settles_pending || (state.pending_life.is_none() && state.preview_life.is_none()) {
                 state.life = life;
                 state.pending_life = None;
                 if settles_pending {
@@ -463,6 +511,7 @@ impl LineageControls {
         let state = self.lineages.entry(lineage).or_default();
         if life.is_some_and(|life| state.pending_life == Some(life)) {
             state.life = state.authoritative_life;
+            state.preview_life = None;
             state.pending_life = None;
         }
         state.issue = Some(issue);
@@ -474,9 +523,63 @@ impl LineageControls {
         };
         if state.pending_life == Some(life) {
             state.life = state.authoritative_life;
+            state.preview_life = None;
             state.pending_life = None;
         }
     }
+}
+
+fn preview_life_callback(
+    lineage: CanonicalUuid,
+    authoritative_life: wire::intent::LineageLife,
+    controls: UseReducerHandle<LineageControls>,
+) -> Callback<InputEvent> {
+    Callback::from(move |event: InputEvent| {
+        let input: HtmlInputElement = event.target_unchecked_into();
+        let index = input.value().parse::<usize>().unwrap_or(0).min(2);
+        controls.dispatch(LineageControlAction::PreviewLife {
+            lineage,
+            authoritative_life,
+            life: LineageLife::ALL[index],
+        });
+    })
+}
+
+fn commit_life_callback(
+    lineage: CanonicalUuid,
+    authoritative_life: wire::intent::LineageLife,
+    topology_revision: u64,
+    controls: UseReducerHandle<LineageControls>,
+    sender: SenderHandle,
+) -> Callback<Event> {
+    Callback::from(move |event: Event| {
+        let input: HtmlInputElement = event.target_unchecked_into();
+        let index = input.value().parse::<usize>().unwrap_or(0).min(2);
+        let life = LineageLife::ALL[index];
+        controls.dispatch(LineageControlAction::RequestLife {
+            lineage,
+            authoritative_life,
+            life,
+        });
+        send_action(
+            &sender,
+            ClientAction::ConfigureLineage {
+                topology_revision,
+                lineage,
+                member: None,
+                life: Some(life.wire()),
+            },
+        );
+    })
+}
+
+fn cancel_life_preview_callback(
+    lineage: CanonicalUuid,
+    controls: UseReducerHandle<LineageControls>,
+) -> Callback<FocusEvent> {
+    Callback::from(move |_| {
+        controls.dispatch(LineageControlAction::CancelLifePreview { lineage });
+    })
 }
 
 #[allow(
@@ -497,9 +600,16 @@ pub(super) fn render_lineage_controls(
     let speech = control.speech;
     let update_speech = lineage_controls.clone();
     let suppress_automatic_speech = suppress_automatic_speech.clone();
-    let selected = control.life;
-    let update_life = lineage_controls.clone();
-    let life_sender = sender.clone();
+    let selected = control.preview_life.unwrap_or(control.life);
+    let preview_life = preview_life_callback(lineage, authoritative_life, lineage_controls.clone());
+    let commit_life = commit_life_callback(
+        lineage,
+        authoritative_life,
+        topology_revision,
+        lineage_controls.clone(),
+        sender.clone(),
+    );
+    let cancel_life_preview = cancel_life_preview_callback(lineage, lineage_controls.clone());
     html! {
         <aside
             class="organization-composer-controls"
@@ -551,25 +661,9 @@ pub(super) fn render_lineage_controls(
                     aria-label={format!("Task subscription policy: {}", selected.help())}
                     title={selected.help()}
                     disabled={!can_configure || control.pending_life.is_some()}
-                    oninput={Callback::from(move |event: InputEvent| {
-                        let input: HtmlInputElement = event.target_unchecked_into();
-                        let index = input.value().parse::<usize>().unwrap_or(0).min(2);
-                        let life = LineageLife::ALL[index];
-                        update_life.dispatch(LineageControlAction::RequestLife {
-                            lineage,
-                            authoritative_life,
-                            life,
-                        });
-                        send_action(
-                            &life_sender,
-                            ClientAction::ConfigureLineage {
-                                topology_revision,
-                                lineage,
-                                member: None,
-                                life: Some(life.wire()),
-                            },
-                        );
-                    })}
+                    oninput={preview_life}
+                    onchange={commit_life}
+                    onblur={cancel_life_preview}
                 />
                 <span>{selected.label()}</span>
             </label>
