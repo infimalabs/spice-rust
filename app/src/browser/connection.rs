@@ -153,6 +153,16 @@ async fn pump_session(
                     !hydrating,
                 ).await?;
                 if hydrating && pending.values().all(|entry| entry.current_read().is_none()) {
+                    let complete = data
+                        .read()
+                        .as_ref()
+                        .is_some_and(CanvasRuntime::is_hydrated);
+                    if !complete {
+                        return Err(
+                            "replacement Canvas scope settled without every current snapshot"
+                                .to_owned(),
+                        );
+                    }
                     handles.surface.set(data.publication());
                     handles.connection.set(Connection::Online {
                         actor: principal.actor().to_string(),

@@ -518,6 +518,15 @@ impl CanvasRuntime {
         self.accepted.scope() == accepted.scope()
     }
 
+    /// Whether every current snapshot needed for one coherent Canvas is present.
+    #[must_use]
+    pub fn is_hydrated(&self) -> bool {
+        self.board().is_some()
+            && self.lanes().is_some()
+            && self.inbox().is_some()
+            && self.settings().is_some()
+    }
+
     #[must_use]
     pub const fn principal(&self) -> &Principal {
         &self.principal
