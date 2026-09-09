@@ -165,6 +165,7 @@ async function geometry(page) {
       const rect = surface.getBoundingClientRect();
       const surfaceStyle = getComputedStyle(surface);
       const toolbar = surface.querySelector(".organization-toolbar");
+      const toolbarStyle = getComputedStyle(toolbar);
       const modeRail = toolbar.querySelector(".organization-mode-rail");
       const modeRailBounds = modeRail.getBoundingClientRect();
       const modeRailStyle = getComputedStyle(modeRail);
@@ -211,6 +212,7 @@ async function geometry(page) {
         clipped,
         toolbar: {
           height: toolbar.getBoundingClientRect().height,
+          horizontalSpacing: [toolbarStyle.gap, toolbarStyle.paddingLeft, toolbarStyle.paddingRight],
           children: [...toolbar.children].map((child) => child.getBoundingClientRect().toJSON()),
         },
         modeRail: {
@@ -290,6 +292,11 @@ function assertTrack(layout, label, overflow) {
   assert.ok(
     Math.max(...toolbarHeights) - Math.min(...toolbarHeights) <= 0.5,
     `${label} keeps weighted team headers equal height: ${JSON.stringify(toolbarHeights)}`,
+  );
+  assert.equal(
+    new Set(layout.surfaces.map(({ toolbar }) => JSON.stringify(toolbar.horizontalSpacing))).size,
+    1,
+    `${label} keeps weighted team header gaps and edge padding equal`,
   );
   for (const surface of layout.surfaces) {
     assert.ok(
