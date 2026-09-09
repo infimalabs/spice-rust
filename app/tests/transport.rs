@@ -204,7 +204,10 @@ fn the_requirement_unaware_canvas_generation_is_stopped_at_discovery() {
         .expect_err("a requirement-unaware browser does not cross current Canvas DTOs");
     assert_eq!(fault.reason, "bootstrap::canvas-mismatch");
     assert!(
-        fault.detail.contains("protocol 3") && fault.detail.contains("speaks 4"),
+        fault.detail.contains("protocol 3")
+            && fault
+                .detail
+                .contains(&format!("speaks {}", wire::CanvasVersion::CURRENT)),
         "{}",
         fault.detail
     );
