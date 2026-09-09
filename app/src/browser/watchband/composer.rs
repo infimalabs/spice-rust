@@ -222,6 +222,7 @@ fn render_agent_message_card(
             data-agent-activity={agent_activity_name(message.activity)}
             data-message-ack-count={badges.acknowledgements.to_string()}
             data-message-taste-count={badges.tastes.to_string()}
+            data-message-broadcast-count={badges.broadcasts.to_string()}
             data-message-final={message.final_answer.to_string()}
             data-speech-active={correspondent.speaking.to_string()}
             data-producer-target-id={quote_lane.to_string()}
@@ -286,7 +287,7 @@ fn agent_message_presentation<'a>(
     let is_compaction = message.activity == wire::AgentActivityKind::Compaction;
     let badges = message.badges;
     let rendered_markdown =
-        crate::composer_markdown::render_received_with_tastes(&message.text, badges.tastes);
+        crate::composer_markdown::render_received_with_badges(&message.text, badges);
     let card_label = match message.activity {
         wire::AgentActivityKind::Compaction => format!("Context compacted by {footer_label}"),
         wire::AgentActivityKind::Tool if message.text.trim().is_empty() => {

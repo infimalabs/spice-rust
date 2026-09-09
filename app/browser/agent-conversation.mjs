@@ -535,6 +535,53 @@ async function assertInlineTastePills(page, console, lane, activityReplay) {
   return replyText;
 }
 
+async function assertInlineBroadcastPill(page, console, lane, activityReplay) {
+  const replyText = "ACK: every occupied agent received the same message.";
+  const text = [
+    "> [BROADCAST] Send this to every occupied agent.",
+    "",
+    replyText,
+  ].join("\n");
+  const { key } = await activityReplay.injectClassifiedAgentProse(page, lane, text, {
+    acknowledgements: 0,
+    tastes: 0,
+    broadcasts: 1,
+  });
+  const card = console.locator(`[data-mosaic-card-key="${key}"]`);
+  await card.waitFor({ timeout: TRANSITION_MS });
+  assert.equal(await card.getAttribute("data-message-broadcast-count"), "1");
+  const pill = card.locator(".message-broadcast-pill");
+  assert.equal(await pill.innerText(), "BROADCAST");
+  assert.equal(await pill.getAttribute("data-message-classification"), "broadcast");
+  assert.equal(await pill.getAttribute("aria-label"), "Broadcast classification");
+  assert.doesNotMatch(await card.locator(".message-body").innerText(), /\[BROADCAST\]/u);
+  for (const colorScheme of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme });
+    const colors = await card.evaluate((element) => {
+      const quote = element.querySelector("blockquote");
+      const pill = element.querySelector(".message-broadcast-pill");
+      if (!quote || !pill) throw new Error("broadcast presentation is incomplete");
+      const probe = document.createElement("span");
+      probe.style.color = "var(--accent-5)";
+      element.append(probe);
+      const accent = getComputedStyle(probe).color;
+      probe.remove();
+      return {
+        accent,
+        quote: getComputedStyle(quote).borderLeftColor,
+        pill: getComputedStyle(pill).color,
+      };
+    });
+    assert.deepEqual(
+      [colors.quote, colors.pill],
+      [colors.accent, colors.accent],
+      `${colorScheme} broadcast quote and pill use the plum accent`,
+    );
+  }
+  await page.emulateMedia({ colorScheme: "light" });
+  return replyText;
+}
+
 export async function assertAgentConversation(
   page,
   fixture,
@@ -986,9 +1033,18 @@ export async function assertAgentConversation(
     seated[0].lane,
     activityReplay,
   );
+  const broadcastReply = await assertInlineBroadcastPill(
+    page,
+    console,
+    seated[1].lane,
+    activityReplay,
+  );
   const tasteHeading = restoredProse.find((message) => message.lane === seated[0].lane);
   assert.ok(tasteHeading, "the taste response belongs to the primary heading lane");
   tasteHeading.prose = tasteReply;
+  const broadcastHeading = restoredProse.find((message) => message.lane === seated[1].lane);
+  assert.ok(broadcastHeading, "the broadcast response belongs to its heading lane");
+  broadcastHeading.prose = broadcastReply;
   const clearedInbox = await reply(fixture, ["inbox", seated[2].lane]);
   for (const pending of clearedInbox.body.lanes[0].pending) {
     await reply(fixture, ["steer", "cancel", pending.directive]);

@@ -86,6 +86,10 @@
   border-left-color: var(--accent-2);
   background: color-mix(in srgb, var(--accent-2) 6%, transparent);
 }
+.markdown-body blockquote:has(> p > .message-broadcast-pill) {
+  border-left-color: var(--accent-5);
+  background: color-mix(in srgb, var(--accent-5) 6%, transparent);
+}
 .markdown-body code {
   padding: 0; background: transparent;
   font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -1014,6 +1018,7 @@ html[data-command-modifier-held="true"]
 }
 .organization-surface .message-task-chip,
 .organization-surface .message-taste-pill,
+.organization-surface .message-broadcast-pill,
 .organization-surface .message-review-pill {
   --message-inline-pill-accent: var(--ink);
   display: inline-flex;
@@ -1050,11 +1055,15 @@ html[data-command-modifier-held="true"]
 .organization-surface .message-taste-pill {
   --message-inline-pill-accent: var(--accent-2);
 }
+.organization-surface .message-broadcast-pill {
+  --message-inline-pill-accent: var(--accent-5);
+}
 .organization-surface .message-review-pill {
   --message-inline-pill-accent: var(--ink);
 }
 .organization-surface .markdown-body blockquote .message-task-chip,
 .organization-surface .markdown-body blockquote .message-taste-pill,
+.organization-surface .markdown-body blockquote .message-broadcast-pill,
 .organization-surface .markdown-body blockquote .message-review-pill {
   background: color-mix(in srgb, var(--message-inline-pill-accent) 6%, transparent);
   color: var(--message-inline-pill-accent);

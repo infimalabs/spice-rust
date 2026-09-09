@@ -9,6 +9,9 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Canonical semantic prefix carried by every broadcast steering directive.
+pub const BROADCAST_MARKER: &str = "[BROADCAST]";
+
 use crate::{
     Actor, AnyFact, Body, CanonicalUuid, Envelope, FactKind, Fault, FaultClass, Instant, Name,
     Origin, Packed, Refusal, RefusalDiagnostic, Seq, TrustHead, WireVersion,
@@ -68,13 +71,16 @@ pub struct AgentMessageBadges {
     /// Positively acknowledged taste reminders.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub tastes: u32,
+    /// Positively acknowledged broadcast directives.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub broadcasts: u32,
 }
 
 impl AgentMessageBadges {
     /// Whether this message earned no semantic badge.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.acknowledgements == 0 && self.tastes == 0
+        self.acknowledgements == 0 && self.tastes == 0 && self.broadcasts == 0
     }
 }
 
