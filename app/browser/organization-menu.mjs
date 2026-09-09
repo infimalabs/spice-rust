@@ -293,7 +293,7 @@ export async function assertCursorRelocation(page, artifacts, engine) {
         const strip = disclosure.querySelector(".task-pill-strip");
         const menu = disclosure.querySelector(".canvas-menu");
         const frame = menu.querySelector(".canvas-menu-frame");
-        const navigation = frame.querySelector(".canvas-navigation");
+        const navigation = disclosure.querySelector(":scope > .canvas-navigation");
         const panel = frame.querySelector(".canvas-menu-panel");
         const summary = menu.querySelector(":scope > summary");
         const navigationStyle = getComputedStyle(navigation);
@@ -308,6 +308,7 @@ export async function assertCursorRelocation(page, artifacts, engine) {
           workspaceTop: node.nextElementSibling.getBoundingClientRect().top,
           frameContainsNavigation: frame.contains(navigation),
           frameContainsPanel: frame.contains(panel),
+          disclosureOwnsNavigation: navigation.parentElement === disclosure,
           menuContainsFrame: menu.contains(frame),
           disclosureContainsAll: [strip, menu, summary, frame, navigation, panel]
             .every((element) => disclosure.contains(element)),
@@ -339,7 +340,12 @@ export async function assertCursorRelocation(page, artifacts, engine) {
       );
       assert.equal(expandedGeometry.disclosureContainsAll, true, `${label} has one disclosure owner`);
       assert.equal(expandedGeometry.menuContainsFrame, true, `${label} nests the frame under the trigger details`);
-      assert.equal(expandedGeometry.frameContainsNavigation, true, `${label} renders navigation only in the frame`);
+      assert.equal(expandedGeometry.frameContainsNavigation, false, `${label} removes navigation from the panel frame`);
+      assert.equal(
+        expandedGeometry.disclosureOwnsNavigation,
+        true,
+        `${label} mounts navigation directly in the shared header shell`,
+      );
       assert.equal(expandedGeometry.frameContainsPanel, true, `${label} keeps context controls in the frame`);
       assert.ok(
         Math.abs(expandedGeometry.frame.right - expandedGeometry.disclosure.right) <= 0.5
@@ -366,34 +372,33 @@ export async function assertCursorRelocation(page, artifacts, engine) {
         `${label} contains project pills and trigger in the framed top row`,
       );
       assert.ok(
-        expandedGeometry.navigation.left >= expandedGeometry.frame.left - 0.5
-          && expandedGeometry.navigation.right <= expandedGeometry.frame.right + 0.5
+        expandedGeometry.navigation.left >= expandedGeometry.strip.left - 0.5
+          && expandedGeometry.navigation.right <= expandedGeometry.summary.left + 0.5
+          && expandedGeometry.navigation.top >= expandedGeometry.disclosure.top - 0.5
+          && expandedGeometry.navigation.bottom <= expandedGeometry.disclosure.bottom + 0.5
           && expandedGeometry.panel.left >= expandedGeometry.frame.left - 0.5
           && expandedGeometry.panel.right <= expandedGeometry.frame.right + 0.5
           && expandedGeometry.panel.bottom <= expandedGeometry.frame.bottom + 0.5,
-        `${label} contains global and context controls in the lower frame`,
+        `${label} contains global controls in the header and context controls in the lower frame`,
       );
       assert.ok(
         expandedGeometry.navigationScrollWidth <= expandedGeometry.navigationClientWidth + 1
-          && !["auto", "scroll"].includes(expandedGeometry.navigationOverflowX),
-        `${label} wraps navigation without a transient scrollbar`,
+          && expandedGeometry.navigationOverflowX === "auto",
+        `${label} keeps the intrinsic destination strip scroll-ready without forcing overflow`,
       );
       assert.equal(
         expandedGeometry.navigationButtons.length,
         3,
         `${label} lays out every current navigation button`,
       );
-      const navigationWidths = expandedGeometry.navigationButtons
-        .map((button) => button.right - button.left);
       assert.ok(
         Math.abs(
           expandedGeometry.navigationButtons[0].left - expandedGeometry.navigation.left,
-        ) <= 0.5
+        ) <= 8
           && Math.abs(
             expandedGeometry.navigationButtons.at(-1).right - expandedGeometry.navigation.right,
-          ) <= 0.5
-          && Math.max(...navigationWidths) - Math.min(...navigationWidths) <= 1,
-        `${label} distributes current navigation evenly across the full rail`,
+          ) <= 0.5,
+        `${label} sizes the current navigation to its intrinsic controls`,
       );
       assert.ok(
         expandedGeometry.navigationButtons.every((button) => (
@@ -401,7 +406,7 @@ export async function assertCursorRelocation(page, artifacts, engine) {
             && button.bottom <= expandedGeometry.navigation.bottom + 0.5
             && button.scrollWidth <= button.clientWidth
         )),
-        `${label} keeps every full-width navigation button usable without label overflow`,
+        `${label} keeps every intrinsic navigation button usable without label overflow`,
       );
       assert.deepEqual(
         [expandedGeometry.summary.right - expandedGeometry.summary.left,
@@ -427,6 +432,116 @@ export async function assertCursorRelocation(page, artifacts, engine) {
         expandedGeometry.strip.right - expandedGeometry.strip.left >= 96,
         `${label} preserves the 6rem task viewport minimum`,
       );
+      const densityGeometry = await disclosure.evaluate((node) => {
+        const box = (element) => {
+          const rect = element.getBoundingClientRect();
+          return { bottom: rect.bottom, left: rect.left, right: rect.right, top: rect.top };
+        };
+        const strip = node.querySelector(":scope > .task-pill-strip");
+        const navigation = node.querySelector(":scope > .canvas-navigation");
+        const frame = node.querySelector(".canvas-menu-frame");
+        const originalPills = Array.from(strip.querySelectorAll(":scope > .task-pill"));
+        const originalDisplays = originalPills.map((pill) => pill.style.display);
+        for (const pill of originalPills) pill.style.display = "none";
+
+        const sparsePill = document.createElement("button");
+        sparsePill.className = "task-pill";
+        sparsePill.dataset.headerDensityFixture = "sparse";
+        sparsePill.textContent = "one";
+        strip.append(sparsePill);
+        strip.scrollLeft = 0;
+        const sparse = box(sparsePill);
+        const sparseNavigation = box(navigation);
+        const sparseClear = sparse.right <= sparseNavigation.left + 0.5;
+
+        const densePill = document.createElement("button");
+        densePill.className = "task-pill";
+        densePill.dataset.headerDensityFixture = "dense";
+        densePill.textContent = "dense task pill ".repeat(18);
+        strip.append(densePill);
+        strip.scrollLeft = strip.scrollWidth;
+
+        for (let index = 1; index <= 7; index += 1) {
+          const destination = document.createElement("button");
+          destination.className = "axis-button pill";
+          destination.dataset.headerNavigationFixture = "true";
+          const label = document.createElement("span");
+          label.className = "pill-label";
+          label.textContent = `Future global destination ${index}`;
+          destination.append(label);
+          navigation.append(destination);
+        }
+        navigation.scrollLeft = navigation.scrollWidth;
+
+        const dense = box(densePill);
+        const cappedNavigation = box(navigation);
+        const frameBounds = box(frame);
+        const lastDestination = box(navigation.lastElementChild);
+        const hitX = Math.min(dense.right, cappedNavigation.right) - 2;
+        const hitY = (Math.max(dense.top, cappedNavigation.top)
+          + Math.min(dense.bottom, cappedNavigation.bottom)) / 2;
+        const hit = document.elementFromPoint(hitX, hitY);
+        const navigationStyle = getComputedStyle(navigation);
+        const result = {
+          background: navigationStyle.backgroundColor,
+          borderLeftStyle: navigationStyle.borderLeftStyle,
+          borderLeftWidth: navigationStyle.borderLeftWidth,
+          denseOverlap: dense.left < cappedNavigation.right && dense.right > cappedNavigation.left,
+          destinationOnTop: navigation.contains(hit),
+          lastDestinationVisible: lastDestination.left >= cappedNavigation.left - 0.5
+            && lastDestination.right <= cappedNavigation.right + 0.5,
+          navigationCappedToPanel: cappedNavigation.right - cappedNavigation.left
+            <= frameBounds.right - frameBounds.left + 0.5,
+          navigationClientWidth: navigation.clientWidth,
+          navigationScrollWidth: navigation.scrollWidth,
+          sparseClear,
+          stripClientWidth: strip.clientWidth,
+          stripScrollWidth: strip.scrollWidth,
+        };
+
+        sparsePill.remove();
+        densePill.remove();
+        for (const destination of navigation.querySelectorAll("[data-header-navigation-fixture]")) {
+          destination.remove();
+        }
+        originalPills.forEach((pill, index) => { pill.style.display = originalDisplays[index]; });
+        strip.scrollLeft = 0;
+        navigation.scrollLeft = 0;
+        return result;
+      });
+      assert.equal(densityGeometry.sparseClear, true, `${label} leaves sparse task pills unobscured`);
+      assert.ok(
+        densityGeometry.stripScrollWidth > densityGeometry.stripClientWidth
+          && densityGeometry.denseOverlap,
+        `${label} lets a dense task strip continue beneath the destination overlay`,
+      );
+      assert.ok(
+        densityGeometry.navigationScrollWidth > densityGeometry.navigationClientWidth,
+        `${label} caps an expanded future destination set for horizontal scrolling; `
+          + JSON.stringify(densityGeometry),
+      );
+      assert.equal(
+        densityGeometry.lastDestinationVisible,
+        true,
+        `${label} can horizontally reveal the final future destination; `
+          + JSON.stringify(densityGeometry),
+      );
+      assert.equal(
+        densityGeometry.navigationCappedToPanel,
+        true,
+        `${label} never lets the destination strip exceed the panel width`,
+      );
+      assert.deepEqual(
+        [densityGeometry.borderLeftStyle, densityGeometry.borderLeftWidth],
+        ["solid", "1px"],
+        `${label} draws a hard boundary before global destinations`,
+      );
+      assert.notEqual(densityGeometry.background, "rgba(0, 0, 0, 0)");
+      assert.equal(
+        densityGeometry.destinationOnTop,
+        true,
+        `${label} paints destination controls above overlapped task pills`,
+      );
       if (viewport.width <= 560) {
         await addOverflowControls(panel);
       }
@@ -435,7 +550,7 @@ export async function assertCursorRelocation(page, artifacts, engine) {
         const frame = node.closest(".canvas-menu-frame").getBoundingClientRect();
         const summary = node.closest(".canvas-menu").querySelector(":scope > summary")
           .getBoundingClientRect();
-        const navigation = node.closest(".canvas-menu-frame").querySelector(".canvas-navigation");
+        const navigation = node.closest(".canvas-disclosure").querySelector(":scope > .canvas-navigation");
         const navigationStyle = getComputedStyle(navigation);
         const commandbarStyle = getComputedStyle(node.closest(".commandbar--mosaic"));
         const global = node.querySelector(".canvas-menu-global").getBoundingClientRect();
@@ -493,9 +608,9 @@ export async function assertCursorRelocation(page, artifacts, engine) {
       assert.ok(
         !["auto", "scroll"].includes(panelGeometry.commandbarOverflowX)
           && !["auto", "scroll"].includes(panelGeometry.commandbarOverflowY)
-          && !["auto", "scroll"].includes(panelGeometry.navigationOverflowX)
+          && panelGeometry.navigationOverflowX === "auto"
           && panelGeometry.navigationScrollWidth <= panelGeometry.navigationClientWidth + 1,
-        `${label} avoids command-bar and navigation scrollbars`,
+        `${label} avoids command-bar scrollbars while retaining a scroll-ready destination strip`,
       );
       assert.equal(
         panelGeometry.cursorInFooter && panelGeometry.footerLast,
@@ -687,10 +802,22 @@ async function assertPepperDisclosure(page) {
 
     await trigger.click();
     await waitForDisclosure(page, true, "the pepper disclosure reopens for project navigation");
-    await retainedPill.click();
+    await taskStrip.evaluate((node) => { node.scrollLeft = 0; });
+    const exposedPill = taskStrip.locator(".task-pill").first();
+    const exposedGeometry = await exposedPill.evaluate((node) => {
+      const pill = node.getBoundingClientRect();
+      const navigation = node.closest(".canvas-disclosure")
+        .querySelector(":scope > .canvas-navigation").getBoundingClientRect();
+      return { pillRight: pill.right, navigationLeft: navigation.left };
+    });
+    assert.ok(
+      exposedGeometry.pillRight <= exposedGeometry.navigationLeft + 0.5,
+      "project navigation uses the task-pill region before the global overlay boundary",
+    );
+    await exposedPill.click();
     await waitForDisclosure(page, false, "project navigation dismisses the pepper disclosure");
     assert.equal(
-      await retainedPill.evaluate((node) => node === document.activeElement),
+      await exposedPill.evaluate((node) => node === document.activeElement),
       true,
       "project navigation retains focus on its mounted pill",
     );
