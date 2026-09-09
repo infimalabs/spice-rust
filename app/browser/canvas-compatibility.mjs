@@ -101,6 +101,7 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
   const trigger = menu.locator(":scope > summary");
   const update = menu.getByRole("button", { name: `Reload Canvas v${currentVersion}` });
   assert.equal(await update.getAttribute("data-canvas-update-generation"), alternateGeneration);
+  assert.match(await update.innerText(), new RegExp(alternateGeneration.slice(0, 8)));
   assert.match(await trigger.getAttribute("title"), new RegExp(`Canvas v${currentVersion} update available`));
 
   const fastMode = menu.getByRole("menuitemcheckbox", { name: /Fast mode/ });

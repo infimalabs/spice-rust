@@ -187,6 +187,16 @@ fn render_global_settings(runtime: Option<&CanvasRuntime>, sender: &SenderHandle
 
 fn render_version_footer(cursor: &str, update: Option<&CanvasUpdate>) -> Html {
     let version = wire::CanvasVersion::CURRENT;
+    let update_presentation = update.map(|update| {
+        let generation = update.generation.as_str()[..8].to_owned();
+        let label = format!("Reload Canvas v{} build {generation}", update.version);
+        (
+            generation,
+            label,
+            update.version.to_string(),
+            update.generation.to_string(),
+        )
+    });
     let reload = Callback::from(move |_| {
         web_sys::window()
             .expect("Canvas update action has a browser window")
@@ -201,16 +211,16 @@ fn render_version_footer(cursor: &str, update: Option<&CanvasUpdate>) -> Html {
                     class="canvas-menu-version"
                     data-canvas-version={version.to_string()}
                 >{format!("Canvas v{version}")}</strong>
-                if let Some(update) = update {
+                if let Some((generation, label, update_version, update_generation)) = update_presentation {
                     <button
                         class="canvas-menu-update"
                         type="button"
-                        aria-label={format!("Reload Canvas v{}", update.version)}
-                        title={format!("Reload Canvas v{}", update.version)}
-                        data-canvas-update-version={update.version.to_string()}
-                        data-canvas-update-generation={update.generation.to_string()}
+                        aria-label={label.clone()}
+                        title={label}
+                        data-canvas-update-version={update_version}
+                        data-canvas-update-generation={update_generation}
                         onclick={reload}
-                    >{"Update"}</button>
+                    >{format!("Update {generation}")}</button>
                 }
             </div>
             <span class="bar-meta canvas-menu-cursor" aria-label="Global cursor">

@@ -158,10 +158,10 @@ function waitForDiscovery(child, canvas, timeout = 30_000) {
   });
 }
 
-export async function startResident(fixture, { measure = false } = {}) {
+export async function startResident(fixture, { measure = false, port = 0 } = {}) {
   const canvas = join(fixture, ".git/.spice-rs/canvas");
   await mkdir(dirname(canvas), { recursive: true });
-  const child = spawn(binary, ["--json", "up", "--foreground", "--port", "0"], {
+  const child = spawn(binary, ["--json", "up", "--foreground", "--port", String(port)], {
     cwd: fixture,
     env: fixtureCommandEnv(undefined, fixture),
     stdio: ["ignore", "pipe", "pipe"],
@@ -850,7 +850,24 @@ export async function assertWaitReportDistinguishesLayout(page, resident, hidden
 /// only that a selector never appeared, and cannot tell a client that rejoined
 /// a stale generation from one that never rejoined at all.
 export async function assertResidentRestart(fixture, page, previous, options = {}) {
-  const resident = await startResident(fixture, options);
+  const port = Number(new URL(previous.endpoint).port);
+  const before = await page.evaluate(() => {
+    document.documentElement.dataset.restartDocument = crypto.randomUUID();
+    document.querySelector("#app").dataset.restartRoot = crypto.randomUUID();
+    window.__restartMinimumSurfaces = document.querySelectorAll(".organization-surface").length;
+    window.__restartObserver = new MutationObserver(() => {
+      window.__restartMinimumSurfaces = Math.min(
+        window.__restartMinimumSurfaces,
+        document.querySelectorAll(".organization-surface").length,
+      );
+    });
+    window.__restartObserver.observe(document.querySelector("#app"), { childList: true, subtree: true });
+    return {
+      document: document.documentElement.dataset.restartDocument,
+      root: document.querySelector("#app").dataset.restartRoot,
+    };
+  });
+  const resident = await startResident(fixture, { ...options, port });
   assert.notEqual(resident.discovery.epoch, previous.epoch, "restart publishes a new generation");
   assert.notEqual(
     resident.discovery.capability,
@@ -865,19 +882,27 @@ export async function assertResidentRestart(fixture, page, previous, options = {
     previous.policy.policy,
     "restart preserves the configured task policy instead of deriving it from lane life",
   );
-  await page.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(page, "Flow");
-  // This is a cold connect, not a reconnect: the line above navigates afresh and
-  // waits for `networkidle`, so the client is not sitting out a retry delay
-  // and the page has a live socket before this wait arms. Bounding it as a
-  // reconnect would hide a genuinely stalled restart behind the retry delay.
   await assertGenerationOnline(
     page,
     resident.discovery.epoch,
     "the resident restarts",
-    CONNECT_MS,
+    RECONNECT_MS,
     { resident },
   );
+  const after = await page.evaluate(() => {
+    window.__restartObserver.disconnect();
+    return {
+      document: document.documentElement.dataset.restartDocument,
+      root: document.querySelector("#app").dataset.restartRoot,
+      minimumSurfaces: window.__restartMinimumSurfaces,
+    };
+  });
+  assert.deepEqual(
+    [after.document, after.root],
+    [before.document, before.root],
+    "resident restart preserves the current document and Wasm root",
+  );
+  assert.ok(after.minimumSurfaces > 0, "resident restart never publishes an empty surface");
   return resident;
 }
 

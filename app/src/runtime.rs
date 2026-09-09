@@ -512,6 +512,12 @@ impl CanvasRuntime {
         }
     }
 
+    /// Whether an acceptance belongs to the authority this runtime may retain.
+    #[must_use]
+    pub fn same_scope(&self, accepted: &Admitted<Accepted>) -> bool {
+        self.accepted.scope() == accepted.scope()
+    }
+
     #[must_use]
     pub const fn principal(&self) -> &Principal {
         &self.principal
