@@ -96,7 +96,7 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
       && document.querySelector(".canvas-menu-trigger--update") !== null,
   );
   assert.equal(navigations, 1, "discovering a rebuilt Canvas does not navigate");
-  assert.equal((await page.locator(".page-heading h1").innerText()).trim(), "Tasks");
+  assert.equal((await page.locator(".page-heading h1").innerText()).trim(), "Board");
   assert.notEqual(await menu.getAttribute("open"), null, "the pending update preserves menu state");
   const trigger = menu.locator(":scope > summary");
   const update = menu.getByRole("button", { name: `Reload Canvas v${currentVersion}` });
@@ -213,7 +213,7 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
   await assertOfflineObserved(page, "explicit Canvas update required");
   assert.equal(sockets, socketsBeforeRefusal, "a protocol mismatch stops before the socket");
   assert.equal(navigations, 1, "a protocol mismatch does not navigate automatically");
-  assert.equal((await page.locator(".page-heading h1").innerText()).trim(), "Tasks");
+  assert.equal((await page.locator(".page-heading h1").innerText()).trim(), "Board");
   assert.notEqual(await menu.getAttribute("open"), null, "the refusal preserves menu state");
 
   bootstrapMode = "current";

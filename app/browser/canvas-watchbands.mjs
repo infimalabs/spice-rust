@@ -197,7 +197,7 @@ export async function assertPerOrgWatchbands(
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Lanes");
   const console = page.locator('[data-pane="agent-console"]');
-  await console.getByRole("tab", { name: /^Threads/ }).first().click();
+  await console.getByRole("tab", { name: /^Agents/ }).first().click();
   await waitForElement(page, "second organization renders after reload", CONNECT_MS,
     console.locator(".organization-surface").nth(1));
 
@@ -244,20 +244,20 @@ export async function assertPerOrgWatchbands(
     ["Org", "Org"],
     "two organizations retain different selected views simultaneously",
   );
-  await primarySurface.getByRole("tab", { name: /^Tasks/ }).click();
+  await primarySurface.getByRole("tab", { name: /^Board/ }).click();
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
     ["Tasks", "Org"],
     "a subsequent primary switch preserves the secondary selection",
   );
   await assertLineageResponsiveLayout(page, console);
-  await secondarySurface.getByRole("tab", { name: /^Threads/ }).click();
+  await secondarySurface.getByRole("tab", { name: /^Agents/ }).click();
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
     ["Tasks", "Lanes"],
     "a subsequent secondary switch preserves the primary selection",
   );
-  await primarySurface.getByRole("tab", { name: /^Threads/ }).click();
+  await primarySurface.getByRole("tab", { name: /^Agents/ }).click();
   const noCardDestination = await primaryDestination(secondarySurface, secondary.lane);
   assert.equal(
     noCardDestination.rendered.length,
@@ -280,11 +280,11 @@ export async function assertPerOrgWatchbands(
     0,
     "unacknowledged secondary prose is absent from the conversation",
   );
-  await secondarySurface.getByRole("tab", { name: /^Tasks/ }).click();
+  await secondarySurface.getByRole("tab", { name: /^Board/ }).click();
   assert.equal(
     await secondarySurface.locator(".organization-task-eyebrow").innerText(),
     "Team work",
-    "the empty Tasks workspace uses the Team presentation name",
+    "the empty Board workspace uses the Team presentation name",
   );
   const queuedDirection = secondarySurface.locator(
     `.organization-direction-row[data-agent-lane="${secondary.lane}"]`,
@@ -293,12 +293,12 @@ export async function assertPerOrgWatchbands(
   assert.equal(
     (await queuedDirection.locator(".organization-direction-preview").innerText()).trim(),
     firstSecondaryDirection,
-    "Tasks shows the admitted newest direction preview without parsing authored text",
+    "Board shows the admitted newest direction preview without parsing authored text",
   );
   assert.equal(
     (await queuedDirection.locator(".organization-direction-count").innerText()).trim(),
     "1 pending",
-    "Tasks keeps queued direction separate from active task count",
+    "Board keeps queued direction separate from active task count",
   );
   assert.equal(
     await secondarySurface.locator(".organization-task-row").count(),
@@ -324,7 +324,7 @@ export async function assertPerOrgWatchbands(
     null,
     "ordinary emptiness is not announced as an unavailable snapshot",
   );
-  await secondarySurface.getByRole("tab", { name: /^Threads/ }).click();
+  await secondarySurface.getByRole("tab", { name: /^Agents/ }).click();
   assert.equal(await console.locator(".organization-surface").count(), 2);
   assert.equal(await console.locator(".organization-speech").count(), 2);
   assert.equal(await console.locator(".organization-lifetime").count(), 2);
@@ -427,22 +427,22 @@ export async function assertPerOrgWatchbands(
     primaryRows.every((lane) => lane.occupant && lane.disposition === "occupied"),
     "watchband Drain changes task policy and never tears down occupants",
   );
-  await primarySurface.getByRole("tab", { name: /^Tasks/ }).click();
+  await primarySurface.getByRole("tab", { name: /^Board/ }).click();
   assert.equal(
     await primarySurface.locator('.organization-task-policy[aria-label="Task policy: Drain"]').count(),
     1,
-    "Tasks reports the authoritative organization task policy once",
+    "Board reports the authoritative organization task policy once",
   );
   assert.equal(
     await primarySurface.getByText("Life", { exact: true }).count(),
     0,
-    "Tasks does not expose the ambiguous per-seat Life label",
+    "Board does not expose the ambiguous per-seat Life label",
   );
   for (const seatLife of new Set(primaryRows.map((lane) => lane.life))) {
     assert.equal(
       await primarySurface.getByText(seatLife, { exact: true }).count(),
       0,
-      `Tasks does not present seat policy ${seatLife} as organization task state`,
+      `Board does not present seat policy ${seatLife} as organization task state`,
     );
   }
   const taskWorkspace = primarySurface.locator(".organization-task-workspace");
@@ -476,10 +476,10 @@ export async function assertPerOrgWatchbands(
     };
   });
   const assertTaskGeometry = (geometry, viewport) => {
-    assert.equal(geometry.eyebrow, "Team work", `${viewport} Tasks uses the Team presentation name`);
+    assert.equal(geometry.eyebrow, "Team work", `${viewport} Board uses the Team presentation name`);
     assert.ok(
       geometry.clientWidth > 0 && geometry.scrollWidth <= geometry.clientWidth,
-      `${viewport} Tasks workspace has visible width without horizontal overflow: ${
+      `${viewport} Board workspace has visible width without horizontal overflow: ${
         JSON.stringify(geometry)
       }`,
     );
@@ -516,7 +516,7 @@ export async function assertPerOrgWatchbands(
   });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
-  await primarySurface.getByRole("tab", { name: /^Threads/ }).click();
+  await primarySurface.getByRole("tab", { name: /^Agents/ }).click();
   assert.equal(
     await secondarySurface.getByRole("button", { name: "Drive", exact: true }).count(),
     1,
@@ -541,7 +541,7 @@ export async function assertPerOrgWatchbands(
   assert.equal(await primarySurface.locator(".organization-speech span").innerText(), "quiet");
   assert.equal(await secondarySurface.locator(".organization-speech span").innerText(), "narrate");
   await console.getByRole("tab", { name: /^Team/ }).first().click();
-  await console.getByRole("tab", { name: /^Threads/ }).first().click();
+  await console.getByRole("tab", { name: /^Agents/ }).first().click();
   assert.equal(await primarySpeech.inputValue(), "0", "Quiet survives an organization redraw");
   assert.equal(await secondarySpeech.inputValue(), "2", "Narrate survives an organization redraw");
   assert.equal(await primarySurface.locator(".organization-speech span").innerText(), "quiet");
@@ -824,7 +824,7 @@ export async function assertPerOrgWatchbands(
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Lanes");
   const reconnected = page.locator('[data-pane="agent-console"]');
-  await reconnected.getByRole("tab", { name: /^Threads/ }).first().click();
+  await reconnected.getByRole("tab", { name: /^Agents/ }).first().click();
   const restoredPrimary = reconnected.locator(
     `.organization-surface[data-lineage-id="${primary.lineage_id}"]`,
   );
@@ -845,7 +845,7 @@ export async function assertPerOrgWatchbands(
   await restoredPrimarySpeech.fill("2");
   await restoredSecondarySpeech.fill("2");
   await reconnected.getByRole("tab", { name: /^Team/ }).first().click();
-  await reconnected.getByRole("tab", { name: /^Threads/ }).first().click();
+  await reconnected.getByRole("tab", { name: /^Agents/ }).first().click();
   await page.evaluate(() => new Promise((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(resolve))));
   assert.deepEqual(
@@ -878,7 +878,7 @@ export async function captureReferenceViewport(page, artifacts) {
     path: join(artifacts, "canvas-reference-agent-details-dark.png"),
     fullPage: false,
   });
-  await organization.getByRole("tab", { name: /^Threads/ }).click();
+  await organization.getByRole("tab", { name: /^Agents/ }).click();
   await organization.locator(".mosaic-message-card").nth(3).waitFor({ timeout: 10_000 });
   assert.equal(
     await page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches),

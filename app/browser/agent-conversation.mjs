@@ -410,7 +410,7 @@ async function assertExternalOperatorReplay(page, fixture, console, lane, worktr
 
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Lanes");
-  await console.getByRole("tab", { name: /^Threads/ }).click();
+  await console.getByRole("tab", { name: /^Agents/ }).click();
   await assertOperatorProseHidden(console, replyText, "pre-acknowledgement replay");
 
   await writeFile(join(worktree, ".spice-ack-trigger"), `${sent.body.key}\n`);
@@ -472,7 +472,7 @@ async function assertExternalOperatorReplay(page, fixture, console, lane, worktr
   assert.equal(await console.locator('[data-card-kind="operator-message"]').count(), 0);
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Lanes");
-  await console.getByRole("tab", { name: /^Threads/ }).click();
+  await console.getByRole("tab", { name: /^Agents/ }).click();
   await acknowledgedCard.waitFor({ timeout: CONNECT_MS });
   assert.equal(await acknowledgedCard.count(), 1, "bootstrap restores one acknowledged assistant card");
   assert.deepEqual(
@@ -556,7 +556,7 @@ async function assertInlineBroadcastPill(page, console, lane, activityReplay) {
   assert.equal(await pill.getAttribute("aria-label"), "Broadcast classification");
   assert.doesNotMatch(await card.locator(".message-body").innerText(), /\[BROADCAST\]/u);
   for (const colorScheme of ["light", "dark"]) {
-    await page.emulateMedia({ colorScheme });
+    await emulateColorScheme(page, colorScheme);
     const colors = await card.evaluate((element) => {
       const quote = element.querySelector("blockquote");
       const pill = element.querySelector(".message-broadcast-pill");
@@ -578,8 +578,19 @@ async function assertInlineBroadcastPill(page, console, lane, activityReplay) {
       `${colorScheme} broadcast quote and pill use the plum accent`,
     );
   }
-  await page.emulateMedia({ colorScheme: "light" });
+  await emulateColorScheme(page, "light");
   return replyText;
+}
+
+async function emulateColorScheme(page, colorScheme) {
+  await page.emulateMedia({ colorScheme });
+  await waitForPage(
+    page,
+    `${colorScheme} system theme applies before palette inspection`,
+    TRANSITION_MS,
+    (expected) => document.documentElement.dataset.canvasEffectiveTheme === expected,
+    colorScheme,
+  );
 }
 
 async function assertImmediateFinalCard(page, console, lane, activityReplay) {
@@ -680,7 +691,7 @@ export async function assertAgentConversation(
     organizationWorktrees,
   } = organization;
 
-  await console.getByRole("tab", { name: /^Threads/ }).click();
+  await console.getByRole("tab", { name: /^Agents/ }).click();
   await console.locator(".organization-agent").nth(3).waitFor();
   assert.equal(await console.locator(".organization-surface").count(), 1, "one lineage renders one surface");
   assert.equal(
@@ -1060,18 +1071,18 @@ export async function assertAgentConversation(
   assert.match(await age.getAttribute("data-age-authored"), /^\d+$/);
   assert.equal(await outgoing.locator(".message-actions button").count(), 3);
 
-  await console.getByRole("tab", { name: /^Tasks/ }).click();
+  await console.getByRole("tab", { name: /^Board/ }).click();
   await console.locator(".organization-task-workspace").waitFor();
   assert.equal(
     await console.locator(".organization-task-workspace").count(),
     1,
-    "Tasks renders one organization-scoped operational workspace",
+    "Board renders one organization-scoped operational workspace",
   );
   await console.getByRole("tab", { name: /^Team/ }).click();
   await console.locator(".organization-detail-card").nth(3).waitFor();
   assert.equal(await console.locator(".organization-detail-card").count(), 4, "Org reaches all agents");
   await console.getByText(organizationWorktrees[0], { exact: true }).waitFor();
-  await console.getByRole("tab", { name: /^Threads/ }).click();
+  await console.getByRole("tab", { name: /^Agents/ }).click();
   await assertFourAgentDensity(console);
   await assertAgentWorkspaceGeometry(page, "populated desktop Lanes page");
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });

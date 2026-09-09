@@ -118,8 +118,8 @@ impl CanvasDestination {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Org => "Team",
-            Self::Tasks => "Tasks",
-            Self::Agents => "Threads",
+            Self::Tasks => "Board",
+            Self::Agents => "Agents",
         }
     }
 
@@ -147,7 +147,7 @@ impl CanvasDestination {
     pub const fn description(self) -> &'static str {
         match self {
             Self::Org => "Resident organizations, agents, capabilities, and possession",
-            Self::Tasks => "Tasks moving through their workflow",
+            Self::Tasks => "Board of tasks, claims, deferrals, and reviews",
             Self::Agents => "Converse across persistent organization agents",
         }
     }
@@ -252,7 +252,7 @@ mod tests {
     fn canvas_destinations_own_the_complete_presentation_order() {
         assert_eq!(
             CanvasDestination::ALL.map(CanvasDestination::label),
-            ["Team", "Tasks", "Threads"],
+            ["Team", "Board", "Agents"],
         );
         assert_eq!(
             OrgDestination::ALL.map(OrgDestination::canvas),

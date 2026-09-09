@@ -1177,7 +1177,7 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
 
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Lanes");
-  await surface.getByRole("tab", { name: /^Threads/ }).click();
+  await surface.getByRole("tab", { name: /^Agents/ }).click();
   const restoredRenew = surface.locator(
     `.agent-renew-request[data-renewal-lane="${renewalLane}"]`,
   );
@@ -1211,7 +1211,7 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
 
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Lanes");
-  await surface.getByRole("tab", { name: /^Threads/ }).click();
+  await surface.getByRole("tab", { name: /^Agents/ }).click();
   const canceledRenew = surface.locator(
     `.agent-renew-request[data-renewal-lane="${renewalLane}"]`,
   );
@@ -1227,7 +1227,7 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
 }
 
 async function claimRenewalWitness(fixture, lane, surface) {
-  const taskTab = surface.getByRole("tab", { name: /^Tasks/ });
+  const taskTab = surface.getByRole("tab", { name: /^Board/ });
   const badge = taskTab.locator(".organization-mode-badge");
   const priorCount = await badge.count() === 0 ? 0 : Number(await badge.innerText());
   assert.ok(Number.isInteger(priorCount), "renewal fixture reads the prior task badge");
@@ -1250,7 +1250,7 @@ async function claimRenewalWitness(fixture, lane, surface) {
         `.organization-surface[data-lineage-id="${lineage}"] [role="tab"]`,
       );
       const tasks = [...tabs].find(
-        (tab) => tab.querySelector(".organization-mode-label")?.textContent === "Tasks",
+        (tab) => tab.querySelector(".organization-mode-label")?.textContent === "Board",
       );
       return Number(tasks?.querySelector(".organization-mode-badge")?.textContent) === expected;
     },
@@ -1300,7 +1300,7 @@ async function assertRenewalClaimUnchanged(fixture, lane, surface, expected, lab
     `${label} preserves task phase, expiry, claimed fact, and source provenance`,
   );
   assert.equal(
-    Number(await surface.getByRole("tab", { name: /^Tasks/ })
+    Number(await surface.getByRole("tab", { name: /^Board/ })
       .locator(".organization-mode-badge").innerText()),
     expected.badge,
     `${label} preserves the active-task badge count`,

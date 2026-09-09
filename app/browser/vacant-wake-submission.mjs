@@ -24,7 +24,7 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
   const targetLane = seeded.lane;
   await chooseCanvasView(page, "Lanes");
   const console_ = page.locator('[data-pane="agent-console"]');
-  await console_.getByRole("tab", { name: /^Threads/ }).click();
+  await console_.getByRole("tab", { name: /^Agents/ }).click();
   const lane = console_.locator(`.organization-agent[data-agent-lane="${targetLane}"]`);
   const ticker = console_.locator(`.ticker[data-agent-lane="${targetLane}"]`);
   const form = lane.locator("xpath=ancestor::form[1]");
@@ -370,7 +370,7 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
     await reloaded.reload({ waitUntil: "networkidle" });
     await chooseCanvasView(reloaded, "Lanes");
     const reloadedConsole = reloaded.locator('[data-pane="agent-console"]');
-    await reloadedConsole.getByRole("tab", { name: /^Threads/ }).click();
+    await reloadedConsole.getByRole("tab", { name: /^Agents/ }).click();
     await reloadedConsole.locator(`.organization-agent[data-agent-lane="${targetLane}"]`).waitFor({
       timeout: WAKE_MS,
     });

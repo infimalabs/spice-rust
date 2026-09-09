@@ -36,7 +36,7 @@ fn render_axis(
     let (noun, description) = match axis {
         Axis::Flow => (
             "active tasks",
-            "Tasks follows ready, active, deferred, and completed work across projects.",
+            "Board follows ready, active, deferred, and completed work across projects.",
         ),
         Axis::Topology => (
             "lineages",
