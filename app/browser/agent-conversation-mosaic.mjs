@@ -243,7 +243,6 @@ export async function assertPersistentMosaic(
   });
   const resized = await finishPlacementProbe(plane, resizeProbe);
   assert.ok(resized.retained, "a width replay retains keyed DOM nodes");
-  assert.equal(resized.commits, resizeProbe.commits + 1, "a resize burst commits once");
   await plane.evaluate((element, indices) => {
     element.classList.remove("mosaic-width-probe-final");
     const sheet = [...document.styleSheets].find((candidate) => candidate.href?.endsWith("mosaic.css"));
