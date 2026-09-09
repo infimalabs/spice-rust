@@ -157,30 +157,34 @@ fn render_global_settings(runtime: Option<&CanvasRuntime>, sender: &SenderHandle
     html! {
         <section class="canvas-menu-section canvas-menu-global">
             <h2>{"Global"}</h2>
-            <button
-                class={classes!(
-                    "canvas-menu-setting",
-                    "canvas-menu-setting--action",
-                    fast_mode.then_some("canvas-menu-setting--checked"),
-                )}
-                type="button"
-                role="menuitemcheckbox"
-                aria-checked={fast_mode.to_string()}
-                disabled={!enabled}
-                title={if fast_mode {
-                    "Fast mode is on for supported agents"
-                } else {
-                    "Fast mode is off for supported agents"
-                }}
-                {onclick}
-            >
-                <strong>{"Fast mode"}</strong>
-                <span>{if settings.is_some() {
-                    if fast_mode { "on" } else { "off" }
-                } else {
-                    "loading"
-                }}</span>
-            </button>
+            <div class="canvas-menu-global-controls">
+                <button
+                    class={classes!(
+                        "canvas-menu-setting",
+                        "canvas-menu-setting--action",
+                        "canvas-fast-setting",
+                        fast_mode.then_some("canvas-menu-setting--checked"),
+                    )}
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={fast_mode.to_string()}
+                    disabled={!enabled}
+                    title={if fast_mode {
+                        "Fast mode is on for supported agents"
+                    } else {
+                        "Fast mode is off for supported agents"
+                    }}
+                    {onclick}
+                >
+                    <strong>{"Fast mode"}</strong>
+                    <span>{if settings.is_some() {
+                        if fast_mode { "on" } else { "off" }
+                    } else {
+                        "loading"
+                    }}</span>
+                </button>
+                {render_theme_selector()}
+            </div>
         </section>
     }
 }
@@ -223,7 +227,6 @@ fn render_version_footer(cursor: &str, update: Option<&CanvasUpdate>) -> Html {
                     >{format!("Update {generation}")}</button>
                 }
             </div>
-            {render_theme_selector()}
             <span class="bar-meta canvas-menu-cursor" aria-label="Global cursor">
                 {format!("cursor {cursor}")}
             </span>
@@ -240,7 +243,7 @@ fn render_theme_selector() -> Html {
         .unwrap_or_else(|| "system".to_owned());
     html! {
         <div class="canvas-theme-selector" role="group" aria-label="Canvas theme">
-            {for [("system", "System"), ("light", "Light"), ("dark", "Dark")]
+            {for [("light", "Light"), ("system", "System"), ("dark", "Dark")]
                 .into_iter()
                 .map(|(mode, label)| {
                     let accessible = format!("Use {label} theme");

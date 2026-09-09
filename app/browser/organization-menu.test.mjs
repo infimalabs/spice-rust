@@ -91,7 +91,7 @@ test("the theme authority resolves before styles and exposes one current prefere
   assert.match(index, /media\.addEventListener\("change", \(\) => \{\s*if \(root\.dataset\.canvasTheme === "system"\)/);
   assert.match(style, /:root\[data-canvas-effective-theme="dark"\]/);
   assert.doesNotMatch(style, /@media \(prefers-color-scheme: dark\)/);
-  assert.match(renderer, /\[\("system", "System"\), \("light", "Light"\), \("dark", "Dark"\)\]/);
+  assert.match(renderer, /\[\("light", "Light"\), \("system", "System"\), \("dark", "Dark"\)\]/);
 });
 
 test("cursor assertion failures capture their engine and viewport before rethrow", async () => {

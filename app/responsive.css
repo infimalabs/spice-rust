@@ -51,7 +51,6 @@
 
 @media (max-width: 560px) {
   .canvas-menu-footer { gap: 6px; }
-  .canvas-theme-option { padding-inline: 2px; }
   .canvas-menu-update { padding-inline: 2px; }
   .axis-button { min-height: 40px; padding: 0 9px; font-size: .74rem; }
   .commandbar--mosaic .canvas-navigation {
