@@ -276,7 +276,7 @@ fn render_hook_document(publication: &HookPublication) -> Result<Option<Vec<u8>>
             context.push_str("\n\n");
         }
         context.push_str(concat!(
-            "Rust Spice steering is pending. Address every key immediately before other work. ",
+            "Rust Spice steering is pending. Handle every listed key before other work. ",
             "Begin assistant prose with `ACK <key> [<key> ...]:` or ",
             "`NACK <key> [<key> ...]:`, then retire every listed key after that prose by ",
             "running each printed `ack <key>` command; append `--decline` for a NACK."

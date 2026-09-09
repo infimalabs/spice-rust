@@ -5,7 +5,7 @@
 A taste is a stable, near-universal operator preference about how work should
 be shaped. It is deliberately blunter than a lint and broader than a task
 instruction. A useful taste applies across files, tasks, and lanes; names an
-action the author can take immediately; and remains worth hearing when a
+action the author can take directly; and remains worth hearing when a
 harmless mention fires it. Guidance that depends on one task, one subsystem, or
 a long exception list belongs in that task or its review instead.
 
@@ -59,7 +59,7 @@ A taste must satisfy all of these rules:
   in the bag. Matching is over case-insensitive whole words, and an entry
   containing whitespace is a phrase matched across consecutive words. Globs,
   digits, punctuation, stemming, and substring matching are not admitted.
-- Make the message imperative, context-independent, and immediately
+- Make the message imperative, context-independent, and directly
   actionable. The message must carry the whole preference because the trigger
   words are only candidate selectors.
 - Prefer the general failure over one narrow symptom. If one message needs
@@ -152,4 +152,8 @@ message = "Rename in place, update every reference in one change, and leave exac
 [taste.legacy]
 words = ["legacy", "legacies"]
 message = "Treat old implementations as evidence, never as executable arms. Migrate retained data forward once or refuse naming its owning release."
+
+[taste.urgency]
+words = ["urgent", "urgency", "urgently", "critical", "critically", "immediate", "immediately", "hard stop", "important"]
+message = "Reserve urgent or critical language for a real time-sensitive risk or escalation. State routine status, sequencing, and deadlines calmly and name the concrete consequence."
 ```
