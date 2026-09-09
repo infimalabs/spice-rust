@@ -1024,12 +1024,12 @@ html[data-command-modifier-held="true"]
   border-radius: 999px;
   background: color-mix(
     in srgb,
-    color-mix(in srgb, var(--message-inline-pill-accent) 85%, var(--ink)) 85%,
+    color-mix(in srgb, var(--message-inline-pill-accent) 80%, var(--ink)) 80%,
     transparent
   );
   color: var(--panel);
   font-size: .8125em;
-  font-weight: 400;
+  font-weight: 700;
   white-space: nowrap;
 }
 .organization-surface .message-task-chip {
@@ -1052,6 +1052,11 @@ html[data-command-modifier-held="true"]
 }
 .organization-surface .message-review-pill {
   --message-inline-pill-accent: var(--ink);
+}
+@media (prefers-color-scheme: light) {
+  .organization-surface .message-taste-pill:not(.markdown-body blockquote *) {
+    --message-inline-pill-accent: color-mix(in srgb, var(--accent-2) 90%, var(--ink));
+  }
 }
 .organization-surface .markdown-body blockquote .message-task-chip,
 .organization-surface .markdown-body blockquote .message-taste-pill,
