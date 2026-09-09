@@ -353,10 +353,12 @@ form, and a transcript named more than once contributes exactly once.
 ```mermaid
 flowchart LR
   C["agent runs a command"] --> S["snapshot live state"]
-  S --> R{"state key changed, or current<br/>lease reminder due?"}
+  S --> R{"durable state key changed?"}
   R -- no --> Q[suppress]
-  R -- yes --> E["one short sentence on stderr"]
-  E --> W["record what was announced,<br/>durably"]
+  R -- yes --> W["record the current key,<br/>durably"]
+  W --> V{"visible fact to report?"}
+  V -- no --> Q
+  V -- yes --> E["one short sentence on stderr"]
 ```
 
 **Invariant —** One line, high signal, repeat-suppressed, on the agent's own
@@ -365,20 +367,22 @@ command stderr. It rides a channel the agent already reads.
 **Invariant —** It reflects **actual state**. A constant encouragement is worse
 than silence: it trains the reader to skip the channel.
 
-**Invariant —** The record of what was last announced survives process exit, so
-identical state remains silent across short commands until the current lease
-tier's reminder cadence is due.
+**Invariant —** The record of the last reduced state survives process exit, so
+identical state remains silent across short commands until its durable key
+changes. A quiet renewal is still recorded, allowing a later countdown cycle to
+announce its boundaries once.
 
-**Invariant —** The urgency tier of an expiring claim is **part of the identity**
-of what was displayed. Command-start evaluation speaks when elapsed time has
-moved the claim into a more urgent tier, and a cancellable timer repeats that
-evaluation while the supervised command remains active. Its interval narrows as
-expiry approaches, it stops with the command, and it never launches one.
+**Invariant —** The countdown band of an expiring claim is **part of the
+identity** of what was displayed. Command-start evaluation speaks when elapsed
+time has moved the claim across the 599-, 299-, or 59-second boundary, and a
+cancellable timer targets only the next boundary while the supervised command
+remains active. The final band schedules no further refresh; the timer stops
+with the command and never launches one.
 
-**Invariant —** When the record of the last announcement is missing, unusable,
-or not strictly older than now, the meter **speaks**. Suppression is a claim
-about what the reader already knows, and an unusable record supports no such
-claim.
+**Invariant —** When the record of the last reduced state is missing, unusable,
+or timestamped later than now, the meter reports any visible fact. Suppression
+is a claim about what the reader already knows, and an unusable record supports
+no such claim.
 
 **Invariant —** Failing to collect working state degrades to silence and never
 changes the outcome of the command being decorated. A status line that can break
@@ -443,7 +447,7 @@ sequenceDiagram
   participant MT as Working-state meter
 
   AG->>MT: run a command
-  MT-->>AG: one line when state key changes or lease reminder is due
+  MT-->>AG: one line when the durable state key changes
 ```
 
 ---
