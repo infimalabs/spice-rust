@@ -119,7 +119,7 @@ send address.
 
 *As the operator, I want two browsers to agree.* — Membership, ordering, and
 topology revision are server truth. A browser may independently hide an organization
-with `Close organization`; that presentation choice does not mutate topology, and the
+with `Close team`; that presentation choice does not mutate topology, and the
 same mount can restore a closed grouped lineage through **Agents → Open organization**.
 
 ### Reading

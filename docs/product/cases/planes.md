@@ -139,8 +139,8 @@
 | Situation | Expected | Ref |
 | --- | --- | --- |
 | An organization holds several worktrees | each worktree remains its own lane and send address; the organization groups them in one console | [An organization groups one or more lanes](../invariants/lifecycle.md#topology-a-organization-groups-one-or-more-lanes) |
-| One browser chooses `Close organization` | that mounted browser hides the console; topology and other browsers are unchanged | [Close organization is browser-local presentation](../invariants/lifecycle.md#topology-close-organization-is-browser-local-presentation) |
-| That browser chooses **Agents → Open organization** for a closed grouped lineage | the console returns during the same mount; no authority command or topology change occurs | [Close organization is browser-local presentation](../invariants/lifecycle.md#topology-close-organization-is-browser-local-presentation) |
+| One browser chooses `Close team` | that mounted browser hides the console; topology and other browsers are unchanged | [Close team is browser-local presentation](../invariants/lifecycle.md#topology-close-organization-is-browser-local-presentation) |
+| That browser chooses **Agents → Open organization** for a closed grouped lineage | the console returns during the same mount; no authority command or topology change occurs | [Close team is browser-local presentation](../invariants/lifecycle.md#topology-close-organization-is-browser-local-presentation) |
 | New content arrives | it places by insert; nothing already placed is re-decided | [New content places by insert](../invariants/lifecycle.md#surface-new-content-places-by-insert) |
 | A neighbour's content grows | untouched cards keep their column and span | [A card's column and span latch between geometry replays](../invariants/lifecycle.md#surface-a-card-s-column-and-span-latch-between-geometry-replays) |
 | Any motion is observed | it corresponds to a change, not to a re-render | [Movement means change](../invariants/lifecycle.md#surface-movement-means-change) |

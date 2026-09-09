@@ -79,7 +79,7 @@ pub(super) fn render(
                     close.dispatch(LineageControlAction::CloseLineage { lineage: identity });
                 })}
             >
-                <span class="organization-action-label">{"Close organization"}</span>
+                <span class="organization-action-label">{"Close team"}</span>
                 <span class="organization-action-detail">{members(member_count)}</span>
             </button>
             <button
