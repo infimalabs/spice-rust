@@ -335,6 +335,7 @@
 
 .organization-toolbar {
   display: grid;
+  flex: 0 0 auto;
   grid-template-columns: max-content minmax(0, 1fr) 30px;
   align-items: center;
   gap: 8px;
@@ -411,7 +412,7 @@
 }
 @container (max-width: 20rem) {
   .organization-toolbar { gap: 4px; padding-inline: 5px; }
-  .organization-mode-rail { gap: 0; padding: 2px; }
+  .organization-mode-rail { gap: 0; padding-inline: 2px; }
   .organization-mode { gap: 2px; padding-inline: 3px; }
   .organization-mode-badge { display: none; }
 }

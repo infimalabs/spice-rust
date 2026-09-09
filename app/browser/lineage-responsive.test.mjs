@@ -286,6 +286,11 @@ function assertTrack(layout, label, overflow) {
   assert.ok(layout.surfaces.every((surface, index) => (
     index === 0 || layout.surfaces[index - 1].left < surface.left
   )), `${label} preserves DOM order west to east`);
+  const toolbarHeights = layout.surfaces.map(({ toolbar }) => toolbar.height);
+  assert.ok(
+    Math.max(...toolbarHeights) - Math.min(...toolbarHeights) <= 0.5,
+    `${label} keeps weighted team headers equal height: ${JSON.stringify(toolbarHeights)}`,
+  );
   for (const surface of layout.surfaces) {
     assert.ok(
       surface.toolbar.height <= 47,
