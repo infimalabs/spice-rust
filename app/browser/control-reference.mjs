@@ -445,6 +445,8 @@ async function installTaskChipFixture(page, surface) {
       + `<span class="message-task-chip-label">${handle}</span></span>`;
     const taste = () => '<span class="message-taste-pill" data-message-classification="taste"'
       + ' aria-label="Taste classification">TASTE</span>';
+    const review = () => '<span class="message-review-pill" data-message-classification="review"'
+      + ' aria-label="Review classification">REVIEW</span>';
     const host = document.createElement("div");
     host.className = "organization-surface";
     host.dataset.taskChipFixture = "matrix";
@@ -489,13 +491,14 @@ async function installTaskChipFixture(page, surface) {
       <p data-task-chip-case="ordinary"><span data-prose>Settled </span>${chip(handles.generated)}<span data-prose> in one pass.</span></p>
       <p data-task-chip-case="long"><span data-prose>Transferred </span>${chip(handles.long)}<span data-prose> with its identity intact.</span></p>
       <p data-task-chip-case="multi"><span data-prose>Related </span>${chip("CARDS-1kRZRDy7")}<span data-prose> and </span>${chip("MOSAIC-1kRYqQxy")}<span data-prose> remain distinct.</span></p>
+      <p data-task-chip-case="classifiers"><span data-prose>Authored </span>${chip(handles.generated)}<span data-prose>, </span>${taste()}<span data-prose>, and </span>${review()}<span data-prose> remain highlighted.</span></p>
       <div data-task-chip-case="taste">
         <blockquote><p>${taste()}<span data-prose> Keep one path; </span>${taste()}<span data-prose> wait for completion.</span></p></blockquote>
       </div>
       <div data-task-chip-case="quoted-first">
         <blockquote>
-          <p><span data-prose>Quoted </span>${chip(handles.generated)}<span data-prose> first.</span></p>
-          <blockquote><p><span data-prose>Nested </span>${chip(handles.generated)}<span data-prose> again.</span></p></blockquote>
+          <p><span data-prose>Quoted </span>${chip(handles.generated)}<span data-prose>, </span>${taste()}<span data-prose>, and </span>${review()}<span data-prose> first.</span></p>
+          <blockquote><p><span data-prose>Nested </span>${chip(handles.generated)}<span data-prose>, </span>${taste()}<span data-prose>, and </span>${review()}<span data-prose> again.</span></p></blockquote>
         </blockquote>
         <p><span data-prose>Authored </span>${chip(handles.generated)}<span data-prose> and </span>${chip(handles.generated)}<span data-prose> remain highlighted.</span></p>
       </div>
@@ -536,6 +539,57 @@ async function measureTaskChipFixture(fixture) {
       range.selectNodeContents(node);
       return [...range.getClientRects()].map(rect);
     };
+    const rgba = (color) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 1;
+      canvas.height = 1;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) throw new Error("task-chip fixture requires a 2D canvas context");
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = color;
+      context.fillRect(0, 0, 1, 1);
+      return [...context.getImageData(0, 0, 1, 1).data];
+    };
+    const quoteDepth = (node) => {
+      let depth = 0;
+      for (let ancestor = node.parentElement; ancestor; ancestor = ancestor.parentElement) {
+        if (ancestor.tagName === "BLOCKQUOTE") depth += 1;
+      }
+      return depth;
+    };
+    const composite = (foreground, background) => {
+      const foregroundAlpha = foreground[3] / 255;
+      const backgroundAlpha = background[3] / 255;
+      const alpha = foregroundAlpha + backgroundAlpha * (1 - foregroundAlpha);
+      if (alpha === 0) return [0, 0, 0, 0];
+      return [0, 1, 2].map((index) => Math.round(
+        (foreground[index] * foregroundAlpha
+          + background[index] * backgroundAlpha * (1 - foregroundAlpha)) / alpha,
+      )).concat(Math.round(alpha * 255));
+    };
+    const compositedBackground = (node) => {
+      const layers = [];
+      for (let ancestor = node; ancestor; ancestor = ancestor.parentElement) {
+        layers.push(rgba(getComputedStyle(ancestor).backgroundColor));
+      }
+      return layers.reverse().reduce(
+        (background, foreground) => composite(foreground, background),
+        [0, 0, 0, 0],
+      );
+    };
+    const luminance = (color) => {
+      const linear = color.slice(0, 3).map((channel) => {
+        const value = channel / 255;
+        return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+    };
+    const contrast = (foreground, background) => {
+      const foregroundLuminance = luminance(foreground);
+      const backgroundLuminance = luminance(background);
+      return (Math.max(foregroundLuminance, backgroundLuminance) + 0.05)
+        / (Math.min(foregroundLuminance, backgroundLuminance) + 0.05);
+    };
     const card = host.querySelector(".mosaic-message-card");
     const body = card?.querySelector(".message-body");
     const quote = card?.querySelector("blockquote");
@@ -549,6 +603,7 @@ async function measureTaskChipFixture(fixture) {
       const label = node.querySelector(".message-task-chip-label");
       if (!label) throw new Error("task-chip fixture requires a label");
       const labelStyle = getComputedStyle(label);
+      const background = compositedBackground(node);
       return {
         handle: node.dataset.taskHandle,
         ariaLabel: node.getAttribute("aria-label"),
@@ -579,14 +634,18 @@ async function measureTaskChipFixture(fixture) {
         paddingLeft: style.paddingLeft,
         color: style.color,
         backgroundColor: style.backgroundColor,
+        backgroundRgba: rgba(style.backgroundColor),
+        contrast: contrast(rgba(style.color), background),
+        quoteDepth: quoteDepth(node),
         labelOverflowX: labelStyle.overflowX,
         labelTextOverflow: labelStyle.textOverflow,
         labelWhiteSpace: labelStyle.whiteSpace,
       };
     };
-    const inspectTaste = (node) => {
+    const inspectClassifier = (node) => {
       const style = getComputedStyle(node);
       const parentStyle = getComputedStyle(node.parentElement);
+      const background = compositedBackground(node);
       return {
         ariaLabel: node.getAttribute("aria-label"),
         classification: node.dataset.messageClassification,
@@ -611,10 +670,29 @@ async function measureTaskChipFixture(fixture) {
         color: style.color,
         borderColor: style.borderColor,
         backgroundColor: style.backgroundColor,
+        backgroundRgba: rgba(style.backgroundColor),
+        contrast: contrast(rgba(style.color), background),
+        quoteDepth: quoteDepth(node),
         count: node.querySelector(".message-badge-count")?.textContent ?? null,
       };
     };
+    const rootStyle = getComputedStyle(document.documentElement);
+    const resolveColor = (property) => {
+      const probe = document.createElement("span");
+      probe.style.color = `var(${property})`;
+      card.append(probe);
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    };
     return {
+      palette: {
+        accent: resolveColor("--accent"),
+        accent2: resolveColor("--accent-2"),
+        ink: resolveColor("--ink"),
+        panel: resolveColor("--panel"),
+        scheme: rootStyle.colorScheme,
+      },
       card: {
         box: rect(card.getBoundingClientRect()),
         clientWidth: card.clientWidth,
@@ -638,7 +716,8 @@ async function measureTaskChipFixture(fixture) {
         scrollWidth: row.scrollWidth,
         prose: [...row.querySelectorAll("[data-prose]")].flatMap(textRects),
         chips: [...row.querySelectorAll(".message-task-chip")].map(inspectChip),
-        tastes: [...row.querySelectorAll(".message-taste-pill")].map(inspectTaste),
+        tastes: [...row.querySelectorAll(".message-taste-pill")].map(inspectClassifier),
+        reviews: [...row.querySelectorAll(".message-review-pill")].map(inspectClassifier),
       })),
       action: {
         box: rect(action.getBoundingClientRect()),
@@ -653,6 +732,31 @@ async function measureTaskChipFixture(fixture) {
 function assertTaskChipMeasurement(label, measured) {
   const tolerance = 1;
   const baselineRows = new Set();
+  const ordinary = measured.cases.find(({ name }) => name === "ordinary").chips[0];
+  const assertPillEmphasis = (kind, pill, semanticAccent) => {
+    const alpha = pill.backgroundRgba[3];
+    if (pill.quoteDepth === 0) {
+      assert.equal(pill.color, measured.palette.panel, `${label} top-level ${kind} uses inverse text`);
+      assert.ok(
+        alpha >= 215 && alpha <= 219,
+        `${label} top-level ${kind} exposes a controlled 15% of its card: ${JSON.stringify(pill)}`,
+      );
+    } else {
+      assert.equal(
+        pill.color,
+        semanticAccent,
+        `${label} quoted ${kind} moves its semantic accent to the text`,
+      );
+      assert.ok(
+        alpha >= 13 && alpha <= 18,
+        `${label} quoted ${kind} is a quiet translucent tint: ${JSON.stringify(pill)}`,
+      );
+    }
+    assert.ok(
+      pill.contrast >= 4.5,
+      `${label} ${kind} text retains accessible contrast: ${JSON.stringify(pill)}`,
+    );
+  };
   assert.ok(
     measured.card.scrollWidth <= measured.card.clientWidth + tolerance
       && measured.body.scrollWidth <= measured.body.clientWidth + tolerance,
@@ -677,8 +781,8 @@ function assertTaskChipMeasurement(label, measured) {
       assert.equal(chip.verticalAlign, "baseline", `${label} ${chip.handle} follows prose baseline`);
       assert.equal(chip.borderWidth, "0px", `${label} ${chip.handle} is borderless inside its card`);
       assert.equal(chip.fontWeight, "400", `${label} ${chip.handle} uses regular text`);
-      assert.equal(chip.color, darkPalette.panel, `${label} ${chip.handle} uses inverse panel text`);
       assert.notEqual(chip.backgroundColor, "rgba(0, 0, 0, 0)");
+      assertPillEmphasis("task pill", chip, measured.palette.accent);
       assert.deepEqual(
         [chip.marginTop, chip.marginRight, chip.marginBottom, chip.marginLeft],
         ["0px", "0px", "0px", "0px"],
@@ -730,7 +834,6 @@ function assertTaskChipMeasurement(label, measured) {
     Array(4).fill(GENERATED_MAX_TASK_HANDLE),
     `${label} quoted, nested-quoted, and later prose occurrences all remain chips`,
   );
-  const ordinary = measured.cases.find(({ name }) => name === "ordinary").chips[0];
   const long = measured.cases.find(({ name }) => name === "long").chips[0];
   assert.equal(ordinary.handle, GENERATED_MAX_TASK_HANDLE);
   assert.ok(
@@ -744,37 +847,56 @@ function assertTaskChipMeasurement(label, measured) {
   );
   const taste = measured.cases.find(({ name }) => name === "taste");
   assert.equal(taste.tastes.length, 2, `${label} repeats one pill for each quoted taste`);
+  const classifierKinds = [
+    ["taste", "TASTE", "Taste classification", measured.palette.accent2],
+    ["review", "REVIEW", "Review classification", measured.palette.ink],
+  ];
+  for (const row of measured.cases) {
+    for (const [classification, text, ariaLabel, accent] of classifierKinds) {
+      const pills = classification === "taste" ? row.tastes : row.reviews;
+      for (const pill of pills) {
+        assert.equal(pill.text, text, `${label} ${classification} pill preserves its text`);
+        assert.equal(pill.count, null, `${label} ${classification} pill has no count element`);
+        assert.equal(pill.ariaLabel, ariaLabel);
+        assert.equal(pill.classification, classification);
+        assert.equal(pill.fontWeight, "400", `${label} ${classification} pill uses regular text`);
+        assert.equal(
+          pill.borderWidth,
+          "0px",
+          `${label} ${classification} pill is borderless inside its card`,
+        );
+        assert.notEqual(pill.backgroundColor, "rgba(0, 0, 0, 0)");
+        assertPillEmphasis(`${classification} pill`, pill, accent);
+        assert.equal(
+          pill.verticalAlign,
+          "baseline",
+          `${label} ${classification} pill follows prose baseline`,
+        );
+        assert.deepEqual(
+          [pill.marginTop, pill.marginRight, pill.marginBottom, pill.marginLeft],
+          ["0px", "0px", "0px", "0px"],
+          `${label} ${classification} pill adds no pill-specific margin`,
+        );
+        assert.ok(
+          Math.abs(
+            pill.lineHeight / pill.fontSize - pill.parentLineHeight / pill.parentFontSize
+          ) <= 0.01,
+          `${label} ${classification} pill inherits its surrounding line-height ratio`,
+        );
+        assert.deepEqual(
+          [pill.paddingTop, pill.paddingRight, pill.paddingBottom, pill.paddingLeft],
+          ["0px", "4px", "0px", "4px"],
+          `${label} ${classification} pill uses compact inline padding`,
+        );
+        assert.ok(
+          pill.box.height <= ordinary.box.height + tolerance,
+          `${label} ${classification} pill is no larger than the inline task chip`,
+        );
+      }
+    }
+  }
+  assert.notEqual(measured.quote.backgroundColor, "rgba(0, 0, 0, 0)");
   for (const pill of taste.tastes) {
-    assert.equal(pill.text, "TASTE", `${label} taste pill has no visible ordinal`);
-    assert.equal(pill.count, null, `${label} taste pill has no count element`);
-    assert.equal(pill.ariaLabel, "Taste classification");
-    assert.equal(pill.classification, "taste");
-    assert.equal(pill.fontWeight, "400", `${label} taste pill uses regular text`);
-    assert.equal(pill.color, darkPalette.panel, `${label} taste pill uses inverse panel text`);
-    assert.equal(pill.borderWidth, "0px", `${label} taste pill is borderless inside its card`);
-    assert.notEqual(pill.backgroundColor, "rgba(0, 0, 0, 0)");
-    assert.notEqual(measured.quote.backgroundColor, "rgba(0, 0, 0, 0)");
-    assert.equal(pill.verticalAlign, "baseline", `${label} taste pill follows prose baseline`);
-    assert.deepEqual(
-      [pill.marginTop, pill.marginRight, pill.marginBottom, pill.marginLeft],
-      ["0px", "0px", "0px", "0px"],
-      `${label} taste pill adds no pill-specific margin`,
-    );
-    assert.ok(
-      Math.abs(
-        pill.lineHeight / pill.fontSize - pill.parentLineHeight / pill.parentFontSize
-      ) <= 0.01,
-      `${label} taste pill inherits its surrounding line-height ratio`,
-    );
-    assert.deepEqual(
-      [pill.paddingTop, pill.paddingRight, pill.paddingBottom, pill.paddingLeft],
-      ["0px", "4px", "0px", "4px"],
-      `${label} taste pill uses compact inline padding`,
-    );
-    assert.ok(
-      pill.fontSize < measured.quote.fontSize && pill.box.height <= ordinary.box.height + tolerance,
-      `${label} taste pill is no larger than the inline task chip: ${JSON.stringify({ pill, ordinary })}`,
-    );
     const adjacentProse = taste.prose.find((prose) => (
       prose.top <= pill.textBox.bottom && prose.bottom >= pill.textBox.top
     ));
@@ -784,6 +906,30 @@ function assertTaskChipMeasurement(label, measured) {
       `${label} taste pill shares the quoted prose baseline`,
     );
   }
+  const contextualPills = measured.cases.flatMap((row) => [
+    ...row.chips.map((pill) => ["task", pill]),
+    ...row.tastes.map((pill) => ["taste", pill]),
+    ...row.reviews.map((pill) => ["review", pill]),
+  ]);
+  for (const kind of ["task", "taste", "review"]) {
+    assert.deepEqual(
+      [...new Set(contextualPills
+        .filter(([candidate]) => candidate === kind)
+        .map(([, pill]) => pill.quoteDepth))].sort(),
+      [0, 1, 2],
+      `${label} ${kind} pills cover top-level, quoted, and nested-quoted contexts`,
+    );
+  }
+  const topLevelAlpha = contextualPills
+    .filter(([, pill]) => pill.quoteDepth === 0)
+    .map(([, pill]) => pill.backgroundRgba[3]);
+  const quotedAlpha = contextualPills
+    .filter(([, pill]) => pill.quoteDepth > 0)
+    .map(([, pill]) => pill.backgroundRgba[3]);
+  assert.ok(
+    Math.min(...topLevelAlpha) > Math.max(...quotedAlpha),
+    `${label} top-level pills remain strictly more prominent than quoted pills`,
+  );
   assert.equal(measured.action.tabIndex, 0, `${label} surrounding card action remains focusable`);
   assert.deepEqual(
     [measured.action.width, measured.action.height],
@@ -829,7 +975,25 @@ export async function assertTaskChipTypographyMatrix(page, surface, artifactPath
       `task-chip matrix follows root text zoom: ${JSON.stringify({ ordinary, zoomed })}`,
     );
     await fixture.screenshot({ path: taskChipArtifact(artifactPath, "zoom") });
+
+    await page.evaluate(() => { document.documentElement.style.fontSize = "24px"; });
+    const highScale = await measureTaskChipFixture(fixture);
+    assertTaskChipMeasurement("high-scale", highScale);
+    assert.ok(
+      highScale.quote.fontSize > zoomed.quote.fontSize,
+      "task-chip matrix remains compact and accessible at the high text scale",
+    );
+    await fixture.screenshot({ path: taskChipArtifact(artifactPath, "high-scale") });
+
+    await page.evaluate((fontSize) => {
+      document.documentElement.style.fontSize = fontSize;
+    }, rootFontSize);
+    await page.emulateMedia({ colorScheme: "light" });
+    const light = await measureTaskChipFixture(fixture);
+    assertTaskChipMeasurement("light", light);
+    await fixture.screenshot({ path: taskChipArtifact(artifactPath, "light") });
   } finally {
+    await page.emulateMedia({ colorScheme: "dark" });
     await page.evaluate((fontSize) => { document.documentElement.style.fontSize = fontSize; }, rootFontSize);
     await fixture.evaluate((node) => node.remove());
   }
