@@ -338,6 +338,24 @@ export async function assertCursorRelocation(page, artifacts, engine) {
           navigationClientWidth: navigation.clientWidth,
           navigationOverflowX: navigationStyle.overflowX,
           navigationScrollWidth: navigation.scrollWidth,
+          navigationBadges: Array.from(navigation.querySelectorAll(".pill-badge"))
+            .map((badge) => {
+              const bounds = badge.getBoundingClientRect();
+              const style = getComputedStyle(badge);
+              return {
+                text: badge.textContent,
+                display: style.display,
+                height: bounds.height,
+                padding: style.padding,
+                fontSize: style.fontSize,
+                lineHeight: style.lineHeight,
+                color: style.color,
+                background: style.backgroundColor,
+                boxShadow: style.boxShadow,
+                clientWidth: badge.clientWidth,
+                scrollWidth: badge.scrollWidth,
+              };
+            }),
           navigationButtons: Array.from(navigation.querySelectorAll(":scope > .axis-button"))
             .map((button) => ({
               ...box(button),
@@ -409,6 +427,28 @@ export async function assertCursorRelocation(page, artifacts, engine) {
           && expandedGeometry.navigationOverflowX === "auto",
         `${label} keeps the intrinsic destination strip scroll-ready without forcing overflow`,
       );
+      if (viewport.width > 560) {
+        assert.ok(
+          expandedGeometry.navigationBadges.length > 0
+            && expandedGeometry.navigationBadges.every((badge) => (
+              /^\d+$/u.test(badge.text)
+                && badge.display === "grid"
+                && badge.height <= 14
+                && badge.padding === "0px 5px"
+                && badge.fontSize === "9px"
+                && badge.lineHeight === "13.05px"
+                && badge.boxShadow !== "none"
+                && badge.background !== "rgba(0, 0, 0, 0)"
+                && badge.scrollWidth <= badge.clientWidth
+            )),
+          `${label} gives every destination count the compact shared numeric treatment`,
+        );
+      } else {
+        assert.ok(
+          expandedGeometry.navigationBadges.every((badge) => badge.display === "none"),
+          `${label} retains the narrow policy that hides destination counts`,
+        );
+      }
       assert.equal(
         expandedGeometry.navigationButtons.length,
         3,
@@ -509,6 +549,8 @@ export async function assertCursorRelocation(page, artifacts, engine) {
           background: navigationStyle.backgroundColor,
           borderLeftStyle: navigationStyle.borderLeftStyle,
           borderLeftWidth: navigationStyle.borderLeftWidth,
+          boxShadow: navigationStyle.boxShadow,
+          paddingLeft: navigationStyle.paddingLeft,
           denseOverlap: dense.left < cappedNavigation.right && dense.right > cappedNavigation.left,
           destinationOnTop: navigation.contains(hit),
           lastDestinationVisible: lastDestination.left >= cappedNavigation.left - 0.5
@@ -555,9 +597,14 @@ export async function assertCursorRelocation(page, artifacts, engine) {
         `${label} never lets the destination strip exceed the panel width`,
       );
       assert.deepEqual(
-        [densityGeometry.borderLeftStyle, densityGeometry.borderLeftWidth],
-        ["solid", "1px"],
-        `${label} draws a hard boundary before global destinations`,
+        [
+          densityGeometry.borderLeftStyle,
+          densityGeometry.borderLeftWidth,
+          densityGeometry.paddingLeft,
+          densityGeometry.boxShadow,
+        ],
+        ["none", "0px", "0px", "none"],
+        `${label} leaves no divider, shadow, or replacement gutter before destinations`,
       );
       assert.notEqual(densityGeometry.background, "rgba(0, 0, 0, 0)");
       assert.equal(

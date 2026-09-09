@@ -129,14 +129,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   display: inline-grid;
   flex: 0 0 auto;
   place-items: center;
-  min-width: 20px;
-  height: 18px;
-  padding: 0 6px;
+  padding: 0 5px;
   border-radius: 999px;
   background: var(--accent);
-  color: var(--panel);
-  font-size: .66rem;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--page) 24%, transparent);
+  color: var(--page);
+  font-size: 9px;
   font-weight: 700;
+  line-height: 1.45;
 }
 
 .bar-meta {

@@ -155,12 +155,9 @@ body:has(.shell--mosaic),
   width: max-content;
   max-width: min(360px, 100%);
   min-width: 0;
-  padding-left: 7px;
   overflow-x: auto;
   overscroll-behavior-inline: contain;
-  border-left: 1px solid var(--line);
   background: var(--page);
-  box-shadow: -6px 0 8px var(--page);
   scrollbar-width: thin;
 }
 .canvas-navigation .axis-button {
