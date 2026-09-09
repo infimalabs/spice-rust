@@ -108,6 +108,11 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
   const lightTheme = themes.getByRole("button", { name: "Use Light theme" });
   const darkTheme = themes.getByRole("button", { name: "Use Dark theme" });
   assert.equal(await themes.getByRole("button").count(), 3);
+  assert.deepEqual(await themes.getByRole("button").allTextContents(), ["", "", ""]);
+  assert.deepEqual(
+    await themes.getByRole("button").evaluateAll((buttons) => buttons.map((button) => button.title)),
+    ["Use System theme", "Use Light theme", "Use Dark theme"],
+  );
   assert.equal(await systemTheme.getAttribute("aria-pressed"), "true");
   await darkTheme.focus();
   assert.equal(await darkTheme.evaluate((button) => button === document.activeElement), true);
@@ -131,6 +136,9 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
       backgroundDiffers: selected.backgroundColor !== unselected.backgroundColor,
       borderDiffers: selected.borderColor !== unselected.borderColor,
       colorDiffers: selected.color !== unselected.color,
+      markerLarger: button.firstElementChild.getBoundingClientRect().width
+        > button.parentElement.querySelector('[data-canvas-theme="light"]')
+          .firstElementChild.getBoundingClientRect().width,
       contrast: (Math.max(foreground, background) + 0.05)
         / (Math.min(foreground, background) + 0.05),
       outlineStyle: selected.outlineStyle,
@@ -142,6 +150,7 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
     backgroundDiffers: true,
     borderDiffers: true,
     colorDiffers: true,
+    markerLarger: true,
     outlineStyle: "solid",
     outlineWidth: "2px",
   });
@@ -181,19 +190,27 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
   await page.setViewportSize({ width: 332, height: 720 });
   const narrow = await menu.locator(".canvas-menu-footer").evaluate((footer) => {
     const button = footer.querySelector(".canvas-menu-update").getBoundingClientRect();
-    const themes = footer.querySelector(".canvas-theme-selector").getBoundingClientRect();
-    const cursor = footer.querySelector(".canvas-menu-cursor").getBoundingClientRect();
+    const themeNode = footer.querySelector(".canvas-theme-selector");
+    const themes = themeNode.getBoundingClientRect();
+    const cursorNode = footer.querySelector(".canvas-menu-cursor");
+    const cursor = cursorNode.getBoundingClientRect();
     const bounds = footer.getBoundingClientRect();
     return {
       contained: button.left >= bounds.left - 0.5 && button.right <= bounds.right + 0.5,
       height: button.height,
       ordered: button.right <= themes.left + 0.5 && themes.right <= cursor.left + 0.5,
       positions: [bounds.left, button.right, themes.left, themes.right, cursor.left, bounds.right],
+      themeText: themeNode.innerText,
+      themeWidth: themes.width,
+      cursorClipped: cursorNode.scrollWidth > cursorNode.clientWidth,
     };
   });
   assert.equal(narrow.contained, true, JSON.stringify(narrow));
   assert.equal(narrow.height, 23, JSON.stringify(narrow));
   assert.equal(narrow.ordered, true, JSON.stringify(narrow));
+  assert.equal(narrow.themeText, "", JSON.stringify(narrow));
+  assert.ok(narrow.themeWidth <= 50, JSON.stringify(narrow));
+  assert.equal(narrow.cursorClipped, false, JSON.stringify(narrow));
 
   bootstrapMode = "protocol";
   const socketsBeforeRefusal = sockets;

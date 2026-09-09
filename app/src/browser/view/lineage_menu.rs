@@ -243,6 +243,7 @@ fn render_theme_selector() -> Html {
             {for [("system", "System"), ("light", "Light"), ("dark", "Dark")]
                 .into_iter()
                 .map(|(mode, label)| {
+                    let accessible = format!("Use {label} theme");
                     let choose = Callback::from(move |_| {
                         let Some(window) = web_sys::window() else { return; };
                         let Ok(setter) = js_sys::Reflect::get(
@@ -256,11 +257,12 @@ fn render_theme_selector() -> Html {
                         <button
                             class="canvas-theme-option"
                             type="button"
-                            aria-label={format!("Use {label} theme")}
+                            aria-label={accessible.clone()}
+                            title={accessible}
                             aria-pressed={(selected == mode).to_string()}
                             data-canvas-theme={mode}
                             onclick={choose}
-                        >{label}</button>
+                        ><span class="canvas-theme-position" aria-hidden="true"></span></button>
                     }
                 })}
         </div>
