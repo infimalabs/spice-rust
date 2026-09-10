@@ -344,7 +344,9 @@ native binary, app generation, and build pins. Proof replays the current
 candidate checkout — read-only in the Linux container and through the attested
 native runner on Darwin — and does not compare that workspace commit with the
 payload source. Only a clean replay publishes a detached receipt. A post-proof
-seal composes both target payloads and receipts into one release manifest; the
+`spice release seal` composes both target payloads and receipts into one release
+manifest, publishes its pointer last, and asks the resident to recognize that
+exact manifest against the current clean commit and tree. The
 publication plan separately admits its source and release commits and the
 manifest, package, notes, targets, and operations without equating the plan's
 source commit with the manifest source.

@@ -308,6 +308,7 @@ fn repository_landed(path: &[&str]) -> bool {
             | ["proof"]
             | ["proof", "replay"]
             | ["release", "notes"]
+            | ["release", "seal"]
             | ["up"]
             | ["down"]
             | ["run"]

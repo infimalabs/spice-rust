@@ -378,6 +378,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "dist::release_notes"
     ),
     row!(
+        ["release", "seal"],
+        "release seal",
+        OperatorOrLane,
+        Command,
+        [ProofSealed],
+        [Resident],
+        Reply,
+        "proof::manifest"
+    ),
+    row!(
         ["up"],
         "up [--foreground] [--host IP] [--port PORT] [--allow-insecure-bind] [--auth-token TOKEN] [--open]",
         Local,

@@ -21,6 +21,9 @@ impl MappedCommand {
             SelectedCommand::ReleasePublish { release, state } => {
                 Self::release_publish(contract, release, state)
             }
+            SelectedCommand::ProofRecognize { manifest, head } => {
+                Self::proof_recognize(contract, manifest, head)
+            }
             SelectedCommand::LaneRead => Self::lane_read(contract),
             SelectedCommand::LaneSeat { body } => Self::lane_seat(contract, body),
             SelectedCommand::LaneState { body } => Self::lane_state(contract, body),
@@ -131,6 +134,25 @@ impl MappedCommand {
                 key: release.key().clone(),
                 manifest: release.manifest().clone(),
                 notes: release.notes().clone().into(),
+            },
+        )
+    }
+
+    fn proof_recognize(
+        contract: &Contract,
+        manifest: &proof::PublishedManifest,
+        head: wire::Seq,
+    ) -> ClientResult<Self> {
+        Self::new(
+            contract,
+            &["release", "seal"],
+            CommandKind::ProofRecognize,
+            vec![Witness::Observation {
+                key: manifest.digest.clone(),
+                head,
+            }],
+            &wire::intent::Recognize {
+                key: manifest.digest.clone(),
             },
         )
     }

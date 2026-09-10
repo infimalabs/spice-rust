@@ -63,6 +63,11 @@ pub(crate) enum SelectedCommand<'a> {
         release: &'a crate::release_command::AdmittedRelease,
         state: crate::release_command::PublicationState,
     },
+    /// Recognize one exact post-proof two-target manifest.
+    ProofRecognize {
+        manifest: &'a proof::PublishedManifest,
+        head: wire::Seq,
+    },
     /// Read the current resident-owned lane table.
     LaneRead,
     /// Seat one new lane and launch its first occupant.

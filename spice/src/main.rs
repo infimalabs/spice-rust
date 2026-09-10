@@ -58,6 +58,8 @@ mod release_execution;
 mod release_history;
 #[cfg(not(target_arch = "wasm32"))]
 mod release_package;
+#[cfg(not(target_arch = "wasm32"))]
+mod release_seal;
 mod render;
 #[cfg(not(target_arch = "wasm32"))]
 mod resident;
@@ -430,6 +432,7 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
             release_command::RunResult::Plan(outcome) => deliver(&outcome, form),
             release_command::RunResult::Published(outcome) => deliver(&outcome, form),
         },
+        ["release", "seal"] => deliver(&release_seal::run(contract), form),
         ["board"]
         | ["board", "graph"]
         | ["board", "handout"]

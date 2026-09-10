@@ -44,11 +44,14 @@ pub mod seal;
 pub use config::{Config, DEFAULT_IMAGE, ExecutablePath, Image};
 pub use container::{Container, ContainerError, Limits, OciRuntime};
 pub use environment::{EnvironmentError, SealedEnvironment, UnsupportedHost, compiled_target};
-pub use evidence::{EvidenceError, EvidencePublishError, VerifiedEvidence, publish, verify};
+pub use evidence::{
+    EvidenceError, EvidencePublishError, VerifiedEvidence, publish, verify, verify_stored,
+};
 pub use layout::{Input, InputError, Layout, LayoutError, ReceiptInput};
 pub use manifest::{
     FileManifestPublisher, ManifestAdmissionError, ManifestError, ManifestInput,
-    ManifestPublishError, ManifestPublisher, PublishedManifest, admit_manifest, publish_manifest,
+    ManifestPublishError, ManifestPublisher, PublishedManifest, admit_manifest,
+    admit_proof_manifest, publish_manifest,
 };
 pub use native::{NativeError, NativeRunner};
 pub use package::{

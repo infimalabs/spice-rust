@@ -389,6 +389,16 @@ pub struct ProofEvidence {
     pub replay: Digest,
 }
 
+/// One post-proof two-target manifest recognized by the resident.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SealedManifest {
+    /// Domain-separated identity of the exact canonical manifest bytes.
+    pub digest: Digest,
+    /// Complete target, payload, receipt, battery, replay, and environment bindings.
+    pub manifest: crate::manifest::ReleaseManifest,
+}
+
 /// Exact registry observation rendered by a recovery preview.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
