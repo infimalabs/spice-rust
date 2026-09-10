@@ -617,6 +617,104 @@ mod tests {
         assert_eq!(notes.entries[1].subject, "Fix beta TASK-own");
     }
 
+    #[test]
+    fn ancestry_distinguishes_inherited_targets_from_the_introducing_landing() {
+        let notes = release_notes(
+            fixture(vec![
+                landing("1111111111", "Keep inherited", "dist", None, ""),
+                landing("2222222222", "Keep unrelated", "dist", None, ""),
+                landing("3333333333", "Remove introduced", "dist", None, ""),
+                landing(
+                    "4444444444",
+                    "Revert introduced",
+                    "dist",
+                    None,
+                    "This reverts commit abcdef0.",
+                ),
+            ]),
+            |target, landing| match (target, landing) {
+                ("abcdef0", "1111111111" | "parent-1111111111") => Ok(true),
+                ("abcdef0", "2222222222") => Ok(false),
+                ("abcdef0", "parent-2222222222") => {
+                    Err("an excluded landing's parent must not be queried".to_owned())
+                }
+                ("abcdef0", "3333333333") => Ok(true),
+                ("abcdef0", "parent-3333333333") => Ok(false),
+                _ => Ok(false),
+            },
+        )
+        .expect("history folds from the exact introduction boundary");
+
+        assert_eq!(
+            notes
+                .entries
+                .iter()
+                .map(|entry| entry.subject.as_str())
+                .collect::<Vec<_>>(),
+            ["Keep inherited", "Keep unrelated"]
+        );
+    }
+
+    #[test]
+    fn malformed_revert_ids_remain_ordinary_landings() {
+        let notes = release_notes(
+            fixture(vec![
+                landing("1111111111", "Keep ordinary landing", "dist", None, ""),
+                landing(
+                    "2222222222",
+                    "Document apparent revert",
+                    "dist",
+                    None,
+                    "This reverts commit abcdef.",
+                ),
+            ]),
+            |target, landing| Ok(target == "abcdef" && landing == "1111111111"),
+        )
+        .expect("short object id is not a structural revert");
+
+        assert_eq!(
+            notes
+                .entries
+                .iter()
+                .map(|entry| entry.subject.as_str())
+                .collect::<Vec<_>>(),
+            ["Keep ordinary landing", "Document apparent revert"]
+        );
+    }
+
+    #[test]
+    fn rendering_groups_equal_highlights_and_preserves_cli_subjects() {
+        let notes = release_notes(
+            fixture(vec![
+                landing(
+                    "1111111111",
+                    "review(CLI): Keep command spelling",
+                    "cli",
+                    None,
+                    "",
+                ),
+                landing(
+                    "2222222222",
+                    "review(CLI): Keep command spelling",
+                    "cli",
+                    None,
+                    "",
+                ),
+            ]),
+            |_target, _landing| Ok(false),
+        )
+        .expect("equal CLI highlights fold");
+
+        assert_eq!(notes.entries[0].subject, "Keep command spelling");
+        assert_eq!(notes.entries[1].subject, "Keep command spelling");
+        assert_eq!(notes.document.matches("### CLI").count(), 1);
+        assert!(
+            notes
+                .document
+                .contains("Keep command spelling. (1111111, 2222222)")
+        );
+    }
+
     fn fixture(landings: Vec<Landing>) -> NotesInput {
         NotesInput {
             release_version: "1.2.4".to_owned(),

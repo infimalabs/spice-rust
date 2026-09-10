@@ -486,7 +486,6 @@ fn validate_ref(reference: &str) -> Result<(), AuthorityError> {
         || reference.ends_with(['/', '.'])
         || reference.contains("..")
         || reference.contains("@{")
-        || reference.contains("//")
         || reference
             .split('/')
             .any(|part| part.is_empty() || part.ends_with(".lock"))
@@ -638,14 +637,22 @@ mod tests {
 
         let authority = current_authority(workspace()).expect("tracked authority");
         let version = ProductVersion::parse("1.2.3").expect("version");
+        let refs = authority.refs(&version);
         assert_eq!(
-            authority.refs(&version),
-            ReleaseRefs {
-                source: "refs/heads/main".to_owned(),
-                package: "refs/spice/packages/v1.2.3".to_owned(),
-                tag: "refs/tags/v1.2.3".to_owned(),
-                announcement: "refs/spice/releases/v1.2.3".to_owned(),
-            }
+            (
+                authority.remote(),
+                refs.source(),
+                refs.package(),
+                refs.tag(),
+                refs.announcement(),
+            ),
+            (
+                "origin",
+                "refs/heads/main",
+                "refs/spice/packages/v1.2.3",
+                "refs/tags/v1.2.3",
+                "refs/spice/releases/v1.2.3",
+            )
         );
     }
 
@@ -696,6 +703,7 @@ mod tests {
             authority.remote_visibility().arguments(),
             ["ls-remote", "--refs", "origin"]
         );
+        assert_eq!(authority.remote_visibility().program(), "git");
         assert_eq!(
             authority
                 .reference_visibility("refs/tags/v1.2.3")
@@ -777,6 +785,7 @@ mod tests {
             "main",
             "refs/heads/release candidate",
             "refs/heads/release..candidate",
+            "refs/heads//release",
             "refs/heads/release~candidate",
             "refs/heads/candidate.lock",
         ] {
@@ -797,6 +806,18 @@ mod tests {
         assert!(matches!(
             disjoint(&document),
             Err(AuthorityError::OverlappingRefs)
+        ));
+        document.announcement_ref = "refs/spice/packages/vnested/VERSION".to_owned();
+        assert!(matches!(
+            disjoint(&document),
+            Err(AuthorityError::OverlappingRefs)
+        ));
+
+        assert!(matches!(
+            current_authority(workspace())
+                .expect("tracked authority")
+                .source_push("111111"),
+            Err(AuthorityError::Object(_))
         ));
     }
 
