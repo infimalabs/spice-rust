@@ -3,16 +3,17 @@
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read as _, Write as _};
-use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
 use spice::repository::Repository;
-use wire::manifest::ReleaseTarget;
+use wire::manifest::{CANVAS_APP_FILES, ReleaseTarget};
 
 const MAX_PACKAGE_ENTRIES: usize = 64;
 const MAX_MEMBER_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_PACKAGE_BYTES: u64 = 1024 * 1024 * 1024;
+const PACKAGE_DOCUMENT_PATH: &str = "release/package.json";
 
 pub(crate) fn run(
     repository: &Repository,
@@ -26,12 +27,12 @@ pub(crate) fn run(
 
 fn delegate(
     worktree: &Path,
-    acquired: &[u8],
+    acquired: &AcquiredPackage,
     apply: Option<&str>,
     json: bool,
 ) -> Result<ExitStatus, Error> {
-    let staged = StagedExecutable::new(acquired)?;
-    let mut command = Command::new(staged.path());
+    let staged = StagedPackage::new(acquired)?;
+    let mut command = Command::new(staged.executable());
     command.current_dir(worktree).arg("install");
     if let Some(digest) = apply {
         command.arg(format!("--apply={digest}"));
@@ -40,11 +41,15 @@ fn delegate(
         command.arg("--json");
     }
     command.status().map_err(|source| {
-        Error::environment("launch verified package executable", staged.path(), source)
+        Error::environment(
+            "launch verified package executable",
+            staged.executable(),
+            source,
+        )
     })
 }
 
-fn acquire(root: &Path) -> Result<Vec<u8>, Error> {
+fn acquire(root: &Path) -> Result<AcquiredPackage, Error> {
     let metadata = match fs::symlink_metadata(root) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -86,16 +91,30 @@ fn acquire(root: &Path) -> Result<Vec<u8>, Error> {
         .iter()
         .find(|candidate| candidate.target == target)
         .ok_or_else(|| Error::input(format!("package has no executable for {target}")))?;
-    members
-        .iter()
-        .find(|member| member.path() == selected.executable_path)
-        .map(|member| member.bytes().to_vec())
-        .ok_or_else(|| {
-            Error::input(format!(
-                "verified package omits selected executable {}",
-                selected.executable_path
-            ))
-        })
+    let acquired = AcquiredPackage {
+        executable_path: selected.executable_path.clone(),
+        payload_path: format!("targets/{}/payload.json", target.as_str()),
+        members,
+    };
+    acquired.member(&acquired.executable_path)?;
+    acquired.member(&acquired.payload_path)?;
+    Ok(acquired)
+}
+
+#[derive(Debug)]
+struct AcquiredPackage {
+    executable_path: String,
+    payload_path: String,
+    members: Vec<proof::PackageMember>,
+}
+
+impl AcquiredPackage {
+    fn member(&self, path: &str) -> Result<&proof::PackageMember, Error> {
+        self.members
+            .iter()
+            .find(|member| member.path() == path)
+            .ok_or_else(|| Error::input(format!("verified package omits staged member {path}")))
+    }
 }
 
 fn newer(candidate: &str, current: &str) -> bool {
@@ -273,56 +292,76 @@ fn current_target() -> Result<ReleaseTarget, Error> {
     }
 }
 
-struct StagedExecutable {
-    path: PathBuf,
+struct StagedPackage {
+    root: PathBuf,
+    executable: PathBuf,
 }
 
-impl StagedExecutable {
-    fn new(bytes: &[u8]) -> Result<Self, Error> {
+impl StagedPackage {
+    fn new(acquired: &AcquiredPackage) -> Result<Self, Error> {
         for _ in 0..32 {
-            let path = std::env::temp_dir().join(format!(
+            let root = std::env::temp_dir().join(format!(
                 "spice-package-{}-{}",
                 std::process::id(),
                 uuid::Uuid::new_v4()
             ));
-            let file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o700)
-                .open(&path);
-            let mut file = match file {
-                Ok(file) => file,
+            let mut builder = fs::DirBuilder::new();
+            builder.mode(0o700);
+            match builder.create(&root) {
+                Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
                 Err(source) => {
                     return Err(Error::environment(
-                        "create verified package executable",
-                        &path,
+                        "create verified package staging root",
+                        &root,
                         source,
                     ));
                 }
+            }
+            let staged = Self {
+                executable: root.join(&acquired.executable_path),
+                root,
             };
-            let staged = Self { path };
-            file.write_all(bytes).map_err(|source| {
-                Error::environment("write verified package executable", staged.path(), source)
-            })?;
-            file.sync_all().map_err(|source| {
-                Error::environment("sync verified package executable", staged.path(), source)
-            })?;
+            staged.publish(acquired.member(PACKAGE_DOCUMENT_PATH)?)?;
+            for file in CANVAS_APP_FILES {
+                staged.publish(acquired.member(&format!("app/{file}"))?)?;
+            }
+            staged.publish(acquired.member(&acquired.payload_path)?)?;
+            staged.publish(acquired.member(&acquired.executable_path)?)?;
             return Ok(staged);
         }
         Err(Error::input(
-            "could not allocate a unique verified package executable",
+            "could not allocate a unique verified package staging root",
         ))
     }
 
-    fn path(&self) -> &Path {
-        &self.path
+    fn executable(&self) -> &Path {
+        &self.executable
+    }
+
+    fn publish(&self, member: &proof::PackageMember) -> Result<(), Error> {
+        let path = self.root.join(member.path());
+        fs::create_dir_all(path.parent().expect("a package member has a parent")).map_err(
+            |source| Error::environment("create package staging directory", &path, source),
+        )?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(member.mode())
+            .open(&path)
+            .map_err(|source| Error::environment("create staged package member", &path, source))?;
+        file.write_all(member.bytes())
+            .map_err(|source| Error::environment("write staged package member", &path, source))?;
+        file.set_permissions(fs::Permissions::from_mode(member.mode()))
+            .map_err(|source| Error::environment("mode staged package member", &path, source))?;
+        file.sync_all()
+            .map_err(|source| Error::environment("sync staged package member", &path, source))
     }
 }
 
-impl Drop for StagedExecutable {
+impl Drop for StagedPackage {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+        let _ = fs::remove_dir_all(&self.root);
     }
 }
 
@@ -380,24 +419,6 @@ mod tests {
     use wire::{Digest, Domain};
 
     #[test]
-    fn verified_executable_staging_is_exact_executable_and_ephemeral() {
-        let bytes = b"#!/bin/sh\nexit 0\n";
-        let staged = StagedExecutable::new(bytes).expect("verified executable stages");
-        let path = staged.path().to_path_buf();
-        assert_eq!(fs::read(&path).expect("staged executable reads"), bytes);
-        assert_eq!(
-            fs::metadata(&path)
-                .expect("staged executable metadata reads")
-                .permissions()
-                .mode()
-                & 0o777,
-            0o700,
-        );
-        drop(staged);
-        assert!(!path.exists());
-    }
-
-    #[test]
     fn package_root_must_be_an_unlinked_directory() {
         let path = std::env::temp_dir().join(format!(
             "spice-package-root-{}-{}",
@@ -420,12 +441,40 @@ mod tests {
         ));
         fs::create_dir(&root).expect("delegate fixture root creates");
         let observed = root.join("arguments");
-        let script = format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\n",
-            observed.display()
+        let package = root.join("package");
+        fs::create_dir(&package).expect("package fixture root creates");
+        let tree = complete_package(&observed);
+        write_package(&package, &tree);
+        let acquired = acquire(&package).expect("complete package acquires");
+        let staged = StagedPackage::new(&acquired).expect("selected package stages");
+        let staged_root = staged.root.clone();
+        assert!(staged.executable().is_file());
+        assert_eq!(
+            fs::metadata(&staged_root).unwrap().permissions().mode() & 0o777,
+            0o700,
         );
-        let status = delegate(&root, script.as_bytes(), Some("abc123"), true)
-            .expect("verified generation launches");
+        assert_eq!(
+            fs::metadata(staged.executable())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            acquired.member(&acquired.executable_path).unwrap().mode(),
+        );
+        assert!(staged_root.join(PACKAGE_DOCUMENT_PATH).is_file());
+        assert!(staged_root.join(&acquired.payload_path).is_file());
+        for file in CANVAS_APP_FILES {
+            assert_eq!(
+                fs::read(staged_root.join("app").join(file)).unwrap(),
+                acquired.member(&format!("app/{file}")).unwrap().bytes(),
+            );
+        }
+        drop(staged);
+        assert!(!staged_root.exists());
+        fs::remove_dir_all(&package).expect("remove admitted source package");
+
+        let status =
+            delegate(&root, &acquired, Some("abc123"), true).expect("verified generation launches");
         assert!(status.success());
         assert_eq!(
             fs::read_to_string(&observed).expect("delegated argv reads"),
@@ -470,14 +519,7 @@ mod tests {
         fs::create_dir(&root).expect("package fixture root creates");
         let marker = root.join("selected-executable-ran");
         let tree = complete_package(&marker);
-        for member in tree.members() {
-            let path = root.join(member.path());
-            fs::create_dir_all(path.parent().expect("package member has a parent"))
-                .expect("package parent creates");
-            fs::write(&path, member.bytes()).expect("package member writes");
-            fs::set_permissions(&path, fs::Permissions::from_mode(member.mode()))
-                .expect("package member mode writes");
-        }
+        write_package(&root, &tree);
 
         let selected = acquire(&root).expect("complete package acquires");
         let status =
@@ -488,6 +530,17 @@ mod tests {
             "install\n"
         );
         fs::remove_dir_all(&root).expect("package fixture removes");
+    }
+
+    fn write_package(root: &Path, tree: &proof::PackageTree) {
+        for member in tree.members() {
+            let path = root.join(member.path());
+            fs::create_dir_all(path.parent().expect("package member has a parent"))
+                .expect("package parent creates");
+            fs::write(&path, member.bytes()).expect("package member writes");
+            fs::set_permissions(&path, fs::Permissions::from_mode(member.mode()))
+                .expect("package member mode writes");
+        }
     }
 
     fn complete_package(marker: &Path) -> proof::PackageTree {
