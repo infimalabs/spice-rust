@@ -71,8 +71,8 @@ fn verifier_cargo_budget_binds_once_and_refuses_drift() {
 
 #[test]
 fn compiler_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs() {
-    let shell_hook_name = |suffix: &str| {
-        let mut name = String::from_utf8_lossy(SHELL_HOOK_PREFIX).into_owned();
+    let prefixed_name = |prefix: &[u8], suffix: &str| {
+        let mut name = String::from_utf8_lossy(prefix).into_owned();
         name.push_str(suffix);
         OsString::from(name)
     };
@@ -84,12 +84,16 @@ fn compiler_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs
         ),
         (OsString::from("SHLVL"), OsString::from("1")),
         (
-            shell_hook_name("REPO_ROOT"),
+            prefixed_name(SHELL_HOOK_PREFIX, "REPO_ROOT"),
             OsString::from("/fixture/repository"),
         ),
         (
-            shell_hook_name("WRAPPERS"),
+            prefixed_name(SHELL_HOOK_PREFIX, "WRAPPERS"),
             OsString::from("producer wrapper functions"),
+        ),
+        (
+            prefixed_name(AGENT_RUNTIME_PREFIXES[1], "SESSION_ID"),
+            OsString::from("producer-session"),
         ),
         (
             OsString::from("ARBITRARY_BUILD_INPUT"),
@@ -111,8 +115,16 @@ fn compiler_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs
         ),
         (OsString::from("SHLVL"), OsString::from("2")),
         (
-            shell_hook_name("WRAPPERS"),
+            prefixed_name(SHELL_HOOK_PREFIX, "WRAPPERS"),
             OsString::from("consumer wrapper functions"),
+        ),
+        (
+            prefixed_name(AGENT_RUNTIME_PREFIXES[1], "SESSION_ID"),
+            OsString::from("consumer-session"),
+        ),
+        (
+            prefixed_name(AGENT_RUNTIME_PREFIXES[0], "SESSION_ID"),
+            OsString::from("consumer-session"),
         ),
         (
             OsString::from("ARBITRARY_BUILD_INPUT"),
@@ -158,11 +170,14 @@ fn compiler_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs
 #[test]
 fn compiler_child_receives_semantic_inputs_but_no_operational_routing() {
     let routing = [
+        wire::SpiceVariable::AgentVendor,
         wire::SpiceVariable::Hooks,
         wire::SpiceVariable::Inbox,
         wire::SpiceVariable::Lane,
+        wire::SpiceVariable::NativeShell,
         wire::SpiceVariable::PreCommitPaths,
         wire::SpiceVariable::PreCommitSource,
+        wire::SpiceVariable::RtkExecutable,
         wire::SpiceVariable::WrapperSpice,
     ];
     let mut input = routing
