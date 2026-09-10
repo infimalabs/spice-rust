@@ -24,6 +24,8 @@ mod materialization;
 use materialization::Projection;
 pub(super) mod contract_edits;
 mod review_feedback;
+mod targets;
+use targets::project_targets;
 #[cfg(test)]
 mod startup_tests;
 
@@ -644,121 +646,6 @@ fn pending_start_failure_is_terminal(failure: &Outcome<()>) -> bool {
         Outcome::Refusal(refusal)
             if !start_refusal_is_retryable(refusal.reason())
     )
-}
-
-fn project_targets(
-    snapshot: &bus::TaskSnapshot,
-    projection: &Projection,
-    now: Instant,
-    holds: &Holds,
-    allocation: &board::NextConfig,
-) -> CommandResult<Vec<Target>> {
-    let Some(residency) = snapshot.residency() else {
-        return Ok(Vec::new());
-    };
-    if !residency.body().lanes.iter().any(|row| {
-        row.occupant.is_none()
-            && row.disposition != "occupied"
-            && row.life != "drain"
-            && holds.seats(row.lane)
-    }) {
-        return Ok(Vec::new());
-    }
-    let entries = projection.entries();
-    let projected_residency = projection
-        .project_residency(residency.body())
-        .map_err(|error| store_fault("lifecycle::subscription-history-invalid", &error))?;
-    let ready_at = projection.ready_at();
-    let mut rows = projected_residency.lanes.iter().collect::<Vec<_>>();
-    rows.sort_by_key(|row| row.lane);
-    let mut targets = Vec::new();
-    for row in rows {
-        if row.occupant.is_some()
-            || row.disposition == "occupied"
-            || row.life == "drain"
-            || !holds.seats(row.lane)
-        {
-            continue;
-        }
-        let pending_inbox = projection.has_operator_steering(row.lane);
-        let mut held = entries.iter().filter(|entry| {
-            entry.claim().is_some_and(|claim| {
-                claim.disposition == ClaimDisposition::Active && claim.lane == row.lane
-            })
-        });
-        let held_claim = match held.next() {
-            Some(entry) => {
-                if held.next().is_some() {
-                    return Err(store_fault(
-                        "lifecycle::held-claim-ambiguous",
-                        "one vacant lane carries more than one active claim",
-                    ));
-                }
-                entry
-                    .lease()
-                    .ok_or_else(|| {
-                        store_fault(
-                            "lifecycle::held-claim-lease-missing",
-                            "an active held claim has no durable lease head",
-                        )
-                    })?
-                    .expiry
-                    > now
-            }
-            None => false,
-        };
-        let mut subscriptions = projected_residency
-            .subscriptions
-            .iter()
-            .filter(|subscription| subscription.lineage_id == row.lineage_id);
-        let subscription = subscriptions.next();
-        if subscriptions.next().is_some() {
-            return Err(store_fault(
-                "lifecycle::subscription-ambiguous",
-                "one lifecycle target has more than one durable task subscription",
-            ));
-        }
-        let actor = Actor::Lane(row.lane);
-        let first_drain_member = !projected_residency.lanes.iter().any(|member| {
-            member.lineage_id == row.lineage_id
-                && member.occupant.is_some()
-                && member.disposition == "occupied"
-        });
-        let (drain_queue, available) = match subscription {
-            Some(subscription) if subscription.policy == wire::intent::LineageLife::Drain => (
-                drain_available(
-                    snapshot,
-                    entries,
-                    ready_at,
-                    &actor,
-                    subscription,
-                    allocation,
-                    first_drain_member,
-                )?,
-                Available::None,
-            ),
-            Some(subscription) if subscription.policy == wire::intent::LineageLife::Drive => (
-                Available::None,
-                available_deadline(
-                    snapshot,
-                    entries,
-                    ready_at,
-                    &actor,
-                    subscription,
-                    allocation,
-                )?,
-            ),
-            Some(_) | None => (Available::None, Available::None),
-        };
-        targets.push(Target {
-            lane: row.lane,
-            pending_inbox,
-            held_claim,
-            drain_queue,
-            available,
-        });
-    }
-    Ok(targets)
 }
 
 fn earliest(first: Option<WakeDeadline>, second: Option<WakeDeadline>) -> Option<WakeDeadline> {

@@ -118,6 +118,7 @@ fn trust_grant_is_an_exact_digest_fact_with_bound_producer_provenance() {
         )]),
     ] {
         assert!(!requirements.are_satisfied_by(&unsatisfied));
+        assert!(requirements.has_unsatisfied_trust_grant(&unsatisfied));
     }
 
     let granted_elsewhere = Environment::EMPTY.with_trust_heads([observed(
@@ -128,6 +129,14 @@ fn trust_grant_is_an_exact_digest_fact_with_bound_producer_provenance() {
     assert!(
         requirements.are_satisfied_by(&granted_elsewhere),
         "producer worktree is provenance, not an eligibility scope"
+    );
+    assert!(!requirements.has_unsatisfied_trust_grant(&granted_elsewhere));
+    assert!(
+        !EnvironmentRequirements::one(
+            EnvironmentRequirement::journal_schema(15).expect("positive schema")
+        )
+        .has_unsatisfied_trust_grant(&Environment::EMPTY),
+        "journal-schema blockers do not ice claims"
     );
 }
 
@@ -325,13 +334,25 @@ fn requirement_edits_bind_statement_and_claim_witnesses_to_the_same_task() {
         command(vec![
             task_witness.clone(),
             Witness::Claim {
-                task: foreign,
+                task: foreign.clone(),
                 head: None,
             },
         ])
         .admit(&accepted),
         Err(CommandRejection::Refusal(ref refusal)) if refusal.reason() == "command::witness-law"
     ));
+    assert!(
+        command(vec![
+            task_witness.clone(),
+            claim_witness.clone(),
+            Witness::Lease {
+                task: born,
+                head: seq,
+            },
+        ])
+        .admit(&accepted)
+        .is_ok()
+    );
     assert!(
         command(vec![task_witness, claim_witness])
             .admit(&accepted)

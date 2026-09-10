@@ -811,7 +811,7 @@ fn desired_renewals(
             continue;
         }
         let lease = coherent_lease(heads, claim.body())?;
-        if lease.body().expiry <= now {
+        if spice::claim_lease::is_indefinite(lease.body()) || lease.body().expiry <= now {
             continue;
         }
         let deadline = shifted(
