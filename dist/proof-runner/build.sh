@@ -24,13 +24,13 @@ bundle="$root/target/proof-native-darwin" # env-policy: allow
 vendor="$bundle/vendor" # env-policy: allow
 rm -rf "$bundle" # env-policy: allow
 mkdir -p "$bundle/bin" # env-policy: allow
-cargo vendor --locked "$vendor" # env-policy: allow
+spice dev cargo -- vendor --locked --respect-source-config "$vendor" # env-policy: allow
 
 # The unsealed build of the runner is the one tool that computes the identities
 # the sealed build is pinned with, so the pins never come from a second
 # implementation that could disagree with the one enforcing them.
 unsealed() {
-    cargo run --locked -q -p proof --bin spice-proof-darwin-runner -- "$@" # env-policy: allow
+    spice dev cargo -- run --locked -q -p proof --bin spice-proof-darwin-runner -- "$@" # env-policy: allow
 }
 
 cargo_path=$(rustup which cargo) # env-policy: allow
@@ -66,7 +66,7 @@ pins=$(printf '%s\n' \
     "digest = \"$(unsealed tool-digest "$sandbox_path")\"") # env-policy: allow
 
 env SPICE_NATIVE_PINS="$pins" \
-    cargo build --locked --release --target-dir "$root/target" \
+    spice dev cargo -- build --locked --release --target-dir "$root/target" \
     -p proof --bin spice-proof-darwin-runner # env-policy: allow
 
 runner="$bundle/bin/spice-proof-darwin-runner" # env-policy: allow
