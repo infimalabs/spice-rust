@@ -1090,7 +1090,7 @@ fn current_build_differs(
     let app_differs = spice_binary
         .map(|binary| app::Source::resolve(repository, binary))
         .transpose()?
-        .is_some_and(|app| plan.app.as_ref() != Some(app.generation()));
+        .is_some_and(|app| app.differs_from(plan));
     Ok(binary_differs || app_differs || plan.fixed_content_differs_from_current_build()?)
 }
 

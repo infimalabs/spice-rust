@@ -453,6 +453,29 @@ fn canvas_refresh_carries_immutable_generations_and_unapplies_them_together() {
     let first = plan(&repository, Some(binary)).unwrap();
     apply(&repository, Some(binary), &first.digest().unwrap()).unwrap();
 
+    let stage = scratch.join("dist/stage-app");
+    let first_generation = fs::read_to_string(stage.join("current")).unwrap();
+    fs::write(
+        stage
+            .join("generations")
+            .join(first_generation.trim())
+            .join("style.css"),
+        b"same generation, different bytes\n",
+    )
+    .unwrap();
+    assert_eq!(
+        audit_appliance(&repository, binary).unwrap().state(),
+        ApplianceState::AnotherBuild,
+    );
+    let same_generation = plan(&repository, Some(binary)).unwrap();
+    assert_eq!(same_generation.app_generation(), first.app_generation());
+    apply(
+        &repository,
+        Some(binary),
+        &same_generation.digest().unwrap(),
+    )
+    .unwrap();
+
     git_repository::seed_canvas_stage_as(scratch.path(), b"refreshed fixture app");
     assert_eq!(
         audit_appliance(&repository, binary).unwrap().state(),
