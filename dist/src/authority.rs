@@ -303,6 +303,19 @@ pub fn current_authority(workspace: &Path) -> Result<ReleaseAuthority, Authority
     )
 }
 
+/// Product version compiled into this distribution generation.
+///
+/// # Errors
+///
+/// Refuses a malformed tracked version instead of giving consumers a second
+/// file-macro authority for the same release identity.
+pub fn current_product_version() -> Result<ProductVersion, AuthorityError> {
+    Ok(ProductVersion::parse(tracked_text_line(
+        VERSION_TEXT,
+        "product version",
+    )?)?)
+}
+
 /// Admit one exact authority document and product version.
 ///
 /// # Errors
@@ -597,6 +610,10 @@ mod tests {
         let authority = current_authority(workspace()).expect("tracked authority admits");
         assert_eq!(authority.package_name(), "spice");
         assert_eq!(authority.version().as_str(), "0.0.0");
+        assert_eq!(
+            current_product_version().expect("tracked version admits"),
+            *authority.version(),
+        );
         assert!(tracked_line(AUTHORITY_BYTES, "authority").is_ok());
         assert!(tracked_text_line(VERSION_TEXT, "version").is_ok());
         assert!(tracked_line(b"{}\n\n", "authority").is_err());

@@ -15,6 +15,18 @@ cargo run --locked -p spice -- install
 cargo run --locked -p spice -- install --apply=DIGEST_FROM_PREVIEW
 ```
 
+An already installed appliance can update from an explicitly materialized
+sealed release-package directory without a Rust toolchain or source checkout:
+
+```sh
+spice install --package /absolute/path/to/spice-release-package
+spice install --package /absolute/path/to/spice-release-package --apply=DIGEST_FROM_PREVIEW
+```
+
+Both commands verify the complete package and execute only its proof-bound
+current-platform Spice binary. Apply does not restart a resident; use the
+installed `spice down` and `spice up` commands when that restart is intended.
+
 Installation publishes the executable, bootstrap skill, supervised-shell
 entry/static/wrapper assets, and three Git hooks under the Git common directory,
 then switches hook authority last. It refuses conflicting linked-worktree

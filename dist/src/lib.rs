@@ -12,7 +12,7 @@ mod stage;
 
 pub use authority::{
     AuthorityError, GitCommand, GitMutation, RefState, ReleaseAuthority, ReleaseRefs,
-    admit_authority, admit_workspace_publish_policy, current_authority,
+    admit_authority, admit_workspace_publish_policy, current_authority, current_product_version,
 };
 pub use notes::{
     HIGHLIGHTS_PLACEHOLDER, INVENTORY_OPEN, Landing, NotesError, NotesInput, curated_release_notes,

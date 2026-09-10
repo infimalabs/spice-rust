@@ -34,6 +34,8 @@ mod gate_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod install_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod install_package;
+#[cfg(not(target_arch = "wasm32"))]
 mod journal_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod journal_lock;
@@ -281,6 +283,7 @@ fn dispatch_native_gate_queries(contract: &cli::Contract, leaf: &clap::ArgMatche
         ["install"] => match install_command::run(leaf) {
             install_command::Answer::Plan(outcome) => deliver(&outcome, form),
             install_command::Answer::Receipt(outcome) => deliver(&outcome, form),
+            install_command::Answer::Child(status) => terminate_child(status),
         },
         ["config"] => deliver_config(&config_command::run(leaf), form),
         ["config", "migrate-tasks"] => {

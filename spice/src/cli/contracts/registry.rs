@@ -183,7 +183,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["install"],
-        "install [--apply=<digest>|--unapply]",
+        "install [--package PACKAGE] [--apply=<digest>|--unapply]",
         Local,
         None,
         [],

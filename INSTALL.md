@@ -203,6 +203,33 @@ appliance's discovery and lock authority.
 
 ## Upgrade
 
+An installed appliance can preview and apply an explicitly materialized sealed
+release package without Cargo, rustc, `xtask`, or a Spice source checkout:
+
+```sh
+SPICE_PACKAGE=/absolute/path/to/spice-release-package
+"$SPICE_BIN" install --package "$SPICE_PACKAGE" || exit
+"$SPICE_BIN" install --package "$SPICE_PACKAGE" --apply=DIGEST_PRINTED_BY_PREVIEW || exit
+```
+
+The package directory is the exact regular-file closure published by the
+release pipeline. Before either command changes repository authority, the
+installed appliance verifies the package index, two-target manifest, payloads,
+proof receipts, artifact identities, modes, and current platform. It stages
+only the selected verified executable, which derives and applies the existing
+receipt-owned transaction from its own embedded native, Canvas, hook, and skill
+generation. Package acquisition never changes the `--unapply` path.
+
+Apply leaves a running resident untouched. When a restart is intended, stop and
+start through this repository's installed appliance so discovery and lock
+authority select the exact resident:
+
+```sh
+"$SPICE_BIN" down || exit
+"$SPICE_BIN" up
+```
+
+The source-workspace refresh remains available to appliance developers.
 Publish the source-bound Canvas generation, then use one freshly built
 executable for preview and apply:
 

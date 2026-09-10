@@ -213,7 +213,7 @@ const LOCAL_SUCCESSION: &[LocalSuccession] = &[
     LocalSuccession {
         python: None,
         rust: &["install"],
-        invocation: "install [--apply=<digest>]",
+        invocation: "install [--package PACKAGE] [--apply=<digest>]",
         relationship: LocalRelationship::Addition,
         rationale: "Spice publishes its one repository-local appliance and generated assets",
     },
@@ -895,6 +895,7 @@ fn contract_syntax_drives_argument_registration() {
             "018f82d4-6f59-7d06-92e3-bce913116302",
         ],
         &["spice", "install", "--apply=digest"],
+        &["spice", "install", "--package", "/tmp/spice-package"],
         &["spice", "restore", "verify", "bundle"],
         &["spice", "run", "--", "cargo", "test", "--locked"],
         &["spice", "task", "recover", "TASK-1k4Q5gJw"],
