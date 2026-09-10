@@ -11,6 +11,9 @@ use spice::install::{apply, installed_binary, installed_git_hooks, plan};
 use spice::repository::Repository;
 use wire::{Digest, Domain};
 
+#[path = "support/staged_app.rs"]
+mod staged_app;
+
 static BENCHMARK: Mutex<()> = Mutex::new(());
 
 #[test]
@@ -358,6 +361,7 @@ impl Fixture {
                 .expect("write benchmark candidate");
             git(worktree, &["add", "--all"]);
         }
+        staged_app::seed(&linked);
 
         let source = Path::new(env!("CARGO_BIN_EXE_spice"));
         let repository = Repository::discover(&linked).expect("discover benchmark worktree");
