@@ -30,17 +30,10 @@
 .composer-issue { margin: 0; color: var(--danger); font-size: .76rem; }
 
 .markdown-body {
-  --mosaic-quote-deep-indent: calc(
-    var(--mosaic-quote-step) - var(--mosaic-quote-rail) - var(--mosaic-quote-nested-inline)
-  );
-  --mosaic-quote-indent: calc(
-    var(--mosaic-quote-step) - var(--mosaic-quote-rail) - var(--mosaic-quote-inline)
-  );
-  --mosaic-quote-inline: 7px;
+  --mosaic-quote-inline: 5px;
   --mosaic-quote-nested-inline: 5px;
   --mosaic-quote-pad-block: 5px; --mosaic-quote-radius: 12px;
   --mosaic-quote-rail: 2px;
-  --mosaic-quote-step: 8px;
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -69,14 +62,10 @@
   font-size: .8125rem;
 }
 .markdown-body blockquote blockquote {
-  margin: 6px var(--mosaic-quote-rail) 6px var(--mosaic-quote-indent);
   padding-inline: var(--mosaic-quote-nested-inline)
     calc(var(--mosaic-quote-nested-inline) + var(--mosaic-quote-rail));
   font-size: inherit;
   border-left-color: color-mix(in srgb, var(--accent) 88%, white); background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
-.markdown-body blockquote blockquote blockquote {
-  margin-left: var(--mosaic-quote-deep-indent);
 }
 .markdown-body blockquote p { margin: 0 0 6px; }
 .markdown-body blockquote p:last-child { margin-bottom: 0; }
@@ -411,7 +400,7 @@
   font-weight: 700;
 }
 @container (max-width: 20rem) {
-  .organization-mode-rail { gap: 0; padding-inline: 2px; }
+  .organization-mode-rail { gap: 0; }
   .organization-mode { gap: 2px; padding-inline: 3px; }
   .organization-mode-badge { display: none; }
 }
