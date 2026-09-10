@@ -30,7 +30,7 @@ pub struct LaneSeated {
     pub vendor: Name,
 }
 
-/// One Canvas lineage adopted a task-subscription policy.
+/// One Canvas lineage adopted a task-allocation lifetime.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LineageConfigured {
     /// Stable Canvas lineage identifying the configured group.
@@ -56,16 +56,10 @@ pub struct LineageConfigured {
         deserialize_with = "crate::optional::present"
     )]
     pub source_rekeyed_to: Option<CanonicalUuid>,
-    /// Prior task-subscription policy before this transaction.
+    /// Prior task-allocation lifetime before this transaction.
     pub from: crate::intent::LineageLife,
-    /// Authoritative task-subscription policy after this transaction.
+    /// Authoritative task-allocation lifetime after this transaction.
     pub life: crate::intent::LineageLife,
-    /// Prior operator-pinned project set.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub from_manual_projects: Vec<String>,
-    /// Authoritative operator-pinned project set after this transaction.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub manual_projects: Vec<String>,
     /// Boundary for the moved member, when one moved and is actively claimed.
     ///
     /// Empty for a policy-only change, which moves no member and so crosses no

@@ -73,6 +73,7 @@ fn validated_snapshot_from_with_occupant(
     })?;
     let mut residency = positioned(residency);
     let origin_threads = task_origin_threads(observed.facts().iter(), &residency.body)?;
+    let creator_lineages = task_creator_lineages(observed.facts().iter())?;
     let (claim_contexts, git_contexts) = task_contexts(observed.facts());
     let mut tasks = Vec::with_capacity(observed.tasks().len());
     let mut entries = Vec::with_capacity(observed.tasks().len());
@@ -88,6 +89,10 @@ fn validated_snapshot_from_with_occupant(
         )?;
         let git_context = git_contexts.get(&statement.body.born).cloned();
         let handle = TaskHandle::for_project(&statement.body.project, &statement.body.born);
+        let creator_lineage = creator_lineages
+            .get(&statement.body.born)
+            .copied()
+            .flatten();
         let entry = Entry::new(
             statement.body.clone(),
             workflow.body.clone(),
@@ -100,7 +105,8 @@ fn validated_snapshot_from_with_occupant(
                 "board::head-invalid",
                 &format!("task {handle} current heads are invalid: {error}"),
             )
-        })?;
+        })?
+        .with_creator_lineage(creator_lineage);
         let visibility = entry.project().visibility().clone();
         let origin_thread = origin_threads
             .get(&statement.body.born)
@@ -116,6 +122,7 @@ fn validated_snapshot_from_with_occupant(
             BoardTask::from_authoritative(
                 visibility,
                 origin_thread,
+                creator_lineage,
                 statement,
                 workflow,
                 claim,
@@ -124,8 +131,6 @@ fn validated_snapshot_from_with_occupant(
             .with_context(claim_context, git_context),
         );
     }
-    board::project_subscription_history(&mut residency.body, &entries, observed.facts().iter())
-        .map_err(|error| store_fault("lineage::subscription-history-invalid", &error))?;
     let recent_cell = board::recent_claim_cell(&entries, observed.facts().iter(), &principal);
     let review_history = board::graph::review_history(observed.facts().iter(), &entries)
         .map_err(|error| error.to_string());
@@ -205,6 +210,10 @@ impl TaskCreationCapture {
         self.context.clone()
     }
 
+    pub(super) const fn creator_lineage(&self) -> Option<wire::CanonicalUuid> {
+        self.context.creator_lineage()
+    }
+
     pub(super) fn guard(&self, write: &mut JournalWrite) {
         let Some(expected_residency) = self.residency else {
             return;
@@ -248,7 +257,9 @@ pub(super) fn task_creation_context_output(context: &body::TaskCreationContext) 
             )
             .into_boxed_str()
         }
-        body::TaskCreationContext::Transcript { session, boundary } => shell_words::join([
+        body::TaskCreationContext::Transcript {
+            session, boundary, ..
+        } => shell_words::join([
             "spice".to_owned(),
             "session".to_owned(),
             "context".to_owned(),
@@ -379,6 +390,7 @@ pub(super) fn task_creation_capture(
         context: body::TaskCreationContext::Transcript {
             session: session.identity.clone(),
             boundary: (**boundary).clone(),
+            creator_lineage: Some(row.lineage_id),
         },
         residency: Some(snapshot.answer.residency.position),
         source: Some((lane, source)),
@@ -518,6 +530,37 @@ fn task_origin_threads<'a>(
         }
     }
     Ok(origins)
+}
+
+fn task_creator_lineages<'a>(
+    facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
+) -> Result<
+    std::collections::BTreeMap<wire::TaskStamp, Option<wire::CanonicalUuid>>,
+    Outcome<CommandAnswer>,
+> {
+    let mut creators = std::collections::BTreeMap::new();
+    for envelope in facts {
+        let Some(added) = envelope.fact.read::<body::TaskAdded>() else {
+            continue;
+        };
+        let creator = match envelope.actor {
+            Actor::Lane(_) => added.creation.creator_lineage(),
+            Actor::Operator | Actor::Spice if added.creation.creator_lineage().is_none() => None,
+            Actor::Operator | Actor::Spice => {
+                return Err(protocol_fault(
+                    "board::task-creator-lineage-invalid",
+                    "a non-lane task creation names a creator lineage",
+                ));
+            }
+        };
+        if creators.insert(added.task.clone(), creator).is_some() {
+            return Err(protocol_fault(
+                "board::task-creator-duplicate",
+                &format!("task {} has more than one creation fact", added.task),
+            ));
+        }
+    }
+    Ok(creators)
 }
 
 pub(super) fn claim_transcript_recovery(
@@ -1084,13 +1127,13 @@ pub(super) fn allocation_subscription<'a>(
     let subscription = subscriptions.next().ok_or_else(|| {
         store_fault(
             "lineage::subscription-missing",
-            "the allocating lane lineage has no durable task-subscription policy",
+            "the allocating lane lineage has no durable task-allocation lifetime",
         )
     })?;
     if subscriptions.next().is_some() {
         return Err(store_fault(
             "lineage::subscription-ambiguous",
-            "the allocating lane lineage has more than one durable task-subscription policy",
+            "the allocating lane lineage has more than one durable task-allocation lifetime",
         ));
     }
     Ok(subscription)

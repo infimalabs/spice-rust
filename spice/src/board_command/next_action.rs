@@ -28,11 +28,7 @@ impl NextTransition {
 /// `post` is the changed task as it will exist after the transaction. Replacing
 /// that handle in the observed entry set makes dependency and possession checks
 /// use one coherent projected board rather than the phase's position in a flow.
-pub(super) fn next_action(
-    snapshot: &ValidatedSnapshot,
-    post: &Entry,
-    learn_created_project: bool,
-) -> Option<Box<str>> {
+pub(super) fn next_action(snapshot: &ValidatedSnapshot, post: &Entry) -> Option<Box<str>> {
     let entries = snapshot
         .entries
         .iter()
@@ -40,14 +36,10 @@ pub(super) fn next_action(
         .cloned()
         .chain(std::iter::once(post.clone()))
         .collect::<Vec<_>>();
-    let mut residency = snapshot.answer.residency.body.clone();
-    if learn_created_project {
-        learn_project_created_by_principal(&mut residency, &snapshot.answer.principal, post);
-    }
     let environment = snapshot.answer.environment();
     accepted_transition(
         &snapshot.answer.principal,
-        &residency,
+        &snapshot.answer.residency.body,
         &entries,
         post,
         &environment,
@@ -151,35 +143,4 @@ fn principal_can_progress(
         .ok()
         .and_then(|at| board::Active::admit(entry, principal, at).ok())
         .is_some()
-}
-
-fn learn_project_created_by_principal(
-    residency: &mut wire::ResidencyHead,
-    principal: &Actor,
-    entry: &Entry,
-) {
-    if entry.project().visibility().is_hidden() {
-        return;
-    }
-    let Actor::Lane(lane) = principal else {
-        return;
-    };
-    let Some(lineage) = residency
-        .lanes
-        .iter()
-        .find(|seat| seat.lane == *lane && seat.disposition == "occupied")
-        .map(|seat| seat.lineage_id)
-    else {
-        return;
-    };
-    let mut subscriptions = residency
-        .subscriptions
-        .iter_mut()
-        .filter(|subscription| subscription.lineage_id == lineage);
-    let Some(subscription) = subscriptions.next() else {
-        return;
-    };
-    if subscriptions.next().is_none() {
-        subscription.learn_project(entry.project().as_str());
-    }
 }

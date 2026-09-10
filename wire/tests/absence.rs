@@ -102,7 +102,7 @@ fn absent_non_head_fields_are_omitted_and_null_is_refused() {
         &["witness", "expected", "observed", "detail"],
     );
     assert_canonical_absence::<PendingDirective>(DIRECTIVE, &["preview", "control"]);
-    assert_canonical_absence::<LineageConfigure>(LINEAGE_MEMBERSHIP, &["life", "manual_projects"]);
+    assert_canonical_absence::<LineageConfigure>(LINEAGE_MEMBERSHIP, &["life"]);
 }
 
 /// An accounted counter is required, and the one optional counter is not zero.

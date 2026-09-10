@@ -588,24 +588,18 @@ fn startup_migrates_one_complete_legacy_subscription_table_and_refuses_partial_a
             wire::LineageSubscription {
                 lineage_id: lineage,
                 policy: wire::intent::LineageLife::Drive,
-                manual_projects: Vec::new(),
-                auto_projects: Vec::new(),
             },
             wire::LineageSubscription {
                 lineage_id: sibling,
                 policy: wire::intent::LineageLife::Steer,
-                manual_projects: Vec::new(),
-                auto_projects: Vec::new(),
             },
         ]
     );
-    let mut projected = migrated.clone();
-    projected[0].auto_projects = vec!["task.derived".to_owned()];
     assert_eq!(
-        super::startup_subscriptions(&lanes, projected)
+        super::startup_subscriptions(&lanes, migrated.clone())
             .expect("the current complete table is preserved"),
         migrated,
-        "startup discards derived auto projects before fact replay",
+        "startup preserves the complete lifetime table",
     );
 
     let Err(Outcome::Fault(fault)) =
@@ -652,15 +646,10 @@ fn assert_lineage_configuration_fact(bus: &Bus, lineage: CanonicalUuid) {
         configured.fact.body().get("life"),
         Some(&serde_json::json!("drain"))
     );
-    assert_eq!(configured.fact.body().get("from_manual_projects"), None);
-    assert_eq!(
-        configured.fact.body().get("manual_projects"),
-        Some(&serde_json::json!(["task.manual"]))
-    );
 }
 
 #[test]
-fn lineage_configuration_changes_only_the_typed_task_subscription() {
+fn lineage_configuration_changes_only_the_typed_lifetime() {
     let (root, paths) = resident_fixture("lineage-configuration");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
     let surface =
@@ -700,7 +689,6 @@ fn lineage_configuration_changes_only_the_typed_task_subscription() {
         lineage_id: lineage,
         member: None,
         life: Some(wire::intent::LineageLife::Drain),
-        manual_projects: Some(vec!["task.manual".to_owned()]),
     };
     let command = Command {
         v: wire::WireVersion::CURRENT,
@@ -717,10 +705,8 @@ fn lineage_configuration_changes_only_the_typed_task_subscription() {
     })
     .expect("operator lineage configuration admits");
 
-    let projects =
-        board::ProjectPolicy::new(Vec::new(), Vec::new(), 2, 4).expect("fixture project policy");
     let Outcome::Reply(reply) =
-        super::lane_surface::configure(&bus, epoch, &seats, &projects, &command, &request)
+        super::lane_surface::configure(&bus, epoch, &seats, &command, &request)
     else {
         panic!("lineage configuration replies");
     };
@@ -737,15 +723,13 @@ fn lineage_configuration_changes_only_the_typed_task_subscription() {
         vec![wire::LineageSubscription {
             lineage_id: lineage,
             policy: wire::intent::LineageLife::Drain,
-            manual_projects: vec!["task.manual".to_owned()],
-            auto_projects: Vec::new(),
         }]
     );
     assert_eq!(answer.lanes[0].occupant, Some(first_occupant));
     assert_eq!(answer.lanes[1].occupant, Some(second_occupant));
     assert!(
         answer.lanes.iter().all(|row| row.disposition == "occupied"),
-        "task-subscription drain never performs LaneAction::Drain",
+        "task-allocation Drain never performs LaneAction::Drain",
     );
     assert!(seats.occupied(first_lane));
     assert!(seats.occupied(second_lane));

@@ -7,7 +7,6 @@ pub(super) fn configure_subscription(
     epoch: CanonicalUuid,
     seat: &Seat,
     policy: wire::intent::LineageLife,
-    manual_projects: &[&str],
 ) {
     let snapshot = bus.task_snapshot().expect("subscription head reads");
     let observed = snapshot.residency().expect("subscription head exists");
@@ -18,14 +17,7 @@ pub(super) fn configure_subscription(
         .find(|subscription| subscription.lineage_id == seat.lane)
         .expect("fixture lineage subscription exists");
     let from = subscription.policy;
-    let from_manual_projects = subscription.manual_projects.clone();
     subscription.policy = policy;
-    subscription.manual_projects = manual_projects
-        .iter()
-        .map(|project| (*project).to_owned())
-        .collect();
-    subscription.manual_projects.sort();
-    let configured_manual_projects = subscription.manual_projects.clone();
     let origin = format!("resident:{epoch}")
         .parse()
         .expect("fixture resident origin");
@@ -40,8 +32,6 @@ pub(super) fn configure_subscription(
                 source_rekeyed_to: None,
                 from,
                 life: policy,
-                from_manual_projects,
-                manual_projects: configured_manual_projects,
                 sources: Vec::new(),
             },
             FactCause::Root,
@@ -54,6 +44,60 @@ pub(super) fn configure_subscription(
     {
         CommitOutcome::Committed(_) => {}
         outcome => panic!("subscription change did not commit: {outcome:?}"),
+    }
+}
+
+pub(super) fn move_fixture_lane_to_lineage(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seat: &Seat,
+    lineage: CanonicalUuid,
+) {
+    let snapshot = bus
+        .task_snapshot()
+        .expect("residency head reads before move");
+    let observed = snapshot
+        .residency()
+        .expect("residency head exists before move");
+    let mut next = observed.body().clone();
+    let row = next
+        .lanes
+        .iter_mut()
+        .find(|row| row.lane == seat.lane)
+        .expect("fixture lane remains seated");
+    let from_lineage = row.lineage_id;
+    row.lineage_id = lineage;
+    next.topology_revision += 1;
+    next.subscriptions
+        .retain(|subscription| subscription.lineage_id != from_lineage);
+    next.subscriptions.push(wire::LineageSubscription {
+        lineage_id: lineage,
+        policy: wire::intent::LineageLife::Drive,
+    });
+
+    let origin = format!("resident:{epoch}")
+        .parse()
+        .expect("fixture resident origin");
+    let at = Instant::new(jiff::Timestamp::now()).expect("current fixture instant");
+    let mut write = JournalWrite::new(Actor::Operator, origin, at, Producer::ResidentRecognition);
+    let configured = write
+        .fact(
+            wire::body::LineageConfigured {
+                lineage_id: lineage,
+                member: Some(seat.lane),
+                from_lineage: Some(from_lineage),
+                source_rekeyed_to: None,
+                from: wire::intent::LineageLife::Drive,
+                life: wire::intent::LineageLife::Drive,
+                sources: Vec::new(),
+            },
+            FactCause::Root,
+        )
+        .expect("fixture lineage move fact builds");
+    write.residency_head(configured, move |_| next);
+    match bus.commit(write).expect("lineage move reaches writer") {
+        CommitOutcome::Committed(_) => {}
+        outcome => panic!("lineage move did not commit: {outcome:?}"),
     }
 }
 
@@ -87,82 +131,76 @@ fn assert_scope(
 }
 
 struct ScopedTasks {
-    manual: TaskHandle,
-    learned: TaskHandle,
-    unrelated: TaskHandle,
+    same_team: TaskHandle,
+    cross_team: TaskHandle,
+    operator: TaskHandle,
 }
 
-fn seed_scoped_tasks(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, lane: &Actor) -> ScopedTasks {
-    let manual = add_project(
+fn seed_scoped_tasks(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    same_lane: &Actor,
+    cross_lane: &Actor,
+) -> ScopedTasks {
+    let same_team = add_project(
         bus,
         epoch,
-        Actor::Operator,
+        same_lane.clone(),
         "SCOPE-manual1",
-        "Operator-pinned work",
+        "Same-team work",
         "task.manual",
         Some("todo"),
     );
-    let learned = add_project(
+    let cross_team = add_project(
         bus,
         epoch,
-        lane.clone(),
+        cross_lane.clone(),
         "SCOPE-learn01",
-        "Lineage-created work",
+        "Cross-team work",
         "task.learned",
         Some("todo"),
     );
-    let unrelated = add_project(
+    let operator = add_project(
         bus,
         epoch,
         Actor::Operator,
         "SCOPE-open001",
-        "Unrelated assignable work",
+        "Operator work",
         "task.unrelated",
         Some("todo"),
     );
-    let unassignable = add_project(
-        bus,
-        epoch,
-        Actor::Operator,
-        "SCOPE-held001",
-        "Already-held work",
-        "task.unassignable",
-        Some("todo"),
-    );
-    capture_for(bus, epoch, seat, &unassignable);
     ScopedTasks {
-        manual,
-        learned,
-        unrelated,
+        same_team,
+        cross_team,
+        operator,
     }
 }
 
 #[test]
-fn resident_subscription_scopes_learn_projects_and_survive_restart_without_changing_lane_life() {
-    let (root, bus, epoch, seats) = fixture("subscription-scopes", 1);
+fn lineage_lifetimes_use_immutable_creator_team_and_survive_restart() {
+    let (root, bus, epoch, seats) = fixture("creator-team-scopes", 2);
     let seat = &seats[0];
     let lane = Actor::Lane(seat.lane);
+    let peer = Actor::Lane(seats[1].lane);
     authorize_lane_creation(&bus, epoch, seat);
-    configure_subscription(
-        &bus,
-        epoch,
-        seat,
-        wire::intent::LineageLife::Steer,
-        &["task.manual"],
-    );
+    authorize_lane_creation(&bus, epoch, &seats[1]);
+    configure_subscription(&bus, epoch, seat, wire::intent::LineageLife::Steer);
     let ScopedTasks {
-        manual,
-        learned,
-        unrelated,
-    } = seed_scoped_tasks(&bus, epoch, seat, &lane);
+        same_team,
+        cross_team,
+        operator,
+    } = seed_scoped_tasks(&bus, epoch, &lane, &peer);
 
     let steer = board(&bus, epoch, lane.clone());
-    assert_scope(&steer, &lane, wire::intent::LineageLife::Steer, &[&manual]);
-    let steer_subscription = allocation_subscription(&steer.residency.body, &lane)
-        .expect("steer subscription remains durable");
-    assert_eq!(
-        steer_subscription.auto_projects,
-        ["task.learned", "task.unassignable"],
+    assert_scope(&steer, &lane, wire::intent::LineageLife::Steer, &[]);
+
+    configure_subscription(&bus, epoch, seat, wire::intent::LineageLife::Drive);
+    let drive = board(&bus, epoch, lane.clone());
+    assert_scope(
+        &drive,
+        &lane,
+        wire::intent::LineageLife::Drive,
+        &[&same_team],
     );
 
     let next_rule: Name = "next".parse().expect("allocator rule");
@@ -171,7 +209,7 @@ fn resident_subscription_scopes_learn_projects_and_survive_restart_without_chang
         id: uuid(NEXT_COMMAND.fetch_add(1, Ordering::Relaxed)),
         epoch,
         kind: CommandKind::ClaimWin,
-        expected: claim_expected(&steer, &manual, seat),
+        expected: claim_expected(&drive, &same_team, seat),
         body: serde_json::to_value(&ClaimWin {
             rule: next_rule.clone(),
             recovery: None,
@@ -184,43 +222,24 @@ fn resident_subscription_scopes_learn_projects_and_survive_restart_without_chang
         epoch,
     })
     .expect("stale allocator command admits");
-    configure_subscription(
-        &bus,
-        epoch,
-        seat,
-        wire::intent::LineageLife::Drive,
-        &["task.manual"],
-    );
+    configure_subscription(&bus, epoch, seat, wire::intent::LineageLife::Drain);
     let stale = dispatch(&bus, &stale_next).expect("board owns stale allocator command");
     assert!(
         matches!(
             stale,
             Outcome::Refusal(ref refusal) if refusal.reason() == "board::witness-moved"
         ),
-        "a command prepared under Steer crossed into Drive: {stale:?}",
-    );
-    let drive = board(&bus, epoch, lane.clone());
-    assert_scope(
-        &drive,
-        &lane,
-        wire::intent::LineageLife::Drive,
-        &[&manual, &learned],
-    );
-
-    configure_subscription(
-        &bus,
-        epoch,
-        seat,
-        wire::intent::LineageLife::Drain,
-        &["task.manual"],
+        "a command prepared under Drive crossed into Drain: {stale:?}",
     );
     let drain = board(&bus, epoch, lane.clone());
     assert_scope(
         &drain,
         &lane,
         wire::intent::LineageLife::Drain,
-        &[&learned, &manual, &unrelated],
+        &[&cross_team, &operator, &same_team],
     );
+
+    configure_subscription(&bus, epoch, seat, wire::intent::LineageLife::Drive);
 
     bus.verify()
         .expect("scoped authority verifies before restart");
@@ -232,52 +251,73 @@ fn resident_subscription_scopes_learn_projects_and_survive_restart_without_chang
     assert_scope(
         &restarted,
         &lane,
-        wire::intent::LineageLife::Drain,
-        &[&learned, &manual, &unrelated],
-    );
-    let subscription = allocation_subscription(&restarted.residency.body, &lane)
-        .expect("drain subscription survives restart");
-    assert_eq!(subscription.manual_projects, ["task.manual"]);
-    assert_eq!(
-        subscription.auto_projects,
-        ["task.learned", "task.unassignable"],
+        wire::intent::LineageLife::Drive,
+        &[&same_team],
     );
     clean(&root, reopened);
 }
 
-/// Reading stays wider than allocation, and the gap is the invariant.
-///
-/// A row filed outside every project this lane's subscription admits is still
-/// readable by it, because allocation matches the subscription exactly while
-/// reading matches a public stem by prefix. The gap is what keeps a misfiled
-/// task fixable: the lane that can no longer be handed the row can still see
-/// it, and so can still move it back. Without the gap the board would have an
-/// absorbing state.
-///
-/// No correction runs here. The edit suite observes this same pair, but only
-/// as the cost of one `task modify` call, so it would stop guarding the rule
-/// the moment that command changed shape. This drives both surfaces for a
-/// task that was simply filed elsewhere to begin with, so that
-/// narrowing reading to the subscription, or widening allocation to the stems,
-/// reds the invariant on its own terms.
 #[test]
-fn reading_stays_wider_than_allocation_for_a_row_outside_the_subscription() {
+fn drive_does_not_move_existing_work_with_its_creator_lane() {
+    let (root, bus, epoch, seats) = fixture("creator-team-move", 1);
+    let seat = &seats[0];
+    let lane = Actor::Lane(seat.lane);
+    authorize_lane_creation(&bus, epoch, seat);
+    configure_subscription(&bus, epoch, seat, wire::intent::LineageLife::Drive);
+    let task = add_project(
+        &bus,
+        epoch,
+        lane.clone(),
+        "SCOPE-stable1",
+        "Creator-team ownership stays fixed",
+        "task.stable",
+        Some("todo"),
+    );
+
+    let before = board(&bus, epoch, lane.clone());
+    assert_scope(&before, &lane, wire::intent::LineageLife::Drive, &[&task]);
+    let row = before
+        .tasks
+        .iter()
+        .find(|row| row.statement.body.handle == task)
+        .expect("created task remains on the board");
+    assert_eq!(row.creator_lineage, Some(seat.lane));
+
+    let moved_lineage = uuid(NEXT_COMMAND.fetch_add(1, Ordering::Relaxed));
+    move_fixture_lane_to_lineage(&bus, epoch, seat, moved_lineage);
+    let after = board(&bus, epoch, lane.clone());
+    assert_scope(&after, &lane, wire::intent::LineageLife::Drive, &[]);
+    let row = after
+        .tasks
+        .iter()
+        .find(|row| row.statement.body.handle == task)
+        .expect("old task remains readable after its creator moves");
+    assert_eq!(
+        row.creator_lineage,
+        Some(seat.lane),
+        "creator-team ownership is the TaskAdded-time lineage, not current membership",
+    );
+    clean(&root, bus);
+}
+
+/// Reading remains independent from Steer's empty automatic allocation.
+///
+/// Public stems decide what a lane can read. The allocation lifetime decides
+/// what `task next` can hand it. Steer therefore leaves visible work readable
+/// while selecting none, so explicit task capture and correction remain
+/// possible without turning project names into allocation predicates.
+#[test]
+fn steer_keeps_public_stem_reading_while_automatic_allocation_is_empty() {
     let (_root, bus, epoch, seats) = fixture("subscription-read-gap", 1);
     let seat = &seats[0];
     let lane = Actor::Lane(seat.lane);
-    configure_subscription(
-        &bus,
-        epoch,
-        seat,
-        wire::intent::LineageLife::Steer,
-        &["task.manual"],
-    );
+    configure_subscription(&bus, epoch, seat, wire::intent::LineageLife::Steer);
     let elsewhere = add_project(
         &bus,
         epoch,
         Actor::Operator,
         "SCOPE-gap0001",
-        "Filed outside this lane's subscription",
+        "Visible while automatic allocation is empty",
         "rim.elsewhere",
         Some("todo"),
     );
@@ -285,7 +325,7 @@ fn reading_stays_wider_than_allocation_for_a_row_outside_the_subscription() {
     let answer = board(&bus, epoch, lane.clone());
     assert!(
         selectable_handles(&answer, &lane).is_empty(),
-        "allocation is subscription scoped: rim.elsewhere is not task.manual",
+        "Steer does not automatically select visible work",
     );
     assert_eq!(
         allocated(&bus, epoch, &lane),

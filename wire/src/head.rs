@@ -636,7 +636,7 @@ pub struct LaneResidency {
     pub disposition: String,
 }
 
-/// Durable task-subscription policy owned by one Canvas lineage.
+/// Durable task-allocation lifetime owned by one Canvas lineage.
 ///
 /// This policy controls which tasks an organization may draw. It is deliberately
 /// separate from [`LaneResidency::life`], which controls whether an individual
@@ -648,42 +648,13 @@ pub struct LineageSubscription {
     pub lineage_id: CanonicalUuid,
     /// Authoritative task-selection policy for the entire lineage.
     pub policy: crate::intent::LineageLife,
-    /// Operator-pinned public projects retained across policy changes.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub manual_projects: Vec<String>,
-    /// Server-projected public projects replayed from durable create/claim facts.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub auto_projects: Vec<String>,
 }
 
 impl LineageSubscription {
-    /// Whether this effective policy admits one public project to `task next`.
+    /// Whether this effective policy admits one immutable task-creator lineage.
     #[must_use]
-    pub fn admits_project(&self, project: &str) -> bool {
-        match self.policy.scope() {
-            crate::intent::TaskSubscriptionScope::Manual => self
-                .manual_projects
-                .iter()
-                .any(|candidate| candidate == project),
-            crate::intent::TaskSubscriptionScope::ManualAndAutoProject => self
-                .manual_projects
-                .iter()
-                .chain(&self.auto_projects)
-                .any(|candidate| candidate == project),
-            crate::intent::TaskSubscriptionScope::AllAssignable => true,
-        }
-    }
-
-    /// Project one server-learned public project in deterministic lexical order.
-    pub fn learn_project(&mut self, project: &str) {
-        if !self
-            .auto_projects
-            .iter()
-            .any(|candidate| candidate == project)
-        {
-            self.auto_projects.push(project.to_owned());
-            self.auto_projects.sort();
-        }
+    pub fn admits_creator_lineage(&self, creator: Option<CanonicalUuid>) -> bool {
+        self.policy.admits_creator_lineage(creator, self.lineage_id)
     }
 }
 
@@ -703,7 +674,7 @@ pub struct ResidencyHead {
     pub topology_revision: u64,
     /// Current lanes, occupants, lineage, capabilities, and dispositions.
     pub lanes: Vec<LaneResidency>,
-    /// One durable task-subscription policy per Canvas lineage.
+    /// One durable task-allocation lifetime per Canvas lineage.
     ///
     /// Absence is admitted only for journal heads written before this field
     /// existed; resident reads derive that legacy lineage's initial policy

@@ -262,6 +262,13 @@ pub struct BoardTask {
     pub visibility: ProjectVisibility,
     /// Server-resolved actor thread that created this task.
     pub origin_thread: String,
+    /// Immutable creator team for lane-authored tasks.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub creator_lineage: Option<crate::CanonicalUuid>,
     /// Actor-facing title derived from that classification.
     pub presentation_title: String,
     /// Current statement evidence projected without authored title prose.
@@ -325,6 +332,7 @@ impl BoardTask {
     pub fn from_authoritative(
         visibility: ProjectVisibility,
         origin_thread: String,
+        creator_lineage: Option<crate::CanonicalUuid>,
         statement: Positioned<crate::TaskHead>,
         workflow: Positioned<crate::WorkflowHead>,
         claim: Option<Positioned<crate::ClaimHead>>,
@@ -338,6 +346,7 @@ impl BoardTask {
         Self {
             visibility,
             origin_thread,
+            creator_lineage,
             presentation_title,
             statement,
             workflow,

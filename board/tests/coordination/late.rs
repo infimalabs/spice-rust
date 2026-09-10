@@ -482,33 +482,37 @@ fn downstream_weight_terminates_on_a_dependency_cycle() {
 }
 
 #[test]
-fn task_subscription_scope_yields_exact_steer_drive_and_drain_sets() {
+fn allocation_lifetimes_yield_exact_creator_team_sets() {
     let lane = uuid("019fbbde-5105-75a3-a76a-722afde1e408");
     let other = uuid("019fbbde-5105-75a3-a76a-722afde1e409");
     let actor = Actor::Lane(lane);
-    let entry = |handle: &str, project: &str, assignment: Option<Actor>| {
-        let mut statement = statement(handle);
-        statement.project = project.to_owned();
-        if project == "task.unrelated" {
-            statement.tags.push("priority:critical".to_owned());
-        }
-        let mut workflow = workflow("todo");
-        workflow.assignment = assignment;
-        admitted(statement, workflow, None, None).expect("scoped fixture entry")
-    };
+    let entry =
+        |handle: &str, project: &str, creator: Option<CanonicalUuid>, assignment: Option<Actor>| {
+            let mut statement = statement(handle);
+            statement.project = project.to_owned();
+            if project == "task.unrelated" {
+                statement.tags.push("priority:critical".to_owned());
+            }
+            let mut workflow = workflow("todo");
+            workflow.assignment = assignment;
+            admitted(statement, workflow, None, None)
+                .expect("scoped fixture entry")
+                .with_creator_lineage(creator)
+        };
     let entries = vec![
-        entry("SCOPE-manual1", "task.manual", None),
-        entry("SCOPE-auto001", "task.learned", None),
-        entry("SCOPE-open001", "task.unrelated", None),
+        entry("SCOPE-same001", "task.same", Some(lane), None),
+        entry("SCOPE-cross01", "task.cross", Some(other), None),
+        entry("SCOPE-open001", "task.unrelated", None, None),
         entry(
             "SCOPE-closed1",
             "task.unassignable",
+            Some(lane),
             Some(Actor::Lane(other)),
         ),
     ];
-    let manual = entries[0].handle().to_string();
-    let automatic = entries[1].handle().to_string();
-    let open = entries[2].handle().to_string();
+    let same = entries[0].handle().to_string();
+    let cross = entries[1].handle().to_string();
+    let unknown = entries[2].handle().to_string();
     let handles = |subscription: &wire::LineageSubscription| {
         entries
             .iter()
@@ -521,34 +525,29 @@ fn task_subscription_scope_yields_exact_steer_drive_and_drain_sets() {
     let subscription = |policy| wire::LineageSubscription {
         lineage_id: lane,
         policy,
-        manual_projects: vec!["task.manual".to_owned()],
-        auto_projects: vec!["task.learned".to_owned(), "task.unassignable".to_owned()],
     };
 
     assert_eq!(
         handles(&subscription(wire::intent::LineageLife::Steer)),
-        BTreeSet::from([manual.clone()]),
+        BTreeSet::new(),
     );
     assert_eq!(
         handles(&subscription(wire::intent::LineageLife::Drive)),
-        BTreeSet::from([automatic.clone(), manual.clone()]),
+        BTreeSet::from([same.clone()]),
     );
     assert_eq!(
         handles(&subscription(wire::intent::LineageLife::Drain)),
-        BTreeSet::from([automatic, manual.clone(), open.clone(),]),
+        BTreeSet::from([cross, same, unknown]),
     );
-    assert_eq!(
+    assert!(
         select(
             &entries,
             &actor,
             &subscription(wire::intent::LineageLife::Steer),
             2,
         )
-        .expect("steer has manual work")
-        .entry()
-        .handle(),
-        entries[0].handle(),
-        "a higher-urgency unrelated task must not cross the Steer boundary",
+        .is_none(),
+        "Steer performs no automatic selection",
     );
     assert_eq!(
         select(
@@ -557,7 +556,7 @@ fn task_subscription_scope_yields_exact_steer_drive_and_drain_sets() {
             &subscription(wire::intent::LineageLife::Drain),
             2,
         )
-        .expect("drain has all assignable work")
+        .expect("Drain has all assignable work")
         .entry()
         .handle(),
         entries[2].handle(),

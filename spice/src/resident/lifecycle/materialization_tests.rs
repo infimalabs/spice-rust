@@ -408,14 +408,11 @@ fn one_fact_scenario(unrelated_history: usize) -> SemanticState {
     )
     .expect("wake targets project from incremental state");
     let resolution = resolve(&targets, &Backoff::default(), now);
-    let residency = incremental
-        .project_residency(
-            snapshot
-                .residency()
-                .expect("fixture residency head exists")
-                .body(),
-        )
-        .expect("automatic subscription projects");
+    let residency = snapshot
+        .residency()
+        .expect("fixture residency head exists")
+        .body()
+        .clone();
     let state = SemanticState {
         residency,
         entries: incremental.entries().to_vec(),
@@ -507,9 +504,7 @@ fn seed_write_with_policy(policy: wire::intent::LineageLife, terminal: bool) -> 
                 depends: Vec::new(),
                 flow: vec![phase.clone()],
                 phase: phase.clone(),
-                creation: body::TaskCreationContext::unavailable(
-                    body::TaskCreationUnavailable::SpiceActor,
-                ),
+                creation: lane_creation(),
                 revision: 1,
             },
             FactCause::Root,
@@ -539,8 +534,6 @@ fn seed_write_with_policy(policy: wire::intent::LineageLife, terminal: bool) -> 
         subscriptions: vec![wire::LineageSubscription {
             lineage_id: lane(),
             policy,
-            manual_projects: Vec::new(),
-            auto_projects: Vec::new(),
         }],
         renewals: Vec::new(),
     });
@@ -572,9 +565,7 @@ fn ready_task_write(moment: &str, at: Instant) -> JournalWrite {
                 depends: Vec::new(),
                 flow: vec![phase.clone()],
                 phase: phase.clone(),
-                creation: body::TaskCreationContext::unavailable(
-                    body::TaskCreationUnavailable::SpiceActor,
-                ),
+                creation: lane_creation(),
                 revision: 1,
             },
             FactCause::Root,
@@ -876,6 +867,23 @@ fn phase() -> Phase {
 
 fn lane() -> CanonicalUuid {
     uuid(1)
+}
+
+fn lane_creation() -> body::TaskCreationContext {
+    body::TaskCreationContext::Transcript {
+        session: "fixture-session".to_owned(),
+        boundary: wire::TranscriptSourceHead {
+            lane: lane(),
+            vendor: "claude".parse().expect("fixture vendor"),
+            stream: body::TASK_CREATION_CONTEXT_STREAM.to_owned(),
+            source: uuid(90),
+            next: body::TranscriptPosition {
+                member: 1,
+                offset: 1,
+            },
+        },
+        creator_lineage: Some(lane()),
+    }
 }
 
 fn lane_at(last: u8) -> CanonicalUuid {

@@ -95,7 +95,7 @@ fn answer_at(
             subscription_row(head, lineage_id)?.cloned().ok_or_else(|| {
                 store_fault(
                     "lineage::subscription-missing",
-                    "a returned lineage has no task-subscription policy",
+                    "a returned lineage has no task-allocation lifetime",
                 )
             })
         })
@@ -571,8 +571,6 @@ mod tests {
         vec![wire::LineageSubscription {
             lineage_id: uuid(1),
             policy: wire::intent::LineageLife::Drive,
-            manual_projects: Vec::new(),
-            auto_projects: Vec::new(),
         }]
     }
 

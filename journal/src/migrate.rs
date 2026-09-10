@@ -15,6 +15,7 @@ mod residency_lineage;
 mod steering_identity;
 mod steering_microseconds;
 mod task_allocation;
+mod task_creator_scope;
 mod topology_revision;
 mod vocabulary;
 
@@ -506,6 +507,7 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (15, MigrationStep::Sql(MIGRATE_15_TO_16_SQL)),
     (16, MigrationStep::Rust(renewal_organization::migrate)),
     (17, MigrationStep::Sql(MIGRATE_17_TO_18_SQL)),
+    (18, MigrationStep::Rust(task_creator_scope::migrate)),
 ];
 
 /// Schema 17 to 18: trust-grant environmental requirement boundary.
@@ -759,8 +761,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 18, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 19, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 18;
+PRAGMA user_version = 19;
 "#;

@@ -255,6 +255,7 @@ impl History {
         TaskCreationContext::Transcript {
             session: session.identity.clone(),
             boundary: (**boundary).clone(),
+            creator_lineage: None,
         }
     }
 }

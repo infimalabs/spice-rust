@@ -721,7 +721,6 @@ async fn send_lineage_configuration(socket: &mut ClientSocket, id: wire::Canonic
                 lineage_id: identity(0xb3),
                 member: None,
                 life: Some(wire::intent::LineageLife::Steer),
-                manual_projects: None,
             },
         },
     )

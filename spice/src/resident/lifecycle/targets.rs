@@ -20,9 +20,7 @@ pub(super) fn project_targets(
     }
     let entries = projection.entries();
     let environment = snapshot.environment();
-    let projected_residency = projection
-        .project_residency(residency.body())
-        .map_err(|error| store_fault("lifecycle::subscription-history-invalid", &error))?;
+    let projected_residency = residency.body();
     let ready_at = projection.ready_at();
     let mut rows = projected_residency.lanes.iter().collect::<Vec<_>>();
     rows.sort_by_key(|row| row.lane);
@@ -37,7 +35,7 @@ pub(super) fn project_targets(
         }
         let pending_inbox = projection.has_operator_steering(row.lane);
         let (held_claim, trust_blocked) = held_claim(entries, row, &environment, now)?;
-        let subscription = subscription(&projected_residency, row)?;
+        let subscription = subscription(projected_residency, row)?;
         let first_drain_member = !projected_residency.lanes.iter().any(|member| {
             member.lineage_id == row.lineage_id
                 && member.occupant.is_some()
@@ -116,7 +114,7 @@ fn subscription<'a>(
     if subscriptions.next().is_some() {
         return Err(store_fault(
             "lifecycle::subscription-ambiguous",
-            "one lifecycle target has more than one durable task subscription",
+            "one lifecycle target has more than one durable task-allocation lifetime",
         ));
     }
     Ok(subscription)

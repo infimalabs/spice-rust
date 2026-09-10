@@ -168,7 +168,7 @@ fn subscription_row(
     if durable.next().is_some() {
         return Err(store_fault(
             "lineage::subscription-ambiguous",
-            "one lineage has more than one durable task-subscription policy",
+            "one lineage has more than one durable task-allocation lifetime",
         ));
     }
     Ok(subscription)
@@ -185,31 +185,6 @@ pub(super) struct Runtime<'a> {
     capabilities: &'a canvas::axum::Capabilities,
     discovery: &'a canvas::Discovery,
     capture: Arc<dyn CaptureReporter>,
-}
-
-fn admit_manual_projects(
-    projects: &board::ProjectPolicy,
-    requested: Option<&[String]>,
-) -> Result<Option<Vec<String>>, Outcome<CommandAnswer>> {
-    let Some(requested) = requested else {
-        return Ok(None);
-    };
-    let mut admitted = Vec::with_capacity(requested.len());
-    for project in requested {
-        if let Err(error) = projects.admit_manual_creation(project) {
-            return Err(lane_refusal(
-                "lineage::manual-project-invalid",
-                Some("one admitted public task project".to_owned()),
-                Some(project.clone()),
-                &error.to_string(),
-            ));
-        }
-        if !admitted.contains(project) {
-            admitted.push(project.clone());
-        }
-    }
-    admitted.sort();
-    Ok(Some(admitted))
 }
 
 impl<'a> Runtime<'a> {

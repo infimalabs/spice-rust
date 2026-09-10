@@ -23,20 +23,18 @@ pub(super) fn propose_seat(
         {
             return Err(store_fault(
                 "lineage::subscription-missing",
-                "an existing lineage has no durable task-subscription policy",
+                "an existing lineage has no durable task-allocation lifetime",
             ));
         }
         let policy = LineageLife::from_wire(&request.life).ok_or_else(|| {
             store_fault(
                 "lineage::subscription-invalid",
-                "a seated lane has no closed task-subscription policy",
+                "a seated lane has no closed task-allocation lifetime",
             )
         })?;
         next.subscriptions.push(wire::LineageSubscription {
             lineage_id: request.lineage_id,
             policy,
-            manual_projects: Vec::new(),
-            auto_projects: Vec::new(),
         });
         next.subscriptions
             .sort_by_key(|subscription| subscription.lineage_id);

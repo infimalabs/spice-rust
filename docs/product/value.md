@@ -495,12 +495,14 @@ of agents; the second makes every message everyone's problem.
 
 ```mermaid
 flowchart LR
-  S["Steer<br/>manual pins only"] --> D["Drive<br/>+ auto-subscribe to<br/>work it creates/claims"]
-  D --> R["Drain<br/>boundary dissolved:<br/>all assignable work"]
+  S["Steer<br/>explicit direction and<br/>task capture only"] --> D["Drive<br/>automatically draw work<br/>created for this team"]
+  D --> R["Drain<br/>draw all otherwise<br/>assignable work"]
 ```
 
-Three values, no more. The accepted value is a **server-side task-subscription
-policy** and the client never re-derives task eligibility. On request, however,
+Three values, no more. The accepted value is a **server-side task-allocation
+lifetime** and the client never re-derives task eligibility. Drive uses the
+creator team captured when a task is added; later membership changes do not
+move old work, and project names are not allocation filters. On request, however,
 the browser immediately presents the requested value as pending and retains it
 across ordinary reads until the command settles. The same optimistic control
 labels the submit button, so the operator sees the autonomy currently being

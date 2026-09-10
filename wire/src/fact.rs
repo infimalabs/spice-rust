@@ -232,7 +232,7 @@ vocabulary! {
     LaneSeated = "lane::seated" by ResidentRecognition;
     /// A seated member moved before another member, possibly across lineages.
     LaneArranged = "lane::arranged" by ResidentRecognition;
-    /// One Canvas lineage adopted a shared task-subscription life.
+    /// One Canvas lineage adopted a shared task-allocation lifetime.
     LineageConfigured = "lineage::configured" by ResidentRecognition;
     /// The operator rearranged which lanes each Canvas lineage holds, and in
     /// what order the lineages stand.

@@ -1197,8 +1197,6 @@ fn attach_heads(
         .map(|lane| wire::LineageSubscription {
             lineage_id: lane.lineage_id,
             policy: wire::intent::LineageLife::Drive,
-            manual_projects: Vec::new(),
-            auto_projects: Vec::new(),
         })
         .collect();
     write.residency_head(seated, move |_| ResidencyHead {

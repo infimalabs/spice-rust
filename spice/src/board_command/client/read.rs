@@ -506,7 +506,9 @@ fn creation_context_lines(statement: &wire::intent::BoardStatement) -> Vec<Strin
         body::TaskCreationContext::Unavailable { .. } => {
             vec![format!("creation_context {output}")]
         }
-        body::TaskCreationContext::Transcript { session, boundary } => {
+        body::TaskCreationContext::Transcript {
+            session, boundary, ..
+        } => {
             vec![
                 format!(
                     "creation_context session={} lane={} vendor={} stream={} source={} member={} offset={}",

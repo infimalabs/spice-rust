@@ -27,7 +27,7 @@ another workflow state. Active possession is another derived answer:
 ```mermaid
 flowchart LR
   P["workflow.status = pending<br/>and completion absent"] --> E["eligible / ready<br/>(derived)"]
-  V["public project and<br/>subscription admits it"] --> E
+  V["public task and allocation<br/>lifetime admits it"] --> E
   F["no deferral"] --> E
   A["assignment admits actor"] --> E
   D["dependencies settled<br/>(completed or withdrawn)"] --> E

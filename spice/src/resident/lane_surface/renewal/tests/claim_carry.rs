@@ -268,8 +268,6 @@ fn seed_claimed_org(fixture: &AdvisoryRtkFixture) -> SeededOrg {
     let subscription = wire::LineageSubscription {
         lineage_id: fixture.lane,
         policy: wire::intent::LineageLife::Drive,
-        manual_projects: Vec::new(),
-        auto_projects: Vec::new(),
     };
     let renewal = handoff(fixture);
     let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))

@@ -714,36 +714,30 @@ pub(super) fn startup_subscriptions(
                         "lineage::subscription-ambiguous",
                         concat!(
                             "a legacy lineage has mixed lane lives and no authoritative ",
-                            "task-subscription policy"
+                            "task-allocation lifetime"
                         ),
                     ));
                 }
                 let policy = wire::intent::LineageLife::from_wire(&row.life).ok_or_else(|| {
                     store_fault(
                         "lineage::subscription-invalid",
-                        "a legacy lineage lane has no closed task-subscription policy",
+                        "a legacy lineage lane has no closed task-allocation lifetime",
                     )
                 })?;
-                Ok(wire::LineageSubscription {
-                    lineage_id,
-                    policy,
-                    manual_projects: Vec::new(),
-                    auto_projects: Vec::new(),
-                })
+                Ok(wire::LineageSubscription { lineage_id, policy })
             })
             .collect();
     }
 
     let mut indexed = std::collections::BTreeMap::new();
-    for mut subscription in stored {
-        subscription.auto_projects.clear();
+    for subscription in stored {
         if indexed
             .insert(subscription.lineage_id, subscription)
             .is_some()
         {
             return Err(store_fault(
                 "lineage::subscription-ambiguous",
-                "one lineage has more than one durable task-subscription policy",
+                "one lineage has more than one durable task-allocation lifetime",
             ));
         }
     }
@@ -755,7 +749,7 @@ pub(super) fn startup_subscriptions(
     {
         return Err(store_fault(
             "lineage::subscription-misaligned",
-            "the durable task-subscription table does not match the resident lineages",
+            "the durable task-allocation lifetime table does not match the resident lineages",
         ));
     }
     Ok(indexed.into_values().collect())

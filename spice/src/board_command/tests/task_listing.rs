@@ -229,6 +229,7 @@ fn task_show_prints_creation_context_as_one_shell_executable_current_command() {
                 offset: 512,
             },
         },
+        creator_lineage: None,
     };
     let shown = task_show(&answer, &row, &[]);
     let command = shown
@@ -405,6 +406,7 @@ fn assert_claim_context(
     let body::TaskCreationContext::Transcript {
         session: expected_session,
         boundary: expected_boundary,
+        ..
     } = expected
     else {
         unreachable!("authorized lane creation has transcript context")

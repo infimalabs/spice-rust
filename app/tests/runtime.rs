@@ -257,6 +257,7 @@ fn board_task(
     wire::intent::BoardTask {
         visibility,
         origin_thread: "operator".to_owned(),
+        creator_lineage: None,
         presentation_title: title.to_owned(),
         statement: wire::intent::Positioned {
             position: seq(1),
@@ -382,8 +383,6 @@ fn lane_response_with_renewals(
                 wire::LineageSubscription {
                     lineage_id,
                     policy: wire::intent::LineageLife::Steer,
-                    manual_projects: Vec::new(),
-                    auto_projects: Vec::new(),
                 },
             )
         })

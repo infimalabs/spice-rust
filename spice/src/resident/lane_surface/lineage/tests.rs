@@ -40,8 +40,6 @@ fn head(rows: &[(u8, u8)]) -> wire::ResidencyHead {
             .map(|lineage| wire::LineageSubscription {
                 lineage_id: uuid(lineage),
                 policy: LineageLife::Drive,
-                manual_projects: Vec::new(),
-                auto_projects: vec![format!("organization.{lineage}")],
             })
             .collect(),
         renewals: Vec::new(),
@@ -97,8 +95,12 @@ fn removing_the_host_rekeys_every_remaining_member_and_preserves_both_policies()
         vec![(uuid(1), uuid(1)), (uuid(2), uuid(2)), (uuid(3), uuid(2))]
     );
     assert_eq!(subscription_ids(&state), vec![uuid(1), uuid(2)]);
-    assert_eq!(state.subscriptions[0].auto_projects, ["organization.1"]);
-    assert_eq!(state.subscriptions[1].auto_projects, ["organization.1"]);
+    assert!(
+        state
+            .subscriptions
+            .iter()
+            .all(|subscription| subscription.policy == LineageLife::Drive)
+    );
 }
 
 #[test]
@@ -128,7 +130,7 @@ fn removing_a_host_mints_an_identity_when_every_remaining_member_name_is_taken()
             .iter()
             .find(|subscription| subscription.lineage_id == rekeyed)
             .expect("the replacement lineage has a subscription")
-            .auto_projects,
-        ["organization.1"]
+            .policy,
+        LineageLife::Drive
     );
 }
