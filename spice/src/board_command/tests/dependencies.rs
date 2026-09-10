@@ -310,7 +310,7 @@ fn omitted_intermediate_witness_refuses_after_the_graph_moves_toward_a_cycle() {
 }
 
 #[test]
-fn foreign_claim_authority_refuses_without_an_edge() {
+fn foreign_actor_edits_dependencies_without_moving_the_active_claim() {
     let (root, bus, epoch, seats) = fixture("dependency-authority", 2);
     let owner = Actor::Lane(seats[0].lane);
     let foreign = Actor::Lane(seats[1].lane);
@@ -319,7 +319,12 @@ fn foreign_claim_authority_refuses_without_an_edge() {
     let dependency = todo_task(&bus, epoch, "AUTH-after001", "Prerequisite");
 
     let foreign_view = board(&bus, epoch, foreign.clone());
-    let outcome = issue(
+    let claim = at(&foreign_view, &task)
+        .claim
+        .as_ref()
+        .expect("active claim")
+        .clone();
+    assert_committed(issue(
         &bus,
         epoch,
         foreign,
@@ -329,23 +334,18 @@ fn foreign_claim_authority_refuses_without_an_edge() {
             task: task.clone(),
             after: vec![dependency.clone()],
         },
+    ));
+    let edited = board(&bus, epoch, Actor::Operator);
+    assert_eq!(
+        at(&edited, &task).statement.body.dependencies,
+        [at(&edited, &dependency).statement.body.born.clone()],
     );
-    assert!(
-        matches!(outcome, Outcome::Refusal(ref refusal) if refusal.reason() == "claim::ownership-refused"),
-        "foreign claimant must refuse: {outcome:?}",
-    );
-    assert!(
-        at(&board(&bus, epoch, Actor::Operator), &task)
-            .statement
-            .body
-            .dependencies
-            .is_empty(),
-    );
+    assert_eq!(at(&edited, &task).claim.as_ref(), Some(&claim));
     clean(&root, bus);
 }
 
 #[test]
-fn fresh_freed_claim_authority_refuses_without_an_edge() {
+fn a_freed_claim_does_not_block_a_dependency_edit() {
     let (root, bus, epoch, seats) = fixture("moved-dependency-authority", 1);
     let owner = Actor::Lane(seats[0].lane);
     let task = todo_task(&bus, epoch, "MOVE-task0001", "Claimed task");
@@ -369,7 +369,13 @@ fn fresh_freed_claim_authority_refuses_without_an_edge() {
         &TaskRef { task: task.clone() },
     ));
     let fresh = board(&bus, epoch, owner.clone());
-    let outcome = issue(
+    let freed = at(&fresh, &task)
+        .claim
+        .as_ref()
+        .expect("freed claim")
+        .clone();
+    assert_eq!(freed.body.disposition, ClaimDisposition::Freed);
+    assert_committed(issue(
         &bus,
         epoch,
         owner,
@@ -377,19 +383,14 @@ fn fresh_freed_claim_authority_refuses_without_an_edge() {
         dependency_witnesses(&fresh, &task, &[&dependency], None, false),
         &TaskDepends {
             task: task.clone(),
-            after: vec![dependency],
+            after: vec![dependency.clone()],
         },
+    ));
+    let edited = board(&bus, epoch, Actor::Operator);
+    assert_eq!(
+        at(&edited, &task).statement.body.dependencies,
+        [at(&edited, &dependency).statement.body.born.clone()],
     );
-    assert!(
-        matches!(outcome, Outcome::Refusal(ref refusal) if refusal.reason() == "claim::ownership-refused"),
-        "moved claim authority must refuse: {outcome:?}",
-    );
-    assert!(
-        at(&board(&bus, epoch, Actor::Operator), &task)
-            .statement
-            .body
-            .dependencies
-            .is_empty(),
-    );
+    assert_eq!(at(&edited, &task).claim.as_ref(), Some(&freed));
     clean(&root, bus);
 }

@@ -935,9 +935,6 @@ pub(super) fn task_depends_with(
         Ok(at) => at,
         Err(outcome) => return outcome,
     };
-    if let Err(outcome) = dependency_claim_authority(&snapshot, entry, command, at) {
-        return outcome;
-    }
     let statement = match dependency_statement(&snapshot.entries, entry, depends) {
         Ok(statement) => statement,
         Err(outcome) => return outcome,
