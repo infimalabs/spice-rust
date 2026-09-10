@@ -177,6 +177,9 @@ impl ChangeSelectionPolicy {
         }
         let gates = self.gates_for_known_path(path);
         if !gates.iter().any(|gate_id| *gate_id != GateId::LocalPaths) {
+            if !self.configured {
+                return Ok(vec![GateId::LocalPaths]);
+            }
             return Err(ChangeSelectionError::new(format!(
                 "{path:?} has no repository-declared packaged policy class"
             )));
