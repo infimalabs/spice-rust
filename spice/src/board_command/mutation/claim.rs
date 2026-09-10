@@ -604,6 +604,7 @@ fn guard_claim(
             expected,
             AllocationObservation {
                 heads,
+                creator_lineages: allocation_creator_lineages(&snapshot.answer),
                 winner: task.clone(),
                 actor: command.actor().clone(),
                 subscription: allocation_subscription(

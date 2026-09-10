@@ -99,6 +99,7 @@ fn guard_observation(
 ) -> AllocationObservation {
     AllocationObservation {
         heads: allocation_heads(answer),
+        creator_lineages: allocation_creator_lineages(answer),
         winner,
         actor: actor.clone(),
         subscription: allocation_subscription(&answer.residency.body, actor)
