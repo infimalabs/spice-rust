@@ -97,7 +97,19 @@ pub(in crate::board_command) fn taste_proposal_add(
         Ok(creation) => creation,
         Err(outcome) => return outcome,
     };
-    let prepared = match prepare_task(command, &normalized, &project, projects, origin, creation) {
+    let (flow, dependency_witnesses) = match task_flow_for_dependencies(&normalized, &snapshot) {
+        Ok(observation) => observation,
+        Err(outcome) => return outcome,
+    };
+    let prepared = match prepare_task(
+        command,
+        &normalized,
+        &project,
+        projects,
+        origin,
+        creation,
+        flow,
+    ) {
         Ok(prepared) => prepared,
         Err(outcome) => return outcome,
     };
@@ -118,6 +130,7 @@ pub(in crate::board_command) fn taste_proposal_add(
         prepared,
         tags,
         None,
+        dependency_witnesses,
         move |write| guard_proposal_observation(write, observation),
     )
 }

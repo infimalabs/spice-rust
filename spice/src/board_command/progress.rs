@@ -1171,7 +1171,7 @@ fn doc_task_spec(
                 .born()
                 .expect("document handles carry canonical task stamps")
         })
-        .collect();
+        .collect::<Vec<_>>();
     let project = plan
         .preview
         .document()
@@ -1199,6 +1199,10 @@ fn doc_task_spec(
         .entries
         .iter()
         .find(|entry| entry.handle() == &task);
+    if existing.is_none() {
+        let _dependency_witnesses =
+            derive_dependency_flow(&mut flow, &dependencies, &plan.snapshot)?;
+    }
     let taste_review = task_taste_review(
         repository,
         &plan.snapshot,

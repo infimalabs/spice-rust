@@ -81,6 +81,51 @@ fn authored_document_apply_is_atomic_idempotent_and_barrier_bound() {
 }
 
 #[test]
+fn authored_task_creation_omits_review_behind_review_dependencies() {
+    let (root, bus, epoch, seats) = fixture("document-dependency-flow", 1);
+    let initial_board = board(&bus, epoch, Actor::Operator);
+    let initial = apply_document(
+        &bus,
+        epoch,
+        "# Goal\n\n- Review prerequisite\n  Flow: todo, review\n",
+        &initial_board,
+    );
+    let prerequisite = titled(&initial.board, "Review prerequisite")
+        .statement
+        .body
+        .handle
+        .clone();
+    let lane = Actor::Lane(seats[0].lane);
+    advance_task_to_review(&bus, epoch, &seats[0], &lane, &prerequisite);
+
+    let review_board = board(&bus, epoch, Actor::Operator);
+    let applied = apply_document(
+        &bus,
+        epoch,
+        concat!(
+            "# Goal\n\n",
+            "- Review prerequisite\n  Flow: todo, review\n",
+            "- Dependent correction\n",
+            "  After: review-prerequisite\n",
+            "  Flow: plan, todo, review\n",
+        ),
+        &review_board,
+    );
+    let dependent = titled(&applied.board, "Dependent correction");
+    assert_eq!(
+        dependent
+            .workflow
+            .body
+            .flow
+            .iter()
+            .map(wire::Phase::as_str)
+            .collect::<Vec<_>>(),
+        ["plan", "todo"],
+    );
+    clean(&root, bus);
+}
+
+#[test]
 fn document_rationale_and_later_notes_recover_through_the_task_ledger() {
     let (root, bus, epoch, _) = fixture("document-context-recovery", 0);
     let initial = board(&bus, epoch, Actor::Operator);

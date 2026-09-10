@@ -47,6 +47,19 @@ pub(super) fn task_add(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
+    task_add_with(bus, command, add, repository, projects, allocation, || {})
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(super) fn task_add_with(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    add: &TaskAdd,
+    repository: Option<&Repository>,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+    after_validation: impl FnOnce(),
+) -> Outcome<CommandAnswer> {
     let requested = add.project.as_deref().unwrap_or("task.private");
     let project = match projects.admit_manual_creation(requested) {
         Ok(project) => project,
@@ -72,6 +85,7 @@ pub(super) fn task_add(
         repository,
         projects,
         allocation,
+        after_validation,
     )
 }
 
@@ -110,6 +124,7 @@ pub(super) fn task_oops_add(
         None,
         projects,
         allocation,
+        || {},
     )
 }
 
@@ -126,6 +141,7 @@ fn create_task<B: serde::Serialize>(
     repository: Option<&Repository>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
+    after_validation: impl FnOnce(),
 ) -> Outcome<CommandAnswer> {
     let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
         Ok(snapshot) => snapshot,
@@ -147,7 +163,12 @@ fn create_task<B: serde::Serialize>(
     if let Err(outcome) = validate_acceptance(&add.acceptance) {
         return outcome;
     }
-    let mut prepared = match prepare_task(command, add, &project, projects, origin, creation) {
+    let (flow, dependency_witnesses) = match task_flow_for_dependencies(add, &snapshot) {
+        Ok(observation) => observation,
+        Err(outcome) => return outcome,
+    };
+    let mut prepared = match prepare_task(command, add, &project, projects, origin, creation, flow)
+    {
         Ok(prepared) => prepared,
         Err(outcome) => return outcome,
     };
@@ -173,6 +194,7 @@ fn create_task<B: serde::Serialize>(
     if taste_review_required {
         require_taste_review(&mut tags);
     }
+    after_validation();
     commit_prepared_task(
         bus,
         command,
@@ -184,6 +206,7 @@ fn create_task<B: serde::Serialize>(
         prepared,
         tags,
         taste_review.as_ref().filter(|review| review.required()),
+        dependency_witnesses,
         |_| {},
     )
 }
@@ -200,6 +223,7 @@ fn commit_prepared_task<B, F>(
     mut prepared: PreparedTask,
     tags: Vec<String>,
     taste_review: Option<&TasteReview>,
+    dependency_witnesses: Vec<Witness>,
     extra_guard: F,
 ) -> Outcome<CommandAnswer>
 where
@@ -223,7 +247,9 @@ where
         prepared.at,
         Producer::CommandDoor,
     );
-    guard(&mut write, command.expected().to_vec());
+    let mut expected = command.expected().to_vec();
+    expected.extend(dependency_witnesses);
+    guard(&mut write, expected);
     prepared.creation.guard(&mut write);
     extra_guard(&mut write);
     let added = match write.fact(
@@ -291,6 +317,7 @@ fn prepare_task(
     projects: &ProjectPolicy,
     origin: wire::Origin,
     creation: TaskCreationCapture,
+    flow: Vec<wire::Phase>,
 ) -> Result<PreparedTask, Outcome<CommandAnswer>> {
     let handles = command
         .expected()
@@ -316,7 +343,6 @@ fn prepare_task(
     }
     let project_text = project.as_str().to_owned();
     let task = TaskHandle::for_project(&project_text, &born);
-    let flow = task_flow(add.flow.as_deref(), &add.acceptance)?;
     let phase = flow[0].clone();
     let at = current_instant()?;
     let statement = TaskHead {
@@ -372,6 +398,63 @@ fn prepare_task(
         statement,
         workflow,
     })
+}
+
+fn task_flow_for_dependencies(
+    add: &TaskAdd,
+    snapshot: &ValidatedSnapshot,
+) -> Result<(Vec<wire::Phase>, Vec<Witness>), Outcome<CommandAnswer>> {
+    let mut flow = task_flow(add.flow.as_deref(), &add.acceptance)?;
+    let dependencies = add
+        .depends
+        .iter()
+        .map(TaskHandle::born)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            refusal(
+                "task::dependency-invalid",
+                Some(error.to_string()),
+                "name dependencies carrying canonical birth stamps",
+            )
+        })?;
+    let witnesses = derive_dependency_flow(&mut flow, &dependencies, snapshot)?;
+    Ok((flow, witnesses))
+}
+
+pub(super) fn derive_dependency_flow(
+    flow: &mut Vec<wire::Phase>,
+    dependencies: &[TaskStamp],
+    snapshot: &ValidatedSnapshot,
+) -> Result<Vec<Witness>, Outcome<CommandAnswer>> {
+    let mut witnesses = Vec::with_capacity(dependencies.len());
+    let mut all_review = !dependencies.is_empty();
+    for born in dependencies {
+        let Some(heads) = snapshot
+            .answer
+            .tasks
+            .iter()
+            .find(|heads| &heads.statement.body.born == born)
+        else {
+            all_review = false;
+            witnesses.push(Witness::Absence { task: born.clone() });
+            continue;
+        };
+        all_review &= heads.workflow.body.phase.as_str() == "review"
+            && heads.workflow.body.status == "pending"
+            && heads.workflow.body.completion.is_none();
+        witnesses.push(workflow_witness(heads));
+    }
+    if all_review {
+        flow.retain(|phase| phase.as_str() != "review");
+        if flow.is_empty() {
+            return Err(refusal(
+                "task::flow-empty",
+                Some("review".to_owned()),
+                "name at least one non-review workflow phase when every dependency is in review",
+            ));
+        }
+    }
+    Ok(witnesses)
 }
 
 fn add_oops_note(
