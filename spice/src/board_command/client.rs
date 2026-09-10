@@ -999,39 +999,46 @@ pub(super) fn mint_handle_at(project: Option<&str>, _title: &str, epoch_micros: 
     TaskHandle::for_project(project, &stamp)
 }
 
-pub(super) fn allocate_task_stamp(board: &BoardAnswer, mut epoch_micros: i64) -> wire::TaskStamp {
-    loop {
-        let candidate = wire::TaskStamp::for_micros(epoch_micros)
-            .expect("the current epoch microsecond fits the task stamp codec");
-        if board
-            .tasks
-            .iter()
-            .all(|task| task.statement.body.born != candidate)
-        {
-            return candidate;
-        }
-        epoch_micros = epoch_micros
-            .checked_add(1)
-            .expect("task birth collision increment fits i64");
-    }
+pub(super) fn allocate_task_stamp(
+    board: &BoardAnswer,
+    epoch_micros: i64,
+) -> Result<wire::TaskStamp, Outcome<CommandAnswer>> {
+    Ok(allocate_task_stamps(board, epoch_micros, 1)?
+        .pop()
+        .expect("one requested task stamp is allocated"))
 }
 
 pub(super) fn allocate_task_stamps(
     board: &BoardAnswer,
     mut epoch_micros: i64,
     count: usize,
-) -> Vec<wire::TaskStamp> {
+) -> Result<Vec<wire::TaskStamp>, Outcome<CommandAnswer>> {
     let mut planned = Vec::with_capacity(count);
     while planned.len() < count {
-        let candidate = allocate_task_stamp(board, epoch_micros);
-        epoch_micros = epoch_micros
-            .checked_add(1)
-            .expect("task birth collision increment fits i64");
-        if planned.iter().all(|born| born != &candidate) {
+        let candidate = wire::TaskStamp::for_micros(epoch_micros)
+            .map_err(|error| environment_fault("task::stamp-clock-invalid", &error.to_string()))?;
+        if board
+            .tasks
+            .iter()
+            .all(|task| task.statement.body.born != candidate)
+            && planned.iter().all(|born| born != &candidate)
+        {
             planned.push(candidate);
         }
+        if planned.len() < count {
+            epoch_micros = epoch_micros
+                .checked_sub(1)
+                .filter(|micros| *micros >= 0)
+                .ok_or_else(|| {
+                    environment_fault(
+                        "task::stamp-clock-invalid",
+                        "task birth collision exhausted the representable clock before zero",
+                    )
+                })?;
+        }
     }
-    planned
+    planned.reverse();
+    Ok(planned)
 }
 
 /// Dispatch one board-family request after transport admission.
