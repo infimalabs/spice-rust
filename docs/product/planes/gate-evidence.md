@@ -34,7 +34,7 @@ same value.
 | --- | --- | --- |
 | `ActionSpec` digest | `spice.gate.action-spec.v1` | `version`, stable `action_id`, runner kind and version, declaration digest, exact `argv`, repository-relative `cwd`, ordered relevant environment names, ordered tool requirements, input-closure strategy, baseline class, execution bounds |
 | `InputManifest` digest | `spice.gate.input-manifest.v1` | `version`, ordered entries of normalized path, Git mode, blob digest, and presence state; ordered non-file inputs with kind and digest |
-| `action_key` | `spice.gate.action-key.v1` | `version`, `ActionSpec` digest, `InputManifest` digest, effective policy digest, compiled gate-set digest, ordered observed tool identities, ordered relevant environment values, and baseline identity when the action is ancestry-sensitive |
+| `action_key` | `spice.gate.action-key.v1` | `version = 2`, `ActionSpec` digest, `InputManifest` digest, typed policy authority (`policy-consuming` or `resolved-execution`), compiled gate-set digest, ordered observed tool identities, ordered relevant environment values, and baseline identity when the action is ancestry-sensitive |
 | `PassReceipt` digest | `spice.gate.pass-receipt.v1` | `version`, `action_key`, spec and manifest digests, typed result digest, `passed`, start and finish timestamps, duration, ordered artifact digests, producer record |
 | `AdmissionBundle` digest | `spice.gate.admission.v1` | `version`, `candidate_tree`, branch ref, pre-commit `HEAD`, selection digest, policy and gate-set digests, ordered owed actions with action key and receipt digest, ordered live-check results, claim-capture digest, creation and expiry timestamps |
 | `transaction_id` | `spice.gate.reference-transaction.v1` | `version`, Git common-directory identity, transaction state-independent normalized ref updates, and the selected admission digest |
@@ -50,9 +50,19 @@ refuse key construction.
 shell text. The relevant environment map is closed by the spec: an undeclared
 environment dependency makes the action non-reusable until its declaration is
 repaired. Tool identities use the existing `ReceiptTool` name and executable
-digest model. Effective policy, compiled declarations, process bounds, and
-baseline state reuse the existing `Verdict` digests rather than introducing a
-second interpretation of those authorities.
+digest model. Policy-consuming focused actions retain the complete compiled
+policy and resolved configuration as typed input-manifest entries. Cargo and
+Canvas use `resolved-execution` only after their complete shard or plan
+inventory, exact source closure, command, tools, environment, gate set,
+external-source authority, and build dependencies are bound; unrelated
+selection-only policy does not enter those action keys. Compiled declarations,
+process bounds, and baseline state reuse the existing `Verdict` digests rather
+than introducing a second interpretation of those authorities.
+
+Action-key document version 2 is the sole current derivation. Version 1
+included a second top-level effective-policy digest. Its receipts remain stored
+for audit but cannot match a current key, and readers perform no legacy fallback
+lookup.
 
 Cacheable Cargo and Canvas actions contain no branch, commit, merge-base, or
 mainline identity. A receipt first produced on a divergent branch that is never
@@ -81,8 +91,9 @@ technical result.
 
 Trust standing is likewise authorization state, not proof identity. A
 configured pre-commit checks the current grant before executing repository
-commands, while reusable action keys remain bound to the executable
-configuration and policy content they prove. Pended, granted, and revoked
+commands, while reusable action keys remain bound to the resolved execution
+authorities they prove. Policy-consuming focused actions bind complete policy
+through their input manifests. Pended, granted, and revoked
 transitions do not change those content identities. Agent-runtime variables
 (`CODEX_*`, `CLAUDE_CODE_*`, and `SPICE_AGENT_VENDOR`), shell-hook variables,
 and Spice command-routing executables are producer or invocation context and

@@ -64,7 +64,7 @@ pub(super) fn prepare(
         &spec,
         &ActionKeyAuthority {
             input_manifest: input_manifest.clone(),
-            policy: context.policy().clone(),
+            policy_authority: ActionPolicyAuthority::PolicyConsuming,
             gate_set: gate_set.clone(),
             tools: tool_authority,
             environment,
