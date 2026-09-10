@@ -688,11 +688,32 @@ fn normalized_action_environment(values: &[(OsString, OsString)]) -> Vec<(OsStri
                     .any(|candidate| name == OsStr::new(candidate))
                 && !spice::gate::operational_routing(name)
         })
-        .cloned()
+        .map(|(name, value)| {
+            let value = if name == OsStr::new("PATH") {
+                normalized_search_path(value)
+            } else {
+                value.clone()
+            };
+            (name.clone(), value)
+        })
         .collect::<Vec<_>>();
     normalized.extend(DISABLED_WRAPPERS.map(|name| (OsString::from(name), OsString::new())));
     normalized.sort();
     normalized
+}
+
+fn normalized_search_path(value: &OsStr) -> OsString {
+    let retained = std::env::split_paths(value).filter(|path| !codex_launcher_path(path));
+    std::env::join_paths(retained).unwrap_or_else(|_| value.to_owned())
+}
+
+fn codex_launcher_path(path: &Path) -> bool {
+    path.parent()
+        .is_some_and(|parent| parent.ends_with(".codex/tmp/arg0"))
+        && path
+            .file_name()
+            .and_then(OsStr::to_str)
+            .is_some_and(|name| name.starts_with("codex-arg0"))
 }
 
 fn execute(action: PreparedAction) -> Result<PendingReceipt, ProveFailure> {
