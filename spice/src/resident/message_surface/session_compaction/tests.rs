@@ -103,6 +103,7 @@ fn real_codex_rollout_compaction_is_published_once_from_complete_jsonl() {
         records.into_iter().next().expect("one compaction"),
         uuid("018f82d4-6f59-7d06-92e3-bce9131163e5"),
         uuid("018f82d4-6f59-7d06-92e3-bce9131163ef"),
+        Path::new("/worktree"),
         &publisher,
         &mut MessageState::default(),
     )
@@ -655,6 +656,7 @@ fn cursor(path: &Path, dialect: listen::Dialect) -> Cursor {
     Cursor {
         thread: "018f7777-7777-7444-8888-999999999999".to_owned(),
         path: path.to_path_buf(),
+        worktree: PathBuf::from("/worktree"),
         dialect,
         author: uuid("018f82d4-6f59-7d06-92e3-bce9131163ef"),
         member: session_member("018f7777-7777-7444-8888-999999999999"),
@@ -689,7 +691,15 @@ fn assert_boundary_publishes_once(
     let publisher = Messages::default();
     let mut state = MessageState::default();
     for record in records {
-        publish(record, lane, author, &publisher, &mut state).expect("boundary publishes");
+        publish(
+            record,
+            lane,
+            author,
+            Path::new("/worktree"),
+            &publisher,
+            &mut state,
+        )
+        .expect("boundary publishes");
     }
 
     let mut reloaded = cursor(transcript, dialect);
@@ -701,8 +711,15 @@ fn assert_boundary_publishes_once(
             .is_empty()
     );
     for record in replay {
-        publish(record, lane, author, &publisher, &mut state)
-            .expect("boundary replay deduplicates");
+        publish(
+            record,
+            lane,
+            author,
+            Path::new("/worktree"),
+            &publisher,
+            &mut state,
+        )
+        .expect("boundary replay deduplicates");
     }
     assert_eq!(
         publisher.0.lock().expect("message lock").len(),

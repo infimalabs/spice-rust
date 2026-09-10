@@ -158,6 +158,7 @@ fn merged_history_fixture() -> MergedHistoryFixture {
                 source: Some(source_end.clone()),
                 session: Some(DurableSession {
                     path: session_path.clone(),
+                    worktree: root.join("worktree"),
                     dialect: listen::Dialect::Codex,
                     thread: "018f7777-7777-7444-8888-999999999999".to_owned(),
                     source: session_source,
