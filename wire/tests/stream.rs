@@ -306,6 +306,7 @@ fn automatic_speech_is_typed_and_has_one_absence_spelling() {
             acknowledgements: 2,
             tastes: 1,
             broadcasts: 1,
+            reviews: 1,
         },
         automatic_speech: Some(AutomaticSpeech {
             kind: AutomaticSpeechKind::Final,

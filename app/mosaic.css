@@ -79,6 +79,10 @@
   border-left-color: var(--accent-5);
   background: color-mix(in srgb, var(--accent-5) 6%, transparent);
 }
+.markdown-body blockquote:has(> p > .message-review-pill) {
+  border-left-color: var(--accent-1);
+  background: color-mix(in srgb, var(--accent-1) 6%, transparent);
+}
 .markdown-body code {
   padding: 0; background: transparent;
   font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -1056,7 +1060,7 @@ html[data-command-modifier-held="true"]
   --message-inline-pill-accent: var(--accent-5);
 }
 .organization-surface .message-review-pill {
-  --message-inline-pill-accent: var(--ink);
+  --message-inline-pill-accent: var(--accent-1);
 }
 @media (prefers-color-scheme: light) {
   .organization-surface .message-taste-pill:not(.markdown-body blockquote *) {

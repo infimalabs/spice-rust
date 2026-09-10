@@ -432,6 +432,7 @@ async function assertExternalOperatorReplay(page, fixture, console, lane, worktr
   assert.equal(await acknowledgedCard.getAttribute("data-message-role"), "agent");
   assert.equal(await acknowledgedCard.getAttribute("data-message-ack-count"), "1");
   assert.equal(await acknowledgedCard.getAttribute("data-message-taste-count"), "0");
+  assert.equal(await acknowledgedCard.getAttribute("data-message-review-count"), "0");
   assert.deepEqual(
     await acknowledgedCard.locator(".message-badge").allTextContents(),
     ["ACK1"],
@@ -615,6 +616,101 @@ async function assertInlineBroadcastPill(page, console, lane, activityReplay) {
     );
   }
   await emulateColorScheme(page, "light");
+  return replyText;
+}
+
+async function assertInlineReviewPill(page, console, lane, activityReplay) {
+  const handle = "CANVAS-1kKRRsDR";
+  const replyText = "ACK: review guidance is internalized.";
+  const text = [
+    `> [REVIEW] Peer feedback for ${handle}:`,
+    ">",
+    "> > missing current coverage",
+    "> >",
+    "> > exercise the live refusal",
+    ">",
+    "> 🌶️ Verbalize noteworthy lessons and keep working the current task.",
+    "",
+    replyText,
+  ].join("\n");
+  const { key } = await activityReplay.injectClassifiedAgentProse(page, lane, text, {
+    acknowledgements: 0,
+    tastes: 0,
+    broadcasts: 0,
+    reviews: 1,
+  });
+  const card = console.locator(`[data-mosaic-card-key="${key}"]`);
+  await card.waitFor({ timeout: TRANSITION_MS });
+  assert.equal(await card.getAttribute("data-message-review-count"), "1");
+  const pill = card.locator(".message-review-pill");
+  assert.equal(await pill.count(), 1, "one authenticated review marker becomes one pill");
+  assert.equal(await pill.innerText(), "REVIEW");
+  assert.equal(await pill.getAttribute("data-message-classification"), "review");
+  assert.equal(await pill.getAttribute("aria-label"), "Review classification");
+  assert.equal(
+    await card.locator(`[data-task-handle="${handle}"]`).count(),
+    1,
+    "the review heading preserves its linked task handle",
+  );
+  const body = card.locator(".message-body");
+  const bodyText = await body.innerText();
+  assert.doesNotMatch(bodyText, /\[REVIEW\]/u, "authenticated review marker is presentation-only");
+  assert.match(bodyText, /Peer feedback for\s+CANVAS-1kKRRsDR\s+:/u);
+  assert.match(bodyText, /missing current coverage/u);
+  assert.match(bodyText, /exercise the live refusal/u);
+  assert.match(bodyText, /Verbalize noteworthy lessons/u);
+  assert.match(bodyText, /ACK: review guidance is internalized\.$/u);
+  assert.equal(
+    await body.locator("blockquote").count(),
+    2,
+    "review feedback keeps one outer context quote and one nested finding quote",
+  );
+  assert.equal(
+    await pill.evaluate((element) => {
+      let depth = 0;
+      for (let node = element.parentElement; node; node = node.parentElement) {
+        if (node.tagName === "BLOCKQUOTE") depth += 1;
+      }
+      return depth;
+    }),
+    1,
+    "the review pill belongs to the outer feedback quote",
+  );
+  for (const colorScheme of ["light", "dark"]) {
+    await emulateColorScheme(page, colorScheme);
+    const colors = await card.evaluate((element) => {
+      const quote = element.querySelector("blockquote");
+      const reviewPill = element.querySelector(".message-review-pill");
+      if (!quote || !reviewPill) throw new Error("review presentation is incomplete");
+      const probe = document.createElement("span");
+      probe.style.color = "var(--accent-1)";
+      element.append(probe);
+      const accent = getComputedStyle(probe).color;
+      probe.remove();
+      return {
+        accent,
+        quote: getComputedStyle(quote).borderLeftColor,
+        pill: getComputedStyle(reviewPill).color,
+      };
+    });
+    assert.deepEqual(
+      [colors.quote, colors.pill],
+      [colors.accent, colors.accent],
+      `${colorScheme} review quote and pill use the established blue accent`,
+    );
+  }
+  await emulateColorScheme(page, "light");
+  await activityReplay.replayAgentMessage(page, key);
+  assert.equal(
+    await card.locator(".message-review-pill").count(),
+    1,
+    "replay does not duplicate the review pill",
+  );
+  assert.doesNotMatch(
+    await body.innerText(),
+    /\[REVIEW\]/u,
+    "replay does not restore the raw review marker",
+  );
   return replyText;
 }
 
@@ -1162,6 +1258,12 @@ export async function assertAgentConversation(
     seated[1].lane,
     activityReplay,
   );
+  const reviewReply = await assertInlineReviewPill(
+    page,
+    console,
+    seated[3].lane,
+    activityReplay,
+  );
   const finalReply = await assertImmediateFinalCard(
     page,
     console,
@@ -1177,6 +1279,9 @@ export async function assertAgentConversation(
   const finalHeading = restoredProse.find((message) => message.lane === seated[2].lane);
   assert.ok(finalHeading, "the immediate final response belongs to its heading lane");
   finalHeading.prose = finalReply;
+  const reviewHeading = restoredProse.find((message) => message.lane === seated[3].lane);
+  assert.ok(reviewHeading, "the review response belongs to its heading lane");
+  reviewHeading.prose = reviewReply;
   const clearedInbox = await reply(fixture, ["inbox", seated[2].lane]);
   for (const pending of clearedInbox.body.lanes[0].pending) {
     await reply(fixture, ["steer", "cancel", pending.directive]);
@@ -1186,7 +1291,7 @@ export async function assertAgentConversation(
     quoteLane: organization.quoteLane,
     agentName: organization.agentName,
     agentAttribution: organization.agentAttribution,
-    quoteProse: restoredQuoteProse,
+    quoteProse: reviewReply,
     acknowledgementReply,
     primaryHeadings: restoredProse,
     organizationWorktrees,

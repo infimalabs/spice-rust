@@ -74,13 +74,16 @@ pub struct AgentMessageBadges {
     /// Positively acknowledged broadcast directives.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub broadcasts: u32,
+    /// Positively acknowledged peer-review feedback directives.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub reviews: u32,
 }
 
 impl AgentMessageBadges {
     /// Whether this message earned no semantic badge.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.acknowledgements == 0 && self.tastes == 0 && self.broadcasts == 0
+        self.acknowledgements == 0 && self.tastes == 0 && self.broadcasts == 0 && self.reviews == 0
     }
 }
 

@@ -673,6 +673,7 @@ struct PresentationDirective {
     text: String,
     authored: bool,
     taste: bool,
+    review: bool,
     disposition: wire::Disposition,
     retirement: Option<wire::body::TranscriptLocus>,
 }
@@ -718,6 +719,7 @@ impl PresentationDirectives {
                     let key = directive.key().clone();
                     let retirement = retirements.get(&key).copied();
                     let taste = tastes.contains(&key);
+                    let review = is_review_feedback(directive.control());
                     (
                         key,
                         PresentationDirective {
@@ -725,6 +727,7 @@ impl PresentationDirectives {
                             text: directive.text().to_owned(),
                             authored: presents_as_authored_steering(directive.control()),
                             taste,
+                            review,
                             disposition: directive.disposition(),
                             retirement,
                         },
@@ -738,6 +741,12 @@ impl PresentationDirectives {
 fn presents_as_authored_steering(control: Option<&str>) -> bool {
     !control.is_some_and(|control| {
         control.starts_with(spice::session_meter::TASK_CONTRACT_CONTROL_PREFIX)
+    })
+}
+
+fn is_review_feedback(control: Option<&str>) -> bool {
+    control.is_some_and(|control| {
+        control.starts_with(super::lifecycle::REVIEW_FEEDBACK_CONTROL_PREFIX)
     })
 }
 
@@ -782,11 +791,25 @@ fn message_badges(
                 .is_some_and(|directive| !directive.taste && has_broadcast_marker(&directive.text))
         })
         .count();
+    let reviews = acknowledged
+        .iter()
+        .filter(|key| {
+            directives
+                .0
+                .get(*key)
+                .is_some_and(|directive| directive.review)
+        })
+        .count();
     wire::AgentMessageBadges {
-        acknowledgements: u32::try_from(acknowledged.len().saturating_sub(tastes + broadcasts))
-            .unwrap_or(u32::MAX),
+        acknowledgements: u32::try_from(
+            acknowledged
+                .len()
+                .saturating_sub(tastes + broadcasts + reviews),
+        )
+        .unwrap_or(u32::MAX),
         tastes: u32::try_from(tastes).unwrap_or(u32::MAX),
         broadcasts: u32::try_from(broadcasts).unwrap_or(u32::MAX),
+        reviews: u32::try_from(reviews).unwrap_or(u32::MAX),
     }
 }
 

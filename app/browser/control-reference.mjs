@@ -692,6 +692,7 @@ async function measureTaskChipFixture(fixture) {
     return {
       palette: {
         accent: resolveColor("var(--accent)"),
+        accent1: resolveColor("var(--accent-1)"),
         accent2: resolveColor("var(--accent-2)"),
         ink: resolveColor("var(--ink)"),
         panel: resolveColor("var(--panel)"),
@@ -853,7 +854,7 @@ function assertTaskChipMeasurement(label, measured) {
   assert.equal(taste.tastes.length, 2, `${label} repeats one pill for each quoted taste`);
   const classifierKinds = [
     ["taste", "tastes", "TASTE", "Taste classification", measured.palette.accent2],
-    ["review", "reviews", "REVIEW", "Review classification", measured.palette.ink],
+    ["review", "reviews", "REVIEW", "Review classification", measured.palette.accent1],
   ];
   for (const row of measured.cases) {
     for (const [classification, collection, text, ariaLabel, accent] of classifierKinds) {
