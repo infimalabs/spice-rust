@@ -333,15 +333,6 @@ fn launch_environment(
     lane: CanonicalUuid,
 ) -> CommandResult<(Environment, wire::body::RtkHealth)> {
     let inbox = paths.inbox_for_repository(repository)?;
-    let cargo_host = crate::cargo_command::host(repository)
-        .map_err(|error| store_fault("lane::cargo-isolation-unavailable", &error.to_string()))?;
-    // The lane-specific home is the resident reader pin: one occupied seat
-    // admits one process group, and a replacement occupant cannot prepare the
-    // same lane home until that seat is vacant. Manual Cargo children can
-    // overlap a home advance, so their preparer additionally holds a kernel
-    // pin for the exact child lifetime.
-    let cargo_home = spice::cargo_isolation::prepare_lane(repository, lane, &cargo_host)
-        .map_err(|error| store_fault("lane::cargo-isolation-unavailable", &error.to_string()))?;
     let native_shell = crate::bootstrap_environment("SHELL").ok_or_else(|| {
         store_fault(
             "lane::native-shell-unavailable",
@@ -362,35 +353,8 @@ fn launch_environment(
         .into_iter()
         .filter_map(|key| crate::bootstrap_environment(key).map(|value| (key.into(), value)))
         .collect::<Vec<(OsString, OsString)>>();
+    values.extend(cargo_environment(repository, lane)?);
     values.extend([
-        (
-            OsString::from(spice::cargo_isolation::CARGO_HOME_VARIABLE),
-            cargo_home.home().as_os_str().to_owned(),
-        ),
-        (
-            OsString::from(spice::cargo_isolation::BOOTSTRAP_HOME_VARIABLE),
-            cargo_host.bootstrap_home().as_os_str().to_owned(),
-        ),
-        (
-            OsString::from(spice::cargo_isolation::NATIVE_CARGO_VARIABLE),
-            cargo_host.cargo().as_os_str().to_owned(),
-        ),
-        (
-            OsString::from(spice::cargo_isolation::NATIVE_RUSTC_VARIABLE),
-            cargo_host.rustc().as_os_str().to_owned(),
-        ),
-        (
-            OsString::from(spice::cargo_isolation::NATIVE_RUSTDOC_VARIABLE),
-            cargo_host.rustdoc().as_os_str().to_owned(),
-        ),
-        (
-            OsString::from(spice::cargo_isolation::RUSTC_VARIABLE),
-            cargo_host.rustc().as_os_str().to_owned(),
-        ),
-        (
-            OsString::from(spice::cargo_isolation::RUSTDOC_VARIABLE),
-            cargo_host.rustdoc().as_os_str().to_owned(),
-        ),
         (
             OsString::from("SHELL"),
             spice::install::installed_shell(repository).into_os_string(),
@@ -439,6 +403,75 @@ fn launch_environment(
         &probe_environment,
     );
     Ok((environment, health))
+}
+
+fn cargo_environment(
+    repository: &Repository,
+    lane: CanonicalUuid,
+) -> CommandResult<Vec<(OsString, OsString)>> {
+    let lock = repository.worktree_root().join("Cargo.lock");
+    match fs::symlink_metadata(&lock) {
+        Ok(metadata) if metadata.file_type().is_file() => {}
+        Ok(_) => {
+            return Err(store_fault(
+                "lane::cargo-isolation-unavailable",
+                &format!("{} is not a regular file", lock.display()),
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(store_fault(
+                "lane::cargo-isolation-unavailable",
+                &format!("inspect {}: {error}", lock.display()),
+            ));
+        }
+    }
+    isolated_cargo_environment(repository, lane)
+}
+
+fn isolated_cargo_environment(
+    repository: &Repository,
+    lane: CanonicalUuid,
+) -> CommandResult<Vec<(OsString, OsString)>> {
+    let host = crate::cargo_command::host(repository)
+        .map_err(|error| store_fault("lane::cargo-isolation-unavailable", &error.to_string()))?;
+    // The lane-specific home is the resident reader pin: one occupied seat
+    // admits one process group, and a replacement occupant cannot prepare the
+    // same lane home until that seat is vacant. Manual Cargo children can
+    // overlap a home advance, so their preparer additionally holds a kernel
+    // pin for the exact child lifetime.
+    let home = spice::cargo_isolation::prepare_lane(repository, lane, &host)
+        .map_err(|error| store_fault("lane::cargo-isolation-unavailable", &error.to_string()))?;
+    Ok(vec![
+        (
+            OsString::from(spice::cargo_isolation::CARGO_HOME_VARIABLE),
+            home.home().as_os_str().to_owned(),
+        ),
+        (
+            OsString::from(spice::cargo_isolation::BOOTSTRAP_HOME_VARIABLE),
+            host.bootstrap_home().as_os_str().to_owned(),
+        ),
+        (
+            OsString::from(spice::cargo_isolation::NATIVE_CARGO_VARIABLE),
+            host.cargo().as_os_str().to_owned(),
+        ),
+        (
+            OsString::from(spice::cargo_isolation::NATIVE_RUSTC_VARIABLE),
+            host.rustc().as_os_str().to_owned(),
+        ),
+        (
+            OsString::from(spice::cargo_isolation::NATIVE_RUSTDOC_VARIABLE),
+            host.rustdoc().as_os_str().to_owned(),
+        ),
+        (
+            OsString::from(spice::cargo_isolation::RUSTC_VARIABLE),
+            host.rustc().as_os_str().to_owned(),
+        ),
+        (
+            OsString::from(spice::cargo_isolation::RUSTDOC_VARIABLE),
+            host.rustdoc().as_os_str().to_owned(),
+        ),
+    ])
 }
 
 /// Health probes are not agent commands and must never enter lane gain history.
