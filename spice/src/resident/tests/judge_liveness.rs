@@ -50,6 +50,7 @@ async fn run_liveness_surface(setup: &mut LivenessSetup) -> String {
             .body(),
         config,
         SurfaceLaunch {
+            app: canvas::AppSource::resolve(&paths.worktree).expect("fixture Canvas app resolves"),
             binding: CanvasBinding::local(EPHEMERAL_LOOPBACK),
             open: false,
             progress: &mut progress,

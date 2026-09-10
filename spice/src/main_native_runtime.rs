@@ -107,7 +107,7 @@ pub(super) fn run_mounted(selection: cli::MountSelection<'_>) -> ! {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) fn resident_up(leaf: &clap::ArgMatches, form: Form) -> ! {
+pub(super) fn resident_up(leaf: &clap::ArgMatches, form: Form, test_canvas_stage: bool) -> ! {
     if !leaf.get_flag("foreground") {
         deliver(&resident::launch(leaf), form);
     }
@@ -125,16 +125,27 @@ pub(super) fn resident_up(leaf: &clap::ArgMatches, form: Form) -> ! {
         (Form::Text, child) => resident::up(
             leaf,
             child,
+            test_canvas_stage,
             &mut io::stderr().lock(),
             &mut io::stdout().lock(),
         ),
         // A detached child is itself a JSON process so any terminal outcome in
         // the common log stays typed. Its progress still belongs in that log,
         // while the token-decorated endpoint must not.
-        (Form::Json, child @ Some(_)) => {
-            resident::up(leaf, child, &mut io::stderr().lock(), &mut io::sink())
-        }
-        (Form::Json, None) => resident::up(leaf, None, &mut io::sink(), &mut io::sink()),
+        (Form::Json, child @ Some(_)) => resident::up(
+            leaf,
+            child,
+            test_canvas_stage,
+            &mut io::stderr().lock(),
+            &mut io::sink(),
+        ),
+        (Form::Json, None) => resident::up(
+            leaf,
+            None,
+            test_canvas_stage,
+            &mut io::sink(),
+            &mut io::sink(),
+        ),
     };
     if let Some(status) = status {
         status.failed(&outcome);

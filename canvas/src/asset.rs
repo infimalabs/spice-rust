@@ -53,6 +53,8 @@ static APP_ASSETS: [AppAsset; 8] = [
 
 /// The sole browser app generation store, built and served per worktree.
 pub const APP_STAGE: &str = "dist/stage-app";
+/// Receipt-owned browser app publication beneath a repository's Git common directory.
+pub const APP_INSTALL: &str = ".spice-install/app";
 /// Atomic pointer to the active immutable lane-app generation.
 pub const APP_STAGE_CURRENT: &str = "current";
 /// Immutable lane-app generations beneath [`APP_STAGE`].
@@ -184,8 +186,26 @@ impl AppSource {
     /// Returns [`AppSourceError::Incomplete`] when the pointer or any file in
     /// its named generation is absent.
     pub fn resolve(worktree: &Path) -> Result<Self, AppSourceError> {
+        Self::resolve_root(worktree.join(APP_STAGE))
+    }
+
+    /// Resolve the sole installed app publication beneath one Git common directory.
+    ///
+    /// Receipt admission belongs to the installer; this constructor validates
+    /// the named publication's pointer and closed generation inventory after
+    /// that authority has been admitted.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppSourceError::Incomplete`] when the pointer or any file in
+    /// its named generation is absent.
+    pub fn resolve_installed(common: &Path) -> Result<Self, AppSourceError> {
+        Self::resolve_root(common.join(APP_INSTALL))
+    }
+
+    fn resolve_root(stage: PathBuf) -> Result<Self, AppSourceError> {
         let source = Self {
-            stage: worktree.join(APP_STAGE),
+            stage,
             generations: Arc::new(Mutex::new(GenerationCache::default())),
         };
         source.current_generation()?;

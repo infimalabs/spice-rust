@@ -138,6 +138,7 @@ impl RunningResident {
         let child = Command::new(env!("CARGO_BIN_EXE_spice"))
             .args(["--json", "up", "--foreground", "--port", "0"])
             .current_dir(&fixture.root)
+            .arg(spice::install::TEST_CANVAS_STAGE_ARGUMENT)
             .env(
                 spice::cargo_isolation::BOOTSTRAP_HOME_VARIABLE,
                 &fixture.cargo_home,

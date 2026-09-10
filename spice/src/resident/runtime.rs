@@ -46,6 +46,7 @@ pub(super) struct SurfaceConfig {
 }
 
 struct SurfaceLaunch<'a> {
+    app: canvas::AppSource,
     binding: CanvasBinding,
     /// Whether the operator asked this start to also open the app.
     ///
@@ -285,6 +286,27 @@ pub(super) struct CanvasAccess {
     pub(super) token: Option<String>,
 }
 
+enum AppSelection {
+    Installed(PathBuf),
+    Staged,
+}
+
+impl AppSelection {
+    fn resolve(self, repository: &Repository) -> CommandResult<canvas::AppSource> {
+        match self {
+            Self::Installed(executable) => {
+                spice::install::installed_canvas_source(repository, &executable)
+                    .map_err(installed_app_refusal)
+            }
+            Self::Staged => {
+                canvas::AppSource::resolve(repository.worktree_root()).map_err(|error| {
+                    environment_fault("canvas::app-source-invalid", &error.to_string())
+                })
+            }
+        }
+    }
+}
+
 impl CanvasBinding {
     pub(crate) fn local(listen: SocketAddr) -> Self {
         Self {
@@ -300,6 +322,7 @@ impl CanvasBinding {
 pub(crate) fn up(
     leaf: &clap::ArgMatches,
     child: Option<ChildLaunch>,
+    test_canvas_stage: bool,
     progress: &mut dyn io::Write,
     endpoint: &mut dyn io::Write,
 ) -> Outcome<()> {
@@ -316,8 +339,20 @@ pub(crate) fn up(
         Ok(current) => current,
         Err(error) => return environment_fault("resident::cwd-unavailable", &error.to_string()),
     };
+    let executable = match std::env::current_exe() {
+        Ok(executable) => executable,
+        Err(error) => {
+            return environment_fault("resident::executable-unavailable", &error.to_string());
+        }
+    };
+    let app = if test_canvas_stage {
+        AppSelection::Staged
+    } else {
+        AppSelection::Installed(executable)
+    };
     up_from_with(
         &current,
+        app,
         CanvasBinding { listen, access },
         leaf.get_flag("open"),
         progress,
@@ -434,9 +469,11 @@ fn listen_refusal(reason: &str, expected: &str, observed: &str) -> Outcome<()> {
     )))
 }
 
+/// Run the explicit demo/test surface against its worktree-built app stage.
 pub(crate) fn up_from(current: &Path, binding: CanvasBinding) -> Outcome<()> {
     up_from_with(
         current,
+        AppSelection::Staged,
         binding,
         false,
         &mut io::sink(),
@@ -447,6 +484,7 @@ pub(crate) fn up_from(current: &Path, binding: CanvasBinding) -> Outcome<()> {
 
 fn up_from_with(
     current: &Path,
+    app: AppSelection,
     binding: CanvasBinding,
     open: bool,
     progress: &mut dyn io::Write,
@@ -456,6 +494,10 @@ fn up_from_with(
     let repository = match Repository::discover(current) {
         Ok(repository) => repository,
         Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
+    };
+    let app = match app.resolve(&repository) {
+        Ok(app) => app,
+        Err(outcome) => return outcome,
     };
     let paths = match RuntimePaths::from_repository(&repository) {
         Ok(paths) => paths,
@@ -514,6 +556,7 @@ fn up_from_with(
             &startup_surface.config,
             &mut seats,
             SurfaceLaunch {
+                app,
                 binding,
                 open,
                 progress,
@@ -533,6 +576,22 @@ fn up_from_with(
         return store_fault("bus::shutdown-failed", &error.to_string());
     }
     answer
+}
+
+fn installed_app_refusal(error: spice::install::InstallError) -> Outcome<()> {
+    let observed = error.to_string();
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            "canvas::installed-app-refused".to_owned(),
+            Some("installed-canvas-generation".to_owned()),
+            Some(
+                "one complete current receipt-owned Canvas generation matching this Spice binary"
+                    .to_owned(),
+            ),
+            Some(observed.clone()),
+        )
+        .with_detail(observed),
+    ))
 }
 
 fn journal_open_failure(error: journal::OpenError) -> Outcome<()> {
