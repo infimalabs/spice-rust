@@ -507,12 +507,12 @@ async function assertInlineTastePills(page, console, lane, activityReplay) {
     replyText,
   ].join("\n");
   const { key } = await activityReplay.injectClassifiedAgentProse(page, lane, text, {
-    acknowledgements: 0,
+    acknowledgements: 2,
     tastes: 2,
   });
   const card = console.locator(`[data-mosaic-card-key="${key}"]`);
   await card.waitFor({ timeout: TRANSITION_MS });
-  assert.equal(await card.getAttribute("data-message-ack-count"), "0");
+  assert.equal(await card.getAttribute("data-message-ack-count"), "2");
   assert.equal(await card.getAttribute("data-message-taste-count"), "2");
   assert.deepEqual(
     await card.locator(".message-taste-pill").allTextContents(),
@@ -552,10 +552,10 @@ async function assertInlineTastePills(page, console, lane, activityReplay) {
     0,
     "inline taste pills carry no ordinal or count",
   );
-  assert.equal(
-    await card.locator(".message-footer .message-badge").count(),
-    0,
-    "taste classification is not repeated in the message footer",
+  assert.deepEqual(
+    await card.locator(".message-footer .message-badge").allTextContents(),
+    ["ACK2"],
+    "taste flavor remains inline while acknowledgement state stays in the footer",
   );
   const body = await card.locator(".message-body").innerText();
   assert.doesNotMatch(body, /\[TASTE\]/, "quoted taste markers are replaced in presentation");
@@ -563,7 +563,18 @@ async function assertInlineTastePills(page, console, lane, activityReplay) {
   assert.match(body, /Keep one tested path\./);
   assert.match(body, /Wait for the completion event\./);
   assert.match(body, /ACK: presentation remains unchanged\.$/);
-  return replyText;
+  await activityReplay.replayAgentMessage(page, key);
+  assert.deepEqual(
+    await card.locator(".message-taste-pill").allTextContents(),
+    ["TASTE", "TASTE"],
+    "replay preserves every taste flavor pill",
+  );
+  assert.deepEqual(
+    await card.locator(".message-footer .message-badge").allTextContents(),
+    ["ACK2"],
+    "replay preserves taste acknowledgement state",
+  );
+  return { key, replyText };
 }
 
 async function assertInlineBroadcastPill(page, console, lane, activityReplay) {
@@ -574,13 +585,19 @@ async function assertInlineBroadcastPill(page, console, lane, activityReplay) {
     replyText,
   ].join("\n");
   const { key } = await activityReplay.injectClassifiedAgentProse(page, lane, text, {
-    acknowledgements: 0,
+    acknowledgements: 1,
     tastes: 0,
     broadcasts: 1,
   });
   const card = console.locator(`[data-mosaic-card-key="${key}"]`);
   await card.waitFor({ timeout: TRANSITION_MS });
+  assert.equal(await card.getAttribute("data-message-ack-count"), "1");
   assert.equal(await card.getAttribute("data-message-broadcast-count"), "1");
+  assert.deepEqual(
+    await card.locator(".message-footer .message-badge").allTextContents(),
+    ["ACK1"],
+    "broadcast flavor remains inline while acknowledgement state stays in the footer",
+  );
   const pill = card.locator(".message-broadcast-pill");
   assert.equal(await pill.innerText(), "BROADCAST");
   assert.equal(await pill.getAttribute("data-message-classification"), "broadcast");
@@ -616,7 +633,14 @@ async function assertInlineBroadcastPill(page, console, lane, activityReplay) {
     );
   }
   await emulateColorScheme(page, "light");
-  return replyText;
+  await activityReplay.replayAgentMessage(page, key);
+  assert.equal(await card.locator(".message-broadcast-pill").count(), 1);
+  assert.deepEqual(
+    await card.locator(".message-footer .message-badge").allTextContents(),
+    ["ACK1"],
+    "replay preserves broadcast flavor and acknowledgement state",
+  );
+  return { key, replyText };
 }
 
 async function assertInlineReviewPill(page, console, lane, activityReplay) {
@@ -711,7 +735,25 @@ async function assertInlineReviewPill(page, console, lane, activityReplay) {
     /\[REVIEW\]/u,
     "replay does not restore the raw review marker",
   );
-  return replyText;
+  return { key, replyText };
+}
+
+async function assertFlavorAcknowledgementsAfterReload(page, console, activityReplay, cases) {
+  await page.reload({ waitUntil: "networkidle" });
+  await chooseCanvasView(page, "Lanes");
+  await console.getByRole("tab", { name: /^Agents/ }).click();
+  for (const { key, flavor, count } of cases) {
+    await activityReplay.replayAgentMessage(page, key);
+    const card = console.locator(`[data-mosaic-card-key="${key}"]`);
+    await card.waitFor({ timeout: CONNECT_MS });
+    assert.equal(await card.getAttribute("data-message-ack-count"), String(count));
+    assert.equal(await card.locator(`.message-${flavor}-pill`).count(), count);
+    assert.deepEqual(
+      await card.locator(".message-footer .message-badge").allTextContents(),
+      [`ACK${count}`],
+      `reload preserves ${flavor} flavor and acknowledgement state`,
+    );
+  }
 }
 
 async function emulateColorScheme(page, colorScheme) {
@@ -1246,24 +1288,29 @@ export async function assertAgentConversation(
     (message) => message.lane === organization.quoteLane,
   )?.prose;
   assert.ok(restoredQuoteProse, "the canonical replay retains the quote lane's assistant prose");
-  const tasteReply = await assertInlineTastePills(
+  const taste = await assertInlineTastePills(
     page,
     console,
     seated[0].lane,
     activityReplay,
   );
-  const broadcastReply = await assertInlineBroadcastPill(
+  const broadcast = await assertInlineBroadcastPill(
     page,
     console,
     seated[1].lane,
     activityReplay,
   );
-  const reviewReply = await assertInlineReviewPill(
+  const review = await assertInlineReviewPill(
     page,
     console,
     seated[3].lane,
     activityReplay,
   );
+  await assertFlavorAcknowledgementsAfterReload(page, console, activityReplay, [
+    { key: taste.key, flavor: "taste", count: 2 },
+    { key: broadcast.key, flavor: "broadcast", count: 1 },
+  ]);
+  await activityReplay.replayAgentMessage(page, review.key);
   const finalReply = await assertImmediateFinalCard(
     page,
     console,
@@ -1272,16 +1319,16 @@ export async function assertAgentConversation(
   );
   const tasteHeading = restoredProse.find((message) => message.lane === seated[0].lane);
   assert.ok(tasteHeading, "the taste response belongs to the primary heading lane");
-  tasteHeading.prose = tasteReply;
+  tasteHeading.prose = taste.replyText;
   const broadcastHeading = restoredProse.find((message) => message.lane === seated[1].lane);
   assert.ok(broadcastHeading, "the broadcast response belongs to its heading lane");
-  broadcastHeading.prose = broadcastReply;
+  broadcastHeading.prose = broadcast.replyText;
   const finalHeading = restoredProse.find((message) => message.lane === seated[2].lane);
   assert.ok(finalHeading, "the immediate final response belongs to its heading lane");
   finalHeading.prose = finalReply;
   const reviewHeading = restoredProse.find((message) => message.lane === seated[3].lane);
   assert.ok(reviewHeading, "the review response belongs to its heading lane");
-  reviewHeading.prose = reviewReply;
+  reviewHeading.prose = review.replyText;
   const clearedInbox = await reply(fixture, ["inbox", seated[2].lane]);
   for (const pending of clearedInbox.body.lanes[0].pending) {
     await reply(fixture, ["steer", "cancel", pending.directive]);
@@ -1291,7 +1338,7 @@ export async function assertAgentConversation(
     quoteLane: organization.quoteLane,
     agentName: organization.agentName,
     agentAttribution: organization.agentAttribution,
-    quoteProse: reviewReply,
+    quoteProse: review.replyText,
     acknowledgementReply,
     primaryHeadings: restoredProse,
     organizationWorktrees,

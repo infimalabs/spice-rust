@@ -62,10 +62,12 @@ pub enum AutomaticSpeechKind {
 ///
 /// These counts are resident-classified from durable steering evidence. Canvas
 /// renders them directly and never parses message prose to infer protocol state.
+/// `acknowledgements` counts positive ordinary, taste, and broadcast
+/// acknowledgements; taste and broadcast are overlapping semantic flavors.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentMessageBadges {
-    /// Positively acknowledged ordinary directives.
+    /// Positively acknowledged ordinary, taste, and broadcast directives.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub acknowledgements: u32,
     /// Positively acknowledged taste reminders.

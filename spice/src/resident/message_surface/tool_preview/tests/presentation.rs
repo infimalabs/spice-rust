@@ -317,7 +317,7 @@ fn acknowledged_broadcast_marker_earns_its_own_semantic_badge() {
     assert_eq!(
         message_badges("ACK 1kQnrzNZ: applied.", Some(&directives), event()),
         wire::AgentMessageBadges {
-            acknowledgements: 0,
+            acknowledgements: 1,
             tastes: 0,
             broadcasts: 1,
             reviews: 0,
@@ -754,7 +754,7 @@ fn mixed_current_and_historical_keys_present_every_known_context() {
     assert_eq!(
         message_badges(text, Some(&directives), event()),
         wire::AgentMessageBadges {
-            acknowledgements: 0,
+            acknowledgements: 1,
             tastes: 1,
             broadcasts: 0,
             reviews: 0,
@@ -810,7 +810,7 @@ fn current_task_contract_and_taste_ack_hide_one_shared_protocol_header() {
     assert_eq!(
         message_badges(text, Some(&directives), event()),
         wire::AgentMessageBadges {
-            acknowledgements: 1,
+            acknowledgements: 2,
             tastes: 1,
             broadcasts: 0,
             reviews: 0,
