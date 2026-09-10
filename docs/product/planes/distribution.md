@@ -128,11 +128,11 @@ preparation does not infer task ownership from the board.
 A release has exactly two target payloads, in canonical order: the native
 `aarch64-apple-darwin` Apple Silicon appliance and the static
 `x86_64-unknown-linux-musl` appliance. Each receipt-free payload binds its schema,
-target, source identity, app, embedded app, native executable, complete build
-pins, and ordered artifact inventory. The detached receipt separately binds the
-environment that actually ran proof: the Linux receipt's OCI identity must match
-the payload's proof-container pin, while the Darwin receipt binds the attested
-native runner digest.
+target, source identity, complete Canvas generation, native executable, complete
+build pins, and ordered artifact inventory. The detached receipt separately binds
+the environment that actually ran proof: the Linux receipt's OCI identity must
+match the payload's proof-container pin, while the Darwin receipt binds the
+attested native runner digest.
 
 The two payloads must bind the source digest carried by their manifest. The
 publication plan separately admits its source and release commits and the

@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use dist::{
-    BuildError, Builder, FilePublisher, Pipeline, PublishError, Publisher, RequiredPins,
-    StagedTarget,
+    AppBundle, AppFile, BuildError, Builder, FilePublisher, Pipeline, PublishError, Publisher,
+    RequiredPins, StagedTarget,
 };
 use sill::{
     Argv, Cancellation, Completion, Deadlines, Environment, Output, ProcessGroup, Redaction,
@@ -396,14 +396,13 @@ struct CommandBuilder<'a, E> {
 }
 
 impl<E: Executor> Builder for CommandBuilder<'_, E> {
-    fn build_app(&mut self) -> Result<Vec<u8>, BuildError> {
+    fn build_app(&mut self) -> Result<AppBundle, BuildError> {
         self.run(CommandSpec::new("app-build", &self.programs.xtask, ["app"]))?;
-        read_lane_app_asset(self.root, "/app_bg.wasm")
+        read_lane_app_bundle(self.root)
     }
 
-    fn embed_app(&mut self, app: &[u8]) -> Result<Vec<u8>, BuildError> {
-        let observed = read_lane_app_asset(self.root, "/app_bg.wasm")?;
-        if observed != app {
+    fn embed_app(&mut self, app: &AppBundle) -> Result<AppBundle, BuildError> {
+        if read_lane_app_bundle(self.root)? != *app {
             return Err(BuildError::new(
                 "staged app changed between app and embedding commands",
             ));
@@ -413,13 +412,19 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
             &self.programs.cargo,
             cargo_build_arguments("canvas", self.target, self.target_dir),
         ))?;
-        read_lane_app_asset(self.root, "/")
+        let observed = read_lane_app_bundle(self.root)?;
+        if observed != *app {
+            return Err(BuildError::new(
+                "staged app changed while the embedding command ran",
+            ));
+        }
+        Ok(observed)
     }
 
     fn build_native(
         &mut self,
         target: ReleaseTarget,
-        embedded_app: &[u8],
+        app: &AppBundle,
     ) -> Result<Vec<u8>, BuildError> {
         if target != self.target {
             return Err(BuildError::new(format!(
@@ -427,10 +432,9 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
                 self.target
             )));
         }
-        let observed = read_lane_app_asset(self.root, "/")?;
-        if observed != embedded_app {
+        if read_lane_app_bundle(self.root)? != *app {
             return Err(BuildError::new(
-                "embedded app changed between embedding and native commands",
+                "Canvas generation changed between embedding and native commands",
             ));
         }
         self.run(CommandSpec::new(
@@ -443,6 +447,23 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
     }
 }
 
+fn read_lane_app_bundle(root: &Path) -> Result<AppBundle, BuildError> {
+    let source = spice::canvas::AppSource::resolve(root).map_err(build_error)?;
+    let generation = source.current_generation().map_err(build_error)?;
+    let files = spice::canvas::APP
+        .assets()
+        .iter()
+        .map(|asset| {
+            generation
+                .served(*asset)
+                .map(|served| AppFile::new(asset.file(), served.into_bytes()))
+                .map_err(build_error)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(AppBundle::new(generation.identity().clone(), files))
+}
+
+#[cfg(test)]
 fn read_lane_app_asset(root: &Path, route: &str) -> Result<Vec<u8>, BuildError> {
     let source = spice::canvas::AppSource::resolve(root).map_err(build_error)?;
     let generation = source.current_generation().map_err(build_error)?;

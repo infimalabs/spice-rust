@@ -107,7 +107,7 @@ impl ManifestPublisher for FileManifestPublisher {
 /// Admit the current fixed manifest pointer and every object it names.
 ///
 /// The caller supplies the executable identities observed at the binary rim.
-/// Both target payloads must carry the embedded app, and the payload matching
+/// Both target payloads must carry the complete app generation, and the payload matching
 /// `native_target` must carry the invoking executable itself.
 ///
 /// # Errors
@@ -117,7 +117,7 @@ impl ManifestPublisher for FileManifestPublisher {
 /// digest and typed bindings are checked before a manifest is returned.
 pub fn admit_manifest(
     root: &Path,
-    embedded_app: &Digest,
+    app: &Digest,
     native_target: ReleaseTarget,
     native: &Digest,
 ) -> Result<PublishedManifest, ManifestAdmissionError> {
@@ -134,7 +134,7 @@ pub fn admit_manifest(
             entry,
             expected_target,
             index,
-            embedded_app,
+            app,
             native_target,
             native,
             battery.digest(),
@@ -204,7 +204,7 @@ fn admit_target(
     entry: &ReleaseManifestTarget,
     expected_target: ReleaseTarget,
     index: usize,
-    embedded_app: &Digest,
+    app: &Digest,
     native_target: ReleaseTarget,
     native: &Digest,
     battery: &Digest,
@@ -216,15 +216,7 @@ fn admit_target(
             observed: entry.target,
         });
     }
-    let payload = admit_target_payload(
-        root,
-        manifest,
-        entry,
-        index,
-        embedded_app,
-        native_target,
-        native,
-    )?;
+    let payload = admit_target_payload(root, manifest, entry, index, app, native_target, native)?;
     admit_target_receipt(root, entry, index, &payload, battery)?;
     Ok(payload)
 }
@@ -235,7 +227,7 @@ fn admit_target_payload(
     manifest: &ReleaseManifest,
     entry: &ReleaseManifestTarget,
     index: usize,
-    embedded_app: &Digest,
+    app: &Digest,
     native_target: ReleaseTarget,
     native: &Digest,
 ) -> Result<TargetPayload, ManifestAdmissionError> {
@@ -250,11 +242,7 @@ fn admit_target_payload(
     require_binding(payload.digest() == &entry.payload, index, "payload digest")?;
     require_binding(value.target == entry.target, index, "payload target")?;
     require_binding(value.source == manifest.source, index, "payload source")?;
-    require_binding(
-        value.embedded_app == *embedded_app,
-        index,
-        "embedded app identity",
-    )?;
+    require_binding(value.app == *app, index, "Canvas generation identity")?;
     require_binding(
         value.target != native_target || value.native == *native,
         index,
@@ -324,8 +312,15 @@ fn admit_shared_payload(
     for (matches, field) in [
         (observed.app == first.app, "app identity"),
         (
-            observed.embedded_app == first.embedded_app,
-            "embedded app identity",
+            observed
+                .inventory
+                .iter()
+                .filter(|entry| entry.path.starts_with("app/"))
+                .eq(first
+                    .inventory
+                    .iter()
+                    .filter(|entry| entry.path.starts_with("app/"))),
+            "Canvas inventory",
         ),
         (observed.pins == first.pins, "toolchain and container pins"),
     ] {
@@ -465,8 +460,16 @@ where
             for (matches, field) in [
                 (admitted.value().app == first.app, "app identity"),
                 (
-                    admitted.value().embedded_app == first.embedded_app,
-                    "embedded app identity",
+                    admitted
+                        .value()
+                        .inventory
+                        .iter()
+                        .filter(|entry| entry.path.starts_with("app/"))
+                        .eq(first
+                            .inventory
+                            .iter()
+                            .filter(|entry| entry.path.starts_with("app/"))),
+                    "Canvas inventory",
                 ),
                 (
                     admitted.value().pins == first.pins,

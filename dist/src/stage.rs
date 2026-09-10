@@ -6,7 +6,8 @@ use std::path::{Component, Path, PathBuf};
 
 use atomic::Destination;
 use wire::manifest::{
-    BuildPins, InventoryEntry, ReleaseTarget, TARGET_PAYLOAD_VERSION, TargetPayload,
+    BuildPins, CANVAS_APP_FILES, InventoryEntry, ReleaseTarget, TARGET_PAYLOAD_VERSION,
+    TargetPayload,
 };
 use wire::{Digest, Domain};
 
@@ -41,13 +42,49 @@ impl BuildError {
 
 /// Heavyweight build implementation supplied by the executable rim.
 pub trait Builder {
-    fn build_app(&mut self) -> Result<Vec<u8>, BuildError>;
-    fn embed_app(&mut self, app: &[u8]) -> Result<Vec<u8>, BuildError>;
+    fn build_app(&mut self) -> Result<AppBundle, BuildError>;
+    fn embed_app(&mut self, app: &AppBundle) -> Result<AppBundle, BuildError>;
     fn build_native(
         &mut self,
         target: ReleaseTarget,
-        embedded_app: &[u8],
+        app: &AppBundle,
     ) -> Result<Vec<u8>, BuildError>;
+}
+
+/// One browser-app member returned by a concrete build adapter.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AppFile {
+    path: String,
+    bytes: Vec<u8>,
+}
+
+impl AppFile {
+    #[must_use]
+    pub fn new(path: impl Into<String>, bytes: impl Into<Vec<u8>>) -> Self {
+        Self {
+            path: path.into(),
+            bytes: bytes.into(),
+        }
+    }
+}
+
+/// Complete immutable Canvas generation produced before the native build.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AppBundle {
+    generation: Digest,
+    files: Vec<AppFile>,
+}
+
+impl AppBundle {
+    #[must_use]
+    pub const fn new(generation: Digest, files: Vec<AppFile>) -> Self {
+        Self { generation, files }
+    }
+
+    #[must_use]
+    pub const fn generation(&self) -> &Digest {
+        &self.generation
+    }
 }
 
 /// Publication boundary used by the real stage and interruption fixtures.
@@ -137,11 +174,11 @@ impl Pipeline {
         publisher: &mut P,
     ) -> Result<StagedTarget, StageError> {
         self.pins.verify(observed)?;
-        let artifacts = build_artifacts(target, builder)?;
-        let payload = make_payload(target, source, self.pins.get(), &artifacts)?;
+        let built = build_artifacts(target, builder)?;
+        let payload = make_payload(target, source, built.app, self.pins.get(), &built.artifacts)?;
         let payload_bytes = wire::encode(&payload)?;
         let payload_digest = Digest::compute(Domain::DistTargetPayload, &payload_bytes);
-        publish_artifacts(publisher, &artifacts)?;
+        publish_artifacts(publisher, &built.artifacts)?;
         let payload_path = PathBuf::from(format!("targets/{target}/payload.json"));
         publisher
             .publish(&payload_path, DATA_MODE, &payload_bytes)
@@ -185,16 +222,21 @@ pub enum PublishError {
 
 #[derive(Clone, Debug)]
 struct Artifact {
-    path: &'static str,
+    path: String,
     mode: u32,
     bytes: Vec<u8>,
     digest: Digest,
 }
 
+struct BuiltArtifacts {
+    app: Digest,
+    artifacts: Vec<Artifact>,
+}
+
 fn build_artifacts<B: Builder>(
     target: ReleaseTarget,
     builder: &mut B,
-) -> Result<Vec<Artifact>, StageError> {
+) -> Result<BuiltArtifacts, StageError> {
     let app = builder.build_app().map_err(|source| StageError::Build {
         step: BuildStep::App,
         source,
@@ -205,23 +247,49 @@ fn build_artifacts<B: Builder>(
             step: BuildStep::Embed,
             source,
         })?;
+    if embedded != app {
+        return Err(StageError::Build {
+            step: BuildStep::Embed,
+            source: BuildError::new("Canvas generation changed during embedding"),
+        });
+    }
     let native = builder
         .build_native(target, &embedded)
         .map_err(|source| StageError::Build {
             step: BuildStep::Native,
             source,
         })?;
-    Ok(vec![
-        artifact("app/app.wasm", DATA_MODE, app),
-        artifact("embed/app.bin", DATA_MODE, embedded),
-        artifact("bin/spice", EXECUTABLE_MODE, native),
-    ])
+    let mut files = embedded.files;
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+    let mut expected = CANVAS_APP_FILES.to_vec();
+    expected.sort_unstable();
+    let observed = files
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect::<Vec<_>>();
+    if observed != expected {
+        return Err(StageError::Build {
+            step: BuildStep::App,
+            source: BuildError::new(format!(
+                "Canvas generation inventory is {observed:?}, expected {expected:?}"
+            )),
+        });
+    }
+    let mut artifacts = files
+        .into_iter()
+        .map(|file| artifact(format!("app/{}", file.path), DATA_MODE, file.bytes))
+        .collect::<Vec<_>>();
+    artifacts.push(artifact("bin/spice", EXECUTABLE_MODE, native));
+    Ok(BuiltArtifacts {
+        app: embedded.generation,
+        artifacts,
+    })
 }
 
-fn artifact(path: &'static str, mode: u32, bytes: Vec<u8>) -> Artifact {
+fn artifact(path: impl Into<String>, mode: u32, bytes: Vec<u8>) -> Artifact {
     let digest = Digest::compute(Domain::DistArtifact, &bytes);
     Artifact {
-        path,
+        path: path.into(),
         mode,
         bytes,
         digest,
@@ -231,6 +299,7 @@ fn artifact(path: &'static str, mode: u32, bytes: Vec<u8>) -> Artifact {
 fn make_payload(
     target: ReleaseTarget,
     source: Digest,
+    app: Digest,
     pins: &BuildPins,
     artifacts: &[Artifact],
 ) -> Result<TargetPayload, serde_json::Error> {
@@ -242,9 +311,13 @@ fn make_payload(
         version: TARGET_PAYLOAD_VERSION,
         target,
         source,
-        app: artifacts[0].digest.clone(),
-        embedded_app: artifacts[1].digest.clone(),
-        native: artifacts[2].digest.clone(),
+        app,
+        native: artifacts
+            .iter()
+            .find(|artifact| artifact.path == "bin/spice")
+            .expect("the built inventory carries the native executable")
+            .digest
+            .clone(),
         pins: pins.clone(),
         pins_digest,
         inventory,
@@ -266,7 +339,7 @@ fn publish_artifacts<P: Publisher>(
     artifacts: &[Artifact],
 ) -> Result<(), StageError> {
     let mut ordered = artifacts.iter().collect::<Vec<_>>();
-    ordered.sort_by_key(|artifact| artifact.path);
+    ordered.sort_by(|left, right| left.path.cmp(&right.path));
     for artifact in ordered {
         let path = object_path(artifact);
         publisher

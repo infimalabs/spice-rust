@@ -269,7 +269,7 @@ fn filesystem_publication_commits_exact_objects_and_pointer() {
         wire::decode(&darwin.payload).expect("Darwin payload decodes");
     let admitted = admit_manifest(
         &scratch.root,
-        &darwin_payload.embedded_app,
+        &darwin_payload.app,
         ReleaseTarget::Aarch64AppleDarwin,
         &darwin_payload.native,
     )
@@ -285,7 +285,7 @@ fn filesystem_publication_commits_exact_objects_and_pointer() {
         assert!(matches!(
             admit_manifest(
                 &linked,
-                &darwin_payload.embedded_app,
+                &darwin_payload.app,
                 ReleaseTarget::Aarch64AppleDarwin,
                 &darwin_payload.native,
             ),
@@ -341,7 +341,7 @@ fn manifest_admission_refuses_missing_stale_and_mixed_objects() {
     assert!(matches!(
         admit_manifest(
             &missing.root,
-            &expected.embedded_app,
+            &expected.app,
             expected.target,
             &expected.native,
         ),
@@ -363,7 +363,7 @@ fn manifest_admission_refuses_missing_stale_and_mixed_objects() {
     assert!(matches!(
         admit_manifest(
             &stale.root,
-            &expected.embedded_app,
+            &expected.app,
             expected.target,
             &expected.native,
         ),
@@ -385,7 +385,7 @@ fn manifest_admission_refuses_missing_stale_and_mixed_objects() {
     assert!(matches!(
         admit_manifest(
             &mixed.root,
-            &expected.embedded_app,
+            &expected.app,
             expected.target,
             &expected.native,
         ),
@@ -445,7 +445,6 @@ fn input(prepared: &Prepared) -> ManifestInput<'_> {
 
 fn prepared(target: ReleaseTarget, source: Digest, clean: bool) -> Prepared {
     let app = digest(Domain::DistArtifact, b"app");
-    let embedded_app = digest(Domain::DistArtifact, b"embedded app");
     let native = digest(Domain::DistArtifact, target.as_str().as_bytes());
     let pins = BuildPins {
         rust: "rustc 1.97.1".to_owned(),
@@ -454,32 +453,27 @@ fn prepared(target: ReleaseTarget, source: Digest, clean: bool) -> Prepared {
         cargo_mutants: "cargo-mutants 27.1.0".to_owned(),
         proof_container: format!("registry.example/spice-proof@sha256:{}", "0".repeat(64)),
     };
-    let inventory = vec![
-        InventoryEntry {
-            path: "app/app.wasm".to_owned(),
+    let mut inventory = wire::manifest::CANVAS_APP_FILES
+        .iter()
+        .map(|file| InventoryEntry {
+            path: format!("app/{file}"),
             mode: 0o644,
-            bytes: 3,
-            digest: app.clone(),
-        },
-        InventoryEntry {
-            path: "bin/spice".to_owned(),
-            mode: 0o755,
-            bytes: 3,
-            digest: native.clone(),
-        },
-        InventoryEntry {
-            path: "embed/app.bin".to_owned(),
-            mode: 0o644,
-            bytes: 3,
-            digest: embedded_app.clone(),
-        },
-    ];
+            bytes: file.len() as u64,
+            digest: digest(Domain::DistArtifact, file.as_bytes()),
+        })
+        .collect::<Vec<_>>();
+    inventory.push(InventoryEntry {
+        path: "bin/spice".to_owned(),
+        mode: 0o755,
+        bytes: target.as_str().len() as u64,
+        digest: native.clone(),
+    });
+    inventory.sort_by(|left, right| left.path.cmp(&right.path));
     let payload = TargetPayload {
-        version: 1,
+        version: wire::manifest::TARGET_PAYLOAD_VERSION,
         target,
         source,
         app,
-        embedded_app,
         native,
         pins_digest: digest(Domain::DistPins, &wire::encode(&pins).expect("pins encode")),
         inventory_digest: digest(

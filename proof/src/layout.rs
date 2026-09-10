@@ -473,11 +473,10 @@ mod tests {
     fn payload(target: ReleaseTarget, marker: &str) -> TargetPayload {
         let digest = Digest::compute(Domain::DistArtifact, marker.as_bytes());
         TargetPayload {
-            version: 1,
+            version: wire::manifest::TARGET_PAYLOAD_VERSION,
             target,
             source: digest.clone(),
             app: digest.clone(),
-            embedded_app: digest.clone(),
             native: digest.clone(),
             pins: BuildPins {
                 rust: marker.to_owned(),

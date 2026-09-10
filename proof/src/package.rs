@@ -5,8 +5,8 @@ use std::fmt;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use wire::manifest::{
-    ProductVersion, ProofStanding, RELEASE_MANIFEST_VERSION, RELEASE_PACKAGE_VERSION,
-    ReleaseManifest, ReleasePackage, ReleasePackageTarget, ReleaseTarget,
+    CANVAS_APP_FILES, ProductVersion, ProofStanding, RELEASE_MANIFEST_VERSION,
+    RELEASE_PACKAGE_VERSION, ReleaseManifest, ReleasePackage, ReleasePackageTarget, ReleaseTarget,
 };
 use wire::{Digest, Domain};
 
@@ -28,6 +28,20 @@ pub struct PackageTargetInput<'a> {
     executable: &'a [u8],
     payload: &'a [u8],
     proof: &'a [u8],
+}
+
+/// Exact bytes supplied for one member of the shared Canvas generation.
+#[derive(Clone, Copy, Debug)]
+pub struct PackageAppInput<'a> {
+    file: &'a str,
+    bytes: &'a [u8],
+}
+
+impl<'a> PackageAppInput<'a> {
+    #[must_use]
+    pub const fn new(file: &'a str, bytes: &'a [u8]) -> Self {
+        Self { file, bytes }
+    }
 }
 
 impl<'a> PackageTargetInput<'a> {
@@ -54,6 +68,7 @@ pub struct PackageInput<'a> {
     notes_identity: Digest,
     notes: &'a [u8],
     manifest: &'a [u8],
+    app: Vec<PackageAppInput<'a>>,
     targets: Vec<PackageTargetInput<'a>>,
 }
 
@@ -64,6 +79,7 @@ impl<'a> PackageInput<'a> {
         notes_identity: Digest,
         notes: &'a [u8],
         manifest: &'a [u8],
+        app: Vec<PackageAppInput<'a>>,
         targets: Vec<PackageTargetInput<'a>>,
     ) -> Self {
         Self {
@@ -71,6 +87,7 @@ impl<'a> PackageInput<'a> {
             notes_identity,
             notes,
             manifest,
+            app,
             targets,
         }
     }
@@ -217,11 +234,20 @@ pub fn admit_package_tree(members: &[PackageMember]) -> Result<AdmittedPackage, 
             exact_member(members, &proof_path(target), DATA_MODE)?.bytes(),
         ));
     }
+    let mut app = CANVAS_APP_FILES
+        .iter()
+        .map(|file| {
+            exact_member(members, &app_path(file), DATA_MODE)
+                .map(|member| PackageAppInput::new(file, member.bytes()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    app.sort_by(|left, right| left.file.cmp(right.file));
     let rebuilt = assemble_package(PackageInput::new(
         &version,
         document.notes.clone(),
         notes.bytes(),
         manifest.bytes(),
+        app,
         targets,
     ))?;
     if rebuilt.members != members || rebuilt.package.document != document {
@@ -274,6 +300,14 @@ fn assemble_package(input: PackageInput<'_>) -> Result<PackageTree, PackageError
             ),
         ]);
     }
+    for asset in &input.app {
+        members.push(member(
+            &app_path(asset.file),
+            DATA_MODE,
+            asset.bytes,
+            Domain::DistArtifact,
+        ));
+    }
     members.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(PackageTree { package, members })
 }
@@ -286,6 +320,7 @@ fn assemble_package_index(input: &PackageInput<'_>) -> Result<AdmittedPackage, P
         return Err(PackageError::TargetCount(input.targets.len()));
     }
     let mut package_targets = Vec::with_capacity(TARGETS.len());
+    let mut first_app = None;
     for (index, ((target, expected), sealed)) in input
         .targets
         .iter()
@@ -301,7 +336,17 @@ fn assemble_package_index(input: &PackageInput<'_>) -> Result<AdmittedPackage, P
                 manifest: sealed.target,
             });
         }
-        let admitted = admit_target(target, sealed, &manifest.source, index)?;
+        let admitted = admit_target(target, &input.app, sealed, &manifest.source, index)?;
+        if let Some((generation, inventory)) = &first_app {
+            if generation != &admitted.app || inventory != &admitted.app_inventory {
+                return Err(PackageError::Binding {
+                    index,
+                    field: "shared Canvas generation",
+                });
+            }
+        } else {
+            first_app = Some((admitted.app.clone(), admitted.app_inventory.clone()));
+        }
         package_targets.push(ReleasePackageTarget {
             target: expected,
             executable_path: executable_path(expected),
@@ -333,6 +378,8 @@ fn assemble_package_index(input: &PackageInput<'_>) -> Result<AdmittedPackage, P
 
 #[derive(Debug)]
 struct TargetEvidence {
+    app: Digest,
+    app_inventory: Vec<wire::manifest::InventoryEntry>,
     executable: Digest,
     payload: Digest,
     proof: Digest,
@@ -340,6 +387,7 @@ struct TargetEvidence {
 
 fn admit_target(
     input: &PackageTargetInput<'_>,
+    app: &[PackageAppInput<'_>],
     sealed: &wire::manifest::ReleaseManifestTarget,
     source: &Digest,
     index: usize,
@@ -352,6 +400,7 @@ fn admit_target(
     let payload_identity = admitted_payload.digest().clone();
     let proof_identity = admitted_proof.digest().clone();
     let executable = Digest::compute(Domain::DistArtifact, input.executable);
+    admit_app(app, payload, index)?;
     let executable_inventory = payload
         .inventory
         .iter()
@@ -386,10 +435,51 @@ fn admit_target(
         return Err(PackageError::Binding { index, field });
     }
     Ok(TargetEvidence {
+        app: payload.app.clone(),
+        app_inventory: payload
+            .inventory
+            .iter()
+            .filter(|entry| entry.path.starts_with("app/"))
+            .cloned()
+            .collect(),
         executable,
         payload: payload_identity,
         proof: proof_identity,
     })
+}
+
+fn admit_app(
+    app: &[PackageAppInput<'_>],
+    payload: &wire::manifest::TargetPayload,
+    index: usize,
+) -> Result<(), PackageError> {
+    let mut expected = CANVAS_APP_FILES.to_vec();
+    expected.sort_unstable();
+    if app.iter().map(|asset| asset.file).collect::<Vec<_>>() != expected {
+        return Err(PackageError::Binding {
+            index,
+            field: "Canvas package inventory",
+        });
+    }
+    for asset in app {
+        let path = format!("app/{}", asset.file);
+        let Some(entry) = payload.inventory.iter().find(|entry| entry.path == path) else {
+            return Err(PackageError::Binding {
+                index,
+                field: "Canvas payload inventory",
+            });
+        };
+        if entry.mode != DATA_MODE
+            || entry.bytes != asset.bytes.len() as u64
+            || entry.digest != Digest::compute(Domain::DistArtifact, asset.bytes)
+        {
+            return Err(PackageError::Binding {
+                index,
+                field: "Canvas asset",
+            });
+        }
+    }
+    Ok(())
 }
 
 fn admit_manifest_shape(manifest: &ReleaseManifest) -> Result<(), PackageError> {
@@ -488,6 +578,10 @@ fn payload_path(target: ReleaseTarget) -> String {
 
 fn proof_path(target: ReleaseTarget) -> String {
     format!("targets/{target}/proof.json")
+}
+
+fn app_path(file: &str) -> String {
+    format!("app/{file}")
 }
 
 /// Why an external release package was refused.
@@ -614,6 +708,7 @@ mod tests {
         notes_identity: Digest,
         notes: Vec<u8>,
         manifest: Vec<u8>,
+        app: Vec<(String, Vec<u8>)>,
         executables: Vec<Vec<u8>>,
         payloads: Vec<Vec<u8>>,
         proofs: Vec<Vec<u8>>,
@@ -626,6 +721,10 @@ mod tests {
                 self.notes_identity.clone(),
                 &self.notes,
                 &self.manifest,
+                self.app
+                    .iter()
+                    .map(|(file, bytes)| PackageAppInput::new(file, bytes))
+                    .collect(),
                 TARGETS
                     .into_iter()
                     .enumerate()
@@ -648,7 +747,7 @@ mod tests {
         let index = build_package_index(fixture.input()).expect("fixture index builds");
         let tree = build_package(fixture.input()).expect("fixture package builds");
         assert_eq!(index, *tree.package());
-        assert_eq!(tree.members().len(), 9);
+        assert_eq!(tree.members().len(), 17);
         assert!(
             tree.members()
                 .windows(2)
@@ -697,6 +796,16 @@ mod tests {
                 ..
             })
         ));
+
+        let mut app = fixture();
+        app.app[0].1.push(0);
+        assert!(matches!(
+            build_package(app.input()),
+            Err(PackageError::Binding {
+                field: "Canvas asset",
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -704,8 +813,11 @@ mod tests {
         let tree = build_package(fixture().input()).expect("fixture package");
 
         let mut missing = tree.members.clone();
-        missing.pop();
-        assert!(admit_package_tree(&missing).is_err());
+        missing.retain(|member| member.path() != "app/style.css");
+        assert_eq!(
+            admit_package_tree(&missing),
+            Err(PackageError::Missing("app/style.css".to_owned()))
+        );
 
         let mut extra = tree.members.clone();
         extra.push(member("extra", DATA_MODE, b"extra", Domain::DistArtifact));
@@ -758,8 +870,12 @@ mod tests {
 
     fn fixture() -> Fixture {
         let source = digest(Domain::DistSourceCommit, b"source");
-        let app = digest(Domain::DistArtifact, b"app");
-        let embedded = digest(Domain::DistArtifact, b"embedded");
+        let app_identity = digest(Domain::DistArtifact, b"app generation");
+        let mut app = CANVAS_APP_FILES
+            .iter()
+            .map(|file| ((*file).to_owned(), file.as_bytes().to_vec()))
+            .collect::<Vec<_>>();
+        app.sort_by(|left, right| left.0.cmp(&right.0));
         let battery = digest(Domain::ProofBattery, b"battery");
         let environment = ProofEnvironment::native(digest(Domain::ProofNativeRunner, b"runner"));
         let mut executables = Vec::new();
@@ -776,32 +892,27 @@ mod tests {
                 cargo_mutants: "cargo-mutants 27.1.0".to_owned(),
                 proof_container: format!("registry.example/proof@sha256:{}", "1".repeat(64)),
             };
-            let inventory = vec![
-                InventoryEntry {
-                    path: "app/app.wasm".to_owned(),
+            let mut inventory = app
+                .iter()
+                .map(|(file, bytes)| InventoryEntry {
+                    path: format!("app/{file}"),
                     mode: DATA_MODE,
-                    bytes: 3,
-                    digest: app.clone(),
-                },
-                InventoryEntry {
-                    path: "bin/spice".to_owned(),
-                    mode: EXECUTABLE_MODE,
-                    bytes: executable.len() as u64,
-                    digest: native.clone(),
-                },
-                InventoryEntry {
-                    path: "embed/app.bin".to_owned(),
-                    mode: DATA_MODE,
-                    bytes: 8,
-                    digest: embedded.clone(),
-                },
-            ];
+                    bytes: bytes.len() as u64,
+                    digest: Digest::compute(Domain::DistArtifact, bytes),
+                })
+                .collect::<Vec<_>>();
+            inventory.push(InventoryEntry {
+                path: "bin/spice".to_owned(),
+                mode: EXECUTABLE_MODE,
+                bytes: executable.len() as u64,
+                digest: native.clone(),
+            });
+            inventory.sort_by(|left, right| left.path.cmp(&right.path));
             let payload = TargetPayload {
                 version: TARGET_PAYLOAD_VERSION,
                 target,
                 source: source.clone(),
-                app: app.clone(),
-                embedded_app: embedded.clone(),
+                app: app_identity.clone(),
                 native: native.clone(),
                 pins_digest: Digest::compute(Domain::DistPins, &wire::encode(&pins).expect("pins")),
                 inventory_digest: Digest::compute(
@@ -848,6 +959,7 @@ mod tests {
             notes_identity: digest(Domain::DistReleaseNotes, b"notes evidence"),
             notes: b"Curated release notes\n".to_vec(),
             manifest: wire::encode(&manifest).expect("manifest"),
+            app,
             executables,
             payloads,
             proofs,

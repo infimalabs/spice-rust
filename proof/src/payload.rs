@@ -4,27 +4,10 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-use wire::manifest::{InventoryEntry, ProofImage, TargetPayload};
+use wire::manifest::{CANVAS_APP_FILES, InventoryEntry, ProofImage, TargetPayload};
 use wire::{Digest, Domain};
 
-const PAYLOAD_VERSION: u16 = 1;
-const ARTIFACTS: [Artifact; 3] = [
-    Artifact {
-        path: "app/app.wasm",
-        mode: 0o644,
-        digest: DigestField::App,
-    },
-    Artifact {
-        path: "bin/spice",
-        mode: 0o755,
-        digest: DigestField::Native,
-    },
-    Artifact {
-        path: "embed/app.bin",
-        mode: 0o644,
-        digest: DigestField::EmbeddedApp,
-    },
-];
+const PAYLOAD_VERSION: u16 = wire::manifest::TARGET_PAYLOAD_VERSION;
 
 /// A canonical, internally coherent target payload admitted for proof work.
 ///
@@ -56,7 +39,7 @@ impl AdmittedPayload {
 ///
 /// Refuses malformed or noncanonical bytes, a stale schema, an unpinned proof
 /// environment, inconsistent subordinate digests, or any inventory other than
-/// the three canonical artifacts in their exact order, modes, and identities.
+/// the complete Canvas generation and native executable in exact order and mode.
 pub fn admit(bytes: &[u8]) -> Result<AdmittedPayload, PayloadError> {
     let payload: TargetPayload =
         wire::decode(bytes).map_err(|source| PayloadError::Decode(source.to_string()))?;
@@ -94,6 +77,7 @@ pub fn admit(bytes: &[u8]) -> Result<AdmittedPayload, PayloadError> {
 }
 
 fn verify_inventory(payload: &TargetPayload) -> Result<(), PayloadError> {
+    let artifacts = expected_artifacts();
     let mut paths = BTreeSet::new();
     for entry in &payload.inventory {
         if !paths.insert(entry.path.as_str()) {
@@ -101,24 +85,24 @@ fn verify_inventory(payload: &TargetPayload) -> Result<(), PayloadError> {
         }
     }
 
-    for artifact in ARTIFACTS {
-        if !paths.contains(artifact.path) {
-            return Err(PayloadError::MissingArtifact(artifact.path));
+    for artifact in &artifacts {
+        if !paths.contains(artifact.path.as_str()) {
+            return Err(PayloadError::MissingArtifact(artifact.path.clone()));
         }
     }
     if let Some(entry) = payload
         .inventory
         .iter()
-        .find(|entry| !ARTIFACTS.iter().any(|artifact| artifact.path == entry.path))
+        .find(|entry| !artifacts.iter().any(|artifact| artifact.path == entry.path))
     {
         return Err(PayloadError::ExtraArtifact(entry.path.clone()));
     }
 
-    for (index, (entry, artifact)) in payload.inventory.iter().zip(ARTIFACTS).enumerate() {
+    for (index, (entry, artifact)) in payload.inventory.iter().zip(&artifacts).enumerate() {
         if entry.path != artifact.path {
             return Err(PayloadError::ReorderedArtifact {
                 index,
-                expected: artifact.path,
+                expected: artifact.path.clone(),
                 observed: entry.path.clone(),
             });
         }
@@ -130,41 +114,57 @@ fn verify_inventory(payload: &TargetPayload) -> Result<(), PayloadError> {
 fn verify_artifact(
     payload: &TargetPayload,
     entry: &InventoryEntry,
-    artifact: Artifact,
+    artifact: &Artifact,
 ) -> Result<(), PayloadError> {
     if entry.mode != artifact.mode {
         return Err(PayloadError::ArtifactMode {
-            path: artifact.path,
+            path: artifact.path.clone(),
             expected: artifact.mode,
             observed: entry.mode,
         });
     }
-    if entry.digest != *artifact.digest.from(payload) {
-        return Err(PayloadError::ArtifactDigest(artifact.path));
+    if artifact
+        .digest
+        .is_some_and(|field| entry.digest != *field.from(payload))
+    {
+        return Err(PayloadError::ArtifactDigest(artifact.path.clone()));
     }
     Ok(())
 }
 
-#[derive(Clone, Copy)]
+fn expected_artifacts() -> Vec<Artifact> {
+    let mut artifacts = CANVAS_APP_FILES
+        .iter()
+        .map(|file| Artifact {
+            path: format!("app/{file}"),
+            mode: 0o644,
+            digest: None,
+        })
+        .collect::<Vec<_>>();
+    artifacts.push(Artifact {
+        path: "bin/spice".to_owned(),
+        mode: 0o755,
+        digest: Some(DigestField::Native),
+    });
+    artifacts.sort_by(|left, right| left.path.cmp(&right.path));
+    artifacts
+}
+
 struct Artifact {
-    path: &'static str,
+    path: String,
     mode: u32,
-    digest: DigestField,
+    digest: Option<DigestField>,
 }
 
 #[derive(Clone, Copy)]
 enum DigestField {
-    App,
     Native,
-    EmbeddedApp,
 }
 
 impl DigestField {
     const fn from(self, payload: &TargetPayload) -> &Digest {
         match self {
-            Self::App => &payload.app,
             Self::Native => &payload.native,
-            Self::EmbeddedApp => &payload.embedded_app,
         }
     }
 }
@@ -187,7 +187,7 @@ pub enum PayloadError {
     /// The declared inventory digest disagrees with the inventory document.
     InventoryDigest,
     /// One canonical artifact is absent.
-    MissingArtifact(&'static str),
+    MissingArtifact(String),
     /// An artifact outside the canonical inventory is present.
     ExtraArtifact(String),
     /// One artifact path occurs more than once.
@@ -197,21 +197,21 @@ pub enum PayloadError {
         /// Zero-based inventory position.
         index: usize,
         /// Canonical path required at that position.
-        expected: &'static str,
+        expected: String,
         /// Path observed at that position.
         observed: String,
     },
     /// One canonical artifact has the wrong published mode.
     ArtifactMode {
         /// Canonical artifact path.
-        path: &'static str,
+        path: String,
         /// Required mode.
         expected: u32,
         /// Declared mode.
         observed: u32,
     },
     /// One inventory digest disagrees with the payload field it names.
-    ArtifactDigest(&'static str),
+    ArtifactDigest(String),
 }
 
 impl fmt::Display for PayloadError {
@@ -313,8 +313,8 @@ mod tests {
         assert_refuses_before_proof(&noncanonical, PayloadError::NonCanonical);
 
         let mut stale = payload();
-        stale.version = 2;
-        assert_refuses_before_proof(&encode(&stale), PayloadError::Version(2));
+        stale.version = 1;
+        assert_refuses_before_proof(&encode(&stale), PayloadError::Version(1));
 
         let mut unpinned = payload();
         unpinned.pins.proof_container = "registry.example/proof:latest".to_owned();
@@ -342,7 +342,7 @@ mod tests {
         refresh_inventory(&mut missing);
         assert_refuses_before_proof(
             &encode(&missing),
-            PayloadError::MissingArtifact("app/app.wasm"),
+            PayloadError::MissingArtifact("app/app.module".to_owned()),
         );
 
         let mut extra = payload();
@@ -363,7 +363,7 @@ mod tests {
         refresh_inventory(&mut duplicate);
         assert_refuses_before_proof(
             &encode(&duplicate),
-            PayloadError::DuplicateArtifact("app/app.wasm".to_owned()),
+            PayloadError::DuplicateArtifact("app/app.module".to_owned()),
         );
 
         let mut reordered = payload();
@@ -373,43 +373,35 @@ mod tests {
             &encode(&reordered),
             PayloadError::ReorderedArtifact {
                 index: 0,
-                expected: "app/app.wasm",
-                observed: "bin/spice".to_owned(),
+                expected: "app/app.module".to_owned(),
+                observed: "app/app_bg.wasm".to_owned(),
             },
         );
     }
 
     #[test]
-    fn every_canonical_path_has_one_mode_and_one_named_digest() {
-        for (index, path, expected) in [
-            (0, "app/app.wasm", 0o644),
-            (1, "bin/spice", 0o755),
-            (2, "embed/app.bin", 0o644),
-        ] {
+    fn every_canonical_path_has_one_mode_and_the_native_digest_is_named() {
+        for (index, entry) in payload().inventory.into_iter().enumerate() {
+            let path = entry.path;
+            let expected = if path == "bin/spice" { 0o755 } else { 0o644 };
             let mut wrong_mode = payload();
             wrong_mode.inventory[index].mode = 0;
             refresh_inventory(&mut wrong_mode);
             assert_refuses_before_proof(
                 &encode(&wrong_mode),
                 PayloadError::ArtifactMode {
-                    path,
+                    path: path.clone(),
                     expected,
                     observed: 0,
                 },
             );
-
-            let mut wrong_digest = payload();
-            match index {
-                0 => wrong_digest.app = Digest::compute(Domain::DistArtifact, b"other app"),
-                1 => wrong_digest.native = Digest::compute(Domain::DistArtifact, b"other native"),
-                2 => {
-                    wrong_digest.embedded_app =
-                        Digest::compute(Domain::DistArtifact, b"other embedded")
-                }
-                _ => unreachable!("fixture has exactly three artifacts"),
-            }
-            assert_refuses_before_proof(&encode(&wrong_digest), PayloadError::ArtifactDigest(path));
         }
+        let mut wrong_native = payload();
+        wrong_native.native = Digest::compute(Domain::DistArtifact, b"other native");
+        assert_refuses_before_proof(
+            &encode(&wrong_native),
+            PayloadError::ArtifactDigest("bin/spice".to_owned()),
+        );
     }
 
     fn payload() -> TargetPayload {
@@ -420,35 +412,29 @@ mod tests {
             cargo_mutants: "cargo-mutants 27.1.0".to_owned(),
             proof_container: format!("registry.example/proof@sha256:{}", "4".repeat(64)),
         };
-        let app = Digest::compute(Domain::DistArtifact, b"app");
+        let app = Digest::compute(Domain::DistArtifact, b"app generation");
         let native = Digest::compute(Domain::DistArtifact, b"native");
-        let embedded = Digest::compute(Domain::DistArtifact, b"embedded");
-        let inventory = vec![
-            InventoryEntry {
-                path: "app/app.wasm".to_owned(),
+        let mut inventory = wire::manifest::CANVAS_APP_FILES
+            .iter()
+            .map(|file| InventoryEntry {
+                path: format!("app/{file}"),
                 mode: 0o644,
-                bytes: 3,
-                digest: app.clone(),
-            },
-            InventoryEntry {
-                path: "bin/spice".to_owned(),
-                mode: 0o755,
-                bytes: 6,
-                digest: native.clone(),
-            },
-            InventoryEntry {
-                path: "embed/app.bin".to_owned(),
-                mode: 0o644,
-                bytes: 8,
-                digest: embedded.clone(),
-            },
-        ];
+                bytes: file.len() as u64,
+                digest: Digest::compute(Domain::DistArtifact, file.as_bytes()),
+            })
+            .collect::<Vec<_>>();
+        inventory.push(InventoryEntry {
+            path: "bin/spice".to_owned(),
+            mode: 0o755,
+            bytes: 6,
+            digest: native.clone(),
+        });
+        inventory.sort_by(|left, right| left.path.cmp(&right.path));
         TargetPayload {
-            version: 1,
+            version: wire::manifest::TARGET_PAYLOAD_VERSION,
             target: ReleaseTarget::X86_64UnknownLinuxMusl,
             source: Digest::compute(Domain::DistArtifact, b"source"),
             app,
-            embedded_app: embedded,
             native,
             pins_digest: Digest::compute(
                 Domain::DistPins,

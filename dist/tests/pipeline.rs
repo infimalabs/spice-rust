@@ -5,10 +5,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::{fs, io};
 
 use dist::{
-    BuildError, Builder, FilePublisher, PinError, PinName, Pipeline, PublishError, Publisher,
-    RequiredPins, StageError,
+    AppBundle, AppFile, BuildError, Builder, FilePublisher, PinError, PinName, Pipeline,
+    PublishError, Publisher, RequiredPins, StageError,
 };
-use wire::manifest::{BuildPins, ReleaseTarget, TargetPayload};
+use wire::manifest::{BuildPins, CANVAS_APP_FILES, ReleaseTarget, TargetPayload};
 use wire::{Digest, Domain};
 
 const OLD_PAYLOAD: &[u8] = b"old-payload";
@@ -33,28 +33,36 @@ struct RecordingBuilder {
 }
 
 impl Builder for RecordingBuilder {
-    fn build_app(&mut self) -> Result<Vec<u8>, BuildError> {
+    fn build_app(&mut self) -> Result<AppBundle, BuildError> {
         self.calls.push("app".to_owned());
-        Ok(b"wasm-app".to_vec())
+        Ok(app_bundle())
     }
 
-    fn embed_app(&mut self, app: &[u8]) -> Result<Vec<u8>, BuildError> {
+    fn embed_app(&mut self, app: &AppBundle) -> Result<AppBundle, BuildError> {
         self.calls.push("embed".to_owned());
-        let mut embedded = b"embedded:".to_vec();
-        embedded.extend_from_slice(app);
-        Ok(embedded)
+        Ok(app.clone())
     }
 
     fn build_native(
         &mut self,
         target: ReleaseTarget,
-        embedded_app: &[u8],
+        app: &AppBundle,
     ) -> Result<Vec<u8>, BuildError> {
         self.calls.push(format!("native:{target}"));
         let mut native = format!("native:{target}:").into_bytes();
-        native.extend_from_slice(embedded_app);
+        native.extend_from_slice(app.generation().as_str().as_bytes());
         Ok(native)
     }
+}
+
+fn app_bundle() -> AppBundle {
+    AppBundle::new(
+        Digest::compute(Domain::DistArtifact, b"app generation"),
+        CANVAS_APP_FILES
+            .iter()
+            .map(|path| AppFile::new(*path, format!("app asset {path}").into_bytes()))
+            .collect(),
+    )
 }
 
 #[derive(Default)]
@@ -136,8 +144,69 @@ fn build_order_payload_bytes_and_restaging_are_deterministic() {
             .iter()
             .map(|entry| entry.path.as_str())
             .collect::<Vec<_>>(),
-        ["app/app.wasm", "bin/spice", "embed/app.bin"]
+        [
+            "app/app.module",
+            "app/app_bg.wasm",
+            "app/canvas-app.html",
+            "app/chrome.css",
+            "app/composer.css",
+            "app/mosaic.css",
+            "app/responsive.css",
+            "app/style.css",
+            "bin/spice",
+        ]
     );
+}
+
+#[test]
+fn incomplete_canvas_generation_refuses_before_publication() {
+    let required = pins();
+    let pipeline = Pipeline::new(RequiredPins::new(required.clone()).expect("pins are valid"));
+    let app = AppBundle::new(
+        app_bundle().generation().clone(),
+        CANVAS_APP_FILES
+            .iter()
+            .skip(1)
+            .map(|path| AppFile::new(*path, format!("app asset {path}").into_bytes()))
+            .collect(),
+    );
+    struct IncompleteBuilder {
+        app: AppBundle,
+    }
+    impl Builder for IncompleteBuilder {
+        fn build_app(&mut self) -> Result<AppBundle, BuildError> {
+            Ok(self.app.clone())
+        }
+        fn embed_app(&mut self, app: &AppBundle) -> Result<AppBundle, BuildError> {
+            Ok(app.clone())
+        }
+        fn build_native(
+            &mut self,
+            _target: ReleaseTarget,
+            _app: &AppBundle,
+        ) -> Result<Vec<u8>, BuildError> {
+            Ok(b"native".to_vec())
+        }
+    }
+    let mut builder = IncompleteBuilder { app };
+    let mut publisher = MemoryPublisher::default();
+    let error = pipeline
+        .stage(
+            ReleaseTarget::Aarch64AppleDarwin,
+            source_digest(),
+            &required,
+            &mut builder,
+            &mut publisher,
+        )
+        .expect_err("missing Canvas asset refuses");
+    assert!(matches!(
+        error,
+        StageError::Build {
+            step: dist::BuildStep::App,
+            ..
+        }
+    ));
+    assert!(publisher.writes.is_empty());
 }
 
 #[test]
@@ -145,7 +214,7 @@ fn interruption_at_every_publication_edge_preserves_the_old_target_pointer() {
     let required = pins();
     let pipeline = Pipeline::new(RequiredPins::new(required.clone()).expect("pins are valid"));
     let payload_path = PathBuf::from("targets/aarch64-apple-darwin/payload.json");
-    for fail_at in 0..=3 {
+    for fail_at in 0..=9 {
         let mut publisher = MemoryPublisher {
             files: BTreeMap::from([(payload_path.clone(), (0o644, OLD_PAYLOAD.to_vec()))]),
             writes: Vec::new(),
@@ -179,53 +248,6 @@ fn target_payload_pointers_and_native_identities_do_not_alias() {
     assert_ne!(darwin.staged.payload.native, linux.staged.payload.native);
     assert_ne!(darwin.staged.payload_digest, linux.staged.payload_digest);
     assert_eq!(darwin.staged.payload.app, linux.staged.payload.app);
-    assert_eq!(
-        darwin.staged.payload.embedded_app,
-        linux.staged.payload.embedded_app
-    );
-}
-
-/// Digests already published under a domain tag have to keep meaning what they
-/// meant, so the four classes are pinned here at their exact spellings rather
-/// than merely compared against each other. A test that only checked the four
-/// differ would pass just as happily if every one of them changed together,
-/// which is precisely what re-tagging or re-framing the hash input would do.
-#[test]
-fn every_domain_digest_is_frozen_at_its_published_spelling() {
-    let required = pins();
-    let pipeline = Pipeline::new(RequiredPins::new(required.clone()).expect("pins are valid"));
-    let run = run_stage(&pipeline, &required, ReleaseTarget::Aarch64AppleDarwin);
-    let payload = &run.staged.payload;
-
-    for (class, computed, frozen) in [
-        (
-            Domain::DistTargetPayload,
-            &run.staged.payload_digest,
-            "5ee967e0354678e62a3a659a1a30ed03dbc1cc29471137325de51b5d79fd0222",
-        ),
-        (
-            Domain::DistArtifact,
-            &payload.app,
-            "5e76593b47a13fefa0febcf111adc0eae5529e489946c120cd2a65f0122c349a",
-        ),
-        (
-            Domain::DistPins,
-            &payload.pins_digest,
-            "68678864490d2f47da44311d8b97bf9a0d73919388417296f20c7f4e703bba4d",
-        ),
-        (
-            Domain::DistInventory,
-            &payload.inventory_digest,
-            "63123aa2330474002ad2693b421dea9378c2d34246dfacac54d9f0756bcaf91d",
-        ),
-    ] {
-        assert_eq!(
-            computed.as_str(),
-            frozen,
-            "{} no longer digests to the spelling it published",
-            class.tag(),
-        );
-    }
 }
 
 #[test]

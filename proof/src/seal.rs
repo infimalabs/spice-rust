@@ -629,35 +629,29 @@ mod tests {
             cargo_mutants: "cargo-mutants 27.1.0".to_owned(),
             proof_container: format!("registry.example/proof@sha256:{}", "4".repeat(64)),
         };
-        let app = Digest::compute(Domain::DistArtifact, b"app");
-        let embedded = Digest::compute(Domain::DistArtifact, b"embedded");
+        let app = Digest::compute(Domain::DistArtifact, b"app generation");
         let native = Digest::compute(Domain::DistArtifact, b"native");
-        let inventory = vec![
-            InventoryEntry {
-                path: "app/app.wasm".to_owned(),
+        let mut inventory = wire::manifest::CANVAS_APP_FILES
+            .iter()
+            .map(|file| InventoryEntry {
+                path: format!("app/{file}"),
                 mode: 0o644,
-                bytes: 3,
-                digest: app.clone(),
-            },
-            InventoryEntry {
-                path: "bin/spice".to_owned(),
-                mode: 0o755,
-                bytes: 6,
-                digest: native.clone(),
-            },
-            InventoryEntry {
-                path: "embed/app.bin".to_owned(),
-                mode: 0o644,
-                bytes: 8,
-                digest: embedded.clone(),
-            },
-        ];
+                bytes: file.len() as u64,
+                digest: Digest::compute(Domain::DistArtifact, file.as_bytes()),
+            })
+            .collect::<Vec<_>>();
+        inventory.push(InventoryEntry {
+            path: "bin/spice".to_owned(),
+            mode: 0o755,
+            bytes: 6,
+            digest: native.clone(),
+        });
+        inventory.sort_by(|left, right| left.path.cmp(&right.path));
         TargetPayload {
-            version: 1,
+            version: wire::manifest::TARGET_PAYLOAD_VERSION,
             target,
             source: Digest::compute(Domain::DistArtifact, b"source"),
             app,
-            embedded_app: embedded,
             native,
             pins_digest: Digest::compute(
                 Domain::DistPins,

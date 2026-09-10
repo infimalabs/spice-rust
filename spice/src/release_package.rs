@@ -8,7 +8,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use sha1::{Digest as _, Sha1};
-use wire::manifest::{ProductVersion, ReleaseManifest, ReleaseTarget};
+use wire::manifest::{CANVAS_APP_FILES, ProductVersion, ReleaseManifest, ReleaseTarget};
 use wire::{Digest, Domain};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -39,7 +39,13 @@ struct LoadedTarget {
 
 struct Loaded {
     manifest: Vec<u8>,
+    app: Vec<LoadedApp>,
     targets: Vec<LoadedTarget>,
+}
+
+struct LoadedApp {
+    file: String,
+    bytes: Vec<u8>,
 }
 
 pub(super) fn preview(
@@ -102,6 +108,11 @@ fn package_input<'a>(
     notes_identity: Digest,
     notes: &'a [u8],
 ) -> proof::PackageInput<'a> {
+    let app = loaded
+        .app
+        .iter()
+        .map(|asset| proof::PackageAppInput::new(&asset.file, &asset.bytes))
+        .collect();
     let targets = loaded
         .targets
         .iter()
@@ -114,7 +125,14 @@ fn package_input<'a>(
             )
         })
         .collect();
-    proof::PackageInput::new(version, notes_identity, notes, &loaded.manifest, targets)
+    proof::PackageInput::new(
+        version,
+        notes_identity,
+        notes,
+        &loaded.manifest,
+        app,
+        targets,
+    )
 }
 
 fn load(root: &Path, manifest: &[u8]) -> Result<Loaded, PackageFailure> {
@@ -149,8 +167,38 @@ fn load(root: &Path, manifest: &[u8]) -> Result<Loaded, PackageFailure> {
             proof,
         });
     }
+    let payload: wire::manifest::TargetPayload = wire::decode(
+        &targets
+            .first()
+            .expect("the current release manifest carries two targets")
+            .payload,
+    )
+    .map_err(|error| PackageFailure::Moved(error.to_string()))?;
+    let mut files = CANVAS_APP_FILES.to_vec();
+    files.sort_unstable();
+    let app = files
+        .into_iter()
+        .map(|file| {
+            let path = format!("app/{file}");
+            let entry = payload
+                .inventory
+                .iter()
+                .find(|entry| entry.path == path)
+                .ok_or_else(|| {
+                    PackageFailure::Moved(format!(
+                        "staged target payload has no Canvas asset {path}"
+                    ))
+                })?;
+            let object = stage.join(format!("objects/{}-{:04o}", entry.digest, entry.mode));
+            Ok(LoadedApp {
+                file: file.to_owned(),
+                bytes: read_bound(&object, &format!("staged Canvas asset {file}"))?,
+            })
+        })
+        .collect::<Result<Vec<_>, PackageFailure>>()?;
     Ok(Loaded {
         manifest: manifest.to_vec(),
+        app,
         targets,
     })
 }
@@ -191,6 +239,11 @@ fn member_refs<'a>(loaded: &'a Loaded, notes: &'a [u8], package: &'a [u8]) -> Ve
             bytes: package,
         },
     ];
+    members.extend(loaded.app.iter().map(|asset| Member {
+        path: format!("app/{}", asset.file),
+        mode: 0o644,
+        bytes: &asset.bytes,
+    }));
     for target in &loaded.targets {
         members.extend([
             Member {

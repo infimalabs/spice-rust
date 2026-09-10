@@ -245,12 +245,9 @@ fn both_targets_use_the_fixed_commands_and_real_artifact_bytes() {
         }));
         assert_eq!(
             build.staged.payload.app,
-            Digest::compute(Domain::DistArtifact, TEST_WASM)
+            GENERATION.parse().expect("fixture generation is canonical")
         );
-        assert_eq!(
-            build.staged.payload.embedded_app,
-            Digest::compute(Domain::DistArtifact, TEST_HTML)
-        );
+        assert_complete_app_inventory(&build.staged.payload);
         let native = fs::read(env::current_exe().expect("test executable"))
             .expect("read real compiled executable");
         assert_eq!(
@@ -262,6 +259,27 @@ fn both_targets_use_the_fixed_commands_and_real_artifact_bytes() {
             build.staged.payload_bytes
         );
     }
+}
+
+fn assert_complete_app_inventory(payload: &wire::manifest::TargetPayload) {
+    assert_eq!(
+        payload
+            .inventory
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "app/app.module",
+            "app/app_bg.wasm",
+            "app/canvas-app.html",
+            "app/chrome.css",
+            "app/composer.css",
+            "app/mosaic.css",
+            "app/responsive.css",
+            "app/style.css",
+            "bin/spice",
+        ],
+    );
 }
 
 fn release_environment(cargo_target_dir: Option<&str>) -> ReleaseEnvironment {
