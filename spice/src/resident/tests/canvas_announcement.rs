@@ -765,7 +765,7 @@ fn assert_direct_taste_reminder(bus: &Bus, paths: &RuntimePaths, lane: Canonical
     assert!(
         fs::read_to_string(steer::inbox::path(&paths.inbox, lane))
             .expect("inbox rendering")
-            .contains("[TASTE] polling: Wait for a terminal event.")
+            .contains("[TASTE] Wait for a terminal event.")
     );
 }
 

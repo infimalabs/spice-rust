@@ -111,17 +111,13 @@ fn bag_identity_covers_ordered_names_triggers_and_vendors() {
 }
 
 #[test]
-fn the_reserved_marker_classifies_echo_before_matching_and_leads_rendering() {
-    let taste: wire::Name = "fallbacks".parse().expect("taste name");
+fn the_reserved_marker_classifies_echo_before_matching_and_preserves_guidance() {
     let message = "Keep one deterministic path.";
-    let rendered = reminder_text(&taste, message);
+    let rendered = reminder_text(message);
 
+    assert_eq!(rendered, "[TASTE] Keep one deterministic path.");
+    assert_eq!(rendered.strip_prefix("[TASTE] "), Some(message));
     assert!(rendered.starts_with(REMINDER_MARKER));
-    assert!(rendered.contains(taste.as_str()));
-    assert!(
-        rendered.ends_with(message),
-        "configured content is unchanged"
-    );
     assert!(is_reminder_echo(&rendered));
     assert!(is_reminder_echo(&format!("> quoted {rendered}")));
     assert!(!is_reminder_echo("ordinary prose about taste"));

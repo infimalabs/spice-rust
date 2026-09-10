@@ -334,7 +334,7 @@ fn an_older_repair_replays_when_new_authority_lands_during_publication() {
     );
     let rendered = fs::read_to_string(steer::inbox::path(&fixture.paths.inbox, fixture.lane))
         .expect("current rendering exists");
-    assert!(rendered.contains("[TASTE] polling: Wait."));
+    assert!(rendered.contains("[TASTE] Wait."));
     assert!(rendered.contains("concurrent command"));
     fixture.finish();
 }
@@ -380,7 +380,7 @@ fn unrelated_journal_movement_does_not_starve_a_lane_fold() {
     );
     let rendered = fs::read_to_string(steer::inbox::path(&fixture.paths.inbox, fixture.lane))
         .expect("selected lane rendering exists");
-    assert!(rendered.contains("[TASTE] polling: Wait."));
+    assert!(rendered.contains("[TASTE] Wait."));
     assert!(!rendered.contains("concurrent command"));
     fixture.finish();
 }
