@@ -94,14 +94,7 @@ impl CanvasActionPlan {
             CanvasActionError::new(format!("Canvas action registry is invalid: {error}"))
         })?;
         validate_registry(&decoded)?;
-        let build = build::authority(
-            root,
-            paths,
-            changed_paths,
-            environment,
-            cargo,
-            external_source,
-        );
+        let build = build::authority(root, paths, environment, cargo, external_source);
         let shard_inputs = selected_inputs(paths, changed_paths, shard_input);
         if build.input_paths.is_empty() || shard_inputs.is_empty() {
             return Err(CanvasActionError::new(

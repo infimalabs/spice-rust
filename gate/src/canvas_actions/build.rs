@@ -20,34 +20,23 @@ pub(super) struct BuildAuthority {
 pub(super) fn authority(
     root: &Path,
     selected_paths: &[String],
-    changed_paths: &[String],
     environment: &Environment,
     cargo: &OsStr,
     external_source: Option<&CargoExternalSourceAuthority>,
 ) -> BuildAuthority {
     let selected = selected_paths.iter().cloned().collect::<BTreeSet<_>>();
     let mut authority = Authority::default();
-    authority.extend(
-        selected_paths
-            .iter()
-            .chain(changed_paths)
-            .filter(|path| explicit_build_path(path))
-            .cloned(),
-    );
     let launchers = launcher_inputs(root, &selected, &mut authority.reasons);
     authority.extend(launchers);
     let app = app_inputs(root, &selected, &mut authority.reasons);
     authority.extend(app);
 
-    let changed = changed_paths
-        .iter()
-        .filter(|path| !path.starts_with("app/browser/"))
-        .cloned()
-        .collect::<Vec<_>>();
     match cargo_package_input_closure_at(
         root,
         selected_paths,
-        &changed,
+        // The Canvas build owns fixed package roots. Changed-path selection
+        // cannot add execution inputs beyond their resolved Cargo closure.
+        &[],
         environment,
         cargo,
         external_source,
@@ -95,10 +84,6 @@ impl Authority {
                 .then(|| self.reasons.into_iter().collect::<Vec<_>>().join("; ")),
         }
     }
-}
-
-fn explicit_build_path(path: &str) -> bool {
-    !path.starts_with("app/browser/")
 }
 
 fn canvas_cargo_path(path: &str) -> bool {
@@ -447,7 +432,6 @@ mod tests {
                 "app/browser/nested.js",
             ]
         );
-        assert!(!explicit_build_path("app/browser/peer.mjs"));
     }
 
     #[test]
@@ -604,7 +588,6 @@ mod tests {
         let build = authority(
             &fixture.0,
             &selected,
-            &["app/browser/scenario.mjs".to_owned()],
             &environment,
             OsStr::new("cargo"),
             None,
@@ -673,12 +656,29 @@ mod tests {
             "export const SCENARIO = true;\n",
         )
         .expect("restore browser-only source");
+        test_repository::stage(&fixture.0, &["app/browser/scenario.mjs"]);
+        fs::write(
+            fixture.0.join("spice-rust.toml"),
+            "[taste.fixture]\nwords = [\"changed\"]\nmessage = \"Changed.\"\n",
+        )
+        .expect("change unrelated tracked policy");
+        test_repository::stage(&fixture.0, &["spice-rust.toml"]);
+        let policy_only = canvas_identities(&fixture.0, Selector::staged())
+            .expect("derive unrelated-policy Canvas identities");
+        assert_eq!(
+            policy_only, original,
+            "selection-only policy bytes outside the build closure move no Canvas identity",
+        );
+
+        fs::write(
+            fixture.0.join("spice-rust.toml"),
+            "[taste.fixture]\nwords = [\"fixture\"]\nmessage = \"Fixture.\"\n",
+        )
+        .expect("restore unrelated tracked policy");
+        test_repository::stage(&fixture.0, &["spice-rust.toml"]);
         fs::write(fixture.0.join("app/browser/reached.txt"), "changed text\n")
             .expect("change Cargo-reached browser input");
-        test_repository::stage(
-            &fixture.0,
-            &["app/browser/scenario.mjs", "app/browser/reached.txt"],
-        );
+        test_repository::stage(&fixture.0, &["app/browser/reached.txt"]);
         let changed = canvas_identities(&fixture.0, Selector::staged())
             .expect("derive changed Canvas identities");
         assert_ne!(changed.0, original.0, "content must move the manifest");
@@ -729,6 +729,10 @@ mod tests {
                         "[[package]]\nname = \"app\"\nversion = \"0.0.0\"\n\n",
                         "[[package]]\nname = \"xtask\"\nversion = \"0.0.0\"\n",
                     ),
+                ),
+                (
+                    "spice-rust.toml",
+                    "[taste.fixture]\nwords = [\"fixture\"]\nmessage = \"Fixture.\"\n",
                 ),
                 (
                     "app/Cargo.toml",
@@ -801,7 +805,6 @@ mod tests {
         let build = authority(
             tree.root(),
             tree.paths(),
-            &[],
             &environment,
             OsStr::new("cargo"),
             None,
