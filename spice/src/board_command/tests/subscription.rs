@@ -61,9 +61,10 @@ pub(super) fn selectable_handles(answer: &BoardAnswer, actor: &Actor) -> BTreeSe
     let entries = actor_entries(answer).expect("scoped board entries validate");
     let subscription = allocation_subscription(&answer.residency.body, actor)
         .expect("scoped board has one lineage subscription");
+    let environment = answer.environment();
     entries
         .iter()
-        .filter(|entry| board::selectable_entry(&entries, entry, actor, subscription))
+        .filter(|entry| board::selectable_entry(&entries, entry, actor, subscription, &environment))
         .map(|entry| entry.handle().to_string())
         .collect()
 }

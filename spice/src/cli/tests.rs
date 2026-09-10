@@ -958,4 +958,26 @@ fn contract_syntax_drives_argument_registration() {
     }
 }
 
+#[test]
+fn task_trust_grant_requirement_flags_are_registered() {
+    let parser = command();
+    let digest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    for argv in [
+        vec![
+            "spice",
+            "task",
+            "add",
+            "title",
+            "--requires-trust-grant",
+            digest,
+        ],
+        vec!["spice", "task", "require", "TASK", "--trust-grant", digest],
+    ] {
+        parser
+            .clone()
+            .try_get_matches_from(argv)
+            .expect("trust requirement flag parses");
+    }
+}
+
 mod late;

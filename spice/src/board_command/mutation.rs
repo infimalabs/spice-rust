@@ -4,11 +4,9 @@ mod claim;
 mod gate_findings;
 mod taste_proposal;
 
-pub(super) use claim::claim_win;
 #[cfg(test)]
-pub(super) use claim::{
-    ClaimPlan, Possession, claim_git_boundary, claim_grant, claim_plan, commit_claim,
-};
+pub(super) use claim::{ClaimPlan, claim_git_boundary, claim_grant, claim_plan, commit_claim};
+pub(super) use claim::{Possession, claim_win};
 pub(super) use gate_findings::gate_findings;
 #[cfg(test)]
 pub(super) use gate_findings::{FindingRow, gate_findings_folded, gate_findings_folded_in_process};

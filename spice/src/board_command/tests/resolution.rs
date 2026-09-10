@@ -60,6 +60,7 @@ fn one_captured_band_drives_board_answer_server_selection_and_guard_replay() {
         subscription,
         available.allocation_band,
         available.recent_cell.as_ref(),
+        &available.environment(),
     )
     .expect("configured client preselection has work");
     assert_eq!(selected.entry().handle(), &lower);
@@ -303,7 +304,7 @@ fn assert_review_pending(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) -> 
         .find(|entry| entry.handle() == task)
         .expect("pending review remains on the board");
     assert!(
-        !board::eligible_entry(&entries, entry, &pending.principal),
+        !board::eligible_entry(&entries, entry, &pending.principal, &pending.environment()),
         "an unresolved correction must block another review claim",
     );
     let facts = bus.fact_snapshot().expect("workflow facts read");
@@ -648,7 +649,7 @@ fn assert_finding_blocks(
             .find(|entry| entry.handle() == task)
             .expect("blocked entry is visible");
         assert!(
-            !board::eligible_entry(&entries, entry, implementer),
+            !board::eligible_entry(&entries, entry, implementer, &blocked.environment()),
             "{reason}"
         );
     }
@@ -675,7 +676,12 @@ fn complete_correction_and_clean(
         .iter()
         .find(|entry| entry.handle() == reviewed)
         .expect("reviewed entry remains visible");
-    assert!(board::eligible_entry(&entries, reviewed_entry, reviewer));
+    assert!(board::eligible_entry(
+        &entries,
+        reviewed_entry,
+        reviewer,
+        &reviewable.environment()
+    ));
     assert_committed(issue(
         bus,
         epoch,
@@ -721,7 +727,8 @@ fn complete_correction_and_clean(
     assert!(board::eligible_entry(
         &entries,
         downstream_entry,
-        implementer
+        implementer,
+        &released.environment(),
     ));
 }
 

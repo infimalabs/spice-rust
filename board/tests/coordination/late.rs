@@ -512,7 +512,9 @@ fn task_subscription_scope_yields_exact_steer_drive_and_drain_sets() {
     let handles = |subscription: &wire::LineageSubscription| {
         entries
             .iter()
-            .filter(|entry| board::selectable_entry(&entries, entry, &actor, subscription))
+            .filter(|entry| {
+                board::selectable_entry(&entries, entry, &actor, subscription, &environment())
+            })
             .map(|entry| entry.handle().to_string())
             .collect::<BTreeSet<_>>()
     };

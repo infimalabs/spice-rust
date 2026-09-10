@@ -29,9 +29,9 @@ pub use config::{Config, NextConfig};
 pub use graph::{Diagram, View};
 pub use inventory::{HiddenInventory, Inventory};
 pub use next::{
-    Selection, capturable_entry, eligible_entry, environment, environment_satisfied,
-    environment_satisfied_by, project_subscription_history, recent_claim_cell, satisfied_tasks,
-    select, selectable_entry, stealable_entry,
+    Selection, capturable_entry, eligible_entry, environment_satisfied,
+    project_subscription_history, recent_claim_cell, satisfied_tasks, select, selectable_entry,
+    stealable_entry,
 };
 pub use overlap::{ClaimOverlap, claim_overlaps};
 pub use phase::{PhaseRefusal, Transition, TransitionKind};
@@ -54,6 +54,7 @@ pub struct Snapshot {
     schema_version: u32,
     cursor: wire::JournalCursor,
     entries: Vec<Entry>,
+    environment: wire::Environment,
 }
 
 impl Snapshot {
@@ -73,6 +74,8 @@ impl Snapshot {
             schema_version,
             cursor,
             entries,
+            environment: wire::Environment::journal_schema(schema_version)
+                .expect("the admitted journal schema is positive"),
         })
     }
 
@@ -82,8 +85,8 @@ impl Snapshot {
         journal: &journal::Journal,
         projects: &ProjectPolicy,
     ) -> Result<Self, SnapshotReadError> {
-        let (cursor, heads) = journal
-            .read(|read| Ok((read.cursor()?, read.task_heads()?)))
+        let (cursor, heads, trust) = journal
+            .read(|read| Ok((read.cursor()?, read.task_heads()?, read.trust_heads()?)))
             .map_err(SnapshotReadError::Journal)?;
         let entries = heads
             .into_iter()
@@ -99,6 +102,9 @@ impl Snapshot {
             schema_version: journal::SCHEMA_VERSION,
             cursor,
             entries,
+            environment: wire::Environment::journal_schema(journal::SCHEMA_VERSION)
+                .expect("the journal schema is positive")
+                .with_trust_heads(trust.into_iter().map(journal::JournalHead::into_body)),
         })
     }
 
@@ -118,6 +124,12 @@ impl Snapshot {
     #[must_use]
     pub fn entries(&self) -> &[Entry] {
         &self.entries
+    }
+
+    /// Environmental authority captured at this snapshot barrier.
+    #[must_use]
+    pub const fn environment(&self) -> &wire::Environment {
+        &self.environment
     }
 }
 

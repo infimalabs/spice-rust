@@ -123,15 +123,15 @@ pub fn select<'a>(
     subscription: &LineageSubscription,
     band: u64,
     recent_cell: Option<&ClaimCell>,
+    environment: &wire::Environment,
 ) -> Option<Selection<'a>> {
     let completed = satisfied_tasks(entries);
     let priorities = effective_priorities(entries);
     let downstream = downstream_weights(entries);
-
     let candidates = entries
         .iter()
         .filter(|entry| selectable(entry, actor, subscription, &completed))
-        .filter(|entry| environment_satisfied(entry))
+        .filter(|entry| environment_satisfied(entry, environment))
         .map(|entry| {
             let effective_priority = priorities
                 .get(entry.born())
@@ -412,43 +412,26 @@ fn unheld(entry: &Entry) -> bool {
         .is_some_and(|claim| claim.disposition == ClaimDisposition::Active)
 }
 
-/// Current typed environment observed by this admitted board build.
-///
-/// [`crate::Snapshot`] admits only [`journal::SCHEMA_VERSION`], so the
-/// compiled schema is also the exact schema of every entry this board can
-/// evaluate. Rebuilding this value on each query makes schema satisfaction a
-/// derived observation rather than task state that needs a wake transition.
-#[must_use]
-pub fn environment() -> wire::Environment {
-    wire::Environment::journal_schema(journal::SCHEMA_VERSION)
-        .expect("the journal schema is a positive integer")
-}
-
 /// Whether every typed environmental requirement on one task is satisfied.
 ///
 /// This is deliberately separate from dependency, workflow, assignment, and
 /// possession eligibility. Every selection surface first applies its ordinary
 /// task rules, then this single derived filter before ranking or admission.
 #[must_use]
-pub fn environment_satisfied(entry: &Entry) -> bool {
-    environment_satisfied_by(entry, &environment())
-}
-
-/// Evaluate one unchanged task against an explicitly observed environment.
-///
-/// This seam proves that environment movement alone can change eligibility;
-/// production callers use [`environment_satisfied`] and its current admitted
-/// journal observation.
-#[must_use]
-pub fn environment_satisfied_by(entry: &Entry, environment: &wire::Environment) -> bool {
+pub fn environment_satisfied(entry: &Entry, environment: &wire::Environment) -> bool {
     entry.statement().requirements.are_satisfied_by(environment)
 }
 
 /// Whether one named entry satisfies the same eligibility law as allocation.
 #[must_use]
-pub fn eligible_entry(entries: &[Entry], entry: &Entry, actor: &Actor) -> bool {
+pub fn eligible_entry(
+    entries: &[Entry],
+    entry: &Entry,
+    actor: &Actor,
+    environment: &wire::Environment,
+) -> bool {
     workable(entry, actor, &satisfied_tasks(entries))
-        && environment_satisfied(entry)
+        && environment_satisfied(entry, environment)
         && unheld(entry)
 }
 
@@ -458,12 +441,17 @@ pub fn eligible_entry(entries: &[Entry], entry: &Entry, actor: &Actor) -> bool {
 /// an explicitly named `.oops` row: a lane may hold it while investigating,
 /// but promotion is still required before dependencies or completion move.
 #[must_use]
-pub fn capturable_entry(entries: &[Entry], entry: &Entry, actor: &Actor) -> bool {
+pub fn capturable_entry(
+    entries: &[Entry],
+    entry: &Entry,
+    actor: &Actor,
+    environment: &wire::Environment,
+) -> bool {
     let completed = satisfied_tasks(entries);
     let public = workable(entry, actor, &completed);
     let oops = entry.project().visibility().hidden_stem() == Some("oops")
         && operational(entry, actor, &completed);
-    (public || oops) && environment_satisfied(entry) && unheld(entry)
+    (public || oops) && environment_satisfied(entry, environment) && unheld(entry)
 }
 
 /// Whether one named entry is eligible through the lineage's current task scope.
@@ -473,9 +461,10 @@ pub fn selectable_entry(
     entry: &Entry,
     actor: &Actor,
     subscription: &LineageSubscription,
+    environment: &wire::Environment,
 ) -> bool {
     selectable(entry, actor, subscription, &satisfied_tasks(entries))
-        && environment_satisfied(entry)
+        && environment_satisfied(entry, environment)
 }
 
 /// Whether one named entry may be taken from whoever currently holds it.
@@ -489,10 +478,15 @@ pub fn selectable_entry(
 /// Every other clause still applies, so a steal can no more take a hidden,
 /// completed, deferred or dependency-blocked task than an allocation can.
 #[must_use]
-pub fn stealable_entry(entries: &[Entry], entry: &Entry, _actor: &Actor) -> bool {
+pub fn stealable_entry(
+    entries: &[Entry],
+    entry: &Entry,
+    _actor: &Actor,
+    environment: &wire::Environment,
+) -> bool {
     !entry.project().visibility().is_hidden()
         && operational_without_assignment(entry, &satisfied_tasks(entries))
-        && environment_satisfied(entry)
+        && environment_satisfied(entry, environment)
 }
 
 /// Birth stamps that no longer block a dependent, stated once for every caller.

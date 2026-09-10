@@ -28,6 +28,11 @@ fn seq(value: u64) -> Seq {
     Seq::new(value).expect("non-zero sequence")
 }
 
+fn environment() -> wire::Environment {
+    wire::Environment::journal_schema(journal::SCHEMA_VERSION)
+        .expect("the compiled journal schema is positive")
+}
+
 fn projects() -> board::ProjectPolicy {
     board::ProjectPolicy::new(
         ["board".to_owned()],
@@ -143,7 +148,7 @@ fn peer_spread_reads_the_whole_board_cell_and_never_excludes_crowded_work() {
     );
     let entries = [crowded.clone(), open.clone(), peer];
 
-    let selected = board::select(&entries, &actor, &all_projects(), 2, None)
+    let selected = board::select(&entries, &actor, &all_projects(), 2, None, &environment())
         .expect("an uncrowded cell is preferred");
     assert_eq!(selected.entry().born(), &stamp("BOARD-z1"));
     assert_eq!(
@@ -157,8 +162,15 @@ fn peer_spread_reads_the_whole_board_cell_and_never_excludes_crowded_work() {
 
     let second_peer = peer_entry("BOARD-peer2", other, ".oops.workflow", "board.beta", "todo");
     let all_crowded = [crowded, open, entries[2].clone(), second_peer];
-    let selected = board::select(&all_crowded, &actor, &all_projects(), 2, None)
-        .expect("crowding remains a preference rather than an exclusion");
+    let selected = board::select(
+        &all_crowded,
+        &actor,
+        &all_projects(),
+        2,
+        None,
+        &environment(),
+    )
+    .expect("crowding remains a preference rather than an exclusion");
     assert_eq!(selected.entry().born(), &stamp("BOARD-a1"));
 }
 
@@ -180,8 +192,15 @@ fn peer_spread_precedes_movement_inside_the_shared_cell_vocabulary() {
     );
     let entries = [local_but_crowded, moved_but_open, peer];
 
-    let selected = board::select(&entries, &actor, &all_projects(), 2, Some(&recent))
-        .expect("peer spread speaks before affinity");
+    let selected = board::select(
+        &entries,
+        &actor,
+        &all_projects(),
+        2,
+        Some(&recent),
+        &environment(),
+    )
+    .expect("peer spread speaks before affinity");
     assert_eq!(selected.entry().born(), &stamp("BOARD-z1"));
 }
 
@@ -197,8 +216,15 @@ fn movement_counts_project_and_phase_separately_from_only_the_recent_cell() {
     let both = placed_entry("BOARD-a1", "board.beta", "review", 1);
 
     let entries = [both.clone(), phase_only.clone(), project_only.clone(), same];
-    let selected = board::select(&entries, &Actor::Spice, &all_projects(), 2, Some(&recent))
-        .expect("cost zero wins");
+    let selected = board::select(
+        &entries,
+        &Actor::Spice,
+        &all_projects(),
+        2,
+        Some(&recent),
+        &environment(),
+    )
+    .expect("cost zero wins");
     assert_eq!(selected.entry().born(), &stamp("BOARD-z0"));
 
     let one_coordinate = [project_only, phase_only.clone()];
@@ -208,13 +234,21 @@ fn movement_counts_project_and_phase_separately_from_only_the_recent_cell() {
         &all_projects(),
         2,
         Some(&recent),
+        &environment(),
     )
     .expect("changing project and changing phase each cost one");
     assert_eq!(selected.entry().born(), &stamp("BOARD-z1"));
 
     let moved = [both, phase_only];
-    let selected = board::select(&moved, &Actor::Spice, &all_projects(), 2, Some(&recent))
-        .expect("one-coordinate movement beats changing both");
+    let selected = board::select(
+        &moved,
+        &Actor::Spice,
+        &all_projects(),
+        2,
+        Some(&recent),
+        &environment(),
+    )
+    .expect("one-coordinate movement beats changing both");
     assert_eq!(selected.entry().born(), &stamp("BOARD-z1"));
 }
 
@@ -229,13 +263,27 @@ fn locality_is_neutral_outside_the_narrow_urgency_band() {
     let far_local = placed_entry("BOARD-a1", "board.local", "todo", 4);
     let entries = [far_local.clone(), oldest_remote.clone(), near_local];
 
-    let selected = board::select(&entries, &Actor::Spice, &all_projects(), 2, Some(&recent))
-        .expect("locality may speak only for the in-band rows");
+    let selected = board::select(
+        &entries,
+        &Actor::Spice,
+        &all_projects(),
+        2,
+        Some(&recent),
+        &environment(),
+    )
+    .expect("locality may speak only for the in-band rows");
     assert_eq!(selected.entry().born(), &stamp("BOARD-y1"));
 
     let outside = [far_local, oldest_remote];
-    let selected = board::select(&outside, &Actor::Spice, &all_projects(), 2, Some(&recent))
-        .expect("the out-of-band local row remains workable but cannot jump age");
+    let selected = board::select(
+        &outside,
+        &Actor::Spice,
+        &all_projects(),
+        2,
+        Some(&recent),
+        &environment(),
+    )
+    .expect("the out-of-band local row remains workable but cannot jump age");
     assert_eq!(selected.entry().born(), &stamp("BOARD-z1"));
 }
 

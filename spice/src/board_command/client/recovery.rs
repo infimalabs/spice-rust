@@ -113,7 +113,7 @@ pub(in crate::board_command) fn recovery_preflight(
         .iter()
         .find(|entry| entry.born() == &heads.statement.body.born)
         .expect("actor entries retain every board task");
-    if !board::eligible_entry(&entries, entry, &board.principal) {
+    if !board::eligible_entry(&entries, entry, &board.principal, &board.environment()) {
         return Err(refusal(
             "git::recovery-task-ineligible",
             Some(task.to_string()),

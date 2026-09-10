@@ -44,8 +44,15 @@ pub(super) fn next_action(
     if learn_created_project {
         learn_project_created_by_principal(&mut residency, &snapshot.answer.principal, post);
     }
-    accepted_transition(&snapshot.answer.principal, &residency, &entries, post)
-        .command(post.handle())
+    let environment = snapshot.answer.environment();
+    accepted_transition(
+        &snapshot.answer.principal,
+        &residency,
+        &entries,
+        post,
+        &environment,
+    )
+    .command(post.handle())
 }
 
 pub(super) fn accepted_transition(
@@ -53,11 +60,12 @@ pub(super) fn accepted_transition(
     residency: &wire::ResidencyHead,
     entries: &[Entry],
     entry: &Entry,
+    environment: &wire::Environment,
 ) -> NextTransition {
     // This check is deliberately first. A completed workflow retains its final
     // phase, but no command may infer another review merely from that phase.
     if entry.workflow().status == "completed" || entry.workflow().completion.is_some() {
-        return allocator_continuation(principal, residency, entries, entry)
+        return allocator_continuation(principal, residency, entries, entry, environment)
             .unwrap_or(NextTransition::Settled);
     }
 
@@ -76,7 +84,8 @@ pub(super) fn accepted_transition(
         return NextTransition::Wake;
     }
 
-    allocator_continuation(principal, residency, entries, entry).unwrap_or(NextTransition::Inert)
+    allocator_continuation(principal, residency, entries, entry, environment)
+        .unwrap_or(NextTransition::Inert)
 }
 
 fn allocator_continuation(
@@ -84,6 +93,7 @@ fn allocator_continuation(
     residency: &wire::ResidencyHead,
     entries: &[Entry],
     entry: &Entry,
+    environment: &wire::Environment,
 ) -> Option<NextTransition> {
     if principal_has_active_claim(entries, principal) {
         return None;
@@ -92,7 +102,7 @@ fn allocator_continuation(
     // A drain lane asks the allocator even when this row is no longer
     // selectable; the typed allocator-empty response closes that drain pass.
     (subscription.policy == wire::intent::LineageLife::Drain
-        || board::selectable_entry(entries, entry, principal, subscription))
+        || board::selectable_entry(entries, entry, principal, subscription, environment))
     .then_some(NextTransition::Next)
 }
 

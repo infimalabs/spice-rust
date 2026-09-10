@@ -40,6 +40,14 @@ fn projects() -> board::ProjectPolicy {
     )
     .expect("fixture project policy")
 }
+fn allocatable(snapshot: &Snapshot) -> bool {
+    board::eligible_entry(
+        snapshot.entries(),
+        &snapshot.entries()[0],
+        &Actor::Lane(uuid(20)),
+        snapshot.environment(),
+    )
+}
 
 /// One non-empty proven boundary, so an opening fact carries something to lose.
 ///
@@ -445,7 +453,7 @@ fn lapse_preserves_lease_and_makes_the_task_allocatable_again() {
     assert_eq!(journal.verify().expect("authority verifies").receipts, 2);
 
     assert!(
-        board::eligible_entry(after.entries(), &after.entries()[0], &Actor::Lane(uuid(20))),
+        allocatable(&after),
         "a lapsed claim leaves the task allocatable again"
     );
 }
@@ -771,11 +779,7 @@ fn duplicate_receipt_rolls_back_and_independent_connections_share_lapse() {
     lapse(&mut second, lapse_request(52, 20)).expect("second connection lapses");
     let shared = Snapshot::read(&first, &projects()).expect("first sees the lapse");
     assert!(
-        board::eligible_entry(
-            shared.entries(),
-            &shared.entries()[0],
-            &Actor::Lane(uuid(20))
-        ),
+        allocatable(&shared),
         "the connection that did not lapse still sees the task allocatable"
     );
     assert_eq!(
@@ -830,11 +834,7 @@ fn a_superseded_expiry_is_refused_and_the_renewed_one_still_lapses() {
     lapse(&mut journal, lapse_request(54, 25)).expect("the renewed expiry lapses");
     let reallocatable = Snapshot::read(&journal, &projects()).expect("heads after the lapse");
     assert!(
-        board::eligible_entry(
-            reallocatable.entries(),
-            &reallocatable.entries()[0],
-            &Actor::Lane(uuid(20))
-        ),
+        allocatable(&reallocatable),
         "a lease lapsed at its renewed expiry leaves the task allocatable again"
     );
 }

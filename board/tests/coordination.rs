@@ -44,6 +44,11 @@ fn seq(value: u64) -> Seq {
     Seq::new(value).expect("non-zero sequence")
 }
 
+fn environment() -> wire::Environment {
+    wire::Environment::journal_schema(journal::SCHEMA_VERSION)
+        .expect("the compiled journal schema is positive")
+}
+
 fn all_projects() -> wire::LineageSubscription {
     wire::LineageSubscription {
         lineage_id: uuid("019fbbde-5105-75a3-a76a-722afde1e408"),
@@ -59,7 +64,7 @@ fn select<'a>(
     subscription: &wire::LineageSubscription,
     band: u64,
 ) -> Option<board::Selection<'a>> {
-    board::select(entries, actor, subscription, band, None)
+    board::select(entries, actor, subscription, band, None, &environment())
 }
 
 fn projects() -> board::ProjectPolicy {
@@ -512,7 +517,12 @@ fn allocator_and_inventory_share_the_stored_visibility_for_every_actor_route() {
             &public_handle
         );
         for hidden in [&entries[0], &entries[1], &entries[3]] {
-            assert!(!board::eligible_entry(&entries, hidden, &actor));
+            assert!(!board::eligible_entry(
+                &entries,
+                hidden,
+                &actor,
+                &environment()
+            ));
         }
     }
 
@@ -568,14 +578,44 @@ fn stealing_waives_possession_alone_and_waits_on_no_lease() {
     };
 
     // lease() runs to 06:10 and is nowhere near spent here.
-    assert!(!board::eligible_entry(&entries, held, &actor));
-    assert!(board::stealable_entry(&entries, held, &actor));
+    assert!(!board::eligible_entry(
+        &entries,
+        held,
+        &actor,
+        &environment()
+    ));
+    assert!(board::stealable_entry(
+        &entries,
+        held,
+        &actor,
+        &environment()
+    ));
 
     // Possession is the only clause a steal waives.
-    assert!(board::eligible_entry(&entries, free, &actor));
-    assert!(board::stealable_entry(&entries, free, &actor));
-    assert!(!board::stealable_entry(&entries, blocked, &actor));
-    assert!(!board::stealable_entry(&entries, sleeping, &actor));
+    assert!(board::eligible_entry(
+        &entries,
+        free,
+        &actor,
+        &environment()
+    ));
+    assert!(board::stealable_entry(
+        &entries,
+        free,
+        &actor,
+        &environment()
+    ));
+    assert!(!board::stealable_entry(
+        &entries,
+        blocked,
+        &actor,
+        &environment()
+    ));
+    assert!(!board::stealable_entry(
+        &entries,
+        sleeping,
+        &actor,
+        &environment()
+    ));
 }
 
 #[test]
@@ -595,16 +635,34 @@ fn environment_is_the_final_eligibility_filter_and_never_ranking_or_task_state()
     let ordinary = entry("BOARD-environment-ready");
     let entries = vec![blocked.clone(), ordinary.clone()];
 
-    assert!(!board::environment_satisfied(&blocked));
-    assert!(!board::eligible_entry(&entries, &blocked, &actor));
-    assert!(!board::capturable_entry(&entries, &blocked, &actor));
+    let observed_before =
+        wire::Environment::journal_schema(current_schema).expect("current schema is positive");
+    assert!(!board::environment_satisfied(&blocked, &observed_before));
+    assert!(!board::eligible_entry(
+        &entries,
+        &blocked,
+        &actor,
+        &observed_before
+    ));
+    assert!(!board::capturable_entry(
+        &entries,
+        &blocked,
+        &actor,
+        &observed_before
+    ));
     assert!(!board::selectable_entry(
         &entries,
         &blocked,
         &actor,
-        &all_projects()
+        &all_projects(),
+        &observed_before
     ));
-    assert!(!board::stealable_entry(&entries, &blocked, &actor));
+    assert!(!board::stealable_entry(
+        &entries,
+        &blocked,
+        &actor,
+        &observed_before
+    ));
     assert_eq!(
         select(&entries, &actor, &all_projects(), 2)
             .expect("ordinary eligible work remains")
@@ -614,16 +672,70 @@ fn environment_is_the_final_eligibility_filter_and_never_ranking_or_task_state()
         "an environment-blocked critical task never enters ranking"
     );
 
-    let observed_before =
-        wire::Environment::journal_schema(current_schema).expect("current schema is positive");
     let observed_after =
         wire::Environment::journal_schema(required_schema).expect("future schema is positive");
-    assert!(!board::environment_satisfied_by(&blocked, &observed_before));
-    assert!(board::environment_satisfied_by(&blocked, &observed_after));
+    assert!(!board::environment_satisfied(&blocked, &observed_before));
+    assert!(board::environment_satisfied(&blocked, &observed_after));
     assert_eq!(
         blocked.statement().requirements.as_slice(),
         entries[0].statement().requirements.as_slice(),
         "observation movement does not mutate task authority"
+    );
+}
+
+#[test]
+fn trust_grant_transition_changes_every_allocator_admission_without_rewriting_the_task() {
+    let actor = Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e408"));
+    let digest: Digest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        .parse()
+        .expect("fixture digest");
+    let mut head = statement("BOARD-trust-blocked");
+    head.requirements = wire::EnvironmentRequirements::one(
+        wire::EnvironmentRequirement::trust_grant(digest.clone()),
+    );
+    let entry = admitted(head, workflow("todo"), None, None).expect("trust-gated entry");
+    let entries = vec![entry.clone()];
+    let observed = |state, worktree: Option<&str>| {
+        environment().with_trust_heads([wire::TrustHead {
+            digest: digest.clone(),
+            state,
+            worktree: worktree.map(str::to_owned),
+        }])
+    };
+    let missing = environment();
+    let pended = observed(wire::TrustState::Pended, Some("/producer/worktree"));
+    let revoked = observed(wire::TrustState::Revoked, Some("/producer/worktree"));
+    let unbound = observed(wire::TrustState::Granted, None);
+    for blocked in [&missing, &pended, &revoked, &unbound] {
+        assert!(!board::environment_satisfied(&entry, blocked));
+        assert!(!board::eligible_entry(&entries, &entry, &actor, blocked));
+        assert!(!board::capturable_entry(&entries, &entry, &actor, blocked));
+        assert!(!board::selectable_entry(
+            &entries,
+            &entry,
+            &actor,
+            &all_projects(),
+            blocked,
+        ));
+        assert!(!board::stealable_entry(&entries, &entry, &actor, blocked));
+    }
+
+    let granted = observed(wire::TrustState::Granted, Some("/different/worktree"));
+    assert!(board::environment_satisfied(&entry, &granted));
+    assert!(board::eligible_entry(&entries, &entry, &actor, &granted));
+    assert!(board::capturable_entry(&entries, &entry, &actor, &granted));
+    assert!(board::selectable_entry(
+        &entries,
+        &entry,
+        &actor,
+        &all_projects(),
+        &granted,
+    ));
+    assert!(board::stealable_entry(&entries, &entry, &actor, &granted));
+    assert_eq!(
+        entry.statement().requirements,
+        entries[0].statement().requirements,
+        "grant movement never rewrites task authority"
     );
 }
 

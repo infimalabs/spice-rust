@@ -4,8 +4,9 @@ use std::thread::{self, ThreadId};
 
 use bus::{Bus, CommitOutcome};
 use journal::crossing::{
-    Actor, CanonicalUuid, Command, CommandKind, EnvironmentRequirements, Origin, Phase, Producer,
-    Seq, TaskHandle, TaskHead, WireVersion, Witness, WorkflowHead, body, intent,
+    Actor, CanonicalUuid, Command, CommandKind, Digest, EnvironmentRequirements, Origin, Phase,
+    Producer, Seq, TaskHandle, TaskHead, TrustHead, TrustState, WireVersion, Witness, WorkflowHead,
+    body, intent,
 };
 use journal::{FactCause, GuardError, Journal, JournalGuard, JournalWrite};
 
@@ -64,6 +65,80 @@ fn one_writer_commits_then_broadcasts_monotone_cursors() {
             .all(|thread| *thread == writer_threads[0])
     );
     drop(writer_threads);
+    bus.shutdown().expect("writer shuts down");
+}
+
+#[test]
+fn trust_only_commits_refresh_immutable_task_snapshots_at_the_commit_cursor() {
+    let bus = Bus::start(Journal::in_memory().expect("in-memory authority"))
+        .expect("dedicated writer starts");
+    let digest: Digest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        .parse()
+        .expect("fixture digest");
+    let mut pended = JournalWrite::new(
+        Actor::Operator,
+        "repo:genesis".parse().expect("origin"),
+        instant("2030-04-12T18:44:09.271Z"),
+        Producer::CommandDoor,
+    );
+    let fact = pended
+        .fact(
+            body::TrustPended {
+                surface: "spice".to_owned(),
+                digest: digest.clone(),
+                worktree: Some("/producer/worktree".to_owned()),
+                previous: None,
+            },
+            FactCause::Root,
+        )
+        .expect("trust pend fact builds");
+    let head_digest = digest.clone();
+    pended.trust_head(fact, move |_| TrustHead {
+        digest: head_digest,
+        state: TrustState::Pended,
+        worktree: Some("/producer/worktree".to_owned()),
+    });
+    let first = committed(bus.commit(pended).expect("trust pend commits"));
+    let before = bus.task_snapshot().expect("pended snapshot reads");
+    assert_eq!(before.cursor(), first.cursor().position());
+    assert_eq!(before.trust().len(), 1);
+    assert_eq!(before.trust()[0].body().state, TrustState::Pended);
+    let requirements = EnvironmentRequirements::one(
+        journal::crossing::EnvironmentRequirement::trust_grant(digest.clone()),
+    );
+    assert!(!requirements.are_satisfied_by(&before.environment()));
+
+    let mut granted = JournalWrite::new(
+        Actor::Operator,
+        "repo:genesis".parse().expect("origin"),
+        instant("2030-04-12T18:44:10.271Z"),
+        Producer::CommandDoor,
+    );
+    let fact = granted
+        .fact(
+            body::TrustGranted {
+                surface: "spice".to_owned(),
+                digest: digest.clone(),
+            },
+            FactCause::Existing(before.trust()[0].position()),
+        )
+        .expect("trust grant fact builds");
+    let worktree = before.trust()[0].body().worktree.clone();
+    granted.trust_head(fact, move |_| TrustHead {
+        digest,
+        state: TrustState::Granted,
+        worktree,
+    });
+    let second = committed(bus.commit(granted).expect("trust grant commits"));
+    let after = bus.task_snapshot().expect("granted snapshot reads");
+    assert_eq!(after.cursor(), second.cursor().position());
+    assert_eq!(after.trust()[0].body().state, TrustState::Granted);
+    assert!(requirements.are_satisfied_by(&after.environment()));
+    assert_eq!(
+        before.trust()[0].body().state,
+        TrustState::Pended,
+        "the earlier snapshot remains immutable"
+    );
     bus.shutdown().expect("writer shuts down");
 }
 

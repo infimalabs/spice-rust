@@ -505,7 +505,15 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (14, MigrationStep::Sql(MIGRATE_14_TO_15_SQL)),
     (15, MigrationStep::Sql(MIGRATE_15_TO_16_SQL)),
     (16, MigrationStep::Rust(renewal_organization::migrate)),
+    (17, MigrationStep::Sql(MIGRATE_17_TO_18_SQL)),
 ];
+
+/// Schema 17 to 18: trust-grant environmental requirement boundary.
+///
+/// Current task facts and heads may now carry the new requirement variant.
+/// No stored row changes; the schema step makes predecessor readers refuse
+/// before decoding that expanded wire vocabulary.
+const MIGRATE_17_TO_18_SQL: &str = "SELECT 1;";
 
 /// Schema 15 to 16: environmental-requirement rollout boundary.
 ///
@@ -751,8 +759,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 17, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 18, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 17;
+PRAGMA user_version = 18;
 "#;

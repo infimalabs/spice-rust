@@ -190,12 +190,14 @@ fn select_task(
     actor: &Actor,
     subscription: &wire::LineageSubscription,
 ) -> Result<Entry, Outcome<CommandAnswer>> {
+    let environment = snapshot.answer.environment();
     board::select(
         &snapshot.entries,
         actor,
         subscription,
         snapshot.answer.allocation_band,
         snapshot.answer.recent_cell.as_ref(),
+        &environment,
     )
     .map(|selection| selection.entry().clone())
     .ok_or_else(|| {

@@ -1,5 +1,8 @@
 use super::*;
 
+mod requirements;
+use requirements::environment_requirements;
+
 /// Execute one generated board-family CLI leaf.
 pub(crate) fn run(matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
     let current = match std::env::current_dir() {
@@ -143,12 +146,14 @@ fn client_next(repository: &Repository, contract: &Contract) -> Outcome<CommandA
     mutate_from_board(repository, contract, |board| {
         let entries = actor_entries(&board)?;
         let subscription = allocation_subscription(&board.residency.body, &board.principal)?;
+        let environment = board.environment();
         let selected = board::select(
             &entries,
             &board.principal,
             subscription,
             board.allocation_band,
             board.recent_cell.as_ref(),
+            &environment,
         )
         .ok_or_else(|| {
             refusal(
@@ -292,12 +297,16 @@ fn client_add(
         .flatten()
         .cloned()
         .collect();
-    let requirements = match matches.get_one::<String>("requires-journal-schema") {
-        Some(written) => match journal_schema_requirements(written) {
-            Ok(requirements) => requirements,
-            Err(outcome) => return outcome,
-        },
-        None => wire::EnvironmentRequirements::default(),
+    let requirements = match environment_requirements(
+        matches
+            .get_one::<String>("requires-journal-schema")
+            .map(String::as_str),
+        matches
+            .get_one::<String>("requires-trust-grant")
+            .map(String::as_str),
+    ) {
+        Ok(requirements) => requirements,
+        Err(outcome) => return outcome,
     };
     let origin = match parse_origin(matches) {
         Ok(origin) => origin,
@@ -679,27 +688,34 @@ fn client_require(
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
     mutate_task_from_board(repository, contract, matches, |_board, task, heads| {
-        let written = matches.get_one::<String>("journal-schema");
+        let schema = matches.get_one::<String>("journal-schema");
+        let trust = matches.get_one::<String>("trust-grant");
         let clear = matches.get_flag("clear");
-        let requirements = match (written, clear) {
-            (Some(written), false) => wire::intent::TaskRequirementsEdit::Set {
-                requirements: journal_schema_requirements(written)?,
-            },
-            (None, true) => wire::intent::TaskRequirementsEdit::Clear {},
-            (Some(_), true) => {
+        let requirements = match (schema, trust, clear) {
+            (schema, trust, false) if schema.is_some() || trust.is_some() => {
+                wire::intent::TaskRequirementsEdit::Set {
+                    requirements: environment_requirements(
+                        schema.map(String::as_str),
+                        trust.map(String::as_str),
+                    )?,
+                }
+            }
+            (None, None, true) => wire::intent::TaskRequirementsEdit::Clear {},
+            (_, _, true) => {
                 return Err(refusal(
                     "task::require-shape",
                     None,
-                    "name either --journal-schema SCHEMA or --clear, never both",
+                    "name environmental requirements or --clear, never both",
                 ));
             }
-            (None, false) => {
+            (None, None, false) => {
                 return Err(refusal(
                     "task::require-shape",
                     None,
-                    "name --journal-schema SCHEMA to replace requirements or --clear to remove them",
+                    "name --journal-schema SCHEMA and/or --trust-grant DIGEST to replace requirements, or --clear to remove them",
                 ));
             }
+            _ => unreachable!("requirement shape arms are exhaustive"),
         };
         Ok((
             CommandKind::TaskEdit,
@@ -716,33 +732,6 @@ fn client_require(
             .expect("typed intent encodes"),
         ))
     })
-}
-
-fn journal_schema_requirements(
-    written: &str,
-) -> Result<wire::EnvironmentRequirements, Outcome<CommandAnswer>> {
-    let value = written.parse::<u32>().map_err(|_| {
-        refusal(
-            "task::journal-schema-invalid",
-            Some(written.to_owned()),
-            "name one canonical positive decimal journal schema",
-        )
-    })?;
-    if value.to_string() != written {
-        return Err(refusal(
-            "task::journal-schema-invalid",
-            Some(written.to_owned()),
-            "name one canonical positive decimal journal schema",
-        ));
-    }
-    let requirement = wire::EnvironmentRequirement::journal_schema(value).map_err(|error| {
-        refusal(
-            "task::journal-schema-invalid",
-            Some(written.to_owned()),
-            &error.to_string(),
-        )
-    })?;
-    Ok(wire::EnvironmentRequirements::one(requirement))
 }
 
 fn client_delete(
@@ -1129,26 +1118,4 @@ pub(crate) fn dispatch_with_repository(
         _ => return None,
     };
     Some(outcome)
-}
-
-#[cfg(test)]
-mod requirement_cli_tests {
-    use super::journal_schema_requirements;
-
-    #[test]
-    fn journal_schema_cli_values_are_positive_canonical_decimals() {
-        let maximum = u32::MAX.to_string();
-        for admitted in ["1", "15", maximum.as_str()] {
-            assert!(
-                journal_schema_requirements(admitted).is_ok(),
-                "{admitted:?} is canonical"
-            );
-        }
-        for refused in ["", "0", "01", "+1", "-1", "1.0", "4294967296"] {
-            assert!(
-                journal_schema_requirements(refused).is_err(),
-                "{refused:?} must not normalize"
-            );
-        }
-    }
 }

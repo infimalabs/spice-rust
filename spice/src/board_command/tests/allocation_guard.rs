@@ -1,5 +1,7 @@
 use super::*;
 
+mod trust;
+
 // The allocator's re-read guard refuses three separate ways, and one scenario
 // that moves everything at once cannot tell them apart. Each test in this file
 // moves only what a single comparison reads, so severing that comparison alone
@@ -81,6 +83,7 @@ pub(super) fn guard_winner(answer: &BoardAnswer, actor: &Actor) -> TaskHandle {
         subscription,
         answer.allocation_band,
         answer.recent_cell.as_ref(),
+        &answer.environment(),
     )
     .expect("allocation guard fixture selects a task")
     .entry()

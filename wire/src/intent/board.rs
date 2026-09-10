@@ -418,6 +418,9 @@ pub struct BoardAnswer {
     pub recent_cell: Option<crate::ClaimCell>,
     /// Complete current task evidence bundles in ascending handle order.
     pub tasks: Vec<BoardTask>,
+    /// Current executable-configuration trust heads in ascending digest order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trust: Vec<Positioned<crate::TrustHead>>,
     /// Current resident and lane head used by possession witnesses.
     pub residency: Positioned<crate::ResidencyHead>,
 }
@@ -426,6 +429,14 @@ impl BoardAnswer {
     /// Pending public routes only; hidden evidence never enters active inventory.
     pub fn active_public_tasks(&self) -> impl Iterator<Item = &BoardTask> {
         self.tasks.iter().filter(|task| task.is_active_public())
+    }
+
+    /// Compile the environmental observations carried by this snapshot.
+    #[must_use]
+    pub fn environment(&self) -> crate::Environment {
+        crate::Environment::journal_schema(self.schema)
+            .expect("an admitted board schema is positive")
+            .with_trust_heads(self.trust.iter().map(|head| head.body.clone()))
     }
 }
 

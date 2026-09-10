@@ -4,8 +4,8 @@ use serde_json::{Value, json};
 use wire::body::TaskAdded;
 use wire::{
     Accepted, Actor, AnyFact, CanonicalUuid, Command, CommandKind, CommandRejection, Environment,
-    EnvironmentObservation, EnvironmentRequirement, EnvironmentRequirements, Seq, TaskHandle,
-    TaskHead, WireVersion, Witness,
+    EnvironmentFact, EnvironmentObservation, EnvironmentRequirement, EnvironmentRequirements, Seq,
+    TaskHandle, TaskHead, TrustHead, TrustState, WireVersion, Witness,
 };
 
 const LEGACY_ADDED: &str = r#"{
@@ -30,6 +30,13 @@ const LEGACY_HEAD: &str = r#"{
   "provenance": "repo:genesis",
   "revision": 10
 }"#;
+
+fn digest(byte: char) -> wire::Digest {
+    std::iter::repeat_n(byte, 64)
+        .collect::<String>()
+        .parse()
+        .expect("fixture digest is canonical")
+}
 
 #[test]
 fn journal_schema_is_one_typed_fact_and_one_typed_value() {
@@ -62,6 +69,89 @@ fn journal_schema_comparison_is_compiled_as_observed_at_least_required() {
 }
 
 #[test]
+fn trust_grant_is_an_exact_digest_fact_with_bound_producer_provenance() {
+    let required = digest('a');
+    let requirement = EnvironmentRequirement::trust_grant(required.clone());
+    assert_eq!(requirement.fact(), EnvironmentFact::TrustGrant);
+    assert_eq!(
+        EnvironmentFact::ALL,
+        &[EnvironmentFact::JournalSchema, EnvironmentFact::TrustGrant]
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&wire::encode(&requirement).expect("encodes"))
+            .expect("requirement is JSON"),
+        json!({"fact": "trust-grant", "value": required})
+    );
+
+    let requirements = EnvironmentRequirements::one(requirement);
+    let observed = |digest: wire::Digest, state, worktree: Option<&str>| TrustHead {
+        digest,
+        state,
+        worktree: worktree.map(str::to_owned),
+    };
+    for unsatisfied in [
+        Environment::EMPTY,
+        Environment::EMPTY.with_trust_heads([observed(
+            required.clone(),
+            TrustState::Pended,
+            Some("/producer/one"),
+        )]),
+        Environment::EMPTY.with_trust_heads([observed(
+            required.clone(),
+            TrustState::Revoked,
+            Some("/producer/one"),
+        )]),
+        Environment::EMPTY.with_trust_heads([observed(
+            required.clone(),
+            TrustState::Granted,
+            None,
+        )]),
+        Environment::EMPTY.with_trust_heads([observed(
+            required.clone(),
+            TrustState::Granted,
+            Some(""),
+        )]),
+        Environment::EMPTY.with_trust_heads([observed(
+            digest('b'),
+            TrustState::Granted,
+            Some("/producer/one"),
+        )]),
+    ] {
+        assert!(!requirements.are_satisfied_by(&unsatisfied));
+    }
+
+    let granted_elsewhere = Environment::EMPTY.with_trust_heads([observed(
+        required,
+        TrustState::Granted,
+        Some("/another/worktree"),
+    )]);
+    assert!(
+        requirements.are_satisfied_by(&granted_elsewhere),
+        "producer worktree is provenance, not an eligibility scope"
+    );
+}
+
+#[test]
+fn journal_and_trust_requirements_form_one_canonical_conjunction() {
+    let schema = EnvironmentRequirement::journal_schema(15).expect("positive schema");
+    let trust = EnvironmentRequirement::trust_grant(digest('c'));
+    let requirements = EnvironmentRequirements::new(vec![schema.clone(), trust.clone()])
+        .expect("fact order is canonical");
+    assert_eq!(requirements.as_slice(), &[schema.clone(), trust.clone()]);
+    assert!(EnvironmentRequirements::new(vec![trust.clone(), schema]).is_err());
+    assert!(EnvironmentRequirements::new(vec![trust.clone(), trust]).is_err());
+
+    let environment = Environment::journal_schema(15)
+        .expect("positive schema")
+        .with_trust_heads([TrustHead {
+            digest: digest('c'),
+            state: TrustState::Granted,
+            worktree: Some("/producer".to_owned()),
+        }]);
+    assert!(requirements.are_satisfied_by(&environment));
+}
+
+#[test]
 fn authored_evaluators_and_non_values_have_no_wire_shape() {
     for malformed in [
         br#"{"fact":"journal-schema","value":0}"#.as_slice(),
@@ -75,6 +165,8 @@ fn authored_evaluators_and_non_values_have_no_wire_shape() {
         br#"{"fact":"journal-schema","value":15,"not":true}"#,
         br#"{"fact":"journal-schema","value":15,"or":[]}"#,
         br#"{"fact":"expression","value":"journal_schema >= required"}"#,
+        br#"{"fact":"trust-grant","value":"ABC"}"#,
+        br#"{"fact":"trust-grant","value":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","operator":"="}"#,
     ] {
         assert!(
             wire::decode::<EnvironmentRequirement>(malformed).is_err(),

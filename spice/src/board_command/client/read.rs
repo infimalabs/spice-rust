@@ -369,6 +369,7 @@ pub(in crate::board_command) fn task_show(
 ) -> String {
     let statement = &task.statement.body;
     let workflow = &task.workflow.body;
+    let environment = board.environment();
     let mut lines = vec![
         format!("handle {}", statement.handle),
         format!("title {}", task.presentation_title()),
@@ -404,31 +405,10 @@ pub(in crate::board_command) fn task_show(
     if has_taste_review(&statement.tags) {
         lines.push("taste_review required".to_owned());
     }
-    lines.push("requirements:".to_owned());
-    if statement.requirements.is_empty() {
-        lines.push("  -".to_owned());
-    } else {
-        for requirement in statement.requirements.as_slice() {
-            match requirement {
-                wire::EnvironmentRequirement::JournalSchema { value: required } => {
-                    let observed = board.schema;
-                    let observation = wire::EnvironmentObservation::journal_schema(observed)
-                        .expect("an admitted journal schema is positive");
-                    lines.push(format!(
-                        "  - journal-schema required={} observed={observed} satisfied={}",
-                        required,
-                        requirement.is_satisfied_by(observation),
-                    ));
-                }
-            }
-        }
-    }
+    lines.extend(requirement_lines(board, statement, &environment));
     lines.push(format!(
         "environment {}",
-        if statement
-            .requirements
-            .are_satisfied_by(&board::environment())
-        {
+        if statement.requirements.are_satisfied_by(&environment) {
             "satisfied"
         } else {
             "blocked"
@@ -470,6 +450,54 @@ pub(in crate::board_command) fn task_show(
     lines.extend(phase_guidance_lines(task));
     lines.push(next_command_line(board, task));
     lines.join("\n")
+}
+
+fn requirement_lines(
+    board: &BoardAnswer,
+    statement: &wire::intent::BoardStatement,
+    environment: &wire::Environment,
+) -> Vec<String> {
+    let mut lines = vec!["requirements:".to_owned()];
+    if statement.requirements.is_empty() {
+        lines.push("  -".to_owned());
+        return lines;
+    }
+    for requirement in statement.requirements.as_slice() {
+        match requirement {
+            wire::EnvironmentRequirement::JournalSchema { value: required } => {
+                let observed = board.schema;
+                let observation = wire::EnvironmentObservation::journal_schema(observed)
+                    .expect("an admitted journal schema is positive");
+                lines.push(format!(
+                    "  - journal-schema required={} observed={observed} satisfied={}",
+                    required,
+                    requirement.is_satisfied_by(&observation),
+                ));
+            }
+            wire::EnvironmentRequirement::TrustGrant { value: required } => {
+                let observed = board
+                    .trust
+                    .iter()
+                    .find(|head| head.body.digest == *required)
+                    .map(|head| &head.body);
+                let standing = observed.map_or("missing", |head| match head.state {
+                    wire::TrustState::Pended => "pended",
+                    wire::TrustState::Granted => "granted",
+                    wire::TrustState::Revoked => "revoked",
+                });
+                let producer = observed
+                    .and_then(|head| head.worktree.as_deref())
+                    .unwrap_or("-");
+                let satisfied = wire::EnvironmentRequirements::new(vec![requirement.clone()])
+                    .expect("one admitted requirement is canonical")
+                    .are_satisfied_by(environment);
+                lines.push(format!(
+                    "  - trust-grant required={required} standing={standing} producer={producer} satisfied={satisfied}"
+                ));
+            }
+        }
+    }
+    lines
 }
 
 fn creation_context_lines(statement: &wire::intent::BoardStatement) -> Vec<String> {
@@ -763,6 +791,7 @@ pub(in crate::board_command) fn task_status(
     board: &BoardAnswer,
 ) -> Result<String, Outcome<CommandAnswer>> {
     let entries = actor_entries(board)?;
+    let environment = board.environment();
     let routed = board
         .tasks
         .iter()
@@ -814,35 +843,14 @@ pub(in crate::board_command) fn task_status(
                 .any(|dependency| !satisfied.contains(dependency))
         })
         .count();
-    let environment_blocked = rows
-        .iter()
-        .filter(|entry| !board::environment_satisfied(entry))
-        .count();
-    let environment_satisfied = rows.len() - environment_blocked;
-    let mut required_schemas = rows
-        .iter()
-        .flat_map(|entry| entry.statement().requirements.as_slice())
-        .map(|requirement| match requirement {
-            wire::EnvironmentRequirement::JournalSchema { value } => value.get(),
-        })
-        .collect::<Vec<_>>();
-    required_schemas.sort_unstable();
-    required_schemas.dedup();
-    let required_schemas = if required_schemas.is_empty() {
-        "-".to_owned()
-    } else {
-        required_schemas
-            .into_iter()
-            .map(|value| value.to_string())
-            .collect::<Vec<_>>()
-            .join(",")
-    };
+    let (environment_satisfied, environment_blocked, required_schemas, required_trust) =
+        environment_status(&rows, &environment);
     let ready = rows
         .iter()
         .copied()
         .filter(|entry| {
             entry.workflow().phase.as_str() != "review"
-                && board::eligible_entry(&entries, entry, &board.principal)
+                && board::eligible_entry(&entries, entry, &board.principal, &environment)
         })
         .count();
     let stale = rows
@@ -866,6 +874,7 @@ pub(in crate::board_command) fn task_status(
          active {active_count}\nready {ready}\n\
          review {review}\nblocked {blocked}\nwaiting {waiting}\n\
          environment journal-schema required={required_schemas} observed={} \
+         trust-grant required={required_trust} \
          satisfied={environment_satisfied} blocked={environment_blocked}\n\
          stale {stale}\noops {oops}",
         board.actor_route.actor,
@@ -874,4 +883,44 @@ pub(in crate::board_command) fn task_status(
         board.project_policy.public_max_depth,
         board.schema,
     ))
+}
+
+fn environment_status(
+    rows: &[&Entry],
+    environment: &wire::Environment,
+) -> (usize, usize, String, String) {
+    let blocked = rows
+        .iter()
+        .filter(|entry| !board::environment_satisfied(entry, environment))
+        .count();
+    let mut schemas = Vec::new();
+    let mut trust = Vec::new();
+    for requirement in rows
+        .iter()
+        .flat_map(|entry| entry.statement().requirements.as_slice())
+    {
+        match requirement {
+            wire::EnvironmentRequirement::JournalSchema { value } => schemas.push(value.get()),
+            wire::EnvironmentRequirement::TrustGrant { value } => trust.push(value.to_string()),
+        }
+    }
+    schemas.sort_unstable();
+    schemas.dedup();
+    trust.sort();
+    trust.dedup();
+    let schemas = if schemas.is_empty() {
+        "-".to_owned()
+    } else {
+        schemas
+            .into_iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let trust = if trust.is_empty() {
+        "-".to_owned()
+    } else {
+        trust.join(",")
+    };
+    (rows.len() - blocked, blocked, schemas, trust)
 }
