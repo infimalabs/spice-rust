@@ -1,11 +1,11 @@
-#[cfg(target_os = "linux")]
-use std::cell::RefCell;
 use std::collections::BTreeSet;
 #[cfg(target_os = "linux")]
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::sync::Mutex;
 
 #[cfg(target_family = "unix")]
 use std::os::unix::{ffi::OsStrExt as _, fs::MetadataExt as _};
@@ -218,7 +218,7 @@ impl IndexSnapshot {
 #[derive(Debug)]
 struct IndexChangeSeal {
     #[cfg(target_os = "linux")]
-    inotify: RefCell<inotify::Inotify>,
+    inotify: Mutex<inotify::Inotify>,
     #[cfg(target_os = "linux")]
     directory_watch: inotify::WatchDescriptor,
 }
@@ -251,7 +251,7 @@ impl IndexChangeSeal {
                 TreeError::io("watching the index directory", directory, source)
             })?;
             Ok(Self {
-                inotify: RefCell::new(inotify),
+                inotify: Mutex::new(inotify),
                 directory_watch,
             })
         }
@@ -274,20 +274,19 @@ impl IndexChangeSeal {
                 | inotify::WatchMask::DELETE_SELF
                 | inotify::WatchMask::MODIFY
                 | inotify::WatchMask::MOVE_SELF;
+            let inotify = self.inotify.lock().map_err(|_| TreeError::IndexChanged {
+                path: repo.index_path(),
+            })?;
             for path in paths {
-                self.inotify
-                    .borrow()
-                    .watches()
-                    .add(path, mask)
-                    .map_err(|source| {
-                        if source.kind() == io::ErrorKind::NotFound {
-                            TreeError::IndexChanged {
-                                path: repo.index_path(),
-                            }
-                        } else {
-                            TreeError::io("watching an index source", path, source)
+                inotify.watches().add(path, mask).map_err(|source| {
+                    if source.kind() == io::ErrorKind::NotFound {
+                        TreeError::IndexChanged {
+                            path: repo.index_path(),
                         }
-                    })?;
+                    } else {
+                        TreeError::io("watching an index source", path, source)
+                    }
+                })?;
             }
             Ok(())
         }
@@ -301,7 +300,9 @@ impl IndexChangeSeal {
         }
         #[cfg(target_os = "linux")]
         {
-            let mut inotify = self.inotify.borrow_mut();
+            let mut inotify = self.inotify.lock().map_err(|_| TreeError::IndexChanged {
+                path: repo.index_path(),
+            })?;
             let mut buffer = [0_u8; 16 * 1024];
             loop {
                 match inotify.read_events(&mut buffer) {

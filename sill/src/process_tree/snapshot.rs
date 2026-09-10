@@ -1,5 +1,6 @@
 //! Locale-independent process topology with native start-generation identity.
 
+#[cfg(target_os = "macos")]
 use std::io;
 
 use super::{Process, ProcessGeneration};
@@ -148,7 +149,7 @@ mod linux {
     use super::{Process, ProcessGeneration};
 
     #[cfg(target_os = "linux")]
-    pub(super) fn process_snapshot() -> io::Result<Vec<Process>> {
+    pub(in crate::process_tree) fn process_snapshot() -> io::Result<Vec<Process>> {
         // SAFETY: sysconf reads one immutable kernel clock-frequency value.
         let ticks_per_second = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
         let ticks_per_second = u64::try_from(ticks_per_second).map_err(|_| {
