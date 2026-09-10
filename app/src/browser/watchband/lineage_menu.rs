@@ -116,7 +116,7 @@ pub(super) fn render(
             >
                 <span class="organization-action-label">{"Split into individuals"}</span>
                 <span class="organization-action-detail">{
-                    if split_enabled { "one organization per agent" } else { "already individual" }
+                    if split_enabled { "one team per agent" } else { "already individual" }
                 }</span>
             </button>
             <button
