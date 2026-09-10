@@ -13,7 +13,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         musl-tools \
         pkg-config
 
-RUN rustup component add rustfmt && \
+RUN rustup component add clippy rustfmt && \
     rustup target add wasm32-unknown-unknown x86_64-unknown-linux-musl
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
@@ -55,6 +55,7 @@ RUN chmod 0755 /opt/spice/bin/cargo && \
     ln -s /usr/local/cargo/bin/rustfmt /opt/spice/bin/rustfmt && \
     git config --system safe.directory '*' && \
     /opt/spice/bin/cargo --version && \
+    /opt/spice/bin/cargo clippy --version && \
     /opt/spice/bin/rustfmt --version && \
     /opt/spice/tools/bin/trunk --version && \
     /opt/spice/tools/bin/cargo-mutants mutants --version && \

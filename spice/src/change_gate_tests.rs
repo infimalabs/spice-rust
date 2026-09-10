@@ -27,6 +27,18 @@ fn report_rejects_missing_and_source_mismatched_policy_evidence() {
 }
 
 #[test]
+fn proof_image_definition_selects_every_current_source_gate() {
+    let source = wire::Digest::compute(wire::Domain::GateTree, b"proof image definition");
+    let selection = gate::select_current_source_change_gates(
+        source,
+        &["dist/proof-image/Dockerfile".to_owned()],
+    )
+    .expect("proof image definition selects");
+
+    assert_eq!(selection.gate_ids(), GateId::BATTERY);
+}
+
+#[test]
 fn ordinary_policy_wire_shape_rejects_removed_applicable_coverage() {
     let error = serde_json::from_slice::<ChangePolicyReport>(
         br#"{"coverage":"applicable","source":"removed","results":[]}"#,
