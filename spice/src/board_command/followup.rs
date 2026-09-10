@@ -331,9 +331,11 @@ pub(super) fn record_followups(
     repository: Option<&Repository>,
     projects: &ProjectPolicy,
 ) -> Result<(), Outcome<CommandAnswer>> {
+    let reviewed_task = task_heads(&snapshot.answer, &review.task)?;
     let context = FollowupContext {
         command,
         snapshot,
+        reviewed_task,
         reviewed,
         origin,
         creation,
@@ -349,6 +351,7 @@ pub(super) fn record_followups(
 struct FollowupContext<'a> {
     command: &'a wire::AdmittedCommand,
     snapshot: &'a ValidatedSnapshot,
+    reviewed_task: &'a BoardTask,
     reviewed: PendingFact,
     origin: &'a wire::Origin,
     creation: Option<&'a TaskCreationCapture>,
@@ -369,6 +372,13 @@ fn prepare_followup_policy(
 ) -> Result<FollowupPolicy, Outcome<CommandAnswer>> {
     validate_acceptance(&add.acceptance)?;
     let mut flow = task_flow(add.flow.as_deref(), &add.acceptance)?;
+    let reviewed = &context.reviewed_task.workflow.body;
+    omit_review_phase(
+        &mut flow,
+        reviewed.phase.as_str() == "review"
+            && reviewed.status == "pending"
+            && reviewed.completion.is_none(),
+    )?;
     let taste_review = task_taste_review(
         context.repository,
         context.snapshot,

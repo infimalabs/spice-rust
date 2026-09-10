@@ -342,7 +342,7 @@ fn shape_cases_415_417_insert_plan_for_bare_capture_only() {
 }
 
 #[test]
-fn shape_case_418_inserts_plan_for_bare_review_followup() {
+fn shape_case_418_inserts_plan_without_review_for_bare_review_followup() {
     let (root, bus, epoch, seats) = fixture("plan-shape-followup", 2);
     authorize_lane_creation(&bus, epoch, &seats[1]);
     let lane_one = Actor::Lane(seats[0].lane);
@@ -412,7 +412,7 @@ fn shape_case_418_inserts_plan_for_bare_review_followup() {
         },
     ));
     let followed = board(&bus, epoch, Actor::Operator);
-    assert_workflow(&followed, &followup, "plan", &["plan", "todo", "review"]);
+    assert_workflow(&followed, &followup, "plan", &["plan", "todo"]);
     clean(&root, bus);
 }
 
