@@ -7,6 +7,40 @@ use super::*;
 const SPARSE_TOOL_RECORDS: usize = 400;
 
 #[test]
+fn replay_uses_the_worktree_bound_to_each_session_locus() {
+    let lane: CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163e5"
+        .parse()
+        .expect("fixture lane");
+    let source: CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163e6"
+        .parse()
+        .expect("fixture source");
+    let worktrees = SessionWorktrees(BTreeMap::from([(
+        (lane, source),
+        vec![
+            SessionWorktree {
+                member: 1,
+                offset: 10,
+                worktree: PathBuf::from("/worktrees/old"),
+            },
+            SessionWorktree {
+                member: 1,
+                offset: 30,
+                worktree: PathBuf::from("/worktrees/new"),
+            },
+        ],
+    )]));
+
+    assert_eq!(
+        worktrees.at(lane, source, tape::Locus::new(1, 20, 1)),
+        Some(Path::new("/worktrees/old")),
+    );
+    assert_eq!(
+        worktrees.at(lane, source, tape::Locus::new(1, 40, 1)),
+        Some(Path::new("/worktrees/new")),
+    );
+}
+
+#[test]
 fn codex_completed_turn_materializes_history_as_one_final_card() {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
@@ -37,7 +71,6 @@ fn codex_completed_turn_materializes_history_as_one_final_card() {
         "018f82d4-6f59-7d06-92e3-bce9131163ef"
             .parse()
             .expect("fixture author"),
-        Path::new("/workspace"),
         &messages,
         &mut reader,
         &mut diagnostic,
@@ -120,7 +153,6 @@ fn merged_history_fixture() -> MergedHistoryFixture {
             lane,
             DurableLane {
                 tape: tape_root,
-                worktree: root.join("worktree"),
                 dialect: listen::Dialect::Codex,
                 author,
                 source: Some(source_end.clone()),
@@ -135,6 +167,7 @@ fn merged_history_fixture() -> MergedHistoryFixture {
         continuations: Mutex::new(HashMap::new()),
         observations: MessageObservations::default(),
         steering: PresentationDirectives::default(),
+        worktrees: SessionWorktrees::default(),
     };
     let future = wire::AgentMessage {
         lane,
@@ -416,7 +449,6 @@ fn historical_page_crosses_sparse_tools_without_materializing_the_horizon() {
         tail.scan,
         lane,
         author,
-        Path::new("/workspace"),
         &messages,
         &mut reader,
         &mut diagnostic,

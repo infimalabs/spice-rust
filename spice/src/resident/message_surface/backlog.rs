@@ -13,12 +13,77 @@ mod tests;
 /// First newest-record window; sparse tapes expand geometrically until enough cards exist.
 const INITIAL_WINDOW_BYTES: u64 = 32 * 1024;
 
+#[derive(Clone, Debug, Default)]
+struct SessionWorktrees(BTreeMap<(CanonicalUuid, CanonicalUuid), Vec<SessionWorktree>>);
+
+#[derive(Clone, Debug)]
+struct SessionWorktree {
+    member: u64,
+    offset: u64,
+    worktree: std::path::PathBuf,
+}
+
+impl SessionWorktrees {
+    fn from_snapshot(snapshot: &journal::FactSnapshot) -> Self {
+        let ingestions = snapshot
+            .facts()
+            .iter()
+            .filter_map(|envelope| {
+                envelope
+                    .fact
+                    .read::<wire::body::JournalIngested>()
+                    .map(|batch| (envelope.seq, batch))
+            })
+            .collect::<Vec<_>>();
+        let mut worktrees = BTreeMap::<(CanonicalUuid, CanonicalUuid), Vec<SessionWorktree>>::new();
+        for envelope in snapshot.facts() {
+            let Some(session) = envelope.fact.read::<wire::body::LaneSessionDeclared>() else {
+                continue;
+            };
+            let position = (session.member, session.offset);
+            let Some(source) = ingestions.iter().find_map(|(seq, batch)| {
+                (*seq > envelope.seq
+                    && batch.lane == session.lane
+                    && batch.vendor == session.vendor
+                    && batch.stream == session.stream
+                    && (batch.from.member, batch.from.offset) <= position
+                    && position < (batch.to.member, batch.to.offset))
+                    .then_some(batch.source)
+            }) else {
+                continue;
+            };
+            worktrees
+                .entry((session.lane, source))
+                .or_default()
+                .push(SessionWorktree {
+                    member: session.member,
+                    offset: session.offset,
+                    worktree: session.worktree.into(),
+                });
+        }
+        for sessions in worktrees.values_mut() {
+            sessions.sort_by_key(|session| (session.member, session.offset));
+        }
+        Self(worktrees)
+    }
+
+    fn at(&self, lane: CanonicalUuid, source: CanonicalUuid, locus: tape::Locus) -> Option<&Path> {
+        self.0
+            .get(&(lane, source))?
+            .iter()
+            .rev()
+            .find(|session| (session.member, session.offset) <= (locus.member, locus.offset))
+            .map(|session| session.worktree.as_path())
+    }
+}
+
 /// Source-authenticated per-lane continuation state for repeated backlog reads.
 #[derive(Debug, Default)]
 pub(in crate::resident) struct BacklogReader {
     cursors: BTreeMap<CanonicalUuid, listen::Checkpoint>,
     state: MessageState,
     steering: PresentationDirectives,
+    worktrees: SessionWorktrees,
 }
 
 impl BacklogReader {
@@ -35,6 +100,7 @@ impl BacklogReader {
                 prose: BTreeMap::new(),
             },
             steering,
+            worktrees: SessionWorktrees::from_snapshot(snapshot),
         })
     }
 
@@ -75,12 +141,12 @@ struct DurableHistory {
     continuations: Mutex<HashMap<(CanonicalUuid, wire::MessageLocus), HistoryContinuation>>,
     observations: MessageObservations,
     steering: PresentationDirectives,
+    worktrees: SessionWorktrees,
 }
 
 #[derive(Debug)]
 struct DurableLane {
     tape: std::path::PathBuf,
-    worktree: std::path::PathBuf,
     dialect: listen::Dialect,
     author: CanonicalUuid,
     source: Option<listen::Checkpoint>,
@@ -137,7 +203,6 @@ impl DurableHistory {
                             .tape
                             .join(row.lane.to_string())
                             .join(row.vendor.as_str()),
-                        worktree: row.worktree.clone().into(),
                         dialect,
                         author,
                         source: reader.cursors.get(&row.lane).cloned(),
@@ -151,6 +216,7 @@ impl DurableHistory {
             continuations: Mutex::new(HashMap::new()),
             observations: reader.state.observations.clone(),
             steering: reader.steering.clone(),
+            worktrees: reader.worktrees.clone(),
         }
     }
 }
@@ -298,13 +364,13 @@ impl DurableHistory {
                 prose: BTreeMap::new(),
             },
             steering: self.steering.clone(),
+            worktrees: self.worktrees.clone(),
         };
         let mut diagnostic = Vec::new();
         publish_scan(
             tail.scan,
             lane,
             source.author,
-            &source.worktree,
             &messages,
             &mut reader,
             &mut diagnostic,
@@ -471,15 +537,7 @@ fn restore_lane(
             return Ok(());
         }
     };
-    publish_scan(
-        scan,
-        row.lane,
-        author,
-        Path::new(&row.worktree),
-        publisher,
-        reader,
-        diagnostic,
-    )
+    publish_scan(scan, row.lane, author, publisher, reader, diagnostic)
 }
 
 fn tape_available(tape: &Path, lane: CanonicalUuid, diagnostic: &mut dyn io::Write) -> bool {
@@ -525,7 +583,6 @@ fn publish_scan(
     scan: listen::Scan,
     lane: CanonicalUuid,
     author: CanonicalUuid,
-    worktree: &Path,
     publisher: &impl AgentMessagePublisher,
     reader: &mut BacklogReader,
     diagnostic: &mut dyn io::Write,
@@ -545,6 +602,9 @@ fn publish_scan(
         let Some(context) = events.first().map(|sourced| &sourced.context) else {
             continue;
         };
+        let worktree = events
+            .first()
+            .and_then(|sourced| reader.worktrees.at(lane, source, sourced.event.locus()));
         let decoded = events
             .iter()
             .map(|sourced| {
@@ -560,7 +620,7 @@ fn publish_scan(
                 lane,
                 author,
                 source: Some(source),
-                worktree: Some(worktree),
+                worktree,
                 context,
                 events: &decoded,
                 observed: None,
