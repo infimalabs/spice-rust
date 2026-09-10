@@ -47,13 +47,6 @@ impl Fixture {
         let linked = root.join("linked");
         fs::create_dir(&main).expect("create main worktree");
         git_repository::link(&main, &linked, "linked");
-        fs::write(main.join("spice-rust.toml"), "# non-Rust repository\n")
-            .expect("write main repository policy");
-        fs::write(
-            linked.join("spice-rust.toml"),
-            "# non-Rust linked worktree\n",
-        )
-        .expect("write linked repository policy");
         let package = install_package_fixture::PackageFixture::create(
             root.join("release-package"),
             Path::new(env!("CARGO_BIN_EXE_spice")),
