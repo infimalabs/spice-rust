@@ -35,7 +35,7 @@ fn validate_operation_inventory(
     plan: &InstallPlan,
     content: GeneratedContentAuthority,
 ) -> Result<(), InstallError> {
-    let current = [
+    let mut current = vec![
         Asset::GitPreCommit,
         Asset::GitCommitMessage,
         Asset::GitReferenceTransaction,
@@ -46,6 +46,7 @@ fn validate_operation_inventory(
         Asset::HookWrapperSpice,
         Asset::Skill,
     ];
+    current.extend(app_operation_inventory(plan)?);
     let previous = [
         Asset::GitPreCommit,
         Asset::GitCommitMessage,
@@ -98,8 +99,61 @@ fn validate_operation_inventory(
             "hook activation and installed executable must be planned together".to_owned(),
         ));
     }
+    validate_app_generations(plan)?;
     if let Some(activation) = &plan.hook_activation {
         activation.validate(content == GeneratedContentAuthority::HistoricalReceipt)?;
+    }
+    Ok(())
+}
+
+fn app_operation_inventory(plan: &InstallPlan) -> Result<Vec<Asset>, InstallError> {
+    let Some(_) = plan.app else {
+        return Ok(Vec::new());
+    };
+    let files = plan
+        .operations
+        .iter()
+        .filter(|operation| app::file(operation.asset).is_some())
+        .count();
+    if files == 0 || files % app::ASSETS.len() != 0 {
+        return Err(InstallError::InvalidRecord(
+            "install plan has an incomplete Canvas generation".to_owned(),
+        ));
+    }
+    let mut expected = Vec::with_capacity(files + 1);
+    for _ in 0..files / app::ASSETS.len() {
+        expected.extend(app::ASSETS.into_iter().map(|(asset, _)| asset));
+    }
+    expected.push(Asset::CanvasCurrent);
+    Ok(expected)
+}
+
+fn validate_app_generations(plan: &InstallPlan) -> Result<(), InstallError> {
+    let Some(current) = &plan.app else {
+        return Ok(());
+    };
+    let generations = plan
+        .operations
+        .iter()
+        .filter_map(|operation| app::operation_generation(operation.asset, &operation.path))
+        .collect::<Vec<_>>();
+    let chunks = generations.chunks_exact(app::ASSETS.len());
+    let groups = chunks
+        .clone()
+        .map(|chunk| chunk[0].clone())
+        .collect::<Vec<_>>();
+    let prior = &groups[..groups.len().saturating_sub(1)];
+    let invalid = !chunks.remainder().is_empty()
+        || chunks
+            .clone()
+            .any(|chunk| chunk.iter().any(|item| item != &chunk[0]))
+        || groups.last() != Some(current)
+        || prior.windows(2).any(|pair| pair[0] >= pair[1])
+        || prior.contains(current);
+    if invalid {
+        return Err(InstallError::InvalidRecord(
+            "install plan Canvas generations are not complete and current-last".to_owned(),
+        ));
     }
     Ok(())
 }
@@ -191,6 +245,7 @@ fn validate_plan_destinations(
             &mut introduced,
             content,
             &plan.repository.common_git,
+            plan.app.as_ref(),
         )?;
         if !destinations.insert((operation.location, operation.destination.clone())) {
             return Err(InstallError::InvalidRecord(
@@ -251,9 +306,12 @@ pub(super) fn validate_operation(
     introduced: &mut BTreeSet<(Location, String)>,
     content: GeneratedContentAuthority,
     common_git: &Path,
+    app: Option<&Digest>,
 ) -> Result<(), InstallError> {
-    let (location, path, expected_mode) = asset_contract(operation.asset);
-    validate_operation_contract(operation, location, path, expected_mode)?;
+    let generation = app::operation_generation(operation.asset, &operation.path);
+    let (location, path, expected_mode) =
+        asset_contract(operation.asset, generation.as_ref().or(app))?;
+    validate_operation_contract(operation, location, &path, expected_mode)?;
     validate_generated_content(operation, content, common_git)?;
     validate_introduced_parents(operation, introduced)
 }
@@ -310,7 +368,8 @@ fn validate_generated_content(
     }
     if content == GeneratedContentAuthority::CurrentBuild
         && let Some(bytes) = fixed_asset_bytes(operation.asset, common_git)?
-        && operation.generated != GeneratedImage::new(asset_contract(operation.asset).2, &bytes)
+        && operation.generated
+            != GeneratedImage::new(asset_contract(operation.asset, None)?.2, &bytes)
     {
         return Err(InstallError::InvalidRecord(format!(
             "{} differs from this build",
@@ -339,15 +398,19 @@ fn validate_generated_content(
 pub(super) fn fixed_content_differs_from_current_build(
     operation: &Operation,
     common_git: &Path,
+    app: Option<&Digest>,
 ) -> Result<bool, InstallError> {
     let Some(bytes) = fixed_asset_bytes(operation.asset, common_git)? else {
         return Ok(false);
     };
-    let expected = GeneratedImage::new(asset_contract(operation.asset).2, &bytes);
+    let expected = GeneratedImage::new(asset_contract(operation.asset, app)?.2, &bytes);
     Ok(operation.generated != expected)
 }
 
 fn asset_name(asset: Asset) -> &'static str {
+    if app::file(asset).is_some() {
+        return "Canvas generation asset";
+    }
     match asset {
         Asset::Exclusions => "retired exclusions asset",
         Asset::GitPreCommit => "Git pre-commit hook",
@@ -359,7 +422,9 @@ fn asset_name(asset: Asset) -> &'static str {
         Asset::HookBash => "Bash startup hook",
         Asset::HookWrapperSpice => "Spice shell wrapper",
         Asset::Skill => "generated skill",
+        Asset::CanvasCurrent => "Canvas generation pointer",
         Asset::Binary => "Spice executable",
+        _ => unreachable!("Canvas generation assets returned above"),
     }
 }
 
@@ -403,26 +468,50 @@ fn validate_introduced_parents(
     Ok(())
 }
 
-pub(super) fn asset_contract(asset: Asset) -> (Location, &'static str, u32) {
-    match asset {
-        Asset::Exclusions => (Location::CommonGit, EXCLUDE_PATH, DATA_MODE),
-        Asset::GitPreCommit => (Location::CommonGit, GIT_PRE_COMMIT_PATH, EXECUTABLE_MODE),
+pub(super) fn asset_contract(
+    asset: Asset,
+    app: Option<&Digest>,
+) -> Result<(Location, String, u32), InstallError> {
+    if let Some(path) = app::operation_path(asset, app)? {
+        return Ok((Location::CommonGit, path, DATA_MODE));
+    }
+    let contract = match asset {
+        Asset::Exclusions => (Location::CommonGit, EXCLUDE_PATH.to_owned(), DATA_MODE),
+        Asset::GitPreCommit => (
+            Location::CommonGit,
+            GIT_PRE_COMMIT_PATH.to_owned(),
+            EXECUTABLE_MODE,
+        ),
         Asset::GitCommitMessage => (
             Location::CommonGit,
-            GIT_COMMIT_MESSAGE_PATH,
+            GIT_COMMIT_MESSAGE_PATH.to_owned(),
             EXECUTABLE_MODE,
         ),
         Asset::GitReferenceTransaction => (
             Location::CommonGit,
-            GIT_REFERENCE_TRANSACTION_PATH,
+            GIT_REFERENCE_TRANSACTION_PATH.to_owned(),
             EXECUTABLE_MODE,
         ),
-        Asset::HookEntry => (Location::CommonGit, ENTRY_PATH, EXECUTABLE_MODE),
-        Asset::HookStatic => (Location::CommonGit, STATIC_PATH, EXECUTABLE_MODE),
-        Asset::HookZsh => (Location::CommonGit, ZSH_HOOK_PATH, EXECUTABLE_MODE),
-        Asset::HookBash => (Location::CommonGit, BASH_HOOK_PATH, EXECUTABLE_MODE),
-        Asset::HookWrapperSpice => (Location::CommonGit, WRAPPER_SPICE_PATH, EXECUTABLE_MODE),
-        Asset::Skill => (Location::CommonGit, SKILL_PATH, DATA_MODE),
-        Asset::Binary => (Location::CommonGit, BINARY_PATH, EXECUTABLE_MODE),
-    }
+        Asset::HookEntry => (Location::CommonGit, ENTRY_PATH.to_owned(), EXECUTABLE_MODE),
+        Asset::HookStatic => (Location::CommonGit, STATIC_PATH.to_owned(), EXECUTABLE_MODE),
+        Asset::HookZsh => (
+            Location::CommonGit,
+            ZSH_HOOK_PATH.to_owned(),
+            EXECUTABLE_MODE,
+        ),
+        Asset::HookBash => (
+            Location::CommonGit,
+            BASH_HOOK_PATH.to_owned(),
+            EXECUTABLE_MODE,
+        ),
+        Asset::HookWrapperSpice => (
+            Location::CommonGit,
+            WRAPPER_SPICE_PATH.to_owned(),
+            EXECUTABLE_MODE,
+        ),
+        Asset::Skill => (Location::CommonGit, SKILL_PATH.to_owned(), DATA_MODE),
+        Asset::Binary => (Location::CommonGit, BINARY_PATH.to_owned(), EXECUTABLE_MODE),
+        _ => unreachable!("Canvas assets returned above"),
+    };
+    Ok(contract)
 }

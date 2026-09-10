@@ -139,18 +139,31 @@ pub(super) fn publish_operation(
 pub(super) fn materialize_generated(
     operation: &Operation,
     spice_binary: Option<&Path>,
+    app: Option<&super::app::Source>,
     common_git: &Path,
 ) -> Result<FileImage, InstallError> {
-    let bytes = match fixed_asset_bytes(operation.asset, common_git)? {
+    let retained = super::app::operation_generation(operation.asset, &operation.path)
+        .filter(|generation| app.is_some_and(|source| source.generation() != generation))
+        .map(|_| observe(&common_git.join(&operation.destination)))
+        .transpose()?
+        .flatten()
+        .filter(|observed| observed.generated() == operation.generated)
+        .map(|observed| observed.image.bytes);
+    let bytes = match retained.or_else(|| app.and_then(|source| source.bytes(operation.asset))) {
         Some(bytes) => bytes,
-        None => match operation.asset {
-            Asset::Exclusions => {
-                return Err(InstallError::InvalidRecord(
-                    "install plan contains the retired version-5 exclusions asset".to_owned(),
-                ));
-            }
-            Asset::Binary => read_binary(spice_binary.ok_or(InstallError::BinaryContextChanged)?)?,
-            _ => unreachable!("fixed assets materialize from repository-bound bytes"),
+        None => match fixed_asset_bytes(operation.asset, common_git)? {
+            Some(bytes) => bytes,
+            None => match operation.asset {
+                Asset::Exclusions => {
+                    return Err(InstallError::InvalidRecord(
+                        "install plan contains the retired version-5 exclusions asset".to_owned(),
+                    ));
+                }
+                Asset::Binary => {
+                    read_binary(spice_binary.ok_or(InstallError::BinaryContextChanged)?)?
+                }
+                _ => return Err(InstallError::BinaryContextChanged),
+            },
         },
     };
     let image = FileImage::new(operation.generated.mode, bytes);

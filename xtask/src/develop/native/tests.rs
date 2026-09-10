@@ -181,6 +181,7 @@ impl Fixture {
         .to_thread_local();
         fs::write(repository.git_dir().join("HEAD"), "ref: refs/heads/main\n")
             .expect("select deterministic scratch branch");
+        seed_canvas_stage(&fixture.0);
         fixture
     }
 
@@ -222,6 +223,19 @@ impl Fixture {
             .publish(state.canvas())
             .expect("scratch discovery publishes");
     }
+}
+
+fn seed_canvas_stage(worktree: &Path) {
+    let generation = wire::Digest::compute(wire::Domain::DistInventory, b"xtask fixture app");
+    let stage = worktree.join("dist/stage-app");
+    let root = stage.join("generations").join(generation.as_str());
+    fs::create_dir_all(&root).expect("create fixture Canvas generation");
+    for file in wire::manifest::CANVAS_APP_FILES {
+        fs::write(root.join(file), format!("xtask Canvas asset {file}\n"))
+            .expect("write fixture Canvas asset");
+    }
+    fs::write(stage.join("current"), format!("{generation}\n"))
+        .expect("write fixture Canvas pointer");
 }
 
 impl Drop for Fixture {

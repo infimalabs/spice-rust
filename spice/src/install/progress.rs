@@ -16,7 +16,10 @@ pub(super) fn apply_with_interruption(
         return Ok(record.receipt());
     }
     let _rollback_lock = record.plan.lock_rollback(repository)?;
-    let generated = materialize_operations(&record, spice_binary)?;
+    let app = spice_binary
+        .map(|binary| app::Source::resolve(repository, binary))
+        .transpose()?;
+    let generated = materialize_operations(&record, spice_binary, app.as_ref())?;
     if fresh {
         record.plan.validate_pristine(repository)?;
     } else {
@@ -107,13 +110,19 @@ fn apply_retirements(
 fn materialize_operations(
     record: &InstallRecord,
     spice_binary: Option<&Path>,
+    app: Option<&app::Source>,
 ) -> Result<Vec<FileImage>, InstallError> {
     record
         .plan
         .operations
         .iter()
         .map(|operation| {
-            materialize_generated(operation, spice_binary, &record.plan.repository.common_git)
+            materialize_generated(
+                operation,
+                spice_binary,
+                app,
+                &record.plan.repository.common_git,
+            )
         })
         .collect()
 }
@@ -261,7 +270,7 @@ fn refresh_required(
     plan: &InstallPlan,
     spice_binary: Option<&Path>,
 ) -> Result<bool, InstallError> {
-    Ok(current_build_differs(plan, spice_binary)?
+    Ok(current_build_differs(repository, plan, spice_binary)?
         || hook_activation::topology_changed(repository, plan)?)
 }
 
