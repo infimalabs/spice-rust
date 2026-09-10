@@ -2,11 +2,13 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Barrier};
+use std::thread;
 
 use crate::repository::Repository;
 use crate::test_repository;
 
-use super::{CandidateTree, capture_candidate_tree, parse_candidate_tree};
+use super::{CandidateTree, capture_candidate_tree};
 
 #[test]
 fn ordinary_staged_content_resolves_its_candidate_tree() {
@@ -24,12 +26,12 @@ fn alternate_index_is_the_only_candidate_tree_authority() {
     let fixture = Fixture::new("alternate-index");
     fixture.write("tracked.txt", b"opening\n");
     fixture.commit_all("opening");
-    let alternate = fixture.scratch.join("alternate.index");
+    let alternate = fixture.main.join("alternate.index");
     fs::copy(fixture.main.join(".git/index"), &alternate).expect("copy alternate fixture index");
     fixture.write("tracked.txt", b"alternate candidate\n");
     test_repository::stage_at(&fixture.main, &alternate, &["tracked.txt"]);
 
-    let candidate = fixture.capture(Some(&alternate));
+    let candidate = fixture.capture(Some(Path::new("alternate.index")));
 
     assert_eq!(candidate.as_str(), fixture.tree(Some(&alternate)));
     assert_ne!(candidate.as_str(), fixture.tree(None));
@@ -98,15 +100,34 @@ fn linked_worktree_uses_its_own_staged_index() {
 }
 
 #[test]
-fn candidate_tree_parser_rejects_noncanonical_output() {
-    for output in [
-        b"0123456789012345678901234567890123456789".as_slice(),
-        b"0123456789012345678901234567890123456789\nextra\n".as_slice(),
-        b"012345678901234567890123456789012345678G\n".as_slice(),
-    ] {
-        let error = parse_candidate_tree(output).expect_err("noncanonical identity is refused");
-        assert_eq!(error.reason(), "gate::candidate-tree-refused");
+fn concurrent_capture_never_takes_the_caller_index_lock() {
+    let fixture = Fixture::new("concurrent");
+    fixture.write("tracked.txt", b"candidate\n");
+    test_repository::stage(&fixture.main, &["tracked.txt"]);
+    let expected = fixture.tree(None);
+    let lock = fixture.main.join(".git/index.lock");
+    fs::write(&lock, b"caller-owned\n").expect("hold caller index lock");
+    let barrier = Arc::new(Barrier::new(2));
+    let captures = (0..2)
+        .map(|_| {
+            let root = fixture.main.clone();
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                let repository = Repository::discover(&root).expect("discover concurrent fixture");
+                barrier.wait();
+                capture_candidate_tree(&repository, None).expect("capture without caller lock")
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for capture in captures {
+        assert_eq!(capture.join().expect("join capture").as_str(), expected);
     }
+    assert_eq!(
+        fs::read(&lock).expect("read caller lock"),
+        b"caller-owned\n"
+    );
+    fs::remove_file(lock).expect("release caller index lock");
 }
 
 struct Fixture {

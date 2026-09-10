@@ -2,11 +2,11 @@
 
 use std::ffi::OsStr;
 use std::fmt;
-use std::process::Command;
+use std::path::PathBuf;
 
 use crate::repository::Repository;
 
-use super::{GIT, RunError};
+use super::RunError;
 
 /// Canonical Git object identity for a prospective staged commit tree.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -30,55 +30,19 @@ pub(super) fn capture_candidate_tree(
     repository: &Repository,
     index: Option<&OsStr>,
 ) -> Result<CandidateTree, RunError> {
-    let mut command = Command::new(GIT);
-    command
-        .arg("-C")
-        .arg(repository.worktree_root())
-        .arg("write-tree");
-    match index {
-        Some(index) => {
-            command.env("GIT_INDEX_FILE", index);
+    let index = index.map(PathBuf::from).map(|index| {
+        if index.is_absolute() {
+            index
+        } else {
+            repository.worktree_root().join(index)
         }
-        None => {
-            command.env_remove("GIT_INDEX_FILE");
-        }
-    }
-    let output = command
-        .output()
-        .map_err(|error| RunError::fault("gate::git-unavailable", error))?;
-    if !output.status.success() {
-        return Err(RunError::refusal(
-            "gate::git-refused",
-            format!(
-                "{GIT} write-tree exited {:?}: {}",
-                output.status.code(),
-                String::from_utf8_lossy(&output.stderr).trim()
-            ),
-        ));
-    }
-    parse_candidate_tree(&output.stdout)
-}
-
-fn parse_candidate_tree(output: &[u8]) -> Result<CandidateTree, RunError> {
-    let identity = output.strip_suffix(b"\n").ok_or_else(|| {
-        RunError::refusal(
-            "gate::candidate-tree-refused",
-            "Git write-tree output is not newline terminated",
-        )
-    })?;
-    let canonical_length = matches!(identity.len(), 40 | 64);
-    let canonical_hex = identity
-        .iter()
-        .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'));
-    if !canonical_length || !canonical_hex {
-        return Err(RunError::refusal(
-            "gate::candidate-tree-refused",
-            "Git write-tree output is not one canonical object identity",
-        ));
-    }
-    let identity = std::str::from_utf8(identity)
-        .map_err(|error| RunError::refusal("gate::candidate-tree-refused", error))?;
-    Ok(CandidateTree(identity.to_owned()))
+    });
+    // `git write-tree` may update the index cache-tree extension, so it takes
+    // index.lock even under GIT_OPTIONAL_LOCKS=0. The gate tree engine instead
+    // seals a private index copy and hashes every synthesized tree in memory.
+    ::gate::tree::capture_staged_candidate_tree(repository.worktree_root(), index.as_deref())
+        .map(CandidateTree)
+        .map_err(|error| RunError::refusal("gate::candidate-tree-refused", error))
 }
 
 #[cfg(test)]

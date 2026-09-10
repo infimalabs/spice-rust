@@ -500,6 +500,29 @@ pub(crate) fn git_directories(repository: &Path) -> Result<(PathBuf, PathBuf), T
     Ok((repo.path().to_path_buf(), repo.common_dir().to_path_buf()))
 }
 
+/// Derive the exact tree identity represented by one staged index without
+/// locking or writing the caller repository.
+///
+/// The index and any split-index companions are sealed and copied into a
+/// private gate workspace before parsing. Every referenced blob is admitted,
+/// synthesized tree objects are hashed in memory, and the source seal is
+/// rechecked before the identity is returned.
+pub fn capture_staged_candidate_tree(
+    repository: &Path,
+    index: Option<&Path>,
+) -> Result<String, TreeError> {
+    let repo = open_repository(repository)?;
+    let index = index.map_or_else(|| repo.index_path(), Path::to_path_buf);
+    let seal = IndexSeal::capture_at(index)?;
+    let build = BuildRoot::create()?;
+    let captured = seal.open(&repo, &build.workspace)?;
+    let items = index_items(&captured)?;
+    materialize_items(&repo, &build.root, &items)?;
+    let identity = write_index_tree(&repo, &items)?;
+    seal.verify()?;
+    Ok(identity)
+}
+
 /// Capture the one stable set of regular paths named by the current Git index.
 ///
 /// The index sources are sealed before they are opened and rechecked after
@@ -512,7 +535,7 @@ pub(crate) fn tracked_paths(repository: &Path) -> Result<Vec<String>, TreeError>
     let build = BuildRoot::create()?;
     let index = seal.open(&repo, &build.workspace)?;
     let items = index_items(&index)?;
-    seal.verify(&repo)?;
+    seal.verify()?;
     Ok(items.into_iter().map(|item| item.path).collect())
 }
 

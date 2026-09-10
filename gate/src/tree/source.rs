@@ -52,7 +52,7 @@ impl SelectionSeal {
                         revision: "HEAD".to_owned(),
                     });
                 }
-                before.verify(repo)?;
+                before.verify()?;
             }
             Self::Revision { before, revision } => {
                 if RevisionSeal::capture(repo, revision).ok().as_ref() != Some(before) {
@@ -68,6 +68,7 @@ impl SelectionSeal {
 
 #[derive(Debug)]
 pub(super) struct IndexSeal {
+    index: PathBuf,
     snapshot: IndexSnapshot,
     changes: IndexChangeSeal,
 }
@@ -79,18 +80,21 @@ struct IndexSnapshot {
 
 impl IndexSeal {
     pub(super) fn capture(repo: &gix::Repository) -> Result<Self, TreeError> {
-        let changes = IndexChangeSeal::start(repo)?;
-        let first = IndexSnapshot::capture_once(repo)?;
-        changes.watch_files(first.files.iter().map(|file| file.path.as_path()), repo)?;
-        let second = IndexSnapshot::capture_once(repo).map_err(|_| TreeError::IndexChanged {
-            path: repo.index_path(),
+        Self::capture_at(repo.index_path())
+    }
+
+    pub(super) fn capture_at(index: PathBuf) -> Result<Self, TreeError> {
+        let changes = IndexChangeSeal::start(&index)?;
+        let first = IndexSnapshot::capture_once(&index)?;
+        changes.watch_files(first.files.iter().map(|file| file.path.as_path()), &index)?;
+        let second = IndexSnapshot::capture_once(&index).map_err(|_| TreeError::IndexChanged {
+            path: index.clone(),
         })?;
-        if first != second || changes.changed(repo)? {
-            return Err(TreeError::IndexChanged {
-                path: repo.index_path(),
-            });
+        if first != second || changes.changed(&index)? {
+            return Err(TreeError::IndexChanged { path: index });
         }
         Ok(Self {
+            index,
             snapshot: second,
             changes,
         })
@@ -101,22 +105,22 @@ impl IndexSeal {
         repo: &gix::Repository,
         workspace: &Path,
     ) -> Result<gix::index::File, TreeError> {
-        self.snapshot.open(repo, workspace)
+        self.snapshot.open(repo, workspace, &self.index)
     }
 
-    pub(super) fn verify(&self, repo: &gix::Repository) -> Result<(), TreeError> {
-        if self.changes.changed(repo)? {
+    pub(super) fn verify(&self) -> Result<(), TreeError> {
+        if self.changes.changed(&self.index)? {
             return Err(TreeError::IndexChanged {
-                path: repo.index_path(),
+                path: self.index.clone(),
             });
         }
         let observed =
-            IndexSnapshot::capture_stable(repo).map_err(|_| TreeError::IndexChanged {
-                path: repo.index_path(),
+            IndexSnapshot::capture_stable(&self.index).map_err(|_| TreeError::IndexChanged {
+                path: self.index.clone(),
             })?;
-        if observed != self.snapshot || self.changes.changed(repo)? {
+        if observed != self.snapshot || self.changes.changed(&self.index)? {
             return Err(TreeError::IndexChanged {
-                path: repo.index_path(),
+                path: self.index.clone(),
             });
         }
         Ok(())
@@ -124,30 +128,29 @@ impl IndexSeal {
 }
 
 impl IndexSnapshot {
-    fn capture_stable(repo: &gix::Repository) -> Result<Self, TreeError> {
-        let first = Self::capture_once(repo)?;
-        let second = Self::capture_once(repo).map_err(|_| TreeError::IndexChanged {
-            path: repo.index_path(),
+    fn capture_stable(index: &Path) -> Result<Self, TreeError> {
+        let first = Self::capture_once(index)?;
+        let second = Self::capture_once(index).map_err(|_| TreeError::IndexChanged {
+            path: index.to_path_buf(),
         })?;
         if first != second {
             return Err(TreeError::IndexChanged {
-                path: repo.index_path(),
+                path: index.to_path_buf(),
             });
         }
         Ok(second)
     }
 
-    fn capture_once(repo: &gix::Repository) -> Result<Self, TreeError> {
-        let index = repo.index_path();
+    fn capture_once(index: &Path) -> Result<Self, TreeError> {
         let directory =
             index
                 .parent()
                 .map(Path::to_path_buf)
                 .ok_or_else(|| TreeError::IndexUnreadable {
-                    path: index.clone(),
+                    path: index.to_path_buf(),
                     evidence: "the index has no parent directory".to_owned(),
                 })?;
-        let mut paths = vec![index];
+        let mut paths = vec![index.to_path_buf()];
         let listing = fs::read_dir(&directory)
             .map_err(|source| TreeError::io("listing index sources", &directory, source))?;
         for entry in listing {
@@ -166,7 +169,7 @@ impl IndexSnapshot {
             .into_iter()
             .map(|path| {
                 observed_file(&path).map_err(|source| {
-                    if path == repo.index_path() && source.kind() == io::ErrorKind::NotFound {
+                    if path == index && source.kind() == io::ErrorKind::NotFound {
                         TreeError::IndexAbsent { path }
                     } else {
                         TreeError::io("capturing an index source", &path, source)
@@ -181,12 +184,12 @@ impl IndexSnapshot {
         &self,
         repo: &gix::Repository,
         workspace: &Path,
+        original_index: &Path,
     ) -> Result<gix::index::File, TreeError> {
         let source = workspace.join("index-source");
         create_private_workspace(&source).map_err(|error| {
             TreeError::io("creating a captured index directory", &source, error)
         })?;
-        let original_index = repo.index_path();
         for file in &self.files {
             let name = if file.path == original_index {
                 "index".into()
@@ -209,7 +212,7 @@ impl IndexSnapshot {
             gix::index::decode::Options::default(),
         )
         .map_err(|error| TreeError::IndexUnreadable {
-            path: original_index,
+            path: original_index.to_path_buf(),
             evidence: error.to_string(),
         })
     }
@@ -224,21 +227,20 @@ struct IndexChangeSeal {
 }
 
 impl IndexChangeSeal {
-    fn start(repo: &gix::Repository) -> Result<Self, TreeError> {
+    fn start(index: &Path) -> Result<Self, TreeError> {
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = repo;
+            let _ = index;
             Ok(Self {})
         }
         #[cfg(target_os = "linux")]
         {
-            let index = repo.index_path();
             let directory = index.parent().ok_or_else(|| TreeError::IndexUnreadable {
-                path: index.clone(),
+                path: index.to_path_buf(),
                 evidence: "the index has no parent directory".to_owned(),
             })?;
             let inotify = inotify::Inotify::init()
-                .map_err(|source| TreeError::io("creating an index change seal", &index, source))?;
+                .map_err(|source| TreeError::io("creating an index change seal", index, source))?;
             let mask = inotify::WatchMask::ATTRIB
                 | inotify::WatchMask::CLOSE_WRITE
                 | inotify::WatchMask::CREATE
@@ -260,11 +262,11 @@ impl IndexChangeSeal {
     fn watch_files<'a>(
         &self,
         paths: impl Iterator<Item = &'a Path>,
-        repo: &gix::Repository,
+        index: &Path,
     ) -> Result<(), TreeError> {
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = (paths, repo);
+            let _ = (paths, index);
             Ok(())
         }
         #[cfg(target_os = "linux")]
@@ -275,13 +277,13 @@ impl IndexChangeSeal {
                 | inotify::WatchMask::MODIFY
                 | inotify::WatchMask::MOVE_SELF;
             let inotify = self.inotify.lock().map_err(|_| TreeError::IndexChanged {
-                path: repo.index_path(),
+                path: index.to_path_buf(),
             })?;
             for path in paths {
                 inotify.watches().add(path, mask).map_err(|source| {
                     if source.kind() == io::ErrorKind::NotFound {
                         TreeError::IndexChanged {
-                            path: repo.index_path(),
+                            path: index.to_path_buf(),
                         }
                     } else {
                         TreeError::io("watching an index source", path, source)
@@ -292,16 +294,16 @@ impl IndexChangeSeal {
         }
     }
 
-    fn changed(&self, repo: &gix::Repository) -> Result<bool, TreeError> {
+    fn changed(&self, index: &Path) -> Result<bool, TreeError> {
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = repo;
+            let _ = index;
             Ok(false)
         }
         #[cfg(target_os = "linux")]
         {
             let mut inotify = self.inotify.lock().map_err(|_| TreeError::IndexChanged {
-                path: repo.index_path(),
+                path: index.to_path_buf(),
             })?;
             let mut buffer = [0_u8; 16 * 1024];
             loop {
@@ -328,7 +330,7 @@ impl IndexChangeSeal {
                     Err(source) => {
                         return Err(TreeError::io(
                             "reading the index change seal",
-                            &repo.index_path(),
+                            index,
                             source,
                         ));
                     }
