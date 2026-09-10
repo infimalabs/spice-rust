@@ -223,7 +223,3 @@ message = "Rename in place, update every reference in one change, and leave exac
 [taste.legacy]
 words = ["legacy", "legacies"]
 message = "Treat old implementations as evidence, never as executable arms. Migrate retained data forward once or refuse naming its owning release."
-
-[taste.urgency]
-words = ["urgent", "urgency", "urgently", "critical", "critically", "immediate", "immediately", "hard stop", "important"]
-message = "Reserve urgent or critical language for a real time-sensitive risk or escalation. State routine status, sequencing, and deadlines calmly and name the concrete consequence."

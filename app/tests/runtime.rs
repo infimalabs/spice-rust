@@ -335,6 +335,7 @@ fn board_response(
                 ),
             ),
         ],
+        trust: Vec::new(),
         residency: wire::intent::Positioned {
             position: seq(3),
             body: wire::ResidencyHead {
