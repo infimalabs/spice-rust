@@ -11,6 +11,8 @@ use wire::Media;
 
 use crate::watchband;
 
+mod taste_quotes;
+
 pub(crate) struct RenderedMarkdown {
     pub(crate) html: String,
     pub(crate) image_only: bool,
@@ -57,14 +59,15 @@ fn render_received_with_classifications(
         | Options::ENABLE_SMART_PUNCTUATION
         | Options::ENABLE_MATH
         | Options::ENABLE_GFM;
-    let events = Parser::new_ext(markdown, options)
+    let markdown = taste_quotes::normalize(markdown, tastes, options);
+    let events = Parser::new_ext(&markdown, options)
         .map(sanitize_markdown_event)
         .collect::<Vec<_>>();
     let events = coalesce_text_events(events);
     let image_only = markdown_is_image_only(&events);
     let mut code_block = false;
     let mut block_quote_depth = 0usize;
-    let mut remaining_review = has_marker_prefix(markdown, "[REVIEW]");
+    let mut remaining_review = has_marker_prefix(&markdown, "[REVIEW]");
     let mut remaining_tastes = usize::try_from(tastes).unwrap_or(usize::MAX);
     let mut remaining_broadcasts = usize::try_from(broadcasts).unwrap_or(usize::MAX);
     let events = decorate_markdown_images(events, image_only)

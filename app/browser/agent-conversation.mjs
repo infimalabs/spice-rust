@@ -497,7 +497,9 @@ async function assertExternalOperatorReplay(page, fixture, console, lane, worktr
 async function assertInlineTastePills(page, console, lane, activityReplay) {
   const replyText = "ACK: presentation remains unchanged.";
   const text = [
-    "> [TASTE] compatibility: Keep one tested path.",
+    "> > > [TASTE] compatibility: Keep one tested path.",
+    "> >",
+    "> > The quoted reply keeps its own context.",
     "",
     "> [TASTE] polling: Wait for the completion event.",
     "",
@@ -515,6 +517,34 @@ async function assertInlineTastePills(page, console, lane, activityReplay) {
     await card.locator(".message-taste-pill").allTextContents(),
     ["TASTE", "TASTE"],
     "each quoted taste receives its own unnumbered inline pill",
+  );
+  const tasteCards = await card.locator(".message-taste-pill").evaluateAll((pills) => (
+    pills.map((pill) => {
+      let depth = 0;
+      for (let node = pill.parentElement; node; node = node.parentElement) {
+        if (node.tagName === "BLOCKQUOTE") depth += 1;
+      }
+      const style = getComputedStyle(pill.closest("blockquote"));
+      return [depth, style.borderLeftColor, style.backgroundColor, style.borderRadius];
+    })
+  ));
+  assert.equal(tasteCards[0][0], 1, "nested taste renders inside one canonical quote card");
+  assert.deepEqual(
+    tasteCards[0],
+    tasteCards[1],
+    "nested and unnested tastes use the same quote-card geometry and colors",
+  );
+  assert.equal(
+    await card.getByText("The quoted reply keeps its own context.", { exact: true })
+      .evaluate((reply) => {
+        let depth = 0;
+        for (let node = reply.parentElement; node; node = node.parentElement) {
+          if (node.tagName === "BLOCKQUOTE") depth += 1;
+        }
+        return depth;
+      }),
+    2,
+    "normal quoted reply structure remains nested around the normalized taste",
   );
   assert.equal(
     await card.locator(".message-taste-pill .message-badge-count").count(),
