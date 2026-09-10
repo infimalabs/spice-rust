@@ -17,6 +17,14 @@ const GUARDIAN_NOTICE_FD: RawFd = 4;
 const DUPLICATE_MINIMUM_FD: RawFd = 10;
 const POLL_NANOSECONDS: libc::c_long = 10_000_000;
 const READY_BYTE: u8 = 1;
+#[cfg(target_os = "linux")]
+const PROC_SELF_FD: &[u8] = b"/proc/self/fd\0";
+#[cfg(target_os = "linux")]
+const DIRENT_BUFFER_BYTES: usize = 1024;
+#[cfg(target_os = "linux")]
+const DIRENT_RECORD_LENGTH_OFFSET: usize = 16;
+#[cfg(target_os = "linux")]
+const DIRENT_NAME_OFFSET: usize = 19;
 /// How much of a record the guardian reads to find the slot reserved in it.
 ///
 /// A record is one line of JSON whose longest field is a working directory, so
@@ -387,14 +395,130 @@ unsafe fn close_unneeded_descriptors() -> bool {
     }
 
     // SAFETY: this closes only descriptors above the guardian's two retained slots.
-    (unsafe {
+    let result = unsafe {
         libc::syscall(
             libc::SYS_close_range,
             GUARDIAN_NOTICE_FD + 1,
             libc::c_uint::MAX,
             0,
         )
-    }) == 0
+    };
+    // Read errno before another libc call can replace it.
+    let error = if result == -1 { unsafe { errno() } } else { 0 };
+    match close_range_disposition(result, error) {
+        CloseRangeDisposition::Complete => true,
+        CloseRangeDisposition::Scan => unsafe { close_proc_descriptors() },
+        CloseRangeDisposition::Refused => false,
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CloseRangeDisposition {
+    Complete,
+    Scan,
+    Refused,
+}
+
+#[cfg(target_os = "linux")]
+const fn close_range_disposition(
+    result: libc::c_long,
+    error: libc::c_int,
+) -> CloseRangeDisposition {
+    if result == 0 {
+        CloseRangeDisposition::Complete
+    } else if result == -1
+        && (error == libc::ENOSYS || error == libc::EPERM || error == libc::EINVAL)
+    {
+        CloseRangeDisposition::Scan
+    } else {
+        CloseRangeDisposition::Refused
+    }
+}
+
+#[cfg(target_os = "linux")]
+unsafe fn close_proc_descriptors() -> bool {
+    // SAFETY: the constant path is nul-terminated and the guardian owns the returned descriptor.
+    let directory = unsafe {
+        libc::open(
+            PROC_SELF_FD.as_ptr().cast(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+        )
+    };
+    if directory == -1 {
+        return false;
+    }
+    let mut buffer = [0_u8; DIRENT_BUFFER_BYTES];
+    loop {
+        // SAFETY: the byte buffer remains writable for the declared capacity.
+        let read = unsafe {
+            libc::syscall(
+                libc::SYS_getdents64,
+                directory,
+                buffer.as_mut_ptr(),
+                buffer.len(),
+            )
+        };
+        if read == -1 && unsafe { errno() } == libc::EINTR {
+            continue;
+        }
+        if read < 0 {
+            unsafe { libc::close(directory) };
+            return false;
+        }
+        if read == 0 {
+            return unsafe { libc::close(directory) } == 0;
+        }
+        let Ok(read) = usize::try_from(read) else {
+            unsafe { libc::close(directory) };
+            return false;
+        };
+        let mut offset = 0;
+        while offset < read {
+            let Some(record) = dirent_record(&buffer[offset..read]) else {
+                unsafe { libc::close(directory) };
+                return false;
+            };
+            if let Some(descriptor) = dirent_descriptor(record)
+                && descriptor > GUARDIAN_NOTICE_FD
+                && descriptor != directory
+                && unsafe { libc::close(descriptor) } == -1
+                && unsafe { errno() } != libc::EBADF
+            {
+                unsafe { libc::close(directory) };
+                return false;
+            }
+            offset += record.len();
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn dirent_record(bytes: &[u8]) -> Option<&[u8]> {
+    let length = bytes.get(
+        DIRENT_RECORD_LENGTH_OFFSET..DIRENT_RECORD_LENGTH_OFFSET.checked_add(size_of::<u16>())?,
+    )?;
+    let length = usize::from(u16::from_ne_bytes(length.try_into().ok()?));
+    (length >= DIRENT_NAME_OFFSET)
+        .then(|| bytes.get(..length))
+        .flatten()
+}
+
+#[cfg(target_os = "linux")]
+fn dirent_descriptor(record: &[u8]) -> Option<RawFd> {
+    let name = record.get(DIRENT_NAME_OFFSET..)?;
+    let end = name.iter().position(|byte| *byte == 0)?;
+    let name = name.get(..end)?;
+    if name.is_empty() || !name.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    let mut descriptor = 0_u32;
+    for byte in name {
+        descriptor = descriptor
+            .checked_mul(10)?
+            .checked_add(u32::from(*byte - b'0'))?;
+    }
+    RawFd::try_from(descriptor).ok()
 }
 
 #[cfg(target_os = "macos")]
@@ -617,5 +741,100 @@ mod tests {
             .collect::<Vec<_>>();
         descriptors.sort_unstable();
         descriptors
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_tests {
+    use std::fs::File;
+    use std::os::fd::AsRawFd;
+
+    use super::{CloseRangeDisposition, close_proc_descriptors, close_range_disposition, errno};
+
+    const HIGH_DESCRIPTOR: libc::c_int = 32;
+
+    #[test]
+    fn close_range_and_proc_scan_paths_are_kernel_independent() {
+        assert_eq!(
+            close_range_disposition(0, 0),
+            CloseRangeDisposition::Complete
+        );
+        for error in [libc::ENOSYS, libc::EPERM, libc::EINVAL] {
+            assert_eq!(
+                close_range_disposition(-1, error),
+                CloseRangeDisposition::Scan
+            );
+        }
+        assert_eq!(
+            close_range_disposition(-1, libc::EIO),
+            CloseRangeDisposition::Refused
+        );
+
+        let file = File::open("/dev/null").expect("descriptor fixture opens");
+        // SAFETY: the source descriptor is live and the result is owned by this test.
+        let high = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, HIGH_DESCRIPTOR) };
+        assert!(
+            high >= HIGH_DESCRIPTOR,
+            "high descriptor duplication failed"
+        );
+        let mut pipe = [0; 2];
+        // SAFETY: the pipe destination is writable for both returned descriptors.
+        assert_eq!(unsafe { libc::pipe(pipe.as_mut_ptr()) }, 0);
+
+        // SAFETY: the child performs only raw descriptor operations before `_exit`.
+        let child = unsafe { libc::fork() };
+        assert!(child >= 0, "descriptor fixture fork failed");
+        if child == 0 {
+            // SAFETY: the selected sources are live and 3/4 are the retained guardian slots.
+            let prepared = unsafe {
+                libc::dup2(file.as_raw_fd(), super::GUARDIAN_LOCK_FD) != -1
+                    && libc::dup2(pipe[1], super::GUARDIAN_NOTICE_FD) != -1
+            };
+            for descriptor in pipe {
+                if descriptor != super::GUARDIAN_LOCK_FD && descriptor != super::GUARDIAN_NOTICE_FD
+                {
+                    // SAFETY: this closes only the child's inherited pipe copy.
+                    unsafe { libc::close(descriptor) };
+                }
+            }
+            // SAFETY: the child owns its inherited descriptor table exclusively.
+            let scanned = prepared && unsafe { close_proc_descriptors() };
+            // SAFETY: `fcntl` observes descriptor presence without changing it.
+            let high_closed = unsafe { libc::fcntl(high, libc::F_GETFD) } == -1
+                && unsafe { errno() } == libc::EBADF;
+            // SAFETY: the two retained descriptors must remain readable by the kernel.
+            let retained = unsafe {
+                libc::fcntl(super::GUARDIAN_LOCK_FD, libc::F_GETFD) != -1
+                    && libc::fcntl(super::GUARDIAN_NOTICE_FD, libc::F_GETFD) != -1
+            };
+            let answer = [u8::from(scanned && high_closed && retained)];
+            // SAFETY: the retained notice descriptor is a live pipe write end.
+            let written = unsafe {
+                libc::write(
+                    super::GUARDIAN_NOTICE_FD,
+                    answer.as_ptr().cast(),
+                    answer.len(),
+                )
+            };
+            // SAFETY: no Rust destructor may run in the post-fork child.
+            unsafe { libc::_exit(if written == 1 { 0 } else { 1 }) };
+        }
+
+        // SAFETY: the parent owns these descriptor copies and the child owns `child`.
+        unsafe { libc::close(pipe[1]) };
+        let mut answer = [0_u8; 1];
+        // SAFETY: the answer buffer is writable for one byte.
+        assert_eq!(
+            unsafe { libc::read(pipe[0], answer.as_mut_ptr().cast(), answer.len()) },
+            1
+        );
+        let mut status = 0;
+        // SAFETY: `child` names the direct child forked above.
+        assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
+        // SAFETY: the parent still owns its read and high descriptor copies.
+        assert_eq!(unsafe { libc::close(pipe[0]) }, 0);
+        assert_eq!(unsafe { libc::close(high) }, 0);
+        assert_eq!(status, 0);
+        assert_eq!(answer, [1]);
     }
 }
