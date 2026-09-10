@@ -449,9 +449,9 @@ fn write_index_tree(repo: &gix::Repository, items: &[Item]) -> Result<String, Tr
     // The identity is evidence, not an object the caller repository needs to
     // retain. The high-level editor writes every synthesized directory tree to
     // the repository object database; detach it and hash the canonical tree
-    // encodings in memory instead. Every leaf was already admitted and read
-    // from the repository by `materialize_items`, and every path was normalized
-    // before it reached this editor.
+    // encodings in memory instead. The sealed index supplies each normalized
+    // path, mode, and leaf identity; callers that execute selected bytes admit
+    // those objects separately before using the identity.
     editor
         .detach()
         .write(|tree| {
@@ -504,9 +504,8 @@ pub(crate) fn git_directories(repository: &Path) -> Result<(PathBuf, PathBuf), T
 /// locking or writing the caller repository.
 ///
 /// The index and any split-index companions are sealed and copied into a
-/// private gate workspace before parsing. Every referenced blob is admitted,
-/// synthesized tree objects are hashed in memory, and the source seal is
-/// rechecked before the identity is returned.
+/// private gate workspace before parsing. Synthesized tree objects are hashed
+/// in memory, and the source seal is rechecked before the identity is returned.
 pub fn capture_staged_candidate_tree(
     repository: &Path,
     index: Option<&Path>,
@@ -517,7 +516,6 @@ pub fn capture_staged_candidate_tree(
     let build = BuildRoot::create()?;
     let captured = seal.open(&repo, &build.workspace)?;
     let items = index_items(&captured)?;
-    materialize_items(&repo, &build.root, &items)?;
     let identity = write_index_tree(&repo, &items)?;
     seal.verify()?;
     Ok(identity)
