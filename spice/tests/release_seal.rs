@@ -89,6 +89,46 @@ fn release_seal_refuses_a_missing_receipt_before_manifest_publication() {
     assert!(!fixture.root.join("dist/stage/release").exists());
 }
 
+#[test]
+fn release_seal_refuses_a_moved_head_without_publishing_a_manifest_pointer() {
+    let fixture = Fixture::new();
+    fs::write(fixture.root.join("later.txt"), "later source\n").expect("later source");
+    git(&fixture.root, &["add", "later.txt"]);
+    git(
+        &fixture.root,
+        &[
+            "-c",
+            "user.name=Spice Test",
+            "-c",
+            "user.email=spice@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "later fixture",
+        ],
+    );
+
+    let output = fixture.invoke(&["--json", "release", "seal"]);
+
+    assert_refusal(&output, "release::seal-source-mismatch");
+    assert!(!fixture.root.join("dist/stage/release").exists());
+}
+
+#[test]
+fn release_seal_refuses_a_moved_canvas_and_preserves_the_existing_pointer() {
+    let fixture = Fixture::new();
+    let pointer = fixture.root.join("dist/stage/release/manifest.json");
+    fs::create_dir_all(pointer.parent().expect("pointer has a parent")).expect("release directory");
+    let existing = b"existing manifest pointer\n";
+    fs::write(&pointer, existing).expect("existing manifest pointer");
+    stage_app_named(&fixture.root, "moved Canvas generation");
+
+    let output = fixture.invoke(&["--json", "release", "seal"]);
+
+    assert_refusal(&output, "release::seal-app-mismatch");
+    assert_eq!(fs::read(pointer).expect("existing pointer reads"), existing);
+}
+
 struct Fixture {
     root: PathBuf,
     commit: String,
@@ -222,7 +262,11 @@ impl Drop for Resident {
 }
 
 fn stage_app(root: &Path) -> Digest {
-    let identity = Digest::compute(Domain::DistArtifact, b"fixture Canvas generation");
+    stage_app_named(root, "fixture Canvas generation")
+}
+
+fn stage_app_named(root: &Path, marker: &str) -> Digest {
+    let identity = Digest::compute(Domain::DistArtifact, marker.as_bytes());
     let generation = root
         .join(canvas::APP_STAGE)
         .join(canvas::APP_STAGE_GENERATIONS)
@@ -231,7 +275,7 @@ fn stage_app(root: &Path) -> Digest {
     for asset in canvas::APP.assets() {
         fs::write(
             generation.join(asset.file()),
-            format!("fixture {}\n", asset.file()),
+            format!("{marker} {}\n", asset.file()),
         )
         .expect("app asset");
     }
@@ -366,4 +410,14 @@ fn spoken(output: &Output) -> String {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     )
+}
+
+fn assert_refusal(output: &Output, reason: &str) {
+    assert_eq!(output.status.code(), Some(2), "{}", spoken(output));
+    let Outcome::Refusal(refusal): Outcome<SealedManifest> =
+        wire::decode(&output.stderr).expect("refusal decodes")
+    else {
+        panic!("command did not refuse: {}", spoken(output));
+    };
+    assert_eq!(refusal.reason(), reason);
 }

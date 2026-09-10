@@ -1,16 +1,50 @@
 //! Post-proof composition and resident recognition of one release manifest.
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use wire::manifest::ReleaseTarget;
-use wire::{Fault, FaultClass, Outcome, Refusal, Reply, SealedManifest};
+use wire::manifest::{ReleaseTarget, TargetPayload};
+use wire::{Digest, Fault, FaultClass, Outcome, Refusal, Reply, SealedManifest};
 
 use spice::repository::Repository;
 
 struct StoredProof {
     payload: Vec<u8>,
     receipt: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CurrentBindings {
+    source: crate::release_command::ProofSourceIdentity,
+    app: Digest,
+}
+
+struct CurrentPublisher<'a> {
+    inner: proof::FileManifestPublisher,
+    worktree: &'a Path,
+    expected: CurrentBindings,
+}
+
+impl proof::ManifestPublisher for CurrentPublisher<'_> {
+    fn publish(
+        &mut self,
+        path: &Path,
+        mode: u32,
+        bytes: &[u8],
+    ) -> Result<(), proof::ManifestPublishError> {
+        if path == Path::new("release/manifest.json") {
+            let observed =
+                current_bindings(self.worktree).map_err(proof::ManifestPublishError::Guard)?;
+            if observed != self.expected {
+                return Err(proof::ManifestPublishError::Guard(format!(
+                    "source or Canvas moved before the manifest pointer: expected {:?}, observed \
+                     {:?}",
+                    self.expected, observed
+                )));
+            }
+        }
+        self.inner.publish(path, mode, bytes)
+    }
 }
 
 struct Prepared {
@@ -51,6 +85,8 @@ fn prepare() -> Result<Prepared, Outcome<SealedManifest>> {
     let state = repository
         .admit_state()
         .map_err(|error| crate::state_failure(&error).outcome())?;
+    let bindings = current_bindings(repository.worktree_root())
+        .map_err(|error| refused("release::seal-source-refused", &error))?;
     let mut stored = Vec::with_capacity(2);
     for target in [
         ReleaseTarget::Aarch64AppleDarwin,
@@ -62,6 +98,7 @@ fn prepare() -> Result<Prepared, Outcome<SealedManifest>> {
             .map_err(|error| refused("release::seal-input-refused", &error))?;
         let admitted = proof::admit(&payload)
             .map_err(|error| refused("release::seal-payload-refused", &error))?;
+        require_current_payload(admitted.value(), &bindings)?;
         let receipt = layout
             .receipt_for(admitted.value())
             .map_err(|error| refused("release::seal-layout-refused", &error))?
@@ -73,19 +110,6 @@ fn prepare() -> Result<Prepared, Outcome<SealedManifest>> {
         .iter()
         .map(|proof| proof::ManifestInput::new(&proof.payload, &proof.receipt));
     let stage = repository.worktree_root().join("dist/stage");
-    let mut publisher = proof::FileManifestPublisher::new(&stage);
-    let published = proof::publish_manifest(inputs, &mut publisher)
-        .map_err(|error| refused("release::seal-manifest-refused", &error))?;
-    let app = crate::release_command::app_digest(repository.worktree_root())
-        .map_err(|error| refused("release::seal-app-refused", &error))?;
-    let admitted = proof::admit_proof_manifest(&stage, &app)
-        .map_err(|error| refused("release::seal-admission-refused", &error))?;
-    if admitted != published {
-        return Err(refused(
-            "release::seal-publication-moved",
-            "published manifest did not read back byte-identically",
-        ));
-    }
     let head = journal::JournalReader::open(state.journal())
         .and_then(|reader| reader.cursor())
         .map_err(|error| environment("release::seal-journal-unavailable", &error.to_string()))?
@@ -95,11 +119,58 @@ fn prepare() -> Result<Prepared, Outcome<SealedManifest>> {
                 "proof recognition requires one current journal head",
             )
         })?;
+    let mut publisher = CurrentPublisher {
+        inner: proof::FileManifestPublisher::new(&stage),
+        worktree: repository.worktree_root(),
+        expected: bindings.clone(),
+    };
+    let published = proof::publish_manifest(inputs, &mut publisher)
+        .map_err(|error| refused("release::seal-manifest-refused", &error))?;
+    let admitted = proof::admit_proof_manifest(&stage, &bindings.app)
+        .map_err(|error| refused("release::seal-admission-refused", &error))?;
+    if admitted != published {
+        return Err(refused(
+            "release::seal-publication-moved",
+            "published manifest did not read back byte-identically",
+        ));
+    }
     Ok(Prepared {
         published,
         canvas: state.canvas().to_path_buf(),
         head,
     })
+}
+
+fn current_bindings(root: &Path) -> Result<CurrentBindings, String> {
+    Ok(CurrentBindings {
+        source: crate::release_command::proof_source_identity(root)?,
+        app: crate::release_command::app_digest(root)?,
+    })
+}
+
+fn require_current_payload(
+    payload: &TargetPayload,
+    bindings: &CurrentBindings,
+) -> Result<(), Outcome<SealedManifest>> {
+    if payload.source != bindings.source.digest {
+        return Err(refused(
+            "release::seal-source-mismatch",
+            &format!(
+                "payload source {} differs from current commit source {}",
+                payload.source, bindings.source.digest
+            ),
+        ));
+    }
+    if payload.app != bindings.app {
+        return Err(refused(
+            "release::seal-app-mismatch",
+            &format!(
+                "payload Canvas {} differs from current Canvas {}",
+                payload.app, bindings.app
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn recognition_outcome(

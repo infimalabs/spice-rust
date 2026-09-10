@@ -368,6 +368,28 @@ pub(crate) fn app_digest(worktree: &Path) -> Result<Digest, String> {
         .map_err(|error| error.to_string())
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ProofSourceIdentity {
+    pub commit: String,
+    pub tree: String,
+    pub digest: Digest,
+}
+
+pub(crate) fn proof_source_identity(root: &Path) -> Result<ProofSourceIdentity, String> {
+    let status = git_line(root, &["status", "--porcelain=v1", "--untracked-files=all"])?;
+    if !status.is_empty() {
+        return Err(format!("proof source is not clean: {status}"));
+    }
+    let commit = git_line(root, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+    let tree = git_line(root, &["rev-parse", "--verify", "HEAD^{tree}"])?;
+    let digest = Digest::compute(Domain::DistSourceCommit, commit.as_bytes());
+    Ok(ProofSourceIdentity {
+        commit,
+        tree,
+        digest,
+    })
+}
+
 pub(crate) fn admit_stage(
     root: &Path,
     app: &Digest,
@@ -832,6 +854,17 @@ fn git_output(root: &Path, arguments: &[&str]) -> Result<(bool, String), String>
         .collect::<Vec<_>>()
         .join("\n");
     Ok((output.status.success(), detail))
+}
+
+fn git_line(root: &Path, arguments: &[&str]) -> Result<String, String> {
+    let (success, output) = git_output(root, arguments)?;
+    if !success {
+        return Err(format!("git {:?} refused: {output}", arguments));
+    }
+    if output.contains(['\r', '\n']) {
+        return Err(format!("git {:?} returned more than one line", arguments));
+    }
+    Ok(output)
 }
 
 pub(crate) fn observe(
