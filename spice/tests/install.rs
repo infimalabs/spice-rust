@@ -9,8 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use spice::install::{
     ApplianceState, InstallError, InstallStatus, apply, audit_appliance, capture_generation,
     installed_bash_env, installed_binary, installed_git_hooks, installed_skill,
-    installed_spice_wrapper, installed_zdotdir, plan, publish_test_version_7_receipt,
-    publish_test_version_13_receipt, unapply,
+    installed_spice_wrapper, installed_zdotdir, plan, publish_test_historical_receipt, unapply,
 };
 use spice::repository::Repository;
 
@@ -150,7 +149,7 @@ fn version_13_payload_receipt_compacts_without_restoring_the_fold_store() {
     let current = plan(&repository, None).unwrap();
     apply(&repository, None, &current.digest().unwrap()).unwrap();
     fs::write(&store, b"legacy fold bytes\n").unwrap();
-    publish_test_version_13_receipt(&repository).unwrap();
+    publish_test_historical_receipt(&repository, 13).unwrap();
     assert!(!store.exists());
     let legacy: serde_json::Value =
         serde_json::from_slice(&fs::read(scratch.record()).unwrap()).unwrap();
@@ -195,7 +194,7 @@ fn compact_migration_deletes_without_archiving_or_restoring_the_obsolete_fold_st
     fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
     let current = plan(&repository, Some(&source)).unwrap();
     apply(&repository, Some(&source), &current.digest().unwrap()).unwrap();
-    publish_test_version_7_receipt(&repository).unwrap();
+    publish_test_historical_receipt(&repository, 7).unwrap();
     let store = scratch.join(RETIRED_FOLD_STORE);
     fs::create_dir_all(store.parent().unwrap()).unwrap();
     fs::write(&store, b"archived fold bytes\n").unwrap();

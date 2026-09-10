@@ -10,8 +10,8 @@ use super::binding::bind_destination;
 use super::files::{observe_bound, publish_bound};
 use super::{
     FileImage, Generation, InstallError, InstallPlan, InstallPlanSummary, InstallReceipt,
-    InstallStatus, LEGACY_RECORD_VERSIONS, RECORD_MODE, RECORD_NAME, RECORD_PATH, RECORD_VERSION,
-    ReceiptGeneration, Repository, RepositoryIdentity, RollbackArchive,
+    InstallStatus, RECORD_MODE, RECORD_NAME, RECORD_PATH, RECORD_VERSION, ReceiptGeneration,
+    ReceiptSupport, Repository, RepositoryIdentity, RollbackArchive,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -32,6 +32,11 @@ pub(super) struct InstallRecord {
     pub(super) retired_parents: Vec<Option<Generation>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) restored_retirements: Vec<Option<Generation>>,
+}
+
+#[derive(Deserialize)]
+struct InstallRecordHeader {
+    version: u16,
 }
 
 pub(super) struct LoadedRecord {
@@ -332,11 +337,16 @@ impl InstallRecord {
             && self.version == super::PREVIOUS_RECORD_VERSION
             && self.plan.version == super::PREVIOUS_RECORD_VERSION
             && self.status == InstallStatus::Complete;
-        if self.version != RECORD_VERSION
-            && !rollback_migratable
-            && !forward_migratable
-            && !inline_migratable
-            && !previous_migratable
+        let supported = matches!(
+            super::receipt_support(self.version),
+            Some(ReceiptSupport::Current | ReceiptSupport::Direct)
+        );
+        if !supported
+            || (self.version != RECORD_VERSION
+                && !rollback_migratable
+                && !forward_migratable
+                && !inline_migratable
+                && !previous_migratable)
         {
             return Err(InstallError::InvalidRecord(format!(
                 "install record version {} is not {RECORD_VERSION}",
@@ -630,16 +640,14 @@ fn decode_record(repository: &Repository) -> Result<Option<LoadedRecord>, Instal
     };
     let generation = ReceiptGeneration::observed(&observed);
     let image = observed.image;
-    let record: InstallRecord = wire::decode(&image.bytes).map_err(InstallError::Decode)?;
-    if let Some((_, owner)) = LEGACY_RECORD_VERSIONS
-        .iter()
-        .find(|(version, _)| *version == record.version)
-    {
+    let header: InstallRecordHeader = wire::decode(&image.bytes).map_err(InstallError::Decode)?;
+    if let Some(ReceiptSupport::Retired(owner)) = super::receipt_support(header.version) {
         return Err(InstallError::LegacyRecord {
             path: record_path(repository)?,
             owner,
         });
     }
+    let record: InstallRecord = wire::decode(&image.bytes).map_err(InstallError::Decode)?;
     let canonical = wire::encode(&record).map_err(InstallError::Encode)?;
     if canonical != image.bytes {
         return Err(InstallError::InvalidRecord(
@@ -770,7 +778,10 @@ pub(super) fn record_path(repository: &Repository) -> Result<PathBuf, InstallErr
 }
 
 #[cfg(debug_assertions)]
-pub(super) fn publish_test_version_7_receipt(repository: &Repository) -> Result<(), InstallError> {
+pub(super) fn publish_test_historical_receipt(
+    repository: &Repository,
+    version: u16,
+) -> Result<(), InstallError> {
     let mut record = read_record(repository)?
         .ok_or_else(|| InstallError::InvalidRecord("test fixture receipt is absent".to_owned()))?
         .record;
@@ -779,32 +790,59 @@ pub(super) fn publish_test_version_7_receipt(repository: &Repository) -> Result<
             "test fixture receipt is not complete".to_owned(),
         ));
     }
-    record.remove_test_newer_hook_assets(repository)?;
-    record.version = super::MIGRATABLE_RECORD_VERSION;
-    record.plan.version = super::MIGRATABLE_RECORD_VERSION;
-    record.plan.retirements.clear();
-    record.plan.rollback_archive = None;
-    record.retired_parents.clear();
-    record.restored_retirements.clear();
+    match version {
+        super::MIGRATABLE_RECORD_VERSION
+        | super::FORWARD_MIGRATABLE_RECORD_VERSION
+        | super::INLINE_ROLLBACK_RECORD_VERSION => {
+            record.remove_test_newer_hook_assets(repository)?;
+            if version == super::MIGRATABLE_RECORD_VERSION {
+                record.plan.retirements.clear();
+                record.plan.rollback_archive = None;
+                record.retired_parents.clear();
+                record.restored_retirements.clear();
+            } else {
+                let index = record
+                    .plan
+                    .retirements
+                    .iter()
+                    .position(|retirement| retirement.path == super::RETIRED_FOLD_STORE_PATH)
+                    .ok_or_else(|| {
+                        InstallError::InvalidRecord(
+                            "test receipt has no fold-store retirement".to_owned(),
+                        )
+                    })?;
+                record.plan.retirements.remove(index);
+                record.retired_parents.remove(index);
+                record.restored_retirements.remove(index);
+                if let Some(archive) = &record.plan.rollback_archive {
+                    record.plan.rollback_archive = Some(archive.to_inline(repository)?);
+                }
+            }
+        }
+        super::PREVIOUS_RECORD_VERSION => downgrade_test_version_13(&mut record, repository)?,
+        _ => {
+            return Err(InstallError::InvalidRecord(format!(
+                "test receipt schema {version} is not directly upgradable"
+            )));
+        }
+    }
+    record.version = version;
+    record.plan.version = version;
     record.completed = record.plan.operation_count();
     record.plan_digest = record.plan.digest()?;
     record.validate_with_content(true)?;
+    record.plan.publish_staged_rollback(repository)?;
     let bytes = wire::encode(&record).map_err(InstallError::Encode)?;
     let path = record_path(repository)?;
     fs::write(&path, bytes)
-        .map_err(|source| InstallError::io("publish version-7 test receipt", path, source))
+        .map_err(|source| InstallError::io("publish historical test receipt", path, source))
 }
 
 #[cfg(debug_assertions)]
-pub(super) fn publish_test_version_13_receipt(repository: &Repository) -> Result<(), InstallError> {
-    let mut record = read_record(repository)?
-        .ok_or_else(|| InstallError::InvalidRecord("test fixture receipt is absent".to_owned()))?
-        .record;
-    if record.status != InstallStatus::Complete {
-        return Err(InstallError::InvalidRecord(
-            "test fixture receipt is not complete".to_owned(),
-        ));
-    }
+fn downgrade_test_version_13(
+    record: &mut InstallRecord,
+    repository: &Repository,
+) -> Result<(), InstallError> {
     let index = record
         .plan
         .retirements
@@ -825,14 +863,5 @@ pub(super) fn publish_test_version_13_receipt(repository: &Repository) -> Result
     retirement.discard = false;
     retirement.superseded = None;
     retirement.rollback = None;
-    record.version = super::PREVIOUS_RECORD_VERSION;
-    record.plan.version = super::PREVIOUS_RECORD_VERSION;
-    record.completed = record.plan.operation_count();
-    record.plan_digest = record.plan.digest()?;
-    record.validate_with_content(true)?;
-    record.plan.publish_staged_rollback(repository)?;
-    let bytes = wire::encode(&record).map_err(InstallError::Encode)?;
-    let path = record_path(repository)?;
-    fs::write(&path, bytes)
-        .map_err(|source| InstallError::io("publish version-13 test receipt", path, source))
+    Ok(())
 }
