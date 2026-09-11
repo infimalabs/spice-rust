@@ -322,34 +322,44 @@ fn advance_current_generation(
 
     let count = usize::try_from(authority.get() - admitted.get())
         .map_err(|_| "committed read-materialization delta exceeds this platform".to_owned())?;
-    let packed = reader
-        .canvas_facts(
-            journal::FactPageStart::After(Some(admitted)),
-            authority,
-            count,
-        )
-        .map_err(|error| format!("read materialization delta is unreadable: {error}"))?;
-    if packed.overflow.is_some()
-        || packed.rows.len() != count
-        || packed.rows.first().map(|row| row.seq.get()) != Some(admitted.get() + 1)
-        || packed.rows.last().map(|row| row.seq) != Some(authority)
+    let mut start = journal::FactPageStart::After(Some(admitted));
+    let mut rows = Vec::new();
+    let mut steps = 0_u64;
+    loop {
+        let packed = reader
+            .canvas_facts(start, authority, journal::FactReadBudget::RETAINED)
+            .map_err(|error| format!("read materialization delta is unreadable: {error}"))?;
+        steps = steps.saturating_add(1);
+        if packed.rows.is_empty() {
+            return Err(format!(
+                "read materialization page ended before authority {authority}"
+            ));
+        }
+        rows.extend(packed.rows);
+        let Some(overflow) = packed.overflow else {
+            break;
+        };
+        start = journal::FactPageStart::At(overflow.continuation);
+    }
+    if rows.len() != count
+        || rows.first().map(|row| row.seq.get()) != Some(admitted.get() + 1)
+        || rows.last().map(|row| row.seq) != Some(authority)
     {
         return Err(format!(
             "read materialization expected committed range {}..={authority}, received {:?}..={:?}",
             admitted.get() + 1,
-            packed.rows.first().map(|row| row.seq),
-            packed.rows.last().map(|row| row.seq)
+            rows.first().map(|row| row.seq),
+            rows.last().map(|row| row.seq)
         ));
     }
 
-    let consent_rebuilt = packed
-        .rows
+    let consent_rebuilt = rows
         .iter()
         .any(|row| consent::Queue::observes(row.fact.kind()));
     let consent = if consent_rebuilt {
         let mut consent = state.consent.as_ref().clone();
         consent
-            .advance(packed.rows.iter())
+            .advance(rows.iter())
             .map_err(|error| format!("consent materialization is invalid: {error}"))?;
         Arc::new(consent)
     } else {
@@ -358,7 +368,7 @@ fn advance_current_generation(
     let generation = Arc::new(Generation {
         cursor: authority,
         consent: Arc::clone(&consent),
-        materialization_steps: 1,
+        materialization_steps: steps,
     });
     state.consent = consent;
     state.generation = Some(Arc::clone(&generation));

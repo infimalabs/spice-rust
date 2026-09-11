@@ -83,10 +83,10 @@ impl<'a> ThreadReader<'a> {
     pub fn walk(
         &self,
         position: wire::Seq,
-        limit: usize,
+        budget: journal::FactReadBudget,
     ) -> Result<wire::Packed<wire::Envelope<wire::AnyFact>>, ThreadReadError> {
         self.bus
-            .canvas_thread(position, limit)
+            .canvas_thread(position, budget)
             .map_err(ThreadReadError::Bus)?
             .ok_or(ThreadReadError::Thread(ThreadError::UnknownPosition(
                 position,
@@ -96,9 +96,9 @@ impl<'a> ThreadReader<'a> {
     pub fn walk_head<T>(
         &self,
         head: &journal::JournalHead<T>,
-        limit: usize,
+        budget: journal::FactReadBudget,
     ) -> Result<wire::Packed<wire::Envelope<wire::AnyFact>>, ThreadReadError> {
-        self.walk(head.position(), limit)
+        self.walk(head.position(), budget)
     }
 }
 

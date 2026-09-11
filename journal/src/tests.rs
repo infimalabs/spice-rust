@@ -30,6 +30,7 @@ mod fact_bounds;
 mod identity_migration;
 mod lane_compaction;
 mod lineage_migration;
+mod page_budget;
 mod read;
 mod release_notes_migration;
 mod renewal;
@@ -47,6 +48,11 @@ static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
 fn seq(value: u64) -> Seq {
     Seq::new(value).expect("fixture sequence is nonzero")
+}
+
+fn fact_budget(rows: usize) -> FactReadBudget {
+    FactReadBudget::new(rows, MAX_RETAINED_FACT_PAGE_BYTES)
+        .expect("fixture rows form a repository fact budget")
 }
 
 #[test]
@@ -128,7 +134,7 @@ fn indexed_canvas_pages_decode_only_the_bounded_tail_and_causal_window() {
 
     reset_indexed_read_metrics();
     let causal = journal
-        .read(|read| read.causal_page(seq(200), 2))
+        .read(|read| read.causal_page(seq(200), fact_budget(2)))
         .expect("indexed causal page reads")
         .expect("indexed causal position exists");
     assert_eq!(
@@ -148,7 +154,13 @@ fn indexed_canvas_pages_decode_only_the_bounded_tail_and_causal_window() {
 
     reset_indexed_read_metrics();
     let tail = journal
-        .read(|read| read.fact_page(FactPageStart::After(Some(seq(198))), seq(200), 1))
+        .read(|read| {
+            read.fact_page(
+                FactPageStart::After(Some(seq(198))),
+                seq(200),
+                fact_budget(1),
+            )
+        })
         .expect("indexed fact tail reads");
     assert_eq!(tail.rows[0].seq, seq(199));
     assert_eq!(

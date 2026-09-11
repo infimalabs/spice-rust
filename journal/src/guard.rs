@@ -164,11 +164,15 @@ impl FactReadBudget {
         })
     }
 
-    const fn rows(self) -> usize {
+    /// Greatest number of returned envelopes this call may decode.
+    #[must_use]
+    pub const fn rows(self) -> usize {
         self.rows
     }
 
-    const fn decoded_bytes(self) -> usize {
+    /// Greatest aggregate envelope bytes this call may decode.
+    #[must_use]
+    pub const fn decoded_bytes(self) -> usize {
         self.decoded_bytes
     }
 }

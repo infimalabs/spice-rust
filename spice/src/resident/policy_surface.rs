@@ -582,7 +582,8 @@ fn trust_head_origin(bus: &Bus, head: &JournalHead<TrustHead>) -> SurfaceResult<
         .canvas_facts(
             journal::FactPageStart::At(head.position()),
             head.position(),
-            1,
+            journal::FactReadBudget::new(1, journal::MAX_RETAINED_FACT_PAGE_BYTES)
+                .expect("one trust-head fact is a repository budget"),
         )
         .map_err(|error| typed_store_fault("trust::journal-unreadable", &error.to_string()))?;
     page.rows

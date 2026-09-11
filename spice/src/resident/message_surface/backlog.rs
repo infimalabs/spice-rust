@@ -789,19 +789,21 @@ fn hydrate_observations(
     let mut facts = Vec::new();
     while remaining > 0 {
         let limit = remaining.min(128);
+        let budget = journal::FactReadBudget::new(limit, journal::MAX_RETAINED_FACT_PAGE_BYTES)
+            .expect("positive capped backlog work is a repository budget");
         let page = bus
             .recent_origin_facts(
                 origin.clone(),
                 wire::FactKind::JournalIngested,
                 before,
-                limit,
+                budget,
             )
             .map_err(|error| store_fault("canvas::message-time-unavailable", &error.to_string()))?;
-        if page.is_empty() {
+        if page.rows.is_empty() {
             break;
         }
-        before = page.last().map(|fact| fact.seq);
-        let reached = page.iter().any(|envelope| {
+        before = page.rows.last().map(|fact| fact.seq);
+        let reached = page.rows.iter().any(|envelope| {
             envelope
                 .fact
                 .read::<wire::body::JournalIngested>()
@@ -811,8 +813,8 @@ fn hydrate_observations(
                         && (batch.from.member, batch.from.offset) <= oldest
                 })
         });
-        remaining = remaining.saturating_sub(page.len());
-        facts.extend(page);
+        remaining = remaining.saturating_sub(page.rows.len());
+        facts.extend(page.rows);
         if reached {
             break;
         }

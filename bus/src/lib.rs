@@ -374,16 +374,15 @@ mod runtime {
             origin: journal::crossing::Origin,
             kind: journal::crossing::FactKind,
             before: Option<journal::crossing::Seq>,
-            limit: usize,
-        ) -> Result<Vec<journal::crossing::Envelope<journal::crossing::AnyFact>>, BusReadError>
-        {
+            budget: journal::FactReadBudget,
+        ) -> Result<journal::SelectedFactPage, BusReadError> {
             let (answer, receiver) = mpsc::sync_channel(1);
             self.requests
                 .send(Request::RecentOriginFacts {
                     origin,
                     kind,
                     before,
-                    limit,
+                    budget,
                     answer,
                 })
                 .map_err(|_| BusReadError::Bus(BusError::Closed))?;
@@ -409,14 +408,14 @@ mod runtime {
             &self,
             start: journal::FactPageStart,
             horizon: journal::crossing::Seq,
-            limit: usize,
+            budget: journal::FactReadBudget,
         ) -> Result<FactPage, BusReadError> {
             let (answer, receiver) = mpsc::sync_channel(1);
             self.requests
                 .send(Request::CanvasFacts {
                     start,
                     horizon,
-                    limit,
+                    budget,
                     answer,
                 })
                 .map_err(|_| BusReadError::Bus(BusError::Closed))?;
@@ -442,13 +441,13 @@ mod runtime {
         pub fn canvas_thread(
             &self,
             position: journal::crossing::Seq,
-            limit: usize,
+            budget: journal::FactReadBudget,
         ) -> Result<Option<FactPage>, BusReadError> {
             let (answer, receiver) = mpsc::sync_channel(1);
             self.requests
                 .send(Request::CanvasThread {
                     position,
-                    limit,
+                    budget,
                     answer,
                 })
                 .map_err(|_| BusReadError::Bus(BusError::Closed))?;
@@ -629,9 +628,9 @@ mod runtime {
             &self,
             start: journal::FactPageStart,
             horizon: journal::crossing::Seq,
-            limit: usize,
+            budget: journal::FactReadBudget,
         ) -> Result<FactPage, BusReadError> {
-            self.reader().canvas_facts(start, horizon, limit)
+            self.reader().canvas_facts(start, horizon, budget)
         }
 
         /// Read newest durable operator directions per lane through the writer queue.
@@ -643,9 +642,9 @@ mod runtime {
         pub fn canvas_thread(
             &self,
             position: journal::crossing::Seq,
-            limit: usize,
+            budget: journal::FactReadBudget,
         ) -> Result<Option<FactPage>, BusReadError> {
-            self.reader().canvas_thread(position, limit)
+            self.reader().canvas_thread(position, budget)
         }
 
         /// Read the current resident and lane head through the writer queue.
@@ -800,10 +799,8 @@ mod runtime {
             origin: journal::crossing::Origin,
             kind: journal::crossing::FactKind,
             before: Option<journal::crossing::Seq>,
-            limit: usize,
-            answer: SyncSender<
-                Result<Vec<journal::crossing::Envelope<journal::crossing::AnyFact>>, GuardError>,
-            >,
+            budget: journal::FactReadBudget,
+            answer: SyncSender<Result<journal::SelectedFactPage, GuardError>>,
         },
         CanvasHeads {
             answer: SyncSender<Result<CanvasHeads, BusReadError>>,
@@ -811,7 +808,7 @@ mod runtime {
         CanvasFacts {
             start: journal::FactPageStart,
             horizon: journal::crossing::Seq,
-            limit: usize,
+            budget: journal::FactReadBudget,
             answer: SyncSender<Result<FactPage, GuardError>>,
         },
         CanvasDirections {
@@ -820,7 +817,7 @@ mod runtime {
         },
         CanvasThread {
             position: journal::crossing::Seq,
-            limit: usize,
+            budget: journal::FactReadBudget,
             answer: SyncSender<Result<Option<FactPage>, GuardError>>,
         },
         Residency {
@@ -914,12 +911,12 @@ mod runtime {
                     origin,
                     kind,
                     before,
-                    limit,
+                    budget,
                     answer,
                 } => {
                     let _ =
                         answer.send(journal.read(move |read| {
-                            read.recent_origin_facts(&origin, kind, before, limit)
+                            read.recent_origin_facts(&origin, kind, before, budget)
                         }));
                 }
                 Request::CanvasHeads { answer } => {
@@ -928,20 +925,21 @@ mod runtime {
                 Request::CanvasFacts {
                     start,
                     horizon,
-                    limit,
+                    budget,
                     answer,
                 } => {
-                    let _ = answer.send(journal.read(|read| read.fact_page(start, horizon, limit)));
+                    let _ =
+                        answer.send(journal.read(|read| read.fact_page(start, horizon, budget)));
                 }
                 Request::CanvasDirections { limit, answer } => {
                     let _ = answer.send(journal.read(|read| read.operator_steering(limit)));
                 }
                 Request::CanvasThread {
                     position,
-                    limit,
+                    budget,
                     answer,
                 } => {
-                    let _ = answer.send(journal.read(|read| read.causal_page(position, limit)));
+                    let _ = answer.send(journal.read(|read| read.causal_page(position, budget)));
                 }
                 Request::Residency { answer } => {
                     let _ = answer.send(journal.read(|read| read.residency_head()));
@@ -1006,7 +1004,8 @@ mod runtime {
                     .fact_page(
                         journal::FactPageStart::At(head.body().created),
                         head.body().created,
-                        1,
+                        journal::FactReadBudget::new(1, journal::MAX_RETAINED_FACT_PAGE_BYTES)
+                            .expect("one creating fact is a repository budget"),
                     )?
                     .rows
                     .into_iter()
@@ -1018,7 +1017,8 @@ mod runtime {
                     .fact_page(
                         journal::FactPageStart::At(head.position()),
                         head.position(),
-                        1,
+                        journal::FactReadBudget::new(1, journal::MAX_RETAINED_FACT_PAGE_BYTES)
+                            .expect("one current fact is a repository budget"),
                     )?
                     .rows
                     .into_iter()

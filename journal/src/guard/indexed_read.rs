@@ -11,6 +11,7 @@ use super::{
 use wire::body::SourceBoundary;
 
 mod bounds;
+mod origin;
 
 use bounds::{admitted_envelope_length, decode_bounded_fact};
 
@@ -33,14 +34,14 @@ impl CausalPage {
         }
     }
 
-    fn push(&mut self, row: &Row<'_>, limit: usize) -> Result<bool, GuardError> {
+    fn push(&mut self, row: &Row<'_>, budget: FactReadBudget) -> Result<bool, GuardError> {
         let seq = row.get::<_, i64>(0).map_err(GuardError::Store)?;
         let remaining = row.get::<_, i64>(3).map_err(GuardError::Store)?;
         read_metrics::observe_row();
         let length =
             admitted_envelope_length(seq, row.get::<_, i64>(5).map_err(GuardError::Store)?)?;
-        if self.facts.len() == limit
-            || self.decoded_bytes.saturating_add(length) > super::MAX_RETAINED_FACT_PAGE_BYTES
+        if self.facts.len() == budget.rows()
+            || self.decoded_bytes.saturating_add(length) > budget.decoded_bytes()
         {
             let continuation = u64::try_from(seq)
                 .ok()
@@ -364,81 +365,14 @@ impl JournalRead<'_> {
         decode_bounded_fact(row, seq, 1, 2, 3).map(|(fact, _)| Some(fact))
     }
 
-    /// Read one newest-first page for a fact kind inside one causal origin.
-    pub fn recent_origin_facts(
-        &self,
-        origin: &wire::Origin,
-        kind: wire::FactKind,
-        before: Option<wire::Seq>,
-        limit: usize,
-    ) -> Result<Vec<wire::Envelope<wire::AnyFact>>, GuardError> {
-        if limit == 0 || limit > super::MAX_RETAINED_FACT_PAGE_ROWS {
-            return Err(GuardError::Invalid(format!(
-                "recent origin fact limit must be within 1..={}, observed {limit}",
-                super::MAX_RETAINED_FACT_PAGE_ROWS,
-            )));
-        }
-        let Some(horizon) = self.cursor else {
-            return Ok(Vec::new());
-        };
-        let horizon = i64::try_from(horizon.get())
-            .map_err(|_| GuardError::Invalid("recent origin horizon exceeds SQLite".to_owned()))?;
-        let limit = i64::try_from(limit)
-            .map_err(|_| GuardError::Invalid("recent origin limit exceeds SQLite".to_owned()))?;
-        let mut sql = String::from(
-            "SELECT seq, kind, length(envelope), envelope FROM fact_envelopes \
-             WHERE origin = ?1 AND kind = ?2 AND seq <= ?3",
-        );
-        let mut parameters = vec![
-            Value::Text(origin.as_str().to_owned()),
-            Value::Text(kind.as_str().to_owned()),
-            Value::Integer(horizon),
-        ];
-        if let Some(before) = before {
-            let before = i64::try_from(before.get()).map_err(|_| {
-                GuardError::Invalid("recent origin cursor exceeds SQLite".to_owned())
-            })?;
-            sql.push_str(" AND seq < ?4 ORDER BY seq DESC LIMIT ?5");
-            parameters.push(Value::Integer(before));
-            parameters.push(Value::Integer(limit));
-        } else {
-            sql.push_str(" ORDER BY seq DESC LIMIT ?4");
-            parameters.push(Value::Integer(limit));
-        }
-        read_metrics::observe_query();
-        let mut statement = self.connection.prepare(&sql).map_err(GuardError::Store)?;
-        let mut rows = statement
-            .query(params_from_iter(&parameters))
-            .map_err(GuardError::Store)?;
-        let mut facts = Vec::new();
-        let mut decoded_bytes = 0usize;
-        while let Some(row) = rows.next().map_err(GuardError::Store)? {
-            let seq = row.get::<_, i64>(0).map_err(GuardError::Store)?;
-            read_metrics::observe_row();
-            let length =
-                admitted_envelope_length(seq, row.get::<_, i64>(2).map_err(GuardError::Store)?)?;
-            if decoded_bytes.saturating_add(length) > super::MAX_RETAINED_FACT_PAGE_BYTES {
-                break;
-            }
-            let (fact, length) = decode_bounded_fact(row, seq, 1, 2, 3)?;
-            decoded_bytes = decoded_bytes.saturating_add(length);
-            facts.push(fact);
-        }
-        Ok(facts)
-    }
-
     /// Read one bounded primary-key fact range through an immutable horizon.
     pub fn fact_page(
         &self,
         start: FactPageStart,
         horizon: wire::Seq,
-        limit: usize,
+        budget: FactReadBudget,
     ) -> Result<wire::Packed<wire::Envelope<wire::AnyFact>>, GuardError> {
-        if limit == 0 {
-            return Err(GuardError::Invalid(
-                "indexed fact page limit must be positive".to_owned(),
-            ));
-        }
+        let limit = budget.rows();
         let Some(cursor) = self.cursor else {
             return Err(GuardError::Invalid(
                 "indexed fact page requires a durable cursor".to_owned(),
@@ -488,8 +422,7 @@ impl JournalRead<'_> {
             read_metrics::observe_row();
             let length =
                 admitted_envelope_length(seq, row.get::<_, i64>(2).map_err(GuardError::Store)?)?;
-            if facts.len() == limit
-                || decoded_bytes.saturating_add(length) > super::MAX_RETAINED_FACT_PAGE_BYTES
+            if facts.len() == limit || decoded_bytes.saturating_add(length) > budget.decoded_bytes()
             {
                 continuation = u64::try_from(seq).ok().and_then(wire::Seq::new);
                 break;
@@ -522,13 +455,9 @@ impl JournalRead<'_> {
     pub fn causal_page(
         &self,
         position: wire::Seq,
-        limit: usize,
+        budget: FactReadBudget,
     ) -> Result<Option<wire::Packed<wire::Envelope<wire::AnyFact>>>, GuardError> {
-        if limit == 0 {
-            return Err(GuardError::Invalid(
-                "indexed causal page limit must be positive".to_owned(),
-            ));
-        }
+        let limit = budget.rows();
         let Some(horizon) = self.cursor else {
             return Ok(None);
         };
@@ -559,7 +488,7 @@ impl JournalRead<'_> {
             .map_err(GuardError::Store)?;
         let mut page = CausalPage::new(query_limit);
         while let Some(row) = rows.next().map_err(GuardError::Store)? {
-            if !page.push(row, limit)? {
+            if !page.push(row, budget)? {
                 break;
             }
         }
