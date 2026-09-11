@@ -22,6 +22,7 @@ mod vocabulary;
 const FINALIZED: &str = "finalized";
 const PREPARED: &str = "prepared";
 pub(crate) const INDEX_ACTIVATION_FACT_LIMIT: u64 = 4_096;
+pub(crate) const INDEX_ACTIVATION_BYTE_LIMIT: u64 = 1024 * 1024;
 const INDEX_ACTIVATION_COMMAND: &str = "spice journal reindex";
 
 pub(crate) fn baseline(connection: &mut Connection) -> Result<Option<Migration>, OpenError> {
@@ -421,6 +422,10 @@ pub enum MigrationError {
         limit: u64,
         observed: u64,
     },
+    IndexActivationBytesRequired {
+        limit: u64,
+        observed: u64,
+    },
     StoredContent {
         from: u32,
         to: u32,
@@ -479,6 +484,10 @@ impl fmt::Display for MigrationError {
             Self::IndexActivationRequired { limit, observed } => write!(
                 formatter,
                 "journal schema 19 index activation observed at least {observed} facts, exceeding the {limit}-fact startup limit; stop the resident and run `{INDEX_ACTIVATION_COMMAND}`"
+            ),
+            Self::IndexActivationBytesRequired { limit, observed } => write!(
+                formatter,
+                "journal schema 19 index activation observed {observed} indexed bytes, exceeding the {limit}-byte startup limit; stop the resident and run `{INDEX_ACTIVATION_COMMAND}`"
             ),
             Self::StoredContent {
                 from,
@@ -585,6 +594,28 @@ fn migrate_schema_19(
             return Err(MigrationError::IndexActivationRequired {
                 limit,
                 observed: limit.saturating_add(1),
+            }
+            .into());
+        }
+        let byte_limit = INDEX_ACTIVATION_BYTE_LIMIT;
+        // `octet_length` reads stored text sizes without materializing either
+        // value. The fact ceiling independently bounds fixed index-entry work.
+        let indexed_bytes: i64 = connection
+            .query_row(
+                "SELECT COALESCE(SUM(indexed_bytes), 0) FROM (
+                     SELECT octet_length(origin) + 2 * octet_length(kind) AS indexed_bytes
+                     FROM fact_envelopes ORDER BY seq LIMIT ?1
+                 )",
+                [offset],
+                |row| row.get(0),
+            )
+            .map_err(OpenError::Sqlite)?;
+        let indexed_bytes =
+            u64::try_from(indexed_bytes).expect("indexed byte lengths are nonnegative");
+        if indexed_bytes > byte_limit {
+            return Err(MigrationError::IndexActivationBytesRequired {
+                limit: byte_limit,
+                observed: indexed_bytes,
             }
             .into());
         }

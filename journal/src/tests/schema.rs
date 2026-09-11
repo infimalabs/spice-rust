@@ -40,15 +40,18 @@ fn schema_nineteen_adds_the_bounded_startup_indexes() {
     let scratch = Scratch::new();
     let path = scratch.path().join("schema-nineteen.sqlite3");
     let journal = authority_file_fixture(&path);
-    journal
-        .connection
-        .execute_batch(
-            "DROP INDEX fact_envelopes_kind_seq;
-             DROP INDEX fact_envelopes_origin_kind_seq;
-             UPDATE journal_schema SET version = 19 WHERE singleton = 1;
-             PRAGMA user_version = 19;",
-        )
-        .expect("restore the pre-index schema");
+    append_fact_copies(
+        &journal.connection,
+        crate::migrate::INDEX_ACTIVATION_FACT_LIMIT
+            .checked_sub(fact_count(&journal.connection))
+            .expect("fixture starts below the startup row limit"),
+    );
+    assert_eq!(
+        fact_count(&journal.connection),
+        crate::migrate::INDEX_ACTIVATION_FACT_LIMIT,
+        "the exact startup row boundary is exercised",
+    );
+    downgrade_to_schema_nineteen(&journal.connection);
     drop(journal);
 
     let journal = Journal::open(&path).expect("schema-nineteen authority migrates");
@@ -72,6 +75,78 @@ fn schema_nineteen_adds_the_bounded_startup_indexes() {
 }
 
 #[test]
+fn schema_nineteen_index_activation_obeys_the_exact_indexed_byte_limit() {
+    let scratch = Scratch::new();
+    let exact_path = scratch.path().join("schema-nineteen-exact-bytes.sqlite3");
+    let exact = authority_file_fixture(&exact_path);
+    set_indexed_fact_bytes(
+        &exact.connection,
+        crate::migrate::INDEX_ACTIVATION_BYTE_LIMIT,
+    );
+    exact
+        .connection
+        .execute(
+            "UPDATE fact_envelopes SET envelope = X'00' WHERE seq = 1",
+            [],
+        )
+        .expect("malformed envelope proves the preflight does not decode it");
+    downgrade_to_schema_nineteen(&exact.connection);
+    drop(exact);
+
+    let migrated = Journal::open(&exact_path).expect("the exact indexed-byte boundary migrates");
+    assert_eq!(
+        migrated
+            .migration()
+            .map(|migration| (migration.from(), migration.to())),
+        Some((19, SCHEMA_VERSION)),
+    );
+    assert!(fact_indexes_exist(&migrated.connection));
+    drop(migrated);
+
+    let oversized_path = scratch
+        .path()
+        .join("schema-nineteen-oversized-index-bytes.sqlite3");
+    let oversized = authority_file_fixture(&oversized_path);
+    assert_eq!(
+        fact_count(&oversized.connection),
+        2,
+        "the byte refusal uses few rows"
+    );
+    set_indexed_fact_bytes(
+        &oversized.connection,
+        crate::migrate::INDEX_ACTIVATION_BYTE_LIMIT.saturating_add(1),
+    );
+    downgrade_to_schema_nineteen(&oversized.connection);
+    drop(oversized);
+
+    let error = Journal::open(&oversized_path)
+        .expect_err("one indexed byte beyond the startup boundary must refuse");
+    assert!(matches!(
+        error,
+        OpenError::Migration(MigrationError::IndexActivationBytesRequired {
+            limit: crate::migrate::INDEX_ACTIVATION_BYTE_LIMIT,
+            observed,
+        }) if observed == crate::migrate::INDEX_ACTIVATION_BYTE_LIMIT + 1
+    ));
+    assert!(error.to_string().contains("`spice journal reindex`"));
+    assert_schema_nineteen_without_fact_indexes(&oversized_path);
+
+    let offline = Journal::open_for_reindex(&oversized_path)
+        .expect("offline activation accepts explicitly unbounded index work");
+    assert_eq!(
+        offline
+            .migration()
+            .map(|migration| (migration.from(), migration.to())),
+        Some((19, SCHEMA_VERSION)),
+    );
+    assert!(fact_indexes_exist(&offline.connection));
+    drop(offline);
+    let retried =
+        Journal::open_for_reindex(&oversized_path).expect("offline byte-boundary retry converges");
+    assert_eq!(retried.migration(), None);
+}
+
+#[test]
 fn large_schema_nineteen_requires_restart_safe_offline_index_activation() {
     let scratch = Scratch::new();
     let path = scratch.path().join("schema-nineteen-large.sqlite3");
@@ -80,15 +155,7 @@ fn large_schema_nineteen_requires_restart_safe_offline_index_activation() {
         &journal.connection,
         crate::migrate::INDEX_ACTIVATION_FACT_LIMIT.saturating_add(1),
     );
-    journal
-        .connection
-        .execute_batch(
-            "DROP INDEX fact_envelopes_kind_seq;
-             DROP INDEX fact_envelopes_origin_kind_seq;
-             UPDATE journal_schema SET version = 19 WHERE singleton = 1;
-             PRAGMA user_version = 19;",
-        )
-        .expect("large predecessor authority is prepared");
+    downgrade_to_schema_nineteen(&journal.connection);
     drop(journal);
 
     let error = Journal::open(&path).expect_err("large startup migration must refuse");
@@ -164,6 +231,78 @@ fn assert_schema_nineteen_without_fact_indexes(path: &Path) {
     let connection = Connection::open(path).expect("schema-nineteen authority opens directly");
     assert_eq!(version_records_connection(&connection), (19, 19));
     assert!(!fact_indexes_exist(&connection));
+}
+
+fn downgrade_to_schema_nineteen(connection: &Connection) {
+    connection
+        .execute_batch(
+            "DROP INDEX fact_envelopes_kind_seq;
+             DROP INDEX fact_envelopes_origin_kind_seq;
+             UPDATE journal_schema SET version = 19 WHERE singleton = 1;
+             PRAGMA user_version = 19;",
+        )
+        .expect("pre-index schema is restored");
+}
+
+fn fact_count(connection: &Connection) -> u64 {
+    let count: i64 = connection
+        .query_row("SELECT count(*) FROM fact_envelopes", [], |row| row.get(0))
+        .expect("fact count reads");
+    u64::try_from(count).expect("fact count is nonnegative")
+}
+
+fn indexed_fact_bytes(connection: &Connection) -> u64 {
+    let bytes: i64 = connection
+        .query_row(
+            "SELECT COALESCE(SUM(octet_length(origin) + 2 * octet_length(kind)), 0)
+             FROM fact_envelopes",
+            [],
+            |row| row.get(0),
+        )
+        .expect("indexed fact bytes read");
+    u64::try_from(bytes).expect("indexed fact bytes are nonnegative")
+}
+
+fn set_indexed_fact_bytes(connection: &Connection, target: u64) {
+    let current_origin: String = connection
+        .query_row(
+            "SELECT origin FROM fact_envelopes WHERE seq = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("fixture origin reads");
+    let fixed = indexed_fact_bytes(connection)
+        .saturating_sub(u64::try_from(current_origin.len()).expect("origin length fits u64"));
+    let origin_bytes = target
+        .checked_sub(fixed)
+        .expect("target exceeds fixed index bytes");
+    let value_bytes = origin_bytes
+        .checked_sub("task:".len() as u64)
+        .expect("target fits a valid origin");
+    let origin = format!(
+        "task:{}",
+        "x".repeat(usize::try_from(value_bytes).expect("fixture origin fits memory"))
+    );
+    let envelope_bytes: Vec<u8> = connection
+        .query_row(
+            "SELECT envelope FROM fact_envelopes WHERE seq = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("fixture envelope reads");
+    let mut envelope: Envelope<AnyFact> =
+        wire::decode(&envelope_bytes).expect("fixture envelope decodes");
+    envelope.origin = origin.parse().expect("large fixture origin remains valid");
+    connection
+        .execute(
+            "UPDATE fact_envelopes SET origin = ?1, envelope = ?2 WHERE seq = 1",
+            params![
+                origin,
+                wire::encode(&envelope).expect("large envelope encodes")
+            ],
+        )
+        .expect("large indexed origin is stored");
+    assert_eq!(indexed_fact_bytes(connection), target);
 }
 
 fn append_fact_copies(connection: &Connection, count: u64) {
