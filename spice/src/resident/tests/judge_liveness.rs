@@ -41,6 +41,8 @@ async fn run_liveness_surface(setup: &mut LivenessSetup) -> String {
     let mut lifecycle = lifecycle::Runtime::new(&config.lane);
     let mut progress = Vec::new();
     let mut endpoint = Vec::new();
+    let app = canvas::AppSource::resolve(&paths.worktree).expect("fixture Canvas app resolves");
+    let version = canvas_version(&app, journal::SCHEMA_VERSION).expect("Canvas identity builds");
     let started = start_surface(
         bus,
         paths,
@@ -50,7 +52,8 @@ async fn run_liveness_surface(setup: &mut LivenessSetup) -> String {
             .body(),
         config,
         SurfaceLaunch {
-            app: canvas::AppSource::resolve(&paths.worktree).expect("fixture Canvas app resolves"),
+            app,
+            version,
             binding: CanvasBinding::local(EPHEMERAL_LOOPBACK),
             open: false,
             progress: &mut progress,

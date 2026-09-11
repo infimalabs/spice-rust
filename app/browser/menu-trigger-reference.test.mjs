@@ -119,7 +119,7 @@ test("Spice trigger stays centered across modes and interaction states", async (
               );
               assert.equal(active.flameAnimation, "canvas-fast-mode-pulse");
 
-              const updateName = "Open Spice Canvas menu - Canvas v5 update available; fast mode on";
+              const updateName = "Open Spice Canvas menu - update available; fast mode on";
               await trigger.evaluate((node, name) => {
                 node.classList.add("canvas-menu-trigger--update");
                 node.setAttribute("aria-label", name);

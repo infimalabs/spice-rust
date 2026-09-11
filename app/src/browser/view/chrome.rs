@@ -23,6 +23,7 @@ pub(super) struct CommandBarRender<'a> {
     pub(super) axis: &'a UseStateHandle<Axis>,
     pub(super) mosaic: &'a UseStateHandle<bool>,
     pub(super) menu_open: &'a UseStateHandle<bool>,
+    pub(super) identity: &'a UseStateHandle<Option<CanvasIdentity>>,
     pub(super) canvas_update: &'a UseStateHandle<Option<CanvasUpdate>>,
     pub(super) active_axis: Axis,
     pub(super) surface: &'a SurfaceData,
@@ -131,14 +132,8 @@ fn render_canvas_menu(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunt
     let menu_open = render.menu_open.clone();
     let update = (**render.canvas_update).as_ref();
     let trigger_label = match (update, fast_mode) {
-        (Some(update), true) => format!(
-            "Open Spice Canvas menu - Canvas v{} update available; fast mode on",
-            update.version
-        ),
-        (Some(update), false) => format!(
-            "Open Spice Canvas menu - Canvas v{} update available",
-            update.version
-        ),
+        (Some(_), true) => "Open Spice Canvas menu - update available; fast mode on".to_owned(),
+        (Some(_), false) => "Open Spice Canvas menu - update available".to_owned(),
         (None, true) => "Open Spice Canvas menu - fast mode on".to_owned(),
         (None, false) => "Open Spice Canvas menu".to_owned(),
     };
@@ -171,6 +166,7 @@ fn render_canvas_menu(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunt
                         runtime,
                         &super::lineage_menu::Context {
                             cursor: render.cursor,
+                            identity: (**render.identity).as_ref(),
                             update,
                             sender: render.sender,
                             lineage_controls: render.lineage_controls,

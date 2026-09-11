@@ -713,9 +713,9 @@ fn version_outcome() -> Outcome<wire::Version> {
         Err(error) => return state_failure(&error).outcome(),
     };
     let app = match canvas::AppSource::resolve(repository.worktree_root())
-        .and_then(|source| source.digest())
+        .and_then(|source| source.current_generation())
     {
-        Ok(digest) => digest,
+        Ok(generation) => generation.identity().clone(),
         Err(error) => {
             return Outcome::Fault(Fault {
                 class: FaultClass::Environment,
@@ -735,13 +735,21 @@ fn version_outcome() -> Outcome<wire::Version> {
 
     Outcome::Reply(wire::Reply {
         position: wire::ReplyPosition::Direct {},
-        body: wire::Version {
-            binary,
-            wire: wire::WireVersion::CURRENT,
-            journal,
-            app,
-        },
+        body: version_identity(binary, journal, app),
     })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn version_identity(binary: wire::Digest, journal: u32, app: wire::Digest) -> wire::Version {
+    wire::Version {
+        product: dist::current_product_version()
+            .expect("the compiled product version is repository-validated"),
+        binary,
+        wire: wire::WireVersion::CURRENT,
+        journal,
+        canvas: wire::CanvasVersion::CURRENT,
+        app,
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

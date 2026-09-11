@@ -68,6 +68,7 @@ async fn run_connection(
             &handles.connection,
             &handles.surface,
             &handles.speech,
+            &handles.identity,
             &handles.canvas_update,
             data,
             &signal,
@@ -451,11 +452,13 @@ async fn establish_connection(
     connection: &UseStateHandle<Connection>,
     surface: &UseStateHandle<SurfaceData>,
     speech: &UseStateHandle<wire::SpeechPlayback>,
+    identity: &UseStateHandle<Option<CanvasIdentity>>,
     canvas_update: &UseStateHandle<Option<CanvasUpdate>>,
     data: &mut SurfaceData,
     signal: &web_sys::AbortSignal,
 ) -> Result<EstablishedConnection, String> {
-    let (session, writer, mut reader) = open_socket(speech, canvas_update, signal).await?;
+    let (session, writer, mut reader) =
+        open_socket(speech, identity, canvas_update, signal).await?;
     let (principal, hydrating) =
         admit_runtime(&session, &mut reader, connection, surface, data).await?;
     let pending = BTreeMap::new();
@@ -472,6 +475,7 @@ async fn establish_connection(
 /// Discover the resident endpoint and open the socket its bootstrap names.
 async fn open_socket(
     speech: &UseStateHandle<wire::SpeechPlayback>,
+    identity: &UseStateHandle<Option<CanvasIdentity>>,
     canvas_update: &UseStateHandle<Option<CanvasUpdate>>,
     signal: &web_sys::AbortSignal,
 ) -> Result<(Session, SocketWriter, SocketReader), String> {
@@ -515,6 +519,13 @@ async fn open_socket(
         .json()
         .await
         .map_err(|error| format!("bootstrap response was invalid: {error}"))?;
+    let canvas = canvas.expect("current Canvas admission requires its version header");
+    identity.set(Some(admit_bootstrap_identity(
+        &discovery,
+        canvas,
+        &generation,
+        loaded_generation,
+    )?));
     speech.set(discovery.speech.clone());
     let session = Session::open(discovery.capability, discovery.epoch);
     let endpoint = discovery
@@ -534,6 +545,27 @@ async fn open_socket(
         .await
         .map_err(websocket_error)?;
     Ok((session, writer, reader))
+}
+
+fn admit_bootstrap_identity(
+    discovery: &wire::CanvasBootstrap,
+    canvas: wire::CanvasVersion,
+    generation: &wire::Digest,
+    loaded_app: wire::Digest,
+) -> Result<CanvasIdentity, String> {
+    if discovery.version.canvas != canvas {
+        return Err("bootstrap body Canvas version disagreed with its header".to_owned());
+    }
+    if &discovery.version.app != generation {
+        return Err("bootstrap body app generation disagreed with its header".to_owned());
+    }
+    if discovery.version.wire != wire::WireVersion::CURRENT {
+        return Err("bootstrap body wire schema is not current".to_owned());
+    }
+    Ok(CanvasIdentity {
+        version: discovery.version.clone(),
+        loaded_app,
+    })
 }
 
 fn loaded_canvas_generation() -> Result<wire::Digest, String> {

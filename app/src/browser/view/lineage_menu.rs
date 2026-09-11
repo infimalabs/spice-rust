@@ -9,6 +9,7 @@ const MEMBER_MIME: &str = "application/x-spice-lineage-member";
 
 pub(super) struct Context<'a> {
     pub(super) cursor: &'a str,
+    pub(super) identity: Option<&'a CanvasIdentity>,
     pub(super) update: Option<&'a CanvasUpdate>,
     pub(super) sender: &'a SenderHandle,
     pub(super) lineage_controls: &'a UseReducerHandle<LineageControls>,
@@ -54,7 +55,7 @@ fn render_axis(
                 </div>
                 <p class="canvas-menu-context-copy">{description}</p>
             </section>
-            {render_version_footer(context.cursor, context.update)}
+            {render_version_footer(context.cursor, context.identity, context.update)}
         </div>
     }
 }
@@ -65,7 +66,7 @@ fn render_lanes(runtime: Option<&CanvasRuntime>, context: &Context<'_>) -> Html 
             <div class="canvas-menu-page" data-menu-page="lanes">
                 {render_global_settings(None, context.sender)}
                 <p>{"Waiting for resident organizations…"}</p>
-                {render_version_footer(context.cursor, context.update)}
+                {render_version_footer(context.cursor, context.identity, context.update)}
             </div>
         };
     };
@@ -74,7 +75,7 @@ fn render_lanes(runtime: Option<&CanvasRuntime>, context: &Context<'_>) -> Html 
             <div class="canvas-menu-page" data-menu-page="lanes">
                 {render_global_settings(Some(runtime), context.sender)}
                 <p>{"Waiting for agent state…"}</p>
-                {render_version_footer(context.cursor, context.update)}
+                {render_version_footer(context.cursor, context.identity, context.update)}
             </div>
         };
     };
@@ -138,7 +139,7 @@ fn render_lanes(runtime: Option<&CanvasRuntime>, context: &Context<'_>) -> Html 
                 solo_member_ids,
                 &solo_render,
             )}
-            {render_version_footer(context.cursor, context.update)}
+            {render_version_footer(context.cursor, context.identity, context.update)}
         </div>
     }
 }
@@ -189,11 +190,20 @@ fn render_global_settings(runtime: Option<&CanvasRuntime>, sender: &SenderHandle
     }
 }
 
-fn render_version_footer(cursor: &str, update: Option<&CanvasUpdate>) -> Html {
-    let version = wire::CanvasVersion::CURRENT;
+fn render_version_footer(
+    cursor: &str,
+    identity: Option<&CanvasIdentity>,
+    update: Option<&CanvasUpdate>,
+) -> Html {
+    let IdentityPresentation {
+        label,
+        details,
+        accessible,
+        update_product,
+    } = identity_presentation(identity);
     let update_presentation = update.map(|update| {
         let generation = update.generation.as_str()[..8].to_owned();
-        let label = format!("Reload Canvas v{} build {generation}", update.version);
+        let label = format!("Reload Spice{update_product} app {generation}");
         (
             generation,
             label,
@@ -213,8 +223,17 @@ fn render_version_footer(cursor: &str, update: Option<&CanvasUpdate>) -> Html {
             <div class="canvas-menu-version-group">
                 <strong
                     class="canvas-menu-version"
-                    data-canvas-version={version.to_string()}
-                >{format!("Canvas v{version}")}</strong>
+                    tabindex="0"
+                    aria-label={accessible}
+                    title={details}
+                    data-product-version={identity.map(|identity| identity.version.product.to_string())}
+                    data-native-binary={identity.map(|identity| identity.version.binary.to_string())}
+                    data-wire-schema={identity.map(|identity| identity.version.wire.to_string())}
+                    data-journal-schema={identity.map(|identity| identity.version.journal.to_string())}
+                    data-canvas-protocol={identity.map(|identity| identity.version.canvas.to_string())}
+                    data-loaded-app-generation={identity.map(|identity| identity.loaded_app.to_string())}
+                    data-served-app-generation={identity.map(|identity| identity.version.app.to_string())}
+                >{label}</strong>
                 if let Some((generation, label, update_version, update_generation)) = update_presentation {
                     <button
                         class="canvas-menu-update"
@@ -231,6 +250,42 @@ fn render_version_footer(cursor: &str, update: Option<&CanvasUpdate>) -> Html {
                 {format!("cursor {cursor}")}
             </span>
         </footer>
+    }
+}
+
+struct IdentityPresentation {
+    label: String,
+    details: Option<String>,
+    accessible: String,
+    update_product: String,
+}
+
+fn identity_presentation(identity: Option<&CanvasIdentity>) -> IdentityPresentation {
+    let Some(identity) = identity else {
+        return IdentityPresentation {
+            label: "Spice".to_owned(),
+            details: None,
+            accessible: "Spice product identity is loading".to_owned(),
+            update_product: String::new(),
+        };
+    };
+    let mut rows = vec![
+        format!("Product: {}", identity.version.product),
+        format!("Native binary: {}", identity.version.binary),
+        format!("Wire schema: {}", identity.version.wire),
+        format!("Journal schema: {}", identity.version.journal),
+        format!("Canvas protocol: {}", identity.version.canvas),
+        format!("Loaded app generation: {}", identity.loaded_app),
+    ];
+    if identity.loaded_app != identity.version.app {
+        rows.push(format!("Served app generation: {}", identity.version.app));
+    }
+    let details = rows.join("\n");
+    IdentityPresentation {
+        label: format!("Spice {}", identity.version.product),
+        accessible: details.replace('\n', "; "),
+        details: Some(details),
+        update_product: format!(" {}", identity.version.product),
     }
 }
 

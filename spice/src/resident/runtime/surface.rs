@@ -68,6 +68,7 @@ pub(super) async fn start_surface<'a>(
     let capabilities = surface_capabilities(operator, residency)?;
     let SurfaceLaunch {
         app,
+        version,
         binding,
         open,
         progress,
@@ -81,6 +82,7 @@ pub(super) async fn start_surface<'a>(
         canvas::axum::Binding::new(listen, policy),
         epoch,
         capabilities.clone(),
+        version,
         app,
         config.speech.clone(),
         bus.reader(),

@@ -27,10 +27,13 @@ pub(super) async fn bootstrap(
     // The socket this names has to be one the asking client can reach, which
     // the published endpoint is not when a remote browser is on the other end
     // of a wildcard bind. It reached this surface somehow; that is the address.
+    let mut version = state.version.clone();
+    version.app = app_generation.identity().clone();
     let discovery = wire::CanvasBootstrap {
         endpoint: format!("http://{host}"),
         capability,
         epoch: state.epoch,
+        version,
         speech: state.speech.playback(),
     };
     let Ok(bytes) = wire::encode(&discovery) else {
@@ -46,7 +49,7 @@ pub(super) async fn bootstrap(
         .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response.headers_mut().insert(
         wire::hello::CANVAS_VERSION_HEADER,
-        HeaderValue::from_str(&wire::CanvasVersion::CURRENT.to_string())
+        HeaderValue::from_str(&discovery.version.canvas.to_string())
             .expect("the numeric Canvas version is a valid header value"),
     );
     response.headers_mut().insert(

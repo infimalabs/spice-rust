@@ -264,6 +264,7 @@ struct SurfaceState {
     origin: String,
     epoch: wire::CanonicalUuid,
     capabilities: Capabilities,
+    version: wire::Version,
     app: crate::AppSource,
     speech: crate::SpeechConfig,
     speech_slot: Semaphore,
@@ -610,6 +611,7 @@ impl Server {
     pub async fn bind(
         epoch: wire::CanonicalUuid,
         capabilities: Capabilities,
+        version: wire::Version,
         app: crate::AppSource,
         speech: crate::SpeechConfig,
     ) -> Result<(Self, Control), std::io::Error> {
@@ -617,6 +619,7 @@ impl Server {
             Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
             epoch,
             capabilities,
+            version,
             app,
             speech,
             None,
@@ -634,6 +637,7 @@ impl Server {
         binding: Binding,
         epoch: wire::CanonicalUuid,
         capabilities: Capabilities,
+        version: wire::Version,
         app: crate::AppSource,
         speech: crate::SpeechConfig,
         bus: bus::BusReader,
@@ -643,6 +647,7 @@ impl Server {
             binding,
             epoch,
             capabilities,
+            version,
             app,
             speech,
             Some(crate::stream::Source::new(bus, epoch, rows)),
@@ -655,6 +660,7 @@ impl Server {
         binding: Binding,
         epoch: wire::CanonicalUuid,
         capabilities: Capabilities,
+        version: wire::Version,
         app: crate::AppSource,
         speech: crate::SpeechConfig,
         stream: Option<crate::stream::Source>,
@@ -665,6 +671,15 @@ impl Server {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
                 "a non-loopback canvas listener requires explicit access",
+            ));
+        }
+        let app_generation = app
+            .current_generation()
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+        if version.app != *app_generation.identity() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Canvas version app identity disagrees with the current served generation",
             ));
         }
         let listener = tokio::net::TcpListener::bind(requested).await?;
@@ -684,6 +699,7 @@ impl Server {
                     origin,
                     epoch,
                     capabilities,
+                    version,
                     app,
                     speech,
                     speech_slot: Semaphore::new(1),
