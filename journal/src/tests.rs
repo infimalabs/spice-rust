@@ -26,6 +26,7 @@ mod allocation_migration;
 mod boundary;
 mod claim_index;
 mod creation_context_migration;
+mod fact_bounds;
 mod identity_migration;
 mod lane_compaction;
 mod lineage_migration;

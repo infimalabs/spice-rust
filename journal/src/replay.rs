@@ -8,6 +8,7 @@ use serde::de::DeserializeOwned;
 
 use crate::{Journal, JournalReader};
 
+mod schema;
 mod steering;
 
 /// Counts proved by a successful authority verification.
@@ -467,6 +468,7 @@ fn verify_sqlite(
             format!("foreign key does not resolve in {parent}"),
         ));
     }
+    schema::verify_fact_envelope_bound_objects(connection, violations)?;
     Ok(())
 }
 
@@ -482,26 +484,23 @@ fn verify_facts(
     violations: &mut Vec<Violation>,
 ) -> Result<BTreeMap<u64, FactRecord>, VerifyError> {
     let mut statement = connection
-        .prepare("SELECT seq, wire_version, instant, actor, origin, cause, kind, envelope FROM fact_envelopes ORDER BY seq")
+        .prepare("SELECT seq, wire_version, instant, actor, origin, cause, kind, length(envelope), envelope FROM fact_envelopes ORDER BY seq")
         .map_err(VerifyError::Sqlite)?;
-    let rows = statement
-        .query_map([], |row| {
-            Ok(FactRow {
-                seq: row.get(0)?,
-                version: row.get(1)?,
-                instant: row.get(2)?,
-                actor: row.get(3)?,
-                origin: row.get(4)?,
-                cause: row.get(5)?,
-                kind: row.get(6)?,
-                envelope: row.get(7)?,
-            })
-        })
-        .map_err(VerifyError::Sqlite)?;
+    let mut rows = statement.query([]).map_err(VerifyError::Sqlite)?;
     let mut facts = BTreeMap::new();
     let mut expected = 1_i64;
-    for row in rows {
-        let row = row.map_err(VerifyError::Sqlite)?;
+    while let Some(stored) = rows.next().map_err(VerifyError::Sqlite)? {
+        let mut row = FactRow {
+            seq: stored.get(0).map_err(VerifyError::Sqlite)?,
+            version: stored.get(1).map_err(VerifyError::Sqlite)?,
+            instant: stored.get(2).map_err(VerifyError::Sqlite)?,
+            actor: stored.get(3).map_err(VerifyError::Sqlite)?,
+            origin: stored.get(4).map_err(VerifyError::Sqlite)?,
+            cause: stored.get(5).map_err(VerifyError::Sqlite)?,
+            kind: stored.get(6).map_err(VerifyError::Sqlite)?,
+            envelope_length: stored.get(7).map_err(VerifyError::Sqlite)?,
+            envelope: None,
+        };
         if row.seq != expected {
             violations.push(Violation::new(
                 ViolationClass::Sequence,
@@ -510,6 +509,10 @@ fn verify_facts(
             ));
         }
         expected = row.seq.saturating_add(1);
+        if fact_envelope_length_violation(&row, violations) {
+            continue;
+        }
+        row.envelope = Some(stored.get(8).map_err(VerifyError::Sqlite)?);
         let envelope = verify_fact_row(&row, violations);
         if let Ok(seq) = u64::try_from(row.seq) {
             facts.insert(
@@ -533,7 +536,32 @@ struct FactRow {
     origin: String,
     cause: Option<i64>,
     kind: String,
-    envelope: Vec<u8>,
+    envelope_length: i64,
+    envelope: Option<Vec<u8>>,
+}
+
+fn fact_envelope_length_violation(row: &FactRow, violations: &mut Vec<Violation>) -> bool {
+    let limit = u64::try_from(crate::MAX_RETAINED_FACT_PAGE_BYTES)
+        .expect("fact envelope limit fits the verifier counter");
+    let Ok(observed) = u64::try_from(row.envelope_length) else {
+        violations.push(Violation::new(
+            ViolationClass::Envelope,
+            row.seq.to_string(),
+            format!("stored envelope has invalid length {}", row.envelope_length),
+        ));
+        return true;
+    };
+    if observed > limit {
+        violations.push(Violation::new(
+            ViolationClass::Envelope,
+            row.seq.to_string(),
+            format!(
+                "stored envelope has {observed} bytes, exceeding the {limit}-byte durable limit"
+            ),
+        ));
+        return true;
+    }
+    false
 }
 
 fn verify_fact_row(
@@ -541,7 +569,11 @@ fn verify_fact_row(
     violations: &mut Vec<Violation>,
 ) -> Option<wire::Envelope<wire::AnyFact>> {
     let subject = row.seq.to_string();
-    let envelope = match decode_canonical::<wire::Envelope<wire::AnyFact>>(&row.envelope) {
+    let envelope = match decode_canonical::<wire::Envelope<wire::AnyFact>>(
+        row.envelope
+            .as_deref()
+            .expect("validated fact bytes are loaded"),
+    ) {
         Ok(envelope) => envelope,
         Err(detail) => {
             violations.push(Violation::new(ViolationClass::Envelope, subject, detail));

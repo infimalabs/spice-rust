@@ -8,6 +8,7 @@ use crate::SCHEMA_VERSION;
 
 mod claim_index;
 mod creation_context;
+mod fact_bounds;
 mod identity_stamp;
 mod release_notes;
 mod renewal_organization;
@@ -24,6 +25,14 @@ const PREPARED: &str = "prepared";
 pub(crate) const INDEX_ACTIVATION_FACT_LIMIT: u64 = 4_096;
 pub(crate) const INDEX_ACTIVATION_BYTE_LIMIT: u64 = 1024 * 1024;
 const INDEX_ACTIVATION_COMMAND: &str = "spice journal reindex";
+const FACT_BOUND_VALIDATION_COMMAND: &str = "spice journal reindex";
+#[cfg(test)]
+pub(crate) use fact_bounds::{
+    FACT_BOUND_VALIDATION_BYTE_LIMIT, FACT_BOUND_VALIDATION_ROW_LIMIT, bounds_sql,
+};
+pub(crate) use fact_bounds::{
+    FACT_ENVELOPE_INSERT_TRIGGER, FACT_ENVELOPE_UPDATE_TRIGGER, insert_sql, update_sql,
+};
 
 pub(crate) fn baseline(connection: &mut Connection) -> Result<Option<Migration>, OpenError> {
     baseline_with(connection, IndexActivation::Startup)
@@ -50,6 +59,9 @@ fn baseline_with(
 
         transaction
             .execute_batch(BASELINE_SQL)
+            .map_err(OpenError::Sqlite)?;
+        transaction
+            .execute_batch(&fact_bounds::bounds_sql())
             .map_err(OpenError::Sqlite)?;
         transaction.commit().map_err(OpenError::Sqlite)?;
         return Ok(Some(Migration {
@@ -426,6 +438,19 @@ pub enum MigrationError {
         limit: u64,
         observed: u64,
     },
+    FactBoundValidationRowsRequired {
+        limit: u64,
+        observed: u64,
+    },
+    FactBoundValidationBytesRequired {
+        limit: u64,
+        observed: u64,
+    },
+    OversizedFactEnvelope {
+        seq: i64,
+        observed: u64,
+        limit: u64,
+    },
     StoredContent {
         from: u32,
         to: u32,
@@ -489,6 +514,22 @@ impl fmt::Display for MigrationError {
                 formatter,
                 "journal schema 19 index activation observed {observed} indexed bytes, exceeding the {limit}-byte startup limit; stop the resident and run `{INDEX_ACTIVATION_COMMAND}`"
             ),
+            Self::FactBoundValidationRowsRequired { limit, observed } => write!(
+                formatter,
+                "journal schema 20 fact-envelope validation observed at least {observed} facts, exceeding the {limit}-fact startup limit; stop the resident and run `{FACT_BOUND_VALIDATION_COMMAND}`"
+            ),
+            Self::FactBoundValidationBytesRequired { limit, observed } => write!(
+                formatter,
+                "journal schema 20 fact-envelope validation observed {observed} envelope bytes, exceeding the {limit}-byte startup limit; stop the resident and run `{FACT_BOUND_VALIDATION_COMMAND}`"
+            ),
+            Self::OversizedFactEnvelope {
+                seq,
+                observed,
+                limit,
+            } => write!(
+                formatter,
+                "journal schema 20 fact envelope at sequence {seq} has {observed} bytes, exceeding the {limit}-byte durable limit"
+            ),
             Self::StoredContent {
                 from,
                 to,
@@ -515,6 +556,7 @@ enum MigrationStep {
     Sql(&'static str),
     Rust(fn(&Connection) -> Result<(), OpenError>),
     FactIndexes,
+    FactEnvelopeBounds,
 }
 
 impl MigrationStep {
@@ -523,6 +565,7 @@ impl MigrationStep {
             Self::Sql(sql) => connection.execute_batch(sql).map_err(OpenError::Sqlite),
             Self::Rust(migrate) => migrate(connection),
             Self::FactIndexes => migrate_schema_19(connection, activation),
+            Self::FactEnvelopeBounds => fact_bounds::migrate(connection, activation),
         }
     }
 }
@@ -563,6 +606,7 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (17, MigrationStep::Sql(MIGRATE_17_TO_18_SQL)),
     (18, MigrationStep::Rust(task_creator_scope::migrate)),
     (19, MigrationStep::FactIndexes),
+    (20, MigrationStep::FactEnvelopeBounds),
 ];
 
 /// Schema 19 to 20: bounded fact-kind recovery.
@@ -878,8 +922,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 20, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 21, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 20;
+PRAGMA user_version = 21;
 "#;

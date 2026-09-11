@@ -6,7 +6,7 @@
 /// open when `migrate::MIGRATIONS` carries the step, and refused by name when it
 /// does not. A newer version is always refused: this build cannot know what the
 /// release that wrote it added.
-pub const SCHEMA_VERSION: u32 = 20;
+pub const SCHEMA_VERSION: u32 = 21;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod guard;
@@ -92,10 +92,11 @@ impl Journal {
         })?)
     }
 
-    /// Opens authority for the explicit offline reindex operation.
+    /// Opens authority for the explicit offline journal maintenance operation.
     ///
-    /// This is the sole unbounded schema-19 index activation path. Its caller
-    /// must hold the repository's offline journal lock before opening.
+    /// This is the sole unbounded schema certification and index activation
+    /// path. Its caller must hold the repository's offline journal lock before
+    /// opening.
     pub fn open_for_reindex(path: impl AsRef<Path>) -> Result<Self, OpenError> {
         let path = path.as_ref();
         let mut connection = Connection::open(path).map_err(|source| OpenError::Open {

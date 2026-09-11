@@ -264,44 +264,53 @@ fn indexed_fact_bytes(connection: &Connection) -> u64 {
 }
 
 fn set_indexed_fact_bytes(connection: &Connection, target: u64) {
-    let current_origin: String = connection
-        .query_row(
-            "SELECT origin FROM fact_envelopes WHERE seq = 1",
-            [],
-            |row| row.get(0),
-        )
-        .expect("fixture origin reads");
-    let fixed = indexed_fact_bytes(connection)
-        .saturating_sub(u64::try_from(current_origin.len()).expect("origin length fits u64"));
-    let origin_bytes = target
-        .checked_sub(fixed)
-        .expect("target exceeds fixed index bytes");
-    let value_bytes = origin_bytes
-        .checked_sub("task:".len() as u64)
-        .expect("target fits a valid origin");
-    let origin = format!(
-        "task:{}",
-        "x".repeat(usize::try_from(value_bytes).expect("fixture origin fits memory"))
-    );
-    let envelope_bytes: Vec<u8> = connection
-        .query_row(
-            "SELECT envelope FROM fact_envelopes WHERE seq = 1",
-            [],
-            |row| row.get(0),
-        )
-        .expect("fixture envelope reads");
-    let mut envelope: Envelope<AnyFact> =
-        wire::decode(&envelope_bytes).expect("fixture envelope decodes");
-    envelope.origin = origin.parse().expect("large fixture origin remains valid");
     connection
-        .execute(
-            "UPDATE fact_envelopes SET origin = ?1, envelope = ?2 WHERE seq = 1",
-            params![
-                origin,
-                wire::encode(&envelope).expect("large envelope encodes")
-            ],
+        .execute_batch(
+            "DROP TRIGGER IF EXISTS fact_envelopes_envelope_size_insert;
+             DROP TRIGGER IF EXISTS fact_envelopes_envelope_size_update;",
         )
-        .expect("large indexed origin is stored");
+        .expect("schema-nineteen fixture removes successor bounds");
+    let fixed: i64 = connection
+        .query_row(
+            "SELECT COALESCE(SUM(2 * octet_length(kind)), 0) FROM fact_envelopes",
+            [],
+            |row| row.get(0),
+        )
+        .expect("fixed indexed bytes read");
+    let origin_bytes = target
+        .checked_sub(u64::try_from(fixed).expect("fixed bytes are nonnegative"))
+        .expect("target exceeds fixed index bytes");
+    let first_origin_bytes = origin_bytes / 2;
+    let origin_sizes = [first_origin_bytes, origin_bytes - first_origin_bytes];
+    for (seq, origin_bytes) in [1_i64, 2].into_iter().zip(origin_sizes) {
+        let value_bytes = origin_bytes
+            .checked_sub("task:".len() as u64)
+            .expect("target fits two valid origins");
+        let origin = format!(
+            "task:{}",
+            "x".repeat(usize::try_from(value_bytes).expect("fixture origin fits memory"))
+        );
+        let envelope_bytes: Vec<u8> = connection
+            .query_row(
+                "SELECT envelope FROM fact_envelopes WHERE seq = ?1",
+                [seq],
+                |row| row.get(0),
+            )
+            .expect("fixture envelope reads");
+        let mut envelope: Envelope<AnyFact> =
+            wire::decode(&envelope_bytes).expect("fixture envelope decodes");
+        envelope.origin = origin.parse().expect("large fixture origin remains valid");
+        connection
+            .execute(
+                "UPDATE fact_envelopes SET origin = ?1, envelope = ?2 WHERE seq = ?3",
+                params![
+                    origin,
+                    wire::encode(&envelope).expect("large envelope encodes"),
+                    seq,
+                ],
+            )
+            .expect("large indexed origin is stored");
+    }
     assert_eq!(indexed_fact_bytes(connection), target);
 }
 

@@ -5,6 +5,7 @@
 //! see and what it is told when a head is incomplete.
 
 use super::*;
+use crate::GuardError;
 
 #[test]
 fn selected_fact_pages_use_the_kind_index_and_decode_only_matching_rows() {
@@ -132,6 +133,15 @@ fn retained_fact_pages_bound_matching_rows_and_bytes_independently_of_history() 
     assert_eq!(byte_metrics.rows, 2);
     assert_eq!(byte_metrics.decoded_bytes, first_bytes as u64);
 
+    let too_small = FactReadBudget::new(MAX_RETAINED_FACT_PAGE_ROWS, first_bytes - 1)
+        .expect("smaller positive byte budget is admitted");
+    reset_indexed_read_metrics();
+    let error = journal
+        .read(|read| read.selected_fact_page(&[FactKind::TaskPhased], None, too_small))
+        .expect_err("a call cannot decode even its first row beyond budget");
+    assert!(error.to_string().contains("this call's"));
+    assert_eq!(indexed_read_metrics().decoded_bytes, 0);
+
     reset_indexed_read_metrics();
     let recent = journal
         .read(|read| read.recent_fact_page(FactKind::TaskPhased, None, row_budget))
@@ -147,8 +157,97 @@ fn retained_fact_pages_bound_matching_rows_and_bytes_independently_of_history() 
 }
 
 #[test]
-fn retained_fact_pages_advance_past_one_indivisible_oversized_fact() {
+fn every_retained_page_surface_keeps_decoded_bytes_within_the_durable_maximum() {
     let journal = authority_fixture();
+    for (position, cause) in [(3, 2), (4, 3)] {
+        insert_fact(
+            &journal,
+            fact(
+                position,
+                Some(cause),
+                FactKind::TaskNoted,
+                json!({"task": "1kKRRsDP", "note": "x".repeat(600_000)}),
+            ),
+        );
+        journal
+            .connection
+            .execute(
+                "INSERT INTO thread_index(seq, origin, cause, root, depth)
+                 VALUES (?1, 'task:1kKRRsDP', ?2, 1, ?3)",
+                params![position as i64, cause as i64, position as i64 - 1],
+            )
+            .expect("extend large-fact causal index");
+    }
+    journal
+        .connection
+        .execute("UPDATE cursor_head SET seq = 4 WHERE singleton = 1", [])
+        .expect("advance large-fact cursor");
+
+    let assert_bounded = |read: &dyn Fn() -> Result<(), GuardError>| {
+        reset_indexed_read_metrics();
+        let _ = read();
+        assert!(
+            indexed_read_metrics().decoded_bytes <= MAX_RETAINED_FACT_PAGE_BYTES as u64,
+            "one retained page decoded beyond the durable maximum"
+        );
+    };
+    assert_bounded(&|| {
+        journal.read(|read| {
+            read.selected_fact_page(
+                &[FactKind::TaskNoted],
+                Some(seq(2)),
+                FactReadBudget::RETAINED,
+            )?;
+            Ok(())
+        })
+    });
+    assert_bounded(&|| {
+        journal.read(|read| {
+            read.recent_fact_page(FactKind::TaskNoted, None, FactReadBudget::RETAINED)?;
+            Ok(())
+        })
+    });
+    assert_bounded(&|| {
+        journal.read(|read| {
+            read.latest_fact(FactKind::TaskNoted)?;
+            Ok(())
+        })
+    });
+    assert_bounded(&|| {
+        journal.read(|read| {
+            read.recent_origin_facts(
+                &"task:1kKRRsDP".parse().expect("fixture origin"),
+                FactKind::TaskNoted,
+                None,
+                2,
+            )?;
+            Ok(())
+        })
+    });
+    assert_bounded(&|| {
+        journal.read(|read| {
+            read.fact_page(FactPageStart::At(seq(3)), seq(4), 2)?;
+            Ok(())
+        })
+    });
+    assert_bounded(&|| {
+        journal.read(|read| {
+            read.causal_page(seq(4), 2)?;
+            Ok(())
+        })
+    });
+}
+
+#[test]
+fn retained_fact_readers_refuse_oversized_corruption_before_decoding_it() {
+    let journal = authority_fixture();
+    journal
+        .connection
+        .execute_batch(
+            "DROP TRIGGER fact_envelopes_envelope_size_insert;
+             DROP TRIGGER fact_envelopes_envelope_size_update;",
+        )
+        .expect("open a corruption fixture beneath finalized enforcement");
     insert_fact(
         &journal,
         fact(
@@ -167,28 +266,14 @@ fn retained_fact_pages_advance_past_one_indivisible_oversized_fact() {
             }),
         ),
     );
-    insert_fact(
-        &journal,
-        fact(
-            4,
-            None,
-            FactKind::TaskAdded,
-            json!({
-                "task": "3kKRRsDP",
-                "title": "following fact",
-                "project": "journal",
-                "tags": [],
-                "depends": [],
-                "flow": ["todo", "review"],
-                "phase": "todo",
-                "revision": 1
-            }),
-        ),
-    );
     journal
         .connection
-        .execute("UPDATE cursor_head SET seq = 4 WHERE singleton = 1", [])
+        .execute("UPDATE cursor_head SET seq = 3 WHERE singleton = 1", [])
         .expect("advance oversized-fact fixture cursor");
+    journal
+        .connection
+        .execute_batch(&crate::migrate::bounds_sql())
+        .expect("restore finalized enforcement around planted corruption");
 
     reset_indexed_read_metrics();
     let selected = journal
@@ -199,46 +284,23 @@ fn retained_fact_pages_advance_past_one_indivisible_oversized_fact() {
                 FactReadBudget::RETAINED,
             )
         })
-        .expect("oversized selected fact remains reachable");
-    assert_eq!(
-        selected
-            .rows
-            .iter()
-            .map(|fact| fact.seq)
-            .collect::<Vec<_>>(),
-        [seq(3)]
-    );
-    assert_eq!(selected.continuation, Some(seq(3)));
-    assert!(indexed_read_metrics().decoded_bytes > MAX_RETAINED_FACT_PAGE_BYTES as u64);
-    let selected_tail = journal
-        .read(|read| {
-            read.selected_fact_page(
-                &[FactKind::TaskAdded],
-                selected.continuation,
-                FactReadBudget::RETAINED,
-            )
-        })
-        .expect("selected read resumes after oversized fact");
-    assert_eq!(
-        selected_tail
-            .rows
-            .iter()
-            .map(|fact| fact.seq)
-            .collect::<Vec<_>>(),
-        [seq(4)]
-    );
-    assert_eq!(selected_tail.continuation, None);
+        .expect_err("oversized selected fact is corruption");
+    assert!(selected.to_string().contains("sequence 3"));
+    assert!(selected.to_string().contains("exceeding"));
+    assert_eq!(indexed_read_metrics().decoded_bytes, 0);
 
+    reset_indexed_read_metrics();
     let recent = journal
-        .read(|read| {
-            read.recent_fact_page(FactKind::TaskAdded, Some(seq(4)), FactReadBudget::RETAINED)
-        })
-        .expect("oversized recent fact remains reachable");
-    assert_eq!(
-        recent.rows.iter().map(|fact| fact.seq).collect::<Vec<_>>(),
-        [seq(3)]
-    );
-    assert_eq!(recent.continuation, Some(seq(3)));
+        .read(|read| read.recent_fact_page(FactKind::TaskAdded, None, FactReadBudget::RETAINED))
+        .expect_err("oversized recent fact is corruption");
+    assert!(recent.to_string().contains("sequence 3"));
+    assert_eq!(indexed_read_metrics().decoded_bytes, 0);
+
+    let snapshot = journal
+        .fact_snapshot()
+        .expect_err("unbounded snapshot still rejects before allocating corruption");
+    assert!(snapshot.to_string().contains("Some(3)"));
+    assert!(snapshot.to_string().contains("exceeding"));
 }
 
 #[test]
