@@ -1,6 +1,55 @@
 use super::*;
 
 #[test]
+fn resident_restart_rebuilds_from_zero_with_fixed_work_and_no_partial_rows() {
+    const BOUNDARY: &str = "{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n";
+    let scratch = Scratch::new("history-auth-restart");
+    let transcript = scratch.transcript();
+    let filler = "x".repeat(1_800);
+    let mut contents = (0..160)
+        .map(|index| claude_assistant_record(index, &filler))
+        .collect::<String>();
+    let boundary_offset = contents.len() as u64;
+    contents.push_str(BOUNDARY);
+    fs::write(&transcript, contents).expect("large history generation is written");
+
+    let abandoned = history_checkpoint(&transcript).expect("first resident captures source");
+    let first = advance_history_authentication(&transcript, &abandoned, Instant::now())
+        .expect("first resident advances one slice");
+    assert_eq!(first.work.source_bytes, HISTORY_BYTE_BUDGET as u64);
+    assert!(first.stamp.is_none());
+    drop(abandoned);
+
+    let restarted = history_checkpoint(&transcript).expect("replacement resident captures source");
+    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+    let restarted_first = bootstrap_before(&mut cursor, 1, &restarted)
+        .expect("replacement resident advances one bounded slice");
+    assert!(restarted_first.pending_authentication);
+    assert!(restarted_first.records.is_empty());
+    assert_eq!(
+        restarted_first.work.source_bytes, HISTORY_BYTE_BUDGET as u64,
+        "restart deliberately redoes its first slice rather than importing opaque hasher state"
+    );
+
+    let mut page = restarted_first;
+    for _ in 0..4 {
+        page = bootstrap_before(&mut cursor, 1, &restarted)
+            .expect("replacement resident resumes bounded authentication");
+        assert!(page.work.within_limits());
+        if !page.pending_authentication {
+            break;
+        }
+        assert!(
+            page.records.is_empty(),
+            "pending authority stays unpublished"
+        );
+    }
+    assert!(!page.pending_authentication);
+    assert_eq!(page.records.len(), 1);
+    assert_eq!(page.records[0].locus().offset, boundary_offset);
+}
+
+#[test]
 fn rewrite_plus_growth_before_initial_build_finishes_is_refused() {
     let scratch = Scratch::new("history-auth-initial-rewrite");
     let transcript = scratch.transcript();
