@@ -8,7 +8,9 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use sha1::{Digest as _, Sha1};
-use wire::manifest::{CANVAS_APP_FILES, ProductVersion, ReleaseManifest, ReleaseTarget};
+use wire::manifest::{
+    CANVAS_APP_FILES, InventoryEntry, ProductVersion, ReleaseManifest, ReleaseTarget,
+};
 use wire::{Digest, Domain};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -35,6 +37,7 @@ struct LoadedTarget {
     executable: Vec<u8>,
     payload: Vec<u8>,
     proof: Vec<u8>,
+    inventory: Vec<InventoryEntry>,
 }
 
 struct Loaded {
@@ -148,16 +151,22 @@ fn load(root: &Path, manifest: &[u8]) -> Result<Loaded, PackageFailure> {
     let stage = root.join("dist/stage");
     let mut targets = Vec::with_capacity(document.targets.len());
     for target in document.targets {
-        let executable_path = stage
-            .join("targets")
-            .join(target.target.as_str())
-            .join("bin/spice");
-        let executable = read_bound(
-            &executable_path,
-            &format!("staged {} executable", target.target),
-        )?;
         let payload_path = stage.join(format!("objects/payload-{}.json", target.payload));
         let payload = read_bound(&payload_path, &format!("staged {} payload", target.target))?;
+        let admitted =
+            proof::admit(&payload).map_err(|error| PackageFailure::Moved(error.to_string()))?;
+        if admitted.digest() != &target.payload || admitted.value().target != target.target {
+            return Err(PackageFailure::Moved(format!(
+                "staged {} payload disagrees with the release manifest",
+                target.target
+            )));
+        }
+        let executable = read_artifact(
+            &stage,
+            &admitted.value().inventory,
+            "bin/spice",
+            &format!("staged {} executable", target.target),
+        )?;
         let proof_path = stage.join(format!("objects/receipt-{}.json", target.receipt));
         let proof = read_bound(&proof_path, &format!("staged {} proof", target.target))?;
         targets.push(LoadedTarget {
@@ -165,34 +174,27 @@ fn load(root: &Path, manifest: &[u8]) -> Result<Loaded, PackageFailure> {
             executable,
             payload,
             proof,
+            inventory: admitted.value().inventory.clone(),
         });
     }
-    let payload: wire::manifest::TargetPayload = wire::decode(
-        &targets
-            .first()
-            .expect("the current release manifest carries two targets")
-            .payload,
-    )
-    .map_err(|error| PackageFailure::Moved(error.to_string()))?;
+    let inventory = &targets
+        .first()
+        .expect("the current release manifest carries two targets")
+        .inventory;
     let mut files = CANVAS_APP_FILES.to_vec();
     files.sort_unstable();
     let app = files
         .into_iter()
         .map(|file| {
             let path = format!("app/{file}");
-            let entry = payload
-                .inventory
-                .iter()
-                .find(|entry| entry.path == path)
-                .ok_or_else(|| {
-                    PackageFailure::Moved(format!(
-                        "staged target payload has no Canvas asset {path}"
-                    ))
-                })?;
-            let object = stage.join(format!("objects/{}-{:04o}", entry.digest, entry.mode));
             Ok(LoadedApp {
                 file: file.to_owned(),
-                bytes: read_bound(&object, &format!("staged Canvas asset {file}"))?,
+                bytes: read_artifact(
+                    &stage,
+                    inventory,
+                    &path,
+                    &format!("staged Canvas asset {file}"),
+                )?,
             })
         })
         .collect::<Result<Vec<_>, PackageFailure>>()?;
@@ -201,6 +203,27 @@ fn load(root: &Path, manifest: &[u8]) -> Result<Loaded, PackageFailure> {
         app,
         targets,
     })
+}
+
+fn read_artifact(
+    stage: &Path,
+    inventory: &[InventoryEntry],
+    path: &str,
+    label: &str,
+) -> Result<Vec<u8>, PackageFailure> {
+    let entry = inventory
+        .iter()
+        .find(|entry| entry.path == path)
+        .ok_or_else(|| PackageFailure::Moved(format!("staged target payload has no {path}")))?;
+    let object = stage.join(format!("objects/{}-{:04o}", entry.digest, entry.mode));
+    let bytes = read_bound(&object, label)?;
+    let observed = Digest::compute(Domain::DistArtifact, &bytes);
+    if bytes.len() as u64 != entry.bytes || observed != entry.digest {
+        return Err(PackageFailure::Moved(format!(
+            "{label} object disagrees with its payload inventory"
+        )));
+    }
+    Ok(bytes)
 }
 
 fn read_bound(path: &Path, label: &str) -> Result<Vec<u8>, PackageFailure> {
@@ -393,3 +416,6 @@ fn hex(bytes: &[u8]) -> String {
     }
     output
 }
+
+#[cfg(test)]
+mod tests;
