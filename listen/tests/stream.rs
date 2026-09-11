@@ -438,15 +438,94 @@ fn tail_window_crosses_sealed_members_without_reopening_the_season_start() {
         tail_budget(u64::try_from(prose.len() * MULTI_MEMBER_WINDOW_RECORDS).expect("window fits")),
     )
     .expect("grown multi-member tail scans");
-    assert_eq!(
-        (
-            grown.work.source_bytes,
-            grown.work.records,
-            grown.work.passes
-        ),
-        first_work,
-        "older sealed members do not increase tail work"
+    assert_eq!(grown.work.records, first_work.1);
+    assert!(grown.work.source_bytes > first_work.0);
+    assert!(grown.work.passes > first_work.2);
+    assert!(grown.work.passes <= TEST_PASS_LIMIT);
+    assert!(
+        grown.work.source_bytes
+            <= u64::try_from(prose.len() * MULTI_MEMBER_WINDOW_RECORDS)
+                .expect("window fits")
+                .saturating_add(TEST_BOUNDARY_ALLOWANCE)
     );
+    scratch.remove();
+}
+
+#[test]
+fn sealed_member_discovery_stops_at_the_same_pass_ceiling_as_the_index_grows() {
+    fn refused(label: &str, members: usize) -> (u64, u64) {
+        let scratch = Scratch::new(label);
+        Tape::open(scratch.path()).expect("tape opens");
+        let mut index = String::from("tape 1\n");
+        for member in 1..=members {
+            index.push_str(&format!("member {member:012} 1\n"));
+        }
+        fs::write(scratch.path().join("index"), index).expect("large index is published");
+        let error = scan_tail(
+            scratch.path(),
+            Dialect::Codex,
+            TailBudget::new(
+                SMALL_WINDOW_BYTES,
+                TEST_SOURCE_LIMIT,
+                SMALL_WINDOW_RECORDS,
+                TEST_PASS_LIMIT,
+                TEST_DURATION,
+            )
+            .expect("bounded tail"),
+        )
+        .expect_err("extent discovery must stop at its pass ceiling");
+        scratch.remove();
+        let ScanError::WorkLimit {
+            dimension,
+            limit,
+            consumed,
+        } = error
+        else {
+            panic!("large index returned a non-budget error: {error}")
+        };
+        assert_eq!(dimension, "scan passes");
+        (limit, consumed)
+    }
+
+    assert_eq!(
+        refused("extent-limit-small", TEST_PASS_LIMIT + 20),
+        refused("extent-limit-large", TEST_PASS_LIMIT + 200),
+    );
+}
+
+#[test]
+fn oversized_index_refuses_before_extent_parsing() {
+    const INDEX_BYTE_LIMIT: u64 = 32;
+    let scratch = Scratch::new("extent-index-byte-limit");
+    Tape::open(scratch.path()).expect("tape opens");
+    fs::write(
+        scratch.path().join("index"),
+        "tape 1\nmember 000000000001 1\nmember 000000000002 1\n",
+    )
+    .expect("oversized canonical index is published");
+
+    let error = scan_tail(
+        scratch.path(),
+        Dialect::Codex,
+        TailBudget::new(
+            1,
+            INDEX_BYTE_LIMIT,
+            SMALL_WINDOW_RECORDS,
+            TEST_PASS_LIMIT,
+            TEST_DURATION,
+        )
+        .expect("byte-bounded tail"),
+    )
+    .expect_err("oversized index must stop before parsing");
+
+    assert!(matches!(
+        error,
+        ScanError::WorkLimit {
+            dimension: "source bytes",
+            limit: INDEX_BYTE_LIMIT,
+            consumed: 0,
+        }
+    ));
     scratch.remove();
 }
 

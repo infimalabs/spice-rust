@@ -21,7 +21,7 @@ use std::io::{self, Read, Seek, SeekFrom};
 
 use flate2::read::GzDecoder;
 
-use crate::{Error, Operation, Refusal, Tape};
+use crate::{Error, Extent, Operation, Refusal, Tape};
 
 /// Times a reader re-resolves while a sealer publishes underneath it.
 ///
@@ -112,6 +112,34 @@ impl Tape {
         Err(Error::Refused(Refusal::MemberVanished {
             member: locus.member,
         }))
+    }
+
+    /// Read through one previously admitted extent without rediscovering the
+    /// complete tape index.
+    ///
+    /// The extent is an observation, not caller authority: its member and
+    /// range must contain the locus. An active member that sealed after the
+    /// observation is read from its immutable replacement.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a mismatched or out-of-range locus and returns an I/O failure
+    /// when neither the observed storage nor its sealed successor can be read.
+    pub fn read_extent(&self, locus: Locus, extent: Extent) -> Result<Vec<u8>, Error> {
+        if locus.member != extent.member {
+            return Err(unknown(locus));
+        }
+        validate(locus, extent.length)?;
+        if extent.sealed {
+            return self
+                .read_sealed(locus.member)
+                .and_then(|plaintext| slice(locus, &plaintext));
+        }
+        if let Some(bytes) = self.read_active(locus)? {
+            return Ok(bytes);
+        }
+        self.read_sealed(locus.member)
+            .and_then(|plaintext| slice(locus, &plaintext))
     }
 
     /// Read a range from the member still accepting appends.

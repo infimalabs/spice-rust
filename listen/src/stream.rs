@@ -285,10 +285,12 @@ fn scan_extent(
     }
 
     let locus = Locus::new(extent.member, start, extent_end - start);
-    let fragment = tape.read(locus).map_err(|error| ScanError::Tape {
-        path: tape.root().to_path_buf(),
-        source: error,
-    })?;
+    let fragment = tape
+        .read_extent(locus, *extent)
+        .map_err(|error| ScanError::Tape {
+            path: tape.root().to_path_buf(),
+            source: error,
+        })?;
     let mut fragment_start = 0_usize;
     for (index, byte) in fragment.iter().enumerate() {
         if *byte != b'\n' {
@@ -395,10 +397,13 @@ fn validate_position(
         };
     };
 
-    if let Some(extent) = extents
-        .iter()
-        .find(|extent| extent.member == position.member)
-    {
+    let extent = position
+        .member
+        .checked_sub(1)
+        .and_then(|index| usize::try_from(index).ok())
+        .and_then(|index| extents.get(index))
+        .filter(|extent| extent.member == position.member);
+    if let Some(extent) = extent {
         if position.offset > extent.length {
             return Err(ScanError::CheckpointRetreated {
                 next: position,

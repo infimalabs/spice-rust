@@ -25,7 +25,7 @@ mod seal;
 mod tee;
 
 pub use read::Locus;
-pub use seal::{Extent, Index, Member, Seal};
+pub use seal::{BoundedExtents, Extent, Index, Member, Seal};
 
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
@@ -525,6 +525,22 @@ pub enum Refusal {
         /// The line that did not parse.
         line: String,
     },
+    /// A bounded reader refused to load a larger index generation.
+    IndexReadLimit {
+        /// Maximum index bytes admitted by the caller.
+        limit: u64,
+        /// Bytes observed before reading the index.
+        observed: u64,
+    },
+    /// A bounded reader refused to materialize another extent.
+    ExtentReadLimit {
+        /// Maximum extents admitted by the caller.
+        limit: usize,
+        /// First extent count outside that maximum.
+        observed: usize,
+        /// Exact index bytes read before the count was known.
+        index_bytes: u64,
+    },
     /// The source-generation identity is not the one form tape writes.
     MalformedSource {
         /// First non-current line, or the final line when framing is truncated.
@@ -558,6 +574,18 @@ impl fmt::Display for Refusal {
                     "the index line {line:?} is not the current format"
                 )
             }
+            Self::IndexReadLimit { limit, observed } => write!(
+                formatter,
+                "the {observed}-byte tape index exceeds the {limit}-byte read limit"
+            ),
+            Self::ExtentReadLimit {
+                limit,
+                observed,
+                index_bytes,
+            } => write!(
+                formatter,
+                "tape extent {observed} exceeds the {limit}-extent read limit after {index_bytes} index bytes"
+            ),
             Self::MalformedSource { line } => write!(
                 formatter,
                 "the source identity line {line:?} is not the current format"
