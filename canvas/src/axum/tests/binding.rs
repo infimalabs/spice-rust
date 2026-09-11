@@ -5,15 +5,36 @@ use super::*;
 const REMOTE_TOKEN: &str = "correct-horse-battery-staple";
 
 #[tokio::test(flavor = "current_thread")]
+async fn server_refuses_an_identity_for_another_app_generation_before_binding() {
+    let app = TestApp::new();
+    let mut version = app.version();
+    version.app = wire::Digest::compute(wire::Domain::DistArtifact, b"another generation");
+
+    let error = Server::bind(
+        epoch(),
+        Capabilities::default(),
+        version,
+        app.source(),
+        speech(),
+    )
+    .await
+    .expect_err("mismatched app identity refuses");
+
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+    assert!(error.to_string().contains("app identity disagrees"));
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn server_binds_ipv4_loopback_and_publishes_that_endpoint() {
     let app = TestApp::new();
     let capabilities = Capabilities::default();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) = Server::bind(epoch(), capabilities, app.source(), speech())
-        .await
-        .expect("binds");
+    let (server, _control) =
+        Server::bind(epoch(), capabilities, app.version(), app.source(), speech())
+            .await
+            .expect("binds");
     let address = server.local_addr().expect("local address");
     let discovery = server.discovery(operator()).expect("operator discovery");
 
@@ -44,6 +65,7 @@ async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin
         ),
         epoch(),
         capabilities,
+        app.version(),
         app.source(),
         speech(),
         None,
@@ -161,6 +183,7 @@ async fn a_non_loopback_listener_refuses_unauthenticated_access_before_bind() {
         Binding::new(unavailable, Access::local()),
         epoch(),
         Capabilities::default(),
+        app.version(),
         app.source(),
         speech(),
         None,
@@ -193,6 +216,7 @@ async fn ipv6_loopback_binds_unauthenticated_while_both_wildcards_refuse() {
         ),
         epoch(),
         Capabilities::default(),
+        app.version(),
         app.source(),
         speech(),
         None,
@@ -211,6 +235,7 @@ async fn ipv6_loopback_binds_unauthenticated_while_both_wildcards_refuse() {
             Binding::new(SocketAddr::new(wildcard, 0), Access::local()),
             epoch(),
             Capabilities::default(),
+            app.version(),
             app.source(),
             speech(),
             None,

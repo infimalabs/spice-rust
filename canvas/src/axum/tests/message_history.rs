@@ -21,6 +21,7 @@ async fn authenticated_socket_pages_member_history_before_the_initial_window() {
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
+        app.version(),
         app.source(),
         speech(),
         bus.reader(),

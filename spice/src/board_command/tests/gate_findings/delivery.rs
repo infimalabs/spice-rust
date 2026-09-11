@@ -20,10 +20,17 @@ async fn oversized_focused_evidence_survives_canvas_response_failure() {
         .insert(capability, Actor::Operator)
         .expect("operator capability registers");
     let app = canvas::AppSource::resolve(&root).expect("fixture Canvas app resolves");
-    let (server, mut control) =
-        canvas::axum::Server::bind(epoch, capabilities, app, canvas::SpeechConfig::default())
-            .await
-            .expect("Canvas server binds");
+    let version = crate::resident::canvas_version(&app, journal::SCHEMA_VERSION)
+        .expect("Canvas identity builds");
+    let (server, mut control) = canvas::axum::Server::bind(
+        epoch,
+        capabilities,
+        version,
+        app,
+        canvas::SpeechConfig::default(),
+    )
+    .await
+    .expect("Canvas server binds");
     let address = server.local_addr().expect("Canvas server address");
     let (shutdown, stopped) = tokio::sync::oneshot::channel();
     let server_task = tokio::spawn(server.up_until(async move {

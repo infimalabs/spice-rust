@@ -9,6 +9,40 @@ import {
 } from "./canvas-fixture.mjs";
 import { assertGlobalNavigation } from "./organization-navigation.mjs";
 
+async function assertCanvasIdentity(page, panel, label) {
+  const version = panel.locator(".canvas-menu-version");
+  const authoritative = await page.evaluate(async () => {
+    const bootstrap = new URL("/bootstrap", window.location.href);
+    bootstrap.search = window.location.search;
+    const response = await fetch(bootstrap);
+    return {
+      canvas: response.headers.get("x-spice-canvas-version"),
+      generation: response.headers.get("x-spice-canvas-generation"),
+      version: (await response.json()).version,
+    };
+  });
+  assert.ok(authoritative.canvas, `${label} bootstrap supplies the Canvas protocol authority`);
+  assert.equal(await version.getAttribute("data-canvas-protocol"), authoritative.canvas);
+  assert.equal((await version.innerText()).trim(), `Spice ${authoritative.version.product}`);
+  assert.equal(await version.getAttribute("data-product-version"), authoritative.version.product);
+  assert.equal(await version.getAttribute("data-native-binary"), authoritative.version.binary);
+  assert.equal(await version.getAttribute("data-wire-schema"), String(authoritative.version.wire));
+  assert.equal(
+    await version.getAttribute("data-journal-schema"),
+    String(authoritative.version.journal),
+  );
+  assert.equal(await version.getAttribute("data-served-app-generation"), authoritative.generation);
+  assert.equal(
+    await version.getAttribute("data-loaded-app-generation"),
+    await page.locator("#app").getAttribute("data-canvas-generation"),
+  );
+  assert.match(
+    await version.getAttribute("title"),
+    /Product: .*Native binary: .*Wire schema: .*Journal schema: .*Canvas protocol: .*Loaded app generation:/s,
+  );
+  assert.doesNotMatch((await version.innerText()).trim(), /^Canvas v\d+$/);
+}
+
 async function openSpiceMenu(page) {
   const menu = page.locator(".canvas-menu");
   if ((await menu.getAttribute("open")) === null) {
@@ -262,24 +296,7 @@ export async function assertCursorRelocation(page, artifacts, engine) {
       });
       assert.equal(await cursor.count(), 1, `${label} keeps one global cursor while open`);
       assert.equal(await cursor.isVisible(), true, `${label} reveals the global cursor with the open menu`);
-      const version = panel.locator(".canvas-menu-version");
-      const authoritativeVersion = await page.evaluate(async () => {
-        const bootstrap = new URL("/bootstrap", window.location.href);
-        bootstrap.search = window.location.search;
-        const response = await fetch(bootstrap);
-        return response.headers.get("x-spice-canvas-version");
-      });
-      assert.ok(authoritativeVersion, `${label} bootstrap supplies the Canvas version authority`);
-      assert.equal(
-        await version.getAttribute("data-canvas-version"),
-        authoritativeVersion,
-        `${label} footer version matches the live Rust bootstrap authority`,
-      );
-      assert.equal(
-        (await version.innerText()).trim(),
-        `Canvas v${authoritativeVersion}`,
-        `${label} footer renders the authoritative version`,
-      );
+      await assertCanvasIdentity(page, panel, label);
       assert.equal(
         await cursor.getAttribute("data-relocation-identity"),
         cursorIdentity,
@@ -716,7 +733,7 @@ export async function assertCursorRelocation(page, artifacts, engine) {
         const original = [version.textContent, cursor.textContent];
         cursor.textContent = "cursor 16777216";
         const roomyCursorClipped = cursor.scrollWidth > cursor.clientWidth;
-        version.textContent = "Canvas version authority with a deliberately long build label";
+        version.textContent = "Spice product authority with a deliberately long build label";
         cursor.textContent = `cursor ${"1234567890".repeat(12)}`;
         const footerBounds = footer.getBoundingClientRect();
         const versionBounds = version.getBoundingClientRect();

@@ -139,22 +139,26 @@ pub struct Reply<B> {
     pub body: B,
 }
 
-/// Compiled identities reported by the daemonless `version` leaf.
+/// Product, executable, protocol, authority, and app-generation identity.
 ///
-/// These four values are one machine document rather than independent prose:
-/// the native artifact and lane-built app identify what is running, while the
-/// wire and journal versions identify the only crossing and authority schemas
-/// that build admits.
+/// These values are one machine document rather than independently synchronized
+/// prose. The daemonless `version` leaf and Canvas bootstrap both use this
+/// shape, with the app field naming the generation served at their read
+/// boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Version {
+    /// Canonical product version compiled from distribution authority.
+    pub product: crate::manifest::ProductVersion,
     /// Digest of the native executable for its release target.
     pub binary: Digest,
     /// The one wire schema this build speaks.
     pub wire: WireVersion,
     /// Finalized journal schema this build observed without migrating it.
     pub journal: u32,
-    /// Digest of the app bytes embedded in the native executable.
+    /// Internal browser/resident protocol clock.
+    pub canvas: crate::hello::CanvasVersion,
+    /// Identity of the complete app generation served by this build.
     pub app: Digest,
 }
 

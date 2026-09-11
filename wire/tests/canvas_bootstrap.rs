@@ -4,6 +4,14 @@ const CANVAS_BOOTSTRAP: &str = r#"{
   "endpoint": "http://127.0.0.1:48123",
   "capability": "018f82d4-6f59-7d06-92e3-bce9131163c6",
   "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
+  "version": {
+    "product": "1.2.3",
+    "binary": "1111111111111111111111111111111111111111111111111111111111111111",
+    "wire": 1,
+    "journal": 20,
+    "canvas": 6,
+    "app": "2222222222222222222222222222222222222222222222222222222222222222"
+  },
   "speech": {
     "backend": "system",
     "voice": "Zoe (Premium)",
@@ -39,6 +47,9 @@ fn canvas_bootstrap_has_one_strict_body_shape() {
         bootstrap.epoch,
         uuid("018f82d4-6f59-7d06-92e3-bce9131163c3")
     );
+    assert_eq!(bootstrap.version.product.as_str(), "1.2.3");
+    assert_eq!(bootstrap.version.canvas, CanvasVersion::CURRENT);
+    assert_eq!(bootstrap.version.app.as_str(), "2".repeat(64));
     assert_eq!(
         bootstrap.speech,
         wire::SpeechPlayback::System {
@@ -47,7 +58,7 @@ fn canvas_bootstrap_has_one_strict_body_shape() {
         }
     );
 
-    for field in ["endpoint", "capability", "epoch", "speech"] {
+    for field in ["endpoint", "capability", "epoch", "version", "speech"] {
         let mut value: serde_json::Value =
             serde_json::from_str(CANVAS_BOOTSTRAP).expect("bootstrap fixture is JSON");
         value
@@ -83,8 +94,8 @@ fn canvas_version_has_one_http_header_spelling() {
     );
     assert_eq!(
         CanvasVersion::CURRENT,
-        CanvasVersion(5),
-        "generation 5 carries explicit Canvas app updates"
+        CanvasVersion(6),
+        "generation 6 carries structured product and build identity"
     );
     assert_eq!(
         CanvasVersion::CURRENT.to_string().parse(),
@@ -99,8 +110,9 @@ fn canvas_version_has_one_http_header_spelling() {
 }
 
 #[test]
-fn strict_bootstrap_body_preserves_the_pre_version_shape() {
+fn strict_bootstrap_body_changes_only_at_the_canvas_six_boundary() {
     #[derive(Debug, serde::Deserialize)]
+    #[allow(dead_code)]
     #[serde(deny_unknown_fields)]
     struct PriorCanvasBootstrap {
         endpoint: String,
@@ -109,31 +121,24 @@ fn strict_bootstrap_body_preserves_the_pre_version_shape() {
         speech: wire::SpeechPlayback,
     }
 
-    let current: CanvasBootstrap =
-        wire::decode(CANVAS_BOOTSTRAP.as_bytes()).expect("current bootstrap decodes");
+    let current: CanvasBootstrap = round_trip(CANVAS_BOOTSTRAP);
     let bytes = wire::encode(&current).expect("current bootstrap encodes");
-    let prior: PriorCanvasBootstrap =
-        wire::decode(&bytes).expect("the prior strict bootstrap shape reads the current body");
-    assert_eq!(prior.endpoint, current.endpoint);
-    assert_eq!(prior.capability, current.capability);
-    assert_eq!(prior.epoch, current.epoch);
-    assert_eq!(prior.speech, current.speech);
-
-    let mut five_field: serde_json::Value =
-        serde_json::from_slice(&bytes).expect("current body is JSON");
-    five_field
-        .as_object_mut()
-        .expect("bootstrap is an object")
-        .insert("canvas".to_owned(), serde_json::json!(1));
-    let five_field = serde_json::to_vec(&five_field).expect("five-field fixture encodes");
-    let error = wire::decode::<PriorCanvasBootstrap>(&five_field)
-        .expect_err("the pre-version strict decoder reproduces the screenshot");
+    let error = wire::decode::<PriorCanvasBootstrap>(&bytes)
+        .expect_err("the prior strict decoder refuses the six-field body");
     assert!(
-        error.to_string().contains("unknown field `canvas`"),
+        error.to_string().contains("unknown field `version`"),
         "{error}"
     );
+
+    let mut prior: serde_json::Value =
+        serde_json::from_slice(&bytes).expect("current body is JSON");
+    prior
+        .as_object_mut()
+        .expect("bootstrap is an object")
+        .remove("version");
+    let prior = serde_json::to_vec(&prior).expect("prior fixture encodes");
     assert!(
-        wire::decode::<CanvasBootstrap>(&five_field).is_err(),
-        "the current strict body must not retain an alternate five-field path"
+        wire::decode::<CanvasBootstrap>(&prior).is_err(),
+        "the current strict body must not retain the prior four-field path"
     );
 }

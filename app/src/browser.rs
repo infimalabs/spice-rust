@@ -96,6 +96,7 @@ struct SurfaceHandles {
     connection: UseStateHandle<Connection>,
     surface: UseStateHandle<SurfaceData>,
     speech: UseStateHandle<wire::SpeechPlayback>,
+    identity: UseStateHandle<Option<CanvasIdentity>>,
     canvas_update: UseStateHandle<Option<CanvasUpdate>>,
     lineage_controls: UseReducerHandle<LineageControls>,
     composer_drafts: UseReducerHandle<ComposerDrafts>,
@@ -106,6 +107,12 @@ struct SurfaceHandles {
 struct CanvasUpdate {
     version: wire::CanvasVersion,
     generation: wire::Digest,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct CanvasIdentity {
+    version: wire::Version,
+    loaded_app: wire::Digest,
 }
 
 #[derive(Clone, PartialEq)]
@@ -510,6 +517,7 @@ fn canvas_app() -> Html {
     let axis = use_state(|| Axis::Topology);
     let mosaic = use_state(|| true);
     let canvas_menu_open = use_state(|| false);
+    let identity = use_state(|| None::<CanvasIdentity>);
     let canvas_update = use_state(|| None::<CanvasUpdate>);
     let lineage_controls = use_reducer(LineageControls::restore);
     let lineage_fleet = use_node_ref();
@@ -548,6 +556,7 @@ fn canvas_app() -> Html {
             connection: connection.clone(),
             surface: surface.clone(),
             speech: speech.clone(),
+            identity: identity.clone(),
             canvas_update: canvas_update.clone(),
             lineage_controls: lineage_controls.clone(),
             composer_drafts: composer_drafts.clone(),
@@ -579,6 +588,7 @@ fn canvas_app() -> Html {
         axis: &axis,
         mosaic: &mosaic,
         canvas_menu_open: &canvas_menu_open,
+        identity: &identity,
         canvas_update: &canvas_update,
         lineage_controls: &lineage_controls,
         composer_drafts: &composer_drafts,

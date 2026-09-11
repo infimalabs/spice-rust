@@ -2,71 +2,10 @@
 
 use super::*;
 
+mod identity;
+
 const LOOPBACK_AUTHORITY: &str = "127.0.0.1:48123";
 const LOOPBACK_ORIGIN: &str = "http://127.0.0.1:48123";
-
-#[tokio::test(flavor = "current_thread")]
-async fn bootstrap_names_the_exact_operator_generation_and_is_not_cached() {
-    let app = TestApp::new();
-    let capabilities = Capabilities::default();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
-    let (server, _control) = Server::bind(epoch(), capabilities, app.source(), speech())
-        .await
-        .expect("binds");
-    let address = server.local_addr().expect("local address");
-    let task = tokio::spawn(server.up());
-
-    let response = request(address, &address.to_string(), "/bootstrap").await;
-    let split = response
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .expect("response carries headers")
-        + 4;
-    assert!(response.starts_with(b"HTTP/1.1 200 OK\r\n"));
-    assert!(
-        response[..split]
-            .windows(b"cache-control: no-store".len())
-            .any(|window| window == b"cache-control: no-store")
-    );
-    let expected_version = format!(
-        "{}: {}\r\n",
-        wire::hello::CANVAS_VERSION_HEADER,
-        wire::CanvasVersion::CURRENT
-    );
-    assert!(
-        response[..split]
-            .windows(expected_version.len())
-            .any(|window| window == expected_version.as_bytes()),
-        "bootstrap response omitted {expected_version:?}"
-    );
-    let expected_generation = format!(
-        "{}: {FIXTURE_GENERATION}\r\n",
-        wire::hello::CANVAS_GENERATION_HEADER,
-    );
-    assert!(
-        response[..split]
-            .windows(expected_generation.len())
-            .any(|window| window == expected_generation.as_bytes()),
-        "bootstrap response omitted {expected_generation:?}"
-    );
-    let discovery: wire::CanvasBootstrap =
-        wire::decode(&response[split..]).expect("bootstrap decodes");
-    assert_eq!(discovery.endpoint, format!("http://{address}"));
-    assert_eq!(discovery.capability, operator());
-    assert_eq!(discovery.epoch, epoch());
-    assert_eq!(
-        discovery.speech,
-        wire::SpeechPlayback::System {
-            voice: "Zoe (Premium)".to_owned(),
-            words_per_minute: 175,
-        }
-    );
-
-    task.abort();
-    assert!(task.await.expect_err("aborted server task").is_cancelled());
-}
 
 #[tokio::test(flavor = "current_thread")]
 async fn authenticated_session_routes_multiple_typed_commands_and_correlates_answers() {
@@ -75,9 +14,10 @@ async fn authenticated_session_routes_multiple_typed_commands_and_correlates_ans
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, mut control) = Server::bind(epoch(), capabilities, app.source(), speech())
-        .await
-        .expect("binds");
+    let (server, mut control) =
+        Server::bind(epoch(), capabilities, app.version(), app.source(), speech())
+            .await
+            .expect("binds");
     let address = server.local_addr().expect("local address");
     let (shutdown, stopped) = oneshot::channel();
     let server_task = tokio::spawn(server.up_until(async move {
@@ -107,7 +47,7 @@ async fn exact_capability_retirement_cancels_a_held_command_only_socket() {
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, mut control) = Server::bind(epoch(), capabilities.clone(), app.source(), speech())
+    let (server, mut control) = bind_test_server(epoch(), &app, capabilities.clone())
         .await
         .expect("server binds");
     let address = server.local_addr().expect("address");
@@ -194,6 +134,7 @@ async fn dark_drains_an_earlier_same_socket_response_before_closing() {
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
+        app.version(),
         app.source(),
         speech(),
         None,
@@ -260,9 +201,10 @@ async fn shutdown_closes_partial_upgrade_pre_hello_and_active_sockets() {
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) = Server::bind(epoch(), capabilities, app.source(), speech())
-        .await
-        .expect("binds");
+    let (server, _control) =
+        Server::bind(epoch(), capabilities, app.version(), app.source(), speech())
+            .await
+            .expect("binds");
     let state = Arc::clone(&server.state);
     let address = server.local_addr().expect("local address");
     let (shutdown, stopped) = oneshot::channel();
@@ -307,9 +249,10 @@ async fn shutdown_forces_transport_closed_when_a_session_cannot_finish_draining(
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) = Server::bind(epoch(), capabilities, app.source(), speech())
-        .await
-        .expect("binds");
+    let (server, _control) =
+        Server::bind(epoch(), capabilities, app.version(), app.source(), speech())
+            .await
+            .expect("binds");
     let state = Arc::clone(&server.state);
     let session = SessionGuard::enter(&state);
 
@@ -338,9 +281,10 @@ async fn operator_lane_replacement_and_reconnect_cross_the_live_door() {
     capabilities
         .insert(lane_capability, wire::Actor::Lane(lane))
         .expect("lane capability");
-    let (server, mut control) = Server::bind(epoch(), capabilities, app.source(), speech())
-        .await
-        .expect("binds");
+    let (server, mut control) =
+        Server::bind(epoch(), capabilities, app.version(), app.source(), speech())
+            .await
+            .expect("binds");
     let address = server.local_addr().expect("local address");
     let (shutdown, stopped) = oneshot::channel();
     let server_task = tokio::spawn(server.up_until(async move {
@@ -399,7 +343,7 @@ async fn operator_lane_replacement_and_reconnect_cross_the_live_door() {
     replacement
         .insert(operator(), wire::Actor::Lane(lane))
         .expect("replacement generation capability");
-    let (server, _control) = Server::bind(replacement_epoch, replacement, app.source(), speech())
+    let (server, _control) = bind_test_server(replacement_epoch, &app, replacement)
         .await
         .expect("replacement binds");
     let address = server.local_addr().expect("replacement address");
@@ -458,6 +402,7 @@ async fn saturated_queue_orders_concurrent_work_before_dark_and_refuses_later_wo
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
+        app.version(),
         app.source(),
         speech(),
         None,
@@ -547,6 +492,7 @@ async fn a_saturated_ordinary_class_cannot_block_an_authenticated_demand() {
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
+        app.version(),
         app.source(),
         speech(),
         None,
@@ -614,6 +560,7 @@ async fn priority_is_three_to_one_and_dark_waits_for_both_classes() {
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
+        app.version(),
         app.source(),
         speech(),
         None,
@@ -757,6 +704,7 @@ async fn shutdown_interrupts_a_queue_reservation_blocked_by_saturation() {
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
+        app.version(),
         app.source(),
         speech(),
         None,
@@ -964,6 +912,7 @@ fn host_and_origin_must_name_the_published_endpoint() {
         origin: LOOPBACK_ORIGIN.to_owned(),
         epoch: epoch(),
         capabilities: Capabilities::default(),
+        version: app.version(),
         app: app.source(),
         speech: speech(),
         speech_slot: Semaphore::new(1),

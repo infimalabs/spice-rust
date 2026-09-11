@@ -116,7 +116,7 @@ const REPLY: &str = r#"{
   }
 }"#;
 
-const VERSION: &str = r#"{"binary":"1111111111111111111111111111111111111111111111111111111111111111","wire":1,"journal":1,"app":"2222222222222222222222222222222222222222222222222222222222222222"}"#;
+const VERSION: &str = r#"{"product":"1.2.3","binary":"1111111111111111111111111111111111111111111111111111111111111111","wire":1,"journal":1,"canvas":6,"app":"2222222222222222222222222222222222222222222222222222222222222222"}"#;
 
 const PROOF_EVIDENCE: &str = concat!(
     r#"{"target":"x86_64-unknown-linux-musl","#,
@@ -164,12 +164,14 @@ fn envelope_matches_the_specified_document() {
 }
 
 #[test]
-fn version_is_the_exact_stable_four_identity_document() {
+fn version_is_the_exact_stable_six_identity_document() {
     let version: Version = wire::decode(VERSION.as_bytes()).expect("version document decodes");
 
+    assert_eq!(version.product.as_str(), "1.2.3");
     assert_eq!(version.binary.as_str(), "1".repeat(64));
     assert_eq!(version.wire, WireVersion::CURRENT);
     assert_eq!(version.journal, 1);
+    assert_eq!(version.canvas, wire::CanvasVersion::CURRENT);
     assert_eq!(version.app.as_str(), "2".repeat(64));
     assert_eq!(
         wire::encode(&version).expect("version document re-encodes"),
@@ -203,7 +205,7 @@ fn rtk_gain_report_requires_exact_agent_database_and_output_provenance() {
 fn version_refuses_missing_null_extra_and_wrong_shaped_identities() {
     let document: serde_json::Value = serde_json::from_str(VERSION).expect("fixture is JSON");
 
-    for field in ["binary", "wire", "journal", "app"] {
+    for field in ["product", "binary", "wire", "journal", "canvas", "app"] {
         let mut missing = document.clone();
         missing
             .as_object_mut()
@@ -235,9 +237,11 @@ fn version_refuses_missing_null_extra_and_wrong_shaped_identities() {
     );
 
     for (field, wrong) in [
+        ("product", serde_json::json!("v1.2.3")),
         ("binary", serde_json::json!(7)),
         ("wire", serde_json::json!("1")),
         ("journal", serde_json::json!("1")),
+        ("canvas", serde_json::json!("6")),
         ("app", serde_json::json!("not-a-digest")),
     ] {
         let mut malformed = document.clone();

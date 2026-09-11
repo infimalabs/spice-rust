@@ -11,7 +11,10 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use super::*;
 use crate::APP;
 
+mod identity;
 mod message_history;
+
+use identity::{TestApp, app_version, bind_test_server};
 
 type ClientSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
@@ -207,33 +210,11 @@ fn seed_app_generation(root: &std::path::Path, label: &str) -> std::path::PathBu
     generation
 }
 
-/// One complete lane-built app whose directory lives exactly as long as its test.
-struct TestApp {
-    source: crate::AppSource,
-    root: tempfile::TempDir,
-}
-
-impl TestApp {
-    fn new() -> Self {
-        let root = tempfile::Builder::new()
-            .prefix("spice-canvas-test-app-")
-            .tempdir()
-            .expect("fixture temp directory");
-        seed_app_generation(root.path(), "test app");
-        let source = crate::AppSource::resolve(root.path()).expect("fixture app resolves");
-        Self { source, root }
-    }
-
-    fn source(&self) -> crate::AppSource {
-        self.source.clone()
-    }
-}
-
 #[test]
 fn app_fixture_directory_does_not_outlive_its_owner() {
     let root = {
         let fixture = TestApp::new();
-        let root = fixture.root.path().to_path_buf();
+        let root = fixture.root().to_path_buf();
         assert!(
             root.is_dir(),
             "fixture directory exists while its owner lives"
@@ -486,6 +467,7 @@ async fn authenticated_socket_streams_bounded_bus_pages_updates_resume_and_typed
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
+        app.version(),
         app.source(),
         speech(),
         bus.reader(),
@@ -560,6 +542,7 @@ async fn a_liveness_probe_is_answered_per_probe_and_still_admits_its_generation(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
+        app.version(),
         app.source(),
         speech(),
         bus.reader(),
@@ -641,6 +624,7 @@ async fn a_held_recall_does_not_block_a_probe_or_sibling_recall_on_one_socket() 
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
+        app.version(),
         app.source(),
         speech(),
         bus.reader(),
@@ -748,6 +732,7 @@ async fn authenticated_socket_reads_and_pushes_agent_messages_with_each_author()
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
+        app.version(),
         app.source(),
         speech(),
         bus.reader(),
@@ -986,6 +971,7 @@ async fn capability_replacement_faults_the_live_stream_without_disclosure() {
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities.clone(),
+        app.version(),
         app.source(),
         speech(),
         bus.reader(),
@@ -1040,6 +1026,7 @@ async fn blocked_command_delivery_turns_broadcast_lag_into_resumable_overflow() 
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         capabilities,
+        app.version(),
         app.source(),
         speech(),
         bus.reader(),
@@ -1239,6 +1226,7 @@ async fn speech_endpoint_executes_only_the_server_owned_argv_contract() {
     let (server, _control) = Server::bind(
         epoch(),
         Capabilities::default(),
+        app.version(),
         app.source(),
         external_speech(&["/bin/cat"]),
     )
@@ -1286,10 +1274,15 @@ async fn speech_endpoint_bounds_disabled_malformed_and_unavailable_backends() {
         external_speech(&[]),
         external_speech(&["/definitely/missing/spice-speech"]),
     ] {
-        let (server, _control) =
-            Server::bind(epoch(), Capabilities::default(), app.source(), speech)
-                .await
-                .expect("binds");
+        let (server, _control) = Server::bind(
+            epoch(),
+            Capabilities::default(),
+            app.version(),
+            app.source(),
+            speech,
+        )
+        .await
+        .expect("binds");
         let address = server.local_addr().expect("local address");
         let task = tokio::spawn(server.up());
         let body = wire::encode(&wire::SpeechRequest {
@@ -1315,6 +1308,7 @@ async fn speech_endpoint_bounds_disabled_malformed_and_unavailable_backends() {
     let (server, _control) = Server::bind(
         epoch(),
         Capabilities::default(),
+        app.version(),
         app.source(),
         external_speech(&["/bin/cat"]),
     )
@@ -1346,9 +1340,15 @@ async fn speech_endpoint_bounds_disabled_malformed_and_unavailable_backends() {
 #[tokio::test(flavor = "current_thread")]
 async fn live_server_serves_the_lane_app_and_refuses_another_host() {
     let app = TestApp::new();
-    let (server, _control) = Server::bind(epoch(), Capabilities::default(), app.source(), speech())
-        .await
-        .expect("binds");
+    let (server, _control) = Server::bind(
+        epoch(),
+        Capabilities::default(),
+        app.version(),
+        app.source(),
+        speech(),
+    )
+    .await
+    .expect("binds");
     let address = server.local_addr().expect("local address");
     let task = tokio::spawn(server.up());
 
@@ -1453,6 +1453,7 @@ async fn live_server_keeps_serving_an_admitted_generation_from_memory() {
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         epoch(),
         Capabilities::default(),
+        app_version(&app),
         app,
         speech(),
         None,

@@ -77,6 +77,54 @@ fn stage_canvas_app(root: &std::path::Path) {
     .expect("Canvas generation publishes");
 }
 
+async fn bind_fixture_canvas(
+    epoch: CanonicalUuid,
+    capabilities: canvas::axum::Capabilities,
+    app: canvas::AppSource,
+) -> (canvas::axum::Server, canvas::axum::Control) {
+    let version = canvas_version(&app, journal::SCHEMA_VERSION).expect("Canvas identity builds");
+    canvas::axum::Server::bind(
+        epoch,
+        capabilities,
+        version,
+        app,
+        canvas::SpeechConfig::default(),
+    )
+    .await
+    .expect("Canvas server binds")
+}
+
+#[test]
+fn canvas_identity_joins_the_running_binary_and_every_compiled_or_live_version_authority() {
+    let (root, _paths) = resident_fixture("canvas-product-identity");
+    stage_canvas_app(&root);
+    let app = canvas::AppSource::resolve(&root).expect("fixture app resolves");
+    let identity = canvas_version(&app, journal::SCHEMA_VERSION).expect("Canvas identity builds");
+    let executable = std::env::current_exe().expect("test executable resolves");
+
+    assert_eq!(
+        identity.product,
+        dist::current_product_version().expect("compiled product version")
+    );
+    assert_eq!(
+        identity.binary,
+        wire::Digest::compute(
+            wire::Domain::DistArtifact,
+            &fs::read(executable).expect("test executable reads")
+        )
+    );
+    assert_eq!(identity.wire, wire::WireVersion::CURRENT);
+    assert_eq!(identity.journal, journal::SCHEMA_VERSION);
+    assert_eq!(identity.canvas, wire::CanvasVersion::CURRENT);
+    assert_eq!(
+        identity.app,
+        app.current_generation()
+            .expect("fixture generation reads")
+            .identity()
+            .clone()
+    );
+}
+
 fn admitted_lane_seat(
     epoch: CanonicalUuid,
     body: &wire::intent::LaneSeat,
@@ -510,14 +558,7 @@ async fn control_dispatch_waits_until_the_socket_response_is_attempted() {
         .insert(operator, Actor::Operator)
         .expect("operator capability registers");
     let app = canvas::AppSource::resolve(&root).expect("fixture app resolves");
-    let (server, mut control) = canvas::axum::Server::bind(
-        epoch,
-        capabilities.clone(),
-        app,
-        canvas::SpeechConfig::default(),
-    )
-    .await
-    .expect("Canvas server binds");
+    let (server, mut control) = bind_fixture_canvas(epoch, capabilities.clone(), app).await;
     let address = server.local_addr().expect("server publishes address");
     let discovery = server
         .discovery(operator)
@@ -613,14 +654,7 @@ async fn socket_dispatch_publishes_three_lane_fanout_before_any_restart_or_ack()
         .insert(operator, Actor::Operator)
         .expect("operator capability registers");
     let app = canvas::AppSource::resolve(&root).expect("fixture app resolves");
-    let (server, mut control) = canvas::axum::Server::bind(
-        epoch,
-        capabilities.clone(),
-        app,
-        canvas::SpeechConfig::default(),
-    )
-    .await
-    .expect("Canvas server binds");
+    let (server, mut control) = bind_fixture_canvas(epoch, capabilities.clone(), app).await;
     let address = server.local_addr().expect("server publishes address");
     let discovery = server
         .discovery(operator)

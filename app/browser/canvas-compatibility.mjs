@@ -22,6 +22,14 @@ async function closeCurrentSocket(page, reason) {
   }, reason);
 }
 
+async function assertGenerationIdentity(menu, loaded, served) {
+  const identity = menu.locator(".canvas-menu-version");
+  assert.equal(await identity.getAttribute("data-loaded-app-generation"), loaded);
+  assert.equal(await identity.getAttribute("data-served-app-generation"), served);
+  assert.match(await identity.getAttribute("title"), /Loaded app generation:/);
+  assert.match(await identity.getAttribute("title"), /Served app generation:/);
+}
+
 async function assertExplicitCanvasUpdate(browser, endpoint) {
   const auth = "canvas-prior-token";
   const context = await browser.newContext({ viewport: { width: 1024, height: 768 } });
@@ -46,15 +54,16 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
     currentGeneration ??= headers[CANVAS_GENERATION_HEADER];
     currentVersion ??= headers[CANVAS_VERSION_HEADER];
     alternateGeneration ??= currentGeneration === "1".repeat(64) ? "2".repeat(64) : "1".repeat(64);
+    const bootstrap = JSON.parse(body.toString());
     let fulfilledBody = body;
-    assert.equal(
-      Object.hasOwn(JSON.parse(body.toString()), "canvas"),
-      false,
-      "the update headers leave the strict bootstrap body unchanged",
-    );
+    assert.equal(bootstrap.version.canvas, Number(currentVersion),
+      "the strict bootstrap identity carries the protocol advertised by its header");
+    assert.equal(bootstrap.version.app, currentGeneration);
     bootstraps += 1;
     if (bootstrapMode === "generation") {
       headers[CANVAS_GENERATION_HEADER] = alternateGeneration;
+      bootstrap.version.app = alternateGeneration;
+      fulfilledBody = JSON.stringify(bootstrap);
     } else if (bootstrapMode === "protocol") {
       headers[CANVAS_VERSION_HEADER] = String(Number(currentVersion) - 1);
       fulfilledBody = JSON.stringify({ future: "bootstrap-shape" });
@@ -100,7 +109,7 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
   const trigger = menu.locator(":scope > summary");
   assert.equal(await menu.getAttribute("open"), null, "the pending update leaves the menu closed");
   await trigger.click();
-  const update = menu.getByRole("button", { name: `Reload Canvas v${currentVersion}` });
+  const update = menu.getByRole("button", { name: /Reload Spice .* app/ });
   await update.waitFor();
   await page.keyboard.press("Escape");
   await update.waitFor({ state: "hidden" });
@@ -109,7 +118,8 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
   await update.waitFor();
   assert.equal(await update.getAttribute("data-canvas-update-generation"), alternateGeneration);
   assert.match(await update.innerText(), new RegExp(alternateGeneration.slice(0, 8)));
-  assert.match(await trigger.getAttribute("title"), new RegExp(`Canvas v${currentVersion} update available`));
+  assert.match(await trigger.getAttribute("title"), /update available/);
+  await assertGenerationIdentity(menu, currentGeneration, alternateGeneration);
   const themes = menu.getByRole("group", { name: "Canvas theme" });
   const systemTheme = themes.getByRole("button", { name: "Use System theme" });
   const lightTheme = themes.getByRole("button", { name: "Use Light theme" });
@@ -277,13 +287,11 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
   assert.equal(await agents.isVisible(), true, "a protocol mismatch preserves Agents");
   assert.equal(await menu.getAttribute("open"), null, "the refusal preserves closed menu state");
   await trigger.click();
-  await menu.getByRole("button", {
-    name: new RegExp(`Reload Canvas v${Number(currentVersion) - 1}`),
-  }).waitFor();
+  await menu.getByRole("button", { name: /Reload Spice .* app/ }).waitFor();
 
   bootstrapMode = "current";
   const navigation = page.waitForEvent("framenavigated", (frame) => frame === page.mainFrame());
-  await menu.getByRole("button", { name: new RegExp(`Reload Canvas v${Number(currentVersion) - 1}`) }).click();
+  await menu.getByRole("button", { name: /Reload Spice .* app/ }).click();
   await navigation;
   await page.waitForLoadState("networkidle");
   await waitForPageFunction(

@@ -8,9 +8,10 @@ use crate::reply::{Fault, FaultClass, Refusal, RefusalDiagnostic};
 
 /// HTTP response header carrying the browser/resident protocol generation.
 ///
-/// The clock sits outside [`CanvasBootstrap`] so adding it did not change the
-/// strict document an already-running Canvas application has to decode before
-/// it can decide whether to replace itself.
+/// The header is admitted before [`CanvasBootstrap`] is decoded, so a document
+/// from another strict body generation can offer an explicit reload without
+/// attempting to decode that body. The admitted body repeats the same clock in
+/// its structured [`crate::Version`] identity.
 pub const CANVAS_VERSION_HEADER: &str = "x-spice-canvas-version";
 /// HTTP response header carrying the immutable browser-app generation identity.
 pub const CANVAS_GENERATION_HEADER: &str = "x-spice-canvas-generation";
@@ -22,10 +23,8 @@ pub const CANVAS_GENERATION_HEADER: &str = "x-spice-canvas-generation";
 /// the browser application, rather than borrowing [`WireVersion`] from durable
 /// facts that must remain readable across upgrades.
 ///
-/// A document loaded before this clock existed cannot observe it and therefore
-/// owns one manual reload at this boundary. Once a clock-aware document is
-/// loaded, every later generation change is decided by the mandatory bootstrap
-/// header before a socket opens or a strict DTO is decoded.
+/// Every generation change is decided by the mandatory bootstrap header before
+/// a socket opens or a strict DTO is decoded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct CanvasVersion(pub u32);
@@ -33,10 +32,9 @@ pub struct CanvasVersion(pub u32);
 impl CanvasVersion {
     /// The one Canvas protocol this build speaks.
     ///
-    /// Version 5 advertises the immutable served app generation before opening
-    /// a socket, allowing the browser to offer an explicit update while its
-    /// currently loaded workspace remains alive.
-    pub const CURRENT: Self = Self(5);
+    /// Version 6 carries the complete structured product and build identity in
+    /// the strict bootstrap body while retaining pre-socket update admission.
+    pub const CURRENT: Self = Self(6);
 
     /// True when this is the Canvas protocol this build speaks.
     #[must_use]
@@ -92,6 +90,8 @@ pub struct CanvasBootstrap {
     pub capability: CanonicalUuid,
     /// Resident generation the endpoint and capability address.
     pub epoch: CanonicalUuid,
+    /// Product and build identity served at this bootstrap boundary.
+    pub version: crate::reply::Version,
     /// Browser-safe playback contract for this resident generation.
     pub speech: SpeechPlayback,
 }

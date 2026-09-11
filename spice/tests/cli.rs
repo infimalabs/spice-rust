@@ -259,7 +259,13 @@ fn top_level_version_flags_are_repository_free_and_byte_identical() {
     let before = directory_state(scratch.path());
     let short = invoke_at(&["-V"], scratch.path());
     let long = invoke_at(&["--version"], scratch.path());
-    let expected = format!("spice {}\n", spice::cli::COMPILED_VERSION).into_bytes();
+    let product = dist::current_product_version().expect("compiled product version");
+    let profile = if cfg!(debug_assertions) {
+        "development"
+    } else {
+        "release"
+    };
+    let expected = format!("spice {product} ({profile})\n").into_bytes();
 
     for spoken in [&short, &long] {
         assert_eq!(spoken.code, Some(0));
@@ -319,14 +325,21 @@ fn version_reports_the_running_artifacts_and_finalized_schema_in_both_forms() {
             &fs::read(env!("CARGO_BIN_EXE_spice")).expect("read launched spice binary"),
         )
     );
+    assert_eq!(
+        text_body.product,
+        dist::current_product_version().expect("compiled product version")
+    );
     assert_eq!(text_body.wire, wire::WireVersion::CURRENT);
     assert_eq!(text_body.journal, journal::SCHEMA_VERSION);
+    assert_eq!(text_body.canvas, wire::CanvasVersion::CURRENT);
     assert_eq!(
         text_body.app,
         canvas::AppSource::resolve(repository.path())
             .expect("fixture app source resolves")
-            .digest()
-            .expect("fixture app shell reads")
+            .current_generation()
+            .expect("fixture app generation reads")
+            .identity()
+            .clone()
     );
     assert_eq!(text.out.iter().filter(|byte| **byte == b'\n').count(), 1);
     assert_eq!(json.out.iter().filter(|byte| **byte == b'\n').count(), 1);

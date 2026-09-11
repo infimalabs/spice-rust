@@ -1,5 +1,9 @@
 use super::*;
 
+mod identity;
+#[cfg(test)]
+pub(crate) use identity::canvas_version;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct RuntimePaths {
     pub(super) worktree: PathBuf,
@@ -47,6 +51,7 @@ pub(super) struct SurfaceConfig {
 
 struct SurfaceLaunch<'a> {
     app: canvas::AppSource,
+    version: wire::Version,
     binding: CanvasBinding,
     /// Whether the operator asked this start to also open the app.
     ///
@@ -529,6 +534,10 @@ fn up_from_with(
     if let Err(outcome) = steering::admit_index(&mut journal) {
         return outcome;
     }
+    let version = match identity::canvas_version_from_journal(&app, &journal) {
+        Ok(version) => version,
+        Err(outcome) => return outcome,
+    };
     let epoch = new_uuid();
     if let Err(error) = resident_lock.set_epoch(epoch) {
         return environment_fault("resident::holder-unwritable", &error.to_string());
@@ -557,6 +566,7 @@ fn up_from_with(
             &mut seats,
             SurfaceLaunch {
                 app,
+                version,
                 binding,
                 open,
                 progress,
