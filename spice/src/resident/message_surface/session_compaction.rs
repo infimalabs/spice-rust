@@ -474,7 +474,7 @@ fn bootstrap_before(
         return Ok(HistoryPage {
             records: Vec::new(),
             latest: None,
-            start: checkpoint.next,
+            start: checkpoint.next(),
             work: authentication.work,
             pending_authentication: true,
         });
@@ -483,7 +483,7 @@ fn bootstrap_before(
         return Ok(HistoryPage {
             records: Vec::new(),
             latest: None,
-            start: checkpoint.next,
+            start: checkpoint.next(),
             work: authentication.work,
             pending_authentication: true,
         });
@@ -547,8 +547,9 @@ fn read_history_source(
         observe_history_source_movement(checkpoint, stamp)?;
         return Ok(None);
     }
-    let source_bytes = checkpoint.next.min(HISTORY_BYTE_BUDGET as u64);
-    let source_start = checkpoint.next.saturating_sub(source_bytes);
+    let end = checkpoint.next();
+    let source_bytes = end.min(HISTORY_BYTE_BUDGET as u64);
+    let source_start = end.saturating_sub(source_bytes);
     file.seek(SeekFrom::Start(source_start))?;
     let mut bytes = vec![0; usize::try_from(source_bytes).expect("history budget fits usize")];
     file.read_exact(&mut bytes)?;
@@ -567,7 +568,7 @@ fn read_history_source(
     if !work.within_limits() {
         return Err(history_budget_exhausted(work));
     }
-    let aligned = align_history_source(&mut bytes, source_start, checkpoint.next, source_bytes)?;
+    let aligned = align_history_source(&mut bytes, source_start, end, source_bytes)?;
     let complete = bytes
         .iter()
         .rposition(|byte| *byte == b'\n')

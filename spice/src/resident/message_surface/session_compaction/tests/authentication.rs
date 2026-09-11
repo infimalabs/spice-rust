@@ -6,6 +6,7 @@ fn rewrite_plus_growth_before_initial_build_finishes_is_refused() {
     let transcript = scratch.transcript();
     fs::write(&transcript, vec![b'x'; HISTORY_BYTE_BUDGET + 17]).expect("large prefix is written");
     let checkpoint = history_checkpoint(&transcript).expect("history checkpoint starts");
+    assert_eq!(checkpoint.next(), 0);
 
     let first = advance_history_authentication(&transcript, &checkpoint, Instant::now())
         .expect("first authentication slice advances");
@@ -13,6 +14,7 @@ fn rewrite_plus_growth_before_initial_build_finishes_is_refused() {
     assert_eq!(first.work.source_bytes, HISTORY_BYTE_BUDGET as u64);
     assert_eq!(first.work.passes, 1);
     assert!(first.work.within_limits());
+    assert_eq!(checkpoint.next(), 0);
     let mut rewritten = OpenOptions::new()
         .write(true)
         .open(&transcript)
@@ -41,9 +43,11 @@ fn genuine_append_reauthenticates_in_fixed_resumable_slices() {
     let transcript = scratch.transcript();
     fs::write(&transcript, vec![b'x'; HISTORY_BYTE_BUDGET + 17]).expect("large prefix is written");
     let checkpoint = history_checkpoint(&transcript).expect("history checkpoint starts");
+    assert_eq!(checkpoint.next(), 0);
     let first = advance_history_authentication(&transcript, &checkpoint, Instant::now())
         .expect("first authentication slice advances");
     assert_eq!(first.work.source_bytes, HISTORY_BYTE_BUDGET as u64);
+    assert_eq!(checkpoint.next(), 0);
     let resumed = checkpoint.clone();
     let initial_finish = advance_history_authentication(&transcript, &resumed, Instant::now())
         .expect("remaining initial prefix authenticates");
@@ -59,14 +63,47 @@ fn genuine_append_reauthenticates_in_fixed_resumable_slices() {
         .expect("admitted prefix reauthenticates after append");
     assert!(recheck.stamp.is_none());
     assert_eq!(recheck.work.source_bytes, HISTORY_BYTE_BUDGET as u64);
+    assert_eq!(resumed.next(), 0);
     let finish = advance_history_authentication(&transcript, &resumed, Instant::now())
         .expect("remaining original prefix authenticates");
     assert!(finish.stamp.is_none());
     assert_eq!(finish.work.source_bytes, 17);
+    assert_eq!(resumed.next(), (HISTORY_BYTE_BUDGET + 17) as u64);
     let ready = advance_history_authentication(&transcript, &resumed, Instant::now())
         .expect("append-only generation becomes readable");
     assert!(ready.stamp.is_some());
     assert_eq!(ready.work, HistoryWork::default());
+}
+
+#[test]
+fn visible_horizon_advances_only_after_every_slice_and_respects_retreat() {
+    let scratch = Scratch::new("history-auth-visible-horizon");
+    let transcript = scratch.transcript();
+    let length = HISTORY_BYTE_BUDGET * 2 + 17;
+    fs::write(&transcript, vec![b'x'; length]).expect("multi-slice prefix is written");
+    let checkpoint = history_checkpoint(&transcript).expect("history checkpoint starts");
+    let retreated = checkpoint.retreat(29);
+
+    for expected in [HISTORY_BYTE_BUDGET as u64, HISTORY_BYTE_BUDGET as u64] {
+        let step = advance_history_authentication(&transcript, &checkpoint, Instant::now())
+            .expect("authentication slice advances");
+        assert_eq!(step.work.source_bytes, expected);
+        assert!(step.stamp.is_none());
+        assert_eq!(checkpoint.next(), 0);
+        assert_eq!(retreated.next(), 0);
+    }
+    let finish = advance_history_authentication(&transcript, &checkpoint, Instant::now())
+        .expect("final authentication slice advances");
+    assert_eq!(finish.work.source_bytes, 17);
+    assert!(finish.stamp.is_none());
+    assert_eq!(checkpoint.next(), length as u64);
+    assert_eq!(retreated.next(), 29);
+
+    let ready = advance_history_authentication(&transcript, &retreated, Instant::now())
+        .expect("authenticated retreated frontier publishes");
+    assert!(ready.stamp.is_some());
+    assert_eq!(ready.work, HistoryWork::default());
+    assert_eq!(retreated.next(), 29);
 }
 
 #[test]

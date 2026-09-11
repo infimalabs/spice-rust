@@ -8,7 +8,7 @@ use super::*;
 
 #[derive(Clone)]
 pub(in crate::resident::message_surface) struct HistoryCheckpoint {
-    pub(super) next: u64,
+    frontier: Option<u64>,
     authentication: Arc<Mutex<HistoryAuthentication>>,
 }
 
@@ -46,19 +46,28 @@ impl std::fmt::Debug for HistoryCheckpoint {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("HistoryCheckpoint")
-            .field("next", &self.next)
+            .field("next", &self.next())
             .finish_non_exhaustive()
     }
 }
 
 impl HistoryCheckpoint {
     pub(in crate::resident::message_surface) fn next(&self) -> u64 {
-        self.next
+        let authenticated = self.authentication.lock().map_or(0, |authentication| {
+            matches!(
+                authentication.state,
+                HistoryAuthenticationState::Ready { .. }
+            )
+            .then_some(authentication.length)
+            .unwrap_or(0)
+        });
+        self.frontier
+            .map_or(authenticated, |frontier| frontier.min(authenticated))
     }
 
     pub(in crate::resident::message_surface) fn retreat(&self, next: u64) -> Self {
         Self {
-            next: next.min(self.next),
+            frontier: Some(self.frontier.map_or(next, |frontier| frontier.min(next))),
             authentication: Arc::clone(&self.authentication),
         }
     }
@@ -81,7 +90,7 @@ pub(in crate::resident::message_surface) fn history_checkpoint(
         }
     };
     Ok(HistoryCheckpoint {
-        next: source.length,
+        frontier: None,
         authentication: Arc::new(Mutex::new(HistoryAuthentication {
             length: source.length,
             state,
