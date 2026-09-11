@@ -213,21 +213,14 @@ impl JournalRead<'_> {
                 continuation = facts.last().map(|fact| fact.seq);
                 break;
             }
-            let remaining = budget.decoded_bytes() - decoded_bytes;
-            if bytes.len() > remaining {
-                let indexed = decode_seq(seq).map_err(GuardError::Invalid)?;
-                let Some(last) = facts.last().map(|fact| fact.seq) else {
-                    return Err(GuardError::Invalid(format!(
-                        "selected fact {indexed} is {} bytes, above the {}-byte page budget",
-                        bytes.len(),
-                        budget.decoded_bytes()
-                    )));
-                };
-                continuation = Some(last);
+            if !facts.is_empty()
+                && decoded_bytes.saturating_add(bytes.len()) > budget.decoded_bytes()
+            {
+                continuation = facts.last().map(|fact| fact.seq);
                 break;
             }
             read_metrics::observe_decode(bytes.len());
-            decoded_bytes += bytes.len();
+            decoded_bytes = decoded_bytes.saturating_add(bytes.len());
             facts.push(
                 crate::read::decode_fact(seq, &kind, &bytes)
                     .map_err(|error| GuardError::Invalid(error.to_string()))?,
@@ -309,21 +302,14 @@ impl JournalRead<'_> {
                 continuation = facts.last().map(|fact| fact.seq);
                 break;
             }
-            let remaining = budget.decoded_bytes() - decoded_bytes;
-            if bytes.len() > remaining {
-                let indexed = decode_seq(seq).map_err(GuardError::Invalid)?;
-                let Some(last) = facts.last().map(|fact| fact.seq) else {
-                    return Err(GuardError::Invalid(format!(
-                        "recent fact {indexed} is {} bytes, above the {}-byte page budget",
-                        bytes.len(),
-                        budget.decoded_bytes()
-                    )));
-                };
-                continuation = Some(last);
+            if !facts.is_empty()
+                && decoded_bytes.saturating_add(bytes.len()) > budget.decoded_bytes()
+            {
+                continuation = facts.last().map(|fact| fact.seq);
                 break;
             }
             read_metrics::observe_decode(bytes.len());
-            decoded_bytes += bytes.len();
+            decoded_bytes = decoded_bytes.saturating_add(bytes.len());
             facts.push(
                 crate::read::decode_fact(seq, &kind, &bytes)
                     .map_err(|error| GuardError::Invalid(error.to_string()))?,

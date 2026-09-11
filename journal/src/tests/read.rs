@@ -147,6 +147,101 @@ fn retained_fact_pages_bound_matching_rows_and_bytes_independently_of_history() 
 }
 
 #[test]
+fn retained_fact_pages_advance_past_one_indivisible_oversized_fact() {
+    let journal = authority_fixture();
+    insert_fact(
+        &journal,
+        fact(
+            3,
+            None,
+            FactKind::TaskAdded,
+            json!({
+                "task": "2kKRRsDP",
+                "title": "x".repeat(MAX_RETAINED_FACT_PAGE_BYTES + 1),
+                "project": "journal",
+                "tags": [],
+                "depends": [],
+                "flow": ["todo", "review"],
+                "phase": "todo",
+                "revision": 1
+            }),
+        ),
+    );
+    insert_fact(
+        &journal,
+        fact(
+            4,
+            None,
+            FactKind::TaskAdded,
+            json!({
+                "task": "3kKRRsDP",
+                "title": "following fact",
+                "project": "journal",
+                "tags": [],
+                "depends": [],
+                "flow": ["todo", "review"],
+                "phase": "todo",
+                "revision": 1
+            }),
+        ),
+    );
+    journal
+        .connection
+        .execute("UPDATE cursor_head SET seq = 4 WHERE singleton = 1", [])
+        .expect("advance oversized-fact fixture cursor");
+
+    reset_indexed_read_metrics();
+    let selected = journal
+        .read(|read| {
+            read.selected_fact_page(
+                &[FactKind::TaskAdded],
+                Some(seq(2)),
+                FactReadBudget::RETAINED,
+            )
+        })
+        .expect("oversized selected fact remains reachable");
+    assert_eq!(
+        selected
+            .rows
+            .iter()
+            .map(|fact| fact.seq)
+            .collect::<Vec<_>>(),
+        [seq(3)]
+    );
+    assert_eq!(selected.continuation, Some(seq(3)));
+    assert!(indexed_read_metrics().decoded_bytes > MAX_RETAINED_FACT_PAGE_BYTES as u64);
+    let selected_tail = journal
+        .read(|read| {
+            read.selected_fact_page(
+                &[FactKind::TaskAdded],
+                selected.continuation,
+                FactReadBudget::RETAINED,
+            )
+        })
+        .expect("selected read resumes after oversized fact");
+    assert_eq!(
+        selected_tail
+            .rows
+            .iter()
+            .map(|fact| fact.seq)
+            .collect::<Vec<_>>(),
+        [seq(4)]
+    );
+    assert_eq!(selected_tail.continuation, None);
+
+    let recent = journal
+        .read(|read| {
+            read.recent_fact_page(FactKind::TaskAdded, Some(seq(4)), FactReadBudget::RETAINED)
+        })
+        .expect("oversized recent fact remains reachable");
+    assert_eq!(
+        recent.rows.iter().map(|fact| fact.seq).collect::<Vec<_>>(),
+        [seq(3)]
+    );
+    assert_eq!(recent.continuation, Some(seq(3)));
+}
+
+#[test]
 fn retained_fact_budget_refuses_zero_and_platform_maximum_work() {
     for (rows, bytes) in [(0, 1), (1, 0), (usize::MAX, 1), (1, usize::MAX)] {
         assert!(FactReadBudget::new(rows, bytes).is_err());
