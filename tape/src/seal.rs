@@ -14,8 +14,8 @@
 //! readable from somewhere else.
 
 use std::fmt;
-use std::fs;
-use std::io::{self, Write};
+use std::fs::{self, File};
+use std::io::{self, Read, Write};
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
@@ -55,6 +55,15 @@ pub struct Extent {
     pub sealed: bool,
 }
 
+/// Complete readable extents admitted by caller-owned discovery bounds.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BoundedExtents {
+    /// Readable members in ascending order.
+    pub extents: Vec<Extent>,
+    /// Exact index bytes read and parsed.
+    pub index_bytes: u64,
+}
+
 /// Every sealed member of one tape, in ascending member order.
 ///
 /// The index records plaintext lengths rather than compressed lengths because
@@ -82,7 +91,11 @@ impl Index {
     /// The sealed member with this number, if it is sealed.
     #[must_use]
     pub fn find(&self, member: u64) -> Option<Member> {
-        self.members.iter().copied().find(|m| m.member == member)
+        let index = usize::try_from(member.checked_sub(1)?).ok()?;
+        self.members
+            .get(index)
+            .copied()
+            .filter(|candidate| candidate.member == member)
     }
 
     /// The member currently accepting appends.
@@ -286,6 +299,69 @@ impl Tape {
         Ok(extents)
     }
 
+    /// Snapshot readable members without reading an oversized index or
+    /// materializing more extents than the caller admitted.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed limit refusal or the same index and metadata failures
+    /// as [`Self::extents`].
+    pub fn extents_bounded(
+        &self,
+        max_index_bytes: u64,
+        max_extents: usize,
+    ) -> Result<BoundedExtents, Error> {
+        let path = self.index_path();
+        let (index, index_bytes) = match File::open(&path) {
+            Ok(file) => read_bounded_index(file, &path, max_index_bytes, max_extents)?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => (Index::default(), 0),
+            Err(error) => return Err(Error::io(Operation::ReadIndex, path, error)),
+        };
+        let mut extents = index
+            .members()
+            .iter()
+            .map(|member| Extent {
+                member: member.member,
+                length: member.length,
+                sealed: true,
+            })
+            .collect::<Vec<_>>();
+        let active = index.next_member();
+        let active_path = self.plain_path(active);
+        match fs::metadata(&active_path) {
+            Ok(metadata) if metadata.is_file() => {
+                if extents.len() == max_extents {
+                    return Err(Error::Refused(Refusal::ExtentReadLimit {
+                        limit: max_extents,
+                        observed: max_extents.saturating_add(1),
+                        index_bytes,
+                    }));
+                }
+                extents.push(Extent {
+                    member: active,
+                    length: metadata.len(),
+                    sealed: false,
+                });
+            }
+            Ok(_) => {
+                return Err(Error::io(
+                    Operation::InspectExtents,
+                    active_path,
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "active tape member is not a regular file",
+                    ),
+                ));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(Error::io(Operation::InspectExtents, active_path, error)),
+        }
+        Ok(BoundedExtents {
+            extents,
+            index_bytes,
+        })
+    }
+
     /// Read the index, treating an absent one as an empty tape.
     pub(crate) fn read_index(&self) -> Result<Index, Error> {
         let path = self.index_path();
@@ -343,6 +419,44 @@ impl Tape {
             compressed: compressed.len() as u64,
         })
     }
+}
+
+fn read_bounded_index(
+    file: File,
+    path: &std::path::Path,
+    max_bytes: u64,
+    max_extents: usize,
+) -> Result<(Index, u64), Error> {
+    let observed = file
+        .metadata()
+        .map_err(|error| Error::io(Operation::ReadIndex, path, error))?
+        .len();
+    if observed > max_bytes {
+        return Err(Error::Refused(Refusal::IndexReadLimit {
+            limit: max_bytes,
+            observed,
+        }));
+    }
+    let mut text = String::new();
+    file.take(max_bytes.saturating_add(1))
+        .read_to_string(&mut text)
+        .map_err(|error| Error::io(Operation::ReadIndex, path, error))?;
+    let index_bytes = u64::try_from(text.len()).expect("a string length fits u64");
+    if index_bytes > max_bytes {
+        return Err(Error::Refused(Refusal::IndexReadLimit {
+            limit: max_bytes,
+            observed: index_bytes,
+        }));
+    }
+    let observed_extents = text.lines().count().saturating_sub(1);
+    if observed_extents > max_extents {
+        return Err(Error::Refused(Refusal::ExtentReadLimit {
+            limit: max_extents,
+            observed: max_extents.saturating_add(1),
+            index_bytes,
+        }));
+    }
+    Ok((Index::parse(&text)?, index_bytes))
 }
 
 /// Compress plaintext into one gzip member.

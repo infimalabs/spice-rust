@@ -124,8 +124,8 @@ pub fn scan_tail(
     let source = tape
         .source_id()
         .map_err(|source| tape_error(root, source))?;
-    let extents = tape.extents().map_err(|source| tape_error(root, source))?;
     let mut tracker = WorkTracker::new(budget);
+    let extents = bounded_extents(&tape, &mut tracker)?;
     let candidate = tail_candidate(&extents, budget.decode_window(), &mut tracker)?;
     let next = preceding_boundary(&tape, &extents, candidate, &mut tracker)?;
     let start = Checkpoint {
@@ -187,9 +187,9 @@ pub fn scan_before(
             next: before.next,
         });
     }
-    let extents = tape.extents().map_err(|source| tape_error(root, source))?;
-    let end = validate_position(before.next, &extents)?;
     let mut tracker = WorkTracker::new(budget);
+    let extents = bounded_extents(&tape, &mut tracker)?;
+    let end = validate_position(before.next, &extents)?;
     let candidate = window_candidate(&extents, end, budget.decode_window(), &mut tracker)?;
     let next = preceding_boundary(&tape, &extents, candidate, &mut tracker)?;
     let start = Checkpoint {
@@ -251,6 +251,10 @@ impl WorkTracker {
     fn read(&mut self, bytes: u64) -> Result<(), ScanError> {
         self.check_duration()?;
         self.pass()?;
+        self.source(bytes)
+    }
+
+    fn source(&mut self, bytes: u64) -> Result<(), ScanError> {
         let next_bytes = self.source_bytes.saturating_add(bytes);
         if next_bytes > self.budget.source_bytes.get() {
             return Err(self.exhausted_u64(
@@ -261,6 +265,17 @@ impl WorkTracker {
         }
         self.source_bytes = next_bytes;
         Ok(())
+    }
+
+    fn remaining_source_bytes(&self) -> u64 {
+        self.budget
+            .source_bytes
+            .get()
+            .saturating_sub(self.source_bytes)
+    }
+
+    fn remaining_passes(&self) -> usize {
+        self.budget.passes.get().saturating_sub(self.passes)
     }
 
     fn pass(&mut self) -> Result<(), ScanError> {
@@ -329,6 +344,7 @@ fn scan_window(
         record_limit: Some(tracker.budget.records.get()),
     };
     for extent in extents {
+        tracker.pass()?;
         if extent.member < state.position.member {
             continue;
         }
@@ -412,11 +428,16 @@ fn preceding_boundary(
     if candidate == Position::start() {
         return Ok(candidate);
     }
-    let candidate_index = extents
-        .iter()
-        .position(|extent| extent.member == candidate.member)
+    let candidate_index = usize::try_from(candidate.member.saturating_sub(1))
+        .ok()
+        .filter(|index| {
+            extents
+                .get(*index)
+                .is_some_and(|extent| extent.member == candidate.member)
+        })
         .expect("a tail candidate names one observed extent");
     for index in (0..=candidate_index).rev() {
+        tracker.pass()?;
         let extent = extents[index];
         let mut end = if index == candidate_index {
             candidate.offset
@@ -428,7 +449,7 @@ fn preceding_boundary(
             let length = end - start;
             tracker.read(length)?;
             let fragment = tape
-                .read(Locus::new(extent.member, start, length))
+                .read_extent(Locus::new(extent.member, start, length), extent)
                 .map_err(|source| tape_error(tape.root(), source))?;
             tracker.check_duration()?;
             if let Some(newline) = fragment.iter().rposition(|byte| *byte == b'\n') {
@@ -453,6 +474,37 @@ fn preceding_boundary(
         tracker.budget.source_bytes.get(),
         tracker.source_bytes,
     ))
+}
+
+fn bounded_extents(tape: &Tape, tracker: &mut WorkTracker) -> Result<Vec<Extent>, ScanError> {
+    tracker.pass()?;
+    let bytes = tracker.remaining_source_bytes();
+    let extents = tracker.remaining_passes();
+    match tape.extents_bounded(bytes, extents) {
+        Ok(snapshot) => {
+            tracker.source(snapshot.index_bytes)?;
+            for _ in &snapshot.extents {
+                tracker.pass()?;
+            }
+            Ok(snapshot.extents)
+        }
+        Err(tape::Error::Refused(tape::Refusal::IndexReadLimit { .. })) => Err(tracker
+            .exhausted_u64(
+                "source bytes",
+                tracker.budget.source_bytes.get(),
+                tracker.source_bytes,
+            )),
+        Err(tape::Error::Refused(tape::Refusal::ExtentReadLimit {
+            limit, index_bytes, ..
+        })) => {
+            tracker.source(index_bytes)?;
+            for _ in 0..limit {
+                tracker.pass()?;
+            }
+            Err(tracker.exhausted("scan passes", tracker.budget.passes.get(), tracker.passes))
+        }
+        Err(source) => Err(tape_error(tape.root(), source)),
+    }
 }
 
 fn tape_error(path: &Path, source: tape::Error) -> ScanError {
