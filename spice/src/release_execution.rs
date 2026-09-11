@@ -279,7 +279,6 @@ impl SystemEffects {
     ) -> Option<String> {
         let refs = self.authority.refs(&plan.requested_version);
         match operation {
-            dist::Operation::PublishSource => Some(refs.source().to_owned()),
             dist::Operation::RehearseUpload | dist::Operation::UploadPackage => {
                 Some(refs.package().to_owned())
             }
@@ -372,14 +371,6 @@ impl SystemEffects {
         run(&self.root, appliance, &dev_xtask_arguments(target))
     }
 
-    fn rehearse_source(&self, object: &str) -> Result<(), dist::EffectError> {
-        let command = self
-            .authority
-            .source_rehearsal(object)
-            .map_err(|error| dist::EffectError::RemoteRefused(error.to_string()))?;
-        self.git_owned(&command).map(|_| ())
-    }
-
     fn install_and_probe(
         &self,
         plan: &dist::ReleasePlan,
@@ -466,19 +457,7 @@ impl dist::EffectPort for SystemEffects {
             observed.clean = status.is_empty();
             observed.release_version = version;
         }
-        let credential_object = if object_exists(&self.root, &plan.release_commit)? {
-            &plan.release_commit
-        } else {
-            &plan.source_commit
-        };
-        self.rehearse_source(credential_object)?;
         let refs = self.authority.refs(&plan.requested_version);
-        observed.source_ref = stable_source_observation(
-            plan.observations.source_ref.as_ref(),
-            self.remote_ref(refs.source())?,
-            &plan.source_commit,
-            &plan.release_commit,
-        );
         observed.package_ref = stable_ref_observation(
             plan.observations.package_ref.as_ref(),
             self.remote_ref(refs.package())?,
@@ -547,7 +526,7 @@ impl dist::EffectPort for SystemEffects {
             }
             Op::InstallAndProbeArtifacts => self.installed_state(plan),
             Op::AwaitRegistryVisibility => self.registry_state(plan),
-            Op::PublishSource | Op::UploadPackage | Op::CreateImmutableTag => {
+            Op::UploadPackage | Op::CreateImmutableTag => {
                 let reference = self
                     .reference_for(plan, operation)
                     .expect("remote-ref operation has one authority ref");
@@ -582,7 +561,6 @@ impl dist::EffectPort for SystemEffects {
             Op::RebuildArtifacts => self.converge_rebuild(plan, prior),
             Op::InstallAndProbeArtifacts => self.install_and_probe(plan),
             Op::RehearseUpload => self.converge_rehearsal(plan),
-            Op::PublishSource => self.converge_source(plan, prior),
             Op::UploadPackage | Op::CreateImmutableTag | Op::Announce => {
                 self.converge_immutable(plan, operation, prior)
             }
@@ -604,12 +582,6 @@ impl SystemEffects {
                 "release repository authority changed".to_owned(),
             ));
         }
-        let object = if object_exists(&self.root, &plan.release_commit)? {
-            &plan.release_commit
-        } else {
-            &plan.source_commit
-        };
-        self.rehearse_source(object)?;
         Ok((
             dist::OperationState::Binding { identity },
             dist::Convergence::Applied,
@@ -845,52 +817,6 @@ impl SystemEffects {
         ))
     }
 
-    fn converge_source(
-        &mut self,
-        plan: &dist::ReleasePlan,
-        prior: &dist::OperationState,
-    ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
-        let reference = self
-            .authority
-            .refs(&plan.requested_version)
-            .source()
-            .to_owned();
-        if !matches!(prior, dist::OperationState::RemoteRef { .. }) {
-            return Err(dist::EffectError::Environment(
-                "publish source received the wrong prior-state shape".to_owned(),
-            ));
-        }
-        match self.remote_ref(&reference)? {
-            Some(object) if object == plan.release_commit => {
-                return Ok((
-                    dist::OperationState::RemoteRef {
-                        reference,
-                        object: Some(object),
-                    },
-                    dist::Convergence::AlreadyConverged,
-                ));
-            }
-            Some(object) if object != plan.source_commit => {
-                return Err(dist::EffectError::RemoteRefused(format!(
-                    "{reference} moved to {object} after preflight"
-                )));
-            }
-            Some(_) | None => {}
-        }
-        let command = self
-            .authority
-            .source_push(&plan.release_commit)
-            .map_err(|error| dist::EffectError::RemoteRefused(error.to_string()))?;
-        self.git_owned(&command)?;
-        Ok((
-            dist::OperationState::RemoteRef {
-                reference,
-                object: Some(plan.release_commit.clone()),
-            },
-            dist::Convergence::Applied,
-        ))
-    }
-
     fn await_registry(
         &self,
         plan: &dist::ReleasePlan,
@@ -982,7 +908,6 @@ use tail::effect_outcome;
 use tail::{
     admitted_local_progress, exact_version_bump, make_executable, manifest_bytes, object_exists,
     package_preview, package_state, ref_state, run, stable_ref_observation,
-    stable_source_observation,
 };
 pub(crate) use tail::{execute, verify_completed};
 

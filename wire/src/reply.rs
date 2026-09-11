@@ -429,13 +429,6 @@ pub struct ReleasePlanObservations {
     pub release_version: crate::manifest::ProductVersion,
     /// Whether the configured remote accepted a no-effect authenticated read.
     pub credentials_valid: bool,
-    /// Unexpected source-ref object, absent when unpublished or converged.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub source_ref: Option<String>,
     /// Unexpected package-ref object, absent when unpublished or converged.
     #[serde(
         default,

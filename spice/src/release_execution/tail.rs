@@ -54,18 +54,6 @@ pub(super) fn exact_version_bump(status: &str) -> bool {
     ) && lines.next().is_none()
 }
 
-pub(super) fn stable_source_observation(
-    previewed: Option<&String>,
-    current: Option<String>,
-    source_commit: &str,
-    release_commit: &str,
-) -> Option<String> {
-    match current {
-        Some(object) if object == source_commit || object == release_commit => previewed.cloned(),
-        other => other,
-    }
-}
-
 #[cfg(unix)]
 pub(super) fn make_executable(path: &Path) -> Result<(), dist::EffectError> {
     use std::os::unix::fs::PermissionsExt as _;

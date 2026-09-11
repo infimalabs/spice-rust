@@ -52,7 +52,6 @@ fn input(action: ReleaseAction) -> PlanInput {
             source_version: source_version.clone(),
             release_version: if recovering { version } else { source_version },
             credentials_valid: true,
-            source_ref: None,
             package_ref: None,
             tag_ref: None,
             announcement_ref: None,
@@ -129,10 +128,6 @@ impl FakeEffects {
             },
             Operation::CreateReleaseCommit => OperationState::Commit {
                 head: plan.release_commit.clone(),
-            },
-            Operation::PublishSource => OperationState::RemoteRef {
-                reference: "refs/heads/main".to_owned(),
-                object: Some(plan.release_commit.clone()),
             },
             Operation::RebuildArtifacts | Operation::RehearseUpload => OperationState::Package {
                 identity: Some(plan.package.clone()),
@@ -233,6 +228,12 @@ fn preview_is_pure_and_spells_the_complete_order() {
     assert_eq!(plan.notes, b"## Highlights\n\n- Exact curated prose.\n");
     assert_eq!(ReleaseAction::Publish.as_str(), "publish");
     assert_eq!(ReleaseAction::TagAndAnnounce.as_str(), "tag-and-announce");
+    assert!(
+        plan.operations
+            .iter()
+            .all(|operation| !operation.as_str().contains("source")),
+        "publication must not observe or mutate a moving source branch"
+    );
     assert_eq!(
         plan.operations
             .iter()
@@ -246,7 +247,6 @@ fn preview_is_pure_and_spells_the_complete_order() {
             "rebuild-artifacts",
             "install-and-probe-artifacts",
             "rehearse-upload",
-            "publish-source",
             "upload-package",
             "await-registry-visibility",
             "create-immutable-tag",
@@ -383,7 +383,6 @@ fn all_no_effect_preconditions_refuse_during_planning() {
     ));
 
     let mut converged = input(ReleaseAction::Publish);
-    converged.observations.source_ref = Some(RELEASE.to_owned());
     converged.observations.package_ref = Some(PACKAGE_OBJECT.to_owned());
     converged.observations.tag_ref = Some(RELEASE.to_owned());
     converged.observations.announcement_ref = Some(RELEASE.to_owned());
@@ -465,7 +464,6 @@ fn one_executor_orders_remote_publication_after_local_proof() {
             .position(|candidate| *candidate == operation)
             .expect("operation exists")
     };
-    assert!(position(Operation::PublishSource) < position(Operation::UploadPackage));
     assert!(position(Operation::UploadPackage) < position(Operation::AwaitRegistryVisibility));
     assert!(position(Operation::AwaitRegistryVisibility) < position(Operation::CreateImmutableTag));
     assert!(position(Operation::CreateImmutableTag) < position(Operation::Announce));
