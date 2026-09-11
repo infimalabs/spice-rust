@@ -229,11 +229,14 @@ pub(super) struct SystemEffects {
     root: PathBuf,
     probe_root: PathBuf,
     authority: dist::ReleaseAuthority,
+    appliance: PathBuf,
 }
 
 impl SystemEffects {
     fn new(root: &Path, journal_root: &Path) -> Result<Self, dist::EffectError> {
         let authority = dist::current_authority(root)
+            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
+        let repository = spice::repository::Repository::discover(root)
             .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
         let probe_root = journal_root
             .parent()
@@ -243,6 +246,7 @@ impl SystemEffects {
             root: root.to_path_buf(),
             probe_root,
             authority,
+            appliance: spice::install::installed_binary(&repository),
         })
     }
 
@@ -360,8 +364,12 @@ impl SystemEffects {
         Ok(dist::OperationState::Gate { receipt })
     }
 
-    fn run_cargo(&self, arguments: &[&str]) -> Result<String, String> {
-        run(&self.root, "cargo", arguments)
+    fn run_dev_xtask(&self, target: &str) -> Result<String, String> {
+        let appliance = self
+            .appliance
+            .to_str()
+            .ok_or_else(|| "installed Spice path is not UTF-8".to_owned())?;
+        run(&self.root, appliance, &dev_xtask_arguments(target))
     }
 
     fn rehearse_source(&self, object: &str) -> Result<(), dist::EffectError> {
@@ -782,7 +790,7 @@ impl SystemEffects {
         prior: &dist::OperationState,
     ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
         for target in &plan.targets {
-            self.run_cargo(&["xtask", "stage-target", &target.target])
+            self.run_dev_xtask(&target.target)
                 .map_err(dist::EffectError::Environment)?;
         }
         let package = crate::release_package::materialize(
@@ -964,6 +972,10 @@ impl SystemEffects {
     }
 }
 
+fn dev_xtask_arguments(target: &str) -> [&str; 5] {
+    ["dev", "xtask", "--", "stage-target", target]
+}
+
 mod tail;
 #[cfg(test)]
 use tail::effect_outcome;
@@ -977,6 +989,19 @@ pub(crate) use tail::{execute, verify_completed};
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn release_rebuilds_both_targets_through_the_admitted_dev_xtask_boundary() {
+        for target in [
+            wire::manifest::ReleaseTarget::Aarch64AppleDarwin,
+            wire::manifest::ReleaseTarget::X86_64UnknownLinuxMusl,
+        ] {
+            assert_eq!(
+                dev_xtask_arguments(target.as_str()),
+                ["dev", "xtask", "--", "stage-target", target.as_str()]
+            );
+        }
+    }
 
     #[test]
     fn external_effect_failures_keep_their_operator_visible_categories() {
