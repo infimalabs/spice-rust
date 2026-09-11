@@ -690,6 +690,10 @@ mod tests {
                 .iter()
                 .any(|argument| argument.ends_with(":refs/spice/releases/v1.2.3"))
         );
+        assert!(matches!(
+            authority.package_rehearsal(&version, "111111"),
+            Err(AuthorityError::Object(_))
+        ));
     }
 
     #[test]
