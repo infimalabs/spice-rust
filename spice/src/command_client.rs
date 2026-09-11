@@ -686,8 +686,10 @@ fn acquire_session_until(
     let Err(outcome) = attempt else {
         return attempt;
     };
-    let Some(fault) = refreshable_fault(&outcome, resident_lock, recovering_submission) else {
-        return Err(outcome);
+    let fault = match refreshable_fault(&outcome, resident_lock, recovering_submission) {
+        Ok(Some(fault)) => fault,
+        Ok(None) => return Err(outcome),
+        Err(fault) => return Err(Outcome::Fault(fault)),
     };
     after_transient(fault);
 
@@ -697,8 +699,10 @@ fn acquire_session_until(
     let Err(outcome) = retry else {
         return retry;
     };
-    if refreshable_fault(&outcome, resident_lock, recovering_submission).is_none() {
-        return Err(outcome);
+    match refreshable_fault(&outcome, resident_lock, recovering_submission) {
+        Ok(Some(_)) => {}
+        Ok(None) => return Err(outcome),
+        Err(fault) => return Err(Outcome::Fault(fault)),
     }
     let Some(observer) = DiscoveryObserver::arm(resident_lock) else {
         return Err(outcome);
@@ -711,8 +715,10 @@ fn acquire_session_until(
         let Err(outcome) = attempt else {
             return attempt;
         };
-        let Some(fault) = refreshable_fault(&outcome, resident_lock, recovering_submission) else {
-            return Err(outcome);
+        let fault = match refreshable_fault(&outcome, resident_lock, recovering_submission) {
+            Ok(Some(fault)) => fault,
+            Ok(None) => return Err(outcome),
+            Err(fault) => return Err(Outcome::Fault(fault)),
         };
         match observer.wait(deadline) {
             DiscoveryWait::Changed => {}
@@ -742,29 +748,34 @@ fn refreshable_fault<'a>(
     outcome: &'a Outcome<CommandAnswer>,
     resident_lock: &Path,
     recovering_submission: bool,
-) -> Option<&'a Fault> {
+) -> Result<Option<&'a Fault>, Fault> {
     let Outcome::Fault(fault) = outcome else {
-        return None;
+        return Ok(None);
     };
     match fault.reason.as_str() {
-        "canvas::publisher-replaced" => Some(fault),
-        "canvas::discovery-unavailable" | "canvas::discovery-replaced"
-            if publisher_is_held(resident_lock) =>
-        {
-            Some(fault)
+        "canvas::publisher-replaced" => Ok(Some(fault)),
+        "canvas::discovery-unavailable" | "canvas::discovery-replaced" => {
+            if recovering_submission {
+                return Ok(Some(fault));
+            }
+            match publisher_availability(resident_lock)? {
+                Availability::Held => Ok(Some(fault)),
+                Availability::Available => Err(environment_fault_value(
+                    "canvas::publisher-gone",
+                    "no resident holds the runtime lock or publishes Canvas discovery; run `spice up` from this repository to restore resident commands",
+                )),
+            }
         }
         "canvas::publisher-gone"
         | "canvas::connect-failed"
         | "canvas::opening-failed"
         | "canvas::send-failed"
         | "canvas::receive-failed"
-        | "canvas::discovery-unavailable"
-        | "canvas::discovery-replaced"
             if recovering_submission =>
         {
-            Some(fault)
+            Ok(Some(fault))
         }
-        _ => None,
+        _ => Ok(None),
     }
 }
 
@@ -779,12 +790,11 @@ fn interrupted_submission(outcome: &Outcome<CommandAnswer>) -> Option<&Fault> {
     .then_some(fault)
 }
 
-fn publisher_is_held(resident_lock: &Path) -> bool {
+fn publisher_availability(resident_lock: &Path) -> Result<Availability, Fault> {
     let name = LockName::new("resident").expect("resident is a non-empty lock name");
-    matches!(
-        LockFile::new(name, resident_lock).availability(),
-        Ok(Availability::Held)
-    )
+    LockFile::new(name, resident_lock)
+        .availability()
+        .map_err(|error| environment_fault_value("canvas::publisher-unknown", &error.to_string()))
 }
 
 fn acquisition_deadline(bound: Duration, prior: &str) -> Outcome<CommandAnswer> {
