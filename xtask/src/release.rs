@@ -553,7 +553,8 @@ fn capture_commit<E: Executor>(executor: &E, git: &Path) -> Result<String, Targe
 }
 
 /// The only untracked paths a release build is allowed to have produced.
-const RELEASE_OUTPUT: [&str; 2] = ["dist/stage/objects/", "dist/stage/targets/"];
+const RELEASE_OUTPUT_ROOTS: [&str; 2] = ["dist/stage/objects/", "dist/stage/targets/"];
+const RELEASE_MANIFEST: &str = "dist/stage/release/manifest.json";
 
 /// The porcelain code and separator an untracked entry is reported under.
 const UNTRACKED: &str = "?? ";
@@ -582,13 +583,20 @@ fn verify_checkout<E: Executor>(executor: &E, git: &Path) -> Result<(), TargetBu
                 "tracked source differs from HEAD: {entry}"
             )));
         };
-        if !RELEASE_OUTPUT.iter().any(|root| path.starts_with(root)) {
+        if !release_output(path) {
             return Err(TargetBuildError::SourceDirty(format!(
                 "untracked source path is outside release output: {path}"
             )));
         }
     }
     Ok(())
+}
+
+fn release_output(path: &str) -> bool {
+    RELEASE_OUTPUT_ROOTS
+        .iter()
+        .any(|root| path.starts_with(root))
+        || path == RELEASE_MANIFEST
 }
 
 struct GuardedPublisher<'a, E> {
