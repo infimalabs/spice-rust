@@ -7,6 +7,26 @@ use super::*;
 const SPARSE_TOOL_RECORDS: usize = 400;
 
 #[test]
+fn startup_work_caps_lane_reads_and_total_source_bytes() {
+    let mut aggregate = StartupWork::default();
+    for _ in 0..STARTUP_LANE_READ_LIMIT {
+        assert!(aggregate.admits_lane());
+        aggregate.begin_lane();
+        aggregate.add(listen::TailWork {
+            source_bytes: TAIL_SOURCE_BYTES,
+            records: 1,
+            passes: 1,
+            duration: Duration::from_millis(1),
+        });
+    }
+    assert!(!aggregate.admits_lane());
+    assert_eq!(aggregate.lanes, STARTUP_LANE_READ_LIMIT);
+    assert_eq!(aggregate.source_bytes, STARTUP_SOURCE_BYTE_LIMIT);
+    assert_eq!(aggregate.records, STARTUP_LANE_READ_LIMIT);
+    assert_eq!(aggregate.passes, STARTUP_LANE_READ_LIMIT);
+}
+
+#[test]
 fn replay_uses_the_worktree_bound_to_each_session_locus() {
     let lane: CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163e5"
         .parse()
@@ -236,7 +256,7 @@ fn collect_merged_history_pages(
     let mut prior_tape = before.locus.offset;
     let session_source = &source.session.as_ref().expect("fixture session").source;
     let mut prior_session = None;
-    loop {
+    for _ in 0..128 {
         let page = canvas::stream::MessageHistoryProvider::history(
             &fixture.history,
             fixture.lane,
@@ -260,7 +280,12 @@ fn collect_merged_history_pages(
         assert!(!page.messages.is_empty());
         assert!(page.messages.len() <= canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT);
         page_lengths.push(page.messages.len());
-        before = page.messages[0].clone();
+        let oldest = page.messages[0].clone();
+        restored.splice(0..0, page.messages);
+        if !page.more {
+            return (pending_pages, page_lengths, restored, initial_before);
+        }
+        before = oldest;
         let continuation = fixture
             .history
             .continuations
@@ -280,12 +305,13 @@ fn collect_merged_history_pages(
         }
         prior_tape = tape_next;
         prior_session = Some(session_next);
-        restored.splice(0..0, page.messages);
-        if !page.more {
-            break;
-        }
     }
-    (pending_pages, page_lengths, restored, initial_before)
+    panic!(
+        "merged history did not exhaust after {} visible page(s) and {} restored rows; tape frontier {prior_tape}, session frontier {prior_session:?}; last page lengths {:?}",
+        page_lengths.len(),
+        restored.len(),
+        &page_lengths[page_lengths.len().saturating_sub(8)..],
+    )
 }
 
 fn assert_replaced_session_is_refused(
@@ -332,16 +358,20 @@ fn visible_card_target_stops_a_season_tail_before_byte_zero() {
     }
     tape.tee(&season).expect("season is durable");
 
-    let scan = tail_backlog(&root, listen::Dialect::Codex).expect("season tail scans");
+    let tail = tail_backlog(&root, listen::Dialect::Codex).expect("season tail scans");
     assert!(
-        visible_cards(&scan) > canvas::stream::INITIAL_MESSAGE_LIMIT,
-        "the selected tail supplies one initial page and its look-behind card",
+        visible_cards(&tail.scan) > 0,
+        "the fixed tail publishes the visible cards it reaches",
     );
     assert!(
-        visible_cards(&scan) < canvas::stream::MESSAGE_CAPACITY,
-        "cold replay does not materialize the retained-history horizon",
+        visible_cards(&tail.scan) <= canvas::stream::INITIAL_MESSAGE_LIMIT,
+        "cold replay does not expand until it fills the visible page",
     );
-    let first_offset = scan
+    assert!(tail.work.source_bytes <= TAIL_SOURCE_BYTES);
+    assert_eq!(tail.work.records, tail.scan.records.len());
+    assert!(tail.work.passes <= TAIL_PASS_LIMIT);
+    let first_offset = tail
+        .scan
         .records
         .first()
         .and_then(|record| match &record.payload {
@@ -360,7 +390,7 @@ fn visible_card_target_stops_a_season_tail_before_byte_zero() {
 }
 
 #[test]
-fn tool_only_tail_expands_until_the_initial_visible_budget_is_satisfied() {
+fn tool_only_tail_stops_at_one_fixed_read_with_older_history_open() {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
         "spice-backlog-sparse-tail-{}-{}",
@@ -388,23 +418,26 @@ fn tool_only_tail_expands_until_the_initial_visible_budget_is_satisfied() {
     }
     tape.tee(&season).expect("sparse season is durable");
 
-    let scan = tail_backlog(&root, listen::Dialect::Codex).expect("sparse tail scans");
+    let tail = tail_backlog(&root, listen::Dialect::Codex).expect("sparse tail scans");
     assert_eq!(
-        visible_cards(&scan),
-        30,
-        "tool activity does not consume the visible-card budget",
+        visible_cards(&tail.scan),
+        0,
+        "one fixed tail need not cross sparse tools to fill a visible-card target",
     );
-    assert_eq!(
-        scan.records.len(),
-        430,
-        "the scanner crosses the sparse tool tail to reach visible cards",
+    assert!(
+        tail.scan.records.len() < SPARSE_TOOL_RECORDS,
+        "the scanner does not cross the complete sparse tool tail",
     );
+    assert!(tail.start.next > listen::Position::start());
+    assert!(tail.work.source_bytes <= TAIL_SOURCE_BYTES);
+    assert_eq!(tail.work.records, tail.scan.records.len());
+    assert!(tail.work.passes <= TAIL_PASS_LIMIT);
 
     fs::remove_dir_all(root).expect("sparse fixture cleanup");
 }
 
 #[test]
-fn historical_page_crosses_sparse_tools_without_materializing_the_horizon() {
+fn historical_page_stops_before_crossing_a_sparse_tool_horizon() {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
         "spice-backlog-sparse-history-{}-{}",
@@ -435,20 +468,15 @@ fn historical_page_crosses_sparse_tools_without_materializing_the_horizon() {
         .expect("sparse history endpoint reads")
         .checkpoint;
 
-    let tail = history_tail(
-        &root,
-        listen::Dialect::Codex,
-        &end,
-        canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT,
-    )
-    .expect("sparse history page scans");
+    let tail =
+        history_tail(&root, listen::Dialect::Codex, &end).expect("sparse history page scans");
     assert!(
         tail.start.next > listen::Position::start(),
         "the historical page stops before byte zero",
     );
     assert!(
-        tail.scan.records.len() > SPARSE_TOOL_RECORDS,
-        "non-visible tools are traversed to reach the visible target",
+        tail.scan.records.len() < SPARSE_TOOL_RECORDS,
+        "one page does not traverse the complete non-visible tool horizon",
     );
     assert!(
         visible_cards(&tail.scan) < canvas::stream::MESSAGE_CAPACITY,
@@ -464,6 +492,7 @@ fn historical_page_crosses_sparse_tools_without_materializing_the_horizon() {
     let messages = CollectedMessages::new(canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT);
     let mut reader = BacklogReader::default();
     let mut diagnostic = Vec::new();
+    let work = tail.work;
     publish_scan(
         tail.scan,
         lane,
@@ -475,16 +504,17 @@ fn historical_page_crosses_sparse_tools_without_materializing_the_horizon() {
     )
     .expect("sparse history materializes");
     assert!(diagnostic.is_empty());
-    assert_eq!(
+    assert!(
         messages
             .inner
             .into_inner()
             .expect("history lock")
             .messages
-            .len(),
-        canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT,
-        "only the requested visible page is materialized",
+            .is_empty()
     );
+    assert!(work.source_bytes <= TAIL_SOURCE_BYTES);
+    assert!(work.records < SPARSE_TOOL_RECORDS);
+    assert!(work.passes <= TAIL_PASS_LIMIT);
 
     fs::remove_dir_all(root).expect("sparse history fixture cleanup");
 }
@@ -499,8 +529,12 @@ fn merged_history_pages_retreat_both_sources_without_gaps_or_rescans() {
         pending_pages > 0,
         "session history waits for authentication"
     );
-    assert_eq!(page_lengths, [50, 50, 18]);
-    assert_eq!(restored.len(), 118);
+    assert!(
+        page_lengths
+            .iter()
+            .all(|length| *length <= canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT),
+    );
+    assert_eq!(restored.len(), 126);
     assert_eq!(
         restored
             .iter()
@@ -523,8 +557,17 @@ fn merged_history_pages_retreat_both_sources_without_gaps_or_rescans() {
         restored.len(),
         "source continuation returns no duplicate card identities",
     );
-    assert!(restored[0].text.starts_with("message 0 "));
-    assert!(restored[117].text.starts_with("message 114 "));
+    let prose = restored
+        .iter()
+        .filter(|message| message.activity == wire::AgentActivityKind::Prose)
+        .collect::<Vec<_>>();
+    assert_eq!(prose.len(), 123);
+    for (index, message) in prose.into_iter().enumerate() {
+        assert!(
+            message.text.starts_with(&format!("message {index} ")),
+            "every tape message before the initial visible boundary is restored exactly",
+        );
+    }
 
     assert_replaced_session_is_refused(&fixture, &initial_before);
     fs::remove_dir_all(&fixture.root).expect("merged fixture cleanup");

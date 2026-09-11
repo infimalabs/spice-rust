@@ -50,6 +50,7 @@ pub trait MessageHistoryProvider: fmt::Debug + Send + Sync {
 pub(super) struct MessageFeed {
     retained: Arc<Mutex<VecDeque<AgentMessage>>>,
     history: Arc<Mutex<Option<Arc<dyn MessageHistoryProvider>>>>,
+    history_open: Arc<Mutex<HashSet<wire::CanonicalUuid>>>,
     history_closed: Arc<Mutex<HashSet<wire::CanonicalUuid>>>,
     pub(super) updates: tokio::sync::broadcast::Sender<AgentMessage>,
     capacity: usize,
@@ -61,6 +62,7 @@ impl MessageFeed {
         Self {
             retained: Arc::new(Mutex::new(VecDeque::new())),
             history: Arc::new(Mutex::new(None)),
+            history_open: Arc::new(Mutex::new(HashSet::new())),
             history_closed: Arc::new(Mutex::new(HashSet::new())),
             updates,
             capacity: MESSAGE_CAPACITY,
@@ -79,13 +81,17 @@ impl MessageFeed {
             .collect::<BTreeSet<_>>();
         let mut selected = HashSet::new();
         let mut more = Vec::new();
+        let history_open = self
+            .history_open
+            .lock()
+            .map_err(|_| MessagePublishError::Unavailable)?;
         for lane in lanes {
             let visible = retained
                 .iter()
                 .filter(|message| message.lane == lane && visible_message(message))
                 .collect::<Vec<_>>();
             let start = visible.len().saturating_sub(INITIAL_MESSAGE_LIMIT);
-            if start > 0 {
+            if start > 0 || history_open.contains(&lane) {
                 more.push(lane);
             }
             selected.extend(
@@ -146,6 +152,10 @@ impl MessageFeed {
                 .lock()
                 .map_err(|_| MessagePublishError::Unavailable)?
                 .insert(lane);
+            self.history_open
+                .lock()
+                .map_err(|_| MessagePublishError::Unavailable)?
+                .remove(&lane);
             return Ok(Some(MessageHistoryPage {
                 messages: Vec::new(),
                 more: false,
@@ -158,13 +168,16 @@ impl MessageFeed {
             .map_err(MessagePublishError::History)?
         {
             self.retain_history_page(lane, &before_message, &mut page)?;
-            if page.messages.len() >= remaining || limit < MESSAGE_HISTORY_PAGE_LIMIT || !page.more
-            {
+            if page.messages.len() >= remaining || !page.more {
                 page.more = false;
                 self.history_closed
                     .lock()
                     .map_err(|_| MessagePublishError::Unavailable)?
                     .insert(lane);
+                self.history_open
+                    .lock()
+                    .map_err(|_| MessagePublishError::Unavailable)?
+                    .remove(&lane);
             }
             return Ok(Some(page));
         }
@@ -266,6 +279,25 @@ impl MessagePublisher {
             .history
             .lock()
             .map_err(|_| MessagePublishError::Unavailable)? = Some(provider);
+        Ok(())
+    }
+
+    /// Name lanes whose initial retained page has older durable history.
+    pub fn set_history_open(
+        &self,
+        lanes: impl IntoIterator<Item = wire::CanonicalUuid>,
+    ) -> Result<(), MessagePublishError> {
+        let lanes = lanes.into_iter().collect::<HashSet<_>>();
+        self.feed
+            .history_closed
+            .lock()
+            .map_err(|_| MessagePublishError::Unavailable)?
+            .retain(|lane| !lanes.contains(lane));
+        *self
+            .feed
+            .history_open
+            .lock()
+            .map_err(|_| MessagePublishError::Unavailable)? = lanes;
         Ok(())
     }
 

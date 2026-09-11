@@ -179,7 +179,7 @@ fn each_resident_generation_restores_durable_prose_before_canvas_subscription() 
 }
 
 #[test]
-fn each_resident_generation_restores_the_same_complete_compaction_window() {
+fn each_resident_generation_restores_a_bounded_tail_then_the_same_complete_compaction_window() {
     let (root, paths) = resident_fixture("message-backlog-compaction-window");
     let bus = Bus::start(journal::Journal::in_memory().expect("backlog authority opens"))
         .expect("backlog bus starts");
@@ -258,7 +258,11 @@ fn each_resident_generation_restores_the_same_complete_compaction_window() {
             panic!("expected message snapshot")
         };
         assert_eq!(*limit as usize, canvas::stream::MESSAGE_CAPACITY);
-        assert_eq!(messages.len(), canvas::stream::INITIAL_MESSAGE_LIMIT);
+        assert_eq!(
+            messages.len(),
+            18,
+            "startup reads exactly one fixed tail window"
+        );
         assert_eq!(more, &[lane]);
         let window = complete_message_history(&source, &accepted, epoch, lane, messages);
         assert_eq!(window.len(), 220);
