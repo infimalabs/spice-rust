@@ -345,13 +345,28 @@ pub(super) fn steering_ledger(
         };
         (prose.role == listen::ProseRole::Assistant).then_some(prose.text.as_str())
     }));
-    let presentations = bus
-        .reader()
-        .steering_presentations(keys.into_iter().map(|key| key.to_string()).collect())
-        .map_err(|error| store_fault("canvas::message-steering-unavailable", &error.to_string()))?;
+    let presentations = load_steering_presentations(&bus.reader(), &keys)?;
     PresentationDirectives::from_presentations(&presentations)
         .map(Some)
         .map_err(|error| store_fault("canvas::message-steering-invalid", &error.to_string()))
+}
+
+pub(super) fn load_steering_presentations(
+    reader: &bus::BusReader,
+    keys: &BTreeSet<steer::Key>,
+) -> CommandResult<Vec<bus::SteeringPresentation>> {
+    let keys = keys.iter().map(ToString::to_string).collect::<Vec<_>>();
+    let mut presentations = Vec::new();
+    for batch in keys.chunks(bus::MAX_STEERING_PRESENTATION_KEYS) {
+        presentations.extend(
+            reader
+                .steering_presentations(batch.to_vec())
+                .map_err(|error| {
+                    store_fault("canvas::message-steering-unavailable", &error.to_string())
+                })?,
+        );
+    }
+    Ok(presentations)
 }
 
 fn present_steering_acknowledgements(

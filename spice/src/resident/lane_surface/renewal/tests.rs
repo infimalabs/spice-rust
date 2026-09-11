@@ -738,7 +738,7 @@ fn publish_surface(fixture: &AdvisoryRtkFixture) -> canvas::Discovery {
 }
 
 fn controls(bus: &Bus, lane: CanonicalUuid) -> Vec<String> {
-    bus.read(move |read| read.pending_steering(Some(lane)))
+    bus.read(move |read| crate::steering_read::pending(read, Some(lane)))
         .expect("pending controls read")
         .iter()
         .filter_map(|head| {

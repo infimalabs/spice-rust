@@ -1,36 +1,44 @@
-use rusqlite::OptionalExtension;
+use rusqlite::{OptionalExtension, params};
 
-use super::commit::decode_optional_seq;
+use super::commit::{decode_optional_seq, decode_seq};
 use super::indexed_read::decode_head;
 use super::*;
 
 impl JournalRead<'_> {
-    /// Live operator-authored steering, ordered by creation position.
+    /// One fixed page of live operator-authored steering in creation order.
+    ///
+    /// `start` is either the first page or the continuation returned by the
+    /// preceding page. Overflow is always explicit.
     pub fn pending_operator_steering(
         &self,
-    ) -> Result<Vec<JournalHead<wire::SteeringHead>>, GuardError> {
+        start: FactPageStart,
+    ) -> Result<SteeringPage, GuardError> {
         self.require_current_steering_index()?;
+        let first = steering_page_start(start)?;
         let mut statement = self
             .connection
             .prepare(
                 "SELECT steering.directive, steering.steer_key, steering.lane, \
                  steering.disposition, steering.created_seq, steering.minted_micros, \
-                 steering.head_seq, steering.body FROM steering_heads AS steering \
+                 steering.head_seq, steering.body, COUNT(*) OVER () \
+                 FROM steering_heads AS steering \
                  JOIN fact_envelopes AS creating ON creating.seq = steering.created_seq \
                  WHERE steering.disposition = 'live' AND creating.actor = ?1 \
-                 ORDER BY steering.created_seq",
+                 AND steering.created_seq >= ?2 ORDER BY steering.created_seq LIMIT ?3",
             )
             .map_err(GuardError::Store)?;
         read_metrics::observe_query();
         let rows = statement
-            .query_map([wire::Actor::Operator.to_string()], read_steering_columns)
+            .query_map(
+                params![
+                    wire::Actor::Operator.to_string(),
+                    first,
+                    steering_query_rows(),
+                ],
+                read_steering_page_row,
+            )
             .map_err(GuardError::Store)?;
-        let mut heads = Vec::new();
-        for row in rows {
-            read_metrics::observe_row();
-            heads.push(self.decode_steering_row(row.map_err(GuardError::Store)?)?);
-        }
-        Ok(heads)
+        self.decode_steering_page(rows)
     }
 
     /// Current steering standing for one stable directive identity.
@@ -49,43 +57,47 @@ impl JournalRead<'_> {
         self.steering_row("steer_key", key)
     }
 
-    /// Live steering heads for one lane, or every lane, in publication order.
+    /// One fixed page of live steering for one lane or every lane.
+    ///
+    /// Heads remain in publication order and overflow names the first omitted
+    /// creation position for an exact continuation.
     pub fn pending_steering(
         &self,
         lane: Option<wire::CanonicalUuid>,
-    ) -> Result<Vec<JournalHead<wire::SteeringHead>>, GuardError> {
+        start: FactPageStart,
+    ) -> Result<SteeringPage, GuardError> {
         self.require_current_steering_index()?;
+        let first = steering_page_start(start)?;
         let sql = if lane.is_some() {
             "SELECT directive, steer_key, lane, disposition, created_seq, minted_micros, \
-             head_seq, body FROM steering_heads WHERE disposition = 'live' AND lane = ?1 \
-             ORDER BY created_seq"
+             head_seq, body, COUNT(*) OVER () FROM steering_heads \
+             WHERE disposition = 'live' AND lane = ?1 AND created_seq >= ?2 \
+             ORDER BY created_seq LIMIT ?3"
         } else {
             "SELECT directive, steer_key, lane, disposition, created_seq, minted_micros, \
-             head_seq, body FROM steering_heads WHERE disposition = 'live' ORDER BY created_seq"
+             head_seq, body, COUNT(*) OVER () FROM steering_heads \
+             WHERE disposition = 'live' AND created_seq >= ?1 \
+             ORDER BY created_seq LIMIT ?2"
         };
         let mut statement = self.connection.prepare(sql).map_err(GuardError::Store)?;
         read_metrics::observe_query();
-        let mut heads = Vec::new();
         if let Some(lane) = lane {
             let rows = statement
-                .query_map([lane.to_string()], read_steering_columns)
+                .query_map(
+                    params![lane.to_string(), first, steering_query_rows()],
+                    read_steering_page_row,
+                )
                 .map_err(GuardError::Store)?;
-            for row in rows {
-                let row = row.map_err(GuardError::Store)?;
-                read_metrics::observe_row();
-                heads.push(self.decode_steering_row(row)?);
-            }
+            self.decode_steering_page(rows)
         } else {
             let rows = statement
-                .query_map([], read_steering_columns)
+                .query_map(
+                    params![first, steering_query_rows()],
+                    read_steering_page_row,
+                )
                 .map_err(GuardError::Store)?;
-            for row in rows {
-                let row = row.map_err(GuardError::Store)?;
-                read_metrics::observe_row();
-                heads.push(self.decode_steering_row(row)?);
-            }
+            self.decode_steering_page(rows)
         }
-        Ok(heads)
     }
 
     /// Newest operator-authored direction heads per lane, in creation order.
@@ -249,6 +261,79 @@ impl JournalRead<'_> {
         }
         Ok(head)
     }
+
+    fn decode_steering_page(
+        &self,
+        rows: impl Iterator<Item = rusqlite::Result<SteeringPageRow>>,
+    ) -> Result<SteeringPage, GuardError> {
+        let mut heads = Vec::with_capacity(MAX_STEERING_PAGE_ROWS);
+        let mut total = None;
+        let mut continuation = None;
+        let mut observed = 0_u64;
+        for row in rows {
+            let row = row.map_err(GuardError::Store)?;
+            read_metrics::observe_row();
+            observed = observed.saturating_add(1);
+            let row_total = u64::try_from(row.total).map_err(|_| {
+                GuardError::Invalid(format!(
+                    "steering page count {} is outside the wire range",
+                    row.total
+                ))
+            })?;
+            if total
+                .replace(row_total)
+                .is_some_and(|total| total != row_total)
+            {
+                return Err(GuardError::Invalid(
+                    "steering page count changed within one snapshot".to_owned(),
+                ));
+            }
+            if heads.len() == MAX_STEERING_PAGE_ROWS {
+                continuation =
+                    Some(decode_seq(row.columns.created_seq).map_err(GuardError::Invalid)?);
+                continue;
+            }
+            heads.push(self.decode_steering_row(row.columns)?);
+        }
+        let total = total.unwrap_or(0);
+        let expected =
+            total.min(u64::try_from(MAX_STEERING_PAGE_ROWS.saturating_add(1)).unwrap_or(u64::MAX));
+        if observed != expected {
+            return Err(GuardError::Invalid(format!(
+                "steering page expected {expected} indexed row(s), found {observed}"
+            )));
+        }
+        let overflow = continuation.map(|continuation| wire::Overflow {
+            omitted: total
+                .saturating_sub(u64::try_from(MAX_STEERING_PAGE_ROWS).unwrap_or(u64::MAX)),
+            continuation,
+        });
+        Ok(SteeringPage {
+            rows: heads,
+            overflow,
+            horizon: self.cursor,
+        })
+    }
+}
+
+fn steering_page_start(start: FactPageStart) -> Result<i64, GuardError> {
+    let first = match start {
+        FactPageStart::After(None) => 1,
+        FactPageStart::After(Some(after)) => after.get().saturating_add(1),
+        FactPageStart::At(position) => position.get(),
+    };
+    i64::try_from(first)
+        .map_err(|_| GuardError::Invalid("steering page start exceeds SQLite".to_owned()))
+}
+
+fn steering_query_rows() -> i64 {
+    i64::try_from(MAX_STEERING_PAGE_ROWS.saturating_add(1))
+        .expect("fixed steering page ceiling fits SQLite")
+}
+
+struct SteeringPageRow {
+    columns: SteeringColumns,
+    total: i64,
 }
 
 struct SteeringColumns {
@@ -272,6 +357,13 @@ fn read_steering_columns(row: &rusqlite::Row<'_>) -> rusqlite::Result<SteeringCo
         minted_micros: row.get(5)?,
         head_seq: row.get(6)?,
         body: row.get(7)?,
+    })
+}
+
+fn read_steering_page_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SteeringPageRow> {
+    Ok(SteeringPageRow {
+        columns: read_steering_columns(row)?,
+        total: row.get(8)?,
     })
 }
 

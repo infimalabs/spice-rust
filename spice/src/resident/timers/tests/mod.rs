@@ -290,7 +290,7 @@ fn manual_claims_never_create_resident_warning_protocol() {
             .bus
             .read({
                 let lane = fixture.authority.lane;
-                move |read| read.pending_steering(Some(lane))
+                move |read| crate::steering_read::pending(read, Some(lane))
             })
             .expect("lane inbox reads")
             .is_empty()

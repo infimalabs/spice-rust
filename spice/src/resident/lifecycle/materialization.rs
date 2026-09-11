@@ -13,7 +13,6 @@ pub(super) struct Projection {
     cursor: Option<Seq>,
     ledger: steer::Ledger,
     operator_directives: BTreeSet<CanonicalUuid>,
-    indexed_operator_lanes: BTreeSet<CanonicalUuid>,
     entries: Vec<Entry>,
     heads: BTreeMap<TaskStamp, TaskHeads>,
     fact_instants: BTreeMap<Seq, Instant>,
@@ -44,7 +43,6 @@ impl Projection {
             cursor: None,
             ledger: steer::Ledger::new(),
             operator_directives: BTreeSet::new(),
-            indexed_operator_lanes: BTreeSet::new(),
             entries: Vec::new(),
             heads: BTreeMap::new(),
             fact_instants: BTreeMap::new(),
@@ -68,12 +66,10 @@ impl Projection {
     }
 
     pub(super) fn has_operator_steering(&self, lane: CanonicalUuid) -> bool {
-        self.indexed_operator_lanes.contains(&lane)
-            || self
-                .ledger
-                .pending(lane)
-                .iter()
-                .any(|directive| self.operator_directives.contains(&directive.directive()))
+        self.ledger
+            .pending(lane)
+            .iter()
+            .any(|directive| self.operator_directives.contains(&directive.directive()))
     }
 
     pub(super) const fn ready_at(&self) -> &BTreeMap<TaskStamp, Instant> {
@@ -85,11 +81,6 @@ impl Projection {
         snapshot: &bus::TaskSnapshot,
         projects: &board::ProjectPolicy,
     ) -> CommandResult<()> {
-        self.indexed_operator_lanes = snapshot
-            .operator_steering()
-            .iter()
-            .map(|head| head.body().lane)
-            .collect();
         let Some((cursor, delta)) = self.committed_delta(snapshot)? else {
             return Ok(());
         };

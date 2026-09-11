@@ -641,7 +641,7 @@ fn timer_snapshot(bus: &Bus) -> CommandResult<TimerSnapshot> {
         Ok(TimerSnapshot {
             tasks: read.task_heads()?,
             residency: read.residency_head()?,
-            steering: read.pending_steering(None)?,
+            steering: crate::steering_read::pending(read, None)?,
             horizon: read.cursor()?,
         })
     })

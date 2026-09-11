@@ -183,8 +183,7 @@ fn read_authorities(
         });
     };
     let actor = Actor::Lane(lane.lane);
-    let ledger = read
-        .pending_steering(Some(lane.lane))
+    let ledger = crate::steering_read::pending(read, Some(lane.lane))
         .map_err(AuthorityReadError::Journal)
         .and_then(|heads| {
             steer::Ledger::from_authority_heads(heads.iter().map(|head| head.body()))
