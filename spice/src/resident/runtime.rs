@@ -939,37 +939,13 @@ where
 }
 
 pub(super) fn latest_surface_digest(bus: &Bus) -> CommandResult<Option<wire::Digest>> {
-    bus.read(|read| {
-        let horizon = read.cursor()?;
-        let mut before = None;
-        loop {
-            let page = read.recent_fact_page(
-                wire::FactKind::TrustPended,
-                before,
-                journal::FactReadBudget::RETAINED,
-            )?;
-            if page.horizon != horizon {
-                return Err(GuardError::Invalid(format!(
-                    "trust fact page horizon moved from {horizon:?} to {:?}",
-                    page.horizon
-                )));
-            }
-            for envelope in &page.rows {
-                let bytes = wire::encode(&envelope.fact)
-                    .map_err(|error| GuardError::Invalid(error.to_string()))?;
-                let fact = wire::decode::<wire::Fact<wire::body::TrustPended>>(&bytes)
-                    .map_err(|error| GuardError::Invalid(error.to_string()))?;
-                if fact.body.surface == crate::trust_command::SURFACE_NAME {
-                    return Ok(Some(fact.body.digest));
-                }
-            }
-            let Some(continuation) = page.continuation else {
-                return Ok(None);
-            };
-            before = Some(continuation);
-        }
-    })
-    .map_err(|error| store_fault("trust::journal-unreadable", &error.to_string()))
+    let snapshot = bus
+        .task_snapshot()
+        .map_err(|error| store_fault("trust::journal-unreadable", &error.to_string()))?;
+    Ok(snapshot
+        .facts()
+        .latest_trust_digest(crate::trust_command::SURFACE_NAME)
+        .cloned())
 }
 
 mod surface;
