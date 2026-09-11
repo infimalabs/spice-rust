@@ -444,6 +444,13 @@ fn reverse_page_refuses_a_record_larger_than_its_hard_byte_allowance() {
             .to_string()
             .contains("fixed 262144-byte history allowance")
     );
+    let exhaustion = error
+        .get_ref()
+        .and_then(|source| source.downcast_ref::<HistoryExhaustion>())
+        .expect("oversized record refusal retains typed work");
+    assert_eq!(exhaustion.work.source_bytes, HISTORY_BYTE_BUDGET as u64);
+    assert_eq!(exhaustion.work.decoded_records, 0);
+    assert_eq!(exhaustion.work.passes, HISTORY_PASS_BUDGET);
     assert_eq!(BOOTSTRAP_BYTES_DECODED.with(Cell::get), 0);
     assert_eq!(cursor.next, 0, "no record suffix becomes evidence");
 }
