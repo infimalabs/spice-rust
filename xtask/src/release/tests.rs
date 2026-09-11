@@ -548,13 +548,14 @@ fn only_untracked_release_output_survives_the_source_check() {
     let git = fixture.root.join("git");
 
     *executor.untracked.borrow_mut() =
-        "?? dist/stage/objects/1f/2e\n?? dist/stage/targets/aarch64-apple-darwin\n".to_owned();
+        "?? dist/stage/objects/1f/2e\n?? dist/stage/targets/aarch64-apple-darwin\n?? dist/stage/release/manifest.json\n".to_owned();
     verify_checkout(&executor, &git).expect("release output is the build's own product");
 
-    *executor.untracked.borrow_mut() = "?? dist/stage/objects/1f/2e\n?? LATER.md\n".to_owned();
+    *executor.untracked.borrow_mut() =
+        "?? dist/stage/objects/1f/2e\n?? dist/stage/release/manifest.extra\n".to_owned();
     let stray = verify_checkout(&executor, &git).expect_err("a stray untracked path refuses");
     assert!(
-        matches!(&stray, TargetBuildError::SourceDirty(reason) if reason.ends_with("LATER.md")),
+        matches!(&stray, TargetBuildError::SourceDirty(reason) if reason.ends_with("manifest.extra")),
         "{stray:?}"
     );
 
