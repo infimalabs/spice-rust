@@ -84,7 +84,6 @@ impl AdmittedRelease {
             observations: wire::ReleasePlanObservations {
                 head: external.observations.head.clone(),
                 clean: external.observations.clean,
-                bump_claimed: external.observations.bump_claimed,
                 unrecorded_local_commits: external.observations.unrecorded_local_commits,
                 source_version: external.observations.source_version.clone(),
                 release_version: external.observations.release_version.clone(),
@@ -422,6 +421,19 @@ mod proof_source_tests {
             [" M source.rs"]
         );
     }
+
+    #[test]
+    fn sealed_manifest_source_must_name_the_selected_release_commit() {
+        let commit = "0123456789abcdef0123456789abcdef01234567";
+        let source = Digest::compute(Domain::DistSourceCommit, commit.as_bytes());
+        admit_manifest_source(&source, commit).expect("matching sealed source");
+
+        let moved = Digest::compute(Domain::DistSourceCommit, b"moved");
+        assert_eq!(
+            admit_manifest_source(&moved, commit),
+            Err("sealed release source does not name the selected release commit".to_owned())
+        );
+    }
 }
 
 pub(crate) fn admit_stage(
@@ -466,7 +478,6 @@ struct ExternalPreconditions {
     repository: Digest,
     head: String,
     clean: bool,
-    bump_claimed: bool,
     unrecorded_local_commits: u64,
     source_version: ProductVersion,
     release_version: ProductVersion,
@@ -480,7 +491,6 @@ struct LocalPreconditions {
     release_commit: String,
     head: String,
     clean: bool,
-    bump_claimed: bool,
     release_version: ProductVersion,
 }
 
@@ -524,7 +534,6 @@ fn resolve_external_preconditions(
         repository: repository_identity(root, authority.remote())?,
         head: local.head,
         clean: local.clean,
-        bump_claimed: local.bump_claimed,
         unrecorded_local_commits: 0,
         source_version: versions.source,
         release_version: local.release_version,
@@ -535,12 +544,11 @@ fn resolve_external_preconditions(
 }
 
 fn release_versions(root: &Path, matches: &ArgMatches) -> Result<ReleaseVersions, String> {
-    let requested = matches
-        .get_one::<String>("version")
-        .map_or(env!("CARGO_PKG_VERSION"), String::as_str);
-    let requested_version = ProductVersion::parse(requested).map_err(|error| error.to_string())?;
-    let source_version =
-        ProductVersion::parse(env!("CARGO_PKG_VERSION")).map_err(|error| error.to_string())?;
+    let source_version = dist::current_product_version().map_err(|error| error.to_string())?;
+    let requested_version = matches.get_one::<String>("version").map_or_else(
+        || Ok(source_version.clone()),
+        |requested| ProductVersion::parse(requested).map_err(|error| error.to_string()),
+    )?;
     let release_version_text = fs::read_to_string(root.join("dist/VERSION"))
         .map_err(|error| format!("cannot read dist/VERSION: {error}"))?;
     let release_version =
@@ -634,97 +642,26 @@ fn resolve_local_preconditions(
     observed_version: &ProductVersion,
 ) -> Result<LocalPreconditions, String> {
     let head = git_required(root, &["rev-parse", "--verify", "HEAD^{commit}"])?;
-    let subject = git_required(root, &["show", "-s", "--format=%s", &head])?;
-    let expected_subject = format!("release: bump to {requested_version}");
     let status = tracked_worktree_status(root)?;
-    match action {
-        dist::ReleaseAction::Publish => {
-            let source_commit = if subject == expected_subject {
-                git_required(root, &["rev-parse", "--verify", &format!("{head}^")])?
-            } else {
-                revision_commit.to_owned()
-            };
-            let fold = crate::release_commit::project(root, &source_commit, requested_version)?;
-            if subject == expected_subject && fold.commit != head {
-                return Err(format!(
-                    "release commit {head} disagrees with deterministic fold {}",
-                    fold.commit
-                ));
-            }
-            admit_publish_progress(
-                &head,
-                &source_commit,
-                &fold.commit,
-                observed_version,
-                source_version,
-                requested_version,
-                &status,
-            )?;
-            Ok(LocalPreconditions {
-                source_commit: source_commit.clone(),
-                release_commit: fold.commit,
-                head: source_commit,
-                clean: true,
-                bump_claimed: false,
-                release_version: source_version.clone(),
-            })
-        }
-        dist::ReleaseAction::TagAndAnnounce => {
-            if head != revision_commit || subject != expected_subject || !status.is_empty() {
-                return Err(
-                    "tag-and-announce requires the clean deterministic release commit at HEAD"
-                        .to_owned(),
-                );
-            }
-            let source_commit =
-                git_required(root, &["rev-parse", "--verify", &format!("{head}^")])?;
-            let fold = crate::release_commit::project(root, &source_commit, requested_version)?;
-            if fold.commit != head || observed_version != requested_version {
-                return Err("tag-and-announce release identity or version moved".to_owned());
-            }
-            Ok(LocalPreconditions {
-                source_commit,
-                release_commit: head.clone(),
-                head,
-                clean: true,
-                bump_claimed: true,
-                release_version: requested_version.clone(),
-            })
-        }
+    if head != revision_commit || !status.is_empty() {
+        return Err(format!(
+            "{} requires the clean selected release commit at HEAD",
+            action.as_str()
+        ));
     }
-}
-
-fn admit_publish_progress(
-    head: &str,
-    source_commit: &str,
-    release_commit: &str,
-    observed_version: &ProductVersion,
-    source_version: &ProductVersion,
-    requested_version: &ProductVersion,
-    status: &str,
-) -> Result<(), String> {
-    let admitted = (head == source_commit
-        && observed_version == source_version
-        && status.is_empty())
-        || (head == source_commit
-            && observed_version == requested_version
-            && exact_version_bump(status))
-        || (head == release_commit && observed_version == requested_version && status.is_empty());
-    if admitted {
-        Ok(())
-    } else {
-        Err(format!(
-            "release source progress moved: HEAD={head} version={observed_version} status={status:?}"
-        ))
+    if source_version != requested_version || observed_version != requested_version {
+        return Err(format!(
+            "{} requires requested, compiled, and tracked product version {requested_version} to agree; compiled={source_version} tracked={observed_version}",
+            action.as_str()
+        ));
     }
-}
-
-fn exact_version_bump(status: &str) -> bool {
-    let mut lines = status.lines();
-    matches!(
-        lines.next(),
-        Some(" M dist/VERSION" | "M  dist/VERSION" | "M dist/VERSION")
-    ) && lines.next().is_none()
+    Ok(LocalPreconditions {
+        source_commit: head.clone(),
+        release_commit: head.clone(),
+        head,
+        clean: true,
+        release_version: requested_version.clone(),
+    })
 }
 
 fn bind_external_plan(
@@ -733,6 +670,7 @@ fn bind_external_plan(
     release: AdmittedRelease,
     external: ExternalPreconditions,
 ) -> Result<AdmittedRelease, String> {
+    admit_manifest_source(&release.published.manifest.source, &external.release_commit)?;
     let package = crate::release_package::preview(
         root,
         &external.requested_version,
@@ -766,7 +704,6 @@ fn bind_external_plan(
     let observations = dist::ReleaseObservations {
         head: external.head,
         clean: external.clean,
-        bump_claimed: external.bump_claimed,
         unrecorded_local_commits: external.unrecorded_local_commits,
         source_version: external.source_version,
         release_version: external.release_version,
@@ -800,6 +737,15 @@ fn bind_external_plan(
     })
     .map_err(|error| error.to_string())?;
     Ok(release.bind_external(plan))
+}
+
+fn admit_manifest_source(source: &Digest, release_commit: &str) -> Result<(), String> {
+    let expected = Digest::compute(Domain::DistSourceCommit, release_commit.as_bytes());
+    if source == &expected {
+        Ok(())
+    } else {
+        Err("sealed release source does not name the selected release commit".to_owned())
+    }
 }
 
 fn tracked_worktree_status(root: &Path) -> Result<String, String> {

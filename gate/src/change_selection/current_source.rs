@@ -49,6 +49,7 @@ const SHELL: [GateId; 4] = [
     GateId::Complexity,
     GateId::MagicNumbers,
 ];
+const RUST_COMPILER_INPUT: [GateId; 2] = [GateId::RustTypecheck, GateId::CanvasWebTypecheck];
 
 /// Select the richer Spice-source battery from its explicit xtask override.
 ///
@@ -114,6 +115,7 @@ fn class_gates(path: &str, extension: &str) -> Result<Vec<GateId>, ChangeSelecti
         "cs" => Ok(CSHARP.to_vec()),
         "sh" | "bash" | "zsh" => Ok(SHELL.to_vec()),
         "toml" | "json" | "yaml" | "yml" | "lock" => configuration_gates(path),
+        "" if path == "dist/VERSION" => Ok(RUST_COMPILER_INPUT.to_vec()),
         "" if known_extensionless_shell(path) => Ok(SHELL.to_vec()),
         "" if known_extensionless(path) => Ok(vec![GateId::RepoShape]),
         _ if frontend_path(path) => Ok(vec![GateId::CanvasWebTypecheck]),
@@ -290,4 +292,16 @@ fn known_extensionless(path: &str) -> bool {
 
 fn known_extensionless_shell(path: &str) -> bool {
     path.starts_with("steer/hooks/shell/") || path.starts_with("steer/hooks/wrappers/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn product_version_selects_both_rust_consumers() {
+        let selected = gates_for_path("dist/VERSION").expect("product version input");
+        assert!(selected.contains(&GateId::RustTypecheck));
+        assert!(selected.contains(&GateId::CanvasWebTypecheck));
+    }
 }

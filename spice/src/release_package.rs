@@ -97,6 +97,19 @@ pub(super) fn materialize(
     })
 }
 
+pub(super) fn target_executable(
+    root: &Path,
+    target: ReleaseTarget,
+    manifest: &[u8],
+) -> Result<Vec<u8>, PackageFailure> {
+    load(root, manifest)?
+        .targets
+        .into_iter()
+        .find(|candidate| candidate.target == target)
+        .map(|candidate| candidate.executable)
+        .ok_or_else(|| PackageFailure::Moved(format!("release manifest has no {target} target")))
+}
+
 fn validate_notes(identity: &Digest, notes: &[u8]) -> Result<(), String> {
     if identity == &Digest::compute(Domain::DistReleaseNotes, notes) {
         Ok(())

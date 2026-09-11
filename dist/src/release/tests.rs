@@ -13,12 +13,10 @@ fn digest(domain: Domain, value: &[u8]) -> Digest {
 
 fn input(action: ReleaseAction) -> PlanInput {
     let version = ProductVersion::parse("1.2.3").expect("fixture version");
-    let source_version = ProductVersion::parse("1.2.2").expect("source version");
-    let recovering = action == ReleaseAction::TagAndAnnounce;
     let package = digest(Domain::DistReleasePackage, b"package");
     let registry = (action == ReleaseAction::TagAndAnnounce).then(|| RegistryEvidence {
         version: version.clone(),
-        release_commit: RELEASE.to_owned(),
+        release_commit: SOURCE.to_owned(),
         package: package.clone(),
     });
     PlanInput {
@@ -26,7 +24,7 @@ fn input(action: ReleaseAction) -> PlanInput {
         action,
         requested_version: version.clone(),
         source_commit: SOURCE.to_owned(),
-        release_commit: RELEASE.to_owned(),
+        release_commit: SOURCE.to_owned(),
         notes: b"## Highlights\n\n- Exact curated prose.\n".to_vec(),
         manifest: digest(Domain::DistReleaseManifest, b"manifest"),
         package,
@@ -45,12 +43,11 @@ fn input(action: ReleaseAction) -> PlanInput {
             },
         ],
         observations: ReleaseObservations {
-            head: if recovering { RELEASE } else { SOURCE }.to_owned(),
+            head: SOURCE.to_owned(),
             clean: true,
-            bump_claimed: recovering,
             unrecorded_local_commits: 0,
-            source_version: source_version.clone(),
-            release_version: if recovering { version } else { source_version },
+            source_version: version.clone(),
+            release_version: version,
             credentials_valid: true,
             package_ref: None,
             tag_ref: None,
@@ -123,13 +120,7 @@ impl FakeEffects {
             Operation::RunCorrectnessGate => OperationState::Gate {
                 receipt: Some(plan.gate_receipt()),
             },
-            Operation::BumpAndVerifyVersion => OperationState::Version {
-                version: plan.requested_version.clone(),
-            },
-            Operation::CreateReleaseCommit => OperationState::Commit {
-                head: plan.release_commit.clone(),
-            },
-            Operation::RebuildArtifacts | Operation::RehearseUpload => OperationState::Package {
+            Operation::RehearseUpload => OperationState::Package {
                 identity: Some(plan.package.clone()),
                 object: Some(plan.package_object.clone()),
             },
@@ -173,9 +164,6 @@ impl EffectPort for FakeEffects {
             .get(&operation)
             .cloned()
             .unwrap_or_else(|| match operation {
-                Operation::BumpAndVerifyVersion => OperationState::Version {
-                    version: plan.observations.source_version.clone(),
-                },
                 Operation::CreateImmutableTag => OperationState::RemoteRef {
                     reference: format!("refs/tags/v{}", plan.requested_version),
                     object: None,
@@ -242,9 +230,6 @@ fn preview_is_pure_and_spells_the_complete_order() {
         [
             "resolve-preconditions-and-credentials",
             "run-correctness-gate",
-            "bump-and-verify-version",
-            "create-release-commit",
-            "rebuild-artifacts",
             "install-and-probe-artifacts",
             "rehearse-upload",
             "upload-package",
@@ -268,7 +253,6 @@ fn every_bound_value_moves_the_plan_digest() {
     let recovery = plan_release(input(ReleaseAction::TagAndAnnounce)).expect("recovery");
     assert_ne!(baseline.key, recovery.key);
     assert_eq!(recovery.operations, RECOVERY_OPERATIONS);
-    assert!(!recovery.operations.contains(&Operation::RebuildArtifacts));
     assert!(!recovery.operations.contains(&Operation::UploadPackage));
 
     let moved = |plan: ReleasePlan| {
@@ -283,13 +267,13 @@ fn every_bound_value_moves_the_plan_digest() {
     moved(plan);
     let mut plan = baseline.clone();
     plan.requested_version = ProductVersion::parse("1.2.4").expect("moved version");
+    plan.observations.source_version = plan.requested_version.clone();
+    plan.observations.release_version = plan.requested_version.clone();
     moved(plan);
     let mut plan = baseline.clone();
     plan.source_commit = RELEASE.to_owned();
+    plan.release_commit = RELEASE.to_owned();
     plan.observations.head = RELEASE.to_owned();
-    moved(plan);
-    let mut plan = baseline.clone();
-    plan.release_commit = SOURCE.to_owned();
     moved(plan);
     let mut plan = baseline.clone();
     plan.manifest = digest(Domain::DistReleaseManifest, b"other manifest");
@@ -307,7 +291,8 @@ fn every_bound_value_moves_the_plan_digest() {
     plan.targets[0].receipt = digest(Domain::ProofReceiptV3, b"other receipt");
     moved(plan);
     let mut plan = baseline.clone();
-    plan.observations.source_version = ProductVersion::parse("1.2.1").expect("moved source");
+    plan.requested_version = ProductVersion::parse("1.2.1").expect("moved requested version");
+    plan.observations.source_version = plan.requested_version.clone();
     plan.observations.release_version = plan.observations.source_version.clone();
     moved(plan);
     let mut plan = baseline;
@@ -343,6 +328,21 @@ fn all_no_effect_preconditions_refuse_during_planning() {
         Err(PlanError::VersionDisagreement { .. })
     ));
 
+    let mut compiled = input(ReleaseAction::Publish);
+    compiled.observations.source_version =
+        ProductVersion::parse("1.2.2").expect("different compiled version");
+    assert!(matches!(
+        plan_release(compiled),
+        Err(PlanError::VersionDisagreement { .. })
+    ));
+
+    let mut split_commit = input(ReleaseAction::Publish);
+    split_commit.release_commit = RELEASE.to_owned();
+    assert!(matches!(
+        plan_release(split_commit),
+        Err(PlanError::CommitDisagreement { .. })
+    ));
+
     let mut package = input(ReleaseAction::Publish);
     package.observations.package_ref = Some(RELEASE.to_owned());
     assert!(matches!(
@@ -354,7 +354,7 @@ fn all_no_effect_preconditions_refuse_during_planning() {
     ));
 
     let mut tag = input(ReleaseAction::Publish);
-    tag.observations.tag_ref = Some(SOURCE.to_owned());
+    tag.observations.tag_ref = Some(RELEASE.to_owned());
     assert!(matches!(plan_release(tag), Err(PlanError::RefMoved { .. })));
 
     let mut credentials = input(ReleaseAction::Publish);
@@ -384,20 +384,13 @@ fn all_no_effect_preconditions_refuse_during_planning() {
 
     let mut converged = input(ReleaseAction::Publish);
     converged.observations.package_ref = Some(PACKAGE_OBJECT.to_owned());
-    converged.observations.tag_ref = Some(RELEASE.to_owned());
-    converged.observations.announcement_ref = Some(RELEASE.to_owned());
+    converged.observations.tag_ref = Some(SOURCE.to_owned());
+    converged.observations.announcement_ref = Some(SOURCE.to_owned());
     plan_release(converged).expect("refs already naming the release converge");
 }
 
 #[test]
 fn recovery_requires_exact_registry_visible_evidence() {
-    let mut unclaimed = input(ReleaseAction::TagAndAnnounce);
-    unclaimed.observations.bump_claimed = false;
-    assert!(matches!(
-        plan_release(unclaimed),
-        Err(PlanError::UnclaimedBump)
-    ));
-
     let mut absent = input(ReleaseAction::TagAndAnnounce);
     absent.observations.registry = None;
     assert!(matches!(
@@ -410,7 +403,7 @@ fn recovery_requires_exact_registry_visible_evidence() {
         .registry
         .as_mut()
         .expect("fixture evidence")
-        .release_commit = SOURCE.to_owned();
+        .release_commit = RELEASE.to_owned();
     assert!(matches!(
         plan_release(moved),
         Err(PlanError::RegistryEvidenceMoved)
@@ -430,7 +423,7 @@ fn moved_digest_and_observations_refuse_before_any_operation() {
     assert!(effects.calls.is_empty());
     assert!(journal.accepted.is_empty());
 
-    effects.observations.tag_ref = Some(SOURCE.to_owned());
+    effects.observations.tag_ref = Some(RELEASE.to_owned());
     assert!(matches!(
         ReleaseExecutor::execute(&plan, &plan.key, &mut journal, &mut effects),
         Err(ExecuteError::ObservationsMoved)
@@ -541,7 +534,7 @@ fn completed_receipts_remain_bound_to_the_exact_plan_and_result() {
     let package_index = plan
         .operations
         .iter()
-        .position(|operation| *operation == Operation::RebuildArtifacts)
+        .position(|operation| *operation == Operation::RehearseUpload)
         .expect("package operation");
     let mut moved_package = execution.completed.clone();
     moved_package[package_index].result = OperationState::Package {
@@ -550,7 +543,7 @@ fn completed_receipts_remain_bound_to_the_exact_plan_and_result() {
     };
     assert!(matches!(
         ReleaseExecutor::verify_completion(&plan, &moved_package),
-        Err(ExecuteError::ReceiptMoved(Operation::RebuildArtifacts))
+        Err(ExecuteError::ReceiptMoved(Operation::RehearseUpload))
     ));
 
     let registry_index = plan

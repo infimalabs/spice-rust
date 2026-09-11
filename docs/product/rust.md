@@ -347,9 +347,9 @@ payload source. Only a clean replay publishes a detached receipt. A post-proof
 `spice release seal` composes both target payloads and receipts into one release
 manifest, publishes its pointer last, and asks the resident to recognize that
 exact manifest against the current clean commit and tree. The
-publication plan separately admits its source and release commits and the
-manifest, package, notes, targets, and operations without equating the plan's
-source commit with the manifest source.
+publication preview requires the manifest source to name the already-versioned
+release commit, then binds that manifest, package, notes, targets, and operations
+with the identical source and release commit.
 
 Target builds use a persistent release target directory. Package materialization
 rechecks staged executable bytes against the payload inventory and must reproduce

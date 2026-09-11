@@ -28,30 +28,10 @@ pub(super) fn admitted_local_progress(
     version: &dist::ProductVersion,
     status: &str,
 ) -> bool {
-    match plan.action {
-        dist::ReleaseAction::Publish => {
-            (head == plan.source_commit
-                && version == &plan.observations.source_version
-                && status.is_empty())
-                || (head == plan.source_commit
-                    && version == &plan.requested_version
-                    && exact_version_bump(status))
-                || (head == plan.release_commit
-                    && version == &plan.requested_version
-                    && status.is_empty())
-        }
-        dist::ReleaseAction::TagAndAnnounce => {
-            head == plan.release_commit && version == &plan.requested_version && status.is_empty()
-        }
-    }
-}
-
-pub(super) fn exact_version_bump(status: &str) -> bool {
-    let mut lines = status.lines();
-    matches!(
-        lines.next(),
-        Some(" M dist/VERSION") | Some("M  dist/VERSION") | Some("M dist/VERSION")
-    ) && lines.next().is_none()
+    plan.source_commit == plan.release_commit
+        && head == plan.source_commit
+        && version == &plan.requested_version
+        && status.is_empty()
 }
 
 #[cfg(unix)]

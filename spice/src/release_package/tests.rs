@@ -11,7 +11,7 @@ use super::*;
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
 #[test]
-fn package_preview_and_materialization_read_only_content_addressed_executables() {
+fn package_preview_reads_only_content_addressed_executables() {
     let fixture = Fixture::new();
     let preview = preview(
         &fixture.root,
@@ -29,12 +29,19 @@ fn package_preview_and_materialization_read_only_content_addressed_executables()
         &fixture.manifest,
     )
     .unwrap_or_else(|error| panic!("content-addressed package materialization failed: {error}"));
-
     assert_eq!(materialized, preview);
-    for target in [
+    for (index, target) in [
         ReleaseTarget::Aarch64AppleDarwin,
         ReleaseTarget::X86_64UnknownLinuxMusl,
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(
+            target_executable(&fixture.root, target, &fixture.manifest)
+                .unwrap_or_else(|error| panic!("sealed executable load failed: {error}")),
+            fs::read(&fixture.executables[index]).expect("read fixture executable object")
+        );
         assert!(
             !fixture
                 .root

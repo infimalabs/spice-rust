@@ -419,8 +419,6 @@ pub struct ReleasePlanObservations {
     pub head: String,
     /// Whether tracked worktree state is clean.
     pub clean: bool,
-    /// Whether any version transition belongs to the selected release commit.
-    pub bump_claimed: bool,
     /// Number of commits after the selected release commit.
     pub unrecorded_local_commits: u64,
     /// Product version compiled into the source executable.

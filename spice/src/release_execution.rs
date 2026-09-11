@@ -229,14 +229,11 @@ pub(super) struct SystemEffects {
     root: PathBuf,
     probe_root: PathBuf,
     authority: dist::ReleaseAuthority,
-    appliance: PathBuf,
 }
 
 impl SystemEffects {
     fn new(root: &Path, journal_root: &Path) -> Result<Self, dist::EffectError> {
         let authority = dist::current_authority(root)
-            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
-        let repository = spice::repository::Repository::discover(root)
             .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
         let probe_root = journal_root
             .parent()
@@ -246,7 +243,6 @@ impl SystemEffects {
             root: root.to_path_buf(),
             probe_root,
             authority,
-            appliance: spice::install::installed_binary(&repository),
         })
     }
 
@@ -363,33 +359,30 @@ impl SystemEffects {
         Ok(dist::OperationState::Gate { receipt })
     }
 
-    fn run_dev_xtask(&self, target: &str) -> Result<String, String> {
-        let appliance = self
-            .appliance
-            .to_str()
-            .ok_or_else(|| "installed Spice path is not UTF-8".to_owned())?;
-        run(&self.root, appliance, &dev_xtask_arguments(target))
-    }
-
     fn install_and_probe(
         &self,
         plan: &dist::ReleasePlan,
     ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
         let target = proof::compiled_target()
             .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
-        let source = self
-            .root
-            .join("dist/stage/targets")
-            .join(target.as_str())
-            .join("bin/spice");
-        let bytes =
-            fs::read(&source).map_err(|error| dist::EffectError::Environment(error.to_string()))?;
+        let bytes = crate::release_package::target_executable(
+            &self.root,
+            target,
+            &manifest_bytes(&self.root, plan)?,
+        )
+        .map_err(|error| match error {
+            crate::release_package::PackageFailure::Moved(detail) => {
+                dist::EffectError::Moved(detail)
+            }
+            crate::release_package::PackageFailure::Environment(detail) => {
+                dist::EffectError::Environment(detail)
+            }
+        })?;
         let identity = Digest::compute(wire::Domain::DistArtifact, &bytes);
         if identity != plan.installed_artifact {
-            return Err(dist::EffectError::Moved(format!(
-                "staged executable {} moved",
-                source.display()
-            )));
+            return Err(dist::EffectError::Moved(
+                "sealed host executable identity moved".to_owned(),
+            ));
         }
         let path = self.probe_path(plan);
         let prior = self.installed_state(plan)?;
@@ -505,18 +498,7 @@ impl dist::EffectPort for SystemEffects {
                 Ok(dist::OperationState::Binding { identity })
             }
             Op::RunCorrectnessGate => self.gate_state(plan),
-            Op::BumpAndVerifyVersion => {
-                let version = fs::read_to_string(self.root.join("dist/VERSION"))
-                    .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
-                Ok(dist::OperationState::Version {
-                    version: dist::ProductVersion::parse(version.trim())
-                        .map_err(|error| dist::EffectError::Environment(error.to_string()))?,
-                })
-            }
-            Op::CreateReleaseCommit => Ok(dist::OperationState::Commit {
-                head: self.git_local(&["rev-parse", "--verify", "HEAD^{commit}"])?,
-            }),
-            Op::RebuildArtifacts | Op::RehearseUpload => {
+            Op::RehearseUpload => {
                 let package = package_preview(&self.root, plan)?;
                 Ok(dist::OperationState::Package {
                     identity: Some(package.identity),
@@ -556,9 +538,6 @@ impl dist::EffectPort for SystemEffects {
         match operation {
             Op::ResolvePreconditionsAndCredentials => self.converge_preconditions(plan),
             Op::RunCorrectnessGate => self.converge_gate(plan, prior),
-            Op::BumpAndVerifyVersion => self.converge_version(plan, prior),
-            Op::CreateReleaseCommit => self.converge_commit(plan, prior),
-            Op::RebuildArtifacts => self.converge_rebuild(plan, prior),
             Op::InstallAndProbeArtifacts => self.install_and_probe(plan),
             Op::RehearseUpload => self.converge_rehearsal(plan),
             Op::UploadPackage | Op::CreateImmutableTag | Op::Announce => {
@@ -648,123 +627,10 @@ impl SystemEffects {
         ))
     }
 
-    fn converge_version(
-        &self,
-        plan: &dist::ReleasePlan,
-        prior: &dist::OperationState,
-    ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
-        let dist::OperationState::Version { version: prior } = prior else {
-            return Err(dist::EffectError::Environment(
-                "version bump received the wrong prior-state shape".to_owned(),
-            ));
-        };
-        let path = self.root.join("dist/VERSION");
-        let current = fs::read_to_string(&path)
-            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
-        let current = dist::ProductVersion::parse(current.trim())
-            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
-        if current == plan.requested_version {
-            return Ok((
-                dist::OperationState::Version { version: current },
-                dist::Convergence::AlreadyConverged,
-            ));
-        }
-        if &current != prior || current != plan.observations.source_version {
-            return Err(dist::EffectError::Moved(format!(
-                "release version moved from {prior} to {current}"
-            )));
-        }
-        let mut staged = atomic::Destination::new(&path)
-            .map_err(|error| dist::EffectError::Environment(error.to_string()))?
-            .stage()
-            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
-        staged
-            .write_all(format!("{}\n", plan.requested_version).as_bytes())
-            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
-        staged
-            .commit()
-            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
-        let observed = fs::read_to_string(&path)
-            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
-        let observed = dist::ProductVersion::parse(observed.trim())
-            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
-        if observed != plan.requested_version {
-            return Err(dist::EffectError::Moved(
-                "version bump did not converge to the requested version".to_owned(),
-            ));
-        }
-        Ok((
-            dist::OperationState::Version { version: observed },
-            dist::Convergence::Applied,
-        ))
-    }
-
-    fn converge_commit(
-        &self,
-        plan: &dist::ReleasePlan,
-        prior: &dist::OperationState,
-    ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
-        let dist::OperationState::Commit { head: prior_head } = prior else {
-            return Err(dist::EffectError::Environment(
-                "release commit received the wrong prior-state shape".to_owned(),
-            ));
-        };
-        let current = self.git_local(&["rev-parse", "--verify", "HEAD^{commit}"])?;
-        if current == plan.release_commit {
-            return Ok((
-                dist::OperationState::Commit { head: current },
-                dist::Convergence::AlreadyConverged,
-            ));
-        }
-        if prior_head != &plan.source_commit || current != plan.source_commit {
-            return Err(dist::EffectError::Moved(format!(
-                "release HEAD moved from {} to {current}",
-                plan.source_commit
-            )));
-        }
-        let version = fs::read_to_string(self.root.join("dist/VERSION"))
-            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
-        let version = dist::ProductVersion::parse(version.trim())
-            .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
-        let status = self.git_local(&["status", "--porcelain=v1", "--untracked-files=no"])?;
-        let bump_is_exact = if plan.requested_version == plan.observations.source_version {
-            status.is_empty()
-        } else {
-            exact_version_bump(&status)
-        };
-        if version != plan.requested_version || !bump_is_exact {
-            return Err(dist::EffectError::Moved(format!(
-                "release bump moved before commit: version={version} status={status:?}"
-            )));
-        }
-        let fold = crate::release_commit::project(
-            &self.root,
-            &plan.source_commit,
-            &plan.requested_version,
-        )
-        .map_err(dist::EffectError::Environment)?;
-        if fold.commit != plan.release_commit {
-            return Err(dist::EffectError::Moved(
-                "deterministic release commit identity changed".to_owned(),
-            ));
-        }
-        let head = crate::release_commit::materialize(&self.root, &fold, &plan.requested_version)
-            .map_err(dist::EffectError::Environment)?;
-        Ok((
-            dist::OperationState::Commit { head },
-            dist::Convergence::Applied,
-        ))
-    }
-
-    fn converge_rebuild(
+    fn converge_rehearsal(
         &mut self,
         plan: &dist::ReleasePlan,
-        prior: &dist::OperationState,
     ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
-        for target in &plan.targets {
-            self.run_dev_xtask(&target.target)
-                .map_err(dist::EffectError::Environment)?;
-        }
         let package = crate::release_package::materialize(
             &self.root,
             &plan.requested_version,
@@ -782,37 +648,16 @@ impl SystemEffects {
         })?;
         if package.identity != plan.package || package.git_tree != plan.package_object {
             return Err(dist::EffectError::Moved(
-                "rebuilt package identity or Git tree changed".to_owned(),
+                "materialized package identity or Git tree changed".to_owned(),
             ));
         }
-        let convergence = if matches!(
-            prior,
-            dist::OperationState::Package {
-                object: Some(object),
-                ..
-            } if object == &plan.package_object
-        ) {
-            dist::Convergence::AlreadyConverged
-        } else {
-            dist::Convergence::Applied
-        };
-        Ok((
-            package_state(package.identity, package.git_tree),
-            convergence,
-        ))
-    }
-
-    fn converge_rehearsal(
-        &mut self,
-        plan: &dist::ReleasePlan,
-    ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
         let command = self
             .authority
             .package_rehearsal(&plan.requested_version, &plan.package_object)
             .map_err(|error| dist::EffectError::RemoteRefused(error.to_string()))?;
         self.git_owned(&command)?;
         Ok((
-            package_state(plan.package.clone(), plan.package_object.clone()),
+            package_state(package.identity, package.git_tree),
             dist::Convergence::Applied,
         ))
     }
@@ -898,35 +743,18 @@ impl SystemEffects {
     }
 }
 
-fn dev_xtask_arguments(target: &str) -> [&str; 5] {
-    ["dev", "xtask", "--", "stage-target", target]
-}
-
 mod tail;
 #[cfg(test)]
 use tail::effect_outcome;
 use tail::{
-    admitted_local_progress, exact_version_bump, make_executable, manifest_bytes, object_exists,
-    package_preview, package_state, ref_state, run, stable_ref_observation,
+    admitted_local_progress, make_executable, manifest_bytes, object_exists, package_preview,
+    package_state, ref_state, run, stable_ref_observation,
 };
 pub(crate) use tail::{execute, verify_completed};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn release_rebuilds_both_targets_through_the_admitted_dev_xtask_boundary() {
-        for target in [
-            wire::manifest::ReleaseTarget::Aarch64AppleDarwin,
-            wire::manifest::ReleaseTarget::X86_64UnknownLinuxMusl,
-        ] {
-            assert_eq!(
-                dev_xtask_arguments(target.as_str()),
-                ["dev", "xtask", "--", "stage-target", target.as_str()]
-            );
-        }
-    }
 
     #[test]
     fn external_effect_failures_keep_their_operator_visible_categories() {

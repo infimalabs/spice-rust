@@ -41,9 +41,12 @@ fn draft_with_release(
 ) -> Result<ReleaseNotes, Error> {
     let history_commit = resolve_commit(root, revision.unwrap_or("HEAD"))?;
     let release_commit = projected_release.unwrap_or(&history_commit).to_owned();
-    let release_version = requested_version
-        .unwrap_or(env!("CARGO_PKG_VERSION"))
-        .to_owned();
+    let release_version = match requested_version {
+        Some(version) => version.to_owned(),
+        None => dist::current_product_version()
+            .map_err(|error| Error::Encoding(error.to_string()))?
+            .to_string(),
+    };
     let current_tag = format!("v{release_version}");
     let previous_tag = reachable_tags(root, &history_commit)?
         .into_iter()

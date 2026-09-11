@@ -392,16 +392,21 @@ pub fn command() -> Command {
 }
 
 /// Product version and build profile compiled into this appliance.
-#[cfg(debug_assertions)]
-pub const COMPILED_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (development)");
-/// Product version and build profile compiled into this appliance.
-#[cfg(not(debug_assertions))]
-pub const COMPILED_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (release)");
+fn compiled_version() -> String {
+    let version = dist::current_product_version()
+        .expect("the tracked product version is validated by the repository gate");
+    let profile = if cfg!(debug_assertions) {
+        "development"
+    } else {
+        "release"
+    };
+    format!("{version} ({profile})")
+}
 
 fn command_from(contracts: &[Contract], mounts: &[Mount]) -> Command {
     let mut root = Command::new("spice")
         .about("Repository-local coordination appliance")
-        .version(COMPILED_VERSION)
+        .version(compiled_version())
         .subcommand_required(true)
         .arg_required_else_help(true)
         .disable_help_subcommand(true)

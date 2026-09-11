@@ -51,7 +51,6 @@ mod proof_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod release_command;
 #[cfg(not(target_arch = "wasm32"))]
-mod release_commit;
 #[cfg(not(target_arch = "wasm32"))]
 mod release_execution;
 #[cfg(not(target_arch = "wasm32"))]
