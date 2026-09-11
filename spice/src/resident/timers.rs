@@ -13,8 +13,6 @@ use wire::{
 
 use super::{CommandResult, environment_fault, new_uuid, steering, store_fault};
 
-const TIMER_FACT_PAGE_ROWS: usize = 1024;
-
 /// Process-local waits mirror durable claim, steering, and lifecycle authority.
 /// Each fired event re-proves its captured durable state before appending, so
 /// restart catch-up and stale races use the same guarded transition path.
@@ -668,7 +666,7 @@ impl TimerFacts {
                 .canvas_facts(
                     journal::FactPageStart::After(self.horizon),
                     target,
-                    TIMER_FACT_PAGE_ROWS,
+                    journal::FactReadBudget::RETAINED,
                 )
                 .map_err(|error| store_fault("bus::timer-facts-failed", &error.to_string()))?;
             let Some(last) = page.rows.last().map(|fact| fact.seq) else {

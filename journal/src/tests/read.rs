@@ -219,20 +219,20 @@ fn every_retained_page_surface_keeps_decoded_bytes_within_the_durable_maximum() 
                 &"task:1kKRRsDP".parse().expect("fixture origin"),
                 FactKind::TaskNoted,
                 None,
-                2,
+                fact_budget(2),
             )?;
             Ok(())
         })
     });
     assert_bounded(&|| {
         journal.read(|read| {
-            read.fact_page(FactPageStart::At(seq(3)), seq(4), 2)?;
+            read.fact_page(FactPageStart::At(seq(3)), seq(4), fact_budget(2))?;
             Ok(())
         })
     });
     assert_bounded(&|| {
         journal.read(|read| {
-            read.causal_page(seq(4), 2)?;
+            read.causal_page(seq(4), fact_budget(2))?;
             Ok(())
         })
     });
@@ -260,12 +260,13 @@ fn recent_origin_facts_resume_after_a_byte_bounded_prefix_without_fault() {
 
     reset_indexed_read_metrics();
     let first = journal
-        .read(|read| read.recent_origin_facts(&origin, FactKind::TaskNoted, None, 2))
+        .read(|read| read.recent_origin_facts(&origin, FactKind::TaskNoted, None, fact_budget(2)))
         .expect("first byte-bounded recent-origin page");
     assert_eq!(
-        first.iter().map(|fact| fact.seq).collect::<Vec<_>>(),
+        first.rows.iter().map(|fact| fact.seq).collect::<Vec<_>>(),
         [seq(4)]
     );
+    assert_eq!(first.continuation, Some(seq(4)));
     assert!(indexed_read_metrics().decoded_bytes <= MAX_RETAINED_FACT_PAGE_BYTES as u64);
 
     reset_indexed_read_metrics();
@@ -274,15 +275,16 @@ fn recent_origin_facts_resume_after_a_byte_bounded_prefix_without_fault() {
             read.recent_origin_facts(
                 &origin,
                 FactKind::TaskNoted,
-                first.last().map(|fact| fact.seq),
-                2,
+                first.continuation,
+                fact_budget(2),
             )
         })
         .expect("second byte-bounded recent-origin page");
     assert_eq!(
-        second.iter().map(|fact| fact.seq).collect::<Vec<_>>(),
+        second.rows.iter().map(|fact| fact.seq).collect::<Vec<_>>(),
         [seq(3)]
     );
+    assert_eq!(second.continuation, None);
     assert!(indexed_read_metrics().decoded_bytes <= MAX_RETAINED_FACT_PAGE_BYTES as u64);
 }
 
@@ -353,9 +355,11 @@ fn retained_fact_readers_refuse_oversized_corruption_before_decoding_it() {
 
 #[test]
 fn retained_fact_budget_refuses_zero_and_platform_maximum_work() {
+    reset_indexed_read_metrics();
     for (rows, bytes) in [(0, 1), (1, 0), (usize::MAX, 1), (1, usize::MAX)] {
         assert!(FactReadBudget::new(rows, bytes).is_err());
     }
+    assert_eq!(indexed_read_metrics(), Default::default());
 }
 
 #[test]
@@ -398,14 +402,14 @@ fn newest_fact_reads_are_indexed_and_obey_their_page_limit() {
                     &"task:1kKRRsDP".parse().expect("fixture origin"),
                     FactKind::TaskPhased,
                     None,
-                    1,
+                    fact_budget(1),
                 )?,
             ))
         })
         .expect("bounded newest fact reads");
     assert_eq!(latest.expect("latest fact").seq, seq(2));
-    assert_eq!(recent.len(), 1);
-    assert_eq!(recent[0].seq, seq(2));
+    assert_eq!(recent.rows.len(), 1);
+    assert_eq!(recent.rows[0].seq, seq(2));
     let metrics = indexed_read_metrics();
     assert_eq!((metrics.queries, metrics.rows), (2, 2));
     assert!(metrics.decoded_bytes > 0);

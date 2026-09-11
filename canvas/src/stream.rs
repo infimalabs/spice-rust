@@ -12,6 +12,7 @@ use wire::{
     StreamCursor, StreamFact, StreamFrame, StreamRequest, ViewSubject, WireVersion,
 };
 
+mod budget;
 mod message;
 mod policy;
 
@@ -184,7 +185,7 @@ impl Source {
         admit_subject(&accepted.actor, ViewSubject::Facts)?;
         let packed = self
             .bus
-            .canvas_thread(cursor.seq, self.rows)
+            .canvas_thread(cursor.seq, self.fact_budget()?)
             .map_err(thread_fault)?
             .ok_or_else(|| {
                 Failure::Refusal(refusal(
@@ -246,7 +247,7 @@ impl Source {
         #[cfg(test)]
         self.reads.facts.fetch_add(1, Ordering::Relaxed);
         self.bus
-            .canvas_facts(start, horizon, self.rows)
+            .canvas_facts(start, horizon, self.fact_budget()?)
             .map_err(|error| {
                 Failure::Fault(Fault {
                     class: FaultClass::Store,
