@@ -11,7 +11,13 @@ use super::ChangeGateError;
 
 const CARGO_BUILD_JOBS: &str = "CARGO_BUILD_JOBS";
 const CONCURRENT_ORDINARY_GATE_SLICES: usize = 4;
-const MAX_GATE_WORKER_PROCESSES: usize = 3;
+/// One ordinary lane's share of the twelve-process host budget.
+///
+/// This cap does not control release proof. Proof executes its five pinned
+/// Cargo members sequentially through `proof::Battery`; matching the separate
+/// prebuilt-test ceiling here would instead let four ordinary lanes admit
+/// twenty-four process roots on a twelve-CPU host.
+const MAX_ORDINARY_GATE_WORKER_PROCESSES: usize = 3;
 const TEST_HARNESS_THREADS_PER_SHARD: usize = 1;
 
 /// Exact host share available to one of the ordinary concurrent gate lanes.
@@ -65,7 +71,7 @@ impl CargoBudget {
 
     pub(super) fn from_capacity(cpus: usize, test_concurrency_cap: usize) -> Self {
         let cpus = cpus.max(1);
-        let worker_processes = cpus.min(MAX_GATE_WORKER_PROCESSES);
+        let worker_processes = cpus.min(MAX_ORDINARY_GATE_WORKER_PROCESSES);
         let slice_jobs = 1;
         let native_policy_jobs = worker_processes.saturating_sub(1).max(1);
         let test_concurrency = worker_processes.min(test_concurrency_cap.max(1));
@@ -152,7 +158,7 @@ impl CargoBudget {
     ) -> Self {
         Self {
             cpus,
-            worker_processes: cpus.min(MAX_GATE_WORKER_PROCESSES),
+            worker_processes: cpus.min(MAX_ORDINARY_GATE_WORKER_PROCESSES),
             slice_jobs: policy_jobs,
             native_policy_jobs: policy_jobs,
             test_concurrency,
@@ -187,7 +193,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn budget_caps_direct_workers_and_each_nested_execution_lane() {
+    fn ordinary_gate_budget_caps_direct_workers_and_each_nested_execution_lane() {
         let budget = CargoBudget::from_capacity(12, 4);
         assert_eq!(budget.worker_processes(), 3);
         assert_eq!(budget.policy_jobs(), 1);
@@ -195,6 +201,8 @@ mod tests {
         assert_eq!(budget.test_concurrency(), 3);
         assert_eq!(budget.shard_jobs(), 1);
         assert_eq!(budget.test_threads(), 1);
+        assert!(!budget.advisory_lane_share().exceeded_by(3));
+        assert!(budget.advisory_lane_share().exceeded_by(6));
 
         let minimum = CargoBudget::from_capacity(0, 4);
         assert_eq!(minimum.policy_jobs(), 1);
