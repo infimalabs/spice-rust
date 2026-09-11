@@ -11,17 +11,20 @@ use super::*;
 #[cfg(test)]
 mod tests;
 
-/// First newest-record window; sparse tapes expand geometrically until enough cards exist.
+/// Fixed newest-record window for one startup or historical tape read.
 const INITIAL_WINDOW_BYTES: u64 = 32 * 1024;
 const TAIL_BOUNDARY_BYTES: u64 = 256 * 1024;
+const TAIL_SOURCE_BYTES: u64 = INITIAL_WINDOW_BYTES + TAIL_BOUNDARY_BYTES;
 const TAIL_RECORD_LIMIT: usize = 32 * 1024;
 const TAIL_PASS_LIMIT: usize = 64;
 const TAIL_DURATION: Duration = Duration::from_secs(1);
+const STARTUP_LANE_READ_LIMIT: usize = 8;
+const STARTUP_SOURCE_BYTE_LIMIT: u64 = TAIL_SOURCE_BYTES * STARTUP_LANE_READ_LIMIT as u64;
 
-fn tail_budget(window_bytes: u64) -> listen::TailBudget {
+fn tail_budget() -> listen::TailBudget {
     listen::TailBudget::new(
-        window_bytes,
-        window_bytes.saturating_add(TAIL_BOUNDARY_BYTES),
+        INITIAL_WINDOW_BYTES,
+        TAIL_SOURCE_BYTES,
         TAIL_RECORD_LIMIT,
         TAIL_PASS_LIMIT,
         TAIL_DURATION,
@@ -98,6 +101,8 @@ impl SessionWorktrees {
 #[derive(Debug, Default)]
 pub(in crate::resident) struct BacklogReader {
     cursors: BTreeMap<CanonicalUuid, listen::Checkpoint>,
+    history_open: BTreeSet<CanonicalUuid>,
+    startup_work: StartupWork,
     state: MessageState,
     steering: PresentationDirectives,
     worktrees: SessionWorktrees,
@@ -116,6 +121,8 @@ impl BacklogReader {
             .map_err(|error| store_fault("canvas::message-steering-invalid", &error))?;
         Ok(Self {
             cursors: BTreeMap::new(),
+            history_open: BTreeSet::new(),
+            startup_work: StartupWork::default(),
             state: MessageState {
                 previews: CallPreviews::default(),
                 observations: MessageObservations::from_snapshot(snapshot),
@@ -128,6 +135,33 @@ impl BacklogReader {
 
     pub(in crate::resident) fn into_state(self) -> MessageState {
         self.state
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct StartupWork {
+    lanes: usize,
+    source_bytes: u64,
+    records: usize,
+    passes: usize,
+}
+
+impl StartupWork {
+    fn admits_lane(self) -> bool {
+        self.lanes < STARTUP_LANE_READ_LIMIT
+            && self.source_bytes.saturating_add(TAIL_SOURCE_BYTES) <= STARTUP_SOURCE_BYTE_LIMIT
+    }
+
+    fn begin_lane(&mut self) {
+        self.lanes = self.lanes.saturating_add(1);
+    }
+
+    fn add(&mut self, work: listen::TailWork) {
+        self.source_bytes = self.source_bytes.saturating_add(work.source_bytes);
+        self.records = self.records.saturating_add(work.records);
+        self.passes = self.passes.saturating_add(work.passes);
+        debug_assert!(self.lanes <= STARTUP_LANE_READ_LIMIT);
+        debug_assert!(self.source_bytes <= STARTUP_SOURCE_BYTE_LIMIT);
     }
 }
 
@@ -168,11 +202,25 @@ fn restore_agent_messages_with(
     reader: &mut BacklogReader,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
+    reader.history_open.clear();
+    reader.startup_work = StartupWork::default();
     for row in &residency.lanes {
-        restore_lane(bus, paths, row, publisher, reader, diagnostic)?;
+        if !reader.startup_work.admits_lane() {
+            break;
+        }
+        reader.startup_work.begin_lane();
+        if let Some(restored) = restore_lane(bus, paths, row, publisher, reader, diagnostic)? {
+            reader.startup_work.add(restored.work);
+            if restored.older_history {
+                reader.history_open.insert(row.lane);
+            }
+        }
     }
     publisher
         .set_history_provider(Arc::new(DurableHistory::new(paths, residency, reader)))
+        .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
+    publisher
+        .set_history_open(reader.history_open.iter().copied())
         .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
     publisher
         .bound_initial_history()
@@ -311,11 +359,10 @@ impl canvas::stream::MessageHistoryProvider for DurableHistory {
             }));
         }
         let tape = if source.tape.is_dir() {
-            continuation
-                .tape
-                .as_ref()
-                .map(|end| self.tape_messages(lane, source, before, end, limit))
-                .transpose()?
+            Some(match continuation.tape.as_ref() {
+                Some(end) => self.tape_messages(lane, source, before, end, limit)?,
+                None => self.initial_tape_messages(lane, source, before, limit)?,
+            })
         } else if source.source.is_some() {
             return Err("the transcript source disappeared after Canvas bootstrap".to_owned());
         } else {
@@ -329,29 +376,63 @@ impl canvas::stream::MessageHistoryProvider for DurableHistory {
             visible.extend(session.messages.clone());
             more |= session.more;
         }
+        // An incomplete source can still hide rows newer than another source's
+        // oldest decoded row. Expose only chronology covered by every source;
+        // an empty incomplete slice advances its cursor while withholding all.
+        let incomplete_floors = [
+            tape.as_ref().and_then(|scan| {
+                scan.more.then(|| {
+                    scan.messages
+                        .iter()
+                        .map(wire::AgentMessage::chronology_key)
+                        .min()
+                })
+            }),
+            session.as_ref().and_then(|scan| {
+                scan.more.then(|| {
+                    scan.messages
+                        .iter()
+                        .map(wire::AgentMessage::chronology_key)
+                        .min()
+                })
+            }),
+        ];
+        if incomplete_floors.iter().any(Option::is_some) {
+            if let Some(floor) = incomplete_floors.into_iter().flatten().flatten().max() {
+                visible.retain(|message| message.chronology_key() >= floor);
+            } else {
+                visible.clear();
+            }
+        }
         visible.sort_by_key(wire::AgentMessage::chronology_key);
         visible.dedup_by(|right, left| right.locus == left.locus);
         let end =
             visible.partition_point(|message| message.chronology_key() < before.chronology_key());
         let start = end.saturating_sub(limit);
         let messages = visible[start..end].to_vec();
-        if let Some(oldest) = messages.first() {
+        let page_more = more || start > 0;
+        if page_more {
+            let continuation_anchor = messages.first().unwrap_or(before);
             let next = HistoryContinuation {
                 tape: tape
                     .as_ref()
-                    .and_then(|tape| tape_continuation(tape, continuation.tape.as_ref(), oldest)),
+                    .map(|tape| tape_continuation(tape, continuation_anchor)),
                 session: session.as_ref().and_then(|session| {
-                    session_continuation(session, continuation.session.as_ref(), oldest)
+                    session_continuation(
+                        session,
+                        continuation.session.as_ref(),
+                        continuation_anchor,
+                    )
                 }),
             };
             self.continuations
                 .lock()
                 .map_err(|_| "durable history continuation is unavailable".to_owned())?
-                .insert((lane, oldest.locus), next);
+                .insert((lane, continuation_anchor.locus), next);
         }
         Ok(Some(canvas::stream::MessageHistoryPage {
             messages,
-            more: more || start > 0,
+            more: page_more,
         }))
     }
 }
@@ -407,16 +488,44 @@ impl DurableHistory {
         end: &listen::Checkpoint,
         limit: usize,
     ) -> Result<TapeHistoryScan, String> {
-        let tail = history_tail(&source.tape, source.dialect, end, limit).map_err(|error| {
+        let tail = history_tail(&source.tape, source.dialect, end).map_err(|error| {
             if matches!(error, listen::ScanError::SourceChanged { .. }) {
                 "the transcript source changed after Canvas bootstrap".to_owned()
             } else {
                 error.to_string()
             }
         })?;
+        self.collect_tape_messages(lane, source, before, limit, tail)
+    }
+
+    fn initial_tape_messages(
+        &self,
+        lane: CanonicalUuid,
+        source: &DurableLane,
+        before: &wire::AgentMessage,
+        limit: usize,
+    ) -> Result<TapeHistoryScan, String> {
+        let tail = tail_backlog(&source.tape, source.dialect).map_err(|error| error.to_string())?;
+        self.collect_tape_messages(lane, source, before, limit, tail)
+    }
+
+    fn collect_tape_messages(
+        &self,
+        lane: CanonicalUuid,
+        source: &DurableLane,
+        before: &wire::AgentMessage,
+        limit: usize,
+        tail: listen::TailScan,
+    ) -> Result<TapeHistoryScan, String> {
+        let source_start = tail.start;
+        let end = tail.scan.checkpoint.clone();
+        #[cfg(test)]
+        let work = tail.work;
         let messages = CollectedMessages::new(limit);
         let mut reader = BacklogReader {
             cursors: BTreeMap::new(),
+            history_open: BTreeSet::new(),
+            startup_work: StartupWork::default(),
             state: MessageState {
                 previews: CallPreviews::default(),
                 observations: self.observations.clone(),
@@ -445,12 +554,17 @@ impl DurableHistory {
             .map_err(|_| "durable history collection is unavailable".to_owned())?;
         let mut messages = collected.messages;
         messages.retain(|message| message.chronology_key() < before.chronology_key());
-        let start = messages.len().saturating_sub(limit);
-        let selected = messages.split_off(start);
+        let selection_start = messages.len().saturating_sub(limit);
+        let selected = messages.split_off(selection_start);
         Ok(TapeHistoryScan {
             messages: selected,
-            more: collected.dropped || start > 0 || tail.start.next != listen::Position::start(),
-            start: tail.start,
+            more: collected.dropped
+                || selection_start > 0
+                || source_start.next != listen::Position::start(),
+            start: source_start,
+            end,
+            #[cfg(test)]
+            work,
         })
     }
 }
@@ -459,16 +573,22 @@ struct TapeHistoryScan {
     messages: Vec<wire::AgentMessage>,
     more: bool,
     start: listen::Checkpoint,
+    end: listen::Checkpoint,
+    #[cfg(test)]
+    work: listen::TailWork,
 }
 
-fn tape_continuation(
-    scan: &TapeHistoryScan,
-    end: Option<&listen::Checkpoint>,
-    before: &wire::AgentMessage,
-) -> Option<listen::Checkpoint> {
-    let end = end?.clone();
+fn tape_continuation(scan: &TapeHistoryScan, before: &wire::AgentMessage) -> listen::Checkpoint {
+    #[cfg(test)]
+    {
+        debug_assert!(scan.work.source_bytes <= TAIL_SOURCE_BYTES);
+        debug_assert!(scan.work.records <= TAIL_RECORD_LIMIT);
+        debug_assert!(scan.work.passes <= TAIL_PASS_LIMIT);
+        debug_assert!(scan.work.duration <= TAIL_DURATION);
+    }
+    let end = scan.end.clone();
     if scan.messages.is_empty() {
-        return Some(scan.start.clone());
+        return scan.start.clone();
     }
     let boundary = scan
         .messages
@@ -476,15 +596,15 @@ fn tape_continuation(
         .filter(|message| message.chronology_key() >= before.chronology_key())
         .min_by_key(|message| message.chronology_key());
     let Some(message) = boundary else {
-        return Some(end);
+        return end;
     };
-    Some(listen::Checkpoint {
+    listen::Checkpoint {
         source: end.source,
         next: listen::Position {
             member: message.locus.member,
             offset: message.locus.offset,
         },
-    })
+    }
 }
 
 fn session_continuation(
@@ -516,6 +636,11 @@ struct CollectedMessages {
 struct CollectedHistory {
     messages: Vec<wire::AgentMessage>,
     dropped: bool,
+}
+
+struct LaneRestore {
+    work: listen::TailWork,
+    older_history: bool,
 }
 
 impl CollectedMessages {
@@ -574,31 +699,38 @@ fn restore_lane(
     publisher: &impl AgentMessagePublisher,
     reader: &mut BacklogReader,
     diagnostic: &mut dyn io::Write,
-) -> CommandResult<()> {
+) -> CommandResult<Option<LaneRestore>> {
     let Some(author) = row
         .occupant
         .or_else(|| row.session.as_ref().map(|session| session.occupant))
         .or_else(|| row.lineage.last().copied())
     else {
-        return Ok(());
+        return Ok(None);
     };
     let Some(vendor) = super::super::ingest_vendor(&row.vendor) else {
-        return Ok(());
+        return Ok(None);
     };
     let tape = paths
         .tape
         .join(row.lane.to_string())
         .join(row.vendor.as_str());
     if !tape_available(&tape, row.lane, diagnostic) {
-        return Ok(());
+        return Ok(None);
     }
-    let scan = match read_backlog(&tape, row.lane, vendor.dialect(), reader) {
-        Ok(scan) => scan,
+    let tail = match read_backlog(&tape, row.lane, vendor.dialect(), reader) {
+        Ok(tail) => tail,
         Err(error) => {
+            let work = error.tail_work().copied();
             forget_changed_source(error, row.lane, reader, diagnostic);
-            return Ok(());
+            return Ok(work.map(|work| LaneRestore {
+                work,
+                older_history: false,
+            }));
         }
     };
+    let work = tail.work;
+    let older_history = tail.start.next != listen::Position::start();
+    let scan = tail.scan;
     if let Some(bus) = bus {
         hydrate_observations(bus, row.lane, &scan, reader)?;
         let keys = scan_steering_keys(&scan);
@@ -616,7 +748,11 @@ fn restore_lane(
         publisher,
         reader,
         diagnostic,
-    )
+    )?;
+    Ok(Some(LaneRestore {
+        work,
+        older_history,
+    }))
 }
 
 fn hydrate_observations(
@@ -820,54 +956,37 @@ fn read_backlog(
     tape: &Path,
     lane: CanonicalUuid,
     dialect: listen::Dialect,
-    reader: &mut BacklogReader,
-) -> Result<listen::Scan, listen::ScanError> {
-    if let Some(cursor) = reader.cursors.get(&lane) {
-        listen::scan(tape, dialect, Some(cursor))
-    } else {
-        tail_backlog(tape, dialect)
+    reader: &BacklogReader,
+) -> Result<listen::TailScan, listen::ScanError> {
+    let tail = tail_backlog(tape, dialect)?;
+    if let Some(cursor) = reader.cursors.get(&lane)
+        && cursor.source != tail.scan.checkpoint.source
+    {
+        return Err(listen::ScanError::SourceChanged {
+            expected: cursor.source.clone(),
+            observed: tail.scan.checkpoint.source.clone(),
+            next: cursor.next,
+        });
     }
+    Ok(tail)
 }
 
-fn tail_backlog(tape: &Path, dialect: listen::Dialect) -> Result<listen::Scan, listen::ScanError> {
-    let mut bytes = INITIAL_WINDOW_BYTES;
-    loop {
-        let tail = listen::scan_tail(tape, dialect, tail_budget(bytes))?;
-        if visible_cards(&tail.scan) > canvas::stream::INITIAL_MESSAGE_LIMIT
-            || tail.start.next == listen::Position::start()
-        {
-            return Ok(tail.scan);
-        }
-        let expanded = bytes.saturating_mul(2);
-        if expanded == bytes {
-            return Ok(tail.scan);
-        }
-        bytes = expanded;
-    }
+fn tail_backlog(
+    tape: &Path,
+    dialect: listen::Dialect,
+) -> Result<listen::TailScan, listen::ScanError> {
+    listen::scan_tail(tape, dialect, tail_budget())
 }
 
 fn history_tail(
     tape: &Path,
     dialect: listen::Dialect,
     before: &listen::Checkpoint,
-    visible_limit: usize,
 ) -> Result<listen::TailScan, listen::ScanError> {
-    let mut bytes = INITIAL_WINDOW_BYTES;
-    loop {
-        let tail = listen::scan_before(tape, dialect, before, tail_budget(bytes))?;
-        if visible_cards(&tail.scan) >= visible_limit
-            || tail.start.next == listen::Position::start()
-        {
-            return Ok(tail);
-        }
-        let expanded = bytes.saturating_mul(2);
-        if expanded == bytes {
-            return Ok(tail);
-        }
-        bytes = expanded;
-    }
+    listen::scan_before(tape, dialect, before, tail_budget())
 }
 
+#[cfg(test)]
 fn visible_cards(scan: &listen::Scan) -> usize {
     scan.records
         .iter()

@@ -275,6 +275,7 @@ fn late_session_boundaries_are_inserted_before_retention_selects_its_floor() {
 #[derive(Debug)]
 struct FixtureHistory {
     messages: Vec<AgentMessage>,
+    page_limit: usize,
     reads: AtomicUsize,
 }
 
@@ -294,7 +295,7 @@ impl MessageHistoryProvider for FixtureHistory {
             })
             .cloned()
             .collect::<Vec<_>>();
-        let start = visible.len().saturating_sub(limit);
+        let start = visible.len().saturating_sub(limit.min(self.page_limit));
         Ok(Some(MessageHistoryPage {
             messages: visible[start..].to_vec(),
             more: start > 0,
@@ -320,6 +321,7 @@ fn cold_history_keeps_one_page_and_loads_older_pages_without_live_updates() {
     durable[54].text = "stale source projection".to_owned();
     let history = Arc::new(FixtureHistory {
         messages: durable,
+        page_limit: usize::MAX,
         reads: AtomicUsize::new(0),
     });
     publisher
@@ -357,6 +359,111 @@ fn cold_history_keeps_one_page_and_loads_older_pages_without_live_updates() {
         updates.try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
+    drop(source);
+    bus.shutdown().expect("bus shuts down");
+}
+
+#[test]
+fn short_provider_pages_continue_until_the_actual_lane_capacity_is_reached() {
+    let bus = fixture(1);
+    let source = Source::new(bus.reader(), epoch(), 10);
+    let publisher = source.message_publisher();
+    let lane = message(0xe5, 0).lane;
+    let durable = (0..HISTORY_LENGTH)
+        .map(|offset| message(0xe5, offset))
+        .collect::<Vec<_>>();
+    for activity in &durable {
+        publisher
+            .publish(activity.clone())
+            .expect("startup history publishes");
+    }
+    let history = Arc::new(FixtureHistory {
+        messages: durable,
+        page_limit: 17,
+        reads: AtomicUsize::new(0),
+    });
+    publisher
+        .set_history_provider(history.clone())
+        .expect("durable history provider installs");
+    publisher
+        .bound_initial_history()
+        .expect("startup history is bounded");
+
+    let (_, frames) = source
+        .begin(
+            &accepted(Actor::Operator),
+            &request(0xc4, vec![ViewSubject::Messages], None),
+        )
+        .expect("message subscription begins");
+    let StreamFrame::Messages { messages, more, .. } = &frames[0] else {
+        panic!("expected retained message snapshot")
+    };
+    let restored = complete_lane_history(&source, lane, messages, more);
+    assert_eq!(
+        restored
+            .iter()
+            .map(|message| message.locus.offset)
+            .collect::<Vec<_>>(),
+        (HISTORY_LENGTH - MESSAGE_CAPACITY as u64..HISTORY_LENGTH).collect::<Vec<_>>(),
+    );
+    assert_eq!(
+        history.reads.load(Ordering::Relaxed),
+        14,
+        "a short read with remaining capacity keeps the durable cursor open",
+    );
+
+    drop(source);
+    bus.shutdown().expect("bus shuts down");
+}
+
+#[test]
+fn explicit_history_hint_keeps_a_partial_initial_page_cursor_addressable() {
+    let bus = fixture(1);
+    let source = Source::new(bus.reader(), epoch(), 10);
+    let publisher = source.message_publisher();
+    let lane = message(0xe5, 0).lane;
+    let durable = (0..20)
+        .map(|offset| message(0xe5, offset))
+        .collect::<Vec<_>>();
+    for activity in &durable[15..] {
+        publisher
+            .publish(activity.clone())
+            .expect("partial startup history publishes");
+    }
+    let history = Arc::new(FixtureHistory {
+        messages: durable,
+        page_limit: usize::MAX,
+        reads: AtomicUsize::new(0),
+    });
+    publisher
+        .set_history_provider(history.clone())
+        .expect("durable history provider installs");
+    publisher
+        .set_history_open([lane])
+        .expect("partial startup continuation is exposed");
+
+    let (_, frames) = source
+        .begin(
+            &accepted(Actor::Operator),
+            &request(0xc4, vec![ViewSubject::Messages], None),
+        )
+        .expect("message subscription begins");
+    let StreamFrame::Messages { messages, more, .. } = &frames[0] else {
+        panic!("expected retained message snapshot")
+    };
+    assert_eq!(messages.len(), 5);
+    assert_eq!(more, &[lane]);
+
+    let restored = complete_lane_history(&source, lane, messages, more);
+    assert_eq!(
+        restored
+            .iter()
+            .map(|message| message.locus.offset)
+            .collect::<Vec<_>>(),
+        (0..20).collect::<Vec<_>>(),
+    );
+    assert_eq!(history.reads.load(Ordering::Relaxed), 1);
+
     drop(source);
     bus.shutdown().expect("bus shuts down");
 }
@@ -418,6 +525,7 @@ fn a_full_page_that_exhausts_capacity_closes_after_compaction_trimming() {
     }
     let history = Arc::new(FixtureHistory {
         messages: durable,
+        page_limit: usize::MAX,
         reads: AtomicUsize::new(0),
     });
     publisher
