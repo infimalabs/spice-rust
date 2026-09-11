@@ -418,10 +418,7 @@ impl JournalRead<'_> {
             let length =
                 admitted_envelope_length(seq, row.get::<_, i64>(2).map_err(GuardError::Store)?)?;
             if decoded_bytes.saturating_add(length) > super::MAX_RETAINED_FACT_PAGE_BYTES {
-                return Err(GuardError::Invalid(format!(
-                    "recent origin fact page would exceed the {}-byte decoded budget at sequence {seq}",
-                    super::MAX_RETAINED_FACT_PAGE_BYTES,
-                )));
+                break;
             }
             let (fact, length) = decode_bounded_fact(row, seq, 1, 2, 3)?;
             decoded_bytes = decoded_bytes.saturating_add(length);

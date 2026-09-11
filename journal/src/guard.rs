@@ -126,11 +126,10 @@ pub enum FactPageStart {
 /// Repository-owned ceiling for one retained-fact projection read.
 pub const MAX_RETAINED_FACT_PAGE_ROWS: usize = 256;
 
-/// Repository-owned aggregate byte target for one retained-fact projection read.
+/// Repository-owned hard aggregate byte ceiling for one retained-fact read.
 ///
-/// A page always admits its first indivisible fact so every valid stored row
-/// remains reachable. Once that row is present, this target stops the page
-/// before decoding another row that would cross it.
+/// Schema enforcement guarantees every durable envelope fits independently;
+/// each page stops before decoding a row that would cross this call's budget.
 pub const MAX_RETAINED_FACT_PAGE_BYTES: usize = 1024 * 1024;
 
 /// Positive, repository-bounded work admitted for one retained-fact page.
@@ -177,7 +176,7 @@ impl FactReadBudget {
 /// One bounded retained-kind page and its explicit resume cursor.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SelectedFactPage {
-    /// Matching rows decoded within the page target, or one oversized first row.
+    /// Matching rows decoded within both the row and byte ceilings.
     pub rows: Vec<wire::Envelope<wire::AnyFact>>,
     /// Last returned cursor when another matching row remains.
     pub continuation: Option<wire::Seq>,
