@@ -23,23 +23,6 @@ struct TaskFactChunk {
 }
 
 impl TaskFacts {
-    fn from_selected(
-        rows: Vec<journal::crossing::Envelope<journal::crossing::AnyFact>>,
-        horizon: Option<journal::crossing::Seq>,
-    ) -> Self {
-        let len = rows.len();
-        Self {
-            tail: (!rows.is_empty()).then(|| {
-                Arc::new(TaskFactChunk {
-                    prior: None,
-                    rows: rows.into_boxed_slice(),
-                })
-            }),
-            len,
-            horizon,
-        }
-    }
-
     fn append_selected(
         &self,
         rows: Vec<journal::crossing::Envelope<journal::crossing::AnyFact>>,
@@ -156,13 +139,11 @@ pub(super) fn load_task_snapshot(journal: &Journal) -> Result<TaskSnapshot, BusR
     journal
         .read_with(|read| {
             let kinds = resident_authority_kinds();
+            let cursor = read.cursor().map_err(BusReadError::Head)?;
             Ok(TaskSnapshot {
-                cursor: read.cursor().map_err(BusReadError::Head)?,
-                facts: TaskFacts::from_selected(
-                    read.selected_facts(&kinds, None)
-                        .map_err(BusReadError::Head)?,
-                    read.cursor().map_err(BusReadError::Head)?,
-                ),
+                cursor,
+                facts: selected_task_facts(read, TaskFacts::default(), &kinds, None, cursor)
+                    .map_err(BusReadError::Head)?,
                 tasks: Arc::from(read.task_heads().map_err(BusReadError::Head)?),
                 trust: Arc::from(read.trust_heads().map_err(BusReadError::Head)?),
                 residency: read.residency_head().map_err(BusReadError::Head)?,
@@ -195,7 +176,7 @@ fn advance_task_snapshot(
         .expect("a durable commit begins at a nonzero position");
     let last = journal::crossing::Seq::new(commit.last)
         .expect("a durable commit ends at a nonzero position");
-    let (cursor, rows, changed, trust, residency, operator_steering) = journal
+    let (cursor, facts, changed, trust, residency, operator_steering) = journal
         .read_with(|read| {
             let cursor = read.cursor().map_err(BusReadError::Head)?;
             if cursor != Some(last) {
@@ -204,9 +185,9 @@ fn advance_task_snapshot(
                 ))));
             }
             let kinds = resident_authority_kinds();
-            let rows = read
-                .selected_facts(&kinds, current.cursor)
-                .map_err(BusReadError::Head)?;
+            let facts =
+                selected_task_facts(read, current.facts.clone(), &kinds, current.cursor, cursor)
+                    .map_err(BusReadError::Head)?;
             let changed = read
                 .changed_task_heads(first, last)
                 .map_err(BusReadError::Head)?;
@@ -215,13 +196,9 @@ fn advance_task_snapshot(
             let operator_steering = read
                 .pending_operator_steering()
                 .map_err(BusReadError::Head)?;
-            Ok((cursor, rows, changed, trust, residency, operator_steering))
+            Ok((cursor, facts, changed, trust, residency, operator_steering))
         })
         .map_err(map_read_error)?;
-    let facts = current
-        .facts
-        .append_selected(rows, last)
-        .map_err(BusReadError::Head)?;
     let tasks = if changed.is_empty() {
         current.tasks.clone()
     } else {
@@ -243,6 +220,34 @@ fn advance_task_snapshot(
         residency,
         operator_steering: Arc::from(operator_steering),
     })
+}
+
+fn selected_task_facts(
+    read: &journal::JournalRead<'_>,
+    mut facts: TaskFacts,
+    kinds: &[journal::crossing::FactKind],
+    mut after: Option<journal::crossing::Seq>,
+    horizon: Option<journal::crossing::Seq>,
+) -> Result<TaskFacts, GuardError> {
+    loop {
+        let page = read.selected_fact_page(kinds, after, journal::FactReadBudget::RETAINED)?;
+        if page.horizon != horizon {
+            return Err(GuardError::Invalid(format!(
+                "task fact page horizon moved from {horizon:?} to {:?}",
+                page.horizon
+            )));
+        }
+        let complete_through = page.continuation.or(horizon);
+        let Some(complete_through) = complete_through else {
+            return Ok(facts);
+        };
+        let continuation = page.continuation;
+        facts = facts.append_selected(page.rows, complete_through)?;
+        let Some(next) = continuation else {
+            return Ok(facts);
+        };
+        after = Some(next);
+    }
 }
 
 /// Facts consumed by resident decisions and bounded presentation recovery.

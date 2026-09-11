@@ -18,8 +18,8 @@ use wire::head::TranscriptSourceHead;
 
 use crate::guard::{indexed_read_metrics, reset_indexed_read_metrics};
 use crate::{
-    FactPageStart, Journal, JournalReader, MigrationError, OpenError, SCHEMA_VERSION,
-    ViolationClass,
+    FactPageStart, FactReadBudget, Journal, JournalReader, MAX_RETAINED_FACT_PAGE_BYTES,
+    MAX_RETAINED_FACT_PAGE_ROWS, MigrationError, OpenError, SCHEMA_VERSION, ViolationClass,
 };
 
 mod allocation_migration;

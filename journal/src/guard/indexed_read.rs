@@ -4,7 +4,10 @@ use rusqlite::{OptionalExtension, params, params_from_iter, types::Value};
 use serde::Serialize;
 
 use super::commit::decode_seq;
-use super::{FactPageStart, GuardError, JournalHead, JournalRead, TaskHeads, read_metrics};
+use super::{
+    FactPageStart, FactReadBudget, GuardError, JournalHead, JournalRead, SelectedFactPage,
+    TaskHeads, read_metrics,
+};
 use wire::body::SourceBoundary;
 
 type CausalRow = (i64, String, Option<i64>, i64, String, Vec<u8>);
@@ -124,21 +127,30 @@ impl JournalRead<'_> {
         Ok(self.cursor)
     }
 
-    /// Read only the named fact kinds after an admitted cursor.
+    /// Read one bounded page of the named fact kinds after an admitted cursor.
     ///
     /// The `(kind, seq)` authority index makes this proportional to matching
-    /// rows. Original positions and order are retained, while the returned
-    /// vector is intentionally sparse with respect to unrelated journal facts.
-    pub fn selected_facts(
+    /// rows. Original positions and order are retained. The continuation is
+    /// the last returned cursor, so the next call resumes strictly after it.
+    pub fn selected_fact_page(
         &self,
         kinds: &[wire::FactKind],
         after: Option<wire::Seq>,
-    ) -> Result<Vec<wire::Envelope<wire::AnyFact>>, GuardError> {
+        budget: FactReadBudget,
+    ) -> Result<SelectedFactPage, GuardError> {
         let Some(horizon) = self.cursor else {
-            return Ok(Vec::new());
+            return Ok(SelectedFactPage {
+                rows: Vec::new(),
+                continuation: None,
+                horizon: None,
+            });
         };
         if kinds.is_empty() || after == Some(horizon) {
-            return Ok(Vec::new());
+            return Ok(SelectedFactPage {
+                rows: Vec::new(),
+                continuation: None,
+                horizon: Some(horizon),
+            });
         }
         if after.is_some_and(|after| after > horizon) {
             return Err(GuardError::Invalid(format!(
@@ -149,11 +161,13 @@ impl JournalRead<'_> {
             .map(|index| format!("?{index}"))
             .collect::<Vec<_>>()
             .join(", ");
+        let limit_parameter = kinds.len() + 3;
         let sql = format!(
             "SELECT seq, kind, envelope FROM fact_envelopes \
-             WHERE seq > ?1 AND seq <= ?2 AND kind IN ({placeholders}) ORDER BY seq"
+             WHERE seq > ?1 AND seq <= ?2 AND kind IN ({placeholders}) \
+             ORDER BY seq LIMIT ?{limit_parameter}"
         );
-        let mut parameters = Vec::with_capacity(kinds.len() + 2);
+        let mut parameters = Vec::with_capacity(kinds.len() + 3);
         let after = after
             .map(|seq| {
                 i64::try_from(seq.get()).map_err(|_| {
@@ -171,6 +185,13 @@ impl JournalRead<'_> {
                 .iter()
                 .map(|kind| Value::Text(kind.as_str().to_owned())),
         );
+        let query_limit = budget
+            .rows()
+            .checked_add(1)
+            .expect("repository fact row ceiling leaves room for an overflow probe");
+        parameters.push(Value::Integer(i64::try_from(query_limit).map_err(
+            |_| GuardError::Invalid("selected fact page limit exceeds SQLite".to_owned()),
+        )?));
         read_metrics::observe_query();
         let mut statement = self.connection.prepare(&sql).map_err(GuardError::Store)?;
         let rows = statement
@@ -182,17 +203,137 @@ impl JournalRead<'_> {
                 ))
             })
             .map_err(GuardError::Store)?;
-        let mut facts = Vec::new();
+        let mut facts: Vec<wire::Envelope<wire::AnyFact>> = Vec::with_capacity(budget.rows());
+        let mut decoded_bytes = 0usize;
+        let mut continuation = None;
         for row in rows {
             let (seq, kind, bytes) = row.map_err(GuardError::Store)?;
             read_metrics::observe_row();
+            if facts.len() == budget.rows() {
+                continuation = facts.last().map(|fact| fact.seq);
+                break;
+            }
+            let remaining = budget.decoded_bytes() - decoded_bytes;
+            if bytes.len() > remaining {
+                let indexed = decode_seq(seq).map_err(GuardError::Invalid)?;
+                let Some(last) = facts.last().map(|fact| fact.seq) else {
+                    return Err(GuardError::Invalid(format!(
+                        "selected fact {indexed} is {} bytes, above the {}-byte page budget",
+                        bytes.len(),
+                        budget.decoded_bytes()
+                    )));
+                };
+                continuation = Some(last);
+                break;
+            }
             read_metrics::observe_decode(bytes.len());
+            decoded_bytes += bytes.len();
             facts.push(
                 crate::read::decode_fact(seq, &kind, &bytes)
                     .map_err(|error| GuardError::Invalid(error.to_string()))?,
             );
         }
-        Ok(facts)
+        Ok(SelectedFactPage {
+            rows: facts,
+            continuation,
+            horizon: Some(horizon),
+        })
+    }
+
+    /// Read one bounded newest-first page of a retained fact kind.
+    ///
+    /// The continuation is the oldest returned cursor, so the next call passes
+    /// it as `before` and resumes strictly before it.
+    pub fn recent_fact_page(
+        &self,
+        kind: wire::FactKind,
+        before: Option<wire::Seq>,
+        budget: FactReadBudget,
+    ) -> Result<SelectedFactPage, GuardError> {
+        let Some(horizon) = self.cursor else {
+            return Ok(SelectedFactPage {
+                rows: Vec::new(),
+                continuation: None,
+                horizon: None,
+            });
+        };
+        if before.is_some_and(|before| before > horizon) {
+            return Err(GuardError::Invalid(format!(
+                "recent fact cursor {before:?} is beyond journal cursor {horizon}"
+            )));
+        }
+        let query_limit = budget
+            .rows()
+            .checked_add(1)
+            .expect("repository fact row ceiling leaves room for an overflow probe");
+        let horizon_sql = i64::try_from(horizon.get())
+            .map_err(|_| GuardError::Invalid("recent fact horizon exceeds SQLite".to_owned()))?;
+        let query_limit = i64::try_from(query_limit)
+            .map_err(|_| GuardError::Invalid("recent fact page limit exceeds SQLite".to_owned()))?;
+        let mut sql = String::from(
+            "SELECT seq, kind, envelope FROM fact_envelopes \
+             WHERE kind = ?1 AND seq <= ?2",
+        );
+        let mut parameters = vec![
+            Value::Text(kind.as_str().to_owned()),
+            Value::Integer(horizon_sql),
+        ];
+        if let Some(before) = before {
+            let before = i64::try_from(before.get())
+                .map_err(|_| GuardError::Invalid("recent fact cursor exceeds SQLite".to_owned()))?;
+            sql.push_str(" AND seq < ?3 ORDER BY seq DESC LIMIT ?4");
+            parameters.push(Value::Integer(before));
+            parameters.push(Value::Integer(query_limit));
+        } else {
+            sql.push_str(" ORDER BY seq DESC LIMIT ?3");
+            parameters.push(Value::Integer(query_limit));
+        }
+        read_metrics::observe_query();
+        let mut statement = self.connection.prepare(&sql).map_err(GuardError::Store)?;
+        let rows = statement
+            .query_map(params_from_iter(&parameters), |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
+            })
+            .map_err(GuardError::Store)?;
+        let mut facts: Vec<wire::Envelope<wire::AnyFact>> = Vec::with_capacity(budget.rows());
+        let mut decoded_bytes = 0usize;
+        let mut continuation = None;
+        for row in rows {
+            let (seq, kind, bytes) = row.map_err(GuardError::Store)?;
+            read_metrics::observe_row();
+            if facts.len() == budget.rows() {
+                continuation = facts.last().map(|fact| fact.seq);
+                break;
+            }
+            let remaining = budget.decoded_bytes() - decoded_bytes;
+            if bytes.len() > remaining {
+                let indexed = decode_seq(seq).map_err(GuardError::Invalid)?;
+                let Some(last) = facts.last().map(|fact| fact.seq) else {
+                    return Err(GuardError::Invalid(format!(
+                        "recent fact {indexed} is {} bytes, above the {}-byte page budget",
+                        bytes.len(),
+                        budget.decoded_bytes()
+                    )));
+                };
+                continuation = Some(last);
+                break;
+            }
+            read_metrics::observe_decode(bytes.len());
+            decoded_bytes += bytes.len();
+            facts.push(
+                crate::read::decode_fact(seq, &kind, &bytes)
+                    .map_err(|error| GuardError::Invalid(error.to_string()))?,
+            );
+        }
+        Ok(SelectedFactPage {
+            rows: facts,
+            continuation,
+            horizon: Some(horizon),
+        })
     }
 
     /// Read the newest fact of one kind through the immutable horizon.
