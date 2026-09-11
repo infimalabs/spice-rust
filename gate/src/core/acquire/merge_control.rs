@@ -174,6 +174,12 @@ mod tests {
             let original = fs::read(&path).expect("read merge control bytes");
             fs::write(&path, b"moved\n").expect("move merge control");
             fs::write(&path, &original).expect("restore merge control bytes");
+            fs::File::options()
+                .write(true)
+                .open(&path)
+                .expect("open restored merge control")
+                .set_times(fs::FileTimes::new().set_modified(SystemTime::UNIX_EPOCH))
+                .expect("move restored merge control mtime");
             seal.verify()
                 .expect_err("write-restore movement must invalidate the source");
         }
