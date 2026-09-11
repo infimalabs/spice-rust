@@ -115,12 +115,16 @@ fn oversized_and_delimiter_free_tails_stop_at_the_same_byte_ceiling() {
             dimension,
             limit,
             consumed,
+            work,
         } = error
         else {
             panic!("oversized tail returned a non-budget error: {error}")
         };
         assert!(matches!(dimension, "source bytes" | "scan passes"));
         assert!(consumed <= limit);
+        assert_eq!(work.records, 0);
+        assert!(work.source_bytes <= TEST_SOURCE_LIMIT);
+        assert!(work.passes <= TEST_PASS_LIMIT);
         (limit, consumed)
     }
 
@@ -150,14 +154,53 @@ fn tail_record_allowance_refuses_before_decoding_an_extra_record() {
         .expect("record-bounded tail"),
     )
     .expect_err("a second record must not be decoded");
-    assert!(matches!(
-        error,
-        ScanError::WorkLimit {
-            dimension: "decoded records",
-            limit: 1,
-            consumed: 1,
-        }
-    ));
+    let ScanError::WorkLimit {
+        dimension,
+        limit,
+        consumed,
+        work,
+    } = error
+    else {
+        panic!("record ceiling returned a non-budget error: {error}")
+    };
+    assert_eq!((dimension, limit, consumed), ("decoded records", 1, 1));
+    assert_eq!(work.records, 1);
+    assert!(work.source_bytes > 0);
+    assert!(work.passes > 0);
+    scratch.remove();
+}
+
+#[test]
+fn wall_exhaustion_carries_every_tail_work_counter() {
+    let scratch = Scratch::new("tail-wall-counters");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+    tape.tee(&line(PROSE)).expect("one record is durable");
+
+    let error = scan_tail(
+        scratch.path(),
+        Dialect::Codex,
+        TailBudget::new(
+            SMALL_WINDOW_BYTES,
+            TEST_SOURCE_LIMIT,
+            SMALL_WINDOW_RECORDS,
+            TEST_PASS_LIMIT,
+            Duration::from_nanos(1),
+        )
+        .expect("deadline-bounded tail"),
+    )
+    .expect_err("one-nanosecond tail must exhaust its wall allowance");
+
+    let work = *error
+        .tail_work()
+        .expect("wall refusal carries complete work");
+    assert!(work.source_bytes <= TEST_SOURCE_LIMIT);
+    assert!(work.records <= SMALL_WINDOW_RECORDS);
+    assert!(work.passes <= TEST_PASS_LIMIT);
+    assert!(!work.duration.is_zero());
+    let diagnostic = error.to_string();
+    for field in ["source bytes", "records", "passes"] {
+        assert!(diagnostic.contains(field), "{diagnostic}");
+    }
     scratch.remove();
 }
 
@@ -479,11 +522,15 @@ fn sealed_member_discovery_stops_at_the_same_pass_ceiling_as_the_index_grows() {
             dimension,
             limit,
             consumed,
+            work,
         } = error
         else {
             panic!("large index returned a non-budget error: {error}")
         };
         assert_eq!(dimension, "scan passes");
+        assert_eq!(work.passes as u64, consumed);
+        assert_eq!(work.records, 0);
+        assert!(work.source_bytes > 0);
         (limit, consumed)
     }
 
@@ -518,14 +565,20 @@ fn oversized_index_refuses_before_extent_parsing() {
     )
     .expect_err("oversized index must stop before parsing");
 
-    assert!(matches!(
-        error,
-        ScanError::WorkLimit {
-            dimension: "source bytes",
-            limit: INDEX_BYTE_LIMIT,
-            consumed: 0,
-        }
-    ));
+    let ScanError::WorkLimit {
+        dimension,
+        limit,
+        consumed,
+        work,
+    } = error
+    else {
+        panic!("index ceiling returned a non-budget error: {error}")
+    };
+    assert_eq!(
+        (dimension, limit, consumed),
+        ("source bytes", INDEX_BYTE_LIMIT, 0)
+    );
+    assert_eq!((work.source_bytes, work.records, work.passes), (0, 0, 1));
     scratch.remove();
 }
 
