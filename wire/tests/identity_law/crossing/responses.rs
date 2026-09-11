@@ -288,7 +288,6 @@ fn cover_release_plan_observations(covered: &mut BTreeSet<String>) {
     let base = ReleasePlanObservations {
         head: "1".repeat(40),
         clean: true,
-        bump_claimed: true,
         unrecorded_local_commits: 0,
         source_version: version.clone(),
         release_version: version.clone(),

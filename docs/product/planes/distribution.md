@@ -65,61 +65,52 @@ operation's exact prior state before crossing the effect boundary and a typed
 receipt after convergence. Resumption admits only that same plan and receipt
 prefix.
 
-### The fresh-publish gate order, and the one seam in it
+### A versioned commit is sealed before publication
 
-The fresh-publish bump sits between two gates, and both neighbours are
-load-bearing. Tag-and-announce recovery takes a separate four-operation path.
+Version activation is an ordinary task landing. Release starts only after that
+clean integrated commit has been built, proved, and sealed. Tag-and-announce
+recovery takes a separate four-operation path.
 
 ```mermaid
 flowchart TD
   A{"release action"}
   A -- "fresh publish" --> SEAL["admit the post-proof<br/>two-target manifest"]
   SEAL --> COR["correctness gate"]
-  COR --> BUMP["bump and verify version"]
-  BUMP --> COMMIT["materialize deterministic<br/>release commit"]
-  COMMIT --> ART["rebuild the exact package<br/>from admitted staged inputs"]
-  ART --> PROBE["read the compiled-host executable,<br/>copy and chmod it in a probe root,<br/>and require command success"]
+  COR --> PROBE["read the sealed compiled-host executable,<br/>copy and chmod it in a probe root,<br/>and require command success"]
+  PROBE --> PKG["materialize and rehearse<br/>the exact sealed package"]
   A -- "tag-and-announce recovery" --> PRE["resolve preconditions<br/>and credentials"]
   PRE --> VIS["await registry visibility"]
   VIS --> TAG["create immutable tag"]
   TAG --> ANN["announce"]
 ```
 
-**Invariant —** The fresh-publish bump lands **after** correctness, so a red
-source never authorizes a version transition. Fresh-publish resumption may admit
-the exact version-only intermediate state after correctness has already been
-receipted; that resumable state cannot move the bump ahead of the gate.
+**Invariant —** Requested, compiled, and tracked product versions already agree
+before preview. Release never edits `dist/VERSION` or synthesizes another
+commit. A red candidate publishes nothing; its task-owned version landing
+remains ordinary repository history.
 
 **Invariant —** For fresh publish, the correctness gate selects the exact source
 commit named by the accepted plan and executes the complete canonical strict
-battery over that immutable tree. Every arm must admit before the bump. This
+battery over that immutable tree. Every arm must admit before publication. This
 host-side battery is distinct from the sealed target proof replay completed
 before the manifest and publication plan are accepted. Tag-and-announce
 recovery instead resolves preconditions and credentials, awaits registry
 visibility, creates the immutable tag, and announces; it does not rerun the
 correctness battery.
 
-**Invariant —** The fresh-publish bump lands **before** the artifact gate, so
-the package ref names the exact sealed package rebuilt for that version and
-release commit.
-
-**Invariant —** The artifact gate proves both composition and use. A persistent
-release target directory may contribute reusable build output; the rebuilt
-package must nevertheless equal the planned package and Git-tree identities.
-The compiled-host staged executable is read, matched to the plan's artifact
-digest, copied to a plan-keyed probe root, made executable there, and required
-to return success from `--json version`. The probe does not require the staged
-source itself to be regular or executable, and it does not interpret the
-command's output as a structured identity.
+**Invariant —** The artifact gate proves both composition and use without
+rebuilding after authorization. The package is materialized from the sealed
+content-addressed objects and must equal the previewed package and Git-tree
+identities. The compiled-host sealed executable is matched to the plan's
+artifact digest, copied to a plan-keyed probe root, made executable there, and
+required to return success from `--json version`.
 
 **Invariant —** Preview, execution, and recovery use one plan and receipt grammar.
 A parallel verification or publication body would be a second release authority.
 
-**Invariant —** Local release progress has three exact admitted shapes. Publish
-may begin at the clean source commit carrying the source version, resume at that
-same commit with `dist/VERSION` as the only tracked change and already equal to
-the requested version, or resume at the clean deterministic release commit.
-Tag-and-announce requires that clean deterministic release commit at HEAD.
+**Invariant —** Local release progress has one admitted shape: clean HEAD is the
+integrated source and release commit, and its requested, compiled, and tracked
+product versions agree. Publish and tag-and-announce both require that shape.
 Every other tracked change, commit, version, or HEAD shape refuses. Release
 preparation does not infer task ownership from the board.
 
@@ -134,11 +125,10 @@ the environment that actually ran proof: the Linux receipt's OCI identity must
 match the payload's proof-container pin, while the Darwin receipt binds the
 attested native runner digest.
 
-The two payloads must bind the source digest carried by their manifest. The
-publication plan separately admits its source and release commits and the
-manifest, package, target, notes, and installed-artifact identities. Current
-admission does not compare the manifest's source digest with the plan's source
-commit.
+The two payloads must bind the source digest carried by their manifest. Preview
+requires that digest to name the already-versioned release commit. The
+publication plan binds that manifest, package, target, notes, and
+installed-artifact identities with the identical source and release commit.
 
 ```mermaid
 flowchart TD
@@ -176,13 +166,11 @@ release.
 published before the sole manifest pointer. A reader therefore sees either the
 prior complete seal or the new complete seal, never a pointer to missing proof.
 
-**Invariant —** The independent executable probe reads the compiled-host staged
-path, recomputes its artifact digest, and refuses disagreement with the plan. A
-readable symlink or other readable source is followed by that read; the probe
-then atomically copies the bytes to a plan-keyed regular file, applies executable
-permissions to the copy, and requires the copied process to exit successfully
-for `--json version`. It does not validate the source file's type or mode or
-decode stdout as a version identity.
+**Invariant —** The independent executable probe reads the compiled-host object
+named by the sealed payload inventory, recomputes its artifact digest, and
+refuses disagreement with the plan. It atomically copies those bytes to a
+plan-keyed regular file, applies executable permissions, and requires the copy
+to exit successfully for `--json version`.
 
 ### Notes are read out of the ledger
 
@@ -213,7 +201,7 @@ flowchart TD
 ```
 
 **Invariant —** Notes derive from the ledger. There is no maintained changelog to
-drift, and a release's own bump commit is excluded from the notes it generates.
+drift.
 
 **Invariant —** Only **first-parent** landings are counted, so one merged unit of
 work contributes one entry rather than one per internal commit.
@@ -279,11 +267,10 @@ sequenceDiagram
     participant RUN as Release run
     participant GIT as Tracked Git remote
 
-    RUN->>GIT: observe all four exact refs and rehearse source transport
+    RUN->>GIT: observe the three exact versioned refs
     GIT-->>RUN: authority and credentials admitted
-    RUN->>GIT: rehearse guarded package-ref publication, no effect
+    RUN->>GIT: materialize and rehearse guarded package-ref publication, no effect
     GIT-->>RUN: exact package update would be accepted
-    RUN->>GIT: publish release commit to refs/heads/main
     RUN->>GIT: converge package tree at refs/spice/packages/vVERSION
     RUN->>GIT: bounded observation of the exact package ref
     GIT-->>RUN: expected package tree visible — or terminal refusal
@@ -297,14 +284,10 @@ remote `origin`, source `refs/heads/main`, versioned package
 `refs/spice/releases/vVERSION`. Runtime configuration cannot redirect one release
 step to another provider.
 
-**Invariant —** The release commit reaches the source ref **before** its package
-tree reaches the immutable package ref. The reverse order exposes a package whose
-source is not present at the same authority.
-
-**Invariant —** Only source publication and guarded package-ref publication have
-explicit no-effect rehearsal operations. Tag and announcement publication run
-their convergent Git mutations directly; the current plan neither rehearses
-those effects nor marks them as unrehearsable.
+**Invariant —** The release commit is already integrated before sealing.
+Publication neither reads nor mutates the moving source branch. Guarded
+package-ref publication alone has an explicit no-effect rehearsal; tag and
+announcement publication run their convergent Git mutations directly.
 
 **Invariant —** Tag and announcement wait until bounded observation sees the
 exact package object at the package ref. Exhausting that observation is a loud
@@ -326,9 +309,9 @@ package tree.
 An existing package, tag, or announcement ref pointing elsewhere refuses rather
 than moving. A matching ref is already converged and is left untouched.
 
-**Invariant —** Rebuild reads the release worktree, so the deterministic release
-commit must be its head and the tree must be clean. Otherwise the package ref
-would name bytes from one tree while the tag and notes describe another.
+**Invariant —** The already-versioned release commit must be clean HEAD during
+preview and execution. Otherwise the package ref could name bytes from one tree
+while the tag and notes describe another.
 
 **Invariant —** An operator interruption terminates with a status distinct from a
 gate failure. Collapsing the two sends the reader hunting for a defect that does

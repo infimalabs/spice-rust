@@ -37,9 +37,6 @@ impl ReleaseAction {
 pub enum Operation {
     ResolvePreconditionsAndCredentials,
     RunCorrectnessGate,
-    BumpAndVerifyVersion,
-    CreateReleaseCommit,
-    RebuildArtifacts,
     InstallAndProbeArtifacts,
     RehearseUpload,
     UploadPackage,
@@ -54,9 +51,6 @@ impl Operation {
         match self {
             Self::ResolvePreconditionsAndCredentials => "resolve-preconditions-and-credentials",
             Self::RunCorrectnessGate => "run-correctness-gate",
-            Self::BumpAndVerifyVersion => "bump-and-verify-version",
-            Self::CreateReleaseCommit => "create-release-commit",
-            Self::RebuildArtifacts => "rebuild-artifacts",
             Self::InstallAndProbeArtifacts => "install-and-probe-artifacts",
             Self::RehearseUpload => "rehearse-upload",
             Self::UploadPackage => "upload-package",
@@ -70,9 +64,6 @@ impl Operation {
 const PUBLISH_OPERATIONS: &[Operation] = &[
     Operation::ResolvePreconditionsAndCredentials,
     Operation::RunCorrectnessGate,
-    Operation::BumpAndVerifyVersion,
-    Operation::CreateReleaseCommit,
-    Operation::RebuildArtifacts,
     Operation::InstallAndProbeArtifacts,
     Operation::RehearseUpload,
     Operation::UploadPackage,
@@ -112,7 +103,6 @@ pub struct RegistryEvidence {
 pub struct ReleaseObservations {
     pub head: String,
     pub clean: bool,
-    pub bump_claimed: bool,
     pub unrecorded_local_commits: u64,
     pub source_version: ProductVersion,
     pub release_version: ProductVersion,
@@ -313,6 +303,12 @@ fn validate_observations(
     package_object: &str,
     observed: &ReleaseObservations,
 ) -> Result<(), PlanError> {
+    if source_commit != release_commit {
+        return Err(PlanError::CommitDisagreement {
+            source_commit: source_commit.to_owned(),
+            release_commit: release_commit.to_owned(),
+        });
+    }
     if !observed.clean {
         return Err(PlanError::Dirty);
     }
@@ -321,22 +317,18 @@ fn validate_observations(
             observed.unrecorded_local_commits,
         ));
     }
-    let (expected_version, expected_head) = match action {
-        ReleaseAction::Publish => (&observed.source_version, source_commit),
-        ReleaseAction::TagAndAnnounce => (requested_version, release_commit),
-    };
-    if &observed.release_version != expected_version {
+    if &observed.source_version != requested_version
+        || &observed.release_version != requested_version
+    {
         return Err(PlanError::VersionDisagreement {
-            requested: expected_version.clone(),
+            requested: requested_version.clone(),
             observed: observed.release_version.clone(),
         });
     }
-    if action == ReleaseAction::TagAndAnnounce
-        && observed.source_version != observed.release_version
-        && !observed.bump_claimed
-    {
-        return Err(PlanError::UnclaimedBump);
-    }
+    let expected_head = match action {
+        ReleaseAction::Publish => source_commit,
+        ReleaseAction::TagAndAnnounce => release_commit,
+    };
     if observed.head != expected_head {
         return Err(PlanError::NonHeadPublication {
             head: observed.head.clone(),
@@ -424,8 +416,13 @@ pub enum PlanError {
     Object { label: &'static str },
     #[error("the release worktree is dirty")]
     Dirty,
-    #[error("the observed version bump is not claimed by this release")]
-    UnclaimedBump,
+    #[error(
+        "release source commit {source_commit} disagrees with versioned commit {release_commit}"
+    )]
+    CommitDisagreement {
+        source_commit: String,
+        release_commit: String,
+    },
     #[error("{0} local commits have not been recorded on the publication baseline")]
     UnrecordedLocalCommits(u64),
     #[error("expected version {requested} disagrees with observed release version {observed}")]
@@ -472,12 +469,6 @@ pub enum OperationState {
     },
     Gate {
         receipt: Option<Digest>,
-    },
-    Version {
-        version: ProductVersion,
-    },
-    Commit {
-        head: String,
     },
     Artifact {
         identity: Option<Digest>,
@@ -703,12 +694,8 @@ fn validate_receipt(plan: &ReleasePlan, receipt: &OperationReceipt) -> Result<()
                 receipt: Some(receipt),
             },
         ) => receipt == &plan.gate_receipt(),
-        (Op::BumpAndVerifyVersion, OperationState::Version { version }) => {
-            version == &plan.requested_version
-        }
-        (Op::CreateReleaseCommit, OperationState::Commit { head }) => head == &plan.release_commit,
         (
-            Op::RebuildArtifacts | Op::RehearseUpload,
+            Op::RehearseUpload,
             OperationState::Package {
                 identity: Some(identity),
                 object: Some(object),

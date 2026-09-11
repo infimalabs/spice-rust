@@ -576,7 +576,7 @@ mod tests {
     fn tracked_authority_is_canonical_fixed_and_non_publishable() {
         let authority = current_authority(workspace()).expect("tracked authority admits");
         assert_eq!(authority.package_name(), "spice");
-        assert_eq!(authority.version().as_str(), "0.0.0");
+        assert_eq!(authority.version().as_str(), "0.2.0-dev.0");
         assert_eq!(
             current_product_version().expect("tracked version admits"),
             *authority.version(),

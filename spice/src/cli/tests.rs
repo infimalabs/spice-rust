@@ -708,7 +708,7 @@ fn every_registered_leaf_renders_its_exact_usage() {
 
 #[test]
 fn root_version_flags_render_one_compile_time_identity() {
-    let expected = format!("spice {COMPILED_VERSION}\n");
+    let expected = format!("spice {}\n", compiled_version());
     for flag in ["-V", "--version"] {
         let error = command()
             .try_get_matches_from(["spice", flag])
