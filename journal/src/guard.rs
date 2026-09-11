@@ -77,6 +77,43 @@ pub struct JournalRead<'a> {
     cursor: Option<wire::Seq>,
 }
 
+/// Greatest number of live steering heads one indexed page can return.
+pub const MAX_STEERING_PAGE_ROWS: usize = 64;
+
+/// One bounded page of live steering heads in creation order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SteeringPage {
+    rows: Vec<JournalHead<wire::SteeringHead>>,
+    overflow: Option<wire::Overflow>,
+    horizon: Option<wire::Seq>,
+}
+
+impl SteeringPage {
+    /// Heads carried by this page in creation order.
+    #[must_use]
+    pub fn rows(&self) -> &[JournalHead<wire::SteeringHead>] {
+        &self.rows
+    }
+
+    /// Exact omitted count and cursor for the next page, when present.
+    #[must_use]
+    pub const fn overflow(&self) -> Option<wire::Overflow> {
+        self.overflow
+    }
+
+    /// Journal authority captured by this page.
+    #[must_use]
+    pub const fn horizon(&self) -> Option<wire::Seq> {
+        self.horizon
+    }
+
+    /// Consume the page and return its carried heads.
+    #[must_use]
+    pub fn into_rows(self) -> Vec<JournalHead<wire::SteeringHead>> {
+        self.rows
+    }
+}
+
 /// Indexed starting boundary for one bounded fact page.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FactPageStart {

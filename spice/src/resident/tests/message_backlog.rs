@@ -15,6 +15,25 @@ const CODEX_APPEND: &[u8] = br#"{"timestamp":"2030-04-12T18:45:09.271Z","type":"
 const CODEX_DISTRIBUTED_ACK: &[u8] = br#"{"timestamp":"2030-04-12T18:46:09.271Z","type":"item.completed","item":{"id":"item-acks","type":"agent_message","text":"ACK\t1kQwPZtK nope 1kQwPZtM: One response.\nNACK\t1kQwPZtL: Unsafe."}}
 "#;
 
+#[test]
+fn canvas_steering_recovery_chunks_keys_at_the_bus_batch_ceiling() {
+    let bus = Bus::start(journal::Journal::in_memory().expect("message authority opens"))
+        .expect("message bus starts");
+    let keys = (0..=bus::MAX_STEERING_PRESENTATION_KEYS)
+        .map(|index| {
+            format!("{index:08}")
+                .parse::<steer::Key>()
+                .expect("legacy fixture steering key")
+        })
+        .collect();
+
+    let rows = message_surface::load_steering_presentations(&bus.reader(), &keys)
+        .expect("Canvas recovery pages an oversized key set");
+
+    assert!(rows.is_empty());
+    bus.shutdown().expect("message bus stops");
+}
+
 fn complete_message_history(
     source: &canvas::stream::Source,
     accepted: &wire::Accepted,

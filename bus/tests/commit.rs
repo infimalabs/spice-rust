@@ -14,6 +14,33 @@ const COMMAND_ONE: &str = "018f82d4-6f59-7d06-92e3-bce9131163c4";
 const COMMAND_TWO: &str = "018f82d4-6f59-7d06-92e3-bce9131163c5";
 
 #[test]
+fn steering_presentation_batches_refuse_before_crossing_the_fixed_key_ceiling() {
+    let bus = Bus::start(Journal::in_memory().expect("in-memory authority"))
+        .expect("dedicated writer starts");
+    let admitted = bus
+        .reader()
+        .steering_presentations(vec![
+            "unresolved".to_owned();
+            bus::MAX_STEERING_PRESENTATION_KEYS
+        ])
+        .expect("the exact presentation ceiling is admitted");
+    assert!(admitted.is_empty());
+    let error = bus
+        .reader()
+        .steering_presentations(vec![
+            "unresolved".to_owned();
+            bus::MAX_STEERING_PRESENTATION_KEYS + 1
+        ])
+        .expect_err("oversized presentation batch refuses");
+    assert!(
+        error
+            .to_string()
+            .contains("steering presentation batch has 65 keys, maximum is 64")
+    );
+    bus.shutdown().expect("writer shuts down");
+}
+
+#[test]
 fn one_writer_commits_then_broadcasts_monotone_cursors() {
     let caller = thread::current().id();
     let observed = Arc::new(Mutex::new(Vec::new()));

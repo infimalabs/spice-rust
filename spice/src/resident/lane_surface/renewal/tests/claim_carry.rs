@@ -92,7 +92,7 @@ fn assert_successor_observations(
     let lane = fixture.lane;
     let pending = seeded
         .bus
-        .read(move |read| read.pending_steering(Some(lane)))
+        .read(move |read| crate::steering_read::pending(read, Some(lane)))
         .expect("successor steering reads");
     assert_eq!(pending.len(), 1);
     assert_eq!(
@@ -187,7 +187,7 @@ fn assert_successor_command(
     let lane = fixture.lane;
     let controls = seeded
         .bus
-        .read(move |read| read.pending_steering(Some(lane)))
+        .read(move |read| crate::steering_read::pending(read, Some(lane)))
         .expect("successor controls read");
     assert!(controls.iter().any(|head| {
         head.body().control.as_deref()

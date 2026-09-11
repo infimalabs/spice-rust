@@ -22,8 +22,8 @@ mod restore;
 #[cfg(not(target_arch = "wasm32"))]
 pub use guard::{
     Applied, BuildError, CommandReplay, CommitError, CommitFault, FactCause, FactPageStart,
-    GuardError, GuardRefusal, JournalGuard, JournalHead, JournalRead, JournalWrite, PendingFact,
-    ReadError, TaskHeads,
+    GuardError, GuardRefusal, JournalGuard, JournalHead, JournalRead, JournalWrite,
+    MAX_STEERING_PAGE_ROWS, PendingFact, ReadError, SteeringPage, TaskHeads,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use migrate::{Migration, MigrationError, OpenError};

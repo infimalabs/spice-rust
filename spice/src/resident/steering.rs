@@ -199,7 +199,7 @@ pub(super) fn dead_letter_pending(
         .read(move |read| {
             Ok((
                 read.cursor()?,
-                read.pending_steering(Some(lane))?,
+                crate::steering_read::pending(read, Some(lane))?,
                 read.residency_head()?,
             ))
         })
@@ -503,7 +503,12 @@ pub(super) fn fold_lane_inbox_with(
         let (source, heads) = bus
             .read({
                 let selected = lane.lane;
-                move |read| Ok((read.cursor()?, read.pending_steering(Some(selected))?))
+                move |read| {
+                    Ok((
+                        read.cursor()?,
+                        crate::steering_read::pending(read, Some(selected))?,
+                    ))
+                }
             })
             .map_err(|error| store_fault("steer::index-unreadable", &error.to_string()))?;
         let source = source.ok_or_else(|| {
@@ -520,7 +525,7 @@ pub(super) fn fold_lane_inbox_with(
         let current = bus
             .read({
                 let selected = lane.lane;
-                move |read| read.pending_steering(Some(selected))
+                move |read| crate::steering_read::pending(read, Some(selected))
             })
             .map_err(|error| store_fault("steer::index-unreadable", &error.to_string()))?;
         let current = steer::Ledger::from_authority_heads(current.iter().map(|head| head.body()))
@@ -764,34 +769,69 @@ fn pending_snapshot(
     lane: Option<CanonicalUuid>,
     epoch: CanonicalUuid,
 ) -> Result<SteeringSnapshot, Outcome<CommandAnswer>> {
-    let snapshot = bus
-        .steering_snapshot(lane)
-        .map_err(|error| typed_store_fault("steer::index-unreadable", &error.to_string()))?;
-    let position = snapshot.authority().cursor().ok_or_else(|| {
-        typed_store_fault(
-            "steer::journal-empty",
-            "a running resident has no durable startup fact",
-        )
-    })?;
-    let residency =
-        snapshot.authority().residency().cloned().ok_or_else(|| {
+    const PAGE_RETRIES: usize = 3;
+    for _ in 0..PAGE_RETRIES {
+        let first = bus
+            .steering_snapshot(lane, journal::FactPageStart::After(None))
+            .map_err(|error| typed_store_fault("steer::index-unreadable", &error.to_string()))?;
+        let authority = first.authority().clone();
+        let position = authority.cursor().ok_or_else(|| {
+            typed_store_fault(
+                "steer::journal-empty",
+                "a running resident has no durable startup fact",
+            )
+        })?;
+        let mut heads = first.pending().rows().to_vec();
+        let mut continuation = first
+            .pending()
+            .overflow()
+            .map(|overflow| overflow.continuation);
+        let mut moved = first.pending().horizon() != Some(position);
+        while !moved {
+            let Some(next) = continuation else {
+                break;
+            };
+            let page = bus
+                .steering_snapshot(lane, journal::FactPageStart::At(next))
+                .map_err(|error| {
+                    typed_store_fault("steer::index-unreadable", &error.to_string())
+                })?;
+            moved = page.authority().cursor() != Some(position)
+                || page.pending().horizon() != Some(position);
+            if moved {
+                break;
+            }
+            heads.extend_from_slice(page.pending().rows());
+            continuation = page
+                .pending()
+                .overflow()
+                .map(|overflow| overflow.continuation);
+        }
+        if moved {
+            continue;
+        }
+        let residency = authority.residency().cloned().ok_or_else(|| {
             typed_store_fault("resident::head-missing", "residency head is absent")
         })?;
-    if residency.body().epoch != epoch {
-        return Err(typed_store_fault(
-            "resident::epoch-moved",
-            &format!("expected {epoch}, observed {}", residency.body().epoch),
-        ));
-    }
-    let ledger =
-        steer::Ledger::from_authority_heads(snapshot.pending().iter().map(|head| head.body()))
+        if residency.body().epoch != epoch {
+            return Err(typed_store_fault(
+                "resident::epoch-moved",
+                &format!("expected {epoch}, observed {}", residency.body().epoch),
+            ));
+        }
+        let ledger = steer::Ledger::from_authority_heads(heads.iter().map(|head| head.body()))
             .map_err(|error| typed_store_fault("steer::index-invalid", &error.to_string()))?;
-    Ok(SteeringSnapshot {
-        ledger,
-        position,
-        facts: snapshot.authority().facts().clone(),
-        residency,
-    })
+        return Ok(SteeringSnapshot {
+            ledger,
+            position,
+            facts: authority.facts().clone(),
+            residency,
+        });
+    }
+    Err(typed_store_fault(
+        "steer::index-moving",
+        "steering authority moved throughout bounded page recovery",
+    ))
 }
 
 fn directive_head(

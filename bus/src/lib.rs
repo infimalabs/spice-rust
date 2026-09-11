@@ -19,6 +19,8 @@ mod runtime {
 
     const REQUEST_CAPACITY: usize = 64;
     const BROADCAST_CAPACITY: usize = 64;
+    /// Greatest number of steering keys one presentation request can resolve.
+    pub const MAX_STEERING_PRESENTATION_KEYS: usize = 64;
     type FactPage =
         journal::crossing::Packed<journal::crossing::Envelope<journal::crossing::AnyFact>>;
     type DirectionHeads = Vec<JournalHead<journal::crossing::SteeringHead>>;
@@ -115,15 +117,14 @@ mod runtime {
         tasks: Arc<[TaskHeads]>,
         trust: Arc<[JournalHead<journal::crossing::TrustHead>]>,
         residency: Option<JournalHead<journal::crossing::ResidencyHead>>,
-        operator_steering: Arc<[JournalHead<journal::crossing::SteeringHead>]>,
     }
 
-    /// Incremental resident authority and indexed pending steering observed at
-    /// one writer-queue barrier.
+    /// Incremental resident authority and one bounded pending-steering page
+    /// observed at one writer-queue barrier.
     #[derive(Clone, Debug, Eq, PartialEq)]
     pub struct SteeringSnapshot {
         authority: TaskSnapshot,
-        pending: Vec<JournalHead<journal::crossing::SteeringHead>>,
+        pending: journal::SteeringPage,
     }
 
     /// Cursor and trust heads observed inside one immutable authority snapshot.
@@ -214,12 +215,6 @@ mod runtime {
         pub fn residency(&self) -> Option<&JournalHead<journal::crossing::ResidencyHead>> {
             self.residency.as_ref()
         }
-
-        /// Current live directions authored by the operator.
-        #[must_use]
-        pub fn operator_steering(&self) -> &[JournalHead<journal::crossing::SteeringHead>] {
-            &self.operator_steering
-        }
     }
 
     impl SteeringSnapshot {
@@ -229,9 +224,9 @@ mod runtime {
             &self.authority
         }
 
-        /// Live steering heads selected at the same barrier.
+        /// Bounded live steering page selected at the same barrier.
         #[must_use]
-        pub fn pending(&self) -> &[JournalHead<journal::crossing::SteeringHead>] {
+        pub const fn pending(&self) -> &journal::SteeringPage {
             &self.pending
         }
     }
@@ -313,11 +308,21 @@ mod runtime {
                 .map_err(|_| BusReadError::Bus(BusError::Closed))?
         }
 
-        /// Resolve only the steering keys named by a bounded message window.
+        /// Resolve only the steering keys named by one fixed-size message batch.
+        ///
+        /// # Errors
+        ///
+        /// Refuses a batch larger than [`MAX_STEERING_PRESENTATION_KEYS`].
         pub fn steering_presentations(
             &self,
             keys: Vec<String>,
         ) -> Result<Vec<SteeringPresentation>, BusReadError> {
+            if keys.len() > MAX_STEERING_PRESENTATION_KEYS {
+                return Err(BusReadError::Head(GuardError::Invalid(format!(
+                    "steering presentation batch has {} keys, maximum is {MAX_STEERING_PRESENTATION_KEYS}",
+                    keys.len()
+                ))));
+            }
             let (answer, receiver) = mpsc::sync_channel(1);
             self.requests
                 .send(Request::SteeringPresentations { keys, answer })
@@ -556,7 +561,7 @@ mod runtime {
             self.reader().task_snapshot()
         }
 
-        /// Read incremental resident authority and pending steering at one barrier.
+        /// Read incremental resident authority and one pending-steering page.
         ///
         /// The retained authority shares already-decoded fact chunks across
         /// requests. Interactive inbox polling therefore never rebuilds the
@@ -564,10 +569,15 @@ mod runtime {
         pub fn steering_snapshot(
             &self,
             lane: Option<journal::crossing::CanonicalUuid>,
+            start: journal::FactPageStart,
         ) -> Result<SteeringSnapshot, BusReadError> {
             let (answer, receiver) = mpsc::sync_channel(1);
             self.requests
-                .send(Request::Steering { lane, answer })
+                .send(Request::Steering {
+                    lane,
+                    start,
+                    answer,
+                })
                 .map_err(|_| BusReadError::Bus(BusError::Closed))?;
             receiver
                 .recv()
@@ -744,6 +754,7 @@ mod runtime {
         },
         Steering {
             lane: Option<journal::crossing::CanonicalUuid>,
+            start: journal::FactPageStart,
             answer: SyncSender<Result<SteeringSnapshot, BusReadError>>,
         },
         SteeringPresentations {
@@ -845,11 +856,15 @@ mod runtime {
                 Request::Tasks { answer } => {
                     answer_tasks(&journal, &mut task_snapshot, answer);
                 }
-                Request::Steering { lane, answer } => {
+                Request::Steering {
+                    lane,
+                    start,
+                    answer,
+                } => {
                     let snapshot =
                         current_task_snapshot(&journal, &mut task_snapshot).and_then(|authority| {
                             journal
-                                .read(|read| read.pending_steering(lane))
+                                .read(|read| read.pending_steering(lane, start))
                                 .map_err(BusReadError::Head)
                                 .map(|pending| SteeringSnapshot { authority, pending })
                         });
@@ -918,6 +933,12 @@ mod runtime {
         journal: &Journal,
         keys: Vec<String>,
     ) -> Result<Vec<SteeringPresentation>, GuardError> {
+        if keys.len() > MAX_STEERING_PRESENTATION_KEYS {
+            return Err(GuardError::Invalid(format!(
+                "steering presentation batch has {} keys, maximum is {MAX_STEERING_PRESENTATION_KEYS}",
+                keys.len()
+            )));
+        }
         journal.read(move |read| {
             let mut presentations = Vec::new();
             for key in keys {
@@ -1115,6 +1136,7 @@ mod runtime {
 #[cfg(not(target_arch = "wasm32"))]
 pub use runtime::{
     BroadcastSubscriber, Bus, BusError, BusReadError, BusReader, BusVerifyError, CanvasHeads,
-    CommitOutcome, CommitSubscriber, JournalCommit, JournalTransaction, SteeringPresentation,
-    SteeringSnapshot, TaskFacts, TaskSnapshot,
+    CommitOutcome, CommitSubscriber, JournalCommit, JournalTransaction,
+    MAX_STEERING_PRESENTATION_KEYS, SteeringPresentation, SteeringSnapshot, TaskFacts,
+    TaskSnapshot,
 };
