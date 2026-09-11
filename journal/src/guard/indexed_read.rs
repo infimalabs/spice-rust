@@ -1,6 +1,6 @@
 //! Indexed reads exposed by one immutable journal transaction.
 
-use rusqlite::{OptionalExtension, params, params_from_iter, types::Value};
+use rusqlite::{OptionalExtension, Row, params, params_from_iter, types::Value};
 use serde::Serialize;
 
 use super::commit::decode_seq;
@@ -10,12 +10,16 @@ use super::{
 };
 use wire::body::SourceBoundary;
 
-type CausalRow = (i64, String, Option<i64>, i64, String, Vec<u8>);
+mod bounds;
+
+use bounds::{admitted_envelope_length, decode_bounded_fact};
 
 struct CausalPage {
     facts: Vec<wire::Envelope<wire::AnyFact>>,
     total: Option<u64>,
     origin: Option<wire::Origin>,
+    decoded_bytes: usize,
+    overflow: Option<wire::Overflow>,
 }
 
 impl CausalPage {
@@ -24,15 +28,45 @@ impl CausalPage {
             facts: Vec::with_capacity(capacity),
             total: None,
             origin: None,
+            decoded_bytes: 0,
+            overflow: None,
         }
     }
 
-    fn push(&mut self, row: CausalRow) -> Result<(), GuardError> {
-        let (seq, origin, cause, remaining, kind, bytes) = row;
+    fn push(&mut self, row: &Row<'_>, limit: usize) -> Result<bool, GuardError> {
+        let seq = row.get::<_, i64>(0).map_err(GuardError::Store)?;
+        let remaining = row.get::<_, i64>(3).map_err(GuardError::Store)?;
         read_metrics::observe_row();
-        read_metrics::observe_decode(bytes.len());
-        let fact = crate::read::decode_fact(seq, &kind, &bytes)
-            .map_err(|error| GuardError::Invalid(error.to_string()))?;
+        let length =
+            admitted_envelope_length(seq, row.get::<_, i64>(5).map_err(GuardError::Store)?)?;
+        if self.facts.len() == limit
+            || self.decoded_bytes.saturating_add(length) > super::MAX_RETAINED_FACT_PAGE_BYTES
+        {
+            let continuation = u64::try_from(seq)
+                .ok()
+                .and_then(wire::Seq::new)
+                .ok_or_else(|| {
+                    GuardError::Invalid(format!(
+                        "thread index sequence {seq} is outside the wire range"
+                    ))
+                })?;
+            let omitted = u64::try_from(remaining)
+                .map_err(|_| {
+                    GuardError::Invalid(format!(
+                        "thread index depth {remaining} is outside the wire range"
+                    ))
+                })?
+                .saturating_add(1);
+            self.overflow = Some(wire::Overflow {
+                omitted,
+                continuation,
+            });
+            return Ok(false);
+        }
+        let origin = row.get::<_, String>(1).map_err(GuardError::Store)?;
+        let cause = row.get::<_, Option<i64>>(2).map_err(GuardError::Store)?;
+        let (fact, length) = decode_bounded_fact(row, seq, 4, 5, 6)?;
+        self.decoded_bytes = self.decoded_bytes.saturating_add(length);
         let indexed_cause = cause
             .map(|cause| {
                 u64::try_from(cause)
@@ -80,42 +114,27 @@ impl CausalPage {
             self.total = Some(remaining.saturating_add(1));
         }
         self.facts.push(fact);
-        Ok(())
+        Ok(true)
     }
 
     fn finish(
-        mut self,
+        self,
         limit: usize,
         horizon: wire::Seq,
     ) -> Result<Option<wire::Packed<wire::Envelope<wire::AnyFact>>>, GuardError> {
         let Some(total) = self.total else {
             return Ok(None);
         };
-        let expected = usize::try_from(total)
-            .unwrap_or(usize::MAX)
-            .min(limit.saturating_add(1));
-        if self.facts.len() != expected {
+        let expected = usize::try_from(total).unwrap_or(usize::MAX).min(limit);
+        if self.overflow.is_none() && self.facts.len() != expected {
             return Err(GuardError::Invalid(format!(
                 "indexed causal range expected {expected} row(s), found {}",
                 self.facts.len()
             )));
         }
-        let overflow = if total > u64::try_from(limit).unwrap_or(u64::MAX) {
-            let continuation = self
-                .facts
-                .pop()
-                .expect("a causal range beyond the limit returns its continuation")
-                .seq;
-            Some(wire::Overflow {
-                omitted: total - u64::try_from(limit).unwrap_or(u64::MAX),
-                continuation,
-            })
-        } else {
-            None
-        };
         Ok(Some(wire::Packed {
             rows: self.facts,
-            overflow,
+            overflow: self.overflow,
             horizon,
         }))
     }
@@ -163,7 +182,7 @@ impl JournalRead<'_> {
             .join(", ");
         let limit_parameter = kinds.len() + 3;
         let sql = format!(
-            "SELECT seq, kind, envelope FROM fact_envelopes \
+            "SELECT seq, kind, length(envelope), envelope FROM fact_envelopes \
              WHERE seq > ?1 AND seq <= ?2 AND kind IN ({placeholders}) \
              ORDER BY seq LIMIT ?{limit_parameter}"
         );
@@ -194,37 +213,34 @@ impl JournalRead<'_> {
         )?));
         read_metrics::observe_query();
         let mut statement = self.connection.prepare(&sql).map_err(GuardError::Store)?;
-        let rows = statement
-            .query_map(params_from_iter(&parameters), |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Vec<u8>>(2)?,
-                ))
-            })
+        let mut rows = statement
+            .query(params_from_iter(&parameters))
             .map_err(GuardError::Store)?;
         let mut facts: Vec<wire::Envelope<wire::AnyFact>> = Vec::with_capacity(budget.rows());
         let mut decoded_bytes = 0usize;
         let mut continuation = None;
-        for row in rows {
-            let (seq, kind, bytes) = row.map_err(GuardError::Store)?;
+        while let Some(row) = rows.next().map_err(GuardError::Store)? {
+            let seq = row.get::<_, i64>(0).map_err(GuardError::Store)?;
             read_metrics::observe_row();
             if facts.len() == budget.rows() {
                 continuation = facts.last().map(|fact| fact.seq);
                 break;
             }
-            if !facts.is_empty()
-                && decoded_bytes.saturating_add(bytes.len()) > budget.decoded_bytes()
-            {
+            let length =
+                admitted_envelope_length(seq, row.get::<_, i64>(2).map_err(GuardError::Store)?)?;
+            if decoded_bytes.saturating_add(length) > budget.decoded_bytes() {
+                if facts.is_empty() {
+                    return Err(GuardError::Invalid(format!(
+                        "fact envelope sequence {seq} has {length} bytes, exceeding this call's {}-byte decoded budget",
+                        budget.decoded_bytes(),
+                    )));
+                }
                 continuation = facts.last().map(|fact| fact.seq);
                 break;
             }
-            read_metrics::observe_decode(bytes.len());
-            decoded_bytes = decoded_bytes.saturating_add(bytes.len());
-            facts.push(
-                crate::read::decode_fact(seq, &kind, &bytes)
-                    .map_err(|error| GuardError::Invalid(error.to_string()))?,
-            );
+            let (fact, length) = decode_bounded_fact(row, seq, 1, 2, 3)?;
+            decoded_bytes = decoded_bytes.saturating_add(length);
+            facts.push(fact);
         }
         Ok(SelectedFactPage {
             rows: facts,
@@ -264,7 +280,7 @@ impl JournalRead<'_> {
         let query_limit = i64::try_from(query_limit)
             .map_err(|_| GuardError::Invalid("recent fact page limit exceeds SQLite".to_owned()))?;
         let mut sql = String::from(
-            "SELECT seq, kind, envelope FROM fact_envelopes \
+            "SELECT seq, kind, length(envelope), envelope FROM fact_envelopes \
              WHERE kind = ?1 AND seq <= ?2",
         );
         let mut parameters = vec![
@@ -283,37 +299,34 @@ impl JournalRead<'_> {
         }
         read_metrics::observe_query();
         let mut statement = self.connection.prepare(&sql).map_err(GuardError::Store)?;
-        let rows = statement
-            .query_map(params_from_iter(&parameters), |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Vec<u8>>(2)?,
-                ))
-            })
+        let mut rows = statement
+            .query(params_from_iter(&parameters))
             .map_err(GuardError::Store)?;
         let mut facts: Vec<wire::Envelope<wire::AnyFact>> = Vec::with_capacity(budget.rows());
         let mut decoded_bytes = 0usize;
         let mut continuation = None;
-        for row in rows {
-            let (seq, kind, bytes) = row.map_err(GuardError::Store)?;
+        while let Some(row) = rows.next().map_err(GuardError::Store)? {
+            let seq = row.get::<_, i64>(0).map_err(GuardError::Store)?;
             read_metrics::observe_row();
             if facts.len() == budget.rows() {
                 continuation = facts.last().map(|fact| fact.seq);
                 break;
             }
-            if !facts.is_empty()
-                && decoded_bytes.saturating_add(bytes.len()) > budget.decoded_bytes()
-            {
+            let length =
+                admitted_envelope_length(seq, row.get::<_, i64>(2).map_err(GuardError::Store)?)?;
+            if decoded_bytes.saturating_add(length) > budget.decoded_bytes() {
+                if facts.is_empty() {
+                    return Err(GuardError::Invalid(format!(
+                        "fact envelope sequence {seq} has {length} bytes, exceeding this call's {}-byte decoded budget",
+                        budget.decoded_bytes(),
+                    )));
+                }
                 continuation = facts.last().map(|fact| fact.seq);
                 break;
             }
-            read_metrics::observe_decode(bytes.len());
-            decoded_bytes = decoded_bytes.saturating_add(bytes.len());
-            facts.push(
-                crate::read::decode_fact(seq, &kind, &bytes)
-                    .map_err(|error| GuardError::Invalid(error.to_string()))?,
-            );
+            let (fact, length) = decode_bounded_fact(row, seq, 1, 2, 3)?;
+            decoded_bytes = decoded_bytes.saturating_add(length);
+            facts.push(fact);
         }
         Ok(SelectedFactPage {
             rows: facts,
@@ -333,29 +346,22 @@ impl JournalRead<'_> {
         let horizon = i64::try_from(horizon.get())
             .map_err(|_| GuardError::Invalid("latest fact horizon exceeds SQLite".to_owned()))?;
         read_metrics::observe_query();
-        let row = self
+        let mut statement = self
             .connection
-            .query_row(
-                "SELECT seq, kind, envelope FROM fact_envelopes \
+            .prepare(
+                "SELECT seq, kind, length(envelope), envelope FROM fact_envelopes \
                  WHERE kind = ?1 AND seq <= ?2 ORDER BY seq DESC LIMIT 1",
-                params![kind.as_str(), horizon],
-                |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, Vec<u8>>(2)?,
-                    ))
-                },
             )
-            .optional()
             .map_err(GuardError::Store)?;
-        row.map(|(seq, kind, bytes)| {
-            read_metrics::observe_row();
-            read_metrics::observe_decode(bytes.len());
-            crate::read::decode_fact(seq, &kind, &bytes)
-                .map_err(|error| GuardError::Invalid(error.to_string()))
-        })
-        .transpose()
+        let mut rows = statement
+            .query(params![kind.as_str(), horizon])
+            .map_err(GuardError::Store)?;
+        let Some(row) = rows.next().map_err(GuardError::Store)? else {
+            return Ok(None);
+        };
+        let seq = row.get::<_, i64>(0).map_err(GuardError::Store)?;
+        read_metrics::observe_row();
+        decode_bounded_fact(row, seq, 1, 2, 3).map(|(fact, _)| Some(fact))
     }
 
     /// Read one newest-first page for a fact kind inside one causal origin.
@@ -366,10 +372,11 @@ impl JournalRead<'_> {
         before: Option<wire::Seq>,
         limit: usize,
     ) -> Result<Vec<wire::Envelope<wire::AnyFact>>, GuardError> {
-        if limit == 0 {
-            return Err(GuardError::Invalid(
-                "recent origin fact limit must be positive".to_owned(),
-            ));
+        if limit == 0 || limit > super::MAX_RETAINED_FACT_PAGE_ROWS {
+            return Err(GuardError::Invalid(format!(
+                "recent origin fact limit must be within 1..={}, observed {limit}",
+                super::MAX_RETAINED_FACT_PAGE_ROWS,
+            )));
         }
         let Some(horizon) = self.cursor else {
             return Ok(Vec::new());
@@ -379,7 +386,7 @@ impl JournalRead<'_> {
         let limit = i64::try_from(limit)
             .map_err(|_| GuardError::Invalid("recent origin limit exceeds SQLite".to_owned()))?;
         let mut sql = String::from(
-            "SELECT seq, kind, envelope FROM fact_envelopes \
+            "SELECT seq, kind, length(envelope), envelope FROM fact_envelopes \
              WHERE origin = ?1 AND kind = ?2 AND seq <= ?3",
         );
         let mut parameters = vec![
@@ -400,24 +407,25 @@ impl JournalRead<'_> {
         }
         read_metrics::observe_query();
         let mut statement = self.connection.prepare(&sql).map_err(GuardError::Store)?;
-        let rows = statement
-            .query_map(params_from_iter(&parameters), |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Vec<u8>>(2)?,
-                ))
-            })
+        let mut rows = statement
+            .query(params_from_iter(&parameters))
             .map_err(GuardError::Store)?;
         let mut facts = Vec::new();
-        for row in rows {
-            let (seq, kind, bytes) = row.map_err(GuardError::Store)?;
+        let mut decoded_bytes = 0usize;
+        while let Some(row) = rows.next().map_err(GuardError::Store)? {
+            let seq = row.get::<_, i64>(0).map_err(GuardError::Store)?;
             read_metrics::observe_row();
-            read_metrics::observe_decode(bytes.len());
-            facts.push(
-                crate::read::decode_fact(seq, &kind, &bytes)
-                    .map_err(|error| GuardError::Invalid(error.to_string()))?,
-            );
+            let length =
+                admitted_envelope_length(seq, row.get::<_, i64>(2).map_err(GuardError::Store)?)?;
+            if decoded_bytes.saturating_add(length) > super::MAX_RETAINED_FACT_PAGE_BYTES {
+                return Err(GuardError::Invalid(format!(
+                    "recent origin fact page would exceed the {}-byte decoded budget at sequence {seq}",
+                    super::MAX_RETAINED_FACT_PAGE_BYTES,
+                )));
+            }
+            let (fact, length) = decode_bounded_fact(row, seq, 1, 2, 3)?;
+            decoded_bytes = decoded_bytes.saturating_add(length);
+            facts.push(fact);
         }
         Ok(facts)
     }
@@ -468,50 +476,44 @@ impl JournalRead<'_> {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT seq, kind, envelope FROM fact_envelopes \
+                "SELECT seq, kind, length(envelope), envelope FROM fact_envelopes \
                  WHERE seq >= ?1 AND seq <= ?2 ORDER BY seq LIMIT ?3",
             )
             .map_err(GuardError::Store)?;
-        let rows = statement
-            .query_map(params![first, horizon_sql, query_limit], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Vec<u8>>(2)?,
-                ))
-            })
+        let mut rows = statement
+            .query(params![first, horizon_sql, query_limit])
             .map_err(GuardError::Store)?;
-        let expected = usize::try_from(total)
-            .unwrap_or(usize::MAX)
-            .min(limit.saturating_add(1));
-        let mut facts = Vec::with_capacity(expected);
-        for row in rows {
-            let (seq, kind, bytes) = row.map_err(GuardError::Store)?;
+        let mut facts = Vec::with_capacity(limit.min(usize::try_from(total).unwrap_or(usize::MAX)));
+        let mut decoded_bytes = 0usize;
+        let mut continuation = None;
+        while let Some(row) = rows.next().map_err(GuardError::Store)? {
+            let seq = row.get::<_, i64>(0).map_err(GuardError::Store)?;
             read_metrics::observe_row();
-            read_metrics::observe_decode(bytes.len());
-            facts.push(
-                crate::read::decode_fact(seq, &kind, &bytes)
-                    .map_err(|error| GuardError::Invalid(error.to_string()))?,
-            );
+            let length =
+                admitted_envelope_length(seq, row.get::<_, i64>(2).map_err(GuardError::Store)?)?;
+            if facts.len() == limit
+                || decoded_bytes.saturating_add(length) > super::MAX_RETAINED_FACT_PAGE_BYTES
+            {
+                continuation = u64::try_from(seq).ok().and_then(wire::Seq::new);
+                break;
+            }
+            let (fact, length) = decode_bounded_fact(row, seq, 1, 2, 3)?;
+            decoded_bytes = decoded_bytes.saturating_add(length);
+            facts.push(fact);
         }
-        if facts.len() != expected {
+        if continuation.is_none() && u64::try_from(facts.len()).unwrap_or(u64::MAX) != total {
             return Err(GuardError::Invalid(format!(
-                "indexed fact range expected {expected} row(s), found {}",
+                "indexed fact range expected {total} row(s), found {}",
                 facts.len()
             )));
         }
-        let overflow = if total > u64::try_from(limit).unwrap_or(u64::MAX) {
-            let continuation = facts
-                .pop()
-                .expect("a range beyond the limit returns its continuation")
-                .seq;
-            Some(wire::Overflow {
-                omitted: total - u64::try_from(limit).unwrap_or(u64::MAX),
-                continuation,
-            })
-        } else {
-            None
-        };
+        let overflow = continuation.map(|continuation| wire::Overflow {
+            omitted: horizon
+                .get()
+                .saturating_sub(continuation.get())
+                .saturating_add(1),
+            continuation,
+        });
         Ok(wire::Packed {
             rows: facts,
             overflow,
@@ -550,26 +552,19 @@ impl JournalRead<'_> {
                      WHERE chain.step + 1 < ?2\
                  ) \
                  SELECT chain.seq, chain.origin, chain.cause, chain.remaining, \
-                        fact.kind, fact.envelope \
+                        fact.kind, length(fact.envelope), fact.envelope \
                  FROM chain JOIN fact_envelopes AS fact ON fact.seq = chain.seq \
                  ORDER BY chain.step LIMIT ?2",
             )
             .map_err(GuardError::Store)?;
-        let rows = statement
-            .query_map(params![position_sql, query_limit_sql], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<i64>>(2)?,
-                    row.get::<_, i64>(3)?,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, Vec<u8>>(5)?,
-                ))
-            })
+        let mut rows = statement
+            .query(params![position_sql, query_limit_sql])
             .map_err(GuardError::Store)?;
         let mut page = CausalPage::new(query_limit);
-        for row in rows {
-            page.push(row.map_err(GuardError::Store)?)?;
+        while let Some(row) = rows.next().map_err(GuardError::Store)? {
+            if !page.push(row, limit)? {
+                break;
+            }
         }
         page.finish(limit, horizon)
     }

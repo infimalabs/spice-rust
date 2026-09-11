@@ -105,20 +105,12 @@ impl JournalReader {
 
 pub(crate) fn read_snapshot(connection: &Connection) -> Result<FactSnapshot, SnapshotError> {
     let mut statement = connection
-        .prepare("SELECT seq, kind, envelope FROM fact_envelopes ORDER BY seq")
+        .prepare("SELECT seq, kind, length(envelope), envelope FROM fact_envelopes ORDER BY seq")
         .map_err(SnapshotError::Sqlite)?;
-    let rows = statement
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Vec<u8>>(2)?,
-            ))
-        })
-        .map_err(SnapshotError::Sqlite)?;
+    let mut rows = statement.query([]).map_err(SnapshotError::Sqlite)?;
     let mut facts = Vec::new();
-    for row in rows {
-        let (indexed_seq, indexed_kind, bytes) = row.map_err(SnapshotError::Sqlite)?;
+    while let Some(row) = rows.next().map_err(SnapshotError::Sqlite)? {
+        let (indexed_seq, indexed_kind, bytes) = read_fact_row(row)?;
         facts.push(decode_fact(indexed_seq, &indexed_kind, &bytes)?);
     }
     FactSnapshot::from_facts(facts)
@@ -160,7 +152,7 @@ fn read_steering_snapshot(connection: &Connection) -> Result<SteeringSnapshot, S
         .collect::<Vec<_>>()
         .join(", ");
     let sql = format!(
-        "SELECT seq, kind, envelope FROM fact_envelopes \
+        "SELECT seq, kind, length(envelope), envelope FROM fact_envelopes \
          WHERE seq <= ?1 AND kind IN ({placeholders}) ORDER BY seq"
     );
     let mut parameters = Vec::with_capacity(wire::FactKind::STEERING_AUTHORITY.len() + 1);
@@ -171,24 +163,39 @@ fn read_steering_snapshot(connection: &Connection) -> Result<SteeringSnapshot, S
             .map(|kind| Value::Text(kind.as_str().to_owned())),
     );
     let mut statement = connection.prepare(&sql).map_err(SnapshotError::Sqlite)?;
-    let rows = statement
-        .query_map(params_from_iter(&parameters), |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Vec<u8>>(2)?,
-            ))
-        })
+    let mut rows = statement
+        .query(params_from_iter(&parameters))
         .map_err(SnapshotError::Sqlite)?;
     let mut facts = Vec::new();
-    for row in rows {
-        let (indexed_seq, indexed_kind, bytes) = row.map_err(SnapshotError::Sqlite)?;
+    while let Some(row) = rows.next().map_err(SnapshotError::Sqlite)? {
+        let (indexed_seq, indexed_kind, bytes) = read_fact_row(row)?;
         facts.push(decode_fact(indexed_seq, &indexed_kind, &bytes)?);
     }
     Ok(SteeringSnapshot {
         facts,
         horizon: Some(horizon),
     })
+}
+
+fn read_fact_row(row: &rusqlite::Row<'_>) -> Result<(i64, String, Vec<u8>), SnapshotError> {
+    let indexed_seq = row.get::<_, i64>(0).map_err(SnapshotError::Sqlite)?;
+    let length = row.get::<_, i64>(2).map_err(SnapshotError::Sqlite)?;
+    let length = usize::try_from(length).map_err(|_| SnapshotError::Invalid {
+        seq: u64::try_from(indexed_seq).ok(),
+        detail: format!("fact envelope has invalid length {length}"),
+    })?;
+    if length > crate::MAX_RETAINED_FACT_PAGE_BYTES {
+        return Err(SnapshotError::Invalid {
+            seq: u64::try_from(indexed_seq).ok(),
+            detail: format!(
+                "fact envelope has {length} bytes, exceeding the {}-byte durable limit",
+                crate::MAX_RETAINED_FACT_PAGE_BYTES,
+            ),
+        });
+    }
+    let indexed_kind = row.get::<_, String>(1).map_err(SnapshotError::Sqlite)?;
+    let bytes = row.get::<_, Vec<u8>>(3).map_err(SnapshotError::Sqlite)?;
+    Ok((indexed_seq, indexed_kind, bytes))
 }
 
 pub(crate) fn decode_fact(

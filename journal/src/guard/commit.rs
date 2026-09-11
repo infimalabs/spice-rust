@@ -55,7 +55,8 @@ impl Journal {
         validate_steering_updates(&write)?;
         run_guards(&transaction, current, std::mem::take(&mut write.guards))?;
         let assigned = assign_positions(current, write.facts.len())?;
-        insert_facts(&transaction, &write, &assigned, current)?;
+        let prepared = prepare_facts(&write, &assigned, current)?;
+        insert_facts(&transaction, &write, &prepared)?;
         apply_heads(
             &transaction,
             write.id,
@@ -430,12 +431,19 @@ fn assign_positions(
         .collect()
 }
 
-fn insert_facts(
-    transaction: &Transaction<'_>,
+struct PreparedFact {
+    seq: wire::Seq,
+    cause: Option<wire::Seq>,
+    kind: wire::FactKind,
+    envelope: Vec<u8>,
+}
+
+fn prepare_facts(
     write: &JournalWrite,
     assigned: &[wire::Seq],
     current: Option<wire::Seq>,
-) -> Result<(), CommitError> {
+) -> Result<Vec<PreparedFact>, CommitError> {
+    let mut prepared = Vec::with_capacity(write.facts.len());
     for (index, proposed) in write.facts.iter().enumerate() {
         let seq = assigned[index];
         let cause = resolve_cause(proposed.cause, write.id, index, assigned, current)?;
@@ -449,23 +457,46 @@ fn insert_facts(
             fact: proposed.fact.clone(),
         };
         let bytes = wire::encode(&envelope).map_err(wire_fault)?;
+        if bytes.len() > MAX_RETAINED_FACT_PAGE_BYTES {
+            return Err(CommitError::Refused(GuardRefusal::new(format!(
+                "fact envelope sequence {seq} has {} bytes, exceeding the {}-byte durable limit",
+                bytes.len(),
+                MAX_RETAINED_FACT_PAGE_BYTES,
+            ))));
+        }
+        prepared.push(PreparedFact {
+            seq,
+            cause,
+            kind: proposed.fact.kind(),
+            envelope: bytes,
+        });
+    }
+    Ok(prepared)
+}
+
+fn insert_facts(
+    transaction: &Transaction<'_>,
+    write: &JournalWrite,
+    prepared: &[PreparedFact],
+) -> Result<(), CommitError> {
+    for fact in prepared {
         transaction
             .execute(
                 "INSERT INTO fact_envelopes(seq, wire_version, instant, actor, origin, cause, \
                  kind, envelope) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
-                    to_sql(seq)?,
+                    to_sql(fact.seq)?,
                     i64::from(wire::WireVersion::CURRENT.0),
                     write.at.to_string(),
                     write.actor.to_string(),
                     write.origin.as_str(),
-                    cause.map(to_sql).transpose()?,
-                    proposed.fact.kind().as_str(),
-                    bytes,
+                    fact.cause.map(to_sql).transpose()?,
+                    fact.kind.as_str(),
+                    fact.envelope,
                 ],
             )
             .map_err(sqlite_fault)?;
-        insert_thread_index(transaction, seq, cause, write.origin.as_str())?;
+        insert_thread_index(transaction, fact.seq, fact.cause, write.origin.as_str())?;
     }
     Ok(())
 }
