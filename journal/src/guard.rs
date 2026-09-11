@@ -86,6 +86,64 @@ pub enum FactPageStart {
     At(wire::Seq),
 }
 
+/// Repository-owned ceiling for one retained-fact projection read.
+pub const MAX_RETAINED_FACT_PAGE_ROWS: usize = 256;
+
+/// Repository-owned decoded-byte ceiling for one retained-fact projection read.
+pub const MAX_RETAINED_FACT_PAGE_BYTES: usize = 1024 * 1024;
+
+/// Positive, repository-bounded work admitted for one retained-fact page.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FactReadBudget {
+    rows: usize,
+    decoded_bytes: usize,
+}
+
+impl FactReadBudget {
+    /// The standard maximum retained-fact work admitted by this repository.
+    pub const RETAINED: Self = Self {
+        rows: MAX_RETAINED_FACT_PAGE_ROWS,
+        decoded_bytes: MAX_RETAINED_FACT_PAGE_BYTES,
+    };
+
+    /// Admit a smaller positive budget beneath the repository ceilings.
+    pub fn new(rows: usize, decoded_bytes: usize) -> Result<Self, GuardError> {
+        if rows == 0 || rows > MAX_RETAINED_FACT_PAGE_ROWS {
+            return Err(GuardError::Invalid(format!(
+                "fact read row budget must be within 1..={MAX_RETAINED_FACT_PAGE_ROWS}, observed {rows}"
+            )));
+        }
+        if decoded_bytes == 0 || decoded_bytes > MAX_RETAINED_FACT_PAGE_BYTES {
+            return Err(GuardError::Invalid(format!(
+                "fact read decoded-byte budget must be within 1..={MAX_RETAINED_FACT_PAGE_BYTES}, observed {decoded_bytes}"
+            )));
+        }
+        Ok(Self {
+            rows,
+            decoded_bytes,
+        })
+    }
+
+    const fn rows(self) -> usize {
+        self.rows
+    }
+
+    const fn decoded_bytes(self) -> usize {
+        self.decoded_bytes
+    }
+}
+
+/// One bounded retained-kind page and its explicit resume cursor.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SelectedFactPage {
+    /// Matching rows decoded within the page budget.
+    pub rows: Vec<wire::Envelope<wire::AnyFact>>,
+    /// Last returned cursor when another matching row remains.
+    pub continuation: Option<wire::Seq>,
+    /// Immutable journal horizon through which this page was selected.
+    pub horizon: Option<wire::Seq>,
+}
+
 impl<'a> JournalRead<'a> {
     fn scoped(connection: &'a Connection) -> Result<Self, GuardError> {
         let cursor = visible_cursor(connection)?;

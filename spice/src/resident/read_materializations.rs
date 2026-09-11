@@ -281,25 +281,47 @@ fn build_initial(
     bus: &Bus,
     policy: &consent::Policy,
 ) -> Result<(Generation, Arc<consent::Queue>), String> {
-    let (cursor, facts) = bus
-        .read(|read| {
-            Ok((
-                read.cursor()?,
-                read.selected_facts(
-                    &[
-                        wire::FactKind::ConsentAsked,
-                        wire::FactKind::ConsentQueued,
-                        wire::FactKind::ConsentGranted,
-                        wire::FactKind::ConsentDenied,
-                    ],
-                    None,
-                )?,
-            ))
+    let policy = policy.clone();
+    let (cursor, consent) = bus
+        .read(move |read| {
+            let cursor = read.cursor()?;
+            let kinds = [
+                wire::FactKind::ConsentAsked,
+                wire::FactKind::ConsentQueued,
+                wire::FactKind::ConsentGranted,
+                wire::FactKind::ConsentDenied,
+            ];
+            let mut consent = consent::Queue::from_facts(
+                std::iter::empty::<&wire::Envelope<wire::AnyFact>>(),
+                &policy,
+            )
+            .map_err(|error| {
+                journal::GuardError::Invalid(format!("consent materialization is invalid: {error}"))
+            })?;
+            let mut after = None;
+            loop {
+                let page =
+                    read.selected_fact_page(&kinds, after, journal::FactReadBudget::RETAINED)?;
+                if page.horizon != cursor {
+                    return Err(journal::GuardError::Invalid(format!(
+                        "consent fact page horizon moved from {cursor:?} to {:?}",
+                        page.horizon
+                    )));
+                }
+                consent.advance(page.rows.iter()).map_err(|error| {
+                    journal::GuardError::Invalid(format!(
+                        "consent materialization is invalid: {error}"
+                    ))
+                })?;
+                let Some(continuation) = page.continuation else {
+                    break;
+                };
+                after = Some(continuation);
+            }
+            Ok((cursor, consent))
         })
         .map_err(|error| format!("read materialization facts are unreadable: {error}"))?;
     let cursor = cursor.ok_or_else(|| "running resident has no durable fact horizon".to_owned())?;
-    let consent = consent::Queue::from_facts(&facts, policy)
-        .map_err(|error| format!("consent materialization is invalid: {error}"))?;
     Ok((
         Generation {
             cursor,
