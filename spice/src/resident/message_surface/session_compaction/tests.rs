@@ -147,22 +147,27 @@ fn codex_recovery_precedes_display_and_display_only_replay_is_inert() {
     let mut recovered = Vec::new();
     let mut compactions = SessionCompactions::new(codex_environment(&scratch.0));
 
-    compactions
-        .synchronize_with(
-            &residency,
-            &publisher,
-            &mut state,
-            &mut diagnostic,
-            |recovered_lane, occupant, thread, locus| {
-                assert!(
-                    publisher.0.lock().expect("message lock").is_empty(),
-                    "durable recovery precedes the fallible Canvas projection",
-                );
-                recovered.push((recovered_lane, occupant, thread.to_owned(), locus));
-                Ok(())
-            },
-        )
-        .expect("Codex synchronization succeeds");
+    for _ in 0..4 {
+        compactions
+            .synchronize_with(
+                &residency,
+                &publisher,
+                &mut state,
+                &mut diagnostic,
+                |recovered_lane, occupant, thread, locus| {
+                    assert!(
+                        publisher.0.lock().expect("message lock").is_empty(),
+                        "durable recovery precedes the fallible Canvas projection",
+                    );
+                    recovered.push((recovered_lane, occupant, thread.to_owned(), locus));
+                    Ok(())
+                },
+            )
+            .expect("Codex synchronization succeeds");
+        if !recovered.is_empty() {
+            break;
+        }
+    }
 
     assert_eq!(recovered.len(), 1);
     assert_eq!(recovered[0].0, lane);
@@ -172,9 +177,11 @@ fn codex_recovery_precedes_display_and_display_only_replay_is_inert() {
     assert_eq!(publisher.0.lock().expect("message lock").len(), 1);
 
     let mut display_only = SessionCompactions::new(codex_environment(&scratch.0));
-    display_only
-        .synchronize_display_only(&residency, &publisher, &mut state, &mut diagnostic)
-        .expect("display-only replay remains non-authoritative");
+    for _ in 0..4 {
+        display_only
+            .synchronize_display_only(&residency, &publisher, &mut state, &mut diagnostic)
+            .expect("display-only replay remains non-authoritative");
+    }
     assert_eq!(
         recovered.len(),
         1,
@@ -339,7 +346,7 @@ fn codex_startup_read_volume_depends_on_the_tail_not_older_epochs() {
         cursor.initialized = false;
         BOOTSTRAP_BYTES_DECODED.with(|count| count.set(0));
 
-        let records = scan(&mut cursor).expect("bounded startup scans");
+        let records = bootstrap_until_ready(&mut cursor, "bounded startup scans");
 
         assert_eq!(
             cursor.startup_recovery.expect("latest boundary").offset,
@@ -373,11 +380,7 @@ fn live_codex_boundary_supersedes_an_unfinished_startup_search() {
     let mut cursor = cursor(&transcript, listen::Dialect::Codex);
     cursor.initialized = false;
 
-    assert!(
-        scan(&mut cursor)
-            .expect("bounded startup page scans")
-            .is_empty()
-    );
+    assert!(bootstrap_until_ready(&mut cursor, "bounded startup page scans").is_empty());
     assert!(cursor.startup_search.is_some());
     append(&transcript, LIVE_BOUNDARY.as_bytes());
 
@@ -405,7 +408,7 @@ fn reverse_compaction_pages_cross_one_oversized_record_and_a_partial_tail() {
     let mut cursor = cursor(&transcript, listen::Dialect::Codex);
     cursor.initialized = false;
 
-    let records = scan(&mut cursor).expect("large record makes backward progress");
+    let records = bootstrap_until_ready(&mut cursor, "large record makes backward progress");
 
     assert_eq!(
         cursor.startup_recovery.expect("completed boundary").offset,
@@ -433,10 +436,7 @@ fn reverse_page_refuses_a_record_larger_than_its_hard_byte_allowance() {
     cursor.initialized = false;
     BOOTSTRAP_BYTES_DECODED.with(|count| count.set(0));
 
-    let error = match scan(&mut cursor) {
-        Ok(_) => panic!("oversized history record was admitted"),
-        Err(error) => error,
-    };
+    let error = bootstrap_until_error(&mut cursor, "oversized history record was admitted");
 
     assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     assert!(
@@ -636,6 +636,7 @@ fn codex_earlier_same_length_result_replacement_rebuilds_pending_calls() {
     assert_boundary_publishes_once(&transcript, listen::Dialect::Codex, records);
 }
 
+mod authentication;
 mod history;
 
 fn observed_state(lane: CanonicalUuid) -> MessageState {
@@ -764,6 +765,27 @@ fn cursor(path: &Path, dialect: listen::Dialect) -> Cursor {
         startup_recovery: None,
         startup_search: None,
     }
+}
+
+fn bootstrap_until_ready(cursor: &mut Cursor, context: &str) -> Vec<CompactionRecord> {
+    let mut records = Vec::new();
+    for _ in 0..128 {
+        records.extend(scan(cursor).unwrap_or_else(|error| panic!("{context}: {error}")));
+        if cursor.initialized {
+            return records;
+        }
+    }
+    panic!("{context}: bounded authentication did not settle")
+}
+
+fn bootstrap_until_error(cursor: &mut Cursor, context: &str) -> io::Error {
+    for _ in 0..128 {
+        match scan(cursor) {
+            Ok(_) => {}
+            Err(error) => return error,
+        }
+    }
+    panic!("{context}: expected a bounded bootstrap refusal")
 }
 
 fn append(path: &Path, bytes: &[u8]) {

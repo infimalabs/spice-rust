@@ -43,7 +43,7 @@ fn resident_reload_bootstraps_only_boundaries_in_the_initial_visible_tail() {
     let mut cursor = cursor(&transcript, listen::Dialect::Claude);
     cursor.initialized = false;
 
-    let records = scan(&mut cursor).expect("resident tail bootstrap scans");
+    let records = bootstrap_until_ready(&mut cursor, "resident tail bootstrap scans");
 
     assert_eq!(
         records.len(),
@@ -106,19 +106,25 @@ fn on_demand_history_recovers_boundaries_across_the_retained_horizon() {
         media: Vec::new(),
     };
 
-    let mut messages = retained_messages(HistoryRequest {
-        path: transcript.clone(),
-        worktree: PathBuf::from("/worktree"),
-        dialect: listen::Dialect::Claude,
-        thread: "018f7777-7777-7444-8888-999999999999".to_owned(),
-        lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163e5"),
-        author: uuid("018f82d4-6f59-7d06-92e3-bce9131163ef"),
-        observations: &MessageObservations::default(),
-        before: &before,
-        end: &end,
-        limit: canvas::stream::MESSAGE_CAPACITY,
-    })
-    .expect("retained compaction history reads");
+    let observations = MessageObservations::default();
+    let mut messages = (0..8)
+        .find_map(|_| {
+            let page = retained_messages(HistoryRequest {
+                path: transcript.clone(),
+                worktree: PathBuf::from("/worktree"),
+                dialect: listen::Dialect::Claude,
+                thread: "018f7777-7777-7444-8888-999999999999".to_owned(),
+                lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163e5"),
+                author: uuid("018f82d4-6f59-7d06-92e3-bce9131163ef"),
+                observations: &observations,
+                before: &before,
+                end: &end,
+                limit: canvas::stream::MESSAGE_CAPACITY,
+            })
+            .expect("retained compaction history reads");
+            (!page.messages.is_empty()).then_some(page)
+        })
+        .expect("retained authentication settles before the page is requested");
 
     assert_eq!(messages.messages.len(), 3);
     assert!(messages.more);
@@ -134,7 +140,7 @@ fn on_demand_history_recovers_boundaries_across_the_retained_horizon() {
         thread: "018f7777-7777-7444-8888-999999999999".to_owned(),
         lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163e5"),
         author: uuid("018f82d4-6f59-7d06-92e3-bce9131163ef"),
-        observations: &MessageObservations::default(),
+        observations: &observations,
         before: &before,
         end: &older_end,
         limit: canvas::stream::MESSAGE_CAPACITY,
@@ -166,9 +172,7 @@ fn resident_reload_does_not_manufacture_a_boundary_from_a_long_prose_tail() {
     cursor.initialized = false;
 
     assert!(
-        scan(&mut cursor)
-            .expect("prose-only tail bootstrap scans")
-            .is_empty(),
+        bootstrap_until_ready(&mut cursor, "prose-only tail bootstrap scans").is_empty(),
         "only typed durable compactions create boundaries",
     );
     assert!(cursor.initialized);
@@ -188,7 +192,7 @@ fn live_boundary_after_tail_bootstrap_authenticates_only_the_new_context_epoch()
     fs::write(&transcript, &contents).expect("long prose transcript is written");
     let mut cursor = cursor(&transcript, listen::Dialect::Claude);
     cursor.initialized = false;
-    assert!(scan(&mut cursor).expect("tail bootstrap scans").is_empty());
+    assert!(bootstrap_until_ready(&mut cursor, "tail bootstrap scans").is_empty());
     let epoch_start = cursor.next;
     append(&transcript, format!("{CALL}{BOUNDARY}").as_bytes());
 
@@ -761,14 +765,19 @@ fn timestamp_less_claude_boundary_is_refused_without_a_chronology_fallback() {
     let mut diagnostic = Vec::new();
     let mut compactions = SessionCompactions::new(claude_environment(&scratch.0));
 
-    compactions
-        .synchronize_display_only(
-            &session_residency(lane, author, THREAD),
-            &publisher,
-            &mut state,
-            &mut diagnostic,
-        )
-        .expect("a malformed preserved boundary does not stop the resident");
+    for _ in 0..4 {
+        compactions
+            .synchronize_display_only(
+                &session_residency(lane, author, THREAD),
+                &publisher,
+                &mut state,
+                &mut diagnostic,
+            )
+            .expect("a malformed preserved boundary does not stop the resident");
+        if !diagnostic.is_empty() {
+            break;
+        }
+    }
 
     assert!(publisher.0.lock().expect("message lock").is_empty());
     assert!(

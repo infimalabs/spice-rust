@@ -281,17 +281,6 @@ impl canvas::stream::MessageHistoryProvider for DurableHistory {
             return Ok(None);
         };
         let continuation = self.continuation(lane, source, before)?;
-        let tape = if source.tape.is_dir() {
-            continuation
-                .tape
-                .as_ref()
-                .map(|end| self.tape_messages(lane, source, before, end, limit))
-                .transpose()?
-        } else if source.source.is_some() {
-            return Err("the transcript source disappeared after Canvas bootstrap".to_owned());
-        } else {
-            None
-        };
         let session = source
             .session
             .as_ref()
@@ -312,6 +301,26 @@ impl canvas::stream::MessageHistoryProvider for DurableHistory {
                 .map_err(|error| format!("{error:?}"))
             })
             .transpose()?;
+        if session
+            .as_ref()
+            .is_some_and(|session| session.pending_authentication)
+        {
+            return Ok(Some(canvas::stream::MessageHistoryPage {
+                messages: Vec::new(),
+                more: true,
+            }));
+        }
+        let tape = if source.tape.is_dir() {
+            continuation
+                .tape
+                .as_ref()
+                .map(|end| self.tape_messages(lane, source, before, end, limit))
+                .transpose()?
+        } else if source.source.is_some() {
+            return Err("the transcript source disappeared after Canvas bootstrap".to_owned());
+        } else {
+            None
+        };
         let mut visible = tape
             .as_ref()
             .map_or_else(Vec::new, |tape| tape.messages.clone());
