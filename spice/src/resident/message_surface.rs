@@ -21,7 +21,9 @@ use projection::{publish_agent_event, publish_agent_messages_in, publish_agent_r
 
 const SESSION_MESSAGE_MEMBER_NAMESPACE: u64 = 1_u64 << 63;
 
-pub(super) use backlog::{BacklogReader, restore_agent_messages};
+#[cfg(test)]
+pub(super) use backlog::restore_agent_messages;
+pub(super) use backlog::{BacklogReader, restore_agent_messages_indexed};
 pub(super) use session_compaction::{
     POLL_INTERVAL as SESSION_COMPACTION_POLL_INTERVAL, SessionCompactions,
 };
@@ -90,14 +92,23 @@ struct MessageObservation {
 struct MessageObservations(Vec<MessageObservation>);
 
 impl MessageObservations {
+    #[cfg(test)]
     fn from_snapshot(snapshot: &journal::FactSnapshot) -> Self {
+        Self::from_facts(snapshot.facts())
+    }
+
+    fn from_facts<'a>(facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>) -> Self {
         let mut observations = Self::default();
-        for envelope in snapshot.facts() {
+        for envelope in facts {
             if let Some(batch) = envelope.fact.read::<wire::body::JournalIngested>() {
                 observations.push(&batch, envelope.at);
             }
         }
         observations
+    }
+
+    fn append(&mut self, mut observations: Self) {
+        self.0.append(&mut observations.0);
     }
 
     fn extend(&mut self, observations: Vec<super::TranscriptObservation>) {
@@ -328,10 +339,17 @@ pub(super) fn steering_ledger(
     if !required {
         return Ok(None);
     }
-    let snapshot = bus
-        .fact_snapshot()
+    let keys = steering_keys(record.decoded.events().iter().filter_map(|event| {
+        let listen::Event::Prose(prose) = event else {
+            return None;
+        };
+        (prose.role == listen::ProseRole::Assistant).then_some(prose.text.as_str())
+    }));
+    let presentations = bus
+        .reader()
+        .steering_presentations(keys.into_iter().map(|key| key.to_string()).collect())
         .map_err(|error| store_fault("canvas::message-steering-unavailable", &error.to_string()))?;
-    PresentationDirectives::from_snapshot(&snapshot)
+    PresentationDirectives::from_presentations(&presentations)
         .map(Some)
         .map_err(|error| store_fault("canvas::message-steering-invalid", &error.to_string()))
 }
@@ -363,6 +381,7 @@ struct PresentationDirective {
 }
 
 impl PresentationDirectives {
+    #[cfg(test)]
     fn from_snapshot(snapshot: &journal::FactSnapshot) -> Result<Self, String> {
         let steering = steer::Ledger::from_snapshot(snapshot).map_err(|error| error.to_string())?;
         let mut retirements = BTreeMap::new();
@@ -420,6 +439,73 @@ impl PresentationDirectives {
                 .collect(),
         ))
     }
+
+    fn from_presentations(rows: &[bus::SteeringPresentation]) -> Result<Self, String> {
+        let mut directives = BTreeMap::new();
+        for row in rows {
+            let head = row.head().body();
+            let key = head
+                .key
+                .parse::<steer::Key>()
+                .map_err(|error| error.to_string())?;
+            let retirement = row
+                .current()
+                .fact
+                .read::<wire::body::SteerAcked>()
+                .map(|body| body.locus)
+                .or_else(|| {
+                    row.current()
+                        .fact
+                        .read::<wire::body::SteerDeclined>()
+                        .map(|body| body.locus)
+                });
+            let taste = row.created().fact.kind() == wire::FactKind::TasteReminded
+                || row
+                    .created()
+                    .fact
+                    .read::<wire::body::TasteJudged>()
+                    .is_some_and(|body| {
+                        matches!(body.decision, wire::body::TasteDecision::Confirmed { .. })
+                    });
+            directives.insert(
+                key,
+                PresentationDirective {
+                    lane: head.lane,
+                    text: head.text.clone(),
+                    authored: presents_as_authored_steering(head.control.as_deref()),
+                    taste,
+                    review: is_review_feedback(head.control.as_deref()),
+                    disposition: head.disposition,
+                    retirement,
+                },
+            );
+        }
+        Ok(Self(directives))
+    }
+
+    fn extend_presentations(&mut self, rows: &[bus::SteeringPresentation]) -> Result<(), String> {
+        self.0.extend(Self::from_presentations(rows)?.0);
+        Ok(())
+    }
+}
+
+struct AnySteeringKey;
+
+impl steer::Standing for AnySteeringKey {
+    fn disposition(&self, _key: &steer::Key) -> Option<wire::Disposition> {
+        Some(wire::Disposition::Live)
+    }
+}
+
+fn steering_keys<'a>(texts: impl IntoIterator<Item = &'a str>) -> BTreeSet<steer::Key> {
+    texts
+        .into_iter()
+        .flat_map(|text| steer::scan(text, &AnySteeringKey))
+        .filter_map(|recognition| match recognition.outcome {
+            steer::Outcome::Retired { key, .. } => Some(key),
+            steer::Outcome::Missed { .. } => None,
+        })
+        .collect()
 }
 
 fn presents_as_authored_steering(control: Option<&str>) -> bool {

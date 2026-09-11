@@ -13,6 +13,7 @@ pub(super) struct Projection {
     cursor: Option<Seq>,
     ledger: steer::Ledger,
     operator_directives: BTreeSet<CanonicalUuid>,
+    indexed_operator_lanes: BTreeSet<CanonicalUuid>,
     entries: Vec<Entry>,
     heads: BTreeMap<TaskStamp, TaskHeads>,
     fact_instants: BTreeMap<Seq, Instant>,
@@ -43,6 +44,7 @@ impl Projection {
             cursor: None,
             ledger: steer::Ledger::new(),
             operator_directives: BTreeSet::new(),
+            indexed_operator_lanes: BTreeSet::new(),
             entries: Vec::new(),
             heads: BTreeMap::new(),
             fact_instants: BTreeMap::new(),
@@ -66,10 +68,12 @@ impl Projection {
     }
 
     pub(super) fn has_operator_steering(&self, lane: CanonicalUuid) -> bool {
-        self.ledger
-            .pending(lane)
-            .iter()
-            .any(|directive| self.operator_directives.contains(&directive.directive()))
+        self.indexed_operator_lanes.contains(&lane)
+            || self
+                .ledger
+                .pending(lane)
+                .iter()
+                .any(|directive| self.operator_directives.contains(&directive.directive()))
     }
 
     pub(super) const fn ready_at(&self) -> &BTreeMap<TaskStamp, Instant> {
@@ -81,6 +85,11 @@ impl Projection {
         snapshot: &bus::TaskSnapshot,
         projects: &board::ProjectPolicy,
     ) -> CommandResult<()> {
+        self.indexed_operator_lanes = snapshot
+            .operator_steering()
+            .iter()
+            .map(|head| head.body().lane)
+            .collect();
         let Some((cursor, delta)) = self.committed_delta(snapshot)? else {
             return Ok(());
         };
@@ -120,13 +129,16 @@ impl Projection {
         }
 
         let delta = snapshot.facts().after(self.cursor).collect::<Vec<_>>();
-        if delta.last().map(|fact| fact.seq) != Some(cursor) {
+        if delta.iter().any(|fact| fact.seq > cursor) {
             return Err(store_fault(
                 "lifecycle::snapshot-gap",
                 &format!(
-                    "lifecycle delta after {:?} ends at {:?}, expected {cursor}",
+                    "lifecycle delta after {:?} crosses cursor {cursor} at {:?}",
                     self.cursor,
-                    delta.last().map(|fact| fact.seq)
+                    delta
+                        .iter()
+                        .find(|fact| fact.seq > cursor)
+                        .map(|fact| fact.seq)
                 ),
             ));
         }

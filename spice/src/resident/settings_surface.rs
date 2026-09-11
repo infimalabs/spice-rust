@@ -1,19 +1,16 @@
 //! Durable global Canvas settings and their command surface.
 
 use bus::Bus;
-use journal::{FactCause, FactSnapshot};
+use journal::FactCause;
 use wire::intent::{CommandAnswer, GlobalSettingsAnswer, GlobalSettingsSet};
 use wire::{Command, Outcome, Producer, Reply, ReplyPosition, SeqRange};
 
 use super::{CommandResult, commit, seq, store_fault, typed_outcome, typed_store_fault, write};
 
 /// Resolve global settings from durable authority. Absence is the predecessor default.
-pub(super) fn resolve(snapshot: &FactSnapshot) -> GlobalSettingsAnswer {
-    snapshot
-        .facts()
-        .iter()
-        .rev()
-        .find_map(|envelope| envelope.fact.read::<wire::body::GlobalSettingsChanged>())
+pub(super) fn resolve(envelope: Option<&wire::Envelope<wire::AnyFact>>) -> GlobalSettingsAnswer {
+    envelope
+        .and_then(|envelope| envelope.fact.read::<wire::body::GlobalSettingsChanged>())
         .map_or(GlobalSettingsAnswer { fast_mode: false }, |settings| {
             GlobalSettingsAnswer {
                 fast_mode: settings.fast_mode,
@@ -23,20 +20,25 @@ pub(super) fn resolve(snapshot: &FactSnapshot) -> GlobalSettingsAnswer {
 
 /// Resolve the current fast-mode value for one later occupant launch.
 pub(super) fn fast_mode(bus: &Bus) -> CommandResult<bool> {
-    bus.fact_snapshot()
-        .map(|snapshot| resolve(&snapshot).fast_mode)
+    bus.read(|read| read.latest_fact(wire::FactKind::GlobalSettingsChanged))
+        .map(|fact| resolve(fact.as_ref()).fast_mode)
         .map_err(|error| store_fault("settings::journal-unreadable", &error.to_string()))
 }
 
 /// Read the current global settings at one immutable journal horizon.
 pub(super) fn read(bus: &Bus) -> Outcome<CommandAnswer> {
-    let snapshot = match bus.fact_snapshot() {
+    let (cursor, fact) = match bus.read(|read| {
+        Ok((
+            read.cursor()?,
+            read.latest_fact(wire::FactKind::GlobalSettingsChanged)?,
+        ))
+    }) {
         Ok(snapshot) => snapshot,
         Err(error) => {
             return typed_store_fault("settings::journal-unreadable", &error.to_string());
         }
     };
-    let Some(cursor) = snapshot.horizon() else {
+    let Some(cursor) = cursor else {
         return typed_store_fault(
             "settings::journal-empty",
             "a running resident has no startup authority fact",
@@ -44,7 +46,7 @@ pub(super) fn read(bus: &Bus) -> Outcome<CommandAnswer> {
     };
     Outcome::Reply(Reply {
         position: ReplyPosition::Snapshot(cursor),
-        body: CommandAnswer::GlobalSettings(resolve(&snapshot)),
+        body: CommandAnswer::GlobalSettings(resolve(fact.as_ref())),
     })
 }
 

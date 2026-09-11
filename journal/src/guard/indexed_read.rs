@@ -1,6 +1,6 @@
 //! Indexed reads exposed by one immutable journal transaction.
 
-use rusqlite::{OptionalExtension, params};
+use rusqlite::{OptionalExtension, params, params_from_iter, types::Value};
 use serde::Serialize;
 
 use super::commit::decode_seq;
@@ -122,6 +122,177 @@ impl JournalRead<'_> {
     /// Last durable fact position visible to this transaction.
     pub fn cursor(&self) -> Result<Option<wire::Seq>, GuardError> {
         Ok(self.cursor)
+    }
+
+    /// Read only the named fact kinds after an admitted cursor.
+    ///
+    /// The `(kind, seq)` authority index makes this proportional to matching
+    /// rows. Original positions and order are retained, while the returned
+    /// vector is intentionally sparse with respect to unrelated journal facts.
+    pub fn selected_facts(
+        &self,
+        kinds: &[wire::FactKind],
+        after: Option<wire::Seq>,
+    ) -> Result<Vec<wire::Envelope<wire::AnyFact>>, GuardError> {
+        let Some(horizon) = self.cursor else {
+            return Ok(Vec::new());
+        };
+        if kinds.is_empty() || after == Some(horizon) {
+            return Ok(Vec::new());
+        }
+        if after.is_some_and(|after| after > horizon) {
+            return Err(GuardError::Invalid(format!(
+                "selected fact cursor {after:?} is beyond journal cursor {horizon}"
+            )));
+        }
+        let placeholders = (3..kinds.len() + 3)
+            .map(|index| format!("?{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT seq, kind, envelope FROM fact_envelopes \
+             WHERE seq > ?1 AND seq <= ?2 AND kind IN ({placeholders}) ORDER BY seq"
+        );
+        let mut parameters = Vec::with_capacity(kinds.len() + 2);
+        let after = after
+            .map(|seq| {
+                i64::try_from(seq.get()).map_err(|_| {
+                    GuardError::Invalid("selected fact cursor exceeds SQLite".to_owned())
+                })
+            })
+            .transpose()?
+            .unwrap_or(0);
+        parameters.push(Value::Integer(after));
+        parameters.push(Value::Integer(i64::try_from(horizon.get()).map_err(
+            |_| GuardError::Invalid("selected fact horizon exceeds SQLite".to_owned()),
+        )?));
+        parameters.extend(
+            kinds
+                .iter()
+                .map(|kind| Value::Text(kind.as_str().to_owned())),
+        );
+        read_metrics::observe_query();
+        let mut statement = self.connection.prepare(&sql).map_err(GuardError::Store)?;
+        let rows = statement
+            .query_map(params_from_iter(&parameters), |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
+            })
+            .map_err(GuardError::Store)?;
+        let mut facts = Vec::new();
+        for row in rows {
+            let (seq, kind, bytes) = row.map_err(GuardError::Store)?;
+            read_metrics::observe_row();
+            read_metrics::observe_decode(bytes.len());
+            facts.push(
+                crate::read::decode_fact(seq, &kind, &bytes)
+                    .map_err(|error| GuardError::Invalid(error.to_string()))?,
+            );
+        }
+        Ok(facts)
+    }
+
+    /// Read the newest fact of one kind through the immutable horizon.
+    pub fn latest_fact(
+        &self,
+        kind: wire::FactKind,
+    ) -> Result<Option<wire::Envelope<wire::AnyFact>>, GuardError> {
+        let Some(horizon) = self.cursor else {
+            return Ok(None);
+        };
+        let horizon = i64::try_from(horizon.get())
+            .map_err(|_| GuardError::Invalid("latest fact horizon exceeds SQLite".to_owned()))?;
+        read_metrics::observe_query();
+        let row = self
+            .connection
+            .query_row(
+                "SELECT seq, kind, envelope FROM fact_envelopes \
+                 WHERE kind = ?1 AND seq <= ?2 ORDER BY seq DESC LIMIT 1",
+                params![kind.as_str(), horizon],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Vec<u8>>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(GuardError::Store)?;
+        row.map(|(seq, kind, bytes)| {
+            read_metrics::observe_row();
+            read_metrics::observe_decode(bytes.len());
+            crate::read::decode_fact(seq, &kind, &bytes)
+                .map_err(|error| GuardError::Invalid(error.to_string()))
+        })
+        .transpose()
+    }
+
+    /// Read one newest-first page for a fact kind inside one causal origin.
+    pub fn recent_origin_facts(
+        &self,
+        origin: &wire::Origin,
+        kind: wire::FactKind,
+        before: Option<wire::Seq>,
+        limit: usize,
+    ) -> Result<Vec<wire::Envelope<wire::AnyFact>>, GuardError> {
+        if limit == 0 {
+            return Err(GuardError::Invalid(
+                "recent origin fact limit must be positive".to_owned(),
+            ));
+        }
+        let Some(horizon) = self.cursor else {
+            return Ok(Vec::new());
+        };
+        let horizon = i64::try_from(horizon.get())
+            .map_err(|_| GuardError::Invalid("recent origin horizon exceeds SQLite".to_owned()))?;
+        let limit = i64::try_from(limit)
+            .map_err(|_| GuardError::Invalid("recent origin limit exceeds SQLite".to_owned()))?;
+        let mut sql = String::from(
+            "SELECT seq, kind, envelope FROM fact_envelopes \
+             WHERE origin = ?1 AND kind = ?2 AND seq <= ?3",
+        );
+        let mut parameters = vec![
+            Value::Text(origin.as_str().to_owned()),
+            Value::Text(kind.as_str().to_owned()),
+            Value::Integer(horizon),
+        ];
+        if let Some(before) = before {
+            let before = i64::try_from(before.get()).map_err(|_| {
+                GuardError::Invalid("recent origin cursor exceeds SQLite".to_owned())
+            })?;
+            sql.push_str(" AND seq < ?4 ORDER BY seq DESC LIMIT ?5");
+            parameters.push(Value::Integer(before));
+            parameters.push(Value::Integer(limit));
+        } else {
+            sql.push_str(" ORDER BY seq DESC LIMIT ?4");
+            parameters.push(Value::Integer(limit));
+        }
+        read_metrics::observe_query();
+        let mut statement = self.connection.prepare(&sql).map_err(GuardError::Store)?;
+        let rows = statement
+            .query_map(params_from_iter(&parameters), |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
+            })
+            .map_err(GuardError::Store)?;
+        let mut facts = Vec::new();
+        for row in rows {
+            let (seq, kind, bytes) = row.map_err(GuardError::Store)?;
+            read_metrics::observe_row();
+            read_metrics::observe_decode(bytes.len());
+            facts.push(
+                crate::read::decode_fact(seq, &kind, &bytes)
+                    .map_err(|error| GuardError::Invalid(error.to_string()))?,
+            );
+        }
+        Ok(facts)
     }
 
     /// Read one bounded primary-key fact range through an immutable horizon.

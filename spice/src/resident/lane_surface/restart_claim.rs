@@ -94,12 +94,12 @@ pub(super) fn observe_restored_claim(
     };
     let at = wire::Instant::new(jiff::Timestamp::now())
         .map_err(|error| store_fault("lane::restart-clock-invalid", &error.to_string()))?;
-    let snapshot = bus
-        .task_snapshot()
+    let heads = bus
+        .read(|read| read.task_heads())
         .map_err(|error| store_fault("lane::restart-claim-heads-unreadable", &error.to_string()))?;
     let mut restored = None;
     let mut found = false;
-    for heads in snapshot.tasks() {
+    for heads in &heads {
         let Some(claim) = heads.claim() else { continue };
         if claim.body().disposition != wire::ClaimDisposition::Active {
             continue;

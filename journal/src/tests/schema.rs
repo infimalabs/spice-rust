@@ -36,6 +36,42 @@ fn empty_database_reaches_the_same_finalized_baseline_once() {
 }
 
 #[test]
+fn schema_nineteen_adds_the_bounded_startup_indexes() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("schema-nineteen.sqlite3");
+    let journal = authority_file_fixture(&path);
+    journal
+        .connection
+        .execute_batch(
+            "DROP INDEX fact_envelopes_kind_seq;
+             DROP INDEX fact_envelopes_origin_kind_seq;
+             UPDATE journal_schema SET version = 19 WHERE singleton = 1;
+             PRAGMA user_version = 19;",
+        )
+        .expect("restore the pre-index schema");
+    drop(journal);
+
+    let journal = Journal::open(&path).expect("schema-nineteen authority migrates");
+    assert_eq!(
+        journal
+            .migration()
+            .map(|migration| (migration.from(), migration.to())),
+        Some((19, SCHEMA_VERSION))
+    );
+    for index in ["fact_envelopes_kind_seq", "fact_envelopes_origin_kind_seq"] {
+        let exists: bool = journal
+            .connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1)",
+                [index],
+                |row| row.get(0),
+            )
+            .expect("read migrated index");
+        assert!(exists, "migration omitted {index}");
+    }
+}
+
+#[test]
 fn schema_fourteen_crosses_the_requirement_wire_boundary_once_without_rewriting_tasks() {
     let scratch = Scratch::new();
     let path = scratch.path().join("schema-fourteen.sqlite3");

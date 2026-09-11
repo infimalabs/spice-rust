@@ -5,6 +5,34 @@ use super::indexed_read::decode_head;
 use super::*;
 
 impl JournalRead<'_> {
+    /// Live operator-authored steering, ordered by creation position.
+    pub fn pending_operator_steering(
+        &self,
+    ) -> Result<Vec<JournalHead<wire::SteeringHead>>, GuardError> {
+        self.require_current_steering_index()?;
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT steering.directive, steering.steer_key, steering.lane, \
+                 steering.disposition, steering.created_seq, steering.minted_micros, \
+                 steering.head_seq, steering.body FROM steering_heads AS steering \
+                 JOIN fact_envelopes AS creating ON creating.seq = steering.created_seq \
+                 WHERE steering.disposition = 'live' AND creating.actor = ?1 \
+                 ORDER BY steering.created_seq",
+            )
+            .map_err(GuardError::Store)?;
+        read_metrics::observe_query();
+        let rows = statement
+            .query_map([wire::Actor::Operator.to_string()], read_steering_columns)
+            .map_err(GuardError::Store)?;
+        let mut heads = Vec::new();
+        for row in rows {
+            read_metrics::observe_row();
+            heads.push(self.decode_steering_row(row.map_err(GuardError::Store)?)?);
+        }
+        Ok(heads)
+    }
+
     /// Current steering standing for one stable directive identity.
     pub fn steering_head(
         &self,

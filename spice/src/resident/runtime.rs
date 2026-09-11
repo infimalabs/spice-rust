@@ -879,10 +879,10 @@ where
                 )
             })?
             .to_owned();
-        let snapshot = bus
-            .fact_snapshot()
+        let facts = bus
+            .read(|read| read.selected_facts(&[wire::FactKind::TrustPended], None))
             .map_err(|error| store_fault("trust::journal-unreadable", &error.to_string()))?;
-        let previous = latest_surface_digest(&snapshot)?;
+        let previous = latest_surface_digest(&facts)?;
         let mut pending = write(Actor::Spice, epoch, Producer::CommandDoor)?;
         let guarded_repository = repository.clone();
         let guarded_surface = surface.clone();
@@ -942,10 +942,9 @@ where
 }
 
 pub(super) fn latest_surface_digest(
-    snapshot: &journal::FactSnapshot,
+    facts: &[wire::Envelope<wire::AnyFact>],
 ) -> CommandResult<Option<wire::Digest>> {
-    for envelope in snapshot
-        .facts()
+    for envelope in facts
         .iter()
         .rev()
         .filter(|envelope| envelope.fact.kind() == wire::FactKind::TrustPended)

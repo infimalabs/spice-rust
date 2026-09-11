@@ -24,6 +24,7 @@ struct SessionWorktree {
 }
 
 impl SessionWorktrees {
+    #[cfg(test)]
     fn from_snapshot(snapshot: &journal::FactSnapshot) -> Self {
         let ingestions = snapshot
             .facts()
@@ -87,6 +88,11 @@ pub(in crate::resident) struct BacklogReader {
 }
 
 impl BacklogReader {
+    pub(in crate::resident) fn indexed() -> Self {
+        Self::default()
+    }
+
+    #[cfg(test)]
     pub(in crate::resident) fn from_snapshot(
         snapshot: &journal::FactSnapshot,
     ) -> CommandResult<Self> {
@@ -116,6 +122,7 @@ impl BacklogReader {
 /// law. A record captured while startup scans is therefore either present in
 /// the replay or delivered from the queued live channel, and the second arrival
 /// is an exact duplicate rather than another execution path.
+#[cfg(test)]
 pub(in crate::resident) fn restore_agent_messages(
     paths: &RuntimePaths,
     residency: &wire::ResidencyHead,
@@ -123,8 +130,30 @@ pub(in crate::resident) fn restore_agent_messages(
     reader: &mut BacklogReader,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
+    restore_agent_messages_with(None, paths, residency, publisher, reader, diagnostic)
+}
+
+pub(in crate::resident) fn restore_agent_messages_indexed(
+    bus: &bus::BusReader,
+    paths: &RuntimePaths,
+    residency: &wire::ResidencyHead,
+    publisher: &canvas::stream::MessagePublisher,
+    reader: &mut BacklogReader,
+    diagnostic: &mut dyn io::Write,
+) -> CommandResult<()> {
+    restore_agent_messages_with(Some(bus), paths, residency, publisher, reader, diagnostic)
+}
+
+fn restore_agent_messages_with(
+    bus: Option<&bus::BusReader>,
+    paths: &RuntimePaths,
+    residency: &wire::ResidencyHead,
+    publisher: &canvas::stream::MessagePublisher,
+    reader: &mut BacklogReader,
+    diagnostic: &mut dyn io::Write,
+) -> CommandResult<()> {
     for row in &residency.lanes {
-        restore_lane(paths, row, publisher, reader, diagnostic)?;
+        restore_lane(bus, paths, row, publisher, reader, diagnostic)?;
     }
     publisher
         .set_history_provider(Arc::new(DurableHistory::new(paths, residency, reader)))
@@ -147,6 +176,7 @@ struct DurableHistory {
 #[derive(Debug)]
 struct DurableLane {
     tape: std::path::PathBuf,
+    worktree: std::path::PathBuf,
     dialect: listen::Dialect,
     author: CanonicalUuid,
     source: Option<listen::Checkpoint>,
@@ -205,6 +235,7 @@ impl DurableHistory {
                             .tape
                             .join(row.lane.to_string())
                             .join(row.vendor.as_str()),
+                        worktree: row.worktree.clone().into(),
                         dialect,
                         author,
                         source: reader.cursors.get(&row.lane).cloned(),
@@ -374,6 +405,7 @@ impl DurableHistory {
             tail.scan,
             lane,
             source.author,
+            &source.worktree,
             &messages,
             &mut reader,
             &mut diagnostic,
@@ -510,6 +542,7 @@ impl AgentMessagePublisher for CollectedMessages {
 }
 
 fn restore_lane(
+    bus: Option<&bus::BusReader>,
     paths: &RuntimePaths,
     row: &wire::LaneResidency,
     publisher: &impl AgentMessagePublisher,
@@ -540,7 +573,115 @@ fn restore_lane(
             return Ok(());
         }
     };
-    publish_scan(scan, row.lane, author, publisher, reader, diagnostic)
+    if let Some(bus) = bus {
+        hydrate_observations(bus, row.lane, &scan, reader)?;
+        let keys = scan_steering_keys(&scan);
+        let rows = bus
+            .steering_presentations(keys.into_iter().map(|key| key.to_string()).collect())
+            .map_err(|error| {
+                store_fault("canvas::message-steering-unavailable", &error.to_string())
+            })?;
+        reader
+            .steering
+            .extend_presentations(&rows)
+            .map_err(|error| store_fault("canvas::message-steering-invalid", &error))?;
+    }
+    publish_scan(
+        scan,
+        row.lane,
+        author,
+        Path::new(&row.worktree),
+        publisher,
+        reader,
+        diagnostic,
+    )
+}
+
+fn hydrate_observations(
+    bus: &bus::BusReader,
+    lane: CanonicalUuid,
+    scan: &listen::Scan,
+    reader: &mut BacklogReader,
+) -> CommandResult<()> {
+    let Some(oldest) = scan
+        .records
+        .iter()
+        .flat_map(|record| match &record.payload {
+            listen::RecordPayload::Events(events) => events
+                .iter()
+                .map(|event| (event.event.locus().member, event.event.locus().offset))
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        })
+        .min()
+    else {
+        return Ok(());
+    };
+    let source = scan
+        .checkpoint
+        .source
+        .as_str()
+        .parse::<CanonicalUuid>()
+        .map_err(|error| store_fault("canvas::message-source-invalid", &error.to_string()))?;
+    let origin = format!("lane:{lane}")
+        .parse::<wire::Origin>()
+        .map_err(|error| store_fault("canvas::message-origin-invalid", &error.to_string()))?;
+    let mut remaining = scan.records.len().saturating_mul(4).clamp(32, 4_096);
+    let mut before = None;
+    let mut facts = Vec::new();
+    while remaining > 0 {
+        let limit = remaining.min(128);
+        let page = bus
+            .recent_origin_facts(
+                origin.clone(),
+                wire::FactKind::JournalIngested,
+                before,
+                limit,
+            )
+            .map_err(|error| store_fault("canvas::message-time-unavailable", &error.to_string()))?;
+        if page.is_empty() {
+            break;
+        }
+        before = page.last().map(|fact| fact.seq);
+        let reached = page.iter().any(|envelope| {
+            envelope
+                .fact
+                .read::<wire::body::JournalIngested>()
+                .is_some_and(|batch| {
+                    batch.lane == lane
+                        && batch.source == source
+                        && (batch.from.member, batch.from.offset) <= oldest
+                })
+        });
+        remaining = remaining.saturating_sub(page.len());
+        facts.extend(page);
+        if reached {
+            break;
+        }
+    }
+    facts.sort_by_key(|fact| fact.seq);
+    reader
+        .state
+        .observations
+        .append(MessageObservations::from_facts(&facts));
+    Ok(())
+}
+
+fn scan_steering_keys(scan: &listen::Scan) -> BTreeSet<steer::Key> {
+    steering_keys(scan.records.iter().flat_map(|record| {
+        match &record.payload {
+            listen::RecordPayload::Events(events) => events
+                .iter()
+                .filter_map(|event| {
+                    let listen::Event::Prose(prose) = &event.event else {
+                        return None;
+                    };
+                    (prose.role == listen::ProseRole::Assistant).then_some(prose.text.as_str())
+                })
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        }
+    }))
 }
 
 fn tape_available(tape: &Path, lane: CanonicalUuid, diagnostic: &mut dyn io::Write) -> bool {
@@ -586,6 +727,7 @@ fn publish_scan(
     scan: listen::Scan,
     lane: CanonicalUuid,
     author: CanonicalUuid,
+    fallback_worktree: &Path,
     publisher: &impl AgentMessagePublisher,
     reader: &mut BacklogReader,
     diagnostic: &mut dyn io::Write,
@@ -607,7 +749,8 @@ fn publish_scan(
         };
         let worktree = events
             .first()
-            .and_then(|sourced| reader.worktrees.at(lane, source, sourced.event.locus()));
+            .and_then(|sourced| reader.worktrees.at(lane, source, sourced.event.locus()))
+            .unwrap_or(fallback_worktree);
         let decoded = events
             .iter()
             .map(|sourced| {
@@ -623,7 +766,7 @@ fn publish_scan(
                 lane,
                 author,
                 source: Some(source),
-                worktree,
+                worktree: Some(worktree),
                 context,
                 events: &decoded,
                 observed: None,

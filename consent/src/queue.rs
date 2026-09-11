@@ -107,6 +107,17 @@ impl Queue {
     /// Returns a semantic replay error when consent facts do not form one
     /// asked, optionally queued, then terminal chain per request identity.
     pub fn from_snapshot(snapshot: &FactSnapshot, policy: &Policy) -> Result<Self, QueueError> {
+        Self::from_facts(snapshot.facts(), policy)
+    }
+
+    /// Rebuild consent state from the ordered consent authority projection.
+    ///
+    /// The input may be sparse in the complete journal as long as it contains
+    /// every consent fact in original order.
+    pub fn from_facts<'a>(
+        facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
+        policy: &Policy,
+    ) -> Result<Self, QueueError> {
         let mut queue = Self {
             requests: BTreeMap::new(),
             budgets: policy
@@ -125,7 +136,7 @@ impl Queue {
                 })
                 .collect(),
         };
-        queue.advance(snapshot.facts())?;
+        queue.advance(facts)?;
         Ok(queue)
     }
 

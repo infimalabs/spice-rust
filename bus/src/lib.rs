@@ -115,6 +115,7 @@ mod runtime {
         tasks: Arc<[TaskHeads]>,
         trust: Arc<[JournalHead<journal::crossing::TrustHead>]>,
         residency: Option<JournalHead<journal::crossing::ResidencyHead>>,
+        operator_steering: Arc<[JournalHead<journal::crossing::SteeringHead>]>,
     }
 
     /// Incremental resident authority and indexed pending steering observed at
@@ -133,6 +134,32 @@ mod runtime {
     pub struct CanvasHeads {
         cursor: Option<journal::crossing::Seq>,
         trust: Vec<JournalHead<journal::crossing::TrustHead>>,
+    }
+
+    /// One exact steering head with the immutable facts that created and most
+    /// recently transitioned it.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct SteeringPresentation {
+        head: JournalHead<journal::crossing::SteeringHead>,
+        created: journal::crossing::Envelope<journal::crossing::AnyFact>,
+        current: journal::crossing::Envelope<journal::crossing::AnyFact>,
+    }
+
+    impl SteeringPresentation {
+        #[must_use]
+        pub const fn head(&self) -> &JournalHead<journal::crossing::SteeringHead> {
+            &self.head
+        }
+
+        #[must_use]
+        pub const fn created(&self) -> &journal::crossing::Envelope<journal::crossing::AnyFact> {
+            &self.created
+        }
+
+        #[must_use]
+        pub const fn current(&self) -> &journal::crossing::Envelope<journal::crossing::AnyFact> {
+            &self.current
+        }
     }
 
     impl CanvasHeads {
@@ -155,7 +182,10 @@ mod runtime {
             self.cursor
         }
 
-        /// Complete fact stream captured at the same board barrier.
+        /// Resident authority facts captured through the same board barrier.
+        ///
+        /// High-volume transcript-ingestion accounting is queried separately
+        /// by origin and kind instead of being replayed into this cache.
         #[must_use]
         pub const fn facts(&self) -> &TaskFacts {
             &self.facts
@@ -183,6 +213,12 @@ mod runtime {
         #[must_use]
         pub fn residency(&self) -> Option<&JournalHead<journal::crossing::ResidencyHead>> {
             self.residency.as_ref()
+        }
+
+        /// Current live directions authored by the operator.
+        #[must_use]
+        pub fn operator_steering(&self) -> &[JournalHead<journal::crossing::SteeringHead>] {
+            &self.operator_steering
         }
     }
 
@@ -275,6 +311,46 @@ mod runtime {
             receiver
                 .recv()
                 .map_err(|_| BusReadError::Bus(BusError::Closed))?
+        }
+
+        /// Resolve only the steering keys named by a bounded message window.
+        pub fn steering_presentations(
+            &self,
+            keys: Vec<String>,
+        ) -> Result<Vec<SteeringPresentation>, BusReadError> {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            self.requests
+                .send(Request::SteeringPresentations { keys, answer })
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
+            receiver
+                .recv()
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?
+                .map_err(BusReadError::Head)
+        }
+
+        /// Read one bounded newest-first page from a fact kind and origin.
+        pub fn recent_origin_facts(
+            &self,
+            origin: journal::crossing::Origin,
+            kind: journal::crossing::FactKind,
+            before: Option<journal::crossing::Seq>,
+            limit: usize,
+        ) -> Result<Vec<journal::crossing::Envelope<journal::crossing::AnyFact>>, BusReadError>
+        {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            self.requests
+                .send(Request::RecentOriginFacts {
+                    origin,
+                    kind,
+                    before,
+                    limit,
+                    answer,
+                })
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
+            receiver
+                .recv()
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?
+                .map_err(BusReadError::Head)
         }
 
         /// Capture the Canvas cursor and trust heads at one queued barrier.
@@ -670,6 +746,19 @@ mod runtime {
             lane: Option<journal::crossing::CanonicalUuid>,
             answer: SyncSender<Result<SteeringSnapshot, BusReadError>>,
         },
+        SteeringPresentations {
+            keys: Vec<String>,
+            answer: SyncSender<Result<Vec<SteeringPresentation>, GuardError>>,
+        },
+        RecentOriginFacts {
+            origin: journal::crossing::Origin,
+            kind: journal::crossing::FactKind,
+            before: Option<journal::crossing::Seq>,
+            limit: usize,
+            answer: SyncSender<
+                Result<Vec<journal::crossing::Envelope<journal::crossing::AnyFact>>, GuardError>,
+            >,
+        },
         CanvasHeads {
             answer: SyncSender<Result<CanvasHeads, BusReadError>>,
         },
@@ -748,14 +837,7 @@ mod runtime {
                     let _ = ready.send(());
                 }
                 Request::Snapshot { answer } => {
-                    // The writer already admitted this immutable history and
-                    // advances it on every commit. Startup materializers must
-                    // not decode that same journal again for each view.
-                    let snapshot = task_snapshot.as_ref().map_or_else(
-                        || journal.fact_snapshot(),
-                        |snapshot| snapshot.facts.snapshot(),
-                    );
-                    let _ = answer.send(snapshot);
+                    let _ = answer.send(journal.fact_snapshot());
                 }
                 Request::Cursor { answer } => {
                     let _ = answer.send(journal.read(|read| read.cursor()));
@@ -772,6 +854,21 @@ mod runtime {
                                 .map(|pending| SteeringSnapshot { authority, pending })
                         });
                     let _ = answer.send(snapshot);
+                }
+                Request::SteeringPresentations { keys, answer } => {
+                    let _ = answer.send(steering_presentations(&journal, keys));
+                }
+                Request::RecentOriginFacts {
+                    origin,
+                    kind,
+                    before,
+                    limit,
+                    answer,
+                } => {
+                    let _ =
+                        answer.send(journal.read(move |read| {
+                            read.recent_origin_facts(&origin, kind, before, limit)
+                        }));
                 }
                 Request::CanvasHeads { answer } => {
                     let _ = answer.send(canvas_heads(&journal));
@@ -815,6 +912,50 @@ mod runtime {
                 }
             }
         }
+    }
+
+    fn steering_presentations(
+        journal: &Journal,
+        keys: Vec<String>,
+    ) -> Result<Vec<SteeringPresentation>, GuardError> {
+        journal.read(move |read| {
+            let mut presentations = Vec::new();
+            for key in keys {
+                let Some(head) = read.steering_key(&key)? else {
+                    continue;
+                };
+                let created = read
+                    .fact_page(
+                        journal::FactPageStart::At(head.body().created),
+                        head.body().created,
+                        1,
+                    )?
+                    .rows
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| {
+                        GuardError::Invalid(format!("steering key {key} has no creating fact"))
+                    })?;
+                let current = read
+                    .fact_page(
+                        journal::FactPageStart::At(head.position()),
+                        head.position(),
+                        1,
+                    )?
+                    .rows
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| {
+                        GuardError::Invalid(format!("steering key {key} has no current fact"))
+                    })?;
+                presentations.push(SteeringPresentation {
+                    head,
+                    created,
+                    current,
+                });
+            }
+            Ok(presentations)
+        })
     }
 
     fn answer_commit(
@@ -974,6 +1115,6 @@ mod runtime {
 #[cfg(not(target_arch = "wasm32"))]
 pub use runtime::{
     BroadcastSubscriber, Bus, BusError, BusReadError, BusReader, BusVerifyError, CanvasHeads,
-    CommitOutcome, CommitSubscriber, JournalCommit, JournalTransaction, SteeringSnapshot,
-    TaskFacts, TaskSnapshot,
+    CommitOutcome, CommitSubscriber, JournalCommit, JournalTransaction, SteeringPresentation,
+    SteeringSnapshot, TaskFacts, TaskSnapshot,
 };

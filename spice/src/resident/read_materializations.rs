@@ -65,7 +65,7 @@ impl CurrentReads {
         policy: &consent::Policy,
     ) -> Result<Self, String> {
         let reader = bus.reader();
-        let (initial, state) = build_initial(&reader, policy)?;
+        let (initial, state) = build_initial(bus, policy)?;
         let initial = Arc::new(initial);
         let state = Arc::new(Mutex::new(ReadState {
             generation: Arc::clone(&initial),
@@ -278,16 +278,27 @@ fn advance_generation(
 }
 
 fn build_initial(
-    reader: &BusReader,
+    bus: &Bus,
     policy: &consent::Policy,
 ) -> Result<(Generation, Arc<consent::Queue>), String> {
-    let snapshot = reader
-        .fact_snapshot()
+    let (cursor, facts) = bus
+        .read(|read| {
+            Ok((
+                read.cursor()?,
+                read.selected_facts(
+                    &[
+                        wire::FactKind::ConsentAsked,
+                        wire::FactKind::ConsentQueued,
+                        wire::FactKind::ConsentGranted,
+                        wire::FactKind::ConsentDenied,
+                    ],
+                    None,
+                )?,
+            ))
+        })
         .map_err(|error| format!("read materialization facts are unreadable: {error}"))?;
-    let cursor = snapshot
-        .horizon()
-        .ok_or_else(|| "running resident has no durable fact horizon".to_owned())?;
-    let consent = consent::Queue::from_snapshot(&snapshot, policy)
+    let cursor = cursor.ok_or_else(|| "running resident has no durable fact horizon".to_owned())?;
+    let consent = consent::Queue::from_facts(&facts, policy)
         .map_err(|error| format!("consent materialization is invalid: {error}"))?;
     Ok((
         Generation {

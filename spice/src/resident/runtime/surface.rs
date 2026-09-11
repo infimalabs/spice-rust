@@ -294,17 +294,14 @@ fn launch_message_startup(
     publisher: &canvas::stream::MessagePublisher,
 ) -> CommandResult<oneshot::Receiver<CommandResult<MessageStartup>>> {
     let residency = current_residency(bus, epoch)?;
-    let snapshot = bus
-        .fact_snapshot()
-        .map_err(|error| store_fault("canvas::message-time-unavailable", &error.to_string()))?;
-    start_message_startup(paths, residency.body(), publisher, snapshot)
+    start_message_startup(paths, residency.body(), publisher, bus.reader())
 }
 
 fn start_message_startup(
     paths: &RuntimePaths,
     residency: &wire::ResidencyHead,
     publisher: &canvas::stream::MessagePublisher,
-    snapshot: journal::FactSnapshot,
+    bus: bus::BusReader,
 ) -> CommandResult<oneshot::Receiver<CommandResult<MessageStartup>>> {
     let paths = paths.clone();
     let residency = residency.clone();
@@ -314,17 +311,18 @@ fn start_message_startup(
         .name("spice-message-startup".to_owned())
         .spawn(move || {
             let mut diagnostic = Vec::new();
-            let result =
-                message_surface::BacklogReader::from_snapshot(&snapshot).and_then(|mut reader| {
-                    message_surface::restore_agent_messages(
-                        &paths,
-                        &residency,
-                        &publisher,
-                        &mut reader,
-                        &mut diagnostic,
-                    )?;
-                    Ok(MessageStartup { reader, diagnostic })
-                });
+            let result = {
+                let mut reader = message_surface::BacklogReader::indexed();
+                message_surface::restore_agent_messages_indexed(
+                    &bus,
+                    &paths,
+                    &residency,
+                    &publisher,
+                    &mut reader,
+                    &mut diagnostic,
+                )
+                .map(|()| MessageStartup { reader, diagnostic })
+            };
             let _ = finished.send(result);
         })
         .map_err(|error| {

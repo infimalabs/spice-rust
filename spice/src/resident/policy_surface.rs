@@ -485,10 +485,10 @@ fn admit_trust_pend(
             ));
         }
     }
-    let snapshot = bus
-        .fact_snapshot()
+    let facts = bus
+        .read(|read| read.selected_facts(&[wire::FactKind::TrustPended], None))
         .map_err(|error| typed_store_fault("trust::journal-unreadable", &error.to_string()))?;
-    let previous = super::latest_surface_digest(&snapshot).map_err(typed_outcome)?;
+    let previous = super::latest_surface_digest(&facts).map_err(typed_outcome)?;
     Ok(TrustPendAdmission {
         worktree,
         surface,

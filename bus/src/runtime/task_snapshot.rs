@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::*;
 
-/// Persistent fact history shared by queued task snapshots.
+/// Persistent task-authority history shared by queued task snapshots.
 ///
 /// Each durable commit contributes one immutable chunk. Cloning a task
 /// snapshot therefore shares all prior decoded facts instead of copying or
@@ -23,13 +23,10 @@ struct TaskFactChunk {
 }
 
 impl TaskFacts {
-    pub(super) fn snapshot(&self) -> Result<FactSnapshot, SnapshotError> {
-        FactSnapshot::from_facts(self.iter().cloned().collect())
-    }
-
-    fn from_snapshot(snapshot: FactSnapshot) -> Self {
-        let horizon = snapshot.horizon();
-        let rows = snapshot.into_facts();
+    fn from_selected(
+        rows: Vec<journal::crossing::Envelope<journal::crossing::AnyFact>>,
+        horizon: Option<journal::crossing::Seq>,
+    ) -> Self {
         let len = rows.len();
         Self {
             tail: (!rows.is_empty()).then(|| {
@@ -43,31 +40,35 @@ impl TaskFacts {
         }
     }
 
-    fn append(
+    fn append_selected(
         &self,
         rows: Vec<journal::crossing::Envelope<journal::crossing::AnyFact>>,
         horizon: journal::crossing::Seq,
     ) -> Result<Self, GuardError> {
-        let expected = self
-            .horizon
-            .map_or(1, |cursor| cursor.get().saturating_add(1));
-        if rows.first().map(|row| row.seq.get()) != Some(expected)
-            || rows.last().map(|row| row.seq) != Some(horizon)
+        if self.horizon.is_some_and(|current| horizon <= current)
+            || rows.windows(2).any(|pair| pair[0].seq >= pair[1].seq)
+            || rows.iter().any(|row| {
+                self.horizon.is_some_and(|current| row.seq <= current) || row.seq > horizon
+            })
         {
             return Err(GuardError::Invalid(format!(
-                "task snapshot append expected {expected}..={horizon}, received {:?}..={:?}",
+                "task snapshot append after {:?} through {horizon} received {:?}..={:?}",
+                self.horizon,
                 rows.first().map(|row| row.seq),
                 rows.last().map(|row| row.seq)
             )));
         }
+        let added = rows.len();
         Ok(Self {
-            tail: Some(Arc::new(TaskFactChunk {
-                prior: self.tail.clone(),
-                rows: rows.into_boxed_slice(),
-            })),
-            len: self.len.saturating_add(
-                usize::try_from(horizon.get() - expected + 1).unwrap_or(usize::MAX),
-            ),
+            tail: if rows.is_empty() {
+                self.tail.clone()
+            } else {
+                Some(Arc::new(TaskFactChunk {
+                    prior: self.tail.clone(),
+                    rows: rows.into_boxed_slice(),
+                }))
+            },
+            len: self.len.saturating_add(added),
             horizon: Some(horizon),
         })
     }
@@ -132,7 +133,7 @@ impl TaskFacts {
         self.len == 0
     }
 
-    /// Greatest fact position visible in this history.
+    /// Journal horizon through which this authority projection is complete.
     #[must_use]
     pub const fn horizon(&self) -> Option<journal::crossing::Seq> {
         self.horizon
@@ -154,14 +155,21 @@ impl Drop for TaskFacts {
 pub(super) fn load_task_snapshot(journal: &Journal) -> Result<TaskSnapshot, BusReadError> {
     journal
         .read_with(|read| {
+            let kinds = resident_authority_kinds();
             Ok(TaskSnapshot {
                 cursor: read.cursor().map_err(BusReadError::Head)?,
-                facts: TaskFacts::from_snapshot(
-                    read.fact_snapshot().map_err(BusReadError::Snapshot)?,
+                facts: TaskFacts::from_selected(
+                    read.selected_facts(&kinds, None)
+                        .map_err(BusReadError::Head)?,
+                    read.cursor().map_err(BusReadError::Head)?,
                 ),
                 tasks: Arc::from(read.task_heads().map_err(BusReadError::Head)?),
                 trust: Arc::from(read.trust_heads().map_err(BusReadError::Head)?),
                 residency: read.residency_head().map_err(BusReadError::Head)?,
+                operator_steering: Arc::from(
+                    read.pending_operator_steering()
+                        .map_err(BusReadError::Head)?,
+                ),
             })
         })
         .map_err(map_read_error)
@@ -187,8 +195,7 @@ fn advance_task_snapshot(
         .expect("a durable commit begins at a nonzero position");
     let last = journal::crossing::Seq::new(commit.last)
         .expect("a durable commit ends at a nonzero position");
-    let limit = usize::try_from(commit.last - commit.first + 1).unwrap_or(usize::MAX);
-    let (cursor, packed, changed, trust, residency) = journal
+    let (cursor, rows, changed, trust, residency, operator_steering) = journal
         .read_with(|read| {
             let cursor = read.cursor().map_err(BusReadError::Head)?;
             if cursor != Some(last) {
@@ -196,26 +203,24 @@ fn advance_task_snapshot(
                     "task snapshot refresh expected cursor {last}, observed {cursor:?}"
                 ))));
             }
-            let packed = read
-                .fact_page(journal::FactPageStart::At(first), last, limit)
+            let kinds = resident_authority_kinds();
+            let rows = read
+                .selected_facts(&kinds, current.cursor)
                 .map_err(BusReadError::Head)?;
             let changed = read
                 .changed_task_heads(first, last)
                 .map_err(BusReadError::Head)?;
             let trust = read.trust_heads().map_err(BusReadError::Head)?;
             let residency = read.residency_head().map_err(BusReadError::Head)?;
-            Ok((cursor, packed, changed, trust, residency))
+            let operator_steering = read
+                .pending_operator_steering()
+                .map_err(BusReadError::Head)?;
+            Ok((cursor, rows, changed, trust, residency, operator_steering))
         })
         .map_err(map_read_error)?;
-    if packed.overflow.is_some() || packed.rows.len() != limit {
-        return Err(BusReadError::Head(GuardError::Invalid(format!(
-            "task snapshot refresh expected {limit} committed fact(s), received {}",
-            packed.rows.len()
-        ))));
-    }
     let facts = current
         .facts
-        .append(packed.rows, last)
+        .append_selected(rows, last)
         .map_err(BusReadError::Head)?;
     let tasks = if changed.is_empty() {
         current.tasks.clone()
@@ -236,7 +241,22 @@ fn advance_task_snapshot(
         tasks,
         trust: Arc::from(trust),
         residency,
+        operator_steering: Arc::from(operator_steering),
     })
+}
+
+/// Facts consumed by resident decisions and bounded presentation recovery.
+///
+/// Transcript ingestion is high-volume accounting, not resident authority.
+/// Its consumers use the origin-and-kind index directly, so the shared
+/// authority cache never replays it. Keeping every other registered kind here
+/// preserves the existing TaskFacts contract as the vocabulary grows.
+fn resident_authority_kinds() -> Vec<journal::crossing::FactKind> {
+    journal::crossing::FactKind::ALL
+        .iter()
+        .copied()
+        .filter(|kind| *kind != journal::crossing::FactKind::JournalIngested)
+        .collect()
 }
 
 fn map_read_error(error: journal::ReadError<BusReadError>) -> BusReadError {

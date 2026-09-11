@@ -91,12 +91,12 @@ fn each_resident_generation_restores_durable_prose_before_canvas_subscription() 
     for generation in 0..2 {
         let source = canvas::stream::Source::new(bus.reader(), epoch, 8);
         let publisher = source.message_publisher();
-        let snapshot = bus.fact_snapshot().expect("durable message times load");
-        let mut reader = message_surface::BacklogReader::from_snapshot(&snapshot)
-            .expect("durable steering context loads");
+        let bus_reader = bus.reader();
+        let mut reader = message_surface::BacklogReader::indexed();
         let mut diagnostic = Vec::new();
         let residency = current_residency(&bus, epoch).expect("residency reads");
-        message_surface::restore_agent_messages(
+        message_surface::restore_agent_messages_indexed(
+            &bus_reader,
             &paths,
             residency.body(),
             &publisher,
@@ -546,12 +546,12 @@ fn restore_mixed_acknowledgement_message(
 ) {
     let source = canvas::stream::Source::new(bus.reader(), epoch, 8);
     let publisher = source.message_publisher();
-    let snapshot = bus.fact_snapshot().expect("steering context reads");
-    let mut reader =
-        message_surface::BacklogReader::from_snapshot(&snapshot).expect("steering context reduces");
+    let bus_reader = bus.reader();
+    let mut reader = message_surface::BacklogReader::indexed();
     let residency = current_residency(bus, epoch).expect("residency reads");
     let mut diagnostic = Vec::new();
-    message_surface::restore_agent_messages(
+    message_surface::restore_agent_messages_indexed(
+        &bus_reader,
         paths,
         residency.body(),
         &publisher,

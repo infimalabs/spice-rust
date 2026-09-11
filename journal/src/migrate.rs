@@ -508,7 +508,19 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (16, MigrationStep::Rust(renewal_organization::migrate)),
     (17, MigrationStep::Sql(MIGRATE_17_TO_18_SQL)),
     (18, MigrationStep::Rust(task_creator_scope::migrate)),
+    (19, MigrationStep::Sql(MIGRATE_19_TO_20_SQL)),
 ];
+
+/// Schema 19 to 20: bounded fact-kind recovery.
+///
+/// Resident startup projections select their own small authority vocabulary.
+/// Keeping the durable position behind the kind makes those reads proportional
+/// to matching authority rather than to every transcript fact ever recorded.
+const MIGRATE_19_TO_20_SQL: &str = r#"
+CREATE INDEX IF NOT EXISTS fact_envelopes_kind_seq ON fact_envelopes(kind, seq);
+CREATE INDEX IF NOT EXISTS fact_envelopes_origin_kind_seq
+    ON fact_envelopes(origin, kind, seq);
+"#;
 
 /// Schema 17 to 18: trust-grant environmental requirement boundary.
 ///
@@ -636,6 +648,8 @@ CREATE TABLE fact_envelopes (
 ) STRICT;
 CREATE INDEX fact_envelopes_origin_seq ON fact_envelopes(origin, seq);
 CREATE INDEX fact_envelopes_cause ON fact_envelopes(cause) WHERE cause IS NOT NULL;
+CREATE INDEX fact_envelopes_kind_seq ON fact_envelopes(kind, seq);
+CREATE INDEX fact_envelopes_origin_kind_seq ON fact_envelopes(origin, kind, seq);
 
 CREATE TABLE thread_index (
     seq INTEGER PRIMARY KEY REFERENCES fact_envelopes(seq) ON DELETE RESTRICT,
@@ -761,8 +775,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 19, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 20, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 19;
+PRAGMA user_version = 20;
 "#;

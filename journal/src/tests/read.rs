@@ -7,6 +7,89 @@
 use super::*;
 
 #[test]
+fn selected_facts_use_the_kind_index_and_decode_only_matching_rows() {
+    let journal = authority_fixture();
+    let plan = journal
+        .connection
+        .query_row(
+            "EXPLAIN QUERY PLAN SELECT seq, kind, envelope FROM fact_envelopes \
+             WHERE seq > 0 AND seq <= 2 AND kind IN ('task::phased') ORDER BY seq",
+            [],
+            |row| row.get::<_, String>(3),
+        )
+        .expect("selected fact query plan");
+    assert!(
+        plan.contains("fact_envelopes_kind_seq"),
+        "selected fact read must use its kind index: {plan}"
+    );
+
+    reset_indexed_read_metrics();
+    let selected = journal
+        .read(|read| read.selected_facts(&[FactKind::TaskPhased], None))
+        .expect("selected facts read");
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].seq, Seq::new(2).expect("fixture seq"));
+    assert_eq!(selected[0].fact.kind(), FactKind::TaskPhased);
+    let metrics = indexed_read_metrics();
+    assert_eq!(metrics.queries, 1);
+    assert_eq!(metrics.rows, 1);
+    assert!(metrics.decoded_bytes > 0);
+}
+
+#[test]
+fn newest_fact_reads_are_indexed_and_obey_their_page_limit() {
+    let journal = authority_fixture();
+    let latest_plan = journal
+        .connection
+        .query_row(
+            "EXPLAIN QUERY PLAN SELECT seq, kind, envelope FROM fact_envelopes \
+             WHERE kind = 'task::phased' AND seq <= 2 ORDER BY seq DESC LIMIT 1",
+            [],
+            |row| row.get::<_, String>(3),
+        )
+        .expect("latest fact query plan");
+    assert!(
+        latest_plan.contains("fact_envelopes_kind_seq"),
+        "latest fact read must use its kind index: {latest_plan}"
+    );
+    let origin_plan = journal
+        .connection
+        .query_row(
+            "EXPLAIN QUERY PLAN SELECT seq, kind, envelope FROM fact_envelopes \
+             WHERE origin = 'task:1kKRRsDP' AND kind = 'task::phased' AND seq <= 2 \
+             ORDER BY seq DESC LIMIT 1",
+            [],
+            |row| row.get::<_, String>(3),
+        )
+        .expect("recent origin fact query plan");
+    assert!(
+        origin_plan.contains("fact_envelopes_origin_kind_seq"),
+        "recent origin read must use its compound index: {origin_plan}"
+    );
+
+    reset_indexed_read_metrics();
+    let (latest, recent) = journal
+        .read(|read| {
+            Ok((
+                read.latest_fact(FactKind::TaskPhased)?,
+                read.recent_origin_facts(
+                    &"task:1kKRRsDP".parse().expect("fixture origin"),
+                    FactKind::TaskPhased,
+                    None,
+                    1,
+                )?,
+            ))
+        })
+        .expect("bounded newest fact reads");
+    assert_eq!(latest.expect("latest fact").seq, seq(2));
+    assert_eq!(recent.len(), 1);
+    assert_eq!(recent[0].seq, seq(2));
+    let metrics = indexed_read_metrics();
+    assert_eq!((metrics.queries, metrics.rows), (2, 2));
+    assert!(metrics.decoded_bytes > 0);
+}
+
+#[test]
 fn scoped_read_returns_owned_cursor_complete_task_bundles_without_mutation() {
     let empty = Journal::in_memory().expect("empty journal");
     let empty_changes = empty.connection.total_changes();
