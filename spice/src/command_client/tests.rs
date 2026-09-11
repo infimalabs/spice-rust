@@ -470,6 +470,20 @@ fn authenticated_read_reacquires_discovery_from_a_live_replacement() {
     assert_eq!(peer.join().expect("replacement peer joins"), 0);
 }
 
+fn mapped_task_status() -> (&'static Contract, MappedCommand) {
+    let contract = crate::cli::contract(&["task", "status"])
+        .expect("the generated CLI registry carries task status");
+    let mapped = MappedCommand::new(
+        contract,
+        contract.path,
+        CommandKind::BoardRead,
+        Vec::new(),
+        &wire::intent::BoardRead { family: None },
+    )
+    .expect("task status maps before discovery");
+    (contract, mapped)
+}
+
 #[test]
 fn task_status_reacquires_discovery_before_sending_once_to_a_live_replacement() {
     let fixture = Fixture::new("replacement-command");
@@ -486,16 +500,7 @@ fn task_status_reacquires_discovery_before_sending_once_to_a_live_replacement() 
     fixture.hold(epoch);
     let peer = std::thread::spawn(move || answer_replacement_opening(listener, epoch, true));
     let mut transients = Vec::new();
-    let contract = crate::cli::contract(&["task", "status"])
-        .expect("the generated CLI registry carries task status");
-    let mapped = MappedCommand::new(
-        contract,
-        contract.path,
-        CommandKind::BoardRead,
-        Vec::new(),
-        &wire::intent::BoardRead { family: None },
-    )
-    .expect("task status maps before discovery");
+    let (contract, mapped) = mapped_task_status();
 
     let outcome = execute_mapped_with(
         &fixture.canvas,
@@ -516,6 +521,81 @@ fn task_status_reacquires_discovery_before_sending_once_to_a_live_replacement() 
     assert_eq!(refusal.reason(), "fixture::task-status-reached-replacement");
     assert_eq!(transients, ["canvas::discovery-unavailable"]);
     assert_eq!(peer.join().expect("replacement peer joins"), 1);
+}
+
+#[test]
+fn task_status_reports_an_absent_resident_before_command_delivery() {
+    let mut fixture = Fixture::new("absent-resident-command");
+    fixture.release_publisher();
+    let (contract, mapped) = mapped_task_status();
+    let mut transients = Vec::new();
+
+    let outcome = execute_mapped_with(
+        &fixture.canvas,
+        contract,
+        Connection::Operator,
+        Ok(mapped),
+        |fault| transients.push(fault.reason.clone()),
+    );
+
+    let Outcome::Fault(fault) = outcome else {
+        panic!("task status without a resident must fault: {outcome:?}");
+    };
+    assert_eq!(fault.reason, "canvas::publisher-gone");
+    assert!(fault.detail.contains("run `spice up`"));
+    assert!(
+        transients.is_empty(),
+        "an available resident lock is terminal, not a publication handoff"
+    );
+}
+
+#[test]
+fn task_status_reports_a_resident_released_during_publication_handoff() {
+    let mut fixture = Fixture::new("released-resident-command");
+    let canvas = fixture.canvas.clone();
+    let (contract, mapped) = mapped_task_status();
+    let mut transients = Vec::new();
+
+    let outcome = execute_mapped_with(
+        &canvas,
+        contract,
+        Connection::Operator,
+        Ok(mapped),
+        |fault| {
+            transients.push(fault.reason.clone());
+            fixture.release_publisher();
+        },
+    );
+
+    let Outcome::Fault(fault) = outcome else {
+        panic!("task status must stop when the starting resident exits: {outcome:?}");
+    };
+    assert_eq!(transients, ["canvas::discovery-unavailable"]);
+    assert_eq!(fault.reason, "canvas::publisher-gone");
+    assert!(fault.detail.contains("run `spice up`"));
+}
+
+#[test]
+fn task_status_keeps_an_unprobeable_resident_lock_fail_closed() {
+    let mut fixture = Fixture::new("unknown-resident-command");
+    fixture.release_publisher();
+    let resident = resident_lock_path(&fixture.canvas);
+    fs::remove_file(&resident).expect("remove fixture resident lock");
+    fs::create_dir(&resident).expect("replace resident lock with a directory");
+    let (contract, mapped) = mapped_task_status();
+
+    let outcome = execute_mapped_with(
+        &fixture.canvas,
+        contract,
+        Connection::Operator,
+        Ok(mapped),
+        |_| panic!("an unprobeable lock must not enter publication handoff"),
+    );
+
+    let Outcome::Fault(fault) = outcome else {
+        panic!("task status with an unprobeable lock must fault: {outcome:?}");
+    };
+    assert_eq!(fault.reason, "canvas::publisher-unknown");
 }
 
 #[test]
