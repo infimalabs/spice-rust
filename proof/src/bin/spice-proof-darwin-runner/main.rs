@@ -338,14 +338,18 @@ fn validate_source(workspace: &Path, pins: &Pins) -> Result<(), String> {
         workspace,
         ["ls-files", "--others", "--exclude-standard"],
     )?;
-    if let Some(path) = untracked.lines().find(|path| {
-        !path.starts_with("dist/stage/objects/") && !path.starts_with("dist/stage/targets/")
-    }) {
+    if let Some(path) = untracked.lines().find(|path| !release_output_path(path)) {
         return Err(format!(
             "untracked source is outside release output: {path}"
         ));
     }
     Ok(())
+}
+
+fn release_output_path(path: &str) -> bool {
+    path.starts_with("dist/stage/objects/")
+        || path.starts_with("dist/stage/targets/")
+        || path == "dist/stage/release/manifest.json"
 }
 
 fn validate_closure(workspace: &Path, pins: &Pins) -> Result<(), String> {
