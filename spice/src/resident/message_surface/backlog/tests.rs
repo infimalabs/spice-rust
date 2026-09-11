@@ -243,6 +243,10 @@ fn collect_merged_history_pages(
         )
         .expect("merged history reads")
         .expect("fixture lane is owned");
+        if page.messages.is_empty() {
+            assert!(page.more, "pending authentication keeps history open");
+            continue;
+        }
         assert!(!page.messages.is_empty());
         assert!(page.messages.len() <= canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT);
         page_lengths.push(page.messages.len());
@@ -259,8 +263,8 @@ fn collect_merged_history_pages(
         let session_next = continuation.session.expect("session continuation").next();
         assert!(tape_next < prior_tape, "tape frontier strictly retreats");
         assert!(
-            session_next < prior_session,
-            "session frontier strictly retreats"
+            session_next <= prior_session,
+            "session frontier retreats or holds while its authenticated snapshot advances"
         );
         prior_tape = tape_next;
         prior_session = session_next;

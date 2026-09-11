@@ -1,0 +1,166 @@
+use super::*;
+
+#[test]
+fn rewrite_plus_growth_before_initial_build_finishes_is_refused() {
+    let scratch = Scratch::new("history-auth-initial-rewrite");
+    let transcript = scratch.transcript();
+    fs::write(&transcript, vec![b'x'; HISTORY_BYTE_BUDGET + 17]).expect("large prefix is written");
+    let checkpoint = history_checkpoint(&transcript).expect("history checkpoint starts");
+
+    let first = advance_history_authentication(&transcript, &checkpoint, Instant::now())
+        .expect("first authentication slice advances");
+    assert!(first.stamp.is_none());
+    assert_eq!(first.work.source_bytes, HISTORY_BYTE_BUDGET as u64);
+    assert_eq!(first.work.passes, 1);
+    assert!(first.work.within_limits());
+    let mut rewritten = OpenOptions::new()
+        .write(true)
+        .open(&transcript)
+        .expect("prefix opens for rewrite");
+    rewritten
+        .seek(SeekFrom::Start(7))
+        .expect("prefix rewrite seeks");
+    rewritten.write_all(b"y").expect("prefix byte rewrites");
+    drop(rewritten);
+    append(&transcript, b"append");
+
+    let error = advance_history_authentication(&transcript, &checkpoint, Instant::now())
+        .expect_err("rewrite plus append must fail authentication");
+
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert!(
+        error
+            .to_string()
+            .contains("before its initial prefix authentication completed")
+    );
+}
+
+#[test]
+fn genuine_append_reauthenticates_in_fixed_resumable_slices() {
+    let scratch = Scratch::new("history-auth-append");
+    let transcript = scratch.transcript();
+    fs::write(&transcript, vec![b'x'; HISTORY_BYTE_BUDGET + 17]).expect("large prefix is written");
+    let checkpoint = history_checkpoint(&transcript).expect("history checkpoint starts");
+    let first = advance_history_authentication(&transcript, &checkpoint, Instant::now())
+        .expect("first authentication slice advances");
+    assert_eq!(first.work.source_bytes, HISTORY_BYTE_BUDGET as u64);
+    let resumed = checkpoint.clone();
+    let initial_finish = advance_history_authentication(&transcript, &resumed, Instant::now())
+        .expect("remaining initial prefix authenticates");
+    assert!(initial_finish.stamp.is_none());
+    assert_eq!(initial_finish.work.source_bytes, 17);
+    let initial_ready = advance_history_authentication(&transcript, &resumed, Instant::now())
+        .expect("initial authenticated horizon publishes");
+    assert!(initial_ready.stamp.is_some());
+    assert_eq!(resumed.next(), (HISTORY_BYTE_BUDGET + 17) as u64);
+    append(&transcript, b"append");
+
+    let recheck = advance_history_authentication(&transcript, &resumed, Instant::now())
+        .expect("admitted prefix reauthenticates after append");
+    assert!(recheck.stamp.is_none());
+    assert_eq!(recheck.work.source_bytes, HISTORY_BYTE_BUDGET as u64);
+    let finish = advance_history_authentication(&transcript, &resumed, Instant::now())
+        .expect("remaining original prefix authenticates");
+    assert!(finish.stamp.is_none());
+    assert_eq!(finish.work.source_bytes, 17);
+    let ready = advance_history_authentication(&transcript, &resumed, Instant::now())
+        .expect("append-only generation becomes readable");
+    assert!(ready.stamp.is_some());
+    assert_eq!(ready.work, HistoryWork::default());
+}
+
+#[test]
+fn rows_are_discarded_when_source_moves_during_page_read() {
+    const BOUNDARY: &str = "{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n";
+    let scratch = Scratch::new("history-auth-page-race");
+    let transcript = scratch.transcript();
+    fs::write(&transcript, BOUNDARY).expect("boundary is written");
+    let checkpoint = history_checkpoint(&transcript).expect("history checkpoint starts");
+    assert!(
+        advance_history_authentication(&transcript, &checkpoint, Instant::now())
+            .expect("initial prefix hashes")
+            .stamp
+            .is_none()
+    );
+    let moving = transcript.clone();
+    AFTER_HISTORY_SOURCE_READ.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || {
+            let mut rewritten = OpenOptions::new()
+                .write(true)
+                .open(&moving)
+                .expect("page prefix opens for rewrite");
+            rewritten
+                .seek(SeekFrom::Start(2))
+                .expect("page rewrite seeks");
+            rewritten.write_all(b"X").expect("page byte rewrites");
+            drop(rewritten);
+            append(&moving, b"{}\n");
+        }));
+    });
+    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+
+    let page = bootstrap_before(&mut cursor, 1, &checkpoint)
+        .expect("moving page is discarded before publication");
+
+    assert!(page.pending_authentication);
+    assert!(page.records.is_empty());
+    let error = advance_history_authentication(&transcript, &checkpoint, Instant::now())
+        .expect_err("rewritten page prefix must fail reauthentication");
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert!(
+        error
+            .to_string()
+            .contains("authenticated prefix was rewritten")
+    );
+}
+
+#[test]
+fn mutation_during_extension_recheck_discards_the_slice() {
+    let scratch = Scratch::new("history-auth-inflight-rewrite");
+    let transcript = scratch.transcript();
+    fs::write(&transcript, vec![b'x'; 4 * 1024]).expect("prefix is written");
+    let checkpoint = history_checkpoint(&transcript).expect("history checkpoint starts");
+    assert!(
+        advance_history_authentication(&transcript, &checkpoint, Instant::now())
+            .expect("initial prefix hashes")
+            .stamp
+            .is_none()
+    );
+    assert!(
+        advance_history_authentication(&transcript, &checkpoint, Instant::now())
+            .expect("initial prefix publishes")
+            .stamp
+            .is_some()
+    );
+    append(&transcript, b"first append");
+    let moving = transcript.clone();
+    AFTER_HISTORY_AUTHENTICATION_READ.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || {
+            let mut rewritten = OpenOptions::new()
+                .write(true)
+                .open(&moving)
+                .expect("prefix opens during authentication");
+            rewritten
+                .seek(SeekFrom::Start(9))
+                .expect("in-flight rewrite seeks");
+            rewritten
+                .write_all(b"y")
+                .expect("in-flight prefix byte rewrites");
+            drop(rewritten);
+            append(&moving, b"second append");
+        }));
+    });
+
+    let moved = advance_history_authentication(&transcript, &checkpoint, Instant::now())
+        .expect("moving authentication slice is discarded");
+    assert!(moved.stamp.is_none());
+    assert!(moved.work.within_limits());
+    let error = advance_history_authentication(&transcript, &checkpoint, Instant::now())
+        .expect_err("rewritten authenticated prefix must be rejected");
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert!(
+        error
+            .to_string()
+            .contains("authenticated prefix was rewritten")
+    );
+}
