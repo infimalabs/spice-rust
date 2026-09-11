@@ -790,12 +790,10 @@ fn create_merge_commit(
 ) -> Result<GitOutput, Error> {
     // A retry over the same immutable parents must name the same commit. Git's
     // default wall clock made an otherwise identical synthesized landing gain
-    // a new identity on every task-boundary retry.
-    let date = required_read(
-        root,
-        &["show", "-s", "--format=%cI", first_parent],
-        "read task merge timestamp",
-    )?;
+    // a new identity on every task-boundary retry. The later parent clock is
+    // equally deterministic and prevents one old integrated-parent timestamp
+    // from propagating through every later task landing.
+    let date = later_parent_date(root, first_parent, second_parent)?;
     run_with_environment(
         root,
         &[
@@ -810,6 +808,41 @@ fn create_merge_commit(
         ],
         &[("GIT_AUTHOR_DATE", &date), ("GIT_COMMITTER_DATE", &date)],
     )
+}
+
+fn later_parent_date(
+    root: &Path,
+    first_parent: &str,
+    second_parent: &str,
+) -> Result<String, Error> {
+    let first = commit_date(root, first_parent)?;
+    let second = commit_date(root, second_parent)?;
+    Ok(if second.0 > first.0 {
+        second.1
+    } else {
+        first.1
+    })
+}
+
+fn commit_date(root: &Path, commit: &str) -> Result<(i64, String), Error> {
+    let observed = required_read(
+        root,
+        &["show", "-s", "--format=%ct %cI", commit],
+        "read task merge parent timestamp",
+    )?;
+    let Some((seconds, date)) = observed.split_once(' ') else {
+        return Err(Error::fault(
+            "git::commit-date-invalid",
+            format!("commit {commit} returned malformed timestamp {observed:?}"),
+        ));
+    };
+    let seconds = seconds.parse::<i64>().map_err(|error| {
+        Error::fault(
+            "git::commit-date-invalid",
+            format!("commit {commit} returned invalid epoch {seconds:?}: {error}"),
+        )
+    })?;
+    Ok((seconds, date.to_owned()))
 }
 
 fn with_retry_remedy(mut error: Error, label: &str) -> Error {
