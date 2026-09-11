@@ -1,14 +1,95 @@
 //! Bounded newest-record windows over a generation-authenticated tape.
 
+use std::num::{NonZeroU64, NonZeroUsize};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
-use tape::{Extent, Locus, Tape};
+use tape::{Extent, Locus, SourceId, Tape};
 
-use super::{Checkpoint, Position, Scan, ScanError, scan, scan_extents, validate_position};
+use super::{Checkpoint, Position, Scan, ScanError, ScanState, scan_extent, validate_position};
 use crate::Dialect;
 
 /// Bytes inspected at once while locating the preceding complete-record boundary.
 const BOUNDARY_CHUNK_BYTES: u64 = 64 * 1024;
+
+/// Validated hard work allowance for one tail or history-window read.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TailBudget {
+    window_bytes: NonZeroU64,
+    source_bytes: NonZeroU64,
+    records: NonZeroUsize,
+    passes: NonZeroUsize,
+    duration: Duration,
+}
+
+impl TailBudget {
+    /// Construct one positive allowance.
+    ///
+    /// # Errors
+    ///
+    /// Refuses any zero dimension, a zero wall duration, or a window larger
+    /// than the total source-byte allowance.
+    pub fn new(
+        window_bytes: u64,
+        source_bytes: u64,
+        records: usize,
+        passes: usize,
+        duration: Duration,
+    ) -> Result<Self, TailBudgetError> {
+        let window_bytes = NonZeroU64::new(window_bytes)
+            .ok_or(TailBudgetError("window bytes must be positive"))?;
+        let source_bytes = NonZeroU64::new(source_bytes)
+            .ok_or(TailBudgetError("source bytes must be positive"))?;
+        let records = NonZeroUsize::new(records)
+            .ok_or(TailBudgetError("decoded records must be positive"))?;
+        let passes =
+            NonZeroUsize::new(passes).ok_or(TailBudgetError("scan passes must be positive"))?;
+        let duration = (!duration.is_zero())
+            .then_some(duration)
+            .ok_or(TailBudgetError("wall duration must be positive"))?;
+        if window_bytes > source_bytes {
+            return Err(TailBudgetError(
+                "window bytes cannot exceed source-byte maximum",
+            ));
+        }
+        Ok(Self {
+            window_bytes,
+            source_bytes,
+            records,
+            passes,
+            duration,
+        })
+    }
+
+    fn decode_window(self) -> u64 {
+        self.window_bytes.get()
+    }
+}
+
+/// Why a tail allowance could not be constructed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TailBudgetError(&'static str);
+
+impl std::fmt::Display for TailBudgetError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "invalid tail scan allowance: {}", self.0)
+    }
+}
+
+impl std::error::Error for TailBudgetError {}
+
+/// Exact work consumed by one admitted tail scan.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TailWork {
+    /// Source bytes read during boundary search and record decoding.
+    pub source_bytes: u64,
+    /// Complete records decoded.
+    pub records: usize,
+    /// Bounded tape reads performed.
+    pub passes: usize,
+    /// Wall duration observed around those bounded reads.
+    pub duration: Duration,
+}
 
 /// One newest-record scan and the complete-record boundary where it began.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -17,24 +98,26 @@ pub struct TailScan {
     pub start: Checkpoint,
     /// Complete records and resumable end checkpoint after that boundary.
     pub scan: Scan,
+    /// Exact work consumed to produce this window.
+    pub work: TailWork,
 }
 
-/// Scan the newest bounded byte window without beginning inside a record.
+/// Scan the newest caller-bounded byte window without beginning inside a record.
 ///
-/// The returned window may exceed `bytes` by one record: its start retreats to
-/// the nearest preceding newline so the normal scanner never interprets a
-/// record suffix as independent vendor evidence. The end checkpoint remains
-/// before an unterminated tail, so a later forward scan cannot miss the suffix
-/// that completes it.
+/// Its start retreats toward the nearest preceding newline only while the
+/// allowance retains bytes and passes, so the scanner never interprets a record
+/// suffix as independent vendor evidence. The end checkpoint remains before an
+/// unterminated tail, so a later forward scan cannot miss the suffix that
+/// completes it.
 ///
 /// # Errors
 ///
 /// Returns [`ScanError`] when tape identity, extents, boundary bytes, or the
-/// resulting generation-authenticated scan cannot be read.
+/// resulting generation-authenticated scan cannot be read within `budget`.
 pub fn scan_tail(
     root: impl AsRef<Path>,
     dialect: Dialect,
-    bytes: u64,
+    budget: TailBudget,
 ) -> Result<TailScan, ScanError> {
     let root = root.as_ref();
     let tape = Tape::open_existing(root).map_err(|source| tape_error(root, source))?;
@@ -42,20 +125,41 @@ pub fn scan_tail(
         .source_id()
         .map_err(|source| tape_error(root, source))?;
     let extents = tape.extents().map_err(|source| tape_error(root, source))?;
-    let candidate = tail_candidate(&extents, bytes.max(1));
-    let next = preceding_boundary(&tape, &extents, candidate)
+    let mut tracker = WorkTracker::new(budget);
+    let candidate = tail_candidate(&extents, budget.decode_window(), &mut tracker)?;
+    let next = preceding_boundary(&tape, &extents, candidate, &mut tracker)?;
+    let start = Checkpoint {
+        source: source.clone(),
+        next,
+    };
+    let state = scan_window(&tape, dialect, &source, &extents, next, None, &mut tracker)?;
+    let observed = tape
+        .source_id()
         .map_err(|source| tape_error(root, source))?;
-    let mut start = Checkpoint { source, next };
-    let scan = scan(root, dialect, Some(&start))?;
-    if start.next == Position::start() {
-        // Byte zero is transferable to a concurrently replaced generation;
-        // report the exact source the resulting scan actually admitted.
-        start.source = scan.checkpoint.source.clone();
+    if observed != source {
+        return Err(ScanError::SourceChanged {
+            expected: source,
+            observed,
+            next: state.position,
+        });
     }
-    Ok(TailScan { start, scan })
+    let work = tracker.complete(state.records.len())?;
+    Ok(TailScan {
+        start,
+        scan: Scan {
+            records: state.records,
+            checkpoint: Checkpoint {
+                source,
+                next: state.position,
+            },
+            pending: state.spans,
+            extents_empty: extents.is_empty(),
+        },
+        work,
+    })
 }
 
-/// Scan a bounded complete-record window immediately before an authenticated boundary.
+/// Scan a caller-bounded complete-record window immediately before an authenticated boundary.
 ///
 /// Unlike [`scan_tail`], this does not read records after `before`, so adjacent
 /// history pages can move backward without rescanning a page already served.
@@ -63,12 +167,13 @@ pub fn scan_tail(
 /// # Errors
 ///
 /// Returns [`ScanError`] when the source identity or boundary no longer belongs
-/// to the observed tape generation, or when its bounded records cannot be read.
+/// to the observed tape generation, or when its records cannot be read within
+/// `budget`.
 pub fn scan_before(
     root: impl AsRef<Path>,
     dialect: Dialect,
     before: &Checkpoint,
-    bytes: u64,
+    budget: TailBudget,
 ) -> Result<TailScan, ScanError> {
     let root = root.as_ref();
     let tape = Tape::open_existing(root).map_err(|source| tape_error(root, source))?;
@@ -84,14 +189,22 @@ pub fn scan_before(
     }
     let extents = tape.extents().map_err(|source| tape_error(root, source))?;
     let end = validate_position(before.next, &extents)?;
-    let candidate = window_candidate(&extents, end, bytes.max(1));
-    let next = preceding_boundary(&tape, &extents, candidate)
-        .map_err(|source| tape_error(root, source))?;
+    let mut tracker = WorkTracker::new(budget);
+    let candidate = window_candidate(&extents, end, budget.decode_window(), &mut tracker)?;
+    let next = preceding_boundary(&tape, &extents, candidate, &mut tracker)?;
     let start = Checkpoint {
         source: before.source.clone(),
         next,
     };
-    let state = scan_extents(&tape, dialect, &before.source, &extents, next, Some(end))?;
+    let state = scan_window(
+        &tape,
+        dialect,
+        &before.source,
+        &extents,
+        next,
+        Some(end),
+        &mut tracker,
+    )?;
     let observed = tape
         .source_id()
         .map_err(|source| tape_error(root, source))?;
@@ -102,6 +215,7 @@ pub fn scan_before(
             next: state.position,
         });
     }
+    let work = tracker.complete(state.records.len())?;
     Ok(TailScan {
         start,
         scan: Scan {
@@ -113,27 +227,160 @@ pub fn scan_before(
             pending: state.spans,
             extents_empty: extents.is_empty(),
         },
+        work,
     })
 }
 
-fn tail_candidate(extents: &[Extent], bytes: u64) -> Position {
+struct WorkTracker {
+    budget: TailBudget,
+    started: Instant,
+    source_bytes: u64,
+    passes: usize,
+}
+
+impl WorkTracker {
+    fn new(budget: TailBudget) -> Self {
+        Self {
+            budget,
+            started: Instant::now(),
+            source_bytes: 0,
+            passes: 0,
+        }
+    }
+
+    fn read(&mut self, bytes: u64) -> Result<(), ScanError> {
+        self.check_duration()?;
+        self.pass()?;
+        let next_bytes = self.source_bytes.saturating_add(bytes);
+        if next_bytes > self.budget.source_bytes.get() {
+            return Err(self.exhausted_u64(
+                "source bytes",
+                self.budget.source_bytes.get(),
+                self.source_bytes,
+            ));
+        }
+        self.source_bytes = next_bytes;
+        Ok(())
+    }
+
+    fn pass(&mut self) -> Result<(), ScanError> {
+        self.check_duration()?;
+        let next_passes = self.passes.saturating_add(1);
+        if next_passes > self.budget.passes.get() {
+            return Err(self.exhausted("scan passes", self.budget.passes.get(), self.passes));
+        }
+        self.passes = next_passes;
+        Ok(())
+    }
+
+    fn check_duration(&self) -> Result<(), ScanError> {
+        let elapsed = self.started.elapsed();
+        if elapsed > self.budget.duration {
+            return Err(ScanError::WorkLimit {
+                dimension: "wall milliseconds",
+                limit: u64::try_from(self.budget.duration.as_millis()).unwrap_or(u64::MAX),
+                consumed: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+            });
+        }
+        Ok(())
+    }
+
+    fn complete(&self, records: usize) -> Result<TailWork, ScanError> {
+        self.check_duration()?;
+        Ok(TailWork {
+            source_bytes: self.source_bytes,
+            records,
+            passes: self.passes,
+            duration: self.started.elapsed(),
+        })
+    }
+
+    fn exhausted(&self, dimension: &'static str, limit: usize, consumed: usize) -> ScanError {
+        ScanError::WorkLimit {
+            dimension,
+            limit: u64::try_from(limit).unwrap_or(u64::MAX),
+            consumed: u64::try_from(consumed).unwrap_or(u64::MAX),
+        }
+    }
+
+    fn exhausted_u64(&self, dimension: &'static str, limit: u64, consumed: u64) -> ScanError {
+        ScanError::WorkLimit {
+            dimension,
+            limit,
+            consumed,
+        }
+    }
+}
+
+fn scan_window(
+    tape: &Tape,
+    dialect: Dialect,
+    source: &SourceId,
+    extents: &[Extent],
+    position: Position,
+    end: Option<Position>,
+    tracker: &mut WorkTracker,
+) -> Result<ScanState, ScanError> {
+    let mut state = ScanState {
+        position,
+        records: Vec::new(),
+        bytes: Vec::new(),
+        spans: Vec::new(),
+        record_limit: Some(tracker.budget.records.get()),
+    };
+    for extent in extents {
+        if extent.member < state.position.member {
+            continue;
+        }
+        if end.is_some_and(|end| extent.member > end.member) {
+            break;
+        }
+        let start = if extent.member == state.position.member {
+            state.position.offset
+        } else {
+            0
+        };
+        let extent_end = end
+            .filter(|end| end.member == extent.member)
+            .map_or(extent.length, |end| end.offset.min(extent.length));
+        if start < extent_end {
+            tracker.read(extent_end - start)?;
+        }
+        scan_extent(tape, dialect, source, extent, end, &mut state)?;
+        tracker.check_duration()?;
+    }
+    Ok(state)
+}
+
+fn tail_candidate(
+    extents: &[Extent],
+    bytes: u64,
+    tracker: &mut WorkTracker,
+) -> Result<Position, ScanError> {
     let mut remaining = bytes;
     for extent in extents.iter().rev() {
+        tracker.pass()?;
         if remaining >= extent.length {
             remaining -= extent.length;
             continue;
         }
-        return Position {
+        return Ok(Position {
             member: extent.member,
             offset: extent.length - remaining,
-        };
+        });
     }
-    Position::start()
+    Ok(Position::start())
 }
 
-fn window_candidate(extents: &[Extent], end: Position, bytes: u64) -> Position {
+fn window_candidate(
+    extents: &[Extent],
+    end: Position,
+    bytes: u64,
+    tracker: &mut WorkTracker,
+) -> Result<Position, ScanError> {
     let mut remaining = bytes;
     for extent in extents.iter().rev() {
+        tracker.pass()?;
         if extent.member > end.member {
             continue;
         }
@@ -146,21 +393,22 @@ fn window_candidate(extents: &[Extent], end: Position, bytes: u64) -> Position {
             continue;
         }
         if remaining < length {
-            return Position {
+            return Ok(Position {
                 member: extent.member,
                 offset: length - remaining,
-            };
+            });
         }
         remaining -= length;
     }
-    Position::start()
+    Ok(Position::start())
 }
 
 fn preceding_boundary(
     tape: &Tape,
     extents: &[Extent],
     candidate: Position,
-) -> Result<Position, tape::Error> {
+    tracker: &mut WorkTracker,
+) -> Result<Position, ScanError> {
     if candidate == Position::start() {
         return Ok(candidate);
     }
@@ -177,7 +425,12 @@ fn preceding_boundary(
         };
         while end > 0 {
             let start = end.saturating_sub(BOUNDARY_CHUNK_BYTES);
-            let fragment = tape.read(Locus::new(extent.member, start, end - start))?;
+            let length = end - start;
+            tracker.read(length)?;
+            let fragment = tape
+                .read(Locus::new(extent.member, start, length))
+                .map_err(|source| tape_error(tape.root(), source))?;
+            tracker.check_duration()?;
             if let Some(newline) = fragment.iter().rposition(|byte| *byte == b'\n') {
                 let offset = start + newline as u64 + 1;
                 return Ok(if extent.sealed && offset == extent.length {
@@ -195,7 +448,11 @@ fn preceding_boundary(
             end = start;
         }
     }
-    Ok(Position::start())
+    Err(tracker.exhausted_u64(
+        "source bytes",
+        tracker.budget.source_bytes.get(),
+        tracker.source_bytes,
+    ))
 }
 
 fn tape_error(path: &Path, source: tape::Error) -> ScanError {

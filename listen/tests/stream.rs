@@ -1,16 +1,194 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use listen::{
-    Checkpoint, Dialect, EventKind, Position, RecordPayload, Scan, ScanError, Span, scan,
-    scan_before, scan_tail,
+    Checkpoint, Dialect, EventKind, Position, RecordPayload, Scan, ScanError, Span, TailBudget,
+    scan, scan_before, scan_tail,
 };
 use tape::Tape;
 
 const PROSE: &[u8] =
     br#"{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"working"}}"#;
 const CLAUDE_MULTI_EVENT: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"working"},{"type":"tool_use","id":"tool-1","name":"shell","input":{"command":"cargo test"}}]}}"#;
+const TEST_BOUNDARY_ALLOWANCE: u64 = 256 * 1024;
+const TEST_SOURCE_LIMIT: u64 = 128 * 1024;
+const TEST_RECORD_LIMIT: usize = 32 * 1024;
+const TEST_PASS_LIMIT: usize = 64;
+const TEST_DURATION: Duration = Duration::from_secs(1);
+const SMALL_WINDOW_BYTES: u64 = 4 * 1024;
+const SMALL_WINDOW_RECORDS: usize = 4 * 1024;
+const OVERSIZED_RECORD_BYTES: usize = 512 * 1024;
+const LARGE_SEASON_RECORDS: usize = 40_000;
+const EQUAL_MEMBER_ADDITIONS: usize = 15;
+const ACTIVE_MEMBER_RECORDS: usize = 5;
+const RECORD_FIXTURE_COUNT: usize = 3;
+const PENDING_WINDOW_BYTES: u64 = 4;
+const MULTI_MEMBER_WINDOW_RECORDS: usize = 7;
+
+fn tail_budget(window_bytes: u64) -> TailBudget {
+    TailBudget::new(
+        window_bytes,
+        window_bytes.saturating_add(TEST_BOUNDARY_ALLOWANCE),
+        TEST_RECORD_LIMIT,
+        TEST_PASS_LIMIT,
+        TEST_DURATION,
+    )
+    .expect("positive test tail budget")
+}
+
+#[test]
+fn tail_allowances_refuse_every_zero_dimension() {
+    let positive = (1, 1, 1, Duration::from_nanos(1));
+    for (window, bytes, records, passes, duration, field) in [
+        (
+            0,
+            positive.0,
+            positive.1,
+            positive.2,
+            positive.3,
+            "window bytes",
+        ),
+        (
+            positive.0,
+            0,
+            positive.1,
+            positive.2,
+            positive.3,
+            "source bytes",
+        ),
+        (
+            positive.0,
+            positive.0,
+            0,
+            positive.2,
+            positive.3,
+            "decoded records",
+        ),
+        (
+            positive.0,
+            positive.0,
+            positive.1,
+            0,
+            positive.3,
+            "scan passes",
+        ),
+        (
+            positive.0,
+            positive.0,
+            positive.1,
+            positive.2,
+            Duration::ZERO,
+            "wall duration",
+        ),
+    ] {
+        let error = TailBudget::new(window, bytes, records, passes, duration)
+            .expect_err("zero allowance must refuse");
+        assert!(error.to_string().contains(field));
+    }
+}
+
+#[test]
+fn oversized_and_delimiter_free_tails_stop_at_the_same_byte_ceiling() {
+    fn refused(label: &str, suffix: &[u8]) -> (u64, u64) {
+        let scratch = Scratch::new(label);
+        let tape = Tape::open(scratch.path()).expect("tape opens");
+        let mut bytes = vec![b'x'; OVERSIZED_RECORD_BYTES];
+        bytes.extend_from_slice(suffix);
+        tape.tee(&bytes).expect("large record is durable");
+        let error = scan_tail(
+            scratch.path(),
+            Dialect::Codex,
+            TailBudget::new(
+                SMALL_WINDOW_BYTES,
+                TEST_SOURCE_LIMIT,
+                SMALL_WINDOW_RECORDS,
+                TEST_PASS_LIMIT,
+                TEST_DURATION,
+            )
+            .expect("bounded tail"),
+        )
+        .expect_err("boundary beyond the allowance must refuse");
+        scratch.remove();
+        let ScanError::WorkLimit {
+            dimension,
+            limit,
+            consumed,
+        } = error
+        else {
+            panic!("oversized tail returned a non-budget error: {error}")
+        };
+        assert!(matches!(dimension, "source bytes" | "scan passes"));
+        assert!(consumed <= limit);
+        (limit, consumed)
+    }
+
+    assert_eq!(
+        refused("oversized-tail", b"\n"),
+        refused("delimiter-free-tail", b"")
+    );
+}
+
+#[test]
+fn tail_record_allowance_refuses_before_decoding_an_extra_record() {
+    let scratch = Scratch::new("tail-record-ceiling");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+    let prose = line(PROSE);
+    tape.tee(&prose.repeat(RECORD_FIXTURE_COUNT))
+        .expect("three records are durable");
+    let error = scan_tail(
+        scratch.path(),
+        Dialect::Codex,
+        TailBudget::new(
+            u64::try_from(prose.len() * RECORD_FIXTURE_COUNT).expect("window fits"),
+            TEST_BOUNDARY_ALLOWANCE,
+            1,
+            TEST_PASS_LIMIT,
+            TEST_DURATION,
+        )
+        .expect("record-bounded tail"),
+    )
+    .expect_err("a second record must not be decoded");
+    assert!(matches!(
+        error,
+        ScanError::WorkLimit {
+            dimension: "decoded records",
+            limit: 1,
+            consumed: 1,
+        }
+    ));
+    scratch.remove();
+}
+
+#[test]
+fn tail_work_is_constant_as_older_sparse_history_grows() {
+    let scratch = Scratch::new("tail-work-ceiling");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+    let residue = b"{}\n";
+    let season = residue.repeat(LARGE_SEASON_RECORDS);
+    tape.tee(&season).expect("older residue is durable");
+    let budget = TailBudget::new(
+        SMALL_WINDOW_BYTES,
+        TEST_SOURCE_LIMIT,
+        SMALL_WINDOW_RECORDS,
+        TEST_PASS_LIMIT,
+        TEST_DURATION,
+    )
+    .expect("bounded tail");
+    let first = scan_tail(scratch.path(), Dialect::Codex, budget).expect("first bounded tail");
+    tape.tee(&season)
+        .expect("more older-shaped residue is durable");
+    let second = scan_tail(scratch.path(), Dialect::Codex, budget).expect("second bounded tail");
+
+    assert_eq!(first.work.source_bytes, second.work.source_bytes);
+    assert_eq!(first.work.records, second.work.records);
+    assert_eq!(first.work.passes, second.work.passes);
+    assert_eq!(first.work.records, first.scan.records.len());
+    assert!(first.work.source_bytes <= TEST_SOURCE_LIMIT);
+    assert!(first.work.passes <= TEST_PASS_LIMIT);
+    scratch.remove();
+}
 
 struct Scratch(PathBuf);
 
@@ -126,7 +304,7 @@ fn tail_scan_starts_near_eof_and_its_source_checkpoint_reads_only_appends() {
     let tail = scan_tail(
         scratch.path(),
         Dialect::Codex,
-        u64::try_from(prose.len() * 3).expect("window fits"),
+        tail_budget(u64::try_from(prose.len() * RECORD_FIXTURE_COUNT).expect("window fits")),
     )
     .expect("tail scan succeeds");
     assert!(
@@ -156,12 +334,17 @@ fn bounded_history_windows_end_at_the_supplied_checkpoint_without_overlap() {
     tape.tee(&prose)
         .expect("an append after the history boundary is durable");
 
-    let newer = scan_before(scratch.path(), Dialect::Codex, &before, bytes)
+    let newer = scan_before(scratch.path(), Dialect::Codex, &before, tail_budget(bytes))
         .expect("newer history window scans");
     assert_eq!(newer.scan.records.len(), 3);
     assert_eq!(newer.scan.checkpoint, before);
-    let older = scan_before(scratch.path(), Dialect::Codex, &newer.start, bytes)
-        .expect("adjacent older history window scans");
+    let older = scan_before(
+        scratch.path(),
+        Dialect::Codex,
+        &newer.start,
+        tail_budget(bytes),
+    )
+    .expect("adjacent older history window scans");
     assert_eq!(older.scan.records.len(), 3);
     assert_eq!(older.scan.checkpoint, newer.start);
     assert!(
@@ -179,7 +362,12 @@ fn tail_checkpoint_stays_before_an_unterminated_record_until_it_completes() {
     let partial = br#"{"type":"turn.failed"#;
     tape.tee(partial).expect("partial record is durable");
 
-    let tail = scan_tail(scratch.path(), Dialect::Codex, 4).expect("tail scan succeeds");
+    let tail = scan_tail(
+        scratch.path(),
+        Dialect::Codex,
+        tail_budget(PENDING_WINDOW_BYTES),
+    )
+    .expect("tail scan succeeds");
     assert!(tail.scan.records.is_empty());
     assert!(!tail.scan.pending.is_empty());
     assert_eq!(
@@ -211,7 +399,7 @@ fn tail_window_crosses_sealed_members_without_reopening_the_season_start() {
     let tail = scan_tail(
         scratch.path(),
         Dialect::Codex,
-        u64::try_from(prose.len() * 7).expect("window fits"),
+        tail_budget(u64::try_from(prose.len() * MULTI_MEMBER_WINDOW_RECORDS).expect("window fits")),
     )
     .expect("cross-member tail scans");
     assert_eq!(tail.scan.records.len(), 7);
@@ -235,6 +423,30 @@ fn tail_window_crosses_sealed_members_without_reopening_the_season_start() {
         .map(|span| span.member)
         .collect::<Vec<_>>();
     assert!(members.contains(&1) && members.contains(&2));
+    let first_work = (tail.work.source_bytes, tail.work.records, tail.work.passes);
+
+    for _ in 0..EQUAL_MEMBER_ADDITIONS {
+        tape.tee(&prose).expect("second member reaches equal size");
+    }
+    tape.seal().expect("second member seals");
+    for _ in 0..ACTIVE_MEMBER_RECORDS {
+        tape.tee(&prose).expect("third member grows");
+    }
+    let grown = scan_tail(
+        scratch.path(),
+        Dialect::Codex,
+        tail_budget(u64::try_from(prose.len() * MULTI_MEMBER_WINDOW_RECORDS).expect("window fits")),
+    )
+    .expect("grown multi-member tail scans");
+    assert_eq!(
+        (
+            grown.work.source_bytes,
+            grown.work.records,
+            grown.work.passes
+        ),
+        first_work,
+        "older sealed members do not increase tail work"
+    );
     scratch.remove();
 }
 

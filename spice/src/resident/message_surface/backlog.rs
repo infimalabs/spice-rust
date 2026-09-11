@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use super::*;
 
@@ -12,6 +13,21 @@ mod tests;
 
 /// First newest-record window; sparse tapes expand geometrically until enough cards exist.
 const INITIAL_WINDOW_BYTES: u64 = 32 * 1024;
+const TAIL_BOUNDARY_BYTES: u64 = 256 * 1024;
+const TAIL_RECORD_LIMIT: usize = 32 * 1024;
+const TAIL_PASS_LIMIT: usize = 64;
+const TAIL_DURATION: Duration = Duration::from_secs(1);
+
+fn tail_budget(window_bytes: u64) -> listen::TailBudget {
+    listen::TailBudget::new(
+        window_bytes,
+        window_bytes.saturating_add(TAIL_BOUNDARY_BYTES),
+        TAIL_RECORD_LIMIT,
+        TAIL_PASS_LIMIT,
+        TAIL_DURATION,
+    )
+    .expect("Canvas tail allowances are positive")
+}
 
 #[derive(Clone, Debug, Default)]
 struct SessionWorktrees(BTreeMap<(CanonicalUuid, CanonicalUuid), Vec<SessionWorktree>>);
@@ -810,7 +826,7 @@ fn read_backlog(
 fn tail_backlog(tape: &Path, dialect: listen::Dialect) -> Result<listen::Scan, listen::ScanError> {
     let mut bytes = INITIAL_WINDOW_BYTES;
     loop {
-        let tail = listen::scan_tail(tape, dialect, bytes)?;
+        let tail = listen::scan_tail(tape, dialect, tail_budget(bytes))?;
         if visible_cards(&tail.scan) > canvas::stream::INITIAL_MESSAGE_LIMIT
             || tail.start.next == listen::Position::start()
         {
@@ -832,7 +848,7 @@ fn history_tail(
 ) -> Result<listen::TailScan, listen::ScanError> {
     let mut bytes = INITIAL_WINDOW_BYTES;
     loop {
-        let tail = listen::scan_before(tape, dialect, before, bytes)?;
+        let tail = listen::scan_before(tape, dialect, before, tail_budget(bytes))?;
         if visible_cards(&tail.scan) >= visible_limit
             || tail.start.next == listen::Position::start()
         {

@@ -15,7 +15,7 @@ use crate::{Decoded, Dialect, Event, LocusLengthError, RecordContext, Residue, d
 
 mod tail;
 
-pub use tail::{TailScan, scan_before, scan_tail};
+pub use tail::{TailBudget, TailBudgetError, TailScan, TailWork, scan_before, scan_tail};
 
 /// Serializable spelling of one durable tape span.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -225,6 +225,7 @@ struct ScanState {
     records: Vec<Record>,
     bytes: Vec<u8>,
     spans: Vec<Span>,
+    record_limit: Option<usize>,
 }
 
 fn scan_extents(
@@ -240,6 +241,7 @@ fn scan_extents(
         records: Vec::new(),
         bytes: Vec::new(),
         spans: Vec::new(),
+        record_limit: None,
     };
     for extent in extents {
         if end.is_some_and(|end| extent.member > end.member) {
@@ -318,6 +320,17 @@ fn scan_extent(
 
 impl ScanState {
     fn finish_record(&mut self, dialect: Dialect, source: &SourceId) -> Result<(), ScanError> {
+        if self
+            .record_limit
+            .is_some_and(|limit| self.records.len() >= limit)
+        {
+            return Err(ScanError::WorkLimit {
+                dimension: "decoded records",
+                limit: u64::try_from(self.record_limit.expect("record limit checked"))
+                    .unwrap_or(u64::MAX),
+                consumed: u64::try_from(self.records.len()).unwrap_or(u64::MAX),
+            });
+        }
         let locus = synthetic_locus(&self.spans, self.bytes.len());
         let decoded = decode(dialect, &self.bytes, locus).map_err(ScanError::DecodeContract)?;
         self.records.push(Record {
@@ -499,6 +512,15 @@ pub enum ScanError {
         /// Next member the observed tape can supply.
         observed_next_member: u64,
     },
+    /// A caller-owned scan allowance was exhausted before more work began.
+    WorkLimit {
+        /// Dimension whose allowance was exhausted.
+        dimension: &'static str,
+        /// Maximum admitted work in this dimension.
+        limit: u64,
+        /// Work consumed before refusal.
+        consumed: u64,
+    },
     /// Decoder received a synthetic locus of the wrong length.
     DecodeContract(LocusLengthError),
 }
@@ -538,6 +560,14 @@ impl fmt::Display for ScanError {
                 "checkpoint {}:{} skips observed next member {observed_next_member}",
                 next.member, next.offset
             ),
+            Self::WorkLimit {
+                dimension,
+                limit,
+                consumed,
+            } => write!(
+                formatter,
+                "tape scan exhausted {dimension} allowance {limit} after consuming {consumed}"
+            ),
             Self::DecodeContract(error) => write!(formatter, "decoder contract failed: {error}"),
         }
     }
@@ -550,7 +580,8 @@ impl Error for ScanError {
             Self::DecodeContract(error) => Some(error),
             Self::SourceChanged { .. }
             | Self::CheckpointRetreated { .. }
-            | Self::CheckpointGap { .. } => None,
+            | Self::CheckpointGap { .. }
+            | Self::WorkLimit { .. } => None,
         }
     }
 }

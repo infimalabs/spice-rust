@@ -26,7 +26,7 @@ pub use event::{
 pub use residue::{Decoded, LocusLengthError, RecordContext, Residue, ResidueKind, TurnMoment};
 pub use stream::{
     Checkpoint, Position, Record, RecordPayload, Scan, ScanError, SourcedEvent, SourcedResidue,
-    Span, TailScan, scan, scan_before, scan_tail,
+    Span, TailBudget, TailBudgetError, TailScan, TailWork, scan, scan_before, scan_tail,
 };
 pub use surface::{
     Mode, Observation, RetroSelector, StreamOutcome, SurfaceError, SurfaceEvent, SurfaceReasoning,
