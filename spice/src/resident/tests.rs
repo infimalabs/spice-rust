@@ -36,6 +36,57 @@ use canvas_announcement::{
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
+#[test]
+fn consent_initialization_resumes_across_small_materializer_steps() {
+    let (root, paths) = resident_fixture("consent-page-resume");
+    let mut journal = journal::Journal::open(&paths.journal).expect("consent journal opens");
+    let lane = test_uuid(91);
+    let mut write = write(Actor::Lane(lane), test_uuid(92), Producer::CommandDoor)
+        .expect("consent write starts");
+    for request in [test_uuid(93), test_uuid(94)] {
+        write
+            .fact(
+                wire::body::ConsentAsked {
+                    request,
+                    lane,
+                    operation: "fixture operation".to_owned(),
+                },
+                FactCause::Root,
+            )
+            .expect("consent request fact builds");
+    }
+    let applied = journal.apply(write).expect("consent requests commit");
+    let bus = Bus::start(journal).expect("consent bus starts");
+    let policy =
+        consent::Policy::new(consent::Answer::Queue, Vec::new()).expect("fixture consent policy");
+    let budget = journal::FactReadBudget::new(1, journal::MAX_RETAINED_FACT_PAGE_BYTES)
+        .expect("one-row materializer budget");
+    let reads =
+        read_materializations::CurrentReads::start_with_budget(&bus, &paths, &policy, budget)
+            .expect("consent materializer starts");
+
+    let generation = reads.current().expect("consent pages settle");
+
+    assert_eq!(generation.cursor(), applied.last());
+    assert_eq!(generation.materialization_steps(), 2);
+    let incremental = generation
+        .consent()
+        .answer(&policy)
+        .expect("incremental consent state remains valid");
+    let complete = consent::Queue::from_snapshot(
+        &bus.fact_snapshot()
+            .expect("complete consent snapshot reads"),
+        &policy,
+    )
+    .expect("complete consent replay remains valid")
+    .answer(&policy)
+    .expect("complete consent answer renders");
+    assert_eq!(incremental, complete);
+    drop(reads);
+    bus.shutdown().expect("consent bus stops");
+    fs::remove_dir_all(root).expect("consent fixture cleanup");
+}
+
 fn fixture(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "spice-resident-{name}-{}-{}",

@@ -18,6 +18,7 @@ use super::RuntimePaths;
 pub(super) struct Generation {
     cursor: Seq,
     consent: Arc<consent::Queue>,
+    materialization_steps: u64,
 }
 
 impl Generation {
@@ -28,15 +29,33 @@ impl Generation {
     pub(super) fn consent(&self) -> &consent::Queue {
         self.consent.as_ref()
     }
+
+    #[cfg(test)]
+    pub(super) const fn materialization_steps(&self) -> u64 {
+        self.materialization_steps
+    }
 }
 
 struct ReadState {
-    generation: Arc<Generation>,
+    generation: Option<Arc<Generation>>,
     consent: Arc<consent::Queue>,
+    initial: Option<InitialCatchUp>,
+}
+
+#[derive(Clone, Copy)]
+struct InitialCatchUp {
+    after: Option<Seq>,
+    authority: Seq,
+    budget: journal::FactReadBudget,
+    steps: u64,
 }
 
 #[derive(Debug)]
 enum Published {
+    Pending {
+        through: Option<Seq>,
+        authority: Seq,
+    },
     Ready(Arc<Generation>),
     Fault(String),
 }
@@ -52,7 +71,6 @@ const CURRENT_WAIT: Duration = Duration::from_secs(10);
 /// One coalescing background publisher and its latest immutable generation.
 pub(super) struct CurrentReads {
     reader: BusReader,
-    state: Arc<Mutex<ReadState>>,
     published: Arc<(Mutex<Publication>, Condvar)>,
     refresh: Option<SyncSender<()>>,
     worker: Option<JoinHandle<()>>,
@@ -61,20 +79,25 @@ pub(super) struct CurrentReads {
 impl CurrentReads {
     pub(super) fn start(
         bus: &Bus,
-        _paths: &RuntimePaths,
+        paths: &RuntimePaths,
         policy: &consent::Policy,
     ) -> Result<Self, String> {
+        Self::start_with_budget(bus, paths, policy, journal::FactReadBudget::RETAINED)
+    }
+
+    pub(super) fn start_with_budget(
+        bus: &Bus,
+        _paths: &RuntimePaths,
+        policy: &consent::Policy,
+        budget: journal::FactReadBudget,
+    ) -> Result<Self, String> {
         let reader = bus.reader();
-        let (initial, state) = build_initial(bus, policy)?;
-        let initial = Arc::new(initial);
-        let state = Arc::new(Mutex::new(ReadState {
-            generation: Arc::clone(&initial),
-            consent: state,
-        }));
+        let (initial, state) = build_initial(bus, policy, budget)?;
+        let state = Arc::new(Mutex::new(state));
         let published = Arc::new((
             Mutex::new(Publication {
                 revision: 0,
-                value: Published::Ready(initial),
+                value: initial,
             }),
             Condvar::new(),
         ));
@@ -88,9 +111,11 @@ impl CurrentReads {
                 run_worker(worker_reader, requests, worker_state, worker_published);
             })
             .map_err(|error| format!("read materializer thread did not start: {error}"))?;
+        refresh
+            .try_send(())
+            .map_err(|_| "read materializer initial refresh could not be queued".to_owned())?;
         Ok(Self {
             reader,
-            state,
             published,
             refresh: Some(refresh),
             worker: Some(worker),
@@ -112,29 +137,7 @@ impl CurrentReads {
 
     /// Settle startup reconciliation before Canvas discovery becomes visible.
     pub(super) fn synchronize_before_publish(&self) -> Result<(), String> {
-        if self.current().is_ok() {
-            return Ok(());
-        }
-        let replacement = advance_generation(&self.reader, &self.state)?;
-        let authority = self
-            .reader
-            .cursor()
-            .map_err(|error| format!("authority cursor is unreadable: {error}"))?;
-        if authority != Some(replacement.cursor) {
-            return Err(format!(
-                "authority moved to {authority:?} while read materialization settled at {}",
-                replacement.cursor
-            ));
-        }
-        let (published, changed) = &*self.published;
-        let mut published = published
-            .lock()
-            .map_err(|_| "read materializer publication lock is poisoned".to_owned())?;
-        published.revision = published.revision.wrapping_add(1);
-        published.value = Published::Ready(replacement);
-        drop(published);
-        changed.notify_all();
-        Ok(())
+        self.current().map(drop)
     }
 
     /// Capture the current immutable generation after a bounded stale-cache join.
@@ -151,10 +154,17 @@ impl CurrentReads {
                 .lock()
                 .map_err(|_| "read materializer publication lock is poisoned".to_owned())?;
             match &current.value {
+                Published::Ready(generation) if generation.materialization_steps == 0 => {
+                    return Err("read materialization published without a bounded step".to_owned());
+                }
                 Published::Ready(generation) if generation.cursor == authority => {
                     return Ok(Arc::clone(generation));
                 }
                 Published::Fault(detail) => return Err(detail.clone()),
+                Published::Pending {
+                    through,
+                    authority: target,
+                } => validate_progress(*through, *target, authority)?,
                 Published::Ready(_) => {}
             }
 
@@ -180,6 +190,16 @@ impl CurrentReads {
     }
 }
 
+fn validate_progress(through: Option<Seq>, target: Seq, authority: Seq) -> Result<(), String> {
+    if target > authority || through.is_some_and(|through| through > target) {
+        Err(format!(
+            "read materialization progress {through:?} toward {target} is beyond authority {authority}"
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 impl Drop for CurrentReads {
     fn drop(&mut self) {
         drop(self.refresh.take());
@@ -198,7 +218,7 @@ fn run_worker(
     while requests.recv().is_ok() {
         while let Ok(()) = requests.try_recv() {}
         let replacement = match advance_generation(&reader, &state) {
-            Ok(generation) => Published::Ready(generation),
+            Ok(publication) => publication,
             Err(error) => Published::Fault(error),
         };
         let (current, changed) = &*published;
@@ -215,22 +235,89 @@ fn run_worker(
 fn advance_generation(
     reader: &BusReader,
     state: &Arc<Mutex<ReadState>>,
-) -> Result<Arc<Generation>, String> {
+) -> Result<Published, String> {
     let mut state = state
         .lock()
         .map_err(|_| "read materializer state lock is poisoned".to_owned())?;
+    if let Some(initial) = state.initial {
+        advance_initial_generation(reader, &mut state, initial)
+    } else {
+        advance_current_generation(reader, &mut state)
+    }
+}
+
+fn advance_initial_generation(
+    reader: &BusReader,
+    state: &mut ReadState,
+    mut initial: InitialCatchUp,
+) -> Result<Published, String> {
+    let kinds = vec![
+        wire::FactKind::ConsentAsked,
+        wire::FactKind::ConsentQueued,
+        wire::FactKind::ConsentGranted,
+        wire::FactKind::ConsentDenied,
+    ];
+    let page = reader
+        .selected_fact_page(kinds, initial.after, initial.budget)
+        .map_err(|error| format!("read materialization facts are unreadable: {error}"))?;
+    let observed = page
+        .horizon
+        .ok_or_else(|| "running resident lost its durable fact horizon".to_owned())?;
+    if observed < initial.authority {
+        return Err(format!(
+            "consent fact page horizon retreated from {} to {observed}",
+            initial.authority
+        ));
+    }
+    initial.authority = observed;
+    let mut consent = state.consent.as_ref().clone();
+    consent
+        .advance(page.rows.iter())
+        .map_err(|error| format!("consent materialization is invalid: {error}"))?;
+    let consent = Arc::new(consent);
+    state.consent = Arc::clone(&consent);
+    let steps = initial.steps.saturating_add(1);
+    if let Some(continuation) = page.continuation {
+        state.initial = Some(InitialCatchUp {
+            after: Some(continuation),
+            steps,
+            ..initial
+        });
+        return Ok(Published::Pending {
+            through: Some(continuation),
+            authority: initial.authority,
+        });
+    }
+    let generation = Arc::new(Generation {
+        cursor: initial.authority,
+        consent,
+        materialization_steps: steps,
+    });
+    state.generation = Some(Arc::clone(&generation));
+    state.initial = None;
+    Ok(Published::Ready(generation))
+}
+
+fn advance_current_generation(
+    reader: &BusReader,
+    state: &mut ReadState,
+) -> Result<Published, String> {
     let authority = reader
         .cursor()
         .map_err(|error| format!("authority cursor is unreadable: {error}"))?
         .ok_or_else(|| "running resident has no durable fact cursor".to_owned())?;
-    let admitted = state.generation.cursor;
+    let generation = state
+        .generation
+        .as_ref()
+        .ok_or_else(|| "read materializer has no admitted generation".to_owned())?;
+    let admitted = generation.cursor;
     if authority < admitted {
         return Err(format!(
             "authority cursor {authority} precedes admitted read generation {admitted}"
         ));
     }
     if authority == admitted {
-        return Ok(Arc::clone(&state.generation));
+        return Ok(Published::Ready(Arc::clone(generation)));
     }
 
     let count = usize::try_from(authority.get() - admitted.get())
@@ -271,62 +358,40 @@ fn advance_generation(
     let generation = Arc::new(Generation {
         cursor: authority,
         consent: Arc::clone(&consent),
+        materialization_steps: 1,
     });
     state.consent = consent;
-    state.generation = Arc::clone(&generation);
-    Ok(generation)
+    state.generation = Some(Arc::clone(&generation));
+    Ok(Published::Ready(generation))
 }
 
 fn build_initial(
     bus: &Bus,
     policy: &consent::Policy,
-) -> Result<(Generation, Arc<consent::Queue>), String> {
-    let policy = policy.clone();
-    let (cursor, consent) = bus
-        .read(move |read| {
-            let cursor = read.cursor()?;
-            let kinds = [
-                wire::FactKind::ConsentAsked,
-                wire::FactKind::ConsentQueued,
-                wire::FactKind::ConsentGranted,
-                wire::FactKind::ConsentDenied,
-            ];
-            let mut consent = consent::Queue::from_facts(
-                std::iter::empty::<&wire::Envelope<wire::AnyFact>>(),
-                &policy,
-            )
-            .map_err(|error| {
-                journal::GuardError::Invalid(format!("consent materialization is invalid: {error}"))
-            })?;
-            let mut after = None;
-            loop {
-                let page =
-                    read.selected_fact_page(&kinds, after, journal::FactReadBudget::RETAINED)?;
-                if page.horizon != cursor {
-                    return Err(journal::GuardError::Invalid(format!(
-                        "consent fact page horizon moved from {cursor:?} to {:?}",
-                        page.horizon
-                    )));
-                }
-                consent.advance(page.rows.iter()).map_err(|error| {
-                    journal::GuardError::Invalid(format!(
-                        "consent materialization is invalid: {error}"
-                    ))
-                })?;
-                let Some(continuation) = page.continuation else {
-                    break;
-                };
-                after = Some(continuation);
-            }
-            Ok((cursor, consent))
-        })
-        .map_err(|error| format!("read materialization facts are unreadable: {error}"))?;
-    let cursor = cursor.ok_or_else(|| "running resident has no durable fact horizon".to_owned())?;
+    budget: journal::FactReadBudget,
+) -> Result<(Published, ReadState), String> {
+    let cursor = bus
+        .cursor()
+        .map_err(|error| format!("read materialization cursor is unreadable: {error}"))?
+        .ok_or_else(|| "running resident has no durable fact horizon".to_owned())?;
+    let consent = Arc::new(
+        consent::Queue::from_facts(std::iter::empty::<&wire::Envelope<wire::AnyFact>>(), policy)
+            .map_err(|error| format!("consent materialization is invalid: {error}"))?,
+    );
     Ok((
-        Generation {
-            cursor,
-            consent: Arc::new(consent.clone()),
+        Published::Pending {
+            through: None,
+            authority: cursor,
         },
-        Arc::new(consent),
+        ReadState {
+            generation: None,
+            consent,
+            initial: Some(InitialCatchUp {
+                after: None,
+                authority: cursor,
+                budget,
+                steps: 0,
+            }),
+        },
     ))
 }

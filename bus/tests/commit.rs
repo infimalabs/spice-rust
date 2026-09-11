@@ -130,6 +130,7 @@ fn trust_only_commits_refresh_immutable_task_snapshots_at_the_commit_cursor() {
     assert_eq!(before.cursor(), first.cursor().position());
     assert_eq!(before.trust().len(), 1);
     assert_eq!(before.trust()[0].body().state, TrustState::Pended);
+    assert_eq!(before.facts().latest_trust_digest("spice"), Some(&digest));
     let requirements = EnvironmentRequirements::one(
         journal::crossing::EnvironmentRequirement::trust_grant(digest.clone()),
     );
@@ -151,8 +152,9 @@ fn trust_only_commits_refresh_immutable_task_snapshots_at_the_commit_cursor() {
         )
         .expect("trust grant fact builds");
     let worktree = before.trust()[0].body().worktree.clone();
+    let granted_digest = digest.clone();
     granted.trust_head(fact, move |_| TrustHead {
-        digest,
+        digest: granted_digest,
         state: TrustState::Granted,
         worktree,
     });
@@ -160,6 +162,7 @@ fn trust_only_commits_refresh_immutable_task_snapshots_at_the_commit_cursor() {
     let after = bus.task_snapshot().expect("granted snapshot reads");
     assert_eq!(after.cursor(), second.cursor().position());
     assert_eq!(after.trust()[0].body().state, TrustState::Granted);
+    assert_eq!(after.facts().latest_trust_digest("spice"), Some(&digest));
     assert!(requirements.are_satisfied_by(&after.environment()));
     assert_eq!(
         before.trust()[0].body().state,
@@ -170,9 +173,8 @@ fn trust_only_commits_refresh_immutable_task_snapshots_at_the_commit_cursor() {
 }
 
 #[test]
-fn fleet_sized_task_snapshots_decode_only_the_committed_tail() {
-    const FLEET_FACTS: usize = 8_501;
-    const FLEET_BYTES: usize = 14_700_000;
+fn multi_page_task_snapshots_resume_then_decode_only_the_committed_tail() {
+    const RETAINED_FACTS: usize = 300;
     let observed = Arc::new(Mutex::new(Vec::new()));
     let mut journal = Journal::in_memory().expect("in-memory authority");
     journal
@@ -184,9 +186,9 @@ fn fleet_sized_task_snapshots_decode_only_the_committed_tail() {
         instant("2030-04-12T18:44:10.271Z"),
         Producer::CommandDoor,
     );
-    let padding = "x".repeat(1_800);
+    let padding = "x".repeat(32);
     let mut cause = FactCause::Existing(Seq::new(1).expect("initial cause"));
-    for index in 1..FLEET_FACTS {
+    for index in 1..RETAINED_FACTS {
         let pending = bulk
             .fact(
                 body::TaskNoted {
@@ -199,23 +201,17 @@ fn fleet_sized_task_snapshots_decode_only_the_committed_tail() {
         cause = FactCause::Pending(pending);
     }
     let applied = journal.apply(bulk).expect("fleet history commits");
-    assert_eq!(applied.last().get(), FLEET_FACTS as u64);
+    assert_eq!(applied.last().get(), RETAINED_FACTS as u64);
 
     let bus = Bus::start(journal).expect("dedicated writer starts");
     let cold = bus.fact_snapshot().expect("cold fact snapshot reads");
-    let before = bus.task_snapshot().expect("fleet snapshot loads once");
+    let before = bus.task_snapshot().expect("multi-page snapshot settles");
     let retained = bus.fact_snapshot().expect("retained fact snapshot reads");
     assert_eq!(retained, cold);
-    let payload_bytes = before
-        .facts()
-        .iter()
-        .filter_map(|fact| fact.fact.read::<body::TaskNoted>())
-        .map(|note| note.note.len())
-        .sum::<usize>();
-    assert_eq!(before.facts().len(), FLEET_FACTS);
+    assert_eq!(before.facts().len(), RETAINED_FACTS);
     assert!(
-        payload_bytes >= FLEET_BYTES,
-        "fleet fixture measured only {payload_bytes} fact-body bytes"
+        before.materialization_steps() > 1,
+        "retained history was drained inside one materialization step"
     );
     let shared_first = before.facts().iter().next().expect("history is nonempty");
 
@@ -243,16 +239,20 @@ fn fleet_sized_task_snapshots_decode_only_the_committed_tail() {
         after.facts().iter().collect::<Vec<_>>()
     );
     assert_eq!(retained.horizon(), before.cursor());
-    assert_eq!(retained.facts().len(), FLEET_FACTS);
-    assert_eq!(after.facts().len(), FLEET_FACTS + 1);
-    assert_eq!(after.facts().horizon().map(Seq::get), Some(8_502));
+    assert_eq!(retained.facts().len(), RETAINED_FACTS);
+    assert_eq!(after.facts().len(), RETAINED_FACTS + 1);
+    assert_eq!(
+        after.facts().horizon().map(Seq::get),
+        Some((RETAINED_FACTS + 1) as u64)
+    );
+    assert_eq!(after.materialization_steps(), 1);
     let committed_tail = after.facts().after(before.cursor()).collect::<Vec<_>>();
     assert_eq!(
         committed_tail.len(),
         1,
         "a caught-up lifecycle consumer touches only the one-fact suffix"
     );
-    assert_eq!(committed_tail[0].seq.get(), 8_502);
+    assert_eq!(committed_tail[0].seq.get(), (RETAINED_FACTS + 1) as u64);
     assert!(
         std::ptr::eq(
             shared_first,
@@ -262,7 +262,7 @@ fn fleet_sized_task_snapshots_decode_only_the_committed_tail() {
                 .next()
                 .expect("history remains nonempty")
         ),
-        "the one-fact commit rebuilt rather than shared 8,501 decoded facts"
+        "the one-fact commit rebuilt rather than shared retained facts"
     );
     assert_eq!(
         after

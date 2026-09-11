@@ -27,7 +27,7 @@ mod runtime {
 
     mod task_snapshot;
     pub use task_snapshot::TaskFacts;
-    use task_snapshot::{load_task_snapshot, refresh_task_snapshot};
+    use task_snapshot::{TaskSnapshotState, advance_task_snapshot, invalidate_task_snapshot};
 
     /// One successful journal transaction, constructable only by the bus
     /// writer after durability.
@@ -117,6 +117,7 @@ mod runtime {
         tasks: Arc<[TaskHeads]>,
         trust: Arc<[JournalHead<journal::crossing::TrustHead>]>,
         residency: Option<JournalHead<journal::crossing::ResidencyHead>>,
+        materialization_steps: u64,
     }
 
     /// Incremental resident authority and one bounded pending-steering page
@@ -215,6 +216,12 @@ mod runtime {
         pub fn residency(&self) -> Option<&JournalHead<journal::crossing::ResidencyHead>> {
             self.residency.as_ref()
         }
+
+        /// Number of bounded retained-fact pages applied for this generation.
+        #[must_use]
+        pub const fn materialization_steps(&self) -> u64 {
+            self.materialization_steps
+        }
     }
 
     impl SteeringSnapshot {
@@ -306,6 +313,34 @@ mod runtime {
             receiver
                 .recv()
                 .map_err(|_| BusReadError::Bus(BusError::Closed))?
+        }
+
+        /// Read one bounded retained-kind page through the writer queue.
+        pub fn selected_fact_page(
+            &self,
+            kinds: Vec<journal::crossing::FactKind>,
+            after: Option<journal::crossing::Seq>,
+            budget: journal::FactReadBudget,
+        ) -> Result<journal::SelectedFactPage, BusReadError> {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            let transaction = Box::new(move |journal: &mut Journal| {
+                let result =
+                    journal.read(move |read| read.selected_fact_page(&kinds, after, budget));
+                let respond = Box::new(move || {
+                    let _ = answer.send(result);
+                });
+                TransactionCompletion {
+                    commit: None,
+                    respond,
+                }
+            });
+            self.requests
+                .send(Request::Transaction { transaction })
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
+            receiver
+                .recv()
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?
+                .map_err(BusReadError::Head)
         }
 
         /// Resolve only the steering keys named by one fixed-size message batch.
@@ -821,8 +856,11 @@ mod runtime {
         broadcasts: tokio::sync::broadcast::Sender<JournalCommit>,
     ) {
         let mut subscribers = Vec::<mpsc::Sender<JournalCommit>>::new();
-        let mut task_snapshot = None;
-        while let Ok(request) = requests.recv() {
+        let mut task_snapshot = TaskSnapshotState::default();
+        let mut task_waiters = Vec::new();
+        while let Some(request) =
+            next_request(&journal, &requests, &mut task_snapshot, &mut task_waiters)
+        {
             match request {
                 Request::Commit { write, answer } => {
                     answer_commit(
@@ -854,20 +892,19 @@ mod runtime {
                     let _ = answer.send(journal.read(|read| read.cursor()));
                 }
                 Request::Tasks { answer } => {
-                    answer_tasks(&journal, &mut task_snapshot, answer);
+                    answer_tasks(&task_snapshot, &mut task_waiters, answer);
                 }
                 Request::Steering {
                     lane,
                     start,
                     answer,
                 } => {
-                    let snapshot =
-                        current_task_snapshot(&journal, &mut task_snapshot).and_then(|authority| {
-                            journal
-                                .read(|read| read.pending_steering(lane, start))
-                                .map_err(BusReadError::Head)
-                                .map(|pending| SteeringSnapshot { authority, pending })
-                        });
+                    let snapshot = current_task_snapshot(&task_snapshot).and_then(|authority| {
+                        journal
+                            .read(|read| read.pending_steering(lane, start))
+                            .map_err(BusReadError::Head)
+                            .map(|pending| SteeringSnapshot { authority, pending })
+                    });
                     let _ = answer.send(snapshot);
                 }
                 Request::SteeringPresentations { keys, answer } => {
@@ -929,6 +966,26 @@ mod runtime {
         }
     }
 
+    fn next_request(
+        journal: &Journal,
+        requests: &Receiver<Request>,
+        task_snapshot: &mut TaskSnapshotState,
+        task_waiters: &mut Vec<SyncSender<Result<TaskSnapshot, BusReadError>>>,
+    ) -> Option<Request> {
+        loop {
+            if !task_snapshot.needs_step() {
+                return requests.recv().ok();
+            }
+            let _ = advance_task_snapshot(journal, task_snapshot);
+            answer_waiting_tasks(task_snapshot, task_waiters);
+            match requests.try_recv() {
+                Ok(request) => return Some(request),
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => return None,
+            }
+        }
+    }
+
     fn steering_presentations(
         journal: &Journal,
         keys: Vec<String>,
@@ -981,7 +1038,7 @@ mod runtime {
 
     fn answer_commit(
         journal: &mut Journal,
-        task_snapshot: &mut Option<TaskSnapshot>,
+        task_snapshot: &mut TaskSnapshotState,
         subscribers: &mut Vec<mpsc::Sender<JournalCommit>>,
         broadcasts: &tokio::sync::broadcast::Sender<JournalCommit>,
         write: JournalWrite,
@@ -990,7 +1047,7 @@ mod runtime {
         let outcome = match journal.apply(write) {
             Ok(applied) => {
                 let commit = JournalCommit::from_applied(applied);
-                refresh_task_snapshot(journal, task_snapshot, commit);
+                invalidate_task_snapshot(task_snapshot);
                 publish_commit(subscribers, broadcasts, commit);
                 CommitOutcome::Committed(commit)
             }
@@ -1002,14 +1059,14 @@ mod runtime {
 
     fn answer_transaction(
         journal: &mut Journal,
-        task_snapshot: &mut Option<TaskSnapshot>,
+        task_snapshot: &mut TaskSnapshotState,
         subscribers: &mut Vec<mpsc::Sender<JournalCommit>>,
         broadcasts: &tokio::sync::broadcast::Sender<JournalCommit>,
         transaction: Box<dyn FnOnce(&mut Journal) -> TransactionCompletion + Send>,
     ) {
         let TransactionCompletion { commit, respond } = transaction(journal);
         if let Some(commit) = commit {
-            refresh_task_snapshot(journal, task_snapshot, commit);
+            invalidate_task_snapshot(task_snapshot);
             publish_commit(subscribers, broadcasts, commit);
         }
         respond();
@@ -1025,25 +1082,35 @@ mod runtime {
     }
 
     fn answer_tasks(
-        journal: &Journal,
-        cached: &mut Option<TaskSnapshot>,
+        state: &TaskSnapshotState,
+        waiters: &mut Vec<SyncSender<Result<TaskSnapshot, BusReadError>>>,
         answer: SyncSender<Result<TaskSnapshot, BusReadError>>,
     ) {
-        let snapshot = current_task_snapshot(journal, cached);
-        let _ = answer.send(snapshot);
+        if state.needs_step() {
+            if waiters.len() < REQUEST_CAPACITY {
+                waiters.push(answer);
+            } else {
+                let _ = answer.send(state.current());
+            }
+        } else {
+            let _ = answer.send(state.current());
+        }
     }
 
-    fn current_task_snapshot(
-        journal: &Journal,
-        cached: &mut Option<TaskSnapshot>,
-    ) -> Result<TaskSnapshot, BusReadError> {
-        let snapshot = cached
-            .clone()
-            .map_or_else(|| load_task_snapshot(journal), Ok);
-        if let Ok(snapshot) = &snapshot {
-            *cached = Some(snapshot.clone());
+    fn answer_waiting_tasks(
+        state: &TaskSnapshotState,
+        waiters: &mut Vec<SyncSender<Result<TaskSnapshot, BusReadError>>>,
+    ) {
+        if state.needs_step() {
+            return;
         }
-        snapshot
+        for answer in waiters.drain(..) {
+            let _ = answer.send(state.current());
+        }
+    }
+
+    fn current_task_snapshot(state: &TaskSnapshotState) -> Result<TaskSnapshot, BusReadError> {
+        state.current()
     }
 
     fn canvas_heads(journal: &Journal) -> Result<CanvasHeads, BusReadError> {
