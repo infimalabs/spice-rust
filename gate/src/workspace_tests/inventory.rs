@@ -495,7 +495,7 @@ pub(super) fn acquire_inventory(
     acquire_inventory_with_resolution(root, environment, cargo, false)
 }
 
-/// Resolve regular Rust modules owned by Cargo compile-time targets.
+/// Resolve regular compiler inputs declared by Cargo targets.
 ///
 /// # Errors
 ///
@@ -503,14 +503,9 @@ pub(super) fn acquire_inventory(
 /// ambiguous compile-time target ownership failures.
 pub fn cargo_declared_compile_time_sources_at(
     root: &Path,
-    changed_sources: &[String],
     environment: &Environment,
 ) -> Result<Vec<String>, WorkspaceTestError> {
-    if !root.join("Cargo.toml").is_file()
-        || !changed_sources
-            .iter()
-            .any(|path| Path::new(path).extension() == Some(OsStr::new("rs")))
-    {
+    if !root.join("Cargo.toml").is_file() {
         return Ok(Vec::new());
     }
     let environment = without_pre_commit_dispatch(environment.clone())?;
@@ -523,24 +518,25 @@ pub(super) fn declared_compile_time_sources(
     root: &Path,
 ) -> Result<Vec<String>, WorkspaceTestError> {
     let root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let mut owners = BTreeMap::<String, BTreeSet<String>>::new();
+    let mut sources = BTreeSet::new();
     for package in &inventory.packages {
         for target in &package.declared_targets {
-            if !target
+            let special_target = target
                 .kind
                 .split('+')
-                .any(|kind| matches!(kind, "custom-build" | "proc-macro"))
-            {
-                continue;
-            }
+                .any(|kind| matches!(kind, "custom-build" | "proc-macro"));
             for declared in &target.declared_path_sources {
-                if !declared.origins.iter().any(|origin| {
+                let file_input = declared.origins.iter().any(|origin| {
                     matches!(
                         origin,
-                        DeclaredPathSourceOrigin::IncludedRust | DeclaredPathSourceOrigin::Module
+                        DeclaredPathSourceOrigin::FileMacro
+                            | DeclaredPathSourceOrigin::IncludedRust
                     )
-                }) || declared.path.extension() != Some(OsStr::new("rs"))
-                {
+                });
+                let special_module = special_target
+                    && declared.origins.contains(&DeclaredPathSourceOrigin::Module)
+                    && declared.path.extension() == Some(OsStr::new("rs"));
+                if !file_input && !special_module {
                     continue;
                 }
                 match fs::symlink_metadata(&declared.path) {
@@ -549,38 +545,29 @@ pub(super) fn declared_compile_time_sources(
                     Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                     Err(error) => {
                         return Err(WorkspaceTestError::new(format!(
-                            "inspect declared compile-time Rust source {}: {error}",
+                            "inspect declared compile-time source {}: {error}",
                             declared.path.display(),
                         )));
                     }
                 }
                 let relative = declared.path.strip_prefix(&root).map_err(|_| {
                     WorkspaceTestError::new(format!(
-                        "declared compile-time Rust source {} escapes selected root {}",
+                        "declared compile-time source {} escapes selected root {}",
                         declared.path.display(),
                         root.display(),
                     ))
                 })?;
                 let source = relative.to_str().ok_or_else(|| {
                     WorkspaceTestError::new(format!(
-                        "declared compile-time Rust source {} is not Unicode",
+                        "declared compile-time source {} is not Unicode",
                         relative.display(),
                     ))
                 })?;
-                owners
-                    .entry(source.replace(std::path::MAIN_SEPARATOR, "/"))
-                    .or_default()
-                    .insert(format!("{}::{}", package.name, target.display()));
+                sources.insert(source.replace(std::path::MAIN_SEPARATOR, "/"));
             }
         }
     }
-    if let Some((source, claims)) = owners.iter().find(|(_, claims)| claims.len() > 1) {
-        return Err(WorkspaceTestError::new(format!(
-            "declared compile-time Rust source {source:?} has ambiguous Cargo target ownership: {}",
-            claims.iter().cloned().collect::<Vec<_>>().join(", "),
-        )));
-    }
-    Ok(owners.into_keys().collect())
+    Ok(sources.into_iter().collect())
 }
 
 pub(super) fn acquire_resolved_inventory(
@@ -911,4 +898,60 @@ fn validate_workspace_dependencies(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod declared_source_tests {
+    use super::*;
+
+    #[test]
+    fn extensionless_file_macro_input_is_declared_without_a_rust_change_hint() {
+        let root = crate::test_repository::Fixture::repository("declared-extensionless-input");
+        root.write("dist/VERSION", b"0.2.0-dev.0\n");
+        let version = fs::canonicalize(root.join("dist/VERSION")).expect("canonical version");
+        let declared = DeclaredPathSource {
+            path: version,
+            test_only: false,
+            dependent_tests: true,
+            origins: BTreeSet::from([DeclaredPathSourceOrigin::FileMacro]),
+            scopes: BTreeSet::new(),
+        };
+        let target = TargetIdentity {
+            package: "dist".to_owned(),
+            kind: "lib".to_owned(),
+            name: "dist".to_owned(),
+            required_features: Vec::new(),
+            source: root.join("dist/src/lib.rs"),
+            declared_path_sources: vec![declared],
+            source_bytes: 1,
+        };
+        let inventory = Inventory {
+            packages: vec![PackageInventory {
+                id: "dist 0.0.0".to_owned(),
+                name: "dist".to_owned(),
+                root: root.join("dist"),
+                dependencies: Vec::new(),
+                namespace_context: FileMacroCrateContext::from_metadata("dist", "2024", &[])
+                    .expect("fixture namespace"),
+                compile_time_authority: None,
+                declared_targets: vec![target.clone()],
+                removed_targets: Vec::new(),
+                targets: vec![target],
+            }],
+            resolution: CargoResolution::default(),
+            binary_outputs: Vec::new(),
+            target_directory: root.join("target"),
+            build_directory: root.join("target/cargo-build"),
+        };
+
+        assert_eq!(
+            declared_compile_time_sources(&inventory, root.path()).expect("declared sources"),
+            ["dist/VERSION"]
+        );
+        assert!(
+            cargo_declared_compile_time_sources_at(root.path(), &Environment::empty())
+                .expect("repository without Cargo")
+                .is_empty()
+        );
+    }
 }

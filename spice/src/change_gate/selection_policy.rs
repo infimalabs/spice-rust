@@ -11,14 +11,12 @@ pub(super) fn packaged_selection_policy(
     tracked_sources: &[String],
     environment: &Environment,
 ) -> Result<gate::ChangeSelectionPolicy, ChangeGateError> {
-    packaged_policy(root, tracked_sources, tracked_sources, environment)
-        .map(|policy| policy.selection)
+    packaged_policy(root, tracked_sources, environment).map(|policy| policy.selection)
 }
 
 pub(super) fn packaged_policy(
     root: &Path,
     tracked_sources: &[String],
-    changed_sources: &[String],
     environment: &Environment,
 ) -> Result<PackagedPolicy, ChangeGateError> {
     const TRACKED_POLICY: &str = "spice-rust.toml";
@@ -40,10 +38,10 @@ pub(super) fn packaged_policy(
     let resolved = crate::config::resolve(crate::config::Inputs::new(document, None, &[]))
         .map_err(|error| ChangeGateError::refusal("change-selection-policy-refused", error))?;
     let policy = resolved.root().policy();
-    let declared_rust_sources =
-        gate::cargo_declared_compile_time_sources_at(root, changed_sources, environment).map_err(
-            |error| ChangeGateError::refusal("change-selection-cargo-source-refused", error),
-        )?;
+    let declared_rust_sources = gate::cargo_declared_compile_time_sources_at(root, environment)
+        .map_err(|error| {
+            ChangeGateError::refusal("change-selection-cargo-source-refused", error)
+        })?;
     let selection = gate::ChangeSelectionPolicy::new(gate::ChangeSelectionPolicyInputs {
         tracked_sources,
         policy_authorities: &[TRACKED_POLICY.to_owned(), "baseline.toml".to_owned()],
