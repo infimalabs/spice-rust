@@ -483,6 +483,7 @@ fn session_continuation(
     end: Option<&session_compaction::HistoryCheckpoint>,
     before: &wire::AgentMessage,
 ) -> Option<session_compaction::HistoryCheckpoint> {
+    debug_assert!(scan.work.within_limits());
     let end = end?;
     if scan.messages.is_empty() {
         return Some(end.retreat(scan.start));

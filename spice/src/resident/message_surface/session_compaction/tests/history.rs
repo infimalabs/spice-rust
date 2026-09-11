@@ -106,8 +106,8 @@ fn on_demand_history_recovers_boundaries_across_the_retained_horizon() {
         media: Vec::new(),
     };
 
-    let messages = retained_messages(HistoryRequest {
-        path: transcript,
+    let mut messages = retained_messages(HistoryRequest {
+        path: transcript.clone(),
         worktree: PathBuf::from("/worktree"),
         dialect: listen::Dialect::Claude,
         thread: "018f7777-7777-7444-8888-999999999999".to_owned(),
@@ -120,6 +120,29 @@ fn on_demand_history_recovers_boundaries_across_the_retained_horizon() {
     })
     .expect("retained compaction history reads");
 
+    assert_eq!(messages.messages.len(), 3);
+    assert!(messages.more);
+    assert!(messages.work.within_limits());
+    assert_eq!(messages.work.passes, HISTORY_PASS_BUDGET);
+    assert!(messages.work.source_bytes <= HISTORY_BYTE_BUDGET as u64);
+    assert!(messages.work.decoded_records <= HISTORY_RECORD_BUDGET as u32);
+    let older_end = end.retreat(messages.start);
+    let older = retained_messages(HistoryRequest {
+        path: transcript,
+        worktree: PathBuf::from("/worktree"),
+        dialect: listen::Dialect::Claude,
+        thread: "018f7777-7777-7444-8888-999999999999".to_owned(),
+        lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163e5"),
+        author: uuid("018f82d4-6f59-7d06-92e3-bce9131163ef"),
+        observations: &MessageObservations::default(),
+        before: &before,
+        end: &older_end,
+        limit: canvas::stream::MESSAGE_CAPACITY,
+    })
+    .expect("older retained compaction page reads");
+    assert_eq!(older.messages.len(), 1);
+    assert!(older.work.within_limits());
+    messages.messages.splice(0..0, older.messages);
     assert_eq!(messages.messages.len(), 4);
     assert!(
         messages

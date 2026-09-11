@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{self, BufRead as _, BufReader, Read as _, Seek as _, SeekFrom};
 use std::path::PathBuf;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt as _;
@@ -55,6 +55,7 @@ struct Cursor {
     guard: Option<RecordGuard>,
     validation: Option<PrefixValidation>,
     startup_recovery: Option<listen::Locus>,
+    startup_search: Option<HistoryCheckpoint>,
 }
 
 struct PendingTool {
@@ -69,11 +70,14 @@ struct RecordGuard {
 }
 
 const RECORD_GUARD_BYTES: usize = 256;
-const INITIAL_WINDOW_BYTES: u64 = 32 * 1024;
 const SCAN_BYTE_BUDGET: usize = 256 * 1024;
 const SCAN_RECORD_BUDGET: usize = 128;
 const VALIDATION_BYTE_BUDGET: usize = 256 * 1024;
 const AUTHENTICATION_BYTE_BUDGET: usize = VALIDATION_BYTE_BUDGET * 2;
+const HISTORY_BYTE_BUDGET: usize = 256 * 1024;
+const HISTORY_RECORD_BUDGET: usize = 128;
+const HISTORY_PASS_BUDGET: u32 = 1;
+const HISTORY_WALL_BUDGET: Duration = Duration::from_millis(50);
 
 struct PrefixValidation {
     start: u64,
@@ -282,6 +286,7 @@ impl Cursor {
             guard: None,
             validation: None,
             startup_recovery: None,
+            startup_search: None,
         }
     }
 }
@@ -312,6 +317,12 @@ fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
     if cursor.validation.is_some() {
         return advance_validation(cursor);
     }
+    if cursor.dialect == listen::Dialect::Codex
+        && cursor.startup_search.is_some()
+        && File::open(&cursor.path)?.metadata()?.len() == cursor.next
+    {
+        return advance_codex_startup_search(cursor);
+    }
     let mut file = File::open(&cursor.path)?;
     if file.metadata()?.len() < cursor.next || !guard_matches(&mut file, cursor)? {
         reset(cursor);
@@ -336,6 +347,9 @@ fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
     if records.is_empty() {
         return Ok(records);
     }
+    if cursor.dialect == listen::Dialect::Codex {
+        cursor.startup_search = None;
+    }
     let stamp = FileStamp::read(reader.get_ref())?;
     drop(reader);
     cursor.validation = Some(PrefixValidation {
@@ -357,33 +371,8 @@ fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
 /// of the visible Canvas tail. Older context epochs cannot change that boundary.
 fn bootstrap_codex(cursor: &mut Cursor, visible_limit: usize) -> io::Result<Vec<CompactionRecord>> {
     let checkpoint = history_checkpoint(&cursor.path)?;
-    let mut recovery = Cursor::new(
-        cursor.thread.clone(),
-        cursor.path.clone(),
-        cursor.worktree.clone(),
-        cursor.dialect,
-        cursor.author,
-    );
-    let mut end = checkpoint.next;
-    let latest = loop {
-        // A zero visible-card limit selects exactly one record-aligned byte
-        // window. Continue before that window, never replaying its suffix.
-        let (boundaries, start) =
-            bootstrap_before(&mut recovery, 0, Some(end), Some(checkpoint.source))?;
-        if let Some(boundary) = boundaries.last() {
-            break Some(boundary.locus());
-        }
-        if start == 0 {
-            break None;
-        }
-        end = start;
-    };
-    let (display, _) = bootstrap_before(
-        cursor,
-        visible_limit,
-        Some(checkpoint.next),
-        Some(checkpoint.source),
-    )?;
+    let page = bootstrap_before(cursor, visible_limit, &checkpoint)?;
+    let latest = page.latest;
     let observed = FileStamp::read(&File::open(&cursor.path)?)?;
     if observed != checkpoint.source {
         reset(cursor);
@@ -393,104 +382,304 @@ fn bootstrap_codex(cursor: &mut Cursor, visible_limit: usize) -> io::Result<Vec<
         ));
     }
     cursor.startup_recovery = latest;
-    Ok(display)
+    cursor.startup_search =
+        (latest.is_none() && page.start > 0).then(|| checkpoint.retreat(page.start));
+    Ok(page.records)
+}
+
+fn advance_codex_startup_search(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
+    let checkpoint = cursor
+        .startup_search
+        .clone()
+        .expect("Codex startup search advances only while pending");
+    let mut recovery = Cursor::new(
+        cursor.thread.clone(),
+        cursor.path.clone(),
+        cursor.worktree.clone(),
+        cursor.dialect,
+        cursor.author,
+    );
+    let page = bootstrap_before(&mut recovery, 0, &checkpoint)?;
+    if let Some(boundary) = page.latest {
+        cursor.startup_recovery = Some(boundary);
+        cursor.startup_search = None;
+    } else if page.start == 0 {
+        cursor.startup_search = None;
+    } else {
+        cursor.startup_search = Some(checkpoint.retreat(page.start));
+    }
+    Ok(Vec::new())
 }
 
 /// Seed a new resident from the bounded initial visible tail Canvas presents.
 ///
 /// A forward replay from byte zero makes the hundredth boundary pay for the
-/// first ninety-nine prefixes again. Read a stable newest-record window once,
-/// expanding only until it covers the requested visible-card limit, and continue live
-/// scanning from that authenticated snapshot.
+/// first ninety-nine prefixes again. Read one fixed newest-record page, retain
+/// its older continuation, and continue live scanning from that snapshot.
 fn bootstrap(cursor: &mut Cursor, visible_limit: usize) -> io::Result<Vec<CompactionRecord>> {
-    bootstrap_before(cursor, visible_limit, None, None).map(|(records, _)| records)
+    let checkpoint = history_checkpoint(&cursor.path)?;
+    bootstrap_before(cursor, visible_limit, &checkpoint).map(|page| page.records)
+}
+
+struct HistoryPage {
+    records: Vec<CompactionRecord>,
+    latest: Option<listen::Locus>,
+    start: u64,
+    work: HistoryWork,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct HistoryWork {
+    pub(super) source_bytes: u64,
+    pub(super) decoded_records: u32,
+    pub(super) passes: u32,
+    pub(super) elapsed: Duration,
+}
+
+impl HistoryWork {
+    pub(super) fn within_limits(self) -> bool {
+        self.source_bytes <= HISTORY_BYTE_BUDGET as u64
+            && self.decoded_records <= HISTORY_RECORD_BUDGET as u32
+            && self.passes <= HISTORY_PASS_BUDGET
+            && self.elapsed <= HISTORY_WALL_BUDGET
+    }
 }
 
 fn bootstrap_before(
     cursor: &mut Cursor,
     visible_limit: usize,
-    end: Option<u64>,
-    expected: Option<FileStamp>,
-) -> io::Result<(Vec<CompactionRecord>, u64)> {
-    let mut window = INITIAL_WINDOW_BYTES;
-    loop {
-        let mut file = File::open(&cursor.path)?;
-        let stamp = FileStamp::read(&file)?;
-        let length = end.unwrap_or(stamp.length);
-        if length > stamp.length {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "preserved session history checkpoint exceeds the current source",
-            ));
-        }
-        if expected.is_some_and(|expected| expected.extension(stamp, length).is_none()) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "preserved session history source changed after Canvas bootstrap",
-            ));
-        }
-        let start = tail_start(&mut file, length, window)?;
-        file.seek(SeekFrom::Start(start))?;
-        let mut reader = BufReader::new(file.take(length.saturating_sub(start)));
-
-        cursor.next = start;
-        cursor.prefix_start = start;
-        cursor.next_call = 0;
-        cursor.pending.clear();
-        cursor.prefix = blake3::Hasher::new();
-        cursor.guard = None;
-        cursor.validation = None;
-
-        let mut records = Vec::new();
-        let mut visible = 0_usize;
-        let mut bytes = Vec::new();
-        loop {
-            bytes.clear();
-            let read = reader.read_until(b'\n', &mut bytes)?;
-            if read == 0 || bytes.last() != Some(&b'\n') {
-                break;
-            }
-            #[cfg(test)]
-            BOOTSTRAP_BYTES_DECODED.with(|count| {
-                count.set(count.get().saturating_add(read as u64));
-            });
-            match decode_record(cursor, &bytes, &mut records) {
-                Ok(count) => visible = visible.saturating_add(count),
-                Err(error) => {
-                    drop(reader);
-                    if FileStamp::read(&File::open(&cursor.path)?)? == stamp {
-                        cursor.initialized = true;
-                        cursor.prefix_start = cursor.next;
-                        cursor.prefix = blake3::Hasher::new();
-                    } else {
-                        reset(cursor);
-                    }
-                    return Err(error);
-                }
-            }
-        }
-        drop(reader);
-
-        let observed = FileStamp::read(&File::open(&cursor.path)?)?;
-        if stamp.extension(observed, length).is_none() {
-            reset(cursor);
-            return Ok((Vec::new(), start));
-        }
-        if visible >= visible_limit || start == 0 {
-            cursor.initialized = true;
-            cursor.prefix_start = cursor.next;
-            cursor.prefix = blake3::Hasher::new();
-            return Ok((records, start));
-        }
-        let expanded = window.saturating_mul(2);
-        if expanded == window {
-            cursor.initialized = true;
-            cursor.prefix_start = cursor.next;
-            cursor.prefix = blake3::Hasher::new();
-            return Ok((records, start));
-        }
-        window = expanded;
+    checkpoint: &HistoryCheckpoint,
+) -> io::Result<HistoryPage> {
+    let started = Instant::now();
+    let source = read_history_source(&cursor.path, checkpoint, started)?;
+    let selected = selected_history_start(&source.bytes);
+    let start = source.aligned.saturating_add(selected as u64);
+    prepare_history_cursor(cursor, start);
+    let mut work = source.work;
+    let (records, latest) = decode_history_records(
+        cursor,
+        &source.bytes[selected..],
+        visible_limit,
+        source.stamp,
+        started,
+        &mut work,
+    )?;
+    let observed = FileStamp::read(&File::open(&cursor.path)?)?;
+    if source.stamp.extension(observed, checkpoint.next).is_none() {
+        reset(cursor);
+        return Ok(HistoryPage {
+            records: Vec::new(),
+            latest: None,
+            start,
+            work,
+        });
     }
+    work.elapsed = started.elapsed();
+    if !work.within_limits() {
+        return Err(history_budget_exhausted(work));
+    }
+    cursor.initialized = true;
+    cursor.prefix_start = cursor.next;
+    cursor.prefix = blake3::Hasher::new();
+    Ok(HistoryPage {
+        records,
+        latest,
+        start,
+        work,
+    })
+}
+
+struct HistorySource {
+    stamp: FileStamp,
+    aligned: u64,
+    bytes: Vec<u8>,
+    work: HistoryWork,
+}
+
+fn read_history_source(
+    path: &PathBuf,
+    checkpoint: &HistoryCheckpoint,
+    started: Instant,
+) -> io::Result<HistorySource> {
+    let mut file = File::open(path)?;
+    let stamp = FileStamp::read(&file)?;
+    admit_history_checkpoint(checkpoint, stamp)?;
+    let source_bytes = checkpoint.next.min(HISTORY_BYTE_BUDGET as u64);
+    let source_start = checkpoint.next.saturating_sub(source_bytes);
+    file.seek(SeekFrom::Start(source_start))?;
+    let mut bytes = vec![0; usize::try_from(source_bytes).expect("history budget fits usize")];
+    file.read_exact(&mut bytes)?;
+    let work = HistoryWork {
+        source_bytes,
+        decoded_records: 0,
+        passes: 1,
+        elapsed: started.elapsed(),
+    };
+    if !work.within_limits() {
+        return Err(history_budget_exhausted(work));
+    }
+    let aligned = align_history_source(&mut bytes, source_start, checkpoint.next, source_bytes)?;
+    let complete = bytes
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |newline| newline + 1);
+    bytes.truncate(complete);
+    Ok(HistorySource {
+        stamp,
+        aligned,
+        bytes,
+        work,
+    })
+}
+
+fn admit_history_checkpoint(checkpoint: &HistoryCheckpoint, stamp: FileStamp) -> io::Result<()> {
+    if checkpoint.next > stamp.length {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "preserved session history checkpoint exceeds the current source",
+        ));
+    }
+    if checkpoint
+        .source
+        .extension(stamp, checkpoint.next)
+        .is_none()
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "preserved session history source changed after Canvas bootstrap",
+        ));
+    }
+    Ok(())
+}
+
+fn align_history_source(
+    bytes: &mut Vec<u8>,
+    source_start: u64,
+    end: u64,
+    source_bytes: u64,
+) -> io::Result<u64> {
+    if source_start == 0 {
+        return Ok(0);
+    }
+    let Some(newline) = bytes.iter().position(|byte| *byte == b'\n') else {
+        return Err(history_record_exceeds_budget(source_bytes));
+    };
+    let aligned = source_start.saturating_add(newline as u64 + 1);
+    if aligned == end {
+        return Err(history_record_exceeds_budget(source_bytes));
+    }
+    bytes.drain(..=newline);
+    Ok(aligned)
+}
+
+fn selected_history_start(bytes: &[u8]) -> usize {
+    let mut starts = vec![0_usize];
+    starts.extend(
+        bytes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, byte)| (*byte == b'\n').then_some(index + 1)),
+    );
+    starts.pop();
+    let selected = starts.len().saturating_sub(HISTORY_RECORD_BUDGET);
+    starts.get(selected).copied().unwrap_or(0)
+}
+
+fn prepare_history_cursor(cursor: &mut Cursor, start: u64) {
+    cursor.next = start;
+    cursor.prefix_start = start;
+    cursor.next_call = 0;
+    cursor.pending.clear();
+    cursor.prefix = blake3::Hasher::new();
+    cursor.guard = None;
+    cursor.validation = None;
+}
+
+fn decode_history_records(
+    cursor: &mut Cursor,
+    bytes: &[u8],
+    visible_limit: usize,
+    stamp: FileStamp,
+    started: Instant,
+    work: &mut HistoryWork,
+) -> io::Result<(Vec<CompactionRecord>, Option<listen::Locus>)> {
+    let mut records = Vec::new();
+    let mut visible = Vec::new();
+    for record in bytes.split_inclusive(|byte| *byte == b'\n') {
+        if started.elapsed() > HISTORY_WALL_BUDGET {
+            return Err(history_budget_exhausted(*work));
+        }
+        #[cfg(test)]
+        BOOTSTRAP_BYTES_DECODED.with(|count| {
+            count.set(count.get().saturating_add(record.len() as u64));
+        });
+        let offset = cursor.next;
+        let count = decode_record(cursor, record, &mut records)
+            .map_err(|error| finish_failed_history_decode(cursor, stamp, error))?;
+        visible.push((offset, count));
+        work.decoded_records = work.decoded_records.saturating_add(1);
+    }
+    let latest = records.last().map(CompactionRecord::locus);
+    retain_visible_history(&mut records, &visible, visible_limit, cursor.next);
+    Ok((records, latest))
+}
+
+fn finish_failed_history_decode(
+    cursor: &mut Cursor,
+    stamp: FileStamp,
+    error: io::Error,
+) -> io::Error {
+    let unchanged = File::open(&cursor.path)
+        .and_then(|file| FileStamp::read(&file))
+        .is_ok_and(|observed| observed == stamp);
+    if unchanged {
+        cursor.initialized = true;
+        cursor.prefix_start = cursor.next;
+        cursor.prefix = blake3::Hasher::new();
+    } else {
+        reset(cursor);
+    }
+    error
+}
+
+fn retain_visible_history(
+    records: &mut Vec<CompactionRecord>,
+    visible: &[(u64, usize)],
+    visible_limit: usize,
+    end: u64,
+) {
+    if visible_limit == 0 {
+        return;
+    }
+    let mut count = 0_usize;
+    let mut start = end;
+    for (offset, record_count) in visible.iter().rev() {
+        start = *offset;
+        count = count.saturating_add(*record_count);
+        if count >= visible_limit {
+            break;
+        }
+    }
+    records.retain(|record| record.locus().offset >= start);
+}
+
+fn history_budget_exhausted(work: HistoryWork) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::TimedOut,
+        format!(
+            "preserved session history page exhausted its fixed work allowance after {} bytes, {} records, {} passes, and {:?}",
+            work.source_bytes, work.decoded_records, work.passes, work.elapsed,
+        ),
+    )
+}
+
+fn history_record_exceeds_budget(bytes: u64) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!(
+            "preserved session record exceeds the fixed {HISTORY_BYTE_BUDGET}-byte history allowance after {bytes} bytes"
+        ),
+    )
 }
 
 #[derive(Clone, Debug)]
@@ -524,6 +713,7 @@ pub(super) struct HistoryScan {
     pub(super) messages: Vec<wire::AgentMessage>,
     pub(super) more: bool,
     pub(super) start: u64,
+    pub(super) work: HistoryWork,
 }
 
 pub(super) struct HistoryRequest<'a> {
@@ -547,20 +737,15 @@ pub(super) fn retained_messages(request: HistoryRequest<'_>) -> CommandResult<Hi
         request.dialect,
         request.author,
     );
-    let (records, source_start) = bootstrap_before(
-        &mut cursor,
-        request.limit,
-        Some(request.end.next),
-        Some(request.end.source),
-    )
-    .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
+    let page = bootstrap_before(&mut cursor, 0, request.end)
+        .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
     let messages = HistoryMessages::new(request.limit);
     let mut state = MessageState {
         previews: CallPreviews::default(),
         observations: request.observations.clone(),
         prose: BTreeMap::new(),
     };
-    for record in records {
+    for record in page.records {
         publish(
             record,
             request.lane,
@@ -582,8 +767,9 @@ pub(super) fn retained_messages(request: HistoryRequest<'_>) -> CommandResult<Hi
     let selected = messages.split_off(start);
     Ok(HistoryScan {
         messages: selected,
-        more: collected.dropped || start > 0 || source_start > 0,
-        start: source_start,
+        more: collected.dropped || start > 0 || page.start > 0,
+        start: page.start,
+        work: page.work,
     })
 }
 
@@ -642,26 +828,6 @@ impl AgentMessagePublisher for HistoryMessages {
         *existing = message;
         Ok(true)
     }
-}
-
-fn tail_start(file: &mut File, length: u64, bytes: u64) -> io::Result<u64> {
-    let mut end = length.saturating_sub(bytes);
-    // Include the record crossing the requested boundary. Advancing to its
-    // next newline can produce an empty page forever when one record exceeds
-    // the byte window. Retreat in fixed reads, allowing one complete record
-    // to exceed the soft window bound.
-    let mut block = vec![0; INITIAL_WINDOW_BYTES as usize];
-    while end > 0 {
-        let start = end.saturating_sub(INITIAL_WINDOW_BYTES);
-        let count = usize::try_from(end - start).expect("one window fits usize");
-        file.seek(SeekFrom::Start(start))?;
-        file.read_exact(&mut block[..count])?;
-        if let Some(newline) = block[..count].iter().rposition(|byte| *byte == b'\n') {
-            return Ok(start + newline as u64 + 1);
-        }
-        end = start;
-    }
-    Ok(0)
 }
 
 fn decode_record(
@@ -765,6 +931,7 @@ fn reset(cursor: &mut Cursor) {
     cursor.guard = None;
     cursor.validation = None;
     cursor.startup_recovery = None;
+    cursor.startup_search = None;
 }
 
 fn advance_validation(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {

@@ -229,7 +229,24 @@ fn codex_startup_recovers_latest_boundary_beyond_the_canvas_tail_once() {
     let mut recovered = Vec::new();
     let mut compactions = SessionCompactions::new(codex_environment(&scratch.0));
 
-    for _ in 0..2 {
+    compactions
+        .synchronize_with(
+            &residency,
+            &publisher,
+            &mut state,
+            &mut diagnostic,
+            |_, _, _, locus| {
+                recovered.push(locus);
+                Ok(())
+            },
+        )
+        .expect("bounded Codex tail becomes ready");
+    assert!(
+        recovered.is_empty(),
+        "readiness does not wait for older pages"
+    );
+
+    for _ in 0..4 {
         compactions
             .synchronize_with(
                 &residency,
@@ -242,7 +259,23 @@ fn codex_startup_recovers_latest_boundary_beyond_the_canvas_tail_once() {
                 },
             )
             .expect("Codex startup synchronization succeeds");
+        if !recovered.is_empty() {
+            break;
+        }
     }
+
+    compactions
+        .synchronize_with(
+            &residency,
+            &publisher,
+            &mut state,
+            &mut diagnostic,
+            |_, _, _, locus| {
+                recovered.push(locus);
+                Ok(())
+            },
+        )
+        .expect("settled Codex startup synchronization succeeds");
 
     assert_eq!(recovered.len(), 1, "startup recovery is not replayed");
     assert_eq!(recovered[0].member, session_member(THREAD));
@@ -319,11 +352,43 @@ fn codex_startup_read_volume_depends_on_the_tail_not_older_epochs() {
         let decoded = BOOTSTRAP_BYTES_DECODED.with(Cell::get);
         assert_eq!(*expected_decoded.get_or_insert(decoded), decoded);
         assert!(
-            decoded < 8 * INITIAL_WINDOW_BYTES,
+            decoded <= HISTORY_BYTE_BUDGET as u64,
             "startup decoded {decoded} bytes"
         );
         assert_eq!(cursor.next, contents.len() as u64);
     }
+}
+
+#[test]
+fn live_codex_boundary_supersedes_an_unfinished_startup_search() {
+    const LIVE_BOUNDARY: &str =
+        "{\"timestamp\":\"2030-04-12T20:44:09.271Z\",\"type\":\"compacted\",\"payload\":{}}\n";
+    let scratch = Scratch::new("codex-live-supersedes-startup-search");
+    let transcript = scratch.transcript();
+    let filler = "x".repeat(1_800);
+    let contents = (0..300)
+        .map(|index| codex_assistant_record(index, &filler))
+        .collect::<String>();
+    fs::write(&transcript, contents).expect("long boundary-free session is written");
+    let mut cursor = cursor(&transcript, listen::Dialect::Codex);
+    cursor.initialized = false;
+
+    assert!(
+        scan(&mut cursor)
+            .expect("bounded startup page scans")
+            .is_empty()
+    );
+    assert!(cursor.startup_search.is_some());
+    append(&transcript, LIVE_BOUNDARY.as_bytes());
+
+    let records = scan(&mut cursor).expect("live boundary scans");
+
+    assert_eq!(records.len(), 1);
+    assert!(cursor.startup_search.is_none());
+    assert_eq!(
+        records[0].locus().offset,
+        cursor.next - LIVE_BOUNDARY.len() as u64
+    );
 }
 
 #[test]
@@ -353,6 +418,34 @@ fn reverse_compaction_pages_cross_one_oversized_record_and_a_partial_tail() {
         scan(&mut cursor).expect("partial record completes").len(),
         1
     );
+}
+
+#[test]
+fn reverse_page_refuses_a_record_larger_than_its_hard_byte_allowance() {
+    let scratch = Scratch::new("codex-record-over-hard-limit");
+    let transcript = scratch.transcript();
+    fs::write(
+        &transcript,
+        codex_assistant_record(0, &"x".repeat(HISTORY_BYTE_BUDGET)),
+    )
+    .expect("oversized record is written");
+    let mut cursor = cursor(&transcript, listen::Dialect::Codex);
+    cursor.initialized = false;
+    BOOTSTRAP_BYTES_DECODED.with(|count| count.set(0));
+
+    let error = match scan(&mut cursor) {
+        Ok(_) => panic!("oversized history record was admitted"),
+        Err(error) => error,
+    };
+
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert!(
+        error
+            .to_string()
+            .contains("fixed 262144-byte history allowance")
+    );
+    assert_eq!(BOOTSTRAP_BYTES_DECODED.with(Cell::get), 0);
+    assert_eq!(cursor.next, 0, "no record suffix becomes evidence");
 }
 
 #[test]
@@ -669,6 +762,7 @@ fn cursor(path: &Path, dialect: listen::Dialect) -> Cursor {
         guard: None,
         validation: None,
         startup_recovery: None,
+        startup_search: None,
     }
 }
 
