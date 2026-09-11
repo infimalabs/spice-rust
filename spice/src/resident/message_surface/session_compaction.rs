@@ -461,6 +461,11 @@ impl HistoryWork {
             && self.passes <= HISTORY_PASS_BUDGET
             && self.elapsed <= HISTORY_WALL_BUDGET
     }
+
+    fn sampled(mut self, started: Instant) -> Self {
+        self.elapsed = started.elapsed();
+        self
+    }
 }
 
 fn bootstrap_before(
@@ -568,7 +573,7 @@ fn read_history_source(
     if !work.within_limits() {
         return Err(history_budget_exhausted(work));
     }
-    let aligned = align_history_source(&mut bytes, source_start, end, source_bytes)?;
+    let aligned = align_history_source(&mut bytes, source_start, end, work, started)?;
     let complete = bytes
         .iter()
         .rposition(|byte| *byte == b'\n')
@@ -586,17 +591,18 @@ fn align_history_source(
     bytes: &mut Vec<u8>,
     source_start: u64,
     end: u64,
-    source_bytes: u64,
+    work: HistoryWork,
+    started: Instant,
 ) -> io::Result<u64> {
     if source_start == 0 {
         return Ok(0);
     }
     let Some(newline) = bytes.iter().position(|byte| *byte == b'\n') else {
-        return Err(history_record_exceeds_budget(source_bytes));
+        return Err(history_record_exceeds_budget(work.sampled(started)));
     };
     let aligned = source_start.saturating_add(newline as u64 + 1);
     if aligned == end {
-        return Err(history_record_exceeds_budget(source_bytes));
+        return Err(history_record_exceeds_budget(work.sampled(started)));
     }
     bytes.drain(..=newline);
     Ok(aligned)
@@ -636,7 +642,8 @@ fn decode_history_records(
     let mut records = Vec::new();
     let mut visible = Vec::new();
     for record in bytes.split_inclusive(|byte| *byte == b'\n') {
-        if started.elapsed() > HISTORY_WALL_BUDGET {
+        *work = work.sampled(started);
+        if !work.within_limits() {
             return Err(history_budget_exhausted(*work));
         }
         #[cfg(test)]
@@ -693,22 +700,51 @@ fn retain_visible_history(
     records.retain(|record| record.locus().offset >= start);
 }
 
+#[derive(Debug)]
+struct HistoryExhaustion {
+    work: HistoryWork,
+    oversized_record: bool,
+}
+
+impl std::fmt::Display for HistoryExhaustion {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.oversized_record {
+            return write!(
+                formatter,
+                "preserved session record exceeds the fixed {HISTORY_BYTE_BUDGET}-byte history allowance after {} bytes, {} records, {} passes, and {:?}",
+                self.work.source_bytes,
+                self.work.decoded_records,
+                self.work.passes,
+                self.work.elapsed,
+            );
+        }
+        write!(
+            formatter,
+            "preserved session history page exhausted its fixed work allowance after {} bytes, {} records, {} passes, and {:?}",
+            self.work.source_bytes, self.work.decoded_records, self.work.passes, self.work.elapsed,
+        )
+    }
+}
+
+impl std::error::Error for HistoryExhaustion {}
+
 fn history_budget_exhausted(work: HistoryWork) -> io::Error {
     io::Error::new(
         io::ErrorKind::TimedOut,
-        format!(
-            "preserved session history page exhausted its fixed work allowance after {} bytes, {} records, {} passes, and {:?}",
-            work.source_bytes, work.decoded_records, work.passes, work.elapsed,
-        ),
+        HistoryExhaustion {
+            work,
+            oversized_record: false,
+        },
     )
 }
 
-fn history_record_exceeds_budget(bytes: u64) -> io::Error {
+fn history_record_exceeds_budget(work: HistoryWork) -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidData,
-        format!(
-            "preserved session record exceeds the fixed {HISTORY_BYTE_BUDGET}-byte history allowance after {bytes} bytes"
-        ),
+        HistoryExhaustion {
+            work,
+            oversized_record: true,
+        },
     )
 }
 
