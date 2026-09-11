@@ -89,7 +89,6 @@ impl AdmittedRelease {
                 source_version: external.observations.source_version.clone(),
                 release_version: external.observations.release_version.clone(),
                 credentials_valid: external.observations.credentials_valid,
-                source_ref: external.observations.source_ref.clone(),
                 package_ref: external.observations.package_ref.clone(),
                 tag_ref: external.observations.tag_ref.clone(),
                 announcement_ref: external.observations.announcement_ref.clone(),
@@ -471,7 +470,6 @@ struct ExternalPreconditions {
     unrecorded_local_commits: u64,
     source_version: ProductVersion,
     release_version: ProductVersion,
-    source_ref: Option<String>,
     package_ref: Option<String>,
     tag_ref: Option<String>,
     announcement_ref: Option<String>,
@@ -493,7 +491,6 @@ struct ReleaseVersions {
 }
 
 struct ExternalRefs {
-    source_ref: Option<String>,
     package_ref: Option<String>,
     tag_ref: Option<String>,
     announcement_ref: Option<String>,
@@ -515,13 +512,9 @@ fn resolve_external_preconditions(
         &versions.observed,
     )?;
     let authority = dist::current_authority(root).map_err(|error| error.to_string())?;
-    let external_refs = resolve_external_refs(
-        root,
-        &authority,
-        &versions.requested,
-        &local.source_commit,
-        &local.release_commit,
-    )?;
+    ensure_source_integrated(root, &authority, &versions.requested, &local.source_commit)?;
+    let external_refs =
+        resolve_external_refs(root, &authority, &versions.requested, &local.release_commit)?;
     validate_external_refs(&external_refs, &local.release_commit)?;
     Ok(ExternalPreconditions {
         requested_version: versions.requested,
@@ -535,7 +528,6 @@ fn resolve_external_preconditions(
         unrecorded_local_commits: 0,
         source_version: versions.source,
         release_version: local.release_version,
-        source_ref: external_refs.source_ref,
         package_ref: external_refs.package_ref,
         tag_ref: external_refs.tag_ref,
         announcement_ref: external_refs.announcement_ref,
@@ -574,25 +566,10 @@ fn resolve_external_refs(
     root: &Path,
     authority: &dist::ReleaseAuthority,
     requested_version: &ProductVersion,
-    source_commit: &str,
     release_commit: &str,
 ) -> Result<ExternalRefs, String> {
     let refs = authority.refs(requested_version);
     git_owned(root, &authority.remote_visibility())?;
-    let credential_object = if commit_exists(root, release_commit)? {
-        release_commit
-    } else {
-        source_commit
-    };
-    let rehearsal = authority
-        .source_rehearsal(credential_object)
-        .map_err(|error| error.to_string())?;
-    git_owned(root, &rehearsal)?;
-    let source_ref = normalize_source_ref(
-        remote_ref(root, authority, refs.source())?,
-        source_commit,
-        release_commit,
-    );
     let package_ref = remote_ref(root, authority, refs.package())?;
     let tag_ref = normalize_converged_ref(remote_ref(root, authority, refs.tag())?, release_commit);
     let announcement_ref = normalize_converged_ref(
@@ -600,7 +577,6 @@ fn resolve_external_refs(
         release_commit,
     );
     Ok(ExternalRefs {
-        source_ref,
         package_ref,
         tag_ref,
         announcement_ref,
@@ -608,9 +584,32 @@ fn resolve_external_refs(
 }
 
 fn validate_external_refs(refs: &ExternalRefs, release_commit: &str) -> Result<(), String> {
-    ensure_release_ref_absent("source", &refs.source_ref, release_commit)?;
     ensure_release_ref_absent("tag", &refs.tag_ref, release_commit)?;
     ensure_release_ref_absent("announcement", &refs.announcement_ref, release_commit)
+}
+
+fn ensure_source_integrated(
+    root: &Path,
+    authority: &dist::ReleaseAuthority,
+    version: &ProductVersion,
+    source_commit: &str,
+) -> Result<(), String> {
+    let source_ref = authority.refs(version).source().to_owned();
+    let branch = source_ref
+        .strip_prefix("refs/heads/")
+        .ok_or_else(|| format!("release source ref is not a branch: {source_ref}"))?;
+    let tracking_ref = format!("refs/remotes/{}/{branch}", authority.remote());
+    let (integrated, detail) = git_output(
+        root,
+        &["merge-base", "--is-ancestor", source_commit, &tracking_ref],
+    )?;
+    if integrated {
+        Ok(())
+    } else {
+        Err(format!(
+            "release source {source_commit} is not integrated in {tracking_ref}: {detail}"
+        ))
+    }
 }
 
 fn ensure_release_ref_absent(
@@ -728,11 +727,6 @@ fn exact_version_bump(status: &str) -> bool {
     ) && lines.next().is_none()
 }
 
-fn commit_exists(root: &Path, commit: &str) -> Result<bool, String> {
-    git_optional(root, &["cat-file", "-e", &format!("{commit}^{{commit}}")])
-        .map(|row| row.is_some())
-}
-
 fn bind_external_plan(
     root: &Path,
     notes: &str,
@@ -777,7 +771,6 @@ fn bind_external_plan(
         source_version: external.source_version,
         release_version: external.release_version,
         credentials_valid: true,
-        source_ref: external.source_ref,
         package_ref,
         tag_ref: external.tag_ref,
         announcement_ref: external.announcement_ref,
@@ -847,14 +840,6 @@ fn git_owned(root: &Path, command: &dist::GitCommand) -> Result<String, String> 
 
 fn normalize_converged_ref(observed: Option<String>, release: &str) -> Option<String> {
     observed.filter(|object| object != release)
-}
-
-fn normalize_source_ref(
-    observed: Option<String>,
-    source_commit: &str,
-    release_commit: &str,
-) -> Option<String> {
-    observed.filter(|object| object != source_commit && object != release_commit)
 }
 
 fn git_required(root: &Path, arguments: &[&str]) -> Result<String, String> {

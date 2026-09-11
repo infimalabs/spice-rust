@@ -42,7 +42,6 @@ pub enum Operation {
     RebuildArtifacts,
     InstallAndProbeArtifacts,
     RehearseUpload,
-    PublishSource,
     UploadPackage,
     AwaitRegistryVisibility,
     CreateImmutableTag,
@@ -60,7 +59,6 @@ impl Operation {
             Self::RebuildArtifacts => "rebuild-artifacts",
             Self::InstallAndProbeArtifacts => "install-and-probe-artifacts",
             Self::RehearseUpload => "rehearse-upload",
-            Self::PublishSource => "publish-source",
             Self::UploadPackage => "upload-package",
             Self::AwaitRegistryVisibility => "await-registry-visibility",
             Self::CreateImmutableTag => "create-immutable-tag",
@@ -77,7 +75,6 @@ const PUBLISH_OPERATIONS: &[Operation] = &[
     Operation::RebuildArtifacts,
     Operation::InstallAndProbeArtifacts,
     Operation::RehearseUpload,
-    Operation::PublishSource,
     Operation::UploadPackage,
     Operation::AwaitRegistryVisibility,
     Operation::CreateImmutableTag,
@@ -120,7 +117,6 @@ pub struct ReleaseObservations {
     pub source_version: ProductVersion,
     pub release_version: ProductVersion,
     pub credentials_valid: bool,
-    pub source_ref: Option<String>,
     pub package_ref: Option<String>,
     pub tag_ref: Option<String>,
     pub announcement_ref: Option<String>,
@@ -350,7 +346,6 @@ fn validate_observations(
     if !observed.credentials_valid {
         return Err(PlanError::Credentials);
     }
-    refuse_moved_ref("source", observed.source_ref.as_deref(), release_commit)?;
     refuse_moved_ref("package", observed.package_ref.as_deref(), package_object)?;
     refuse_moved_ref("tag", observed.tag_ref.as_deref(), release_commit)?;
     refuse_moved_ref(
@@ -726,7 +721,7 @@ fn validate_receipt(plan: &ReleasePlan, receipt: &OperationReceipt) -> Result<()
             },
         ) => identity == &plan.installed_artifact,
         (
-            Op::PublishSource | Op::CreateImmutableTag,
+            Op::CreateImmutableTag,
             OperationState::RemoteRef {
                 object: Some(object),
                 ..

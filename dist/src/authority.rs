@@ -103,38 +103,6 @@ impl ReleaseAuthority {
         }
     }
 
-    /// Push one exact source commit to the configured shared branch.
-    ///
-    /// # Errors
-    ///
-    /// Refuses a noncanonical Git object spelling.
-    pub fn source_push(&self, object: &str) -> Result<GitCommand, AuthorityError> {
-        object_id(object)?;
-        Ok(push_command(
-            &self.document.remote,
-            object,
-            &self.document.source,
-            None,
-            false,
-        ))
-    }
-
-    /// Prove the configured source transport accepts a write without changing refs.
-    ///
-    /// # Errors
-    ///
-    /// Refuses a noncanonical Git object spelling.
-    pub fn source_rehearsal(&self, object: &str) -> Result<GitCommand, AuthorityError> {
-        object_id(object)?;
-        Ok(push_command(
-            &self.document.remote,
-            object,
-            &self.document.source,
-            None,
-            true,
-        ))
-    }
-
     /// Rehearse the exact guarded package publication without changing refs.
     ///
     /// # Errors
@@ -662,18 +630,6 @@ mod tests {
         let version = ProductVersion::parse("1.2.3").expect("version");
         assert_eq!(
             authority
-                .source_push(OBJECT)
-                .expect("source push")
-                .arguments(),
-            [
-                "push",
-                "--porcelain",
-                "origin",
-                "1111111111111111111111111111111111111111:refs/heads/main",
-            ]
-        );
-        assert_eq!(
-            authority
                 .package_rehearsal(&version, OBJECT)
                 .expect("rehearsal")
                 .arguments(),
@@ -684,19 +640,6 @@ mod tests {
                 "--force-with-lease=refs/spice/packages/v1.2.3:",
                 "origin",
                 "1111111111111111111111111111111111111111:refs/spice/packages/v1.2.3",
-            ]
-        );
-        assert_eq!(
-            authority
-                .source_rehearsal(OBJECT)
-                .expect("source rehearsal")
-                .arguments(),
-            [
-                "push",
-                "--dry-run",
-                "--porcelain",
-                "origin",
-                "1111111111111111111111111111111111111111:refs/heads/main",
             ]
         );
         assert_eq!(
@@ -811,13 +754,6 @@ mod tests {
         assert!(matches!(
             disjoint(&document),
             Err(AuthorityError::OverlappingRefs)
-        ));
-
-        assert!(matches!(
-            current_authority(workspace())
-                .expect("tracked authority")
-                .source_push("111111"),
-            Err(AuthorityError::Object(_))
         ));
     }
 

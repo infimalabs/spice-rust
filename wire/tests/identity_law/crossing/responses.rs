@@ -293,7 +293,6 @@ fn cover_release_plan_observations(covered: &mut BTreeSet<String>) {
         source_version: version.clone(),
         release_version: version.clone(),
         credentials_valid: true,
-        source_ref: None,
         package_ref: None,
         tag_ref: None,
         announcement_ref: None,
@@ -305,7 +304,6 @@ fn cover_release_plan_observations(covered: &mut BTreeSet<String>) {
         &[
             base.clone(),
             ReleasePlanObservations {
-                source_ref: Some("2".repeat(40)),
                 package_ref: Some("3".repeat(40)),
                 tag_ref: Some("4".repeat(40)),
                 announcement_ref: Some("5".repeat(40)),
