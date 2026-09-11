@@ -92,6 +92,26 @@ impl Journal {
         })?)
     }
 
+    /// Opens authority for the explicit offline reindex operation.
+    ///
+    /// This is the sole unbounded schema-19 index activation path. Its caller
+    /// must hold the repository's offline journal lock before opening.
+    pub fn open_for_reindex(path: impl AsRef<Path>) -> Result<Self, OpenError> {
+        let path = path.as_ref();
+        let mut connection = Connection::open(path).map_err(|source| OpenError::Open {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        connection
+            .execute_batch("PRAGMA foreign_keys = ON; PRAGMA trusted_schema = OFF;")
+            .map_err(OpenError::Sqlite)?;
+        let migration = migrate::baseline_for_reindex(&mut connection)?;
+        Ok(Self {
+            connection,
+            migration,
+        })
+    }
+
     /// Opens an isolated in-memory authority database.
     pub fn in_memory() -> Result<Self, OpenError> {
         Self::from_connection(Connection::open_in_memory().map_err(OpenError::Sqlite)?)

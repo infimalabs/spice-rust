@@ -72,6 +72,150 @@ fn schema_nineteen_adds_the_bounded_startup_indexes() {
 }
 
 #[test]
+fn large_schema_nineteen_requires_restart_safe_offline_index_activation() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("schema-nineteen-large.sqlite3");
+    let journal = authority_file_fixture(&path);
+    append_fact_copies(
+        &journal.connection,
+        crate::migrate::INDEX_ACTIVATION_FACT_LIMIT.saturating_add(1),
+    );
+    journal
+        .connection
+        .execute_batch(
+            "DROP INDEX fact_envelopes_kind_seq;
+             DROP INDEX fact_envelopes_origin_kind_seq;
+             UPDATE journal_schema SET version = 19 WHERE singleton = 1;
+             PRAGMA user_version = 19;",
+        )
+        .expect("large predecessor authority is prepared");
+    drop(journal);
+
+    let error = Journal::open(&path).expect_err("large startup migration must refuse");
+    assert!(matches!(
+        error,
+        OpenError::Migration(MigrationError::IndexActivationRequired {
+            limit: crate::migrate::INDEX_ACTIVATION_FACT_LIMIT,
+            observed,
+        }) if observed == crate::migrate::INDEX_ACTIVATION_FACT_LIMIT + 1
+    ));
+    assert!(error.to_string().contains("`spice journal reindex`"));
+    assert_schema_nineteen_without_fact_indexes(&path);
+
+    let larger = Connection::open(&path).expect("large predecessor reopens for scale proof");
+    append_fact_copies(
+        &larger,
+        crate::migrate::INDEX_ACTIVATION_FACT_LIMIT.saturating_add(1),
+    );
+    drop(larger);
+    let grown = Journal::open(&path).expect_err("larger startup migration must also refuse");
+    assert_eq!(grown.to_string(), error.to_string());
+    assert_schema_nineteen_without_fact_indexes(&path);
+
+    for prefix in [
+        "CREATE INDEX fact_envelopes_kind_seq ON fact_envelopes(kind, seq);",
+        "CREATE INDEX fact_envelopes_kind_seq ON fact_envelopes(kind, seq);
+         CREATE INDEX fact_envelopes_origin_kind_seq ON fact_envelopes(origin, kind, seq);",
+    ] {
+        let mut connection =
+            Connection::open(&path).expect("predecessor opens for index interruption proof");
+        let transaction = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive)
+            .expect("partial index activation transaction begins");
+        transaction
+            .execute_batch(prefix)
+            .expect("partial index activation advances");
+        drop(transaction);
+        drop(connection);
+        assert_schema_nineteen_without_fact_indexes(&path);
+    }
+
+    let mut connection =
+        Connection::open(&path).expect("predecessor opens for version interruption proof");
+    let transaction = connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive)
+        .expect("offline activation transaction begins");
+    crate::migrate::advance_for_reindex(&transaction).expect("offline activation advances");
+    assert_eq!(
+        version_records_connection(&transaction),
+        (SCHEMA_VERSION, SCHEMA_VERSION)
+    );
+    assert!(fact_indexes_exist(&transaction));
+    drop(transaction);
+    drop(connection);
+    assert_schema_nineteen_without_fact_indexes(&path);
+
+    let migrated = Journal::open_for_reindex(&path).expect("offline activation commits");
+    assert_eq!(
+        migrated
+            .migration()
+            .map(|migration| (migration.from(), migration.to())),
+        Some((19, SCHEMA_VERSION))
+    );
+    assert!(fact_indexes_exist(&migrated.connection));
+    drop(migrated);
+
+    let retried = Journal::open_for_reindex(&path).expect("offline activation retry converges");
+    assert_eq!(retried.migration(), None);
+    assert!(fact_indexes_exist(&retried.connection));
+}
+
+fn assert_schema_nineteen_without_fact_indexes(path: &Path) {
+    let connection = Connection::open(path).expect("schema-nineteen authority opens directly");
+    assert_eq!(version_records_connection(&connection), (19, 19));
+    assert!(!fact_indexes_exist(&connection));
+}
+
+fn append_fact_copies(connection: &Connection, count: u64) {
+    let first: i64 = connection
+        .query_row("SELECT max(seq) + 1 FROM fact_envelopes", [], |row| {
+            row.get(0)
+        })
+        .expect("synthetic fact range begins after authority");
+    let count = i64::try_from(count).expect("synthetic fact count fits SQLite");
+    let last = first.saturating_add(count.saturating_sub(1));
+    connection
+        .execute_batch(&format!(
+            "WITH RECURSIVE facts(seq) AS (
+                 SELECT {first} UNION ALL SELECT seq + 1 FROM facts WHERE seq < {last}
+             )
+             INSERT INTO fact_envelopes(seq, wire_version, instant, actor, origin, cause, kind, envelope)
+             SELECT facts.seq, source.wire_version, source.instant, source.actor,
+                    source.origin, NULL, source.kind, source.envelope
+             FROM facts CROSS JOIN fact_envelopes AS source WHERE source.seq = 1;"
+        ))
+        .expect("synthetic fact range is inserted in one statement");
+}
+
+fn fact_indexes_exist(connection: &Connection) -> bool {
+    ["fact_envelopes_kind_seq", "fact_envelopes_origin_kind_seq"]
+        .into_iter()
+        .all(|index| {
+            connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1)",
+                    [index],
+                    |row| row.get(0),
+                )
+                .expect("fact index identity reads")
+        })
+}
+
+fn version_records_connection(connection: &Connection) -> (u32, u32) {
+    let row = connection
+        .query_row(
+            "SELECT version FROM journal_schema WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("schema row version reads");
+    let pragma = connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .expect("schema pragma version reads");
+    (row, pragma)
+}
+
+#[test]
 fn schema_fourteen_crosses_the_requirement_wire_boundary_once_without_rewriting_tasks() {
     let scratch = Scratch::new();
     let path = scratch.path().join("schema-fourteen.sqlite3");

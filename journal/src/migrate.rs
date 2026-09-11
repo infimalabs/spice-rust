@@ -21,8 +21,23 @@ mod vocabulary;
 
 const FINALIZED: &str = "finalized";
 const PREPARED: &str = "prepared";
+pub(crate) const INDEX_ACTIVATION_FACT_LIMIT: u64 = 4_096;
+const INDEX_ACTIVATION_COMMAND: &str = "spice journal reindex";
 
 pub(crate) fn baseline(connection: &mut Connection) -> Result<Option<Migration>, OpenError> {
+    baseline_with(connection, IndexActivation::Startup)
+}
+
+pub(crate) fn baseline_for_reindex(
+    connection: &mut Connection,
+) -> Result<Option<Migration>, OpenError> {
+    baseline_with(connection, IndexActivation::Maintenance)
+}
+
+fn baseline_with(
+    connection: &mut Connection,
+    activation: IndexActivation,
+) -> Result<Option<Migration>, OpenError> {
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Exclusive)
         .map_err(OpenError::Sqlite)?;
@@ -42,7 +57,10 @@ pub(crate) fn baseline(connection: &mut Connection) -> Result<Option<Migration>,
         }));
     }
 
-    let migration = advance(&transaction)?;
+    let migration = match activation {
+        IndexActivation::Maintenance => advance_for_reindex(&transaction)?,
+        IndexActivation::Startup => advance(&transaction)?,
+    };
     transaction.commit().map_err(OpenError::Sqlite)?;
     Ok(migration)
 }
@@ -214,6 +232,17 @@ fn finalized_stored_state(connection: &Connection, state: SchemaState) -> Result
 /// commits. A caller that fails after this returns is the case worth pinning,
 /// because both version records are already written by then.
 pub(crate) fn advance(connection: &Connection) -> Result<Option<Migration>, OpenError> {
+    advance_with(connection, IndexActivation::Startup)
+}
+
+pub(crate) fn advance_for_reindex(connection: &Connection) -> Result<Option<Migration>, OpenError> {
+    advance_with(connection, IndexActivation::Maintenance)
+}
+
+fn advance_with(
+    connection: &Connection,
+    activation: IndexActivation,
+) -> Result<Option<Migration>, OpenError> {
     let from = admit_readable_state(connection, stored_state(connection)?)?;
     if from == SCHEMA_VERSION {
         return Ok(None);
@@ -221,7 +250,7 @@ pub(crate) fn advance(connection: &Connection) -> Result<Option<Migration>, Open
 
     let path = migration_path(from).ok_or(MigrationError::UnknownVersion { found: from })?;
     for step in path {
-        step.apply(connection)?;
+        step.apply(connection, activation)?;
     }
     connection
         .execute(
@@ -388,6 +417,10 @@ pub enum MigrationError {
         row: u32,
         pragma: u32,
     },
+    IndexActivationRequired {
+        limit: u64,
+        observed: u64,
+    },
     StoredContent {
         from: u32,
         to: u32,
@@ -443,6 +476,10 @@ impl fmt::Display for MigrationError {
                 formatter,
                 "journal schema row names version {row}, but SQLite user_version names {pragma}"
             ),
+            Self::IndexActivationRequired { limit, observed } => write!(
+                formatter,
+                "journal schema 19 index activation observed at least {observed} facts, exceeding the {limit}-fact startup limit; stop the resident and run `{INDEX_ACTIVATION_COMMAND}`"
+            ),
             Self::StoredContent {
                 from,
                 to,
@@ -468,15 +505,23 @@ impl Error for MigrationError {}
 enum MigrationStep {
     Sql(&'static str),
     Rust(fn(&Connection) -> Result<(), OpenError>),
+    FactIndexes,
 }
 
 impl MigrationStep {
-    fn apply(self, connection: &Connection) -> Result<(), OpenError> {
+    fn apply(self, connection: &Connection, activation: IndexActivation) -> Result<(), OpenError> {
         match self {
             Self::Sql(sql) => connection.execute_batch(sql).map_err(OpenError::Sqlite),
             Self::Rust(migrate) => migrate(connection),
+            Self::FactIndexes => migrate_schema_19(connection, activation),
         }
     }
+}
+
+#[derive(Clone, Copy)]
+enum IndexActivation {
+    Startup,
+    Maintenance,
 }
 
 fn migrate_schema_3(connection: &Connection) -> Result<(), OpenError> {
@@ -508,7 +553,7 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (16, MigrationStep::Rust(renewal_organization::migrate)),
     (17, MigrationStep::Sql(MIGRATE_17_TO_18_SQL)),
     (18, MigrationStep::Rust(task_creator_scope::migrate)),
-    (19, MigrationStep::Sql(MIGRATE_19_TO_20_SQL)),
+    (19, MigrationStep::FactIndexes),
 ];
 
 /// Schema 19 to 20: bounded fact-kind recovery.
@@ -521,6 +566,33 @@ CREATE INDEX IF NOT EXISTS fact_envelopes_kind_seq ON fact_envelopes(kind, seq);
 CREATE INDEX IF NOT EXISTS fact_envelopes_origin_kind_seq
     ON fact_envelopes(origin, kind, seq);
 "#;
+
+fn migrate_schema_19(
+    connection: &Connection,
+    activation: IndexActivation,
+) -> Result<(), OpenError> {
+    if let IndexActivation::Startup = activation {
+        let limit = INDEX_ACTIVATION_FACT_LIMIT;
+        let offset = i64::try_from(limit).expect("the startup fact limit fits SQLite");
+        let exceeds = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM fact_envelopes ORDER BY seq LIMIT 1 OFFSET ?1)",
+                [offset],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(OpenError::Sqlite)?;
+        if exceeds {
+            return Err(MigrationError::IndexActivationRequired {
+                limit,
+                observed: limit.saturating_add(1),
+            }
+            .into());
+        }
+    }
+    connection
+        .execute_batch(MIGRATE_19_TO_20_SQL)
+        .map_err(OpenError::Sqlite)
+}
 
 /// Schema 17 to 18: trust-grant environmental requirement boundary.
 ///

@@ -220,7 +220,7 @@ fn verify_inner(contract: &Contract) -> Result<(ReplyPosition, JournalVerificati
 fn reindex_inner() -> Result<(ReplyPosition, JournalReindex), Failure> {
     let state = state()?;
     let _lock = acquire_lock(&state)?;
-    let mut journal = journal::Journal::open(state.journal()).map_err(open_failure)?;
+    let mut journal = journal::Journal::open_for_reindex(state.journal()).map_err(open_failure)?;
     admit_steering_index(&mut journal)?;
     let rebuilt = journal.reindex().map_err(|error| match error {
         journal::ReindexError::Violations(_) => Failure::refusal(
