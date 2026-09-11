@@ -239,6 +239,54 @@ fn every_retained_page_surface_keeps_decoded_bytes_within_the_durable_maximum() 
 }
 
 #[test]
+fn recent_origin_facts_resume_after_a_byte_bounded_prefix_without_fault() {
+    let journal = authority_fixture();
+    for position in [3, 4] {
+        insert_fact(
+            &journal,
+            fact(
+                position,
+                None,
+                FactKind::TaskNoted,
+                json!({"task": "1kKRRsDP", "note": "x".repeat(600_000)}),
+            ),
+        );
+    }
+    journal
+        .connection
+        .execute("UPDATE cursor_head SET seq = 4 WHERE singleton = 1", [])
+        .expect("advance large recent-origin cursor");
+    let origin = "task:1kKRRsDP".parse().expect("fixture origin");
+
+    reset_indexed_read_metrics();
+    let first = journal
+        .read(|read| read.recent_origin_facts(&origin, FactKind::TaskNoted, None, 2))
+        .expect("first byte-bounded recent-origin page");
+    assert_eq!(
+        first.iter().map(|fact| fact.seq).collect::<Vec<_>>(),
+        [seq(4)]
+    );
+    assert!(indexed_read_metrics().decoded_bytes <= MAX_RETAINED_FACT_PAGE_BYTES as u64);
+
+    reset_indexed_read_metrics();
+    let second = journal
+        .read(|read| {
+            read.recent_origin_facts(
+                &origin,
+                FactKind::TaskNoted,
+                first.last().map(|fact| fact.seq),
+                2,
+            )
+        })
+        .expect("second byte-bounded recent-origin page");
+    assert_eq!(
+        second.iter().map(|fact| fact.seq).collect::<Vec<_>>(),
+        [seq(3)]
+    );
+    assert!(indexed_read_metrics().decoded_bytes <= MAX_RETAINED_FACT_PAGE_BYTES as u64);
+}
+
+#[test]
 fn retained_fact_readers_refuse_oversized_corruption_before_decoding_it() {
     let journal = authority_fixture();
     journal
