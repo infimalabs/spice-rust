@@ -1,7 +1,9 @@
 //! Bounded steering authority, atomic publication, and schema-7 admission.
 
 use super::*;
-use crate::{CommitError, FactCause, JournalGuard, JournalHead, JournalWrite};
+use crate::{
+    CommitError, FactCause, JournalGuard, JournalHead, JournalWrite, MAX_STEERING_PAGE_ROWS,
+};
 use wire::body::{
     LaneHeld, SteerCanceled, SteerEscalated, SteerSent, SteeringStage, SteeringTransition,
     TaskNoted,
@@ -297,7 +299,10 @@ fn schema_six_migration_requires_one_explicit_rebuild_then_stays_current() {
     assert!(!migrated.steering_index_current().expect("lag reads"));
     assert!(
         migrated
-            .read(|read| read.pending_steering(None).map(drop))
+            .read(|read| {
+                read.pending_steering(None, FactPageStart::After(None))
+                    .map(drop)
+            })
             .expect_err("interactive indexed read refuses lag")
             .to_string()
             .contains("disagrees with journal cursor")
@@ -373,6 +378,84 @@ fn steering_recovery_snapshot_excludes_unrelated_world_history() {
     );
 }
 
+#[test]
+fn live_steering_pages_bound_rows_decode_work_and_preserve_continuation_order() {
+    let mut journal = Journal::in_memory().expect("steering journal");
+    let total = MAX_STEERING_PAGE_ROWS + 3;
+    for index in 0..total {
+        journal
+            .apply(send_write(
+                indexed_uuid(index),
+                &format!("bounded-{index:04}"),
+            ))
+            .expect("live steering publication applies");
+    }
+    for index in 0..total {
+        journal
+            .apply(send_write_for(
+                indexed_uuid(total + index),
+                &format!("lane-{index:04}"),
+                indexed_uuid(total * 2 + index),
+            ))
+            .expect("another lane's live steering publication applies");
+    }
+
+    crate::guard::reset_indexed_read_metrics();
+    let first = journal
+        .read(|read| read.pending_steering(Some(lane()), FactPageStart::After(None)))
+        .expect("first bounded page reads");
+    let first_metrics = crate::guard::indexed_read_metrics();
+    let overflow = first
+        .overflow()
+        .expect("large live set exposes continuation");
+    assert_eq!(first.rows().len(), MAX_STEERING_PAGE_ROWS);
+    assert_eq!(overflow.omitted, 3);
+    assert_eq!(first.horizon().map(Seq::get), Some((total * 2) as u64));
+    assert_eq!(
+        first_metrics.queries, 2,
+        "index horizon plus one page query"
+    );
+    assert_eq!(
+        first_metrics.rows,
+        u64::try_from(MAX_STEERING_PAGE_ROWS + 2).expect("fixed page metrics fit"),
+        "index horizon, carried rows, and one continuation row"
+    );
+
+    crate::guard::reset_indexed_read_metrics();
+    let operator = journal
+        .read(|read| read.pending_operator_steering(FactPageStart::After(None)))
+        .expect("operator page reads");
+    assert_eq!(operator.rows(), first.rows());
+    assert_eq!(
+        operator.overflow().expect("all lanes overflow").omitted,
+        u64::try_from(total * 2 - MAX_STEERING_PAGE_ROWS).expect("omitted count fits")
+    );
+    assert_eq!(crate::guard::indexed_read_metrics(), first_metrics);
+
+    crate::guard::reset_indexed_read_metrics();
+    let all_lanes = journal
+        .read(|read| read.pending_steering(None, FactPageStart::After(None)))
+        .expect("all-lane page reads");
+    assert_eq!(all_lanes.rows(), first.rows());
+    assert_eq!(all_lanes.overflow(), operator.overflow());
+    assert_eq!(crate::guard::indexed_read_metrics(), first_metrics);
+
+    let second = journal
+        .read(|read| read.pending_steering(Some(lane()), FactPageStart::At(overflow.continuation)))
+        .expect("continuation page reads");
+    assert_eq!(second.rows().len(), 3);
+    assert!(second.overflow().is_none());
+    let positions = first
+        .rows()
+        .iter()
+        .chain(second.rows())
+        .map(JournalHead::position)
+        .collect::<Vec<_>>();
+    assert_eq!(positions.len(), total);
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    assert_eq!(second.rows()[0].body().created, overflow.continuation);
+}
+
 fn measured_key(journal: &Journal) -> crate::guard::IndexedReadMetrics {
     crate::guard::reset_indexed_read_metrics();
     let head = journal
@@ -386,20 +469,20 @@ fn measured_key(journal: &Journal) -> crate::guard::IndexedReadMetrics {
 fn measured_lane(journal: &Journal) -> crate::guard::IndexedReadMetrics {
     crate::guard::reset_indexed_read_metrics();
     let pending = journal
-        .read(|read| read.pending_steering(Some(lane())))
+        .read(|read| read.pending_steering(Some(lane()), FactPageStart::After(None)))
         .expect("live lane reads");
-    assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].body().directive, uuid(TARGET));
+    assert_eq!(pending.rows().len(), 1);
+    assert_eq!(pending.rows()[0].body().directive, uuid(TARGET));
     crate::guard::indexed_read_metrics()
 }
 
 fn measured_all_lanes(journal: &Journal) -> crate::guard::IndexedReadMetrics {
     crate::guard::reset_indexed_read_metrics();
     let pending = journal
-        .read(|read| read.pending_steering(None))
+        .read(|read| read.pending_steering(None, FactPageStart::After(None)))
         .expect("all live lanes read");
-    assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].body().directive, uuid(TARGET));
+    assert_eq!(pending.rows().len(), 1);
+    assert_eq!(pending.rows()[0].body().directive, uuid(TARGET));
     crate::guard::indexed_read_metrics()
 }
 
@@ -469,14 +552,25 @@ fn escalation_batch(observed: &JournalHead<SteeringHead>, placement: BatchHead) 
 }
 
 fn send_write(directive: CanonicalUuid, key: &str) -> JournalWrite {
+    send_write_for(directive, key, lane())
+}
+
+fn send_write_for(directive: CanonicalUuid, key: &str, lane: CanonicalUuid) -> JournalWrite {
     let mut write = JournalWrite::new(Actor::Operator, origin(), instant(), Producer::CommandDoor);
-    let body = sent(directive, key);
+    let mut body = sent(directive, key);
+    body.lane = lane;
     let pending = write
         .fact(body.clone(), FactCause::Root)
         .expect("sent fact builds");
     let key = key.to_owned();
     write.steering_head(pending, move |seq| live_head(&body, key, seq));
     write
+}
+
+fn indexed_uuid(index: usize) -> CanonicalUuid {
+    format!("018f82d4-6f59-7d06-92e3-{:012x}", index + 0x100)
+        .parse()
+        .expect("indexed fixture UUID")
 }
 
 fn cancel_write(observed: &JournalHead<SteeringHead>) -> JournalWrite {

@@ -146,7 +146,7 @@ fn cursor_current_startup_does_not_rebuild_the_transactional_fold() {
     );
     admit_index(&mut journal).expect("current transactional fold is admitted directly");
     let pending = journal
-        .read(|read| read.pending_steering(None))
+        .read(|read| crate::steering_read::pending(read, None))
         .expect("current inbox reads");
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].body().disposition, Disposition::Live);
@@ -190,7 +190,7 @@ fn startup_replay_repairs_lagging_predicate_corruption() {
     admit_index(&mut journal).expect("one canonical startup replay repairs fold");
     journal.verify().expect("repaired authority verifies");
     let pending = journal
-        .read(|read| read.pending_steering(None))
+        .read(|read| crate::steering_read::pending(read, None))
         .expect("repaired inbox reads");
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].body().disposition, Disposition::Live);

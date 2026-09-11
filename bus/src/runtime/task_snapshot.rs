@@ -147,10 +147,6 @@ pub(super) fn load_task_snapshot(journal: &Journal) -> Result<TaskSnapshot, BusR
                 tasks: Arc::from(read.task_heads().map_err(BusReadError::Head)?),
                 trust: Arc::from(read.trust_heads().map_err(BusReadError::Head)?),
                 residency: read.residency_head().map_err(BusReadError::Head)?,
-                operator_steering: Arc::from(
-                    read.pending_operator_steering()
-                        .map_err(BusReadError::Head)?,
-                ),
             })
         })
         .map_err(map_read_error)
@@ -176,7 +172,7 @@ fn advance_task_snapshot(
         .expect("a durable commit begins at a nonzero position");
     let last = journal::crossing::Seq::new(commit.last)
         .expect("a durable commit ends at a nonzero position");
-    let (cursor, facts, changed, trust, residency, operator_steering) = journal
+    let (cursor, facts, changed, trust, residency) = journal
         .read_with(|read| {
             let cursor = read.cursor().map_err(BusReadError::Head)?;
             if cursor != Some(last) {
@@ -193,10 +189,7 @@ fn advance_task_snapshot(
                 .map_err(BusReadError::Head)?;
             let trust = read.trust_heads().map_err(BusReadError::Head)?;
             let residency = read.residency_head().map_err(BusReadError::Head)?;
-            let operator_steering = read
-                .pending_operator_steering()
-                .map_err(BusReadError::Head)?;
-            Ok((cursor, facts, changed, trust, residency, operator_steering))
+            Ok((cursor, facts, changed, trust, residency))
         })
         .map_err(map_read_error)?;
     let tasks = if changed.is_empty() {
@@ -218,7 +211,6 @@ fn advance_task_snapshot(
         tasks,
         trust: Arc::from(trust),
         residency,
-        operator_steering: Arc::from(operator_steering),
     })
 }
 

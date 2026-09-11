@@ -256,8 +256,7 @@ fn collect_lane(
     actor: &ProcessActor,
     prior_active: Option<AuthorityKey>,
 ) -> Result<BoardObservation, journal::GuardError> {
-    let pending_inbox_count = read
-        .pending_steering(Some(lane.lane))?
+    let pending_inbox_count = crate::steering_read::pending(read, Some(lane.lane))?
         .into_iter()
         .filter(|head| counts_as_authored_inbox(head.body().control.as_deref()))
         .count();

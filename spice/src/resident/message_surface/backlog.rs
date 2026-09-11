@@ -576,11 +576,7 @@ fn restore_lane(
     if let Some(bus) = bus {
         hydrate_observations(bus, row.lane, &scan, reader)?;
         let keys = scan_steering_keys(&scan);
-        let rows = bus
-            .steering_presentations(keys.into_iter().map(|key| key.to_string()).collect())
-            .map_err(|error| {
-                store_fault("canvas::message-steering-unavailable", &error.to_string())
-            })?;
+        let rows = load_steering_presentations(bus, &keys)?;
         reader
             .steering
             .extend_presentations(&rows)

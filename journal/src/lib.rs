@@ -23,8 +23,8 @@ mod restore;
 pub use guard::{
     Applied, BuildError, CommandReplay, CommitError, CommitFault, FactCause, FactPageStart,
     FactReadBudget, GuardError, GuardRefusal, JournalGuard, JournalHead, JournalRead, JournalWrite,
-    MAX_RETAINED_FACT_PAGE_BYTES, MAX_RETAINED_FACT_PAGE_ROWS, PendingFact, ReadError,
-    SelectedFactPage, TaskHeads,
+    MAX_RETAINED_FACT_PAGE_BYTES, MAX_RETAINED_FACT_PAGE_ROWS, MAX_STEERING_PAGE_ROWS, PendingFact,
+    ReadError, SelectedFactPage, SteeringPage, TaskHeads,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use migrate::{Migration, MigrationError, OpenError};
