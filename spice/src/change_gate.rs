@@ -727,8 +727,7 @@ fn select_changes(
     let (selection, test_execution) =
         match surface {
             SelectionSurface::Packaged => {
-                let policy =
-                    packaged_policy(anchor.root(), anchor.paths(), anchor.changes(), environment)?;
+                let policy = packaged_policy(anchor.root(), anchor.paths(), environment)?;
                 let selection = gate::select_change_gates(
                     anchor.source().clone(),
                     anchor.changes(),
