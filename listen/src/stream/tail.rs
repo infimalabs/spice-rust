@@ -143,7 +143,7 @@ pub fn scan_tail(
             next: state.position,
         });
     }
-    let work = tracker.complete(state.records.len())?;
+    let work = tracker.complete()?;
     Ok(TailScan {
         start,
         scan: Scan {
@@ -215,7 +215,7 @@ pub fn scan_before(
             next: state.position,
         });
     }
-    let work = tracker.complete(state.records.len())?;
+    let work = tracker.complete()?;
     Ok(TailScan {
         start,
         scan: Scan {
@@ -235,6 +235,7 @@ struct WorkTracker {
     budget: TailBudget,
     started: Instant,
     source_bytes: u64,
+    records: usize,
     passes: usize,
 }
 
@@ -244,6 +245,7 @@ impl WorkTracker {
             budget,
             started: Instant::now(),
             source_bytes: 0,
+            records: 0,
             passes: 0,
         }
     }
@@ -278,6 +280,15 @@ impl WorkTracker {
         self.budget.passes.get().saturating_sub(self.passes)
     }
 
+    fn record(&mut self) -> Result<(), ScanError> {
+        self.check_duration()?;
+        if self.records >= self.budget.records.get() {
+            return Err(self.exhausted("decoded records", self.budget.records.get(), self.records));
+        }
+        self.records = self.records.saturating_add(1);
+        Ok(())
+    }
+
     fn pass(&mut self) -> Result<(), ScanError> {
         self.check_duration()?;
         let next_passes = self.passes.saturating_add(1);
@@ -295,19 +306,24 @@ impl WorkTracker {
                 dimension: "wall milliseconds",
                 limit: u64::try_from(self.budget.duration.as_millis()).unwrap_or(u64::MAX),
                 consumed: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+                work: self.work(),
             });
         }
         Ok(())
     }
 
-    fn complete(&self, records: usize) -> Result<TailWork, ScanError> {
+    fn complete(&self) -> Result<TailWork, ScanError> {
         self.check_duration()?;
-        Ok(TailWork {
+        Ok(self.work())
+    }
+
+    fn work(&self) -> TailWork {
+        TailWork {
             source_bytes: self.source_bytes,
-            records,
+            records: self.records,
             passes: self.passes,
             duration: self.started.elapsed(),
-        })
+        }
     }
 
     fn exhausted(&self, dimension: &'static str, limit: usize, consumed: usize) -> ScanError {
@@ -315,6 +331,7 @@ impl WorkTracker {
             dimension,
             limit: u64::try_from(limit).unwrap_or(u64::MAX),
             consumed: u64::try_from(consumed).unwrap_or(u64::MAX),
+            work: self.work(),
         }
     }
 
@@ -323,6 +340,7 @@ impl WorkTracker {
             dimension,
             limit,
             consumed,
+            work: self.work(),
         }
     }
 }
@@ -341,7 +359,6 @@ fn scan_window(
         records: Vec::new(),
         bytes: Vec::new(),
         spans: Vec::new(),
-        record_limit: Some(tracker.budget.records.get()),
     };
     for extent in extents {
         tracker.pass()?;
@@ -362,7 +379,19 @@ fn scan_window(
         if start < extent_end {
             tracker.read(extent_end - start)?;
         }
-        scan_extent(tape, dialect, source, extent, end, &mut state)?;
+        let scanned = {
+            let mut admit_record = || tracker.record();
+            scan_extent(
+                tape,
+                dialect,
+                source,
+                extent,
+                end,
+                &mut state,
+                &mut admit_record,
+            )
+        };
+        scanned?;
         tracker.check_duration()?;
     }
     Ok(state)

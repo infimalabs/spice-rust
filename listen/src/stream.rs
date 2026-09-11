@@ -225,7 +225,6 @@ struct ScanState {
     records: Vec<Record>,
     bytes: Vec<u8>,
     spans: Vec<Span>,
-    record_limit: Option<usize>,
 }
 
 fn scan_extents(
@@ -241,13 +240,21 @@ fn scan_extents(
         records: Vec::new(),
         bytes: Vec::new(),
         spans: Vec::new(),
-        record_limit: None,
     };
+    let mut admit_record = || Ok(());
     for extent in extents {
         if end.is_some_and(|end| extent.member > end.member) {
             break;
         }
-        scan_extent(tape, dialect, source, extent, end, &mut state)?;
+        scan_extent(
+            tape,
+            dialect,
+            source,
+            extent,
+            end,
+            &mut state,
+            &mut admit_record,
+        )?;
     }
     Ok(state)
 }
@@ -259,6 +266,7 @@ fn scan_extent(
     extent: &tape::Extent,
     end: Option<Position>,
     state: &mut ScanState,
+    admit_record: &mut impl FnMut() -> Result<(), ScanError>,
 ) -> Result<(), ScanError> {
     if extent.member < state.position.member {
         return Ok(());
@@ -305,7 +313,7 @@ fn scan_extent(
             &fragment[fragment_start..end],
         );
         state.position = next_position(extent, start + end as u64);
-        state.finish_record(dialect, source)?;
+        state.finish_record(dialect, source, admit_record)?;
         fragment_start = end;
     }
     if fragment_start < fragment.len() {
@@ -321,18 +329,13 @@ fn scan_extent(
 }
 
 impl ScanState {
-    fn finish_record(&mut self, dialect: Dialect, source: &SourceId) -> Result<(), ScanError> {
-        if self
-            .record_limit
-            .is_some_and(|limit| self.records.len() >= limit)
-        {
-            return Err(ScanError::WorkLimit {
-                dimension: "decoded records",
-                limit: u64::try_from(self.record_limit.expect("record limit checked"))
-                    .unwrap_or(u64::MAX),
-                consumed: u64::try_from(self.records.len()).unwrap_or(u64::MAX),
-            });
-        }
+    fn finish_record(
+        &mut self,
+        dialect: Dialect,
+        source: &SourceId,
+        admit_record: &mut impl FnMut() -> Result<(), ScanError>,
+    ) -> Result<(), ScanError> {
+        admit_record()?;
         let locus = synthetic_locus(&self.spans, self.bytes.len());
         let decoded = decode(dialect, &self.bytes, locus).map_err(ScanError::DecodeContract)?;
         self.records.push(Record {
@@ -525,6 +528,8 @@ pub enum ScanError {
         limit: u64,
         /// Work consumed before refusal.
         consumed: u64,
+        /// Complete work counters at the refusal boundary.
+        work: TailWork,
     },
     /// Decoder received a synthetic locus of the wrong length.
     DecodeContract(LocusLengthError),
@@ -569,11 +574,24 @@ impl fmt::Display for ScanError {
                 dimension,
                 limit,
                 consumed,
+                work,
             } => write!(
                 formatter,
-                "tape scan exhausted {dimension} allowance {limit} after consuming {consumed}"
+                "tape scan exhausted {dimension} allowance {limit} after consuming {consumed}; work: {} source bytes, {} records, {} passes, {:?}",
+                work.source_bytes, work.records, work.passes, work.duration,
             ),
             Self::DecodeContract(error) => write!(formatter, "decoder contract failed: {error}"),
+        }
+    }
+}
+
+impl ScanError {
+    /// Complete tail work counters when a caller-owned allowance was exhausted.
+    #[must_use]
+    pub const fn tail_work(&self) -> Option<&TailWork> {
+        match self {
+            Self::WorkLimit { work, .. } => Some(work),
+            _ => None,
         }
     }
 }
