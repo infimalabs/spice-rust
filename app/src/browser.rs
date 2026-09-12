@@ -15,14 +15,13 @@ use wasm_bindgen_futures::spawn_local;
 use wire::body::DirectiveAttachment;
 use wire::intent::{
     BoardRead, GlobalSettingsRead, GlobalSettingsSet, LaneAction, LaneArrange, LaneRead,
-    LaneRenewal, LaneSeat, LaneState, LineageArrange, LineageArrangement, LineageConfigure,
-    LineageLife, SteerInbox, SteerSend, TaskAnswer,
+    LaneRenewal, LaneState, LineageArrangement, LineageConfigure, LineageLife, SteerInbox,
+    SteerSend, TaskAnswer,
 };
 use wire::{CanonicalUuid, CommandKind, Response, StreamRequest, TaskHandle, WireVersion, Witness};
 use yew::prelude::*;
 
 use crate::client_action::ClientAction;
-use crate::command_demands::{DemandQueue, DemandResponse, classify_demand_outcome};
 use crate::compose::{self, Notice};
 use crate::composer_submissions::{Submission, SubmissionQueue, SubmissionStatus};
 use crate::runtime::{CanvasSurface, topology_mutation_requires_refresh};
@@ -435,16 +434,6 @@ impl PendingKind {
             | Self::SteerSubmission { .. }
             | Self::Note => None,
         }
-    }
-
-    const fn is_demand(&self) -> bool {
-        matches!(
-            self,
-            Self::LaneSeat
-                | Self::LaneArrange
-                | Self::LineageConfigure { .. }
-                | Self::LineageArrange
-        )
     }
 }
 
@@ -1095,12 +1084,20 @@ fn binary_message(message: Message) -> Result<Vec<u8>, String> {
 
 fn admit_action(sender: &SenderHandle, action: ClientAction) -> bool {
     let clears_issue = action.is_mutation();
+    let topology_id = if action.is_topology_mutation() {
+        let Some(id) = action_identity(sender) else {
+            return false;
+        };
+        Some(id)
+    } else {
+        None
+    };
     let result = sender
         .queue
         .borrow()
         .as_ref()
         .ok_or(action_mailbox::ActionAdmissionError::Unavailable)
-        .and_then(|queue| queue.admit(action));
+        .and_then(|queue| queue.admit(action, topology_id));
     match result {
         Ok(()) => {
             if clears_issue && sender.issue.is_some() {
