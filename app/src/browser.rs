@@ -1131,7 +1131,8 @@ fn queue_submission(
     submission: Submission,
 ) -> bool {
     let id = submission.id;
-    if submissions.queue.borrow_mut().enqueue(submission).is_err() {
+    if let Err(error) = submissions.queue.borrow_mut().enqueue(submission) {
+        sender.issue.set(Some(error));
         return false;
     }
     submissions.publish();
@@ -1159,7 +1160,8 @@ fn queue_submissions(
         .iter()
         .map(|submission| submission.id)
         .collect::<Vec<_>>();
-    if submissions.queue.borrow_mut().enqueue_all(batch).is_err() {
+    if let Err(error) = submissions.queue.borrow_mut().enqueue_all(batch) {
+        sender.issue.set(Some(error));
         return false;
     }
     submissions.publish();

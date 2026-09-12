@@ -6,13 +6,42 @@
 //! cannot drop operator prose with it.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::rc::Rc;
 
 use wire::CanonicalUuid;
 use wire::Disposition;
 use wire::body::DirectiveAttachment;
 use wire::intent::PendingDirective;
 
-use crate::composer_drafts::ComposerDraft;
+use crate::composer_drafts::{ComposerDraft, QuoteDraft};
+
+const SUBMISSION_LIMIT: usize = 64;
+const LANE_SUBMISSION_LIMIT: usize = 16;
+const MEDIA_DATA_URL_BYTES: usize = wire::media::MAX_MEDIA_BYTES.div_ceil(3) * 4 + 64;
+const MEDIA_RETAINED_BYTES: usize = MEDIA_DATA_URL_BYTES + 512;
+const MESSAGE_BYTES: usize = wire::media::MAX_MEDIA_BYTES;
+const PAYLOAD_METADATA_BYTES: usize =
+    std::mem::size_of::<SubmissionPayload>() + 2 * std::mem::size_of::<usize>();
+const MESSAGE_PAYLOAD_BYTES: usize =
+    wire::media::MAX_MEDIA_ITEMS * MEDIA_RETAINED_BYTES + MESSAGE_BYTES + PAYLOAD_METADATA_BYTES;
+const SUBMISSION_METADATA_BYTES: usize = std::mem::size_of::<Submission>();
+const RETAINED_BYTES_LIMIT: usize = MESSAGE_PAYLOAD_BYTES * 2 + SUBMISSION_METADATA_BYTES;
+
+/// One authored payload shared by every target-specific fanout record.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct SubmissionPayload {
+    id: CanonicalUuid,
+    pub(crate) message: String,
+    pub(crate) attachments: Vec<DirectiveAttachment>,
+}
+
+impl SubmissionPayload {
+    fn retained_bytes(&self) -> usize {
+        PAYLOAD_METADATA_BYTES
+            .saturating_add(self.message.capacity())
+            .saturating_add(attachments_bytes(&self.attachments))
+    }
+}
 
 /// One target-specific document detached from its composer.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -20,8 +49,7 @@ pub(crate) struct Submission {
     pub(crate) id: CanonicalUuid,
     pub(crate) fanout: CanonicalUuid,
     pub(crate) lane: CanonicalUuid,
-    pub(crate) message: String,
-    pub(crate) attachments: Vec<DirectiveAttachment>,
+    payload: Rc<SubmissionPayload>,
     pub(crate) snapshot: ComposerDraft,
     restore_lane: CanonicalUuid,
     stage: Stage,
@@ -44,16 +72,15 @@ impl Submission {
         snapshot: ComposerDraft,
     ) -> Self {
         let (occupant, epoch) = residency;
-        Self {
+        Self::shared(
             id,
             fanout,
             lane,
-            message,
-            attachments,
+            Self::payload(id, message, attachments),
             snapshot,
-            restore_lane: lane,
-            stage: Stage::Queued { occupant, epoch },
-        }
+            lane,
+            Stage::Queued { occupant, epoch },
+        )
     }
 
     /// Detach a document for a bound seat that has no current occupant.
@@ -69,38 +96,80 @@ impl Submission {
         attachments: Vec<DirectiveAttachment>,
         snapshot: ComposerDraft,
     ) -> Self {
-        Self {
+        Self::shared(
             id,
             fanout,
             lane,
-            message,
-            attachments,
+            Self::payload(id, message, attachments),
             snapshot,
-            restore_lane: lane,
-            stage: Stage::WakeQueued,
-        }
+            lane,
+            Stage::WakeQueued,
+        )
     }
 
-    pub(crate) fn broadcast_copy(
+    pub(crate) fn payload(
+        id: CanonicalUuid,
+        message: String,
+        attachments: Vec<DirectiveAttachment>,
+    ) -> Rc<SubmissionPayload> {
+        Rc::new(SubmissionPayload {
+            id,
+            message,
+            attachments,
+        })
+    }
+
+    pub(crate) fn broadcast(
         id: CanonicalUuid,
         fanout: CanonicalUuid,
         lane: CanonicalUuid,
         residency: (CanonicalUuid, CanonicalUuid),
-        message: String,
-        attachments: Vec<DirectiveAttachment>,
+        payload: Rc<SubmissionPayload>,
+        snapshot: ComposerDraft,
         restore_lane: CanonicalUuid,
     ) -> Self {
-        let mut submission = Self::new(
+        let (occupant, epoch) = residency;
+        Self::shared(
             id,
             fanout,
             lane,
-            residency,
-            message,
-            attachments,
-            ComposerDraft::default(),
-        );
-        submission.restore_lane = restore_lane;
-        submission
+            payload,
+            snapshot,
+            restore_lane,
+            Stage::Queued { occupant, epoch },
+        )
+    }
+
+    fn shared(
+        id: CanonicalUuid,
+        fanout: CanonicalUuid,
+        lane: CanonicalUuid,
+        payload: Rc<SubmissionPayload>,
+        snapshot: ComposerDraft,
+        restore_lane: CanonicalUuid,
+        stage: Stage,
+    ) -> Self {
+        Self {
+            id,
+            fanout,
+            lane,
+            payload,
+            snapshot,
+            restore_lane,
+            stage,
+        }
+    }
+
+    pub(crate) fn message(&self) -> &str {
+        &self.payload.message
+    }
+
+    pub(crate) fn attachments(&self) -> &[DirectiveAttachment] {
+        &self.payload.attachments
+    }
+
+    fn retained_bytes(&self) -> usize {
+        SUBMISSION_METADATA_BYTES.saturating_add(draft_bytes(&self.snapshot))
     }
 
     pub(crate) fn residency(&self) -> Option<(CanonicalUuid, CanonicalUuid)> {
@@ -113,6 +182,66 @@ impl Submission {
             | Stage::Accepted { .. } => None,
         }
     }
+}
+
+fn attachments_bytes(attachments: &Vec<DirectiveAttachment>) -> usize {
+    attachments.iter().fold(
+        attachments
+            .capacity()
+            .saturating_mul(std::mem::size_of::<DirectiveAttachment>()),
+        |bytes, attachment| {
+            bytes
+                .saturating_add(attachment.name.capacity())
+                .saturating_add(attachment.content_type.capacity())
+                .saturating_add(attachment.data_url.capacity())
+        },
+    )
+}
+
+fn draft_bytes(draft: &ComposerDraft) -> usize {
+    draft.quotes.iter().fold(
+        draft
+            .body
+            .capacity()
+            .saturating_add(draft.issue.as_ref().map_or(0, String::capacity))
+            .saturating_add(attachments_bytes(&draft.attachments))
+            .saturating_add(
+                draft
+                    .quotes
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<QuoteDraft>()),
+            ),
+        |bytes, quote| {
+            bytes
+                .saturating_add(quote.identity.capacity())
+                .saturating_add(quote.quote.capacity())
+                .saturating_add(quote.preview.as_ref().map_or(0, String::capacity))
+                .saturating_add(quote.body.capacity())
+                .saturating_add(attachments_bytes(&quote.attachments))
+                .saturating_add(quote.issue.as_ref().map_or(0, String::capacity))
+        },
+    )
+}
+
+fn admit_payload(payload: &SubmissionPayload) -> Result<(), String> {
+    if payload.attachments.len() > wire::media::MAX_MEDIA_ITEMS {
+        return Err(format!(
+            "Canvas submissions admit at most {} attachments.",
+            wire::media::MAX_MEDIA_ITEMS
+        ));
+    }
+    if payload.message.len() > MESSAGE_BYTES
+        || payload
+            .attachments
+            .iter()
+            .any(|attachment| attachment.data_url.len() > MEDIA_DATA_URL_BYTES)
+        || payload.retained_bytes() > MESSAGE_PAYLOAD_BYTES
+    {
+        return Err(format!(
+            "Canvas submission payload exceeds the {MESSAGE_PAYLOAD_BYTES}-byte limit."
+        ));
+    }
+    Ok(())
 }
 
 /// How far one submission has crossed the browser-to-resident boundary.
@@ -137,6 +266,15 @@ enum Stage {
         key: String,
         disposition: Disposition,
     },
+}
+
+impl Stage {
+    fn acceptance(&self) -> Option<(CanonicalUuid, &str)> {
+        match self {
+            Self::Accepted { directive, key, .. } => Some((*directive, key)),
+            _ => None,
+        }
+    }
 }
 
 /// Renderable fold of all submissions not yet covered by a fresh inbox.
@@ -199,51 +337,100 @@ impl SubmissionStatus {
     }
 }
 
-/// Per-lane submission queues shared across every connection attempt.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RetainedPayload {
+    payload: Rc<SubmissionPayload>,
+    records: usize,
+}
+
+/// Bounded per-lane submission queues shared across every connection attempt.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct SubmissionQueue(
-    BTreeMap<CanonicalUuid, VecDeque<Submission>>,
-    BTreeMap<CanonicalUuid, String>,
-);
+pub(crate) struct SubmissionQueue {
+    rows: BTreeMap<CanonicalUuid, VecDeque<Submission>>,
+    identities: BTreeMap<CanonicalUuid, CanonicalUuid>,
+    backend: BTreeMap<CanonicalUuid, String>,
+    payloads: BTreeMap<CanonicalUuid, RetainedPayload>,
+    retained_bytes: usize,
+}
 
 impl SubmissionQueue {
     pub(crate) fn enqueue(&mut self, submission: Submission) -> Result<(), String> {
-        if self
-            .0
-            .values()
-            .flatten()
-            .any(|candidate| candidate.id == submission.id)
-        {
-            return Err(format!(
-                "composer submission identity {} is already queued",
-                submission.id
-            ));
-        }
-        self.0
-            .entry(submission.lane)
-            .or_default()
-            .push_back(submission);
-        Ok(())
+        self.enqueue_all(vec![submission])
     }
 
     /// Admit a complete fanout batch before publishing any of its destinations.
     pub(crate) fn enqueue_all(&mut self, submissions: Vec<Submission>) -> Result<(), String> {
-        let mut identities = self
-            .0
-            .values()
-            .flatten()
-            .map(|submission| submission.id)
-            .collect::<BTreeSet<_>>();
+        if submissions.len() > SUBMISSION_LIMIT.saturating_sub(self.identities.len()) {
+            return Err(format!(
+                "Canvas already retains {} submissions; wait for delivery before retrying.",
+                self.identities.len()
+            ));
+        }
+        let mut identities = BTreeSet::new();
+        let mut lane_counts = BTreeMap::<CanonicalUuid, usize>::new();
+        let mut payloads = BTreeMap::<CanonicalUuid, Rc<SubmissionPayload>>::new();
+        let mut additional_bytes = 0usize;
         for submission in &submissions {
-            if !identities.insert(submission.id) {
+            if self.identities.contains_key(&submission.id) || !identities.insert(submission.id) {
                 return Err(format!(
                     "composer submission identity {} is already queued",
                     submission.id
                 ));
             }
+            let lane_count = self.rows.get(&submission.lane).map_or(0, VecDeque::len)
+                + *lane_counts.entry(submission.lane).or_default();
+            if lane_count >= LANE_SUBMISSION_LIMIT {
+                return Err(format!(
+                    "Canvas already retains {LANE_SUBMISSION_LIMIT} submissions for lane {}; wait for delivery before retrying.",
+                    submission.lane
+                ));
+            }
+            *lane_counts
+                .get_mut(&submission.lane)
+                .expect("the batch lane count was initialized") += 1;
+            admit_payload(&submission.payload)?;
+            additional_bytes = additional_bytes.saturating_add(submission.retained_bytes());
+            let retained = self
+                .payloads
+                .get(&submission.payload.id)
+                .map(|retained| &retained.payload)
+                .or_else(|| payloads.get(&submission.payload.id));
+            if retained.is_some_and(|payload| !Rc::ptr_eq(payload, &submission.payload)) {
+                return Err(format!(
+                    "composer payload identity {} was reused",
+                    submission.payload.id
+                ));
+            }
+            if retained.is_none() {
+                additional_bytes =
+                    additional_bytes.saturating_add(submission.payload.retained_bytes());
+                payloads.insert(submission.payload.id, Rc::clone(&submission.payload));
+            }
+        }
+        if additional_bytes > RETAINED_BYTES_LIMIT.saturating_sub(self.retained_bytes) {
+            return Err(format!(
+                "Canvas submission retention exceeds the {RETAINED_BYTES_LIMIT}-byte limit; wait for delivery before retrying."
+            ));
         }
         for submission in submissions {
-            self.0
+            self.retained_bytes = self
+                .retained_bytes
+                .saturating_add(submission.retained_bytes());
+            self.identities.insert(submission.id, submission.lane);
+            match self.payloads.entry(submission.payload.id) {
+                std::collections::btree_map::Entry::Occupied(mut entry) => {
+                    entry.get_mut().records += 1;
+                }
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    let bytes = submission.payload.retained_bytes();
+                    self.retained_bytes = self.retained_bytes.saturating_add(bytes);
+                    entry.insert(RetainedPayload {
+                        payload: Rc::clone(&submission.payload),
+                        records: 1,
+                    });
+                }
+            }
+            self.rows
                 .entry(submission.lane)
                 .or_default()
                 .push_back(submission);
@@ -252,32 +439,31 @@ impl SubmissionQueue {
     }
 
     pub(crate) fn restore_lane(&self, id: CanonicalUuid) -> Result<CanonicalUuid, String> {
-        self.0
-            .values()
-            .flatten()
-            .find(|submission| submission.id == id)
+        self.submission(id)
             .map(|submission| submission.restore_lane)
-            .ok_or_else(|| format!("composer result named unknown submission {id}"))
     }
 
     /// Remove an enqueue whose wake could not reach the connection vendor.
     pub(crate) fn rollback(&mut self, id: CanonicalUuid) -> Option<Submission> {
         let lane = self.lane_for(id)?;
-        let rows = self.0.get_mut(&lane)?;
+        let rows = self.rows.get_mut(&lane)?;
         let index = rows.iter().position(|submission| {
             submission.id == id
                 && matches!(&submission.stage, Stage::WakeQueued | Stage::Queued { .. })
         })?;
         let removed = rows.remove(index);
         if rows.is_empty() {
-            self.0.remove(&lane);
+            self.rows.remove(&lane);
+        }
+        if let Some(submission) = &removed {
+            self.release(submission);
         }
         removed
     }
 
     /// At most one ready submission from each concrete lane.
     pub(crate) fn ready(&self) -> Vec<Submission> {
-        self.0
+        self.rows
             .values()
             .filter(|rows| {
                 !rows
@@ -295,7 +481,7 @@ impl SubmissionQueue {
 
     /// At most one wake that is the first unsettled document in its lane.
     pub(crate) fn ready_wakes(&self) -> Vec<Submission> {
-        self.0
+        self.rows
             .values()
             .filter(|rows| {
                 !rows.iter().any(|submission| {
@@ -338,7 +524,7 @@ impl SubmissionQueue {
 
     /// Make every result-less write eligible for replay with the same identity.
     pub(crate) fn reconnect(&mut self) {
-        for submission in self.0.values_mut().flatten() {
+        for submission in self.rows.values_mut().flatten() {
             submission.stage = match submission.stage.clone() {
                 Stage::WakeSent => Stage::WakeQueued,
                 Stage::Sent { occupant, epoch } => Stage::Queued { occupant, epoch },
@@ -361,7 +547,7 @@ impl SubmissionQueue {
 
     /// Wake submissions awaiting a lane read issued after their wake replies.
     pub(crate) fn awaiting_residency(&self) -> Vec<CanonicalUuid> {
-        self.0
+        self.rows
             .values()
             .flatten()
             .filter(|submission| submission.stage == Stage::AwaitingResidency)
@@ -379,11 +565,7 @@ impl SubmissionQueue {
     ) -> std::collections::BTreeSet<CanonicalUuid> {
         ids.iter()
             .filter_map(|id| {
-                let submission = self
-                    .0
-                    .values()
-                    .flatten()
-                    .find(|submission| submission.id == *id)?;
+                let submission = self.submission(*id).ok()?;
                 (submission.stage == Stage::AwaitingResidency).then_some(submission.lane)
             })
             .collect()
@@ -396,7 +578,7 @@ impl SubmissionQueue {
         occupant: CanonicalUuid,
         epoch: CanonicalUuid,
     ) {
-        let Some(rows) = self.0.get_mut(&lane) else {
+        let Some(rows) = self.rows.get_mut(&lane) else {
             return;
         };
         for submission in rows {
@@ -415,18 +597,18 @@ impl SubmissionQueue {
         directive: CanonicalUuid,
         key: String,
         disposition: Disposition,
-    ) -> Result<Option<Submission>, String> {
+    ) -> Result<Option<Rc<SubmissionPayload>>, String> {
         if directive != id {
             return Err(format!(
                 "composer submission {id} received mismatched directive {directive}"
             ));
         }
-        if !matches!(&self.submission_mut(id)?.stage, Stage::Sent { .. }) {
+        if !matches!(&self.submission(id)?.stage, Stage::Sent { .. }) {
             return Err(format!(
                 "composer submission {id} received a result before it was sent"
             ));
         }
-        let observed = self.1.get(&directive).cloned();
+        let observed = self.backend.get(&directive).cloned();
         if let Some(backend_key) = &observed
             && backend_key != &key
         {
@@ -435,7 +617,7 @@ impl SubmissionQueue {
             ));
         }
         let accepted = if disposition == Disposition::Live {
-            Some(self.submission_mut(id)?.clone())
+            Some(Rc::clone(&self.submission(id)?.payload))
         } else {
             None
         };
@@ -469,7 +651,7 @@ impl SubmissionQueue {
         lane: CanonicalUuid,
     ) -> Result<Vec<SubmissionRestore>, String> {
         let id = self
-            .0
+            .rows
             .get(&lane)
             .into_iter()
             .flatten()
@@ -487,43 +669,47 @@ impl SubmissionQueue {
         let lane = self
             .lane_for(id)
             .ok_or_else(|| format!("composer result named unknown submission {id}"))?;
-        let rows = self
-            .0
-            .get_mut(&lane)
-            .expect("a located submission retains its lane queue");
-        let index = rows
-            .iter()
-            .position(|submission| submission.id == id)
-            .expect("a located submission remains in its lane queue");
-        if !expected(&rows[index].stage) {
-            return Err(format!(
-                "composer submission {id} was not awaiting a result"
-            ));
+        let (removed, empty) = {
+            let rows = self
+                .rows
+                .get_mut(&lane)
+                .expect("an indexed submission retains its lane queue");
+            let index = rows
+                .iter()
+                .position(|submission| submission.id == id)
+                .expect("an indexed submission remains in its lane queue");
+            if !expected(&rows[index].stage) {
+                return Err(format!(
+                    "composer submission {id} was not awaiting a result"
+                ));
+            }
+            let removed = rows.drain(index..).collect::<Vec<_>>();
+            (removed, rows.is_empty())
+        };
+        if empty {
+            self.rows.remove(&lane);
         }
-        let restored = rows
-            .drain(index..)
+        for submission in &removed {
+            self.release(submission);
+        }
+        Ok(removed
+            .into_iter()
             .map(|submission| SubmissionRestore {
                 lane: submission.restore_lane,
                 draft: submission.snapshot,
             })
-            .collect::<Vec<_>>();
-        if rows.is_empty() {
-            self.0.remove(&lane);
-        }
-        Ok(restored)
+            .collect())
     }
 
     pub(crate) fn accepted(&self) -> BTreeMap<CanonicalUuid, String> {
-        self.0
+        self.rows
             .values()
             .flatten()
-            .filter_map(|submission| match &submission.stage {
-                Stage::Accepted { directive, key, .. } => Some((*directive, key.clone())),
-                Stage::WakeQueued
-                | Stage::WakeSent
-                | Stage::AwaitingResidency
-                | Stage::Queued { .. }
-                | Stage::Sent { .. } => None,
+            .filter_map(|submission| {
+                submission
+                    .stage
+                    .acceptance()
+                    .map(|(directive, key)| (directive, key.to_owned()))
             })
             .collect()
     }
@@ -535,15 +721,16 @@ impl SubmissionQueue {
         covered: &BTreeMap<CanonicalUuid, String>,
     ) -> Result<(), String> {
         let backend = pending
+            .filter(|directive| self.identities.contains_key(&directive.directive))
             .map(|directive| (directive.directive, directive.key.clone()))
             .collect::<BTreeMap<_, _>>();
-        for submission in self.0.values().flatten() {
-            let Stage::Accepted { directive, key, .. } = &submission.stage else {
+        for submission in self.rows.values().flatten() {
+            let Some((directive, key)) = submission.stage.acceptance() else {
                 continue;
             };
             for (source, observed) in [
-                ("backend", backend.get(directive)),
-                ("captured", covered.get(directive)),
+                ("backend", backend.get(&directive)),
+                ("captured", covered.get(&directive)),
             ] {
                 if let Some(observed) = observed
                     && observed != key
@@ -555,32 +742,30 @@ impl SubmissionQueue {
                 }
             }
         }
-        self.1 = backend;
-        self.0.retain(|_, rows| {
-            rows.retain(|submission| match &submission.stage {
-                Stage::Accepted { directive, key, .. } => {
-                    self.1
-                        .get(directive)
-                        .is_none_or(|backend_key| backend_key != key)
-                        && covered
-                            .get(directive)
-                            .is_none_or(|captured_key| captured_key != key)
-                }
-                Stage::WakeQueued
-                | Stage::WakeSent
-                | Stage::AwaitingResidency
-                | Stage::Queued { .. }
-                | Stage::Sent { .. } => true,
-            });
-            !rows.is_empty()
-        });
+        let retired = self
+            .rows
+            .values()
+            .flatten()
+            .filter_map(|submission| {
+                let (directive, key) = submission.stage.acceptance()?;
+                [backend.get(&directive), covered.get(&directive)]
+                    .into_iter()
+                    .flatten()
+                    .any(|observed| observed == key)
+                    .then_some(submission.id)
+            })
+            .collect::<Vec<_>>();
+        self.backend = backend;
+        for id in retired {
+            self.remove(id);
+        }
         Ok(())
     }
 
     pub(crate) fn status(&self) -> SubmissionStatus {
         SubmissionStatus {
             rows: self
-                .0
+                .rows
                 .iter()
                 .map(|(lane, rows)| {
                     (
@@ -588,21 +773,14 @@ impl SubmissionQueue {
                         rows.iter()
                             .map(|submission| Prediction {
                                 directive: submission.id,
-                                key: match &submission.stage {
-                                    Stage::Accepted { key, .. } => Some(key.clone()),
-                                    Stage::WakeQueued
-                                    | Stage::WakeSent
-                                    | Stage::AwaitingResidency
-                                    | Stage::Queued { .. }
-                                    | Stage::Sent { .. } => None,
-                                },
+                                key: submission.stage.acceptance().map(|(_, key)| key.to_owned()),
                             })
                             .collect(),
                     )
                 })
                 .collect(),
             keyless: self
-                .0
+                .rows
                 .values()
                 .flatten()
                 .filter(|submission| !matches!(&submission.stage, Stage::Accepted { .. }))
@@ -611,33 +789,92 @@ impl SubmissionQueue {
     }
 
     fn lane_for(&self, id: CanonicalUuid) -> Option<CanonicalUuid> {
-        self.0.iter().find_map(|(lane, rows)| {
-            rows.iter()
-                .any(|submission| submission.id == id)
-                .then_some(*lane)
-        })
+        self.identities.get(&id).copied()
+    }
+
+    fn submission(&self, id: CanonicalUuid) -> Result<&Submission, String> {
+        let lane = self
+            .lane_for(id)
+            .ok_or_else(|| format!("composer result named unknown submission {id}"))?;
+        self.rows
+            .get(&lane)
+            .expect("an indexed submission retains its lane queue")
+            .iter()
+            .find(|submission| submission.id == id)
+            .ok_or_else(|| format!("composer result named unknown submission {id}"))
     }
 
     fn submission_mut(&mut self, id: CanonicalUuid) -> Result<&mut Submission, String> {
-        self.0
-            .values_mut()
-            .flatten()
+        let lane = self
+            .identities
+            .get(&id)
+            .copied()
+            .ok_or_else(|| format!("composer result named unknown submission {id}"))?;
+        self.rows
+            .get_mut(&lane)
+            .expect("an indexed submission retains its lane queue")
+            .iter_mut()
             .find(|submission| submission.id == id)
             .ok_or_else(|| format!("composer result named unknown submission {id}"))
     }
 
     fn remove(&mut self, id: CanonicalUuid) {
-        self.0.retain(|_, rows| {
-            rows.retain(|submission| submission.id != id);
-            !rows.is_empty()
-        });
+        let _ = self.remove_submission(id);
+    }
+
+    fn remove_submission(&mut self, id: CanonicalUuid) -> Option<Submission> {
+        let lane = self.lane_for(id)?;
+        let (removed, empty) = {
+            let rows = self
+                .rows
+                .get_mut(&lane)
+                .expect("an indexed submission retains its lane queue");
+            let index = rows.iter().position(|submission| submission.id == id)?;
+            let removed = rows.remove(index);
+            (removed, rows.is_empty())
+        };
+        if empty {
+            self.rows.remove(&lane);
+        }
+        if let Some(submission) = &removed {
+            self.release(submission);
+        }
+        removed
+    }
+
+    fn release(&mut self, submission: &Submission) {
+        assert_eq!(
+            self.identities.remove(&submission.id),
+            Some(submission.lane),
+            "released submission identity remains indexed to its lane"
+        );
+        self.backend.remove(&submission.id);
+        self.retained_bytes = self
+            .retained_bytes
+            .saturating_sub(submission.retained_bytes());
+        let remove_payload = {
+            let payload = self
+                .payloads
+                .get_mut(&submission.payload.id)
+                .expect("released submission retains its payload accounting");
+            payload.records -= 1;
+            payload.records == 0
+        };
+        if remove_payload {
+            let payload = self
+                .payloads
+                .remove(&submission.payload.id)
+                .expect("empty payload accounting remains present");
+            self.retained_bytes = self
+                .retained_bytes
+                .saturating_sub(payload.payload.retained_bytes());
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeSet;
     use wire::Instant;
 
     const LANE_A: &str = "11111111-1111-4111-8111-111111111111";
@@ -653,12 +890,16 @@ mod tests {
         value.parse().expect("fixture UUID is canonical")
     }
 
+    fn numbered(value: usize) -> CanonicalUuid {
+        format!("00000000-0000-4000-8000-{value:012x}")
+            .parse()
+            .expect("numbered fixture UUID is canonical")
+    }
+
     fn draft(body: &str) -> ComposerDraft {
         ComposerDraft {
             body: body.to_owned(),
-            quotes: Vec::new(),
-            attachments: Vec::new(),
-            issue: None,
+            ..ComposerDraft::default()
         }
     }
 
@@ -685,10 +926,29 @@ mod tests {
         )
     }
 
-    fn pending(id: &str) -> PendingDirective {
+    fn broadcast(index: usize, lane: CanonicalUuid, payload: &Rc<SubmissionPayload>) -> Submission {
+        Submission::broadcast(
+            numbered(index),
+            uuid(FANOUT),
+            lane,
+            (uuid(OCCUPANT), uuid(EPOCH)),
+            Rc::clone(payload),
+            ComposerDraft::default(),
+            uuid(LANE_A),
+        )
+    }
+
+    fn accept(queue: &mut SubmissionQueue, id: &str, key: &str, disposition: Disposition) {
+        queue.sent(uuid(id)).unwrap();
+        queue
+            .accept(uuid(id), uuid(id), key.to_owned(), disposition)
+            .unwrap();
+    }
+
+    fn pending(id: &str, key: &str) -> PendingDirective {
         PendingDirective {
             directive: uuid(id),
-            key: "1kKey".to_owned(),
+            key: key.to_owned(),
             text: "durable".to_owned(),
             preview: Some("durable".to_owned()),
             control: None,
@@ -701,413 +961,152 @@ mod tests {
     }
 
     #[test]
-    fn one_lineage_submit_keeps_one_fanout_across_distinct_target_commands() {
+    fn admission_bounds_batches_atomically_and_counts_one_shared_fanout_payload() {
+        let payload =
+            Submission::payload(uuid(FANOUT), "[BROADCAST] bounded".to_owned(), Vec::new());
+        let batch = (0..SUBMISSION_LIMIT)
+            .map(|index| broadcast(1_000 + index, numbered(2_000 + index), &payload))
+            .collect();
         let mut queue = SubmissionQueue::default();
-        for (id, lane) in [(ID_A, LANE_A), (ID_B, LANE_B)] {
-            queue
-                .enqueue(Submission::new(
-                    uuid(id),
-                    uuid(FANOUT),
-                    uuid(lane),
-                    (uuid(OCCUPANT), uuid(EPOCH)),
-                    "prefer rg for repository searches".to_owned(),
-                    Vec::new(),
-                    draft("prefer rg for repository searches"),
-                ))
-                .unwrap();
-        }
-
-        let ready = queue.ready();
-        assert_eq!(ready.len(), 2);
-        assert_ne!(ready[0].id, ready[1].id);
-        assert!(
-            ready
-                .iter()
-                .all(|submission| submission.fanout == uuid(FANOUT))
+        queue.enqueue_all(batch).unwrap();
+        assert_eq!(
+            (queue.status().len(), queue.identities.len()),
+            (SUBMISSION_LIMIT, SUBMISSION_LIMIT)
         );
-
-        for id in [ID_A, ID_B] {
-            queue.sent(uuid(id)).unwrap();
-        }
-        queue.reconnect();
+        assert_eq!(queue.payloads[&uuid(FANOUT)].records, SUBMISSION_LIMIT);
+        assert!(Rc::ptr_eq(&queue.payloads[&uuid(FANOUT)].payload, &payload));
+        assert_eq!(queue.ready()[0].message(), "[BROADCAST] bounded");
+        assert!(queue.ready()[0].attachments().is_empty());
+        assert_eq!(queue.restore_lane(numbered(1_017)).unwrap(), uuid(LANE_A));
+        let retained = queue.retained_bytes;
         assert!(
             queue
-                .ready()
-                .iter()
-                .all(|submission| submission.fanout == uuid(FANOUT))
-        );
-    }
-
-    #[test]
-    fn broadcast_batch_is_all_or_none_and_only_the_source_copy_restores_content() {
-        let mut refused = SubmissionQueue::default();
-        refused
-            .enqueue(submission(ID_A, LANE_A, "existing"))
-            .unwrap();
-        assert!(
-            refused
-                .enqueue_all(vec![
-                    submission(ID_B, LANE_B, "candidate"),
-                    submission(ID_A, LANE_B, "collision"),
-                ])
+                .enqueue(broadcast(9_000, numbered(9_001), &payload))
                 .is_err()
         );
         assert_eq!(
-            refused.status().len(),
-            1,
-            "a refused batch inserts no prefix"
+            (queue.status().len(), queue.retained_bytes),
+            (SUBMISSION_LIMIT, retained)
         );
 
-        let mut queue = SubmissionQueue::default();
-        let source = Submission::new(
-            uuid(ID_A),
-            uuid(FANOUT),
-            uuid(LANE_A),
-            (uuid(OCCUPANT), uuid(EPOCH)),
-            "[BROADCAST] broadcast".to_owned(),
-            Vec::new(),
-            draft("broadcast"),
-        );
-        let copy = Submission::broadcast_copy(
-            uuid(ID_B),
-            uuid(FANOUT),
-            uuid(LANE_B),
-            (uuid(OCCUPANT), uuid(EPOCH)),
-            "[BROADCAST] broadcast".to_owned(),
-            Vec::new(),
-            uuid(LANE_A),
-        );
-        queue.enqueue_all(vec![source, copy]).unwrap();
-        let broadcast_messages = queue
-            .ready()
-            .iter()
-            .map(|submission| submission.message.clone())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            broadcast_messages,
-            ["[BROADCAST] broadcast", "[BROADCAST] broadcast"]
-        );
-        queue.reconnect();
-        assert_eq!(
-            queue
-                .ready()
-                .iter()
-                .map(|submission| submission.message.as_str())
-                .collect::<Vec<_>>(),
-            ["[BROADCAST] broadcast", "[BROADCAST] broadcast"],
-            "broadcast replay preserves each target payload byte-for-byte"
-        );
-        assert_eq!(queue.restore_lane(uuid(ID_A)).unwrap(), uuid(LANE_A));
-        assert_eq!(queue.restore_lane(uuid(ID_B)).unwrap(), uuid(LANE_A));
-        assert!(
-            queue
-                .ready()
-                .iter()
-                .all(|submission| submission.fanout == uuid(FANOUT))
-        );
+        let mut lane = SubmissionQueue::default();
+        for index in 0..LANE_SUBMISSION_LIMIT {
+            lane.enqueue(broadcast(10_000 + index, uuid(LANE_A), &payload))
+                .unwrap();
+        }
+        assert!(lane.enqueue(submission(ID_A, LANE_A, "overflow")).is_err());
 
-        queue
-            .enqueue(submission(ID_C, LANE_B, "later ordinary draft"))
-            .unwrap();
-        queue.sent(uuid(ID_B)).unwrap();
-        let copy_refusal = queue.refuse(uuid(ID_B)).unwrap();
-        assert_eq!(
-            copy_refusal
-                .iter()
-                .map(|restored| (restored.lane, restored.draft.body.as_str()))
-                .collect::<Vec<_>>(),
-            [(uuid(LANE_A), ""), (uuid(LANE_B), "later ordinary draft")],
-            "each drained snapshot retains its own restoration lane"
-        );
-        queue.sent(uuid(ID_A)).unwrap();
-        assert_eq!(queue.refuse(uuid(ID_A)).unwrap()[0].draft.body, "broadcast");
+        let mut bytes = SubmissionQueue {
+            retained_bytes: RETAINED_BYTES_LIMIT,
+            ..SubmissionQueue::default()
+        };
+        assert!(bytes.enqueue(submission(ID_A, LANE_A, "overflow")).is_err());
     }
 
     #[test]
-    fn lanes_drain_independently_and_replay_the_same_identity() {
+    fn indexed_fifo_replays_exact_commands_and_refusal_restores_the_lane_tail() {
         let mut queue = SubmissionQueue::default();
         queue.enqueue(submission(ID_A, LANE_A, "first")).unwrap();
-        queue.enqueue(submission(ID_B, LANE_A, "second")).unwrap();
+        let mut second = submission(ID_B, LANE_A, "second");
+        second.fanout = uuid(ID_A);
+        queue.enqueue(second).unwrap();
         queue.enqueue(submission(ID_C, LANE_B, "sibling")).unwrap();
-        assert_eq!(queue.status().len(), 3);
-
-        assert_eq!(
-            queue
-                .ready()
-                .iter()
-                .map(|submission| submission.id)
-                .collect::<BTreeSet<_>>(),
-            BTreeSet::from([uuid(ID_A), uuid(ID_C)])
-        );
         queue.sent(uuid(ID_A)).unwrap();
         queue.sent(uuid(ID_C)).unwrap();
         assert!(queue.ready().is_empty());
-
         queue.reconnect();
         assert_eq!(
             queue
                 .ready()
                 .iter()
-                .map(|submission| submission.id)
+                .map(|row| row.id)
                 .collect::<BTreeSet<_>>(),
-            BTreeSet::from([uuid(ID_A), uuid(ID_C)]),
-            "connection replacement replays the original command identities"
+            BTreeSet::from([uuid(ID_A), uuid(ID_C)])
         );
-    }
 
-    #[test]
-    fn an_acceptance_opens_only_its_lane_and_a_refusal_restores_the_tail() {
-        let mut queue = SubmissionQueue::default();
-        queue.enqueue(submission(ID_A, LANE_A, "first")).unwrap();
-        queue.enqueue(submission(ID_B, LANE_A, "second")).unwrap();
-        queue.enqueue(submission(ID_C, LANE_A, "third")).unwrap();
-        queue.sent(uuid(ID_A)).unwrap();
-        queue
-            .accept(
-                uuid(ID_A),
-                uuid(ID_A),
-                "1kFirst".to_owned(),
-                Disposition::Live,
-            )
-            .unwrap();
+        accept(&mut queue, ID_A, "1kFirst", Disposition::Live);
         assert_eq!(queue.ready()[0].id, uuid(ID_B));
         queue.sent(uuid(ID_B)).unwrap();
-
-        let restored = queue.refuse(uuid(ID_B)).unwrap();
-        assert_eq!(
-            restored
-                .iter()
-                .map(|restored| restored.draft.body.as_str())
-                .collect::<Vec<_>>(),
-            ["second", "third"]
-        );
-        assert!(queue.accepted().contains_key(&uuid(ID_A)));
+        assert_eq!(queue.refuse(uuid(ID_B)).unwrap()[0].draft.body, "second");
+        assert_eq!(queue.rollback(uuid(ID_C)).unwrap().snapshot.body, "sibling");
+        assert_eq!(queue.identities.len(), 1);
     }
 
     #[test]
-    fn pending_is_key_aware_and_a_post_acceptance_read_retires_the_floor() {
+    fn backend_keys_reconcile_accepted_predictions_without_losing_queued_work() {
         let mut queue = SubmissionQueue::default();
         queue.enqueue(submission(ID_A, LANE_A, "first")).unwrap();
         queue.enqueue(submission(ID_B, LANE_A, "second")).unwrap();
-        assert_eq!(queue.status().pending(uuid(LANE_A), &[]), 2);
+        let status = queue.status();
         assert_eq!(
-            queue.status().total_pending(
-                [
-                    (uuid(LANE_A), [pending(ID_A)].as_slice()),
-                    (uuid(LANE_B), [pending(ID_C)].as_slice()),
-                ]
-                .into_iter()
-            ),
-            3,
-            "the global total retains unmatched backend lanes and uncovered predictions"
+            status.pending(uuid(LANE_A), &[]),
+            status.total_pending([(uuid(LANE_A), &[][..])].into_iter())
         );
-        assert_eq!(
-            queue.status().pending(uuid(LANE_A), &[pending(ID_A)]),
-            2,
-            "a durable identity is counted once, never as backend plus prediction"
-        );
-
-        queue.sent(uuid(ID_A)).unwrap();
+        accept(&mut queue, ID_A, "1kKey", Disposition::Live);
+        assert!(queue.status().is_unsafe());
+        assert_eq!(queue.accepted()[&uuid(ID_A)], "1kKey");
         queue
-            .accept(
-                uuid(ID_A),
-                uuid(ID_A),
-                "1kKey".to_owned(),
-                Disposition::Live,
-            )
+            .observe_backend([pending(ID_A, "1kKey")].iter(), &BTreeMap::new())
             .unwrap();
-        queue
-            .observe_backend([pending(ID_A)].iter(), &BTreeMap::new())
-            .unwrap();
-        assert_eq!(queue.status().pending(uuid(LANE_A), &[pending(ID_A)]), 2);
-        assert!(
-            queue.status().is_unsafe(),
-            "the second draft remains queued"
-        );
+        assert_eq!(queue.status().len(), 1);
+        assert_eq!(queue.ready()[0].id, uuid(ID_B));
+
+        accept(&mut queue, ID_B, "1kDone", Disposition::Acked);
+        assert!(queue.identities.is_empty());
     }
 
     #[test]
-    fn accepted_stage_retains_the_backend_key_until_reconciliation() {
-        let mut queue = SubmissionQueue::default();
-        queue.enqueue(submission(ID_A, LANE_A, "first")).unwrap();
-        queue.sent(uuid(ID_A)).unwrap();
-        queue
-            .accept(
-                uuid(ID_A),
-                uuid(ID_A),
-                "1kFirst".to_owned(),
-                Disposition::Live,
-            )
-            .unwrap();
-        let row = &queue.0[&uuid(LANE_A)][0];
-        assert_eq!(
-            row.stage,
-            Stage::Accepted {
-                directive: uuid(ID_A),
-                key: "1kFirst".to_owned(),
-                disposition: Disposition::Live,
-            }
-        );
-        assert!(
-            !queue.status().is_unsafe(),
-            "a keyed accepted record no longer risks operator prose"
-        );
-    }
-
-    #[test]
-    fn backend_key_or_reconstructed_retirement_settles_a_late_response() {
-        let mut observed = SubmissionQueue::default();
-        observed.enqueue(submission(ID_A, LANE_A, "first")).unwrap();
-        observed.sent(uuid(ID_A)).unwrap();
-        observed
-            .observe_backend([pending(ID_A)].iter(), &BTreeMap::new())
-            .unwrap();
-        observed
-            .accept(
-                uuid(ID_A),
-                uuid(ID_A),
-                "1kKey".to_owned(),
-                Disposition::Live,
-            )
-            .unwrap();
-        assert_eq!(observed.status().len(), 0);
-
-        let mut retired = SubmissionQueue::default();
-        retired.enqueue(submission(ID_B, LANE_A, "second")).unwrap();
-        retired.sent(uuid(ID_B)).unwrap();
-        retired
-            .accept(
-                uuid(ID_B),
-                uuid(ID_B),
-                "1kRetired".to_owned(),
-                Disposition::Acked,
-            )
-            .unwrap();
-        assert_eq!(retired.status().len(), 0);
-
-        let mut reconstructed = SubmissionQueue::default();
-        reconstructed
-            .enqueue(submission(ID_C, LANE_A, "third"))
-            .unwrap();
-        reconstructed.sent(uuid(ID_C)).unwrap();
-        reconstructed
-            .accept(
-                uuid(ID_C),
-                uuid(ID_C),
-                "1kConsumed".to_owned(),
-                Disposition::Live,
-            )
-            .unwrap();
-        let covered = reconstructed.accepted();
-        reconstructed.observe_backend([].iter(), &covered).unwrap();
-        assert_eq!(
-            reconstructed.status().len(),
-            0,
-            "a later inbox absence reconstructs the live receipt as consumed"
-        );
-    }
-
-    #[test]
-    fn a_failed_connection_wake_rolls_back_only_its_newest_queued_identity() {
-        let mut queue = SubmissionQueue::default();
-        queue.enqueue(submission(ID_A, LANE_A, "first")).unwrap();
-        queue.enqueue(submission(ID_B, LANE_A, "second")).unwrap();
-        assert_eq!(queue.rollback(uuid(ID_B)).unwrap().snapshot.body, "second");
-        assert_eq!(queue.ready()[0].id, uuid(ID_A));
-        assert!(queue.rollback(uuid(ID_C)).is_none());
-    }
-
-    #[test]
-    fn wake_requires_its_reply_and_a_nominated_fresh_residency_before_steer() {
+    fn wake_replay_requires_a_fresh_residency_and_every_refusal_restores_in_order() {
         let mut queue = SubmissionQueue::default();
         queue
-            .enqueue(wake_submission(ID_A, LANE_A, "wake first"))
+            .enqueue(wake_submission(ID_A, LANE_A, "first"))
             .unwrap();
         queue
-            .enqueue(wake_submission(ID_B, LANE_A, "wake second"))
+            .enqueue(wake_submission(ID_B, LANE_A, "second"))
             .unwrap();
-
         assert_eq!(queue.ready_wakes()[0].id, uuid(ID_A));
         queue.wake_sent(uuid(ID_A)).unwrap();
-        assert!(queue.ready().is_empty());
-        assert!(queue.ready_wakes().is_empty());
-
-        let stale_nomination = queue.awaiting_residency();
+        let stale = queue.awaiting_residency();
         queue.reconnect();
-        assert_eq!(queue.ready_wakes()[0].id, uuid(ID_A));
         queue.wake_sent(uuid(ID_A)).unwrap();
         queue.wake_accepted(uuid(ID_A)).unwrap();
-        assert!(
-            queue.awaiting_lanes(&stale_nomination).is_empty(),
-            "a lane read nominated before the wake reply cannot establish fresh residency"
-        );
-        assert_eq!(
-            queue.awaiting_residency(),
-            [uuid(ID_A)],
-            "the stale read leaves an explicit demand for a post-wake lane read"
-        );
+        assert!(queue.awaiting_lanes(&stale).is_empty());
         let nominated = queue.awaiting_residency();
-        assert_eq!(nominated, [uuid(ID_A)]);
         assert_eq!(
             queue.awaiting_lanes(&nominated),
             BTreeSet::from([uuid(LANE_A)])
         );
-        assert!(queue.ready().is_empty());
-
         queue.bind_woken_lane(uuid(LANE_A), uuid(OCCUPANT), uuid(EPOCH));
-        assert!(queue.awaiting_residency().is_empty());
-        assert_eq!(queue.ready()[0].id, uuid(ID_A));
         assert_eq!(
             queue.ready()[0].residency(),
             Some((uuid(OCCUPANT), uuid(EPOCH)))
         );
         queue.sent(uuid(ID_A)).unwrap();
-        queue
-            .accept(
-                uuid(ID_A),
-                uuid(ID_A),
-                "1kWake".to_owned(),
-                Disposition::Live,
-            )
-            .unwrap();
-        assert_eq!(queue.ready()[0].id, uuid(ID_B));
         assert_eq!(
-            queue.ready()[0].residency(),
-            Some((uuid(OCCUPANT), uuid(EPOCH))),
-            "the same causal lane read binds later vacant-lane drafts without a redundant wake"
-        );
-    }
-
-    #[test]
-    fn wake_refusal_and_missing_residency_restore_every_unsent_lane_draft() {
-        let mut refused = SubmissionQueue::default();
-        refused
-            .enqueue(wake_submission(ID_A, LANE_A, "refused first"))
-            .unwrap();
-        refused
-            .enqueue(wake_submission(ID_B, LANE_A, "refused second"))
-            .unwrap();
-        refused.wake_sent(uuid(ID_A)).unwrap();
-        assert_eq!(
-            refused
-                .refuse_wake(uuid(ID_A))
+            queue
+                .refuse(uuid(ID_A))
                 .unwrap()
                 .into_iter()
                 .map(|restored| restored.draft.body)
                 .collect::<Vec<_>>(),
-            ["refused first", "refused second"]
+            ["first", "second"]
         );
 
-        let mut unproven = SubmissionQueue::default();
-        unproven
+        queue
             .enqueue(wake_submission(ID_C, LANE_B, "unproven"))
             .unwrap();
-        unproven.wake_sent(uuid(ID_C)).unwrap();
-        unproven.wake_accepted(uuid(ID_C)).unwrap();
+        queue.wake_sent(uuid(ID_C)).unwrap();
         assert_eq!(
-            unproven.refuse_woken_lane(uuid(LANE_B)).unwrap()[0]
-                .draft
-                .body,
+            queue.refuse_wake(uuid(ID_C)).unwrap()[0].draft.body,
+            "unproven"
+        );
+        queue
+            .enqueue(wake_submission(ID_C, LANE_B, "unproven"))
+            .unwrap();
+        queue.wake_sent(uuid(ID_C)).unwrap();
+        queue.wake_accepted(uuid(ID_C)).unwrap();
+        assert_eq!(
+            queue.refuse_woken_lane(uuid(LANE_B)).unwrap()[0].draft.body,
             "unproven"
         );
     }

@@ -353,8 +353,13 @@ fn apply_submission_response(
         }
     };
     handles.submissions.publish();
-    if let Some(submission) = accepted {
-        runtime.apply_steer_submission(&admitted, lane, submission.message, submission.attachments);
+    if let Some(payload) = accepted {
+        runtime.apply_steer_submission(
+            &admitted,
+            lane,
+            payload.message.clone(),
+            payload.attachments.clone(),
+        );
     }
     Ok(true)
 }

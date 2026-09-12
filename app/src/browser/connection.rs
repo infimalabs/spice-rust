@@ -957,8 +957,8 @@ async fn drain_submissions(
         let body = SteerSend {
             fanout: submission.fanout,
             lane: submission.lane,
-            message: submission.message.clone(),
-            attachments: submission.attachments.clone(),
+            message: submission.message().to_owned(),
+            attachments: submission.attachments().to_vec(),
         };
         let expected = vec![Witness::Residency {
             lane: submission.lane,
