@@ -21,83 +21,170 @@ enum RecordRead {
     Interrupted(std::io::Error),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct ForwardContinuation {
+    pub(super) line: u64,
+    pub(super) dialect: Option<listen::Dialect>,
+    pub(super) live_tail: bool,
+}
+
+pub(super) enum ForwardProgress {
+    More(ForwardContinuation),
+    Eof(ForwardContinuation),
+}
+
+pub(super) struct ForwardWindow {
+    pub(super) row: Option<DecodedRow>,
+    pub(super) progress: ForwardProgress,
+}
+
+pub(super) struct ForwardCursor<'a> {
+    source: &'a ResolvedSource,
+    reader: Box<dyn BufRead>,
+    start: Option<String>,
+    dialect: Option<listen::Dialect>,
+    line: u64,
+    within_horizon: bool,
+    live_tail: bool,
+    buffer: Vec<u8>,
+}
+
 pub(super) fn stream_records(
     source: &ResolvedSource,
     start: Option<&str>,
     work: &mut SessionWork,
     mut accept: impl FnMut(DecodedRow, &mut SessionWork, &str) -> Result<(), Refusal>,
 ) -> Result<Vendor, Refusal> {
-    let mut reader = transcript_reader(source, start, work)?;
-    work.begin_pass(&source.path.display().to_string())?;
-    let mut dialect = source.dialect;
-    let mut buffer = Vec::new();
-    let mut line = 0_u64;
-    let mut within_horizon = start.is_none();
+    let mut cursor = ForwardCursor::new(source, start, work)?;
     loop {
-        buffer.clear();
-        let at = format!(
-            "{}:record {}",
-            source.path.display(),
-            line.saturating_add(1)
-        );
-        let read = match read_record(reader.as_mut(), &mut buffer, work, &at)? {
-            RecordRead::Read { bytes, terminated } => {
-                if !terminated
-                    && let Some((observed, residue)) = live_tail_truncated_residue(
-                        source,
-                        line.saturating_add(1),
-                        &buffer,
-                        dialect,
-                    )?
-                {
-                    dialect = Some(observed);
-                    let row = DecodedRow::Residue(residue);
-                    work.admit_decoded(decoded_row_events(&row), &at)?;
-                    accept(row, work, &at)?;
-                    line = line.saturating_add(1);
-                    continue;
-                }
-                bytes
-            }
-            RecordRead::Interrupted(error) => {
-                let row =
-                    DecodedRow::Residue(read_residue(&source.path, line.saturating_add(1), &error));
-                work.admit_decoded(decoded_row_events(&row), &at)?;
-                accept(row, work, &at)?;
+        let window = cursor.advance(work)?;
+        if let Some(row) = window.row {
+            let at = cursor.record_locus();
+            accept(row, work, &at)?;
+        }
+        match window.progress {
+            ForwardProgress::More(next) => debug_assert!(cursor.is_at(next)),
+            ForwardProgress::Eof(end) => {
+                debug_assert!(cursor.is_at(end));
                 break;
             }
-            RecordRead::Eof => break,
-        };
-        line = line.saturating_add(1);
-        while matches!(buffer.last(), Some(b'\n' | b'\r')) {
-            buffer.pop();
-        }
-        if buffer.is_empty() {
-            continue;
-        }
-        debug_assert!(read > 0);
-        let (observed, row) = decode_row(source, line, &buffer, dialect)?;
-        dialect = observed.or(dialect);
-        work.admit_decoded(decoded_row_events(&row), &at)?;
-        match row {
-            DecodedRow::Typed(record) => {
-                if !within_horizon && start.is_some_and(|start| record_timestamp(&record) >= start)
-                {
-                    within_horizon = true;
-                }
-                if within_horizon {
-                    accept(DecodedRow::Typed(record), work, &at)?;
-                }
-            }
-            DecodedRow::Residue(residue) => accept(DecodedRow::Residue(residue), work, &at)?,
-            DecodedRow::Ignored => accept(DecodedRow::Ignored, work, &at)?,
         }
     }
-    Ok(if source.vendor.is_unknown() {
-        dialect.map_or(source.vendor, Vendor::inferred)
-    } else {
-        source.vendor
-    })
+    Ok(cursor.vendor())
+}
+
+impl<'a> ForwardCursor<'a> {
+    pub(super) fn new(
+        source: &'a ResolvedSource,
+        start: Option<&str>,
+        work: &mut SessionWork,
+    ) -> Result<Self, Refusal> {
+        let reader = transcript_reader(source, start, work)?;
+        work.begin_pass(&source.path.display().to_string())?;
+        Ok(Self {
+            source,
+            reader,
+            start: start.map(str::to_owned),
+            dialect: source.dialect,
+            line: 0,
+            within_horizon: start.is_none(),
+            live_tail: false,
+            buffer: Vec::new(),
+        })
+    }
+
+    pub(super) fn advance(&mut self, work: &mut SessionWork) -> Result<ForwardWindow, Refusal> {
+        self.buffer.clear();
+        let at = self.next_record_locus();
+        let (read, terminated) =
+            match read_record(self.reader.as_mut(), &mut self.buffer, work, &at)? {
+                RecordRead::Eof => return Ok(self.window(None, false)),
+                RecordRead::Interrupted(error) => {
+                    self.line = self.line.saturating_add(1);
+                    let row =
+                        DecodedRow::Residue(read_residue(&self.source.path, self.line, &error));
+                    work.admit_decoded(decoded_row_events(&row), &at)?;
+                    return Ok(self.window(Some(row), false));
+                }
+                RecordRead::Read { bytes, terminated } => (bytes, terminated),
+            };
+        self.line = self.line.saturating_add(1);
+        self.live_tail = !terminated && self.source.thread.is_some();
+        if self.live_tail
+            && let Some((observed, residue)) =
+                live_tail_truncated_residue(self.source, self.line, &self.buffer, self.dialect)?
+        {
+            self.dialect = Some(observed);
+            let row = DecodedRow::Residue(residue);
+            work.admit_decoded(decoded_row_events(&row), &at)?;
+            return Ok(self.window(Some(row), false));
+        }
+        while matches!(self.buffer.last(), Some(b'\n' | b'\r')) {
+            self.buffer.pop();
+        }
+        if self.buffer.is_empty() {
+            return Ok(self.window(None, terminated));
+        }
+        debug_assert!(read > 0 && read <= MAX_LINE_BYTES.saturating_add(2));
+        let (observed, row) = decode_row(self.source, self.line, &self.buffer, self.dialect)?;
+        self.dialect = observed.or(self.dialect);
+        work.admit_decoded(decoded_row_events(&row), &at)?;
+        let row = match row {
+            DecodedRow::Typed(record) => {
+                if !self.within_horizon
+                    && self
+                        .start
+                        .as_deref()
+                        .is_some_and(|start| record_timestamp(&record) >= start)
+                {
+                    self.within_horizon = true;
+                }
+                self.within_horizon.then_some(DecodedRow::Typed(record))
+            }
+            row => Some(row),
+        };
+        Ok(self.window(row, terminated))
+    }
+
+    fn window(&self, row: Option<DecodedRow>, more: bool) -> ForwardWindow {
+        let continuation = ForwardContinuation {
+            line: self.line,
+            dialect: self.dialect,
+            live_tail: self.live_tail,
+        };
+        let progress = if more {
+            ForwardProgress::More(continuation)
+        } else {
+            ForwardProgress::Eof(continuation)
+        };
+        ForwardWindow { row, progress }
+    }
+
+    fn is_at(&self, continuation: ForwardContinuation) -> bool {
+        self.line == continuation.line
+            && self.dialect == continuation.dialect
+            && self.live_tail == continuation.live_tail
+    }
+
+    fn next_record_locus(&self) -> String {
+        format!(
+            "{}:record {}",
+            self.source.path.display(),
+            self.line.saturating_add(1)
+        )
+    }
+
+    fn record_locus(&self) -> String {
+        format!("{}:record {}", self.source.path.display(), self.line)
+    }
+
+    pub(super) fn vendor(&self) -> Vendor {
+        if self.source.vendor.is_unknown() {
+            self.dialect.map_or(self.source.vendor, Vendor::inferred)
+        } else {
+            self.source.vendor
+        }
+    }
 }
 
 fn read_record(

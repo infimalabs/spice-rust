@@ -389,8 +389,8 @@ mod tests {
             concat!(
                 "{\"timestamp\":\"2026-01-01T00:00:01Z\",\"type\":\"compacted\",\"payload\":{}}\n",
                 "{\"timestamp\":\"2026-01-01T00:00:02Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"context_compacted\"}}\n",
-                "{\"timestamp\":\"2026-01-01T00:00:03Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"working\"}]}}\n",
-                "{\"timestamp\":\"2026-01-01T00:00:04Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"exec_command\",\"call_id\":\"command-one\",\"arguments\":\"{\\\"cmd\\\":\\\"cargo test\\\"}\"}}\n",
+                "{\"timestamp\":\"2026-01-01T00:00:03Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"x\"}]}}\n",
+                "{\"timestamp\":\"2026-01-01T00:00:04Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"exec_command\",\"call_id\":\"c\",\"arguments\":\"{\\\"cmd\\\":\\\"x\\\"}\"}}\n",
                 "{\"timestamp\":\"2026-01-01T00:00:05Z\",\"type\":\"compacted\"",
             ),
         )
@@ -429,7 +429,7 @@ mod tests {
         let derived_floor = message_text_bytes(&dataset.messages[0])
             .saturating_mul(2)
             .saturating_add(command_text_bytes(&dataset.commands[0]))
-            .saturating_add(text_bytes(["exec_command", "command-one"]));
+            .saturating_add(text_bytes(["exec_command", "c"]));
         finish_fold(&mut dataset, fold, &mut work, "fixture fold").expect("fold finishes");
         let residues = residues
             .finish(&mut work, "residue summary")
@@ -457,7 +457,6 @@ mod tests {
             .expect_err("source bytes stop before the first record");
         assert_eq!(refusal.reason(), "session::transcript-work-exhausted");
         assert_eq!(exhausted.report().source_bytes, 0);
-
         let retained_budget =
             SessionWorkBudget::new(1_048_576, 16, 16, 1, 1, deadline).expect("positive budget");
         let mut exhausted = SessionWork::new(retained_budget);
