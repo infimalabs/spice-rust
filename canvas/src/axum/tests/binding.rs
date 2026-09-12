@@ -10,13 +10,13 @@ async fn server_refuses_an_identity_for_another_app_generation_before_binding() 
     let mut version = app.version();
     version.app = wire::Digest::compute(wire::Domain::DistArtifact, b"another generation");
 
-    let error = Server::bind(
+    let error = Server::bind(Generation::new(
         epoch(),
         Capabilities::default(),
         version,
         app.source(),
         speech(),
-    )
+    ))
     .await
     .expect_err("mismatched app identity refuses");
 
@@ -31,10 +31,9 @@ async fn server_binds_ipv4_loopback_and_publishes_that_endpoint() {
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) =
-        Server::bind(epoch(), capabilities, app.version(), app.source(), speech())
-            .await
-            .expect("binds");
+    let (server, _control) = Server::bind(generation(&app, capabilities))
+        .await
+        .expect("binds");
     let address = server.local_addr().expect("local address");
     let discovery = server.discovery(operator()).expect("operator discovery");
 
@@ -63,11 +62,7 @@ async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin
             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
             Access::authenticated(REMOTE_TOKEN.to_owned()),
         ),
-        epoch(),
-        capabilities,
-        app.version(),
-        app.source(),
-        speech(),
+        generation(&app, capabilities),
         None,
         1,
     )
@@ -181,11 +176,7 @@ async fn a_non_loopback_listener_refuses_unauthenticated_access_before_bind() {
     let unavailable: SocketAddr = "192.0.2.1:9".parse().expect("documentation address");
     let error = Server::bind_with_capacity(
         Binding::new(unavailable, Access::local()),
-        epoch(),
-        Capabilities::default(),
-        app.version(),
-        app.source(),
-        speech(),
+        generation(&app, Capabilities::default()),
         None,
         1,
     )
@@ -214,11 +205,7 @@ async fn ipv6_loopback_binds_unauthenticated_while_both_wildcards_refuse() {
             SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0),
             Access::local(),
         ),
-        epoch(),
-        Capabilities::default(),
-        app.version(),
-        app.source(),
-        speech(),
+        generation(&app, Capabilities::default()),
         None,
         1,
     )
@@ -233,11 +220,7 @@ async fn ipv6_loopback_binds_unauthenticated_while_both_wildcards_refuse() {
     ] {
         let error = Server::bind_with_capacity(
             Binding::new(SocketAddr::new(wildcard, 0), Access::local()),
-            epoch(),
-            Capabilities::default(),
-            app.version(),
-            app.source(),
-            speech(),
+            generation(&app, Capabilities::default()),
             None,
             1,
         )

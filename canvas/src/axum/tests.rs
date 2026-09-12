@@ -183,6 +183,10 @@ fn speech() -> crate::SpeechConfig {
     crate::SpeechConfig::default()
 }
 
+fn generation(app: &TestApp, capabilities: Capabilities) -> Generation {
+    Generation::new(epoch(), capabilities, app.version(), app.source(), speech())
+}
+
 const FIXTURE_GENERATION: &str = "3333333333333333333333333333333333333333333333333333333333333333";
 
 fn seed_app_generation(root: &std::path::Path, label: &str) -> std::path::PathBuf {
@@ -465,11 +469,7 @@ async fn authenticated_socket_streams_bounded_bus_pages_updates_resume_and_typed
         .expect("operator capability");
     let (server, _control) = Server::bind_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
-        epoch(),
-        capabilities,
-        app.version(),
-        app.source(),
-        speech(),
+        generation(&app, capabilities),
         bus.reader(),
         8,
     )
@@ -540,11 +540,7 @@ async fn a_liveness_probe_is_answered_per_probe_and_still_admits_its_generation(
         .expect("operator capability");
     let (server, _control) = Server::bind_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
-        epoch(),
-        capabilities,
-        app.version(),
-        app.source(),
-        speech(),
+        generation(&app, capabilities),
         bus.reader(),
         8,
     )
@@ -622,11 +618,7 @@ async fn a_held_recall_does_not_block_a_probe_or_sibling_recall_on_one_socket() 
         .expect("operator capability");
     let (server, mut control) = Server::bind_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
-        epoch(),
-        capabilities,
-        app.version(),
-        app.source(),
-        speech(),
+        generation(&app, capabilities),
         bus.reader(),
         2,
     )
@@ -730,11 +722,7 @@ async fn authenticated_socket_reads_and_pushes_agent_messages_with_each_author()
         .expect("operator capability");
     let (server, _control) = Server::bind_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
-        epoch(),
-        capabilities,
-        app.version(),
-        app.source(),
-        speech(),
+        generation(&app, capabilities),
         bus.reader(),
         8,
     )
@@ -969,11 +957,7 @@ async fn capability_replacement_faults_the_live_stream_without_disclosure() {
         .expect("operator capability");
     let (server, _control) = Server::bind_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
-        epoch(),
-        capabilities.clone(),
-        app.version(),
-        app.source(),
-        speech(),
+        generation(&app, capabilities.clone()),
         bus.reader(),
         8,
     )
@@ -1024,11 +1008,7 @@ async fn blocked_command_delivery_turns_broadcast_lag_into_resumable_overflow() 
         .expect("operator capability");
     let (server, mut control) = Server::bind_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
-        epoch(),
-        capabilities,
-        app.version(),
-        app.source(),
-        speech(),
+        generation(&app, capabilities),
         bus.reader(),
         8,
     )
@@ -1223,13 +1203,13 @@ fn external_speech(command: &[&str]) -> crate::SpeechConfig {
 #[tokio::test(flavor = "current_thread")]
 async fn speech_endpoint_executes_only_the_server_owned_argv_contract() {
     let app = TestApp::new();
-    let (server, _control) = Server::bind(
+    let (server, _control) = Server::bind(Generation::new(
         epoch(),
         Capabilities::default(),
         app.version(),
         app.source(),
         external_speech(&["/bin/cat"]),
-    )
+    ))
     .await
     .expect("binds");
     let address = server.local_addr().expect("local address");
@@ -1274,13 +1254,13 @@ async fn speech_endpoint_bounds_disabled_malformed_and_unavailable_backends() {
         external_speech(&[]),
         external_speech(&["/definitely/missing/spice-speech"]),
     ] {
-        let (server, _control) = Server::bind(
+        let (server, _control) = Server::bind(Generation::new(
             epoch(),
             Capabilities::default(),
             app.version(),
             app.source(),
             speech,
-        )
+        ))
         .await
         .expect("binds");
         let address = server.local_addr().expect("local address");
@@ -1305,13 +1285,13 @@ async fn speech_endpoint_bounds_disabled_malformed_and_unavailable_backends() {
         assert!(task.await.expect_err("aborted server task").is_cancelled());
     }
 
-    let (server, _control) = Server::bind(
+    let (server, _control) = Server::bind(Generation::new(
         epoch(),
         Capabilities::default(),
         app.version(),
         app.source(),
         external_speech(&["/bin/cat"]),
-    )
+    ))
     .await
     .expect("binds");
     let address = server.local_addr().expect("local address");
@@ -1340,15 +1320,9 @@ async fn speech_endpoint_bounds_disabled_malformed_and_unavailable_backends() {
 #[tokio::test(flavor = "current_thread")]
 async fn live_server_serves_the_lane_app_and_refuses_another_host() {
     let app = TestApp::new();
-    let (server, _control) = Server::bind(
-        epoch(),
-        Capabilities::default(),
-        app.version(),
-        app.source(),
-        speech(),
-    )
-    .await
-    .expect("binds");
+    let (server, _control) = Server::bind(generation(&app, Capabilities::default()))
+        .await
+        .expect("binds");
     let address = server.local_addr().expect("local address");
     let task = tokio::spawn(server.up());
 
@@ -1451,11 +1425,13 @@ async fn live_server_keeps_serving_an_admitted_generation_from_memory() {
     let app = crate::AppSource::resolve(fixture.root()).expect("a complete stage resolves");
     let (server, _control) = Server::bind_with_capacity(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
-        epoch(),
-        Capabilities::default(),
-        app_version(&app),
-        app,
-        speech(),
+        Generation::new(
+            epoch(),
+            Capabilities::default(),
+            app_version(&app),
+            app,
+            speech(),
+        ),
         None,
         1,
     )

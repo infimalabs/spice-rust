@@ -22,13 +22,13 @@ async fn oversized_focused_evidence_survives_canvas_response_failure() {
     let app = canvas::AppSource::resolve(&root).expect("fixture Canvas app resolves");
     let version = crate::resident::canvas_version(&app, journal::SCHEMA_VERSION)
         .expect("Canvas identity builds");
-    let (server, mut control) = canvas::axum::Server::bind(
+    let (server, mut control) = canvas::axum::Server::bind(canvas::axum::Generation::new(
         epoch,
         capabilities,
         version,
         app,
         canvas::SpeechConfig::default(),
-    )
+    ))
     .await
     .expect("Canvas server binds");
     let address = server.local_addr().expect("Canvas server address");

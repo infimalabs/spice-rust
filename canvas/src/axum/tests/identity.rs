@@ -22,7 +22,14 @@ pub(super) async fn bind_test_server(
     app: &TestApp,
     capabilities: Capabilities,
 ) -> Result<(Server, Control), std::io::Error> {
-    Server::bind(epoch, capabilities, app.version(), app.source(), speech()).await
+    Server::bind(Generation::new(
+        epoch,
+        capabilities,
+        app.version(),
+        app.source(),
+        speech(),
+    ))
+    .await
 }
 
 /// One complete lane-built app whose directory lives exactly as long as its test.

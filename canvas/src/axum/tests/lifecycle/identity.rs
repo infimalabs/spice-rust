@@ -9,10 +9,9 @@ async fn bootstrap_names_the_exact_operator_generation_and_is_not_cached() {
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) =
-        Server::bind(epoch(), capabilities, app.version(), app.source(), speech())
-            .await
-            .expect("binds");
+    let (server, _control) = Server::bind(generation(&app, capabilities))
+        .await
+        .expect("binds");
     let address = server.local_addr().expect("local address");
     let task = tokio::spawn(server.up());
 

@@ -78,13 +78,16 @@ pub(super) async fn start_surface<'a>(
     let app_description = app.to_string();
     let CanvasBinding { listen, access } = binding;
     let CanvasAccess { policy, token } = access;
-    let (server, control) = canvas::axum::Server::bind_streaming(
-        canvas::axum::Binding::new(listen, policy),
+    let generation = canvas::axum::Generation::new(
         epoch,
         capabilities.clone(),
         version,
         app,
         config.speech.clone(),
+    );
+    let (server, control) = canvas::axum::Server::bind_streaming(
+        canvas::axum::Binding::new(listen, policy),
+        generation,
         bus.reader(),
         config.canvas.rows(),
     )
