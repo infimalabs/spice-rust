@@ -513,6 +513,5 @@ pub(crate) struct Dataset {
     pub(crate) compactions: Vec<CompactionRecord>,
     pub(crate) messages: Vec<MessageRecord>,
     pub(crate) commands: Vec<CommandRecord>,
-    pub(crate) tokens: Vec<TokenRecord>,
     pub(crate) residues: Vec<Residue>,
 }

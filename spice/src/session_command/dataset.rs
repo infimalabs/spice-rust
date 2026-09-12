@@ -20,10 +20,12 @@ use super::model::{
 };
 use super::source::ResolvedSource;
 
+mod aggregate;
 mod horizon;
 mod stream;
 mod work;
 
+pub(crate) use aggregate::Aggregate;
 pub(crate) use horizon::recent_compaction_horizon;
 use stream::stream_records;
 use work::{ResidueLedger, SessionWork, SessionWorkBudget, text_bytes};
@@ -86,6 +88,7 @@ pub(crate) fn load_since(
                     markers: &mut markers,
                     residues: &mut residues,
                     state: &mut fold,
+                    tokens: None,
                 };
                 reduce_record(&record, &mut storage, work, at)
             }
@@ -309,6 +312,7 @@ struct FoldStorage<'a> {
     markers: &'a mut Vec<Marker>,
     residues: &'a mut ResidueLedger,
     state: &'a mut FoldState,
+    tokens: Option<&'a mut Vec<TokenRecord>>,
 }
 
 fn reduce_record(
@@ -383,7 +387,14 @@ fn reduce_event(
             touch_turn(storage.dataset, index, timestamp, work, at)?;
         }
         Event::Tool(tool) => reduce_tool(record, tool, storage, work, at)?,
-        Event::Usage(usage) => push_usage(storage.dataset, record, usage, work, at)?,
+        Event::Usage(usage) => {
+            if let Some(tokens) = &mut storage.tokens
+                && let Some(token) = token_record(record, usage)
+            {
+                work.admit_retained_text(token_text_bytes(&token), at)?;
+                tokens.push(token);
+            }
+        }
         Event::Compaction(compaction) => {
             let marker = Marker {
                 source: record.source.clone(),
@@ -1070,13 +1081,7 @@ fn complete_tool_call(
     touch_turn(dataset, pending.turn, record_timestamp(record), work, at)
 }
 
-fn push_usage(
-    dataset: &mut Dataset,
-    record: &TypedRecord,
-    usage: &listen::Usage,
-    work: &mut SessionWork,
-    at: &str,
-) -> Result<(), Refusal> {
+fn token_record(record: &TypedRecord, usage: &listen::Usage) -> Option<TokenRecord> {
     let context = ContextSnapshot::admit(
         record_timestamp(record),
         record.context.model_context_window,
@@ -1088,7 +1093,7 @@ fn push_usage(
         .saturating_add(usage.output_tokens)
         .saturating_add(reasoning);
     if total == 0 {
-        return Ok(());
+        return None;
     }
     let token = TokenRecord {
         source: record.source.clone(),
@@ -1100,9 +1105,7 @@ fn push_usage(
         total,
         model_context_window: context.model_context_window,
     };
-    work.admit_retained_text(token_text_bytes(&token), at)?;
-    dataset.tokens.push(token);
-    Ok(())
+    Some(token)
 }
 
 fn reconstruct_compactions(
@@ -1199,9 +1202,6 @@ fn sort_dataset(dataset: &mut Dataset) {
     });
     dataset
         .commands
-        .sort_by(|left, right| (&left.ts, &left.source).cmp(&(&right.ts, &right.source)));
-    dataset
-        .tokens
         .sort_by(|left, right| (&left.ts, &left.source).cmp(&(&right.ts, &right.source)));
 }
 

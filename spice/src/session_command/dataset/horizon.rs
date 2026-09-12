@@ -516,6 +516,7 @@ mod tests {
                         markers: &mut markers,
                         residues: &mut residues,
                         state: &mut fold,
+                        tokens: None,
                     };
                     reduce_record(&record, &mut storage, work, at)?;
                 }
@@ -570,6 +571,7 @@ mod tests {
                     markers: &mut markers,
                     residues: &mut residues,
                     state: &mut fold,
+                    tokens: None,
                 };
                 reduce_record(&record, &mut storage, work, at)
             }

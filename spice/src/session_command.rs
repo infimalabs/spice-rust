@@ -329,10 +329,14 @@ fn build(
             )
         })?;
         let resolved = source::resolve_thread(&id, environment)?;
-        let data = dataset::load(&resolved)?;
-        return Ok(project::thread(&data, id));
+        return Ok(dataset::Aggregate::scan(&resolved, 0)?.thread(id));
     }
 
+    if action == "summary" {
+        project::summary_recent(matches)?;
+    } else if action == "phases" {
+        project::phase_options(matches)?;
+    }
     let files = project::values(matches, "FILES");
     let sources = source::resolve_inputs(&files, environment)?;
     build_resolved(matches, path, action, sources, environment)
@@ -346,6 +350,17 @@ fn build_resolved(
     environment: &Environment,
 ) -> Result<Report, Refusal> {
     let filters = project::Filters::from_matches(matches)?;
+    if action == "summary" {
+        let recent = project::summary_recent(matches)?;
+        return Ok(dataset::Aggregate::scan(&sources, recent)?.summary());
+    }
+    if action == "tokens" {
+        return Ok(dataset::Aggregate::scan(&sources, 0)?.tokens(project::tokens_by_file(matches)));
+    }
+    if action == "phases" {
+        let options = project::phase_options(matches)?;
+        return dataset::Aggregate::scan_phases(&sources, options, filters);
+    }
     let data = if matches!(action, "briefing" | "sweep") {
         let count = project::horizon_count(matches, action)?;
         let horizon = dataset::recent_compaction_horizon(&sources, count, filters.end_bound())?;
@@ -360,13 +375,10 @@ fn build_resolved(
             project::recall(&data, matches, &filters, authorities)
         }
         "sweep" => project::sweep(&data, matches, &filters),
-        "summary" => project::summary(&data, matches),
-        "tokens" => Ok(project::tokens(&data, matches)),
         "timeline" => project::timeline(&data, matches, &filters),
         "turns" => project::turns(&data, matches, &filters),
         "compactions" => project::compactions(&data, matches),
         "slices" => project::slices(&data, matches),
-        "phases" => project::phases(&data, matches, &filters),
         "messages" => project::messages(&data, matches),
         "commits" => project::commits(&data, matches),
         "commands" => project::commands(&data, matches),
