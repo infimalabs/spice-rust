@@ -7,11 +7,11 @@ use super::*;
 
 pub(in crate::resident) fn send(
     bus: &Bus,
-    paths: &RuntimePaths,
     epoch: CanonicalUuid,
     config: &steer::Config,
     command: &wire::AdmittedCommand,
     send: &wire::intent::SteerSend,
+    effects: &mut CommandEffects,
 ) -> Outcome<CommandAnswer> {
     if let Err(outcome) = admit_send_content(send) {
         return outcome;
@@ -119,7 +119,7 @@ pub(in crate::resident) fn send(
     {
         return typed_store_fault("steer::receipt-invalid", &error.to_string());
     }
-    finish(bus, paths, residency.body(), send.lane, proposal, answer)
+    finish(bus, send.lane, proposal, answer, effects)
 }
 
 fn admit_send_content(send: &wire::intent::SteerSend) -> Result<(), Outcome<CommandAnswer>> {
@@ -148,10 +148,10 @@ fn admit_send_content(send: &wire::intent::SteerSend) -> Result<(), Outcome<Comm
 
 pub(in crate::resident) fn cancel(
     bus: &Bus,
-    paths: &RuntimePaths,
     epoch: CanonicalUuid,
     command: &wire::AdmittedCommand,
     cancel: &wire::intent::DirectiveRef,
+    effects: &mut CommandEffects,
 ) -> Outcome<CommandAnswer> {
     let (_, indexed) = match directive_head(bus, cancel.directive) {
         Ok(snapshot) => snapshot,
@@ -207,18 +207,11 @@ pub(in crate::resident) fn cancel(
     ) {
         return typed_store_fault("steer::receipt-invalid", &error.to_string());
     }
-    let residency = match current_residency(bus, epoch) {
+    let _residency = match current_residency(bus, epoch) {
         Ok(residency) => residency,
         Err(outcome) => return typed_outcome(outcome),
     };
-    finish(
-        bus,
-        paths,
-        residency.body(),
-        directive.body().lane,
-        proposal,
-        answer,
-    )
+    finish(bus, directive.body().lane, proposal, answer, effects)
 }
 
 pub(in crate::resident) fn resend(
@@ -228,6 +221,7 @@ pub(in crate::resident) fn resend(
     config: &steer::Config,
     command: &wire::AdmittedCommand,
     resend: &wire::intent::DirectiveRef,
+    effects: &mut CommandEffects,
 ) -> Outcome<CommandAnswer> {
     if !matches!(command.actor(), Actor::Operator) {
         return refusal(
@@ -277,16 +271,7 @@ pub(in crate::resident) fn resend(
         return resend_snapshot(bus, paths, residency.body(), &directive, position, answer);
     }
     commit_resend(
-        bus,
-        paths,
-        epoch,
-        command,
-        resend,
-        residency.body(),
-        &directive,
-        at,
-        stages,
-        answer,
+        bus, epoch, command, resend, &directive, at, stages, answer, effects,
     )
 }
 
@@ -327,15 +312,14 @@ fn resend_snapshot(
 #[allow(clippy::too_many_arguments)]
 fn commit_resend(
     bus: &Bus,
-    paths: &RuntimePaths,
     epoch: CanonicalUuid,
     command: &wire::AdmittedCommand,
     resend: &wire::intent::DirectiveRef,
-    residency: &ResidencyHead,
     directive: &journal::JournalHead<wire::SteeringHead>,
     at: Instant,
     stages: Vec<wire::body::SteeringStage>,
     answer: DirectiveAnswer,
+    effects: &mut CommandEffects,
 ) -> Outcome<CommandAnswer> {
     let origin = directive.body().origin.clone();
     let cause = directive.body().created;
@@ -374,23 +358,16 @@ fn commit_resend(
     ) {
         return typed_store_fault("steer::receipt-invalid", &error.to_string());
     }
-    finish(
-        bus,
-        paths,
-        residency,
-        directive.body().lane,
-        proposal,
-        answer,
-    )
+    finish(bus, directive.body().lane, proposal, answer, effects)
 }
 
 pub(in crate::resident) fn recover(
     bus: &Bus,
-    paths: &RuntimePaths,
     epoch: CanonicalUuid,
     config: &steer::Config,
     command: &wire::AdmittedCommand,
     recover: &wire::intent::DirectiveRef,
+    effects: &mut CommandEffects,
 ) -> Outcome<CommandAnswer> {
     if !matches!(command.actor(), Actor::Operator) {
         return refusal(
@@ -400,7 +377,7 @@ pub(in crate::resident) fn recover(
             "submit recovery through the current operator discovery",
         );
     }
-    let residency = match current_residency(bus, epoch) {
+    let _residency = match current_residency(bus, epoch) {
         Ok(residency) => residency,
         Err(outcome) => return typed_outcome(outcome),
     };
@@ -502,7 +479,7 @@ pub(in crate::resident) fn recover(
     ) {
         return typed_store_fault("steer::recovery-receipt-invalid", &error.to_string());
     }
-    finish(bus, paths, residency.body(), lane, proposal, answer)
+    finish(bus, lane, proposal, answer, effects)
 }
 
 pub(in crate::resident) fn dispose(
@@ -511,6 +488,7 @@ pub(in crate::resident) fn dispose(
     epoch: CanonicalUuid,
     command: &wire::AdmittedCommand,
     dispose: &wire::intent::SteerDispose,
+    effects: &mut CommandEffects,
 ) -> Outcome<CommandAnswer> {
     if !matches!(
         dispose.disposition,
@@ -572,16 +550,15 @@ pub(in crate::resident) fn dispose(
     match recognition.outcome {
         ScanOutcome::Retired { key, disposition } => record_disposition(
             bus,
-            paths,
             epoch,
             command,
             dispose,
-            residency.body(),
             indexed.expect("the scanner retires only an indexed live key"),
             *actor_lane,
             key,
             disposition,
             recognition.locus,
+            effects,
         ),
         ScanOutcome::Missed { token, miss } => record_miss(
             bus,
@@ -599,16 +576,15 @@ pub(in crate::resident) fn dispose(
 #[allow(clippy::too_many_arguments)]
 fn record_disposition(
     bus: &Bus,
-    paths: &RuntimePaths,
     epoch: CanonicalUuid,
     command: &wire::AdmittedCommand,
     dispose: &wire::intent::SteerDispose,
-    residency: &ResidencyHead,
     directive: journal::JournalHead<wire::SteeringHead>,
     actor_lane: CanonicalUuid,
     key: steer::Key,
     disposition: Disposition,
     locus: TranscriptLocus,
+    effects: &mut CommandEffects,
 ) -> Outcome<CommandAnswer> {
     if directive.body().lane != actor_lane {
         return refusal(
@@ -636,49 +612,17 @@ fn record_disposition(
         Producer::AckScanner,
     );
     proposal.guard(live_guard(directive.body().directive, directive.position()));
-    let cause = FactCause::Existing(directive.body().created);
-    let (pending, next) = match disposition {
-        Disposition::Acked => {
-            let body = wire::body::SteerAcked {
-                directive: directive.body().directive,
-                key: key.to_string(),
-                lane: directive.body().lane,
-                epoch,
-                locus,
-            };
-            let pending = match proposal.fact(body.clone(), cause) {
-                Ok(pending) => pending,
-                Err(error) => return typed_store_fault("steer::fact-invalid", &error.to_string()),
-            };
-            let next =
-                steer::Ledger::transition_head(directive.body(), steer::Steering::Acked(&body), at);
-            (pending, next)
-        }
-        Disposition::Declined => {
-            let body = wire::body::SteerDeclined {
-                directive: directive.body().directive,
-                key: key.to_string(),
-                lane: directive.body().lane,
-                epoch,
-                locus,
-                reason: "declined at the cited assistant transcript locus".to_owned(),
-            };
-            let pending = match proposal.fact(body.clone(), cause) {
-                Ok(pending) => pending,
-                Err(error) => return typed_store_fault("steer::fact-invalid", &error.to_string()),
-            };
-            let next = steer::Ledger::transition_head(
-                directive.body(),
-                steer::Steering::Declined(&body),
-                at,
-            );
-            (pending, next)
-        }
-        _ => unreachable!("the transcript scanner emits only terminal lane dispositions"),
-    };
-    let next = match next {
-        Ok(next) => next,
-        Err(error) => return typed_store_fault("steer::index-invalid", &error.to_string()),
+    let (pending, next) = match append_disposition(
+        &mut proposal,
+        &directive,
+        &key,
+        disposition,
+        locus,
+        epoch,
+        at,
+    ) {
+        Ok(transition) => transition,
+        Err(outcome) => return outcome,
     };
     proposal.steering_head(pending, move |_| next);
     let answer = DirectiveAnswer {
@@ -695,14 +639,65 @@ fn record_disposition(
     ) {
         return typed_store_fault("steer::receipt-invalid", &error.to_string());
     }
-    finish(
-        bus,
-        paths,
-        residency,
-        directive.body().lane,
-        proposal,
-        answer,
-    )
+    finish(bus, directive.body().lane, proposal, answer, effects)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_disposition(
+    proposal: &mut JournalWrite,
+    directive: &journal::JournalHead<wire::SteeringHead>,
+    key: &steer::Key,
+    disposition: Disposition,
+    locus: TranscriptLocus,
+    epoch: CanonicalUuid,
+    at: Instant,
+) -> Result<(PendingFact, wire::SteeringHead), Outcome<CommandAnswer>> {
+    let cause = FactCause::Existing(directive.body().created);
+    let (pending, next) = match disposition {
+        Disposition::Acked => {
+            let body = wire::body::SteerAcked {
+                directive: directive.body().directive,
+                key: key.to_string(),
+                lane: directive.body().lane,
+                epoch,
+                locus,
+            };
+            let pending = match proposal.fact(body.clone(), cause) {
+                Ok(pending) => pending,
+                Err(error) => {
+                    return Err(typed_store_fault("steer::fact-invalid", &error.to_string()));
+                }
+            };
+            let next =
+                steer::Ledger::transition_head(directive.body(), steer::Steering::Acked(&body), at);
+            (pending, next)
+        }
+        Disposition::Declined => {
+            let body = wire::body::SteerDeclined {
+                directive: directive.body().directive,
+                key: key.to_string(),
+                lane: directive.body().lane,
+                epoch,
+                locus,
+                reason: "declined at the cited assistant transcript locus".to_owned(),
+            };
+            let pending = match proposal.fact(body.clone(), cause) {
+                Ok(pending) => pending,
+                Err(error) => {
+                    return Err(typed_store_fault("steer::fact-invalid", &error.to_string()));
+                }
+            };
+            let next = steer::Ledger::transition_head(
+                directive.body(),
+                steer::Steering::Declined(&body),
+                at,
+            );
+            (pending, next)
+        }
+        _ => unreachable!("the transcript scanner emits only terminal lane dispositions"),
+    };
+    next.map(|next| (pending, next))
+        .map_err(|error| typed_store_fault("steer::index-invalid", &error.to_string()))
 }
 
 #[allow(clippy::too_many_arguments)]

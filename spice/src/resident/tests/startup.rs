@@ -282,10 +282,9 @@ fn assert_steer_send_response(
         Some(&serde_json::json!("live")),
         "directive remains live after socket dispatch"
     );
-    assert_eq!(
-        reply.body.pointer("/delivery/standing"),
-        Some(&serde_json::json!("published")),
-        "socket dispatch publishes the selected lane inbox before replying"
+    assert!(
+        reply.body.get("delivery").is_none(),
+        "the durable receipt precedes disposable inbox projection"
     );
 }
 
@@ -637,7 +636,7 @@ async fn control_dispatch_waits_until_the_socket_response_is_attempted() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn socket_dispatch_publishes_three_lane_fanout_before_any_restart_or_ack() {
+async fn socket_dispatch_replies_then_projects_three_lane_fanout() {
     let (root, paths) = resident_fixture("socket-three-lane-fanout");
     stage_canvas_app(&root);
     let repository = Repository::discover(&root).expect("fixture repository resolves");

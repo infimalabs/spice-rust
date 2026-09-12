@@ -9,9 +9,10 @@ use wire::intent::{CommandAnswer, Intent};
 use wire::{Actor, CanonicalUuid, CommandKind, Outcome, Refusal, Reply};
 
 use super::{
-    RuntimePaths, SurfaceConfig, dispatch_proof_recognize, dispatch_release_publish,
-    dispatch_up_change, lane_recovery, lane_surface, lifecycle, policy_surface,
-    read_materializations::CurrentReads, settings_surface, steering,
+    CommandDispatch, CommandEffects, RuntimePaths, SurfaceConfig, current_residency,
+    dispatch_proof_recognize, dispatch_release_publish, dispatch_up_change, lane_recovery,
+    lane_surface, lifecycle, policy_surface, read_materializations::CurrentReads, settings_surface,
+    steering,
 };
 
 pub(super) struct Surface<'a> {
@@ -102,7 +103,7 @@ impl<'a> Surface<'a> {
         &self,
         seats: &mut Seats,
         command: &wire::AdmittedCommand,
-    ) -> Outcome<CommandAnswer> {
+    ) -> CommandDispatch {
         if let Some(outcome) = crate::board_command::dispatch_with_repository(
             self.bus,
             command,
@@ -110,19 +111,21 @@ impl<'a> Surface<'a> {
             &self.config.projects,
             &self.config.allocation,
         ) {
-            return outcome;
+            return CommandDispatch::ordinary(outcome);
         }
         if let Some(outcome) = self.dispatch_lane(seats, command) {
-            return outcome;
+            return CommandDispatch::ordinary(outcome);
         }
-        if let Some(outcome) = self.dispatch_controls(command) {
-            return outcome;
+        if let Some(dispatched) = self.dispatch_controls(command) {
+            return dispatched;
         }
-        Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
-            PlaceholderReason::HandlerNotLanded.to_reason(),
-            None,
-            Some(command.kind().to_string()),
-            None,
+        CommandDispatch::ordinary(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                PlaceholderReason::HandlerNotLanded.to_reason(),
+                None,
+                Some(command.kind().to_string()),
+                None,
+            ),
         )))
     }
 
@@ -186,8 +189,14 @@ impl<'a> Surface<'a> {
         }
     }
 
-    fn dispatch_controls(&self, command: &wire::AdmittedCommand) -> Option<Outcome<CommandAnswer>> {
-        match (command.kind(), command.body()) {
+    fn dispatch_controls(&self, command: &wire::AdmittedCommand) -> Option<CommandDispatch> {
+        self.dispatch_steering(command)
+            .or_else(|| self.dispatch_policy(command).map(CommandDispatch::ordinary))
+    }
+
+    fn dispatch_steering(&self, command: &wire::AdmittedCommand) -> Option<CommandDispatch> {
+        let mut effects = CommandEffects::default();
+        let outcome = match (command.kind(), command.body()) {
             (CommandKind::SteerInbox, Intent::SteerInbox(inbox)) => Some(steering::inbox(
                 self.bus, self.paths, self.epoch, command, inbox,
             )),
@@ -196,14 +205,18 @@ impl<'a> Surface<'a> {
             )),
             (CommandKind::SteerSend, Intent::SteerSend(send)) => Some(steering::send(
                 self.bus,
-                self.paths,
                 self.epoch,
                 &self.config.steering,
                 command,
                 send,
+                &mut effects,
             )),
             (CommandKind::SteerCancel, Intent::DirectiveRef(cancel)) => Some(steering::cancel(
-                self.bus, self.paths, self.epoch, command, cancel,
+                self.bus,
+                self.epoch,
+                command,
+                cancel,
+                &mut effects,
             )),
             (CommandKind::SteerResend, Intent::DirectiveRef(resend)) => Some(steering::resend(
                 self.bus,
@@ -212,18 +225,31 @@ impl<'a> Surface<'a> {
                 &self.config.steering,
                 command,
                 resend,
+                &mut effects,
             )),
             (CommandKind::SteerRecover, Intent::DirectiveRef(recover)) => Some(steering::recover(
                 self.bus,
-                self.paths,
                 self.epoch,
                 &self.config.steering,
                 command,
                 recover,
+                &mut effects,
             )),
             (CommandKind::SteerDispose, Intent::SteerDispose(dispose)) => Some(steering::dispose(
-                self.bus, self.paths, self.epoch, command, dispose,
+                self.bus,
+                self.paths,
+                self.epoch,
+                command,
+                dispose,
+                &mut effects,
             )),
+            _ => None,
+        }?;
+        Some(CommandDispatch::with_effects(outcome, effects))
+    }
+
+    fn dispatch_policy(&self, command: &wire::AdmittedCommand) -> Option<Outcome<CommandAnswer>> {
+        match (command.kind(), command.body()) {
             (CommandKind::GlobalSettingsRead, Intent::GlobalSettingsRead(_)) => {
                 Some(settings_surface::read(self.bus))
             }
@@ -266,6 +292,11 @@ impl<'a> Surface<'a> {
             }
             _ => None,
         }
+    }
+
+    pub(super) fn project_inbox(&self, lane: CanonicalUuid) -> super::CommandResult<()> {
+        let residency = current_residency(self.bus, self.epoch)?;
+        steering::publish_inbox(self.bus, self.paths, residency.body(), lane)
     }
 
     pub(super) fn reconcile_lifecycle(

@@ -19,6 +19,42 @@ use wire::{
 
 type CommandResult<T> = Result<T, Outcome<()>>;
 
+#[derive(Default)]
+struct CommandEffects {
+    inbox_projection: Option<CanonicalUuid>,
+}
+
+impl CommandEffects {
+    fn project_inbox(&mut self, lane: CanonicalUuid) {
+        assert!(
+            self.inbox_projection.replace(lane).is_none(),
+            "one command cannot project more than one lane inbox"
+        );
+    }
+}
+
+struct CommandDispatch {
+    outcome: Outcome<CommandAnswer>,
+    effects: CommandEffects,
+}
+
+impl CommandDispatch {
+    fn ordinary(outcome: Outcome<CommandAnswer>) -> Self {
+        Self {
+            outcome,
+            effects: CommandEffects::default(),
+        }
+    }
+
+    fn with_effects(outcome: Outcome<CommandAnswer>, effects: CommandEffects) -> Self {
+        Self { outcome, effects }
+    }
+
+    fn into_parts(self) -> (Outcome<CommandAnswer>, CommandEffects) {
+        (self.outcome, self.effects)
+    }
+}
+
 pub(crate) const SIMULATED_VENDOR: &str = "simulated";
 pub(crate) const SIMULATED_DISPOSITION: &str = "simulated";
 

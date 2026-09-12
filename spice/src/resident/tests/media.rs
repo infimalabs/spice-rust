@@ -47,18 +47,20 @@ fn direct_steer_send_refuses_invalid_media_before_journal_mutation() {
     .expect("crossing admission leaves resident media validation authoritative");
     let before = bus.fact_snapshot().expect("journal reads before refusal");
 
+    let mut effects = CommandEffects::default();
     let outcome = steering::send(
         &bus,
-        &paths,
         epoch,
         &steer::Config::default(),
         &command,
         &request,
+        &mut effects,
     );
     assert!(matches!(
         outcome,
         Outcome::Refusal(refusal) if refusal.reason() == "steer::media-invalid"
     ));
+    assert!(effects.inbox_projection.is_none());
 
     let after = bus.fact_snapshot().expect("journal reads after refusal");
     assert_eq!(after.horizon(), before.horizon());
@@ -109,17 +111,7 @@ fn operator_media_replays_after_restart_into_the_browsable_pending_directive() {
         epoch,
     })
     .expect("operator send admits");
-    assert!(matches!(
-        steering::send(
-            &bus,
-            &paths,
-            epoch,
-            &steer::Config::default(),
-            &send_command,
-            &send,
-        ),
-        Outcome::Reply(_)
-    ));
+    send_and_project(&bus, &paths, epoch, &send_command, &send);
     let inbox = paths
         .inbox_for_worktree(&worktree)
         .expect("fixture worktree inbox resolves");
@@ -144,6 +136,46 @@ fn operator_media_replays_after_restart_into_the_browsable_pending_directive() {
         .expect("published directive authority verifies");
     bus.shutdown().expect("first resident generation stops");
 
+    assert_media_replays(&paths, epoch, lane, &media);
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+fn send_and_project(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    command: &wire::AdmittedCommand,
+    send: &wire::intent::SteerSend,
+) {
+    let mut effects = CommandEffects::default();
+    assert!(matches!(
+        steering::send(
+            bus,
+            epoch,
+            &steer::Config::default(),
+            command,
+            send,
+            &mut effects,
+        ),
+        Outcome::Reply(Reply {
+            body: CommandAnswer::Directive(answer),
+            ..
+        }) if matches!(*answer.delivery, wire::intent::DeliveryStanding::Unknown)
+    ));
+    let projected = effects
+        .inbox_projection
+        .expect("durable send schedules its lane projection");
+    let residency = current_residency(bus, epoch).expect("current residency reads");
+    steering::publish_inbox(bus, paths, residency.body(), projected)
+        .expect("post-receipt projection publishes the inbox");
+}
+
+fn assert_media_replays(
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    media: &wire::Media,
+) {
     let bus = Bus::start(journal::Journal::open(&paths.journal).expect("journal reopens"))
         .expect("replacement bus starts");
     let inbox_request = wire::intent::SteerInbox { lane: Some(lane) };
@@ -173,7 +205,7 @@ fn operator_media_replays_after_restart_into_the_browsable_pending_directive() {
     assert_eq!(inbox.lanes[0].pending.len(), 1);
     assert_eq!(
         inbox.lanes[0].pending[0].attachments.as_slice(),
-        std::slice::from_ref(&media),
+        std::slice::from_ref(media),
     );
     assert_eq!(
         inbox.lanes[0].pending[0].attachments[0]
@@ -184,5 +216,4 @@ fn operator_media_replays_after_restart_into_the_browsable_pending_directive() {
 
     bus.verify().expect("replayed authority verifies");
     bus.shutdown().expect("replacement bus stops");
-    fs::remove_dir_all(root).expect("fixture cleanup");
 }
