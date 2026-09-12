@@ -1,5 +1,6 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::io;
+use std::num::NonZeroUsize;
 use std::path::Path;
 
 use listen::{
@@ -29,6 +30,7 @@ use stream::stream_records;
 use work::{ResidueLedger, SessionWork, SessionWorkBudget, text_bytes};
 
 const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_FRONTIER_RESULTS: usize = 4 * 1024;
 
 #[derive(Debug)]
 struct TypedRecord {
@@ -78,21 +80,11 @@ pub(crate) fn load_since(
     let mut work = SessionWork::new(SessionWorkBudget::report());
     for source in sources {
         let source_name = source.path.display().to_string();
-        let mut fold = FoldState::default();
-        let vendor = stream_records(source, start, &mut work, |row, work, at| match row {
-            DecodedRow::Typed(record) => {
-                let mut storage = FoldStorage {
-                    dataset: &mut dataset,
-                    markers: &mut markers,
-                    residues: &mut residues,
-                    state: &mut fold,
-                };
-                reduce_record(&record, &mut storage, work, at)
-            }
-            DecodedRow::Residue(residue) => residues.push(residue, work, at),
-            DecodedRow::Ignored => Ok(()),
+        let mut fold = WindowFold::new(&mut dataset, &mut markers, &mut residues);
+        let vendor = stream_records(source, start, &mut work, |row, work, at| {
+            fold.push(row, work, at)
         })?;
-        finish_fold(&mut dataset, fold, &mut work, &source_name)?;
+        fold.finish(&mut work, &source_name)?;
         let source_view = SourceView {
             name: source.path.file_name().map_or_else(
                 || source_name.clone(),
@@ -309,6 +301,133 @@ struct FoldStorage<'a> {
     markers: &'a mut Vec<Marker>,
     residues: &'a mut ResidueLedger,
     state: &'a mut FoldState,
+}
+
+struct WindowFold<'a> {
+    dataset: &'a mut Dataset,
+    markers: &'a mut Vec<Marker>,
+    residues: &'a mut ResidueLedger,
+    state: FoldState,
+}
+
+impl<'a> WindowFold<'a> {
+    fn new(
+        dataset: &'a mut Dataset,
+        markers: &'a mut Vec<Marker>,
+        residues: &'a mut ResidueLedger,
+    ) -> Self {
+        Self {
+            dataset,
+            markers,
+            residues,
+            state: FoldState::default(),
+        }
+    }
+
+    fn push(&mut self, row: DecodedRow, work: &mut SessionWork, at: &str) -> Result<(), Refusal> {
+        match row {
+            DecodedRow::Typed(record) => reduce_record(
+                &record,
+                &mut FoldStorage {
+                    dataset: self.dataset,
+                    markers: self.markers,
+                    residues: self.residues,
+                    state: &mut self.state,
+                },
+                work,
+                at,
+            ),
+            DecodedRow::Residue(residue) => self.residues.push(residue, work, at),
+            DecodedRow::Ignored => Ok(()),
+        }
+    }
+
+    fn finish(self, work: &mut SessionWork, at: &str) -> Result<(), Refusal> {
+        finish_fold(self.dataset, self.state, work, at)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum FrontierDirection {
+    Oldest,
+    Newest,
+}
+
+enum FrontierProgress<C> {
+    More(C),
+    Complete(C),
+    Refused { continuation: C, error: Refusal },
+}
+
+struct ResultFrontier<T, C> {
+    direction: FrontierDirection,
+    limit: NonZeroUsize,
+    rows: VecDeque<T>,
+    progress: Option<FrontierProgress<C>>,
+}
+
+struct FrontierPage<T, C> {
+    rows: Vec<T>,
+    progress: FrontierProgress<C>,
+}
+
+impl<T, C> ResultFrontier<T, C> {
+    fn new(limit: usize, direction: FrontierDirection) -> Result<Self, Refusal> {
+        let limit = frontier_limit(limit)?;
+        Ok(Self {
+            direction,
+            limit,
+            rows: VecDeque::with_capacity(limit.get()),
+            progress: None,
+        })
+    }
+
+    fn push(&mut self, row: T) {
+        if self.rows.len() < self.limit.get() {
+            self.rows.push_back(row);
+        } else if matches!(self.direction, FrontierDirection::Newest) {
+            self.rows.pop_front();
+            self.rows.push_back(row);
+        }
+    }
+
+    fn is_full(&self) -> bool {
+        self.rows.len() == self.limit.get()
+    }
+
+    fn more(&mut self, continuation: C) {
+        self.progress = Some(FrontierProgress::More(continuation));
+    }
+
+    fn complete(&mut self, continuation: C) {
+        self.progress = Some(FrontierProgress::Complete(continuation));
+    }
+
+    fn refuse(&mut self, continuation: C, error: Refusal) {
+        self.progress = Some(FrontierProgress::Refused {
+            continuation,
+            error,
+        });
+    }
+
+    fn into_page(self) -> Option<FrontierPage<T, C>> {
+        self.progress.map(|progress| FrontierPage {
+            rows: self.rows.into(),
+            progress,
+        })
+    }
+}
+
+fn frontier_limit(limit: usize) -> Result<NonZeroUsize, Refusal> {
+    NonZeroUsize::new(limit)
+        .filter(|limit| limit.get() <= MAX_FRONTIER_RESULTS)
+        .ok_or_else(|| {
+            refusal(
+                "session::result-frontier-invalid",
+                Some(format!("limit={limit} maximum={MAX_FRONTIER_RESULTS}")),
+                "use one positive capped session result limit",
+            )
+        })
 }
 
 fn reduce_record(

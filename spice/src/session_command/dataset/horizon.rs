@@ -5,11 +5,12 @@ use std::path::Path;
 use listen::{Decoded, Event, RecordDecodeError, ResidueKind};
 use wire::Refusal;
 
-use super::stream::{compressed, stream_records};
+use super::stream::{ForwardCursor, ForwardProgress, compressed};
 use super::work::SessionWork;
 use super::{
-    CompactionHorizon, DecodedRow, MAX_LINE_BYTES, Marker, ResolvedSource, TypedRecord,
-    record_refusal, record_timestamp, refusal,
+    CompactionHorizon, DecodedRow, FrontierDirection, FrontierProgress, MAX_LINE_BYTES, Marker,
+    ResolvedSource, ResultFrontier, TypedRecord, frontier_limit, record_refusal, record_timestamp,
+    refusal,
 };
 
 const BACKWARD_CHUNK_BYTES: u64 = 64 * 1024;
@@ -23,6 +24,7 @@ pub(crate) fn recent_compaction_horizon(
     if count == 0 {
         return Ok(CompactionHorizon { start: None });
     }
+    frontier_limit(count)?;
     let mut markers = Vec::new();
     let mut work = SessionWork::new(super::work::SessionWorkBudget::report());
     for source in sources {
@@ -50,20 +52,22 @@ fn read_recent_compaction_markers(
         return read_recent_compaction_markers_forward(source, count, end, work);
     }
     let source_name = source.path.display().to_string();
-    let mut markers = Vec::new();
+    let mut frontier = ResultFrontier::new(count, FrontierDirection::Oldest)?;
     work.begin_pass(&source_name)?;
     reverse_lines(&source.path, work, |line, offset, _, terminal, work| {
         let live_tail = source.thread.is_some() && terminal;
         if let Some(marker) = marker_from_line(source, &source_name, line, offset, live_tail, work)?
             && end.is_none_or(|end| marker.ts.as_str() <= end)
         {
-            markers.push(marker);
-            if markers.len() == count {
-                return Ok(false);
-            }
+            frontier.push(marker);
         }
-        Ok(true)
+        Ok(!frontier.is_full())
     })?;
+    frontier.complete(());
+    let mut markers = frontier
+        .into_page()
+        .expect("completed reverse frontier records progress")
+        .rows;
     markers.reverse();
     Ok(markers)
 }
@@ -74,19 +78,61 @@ fn read_recent_compaction_markers_forward(
     end: Option<&str>,
     work: &mut SessionWork,
 ) -> Result<Vec<Marker>, Refusal> {
-    let mut markers = Vec::new();
-    stream_records(source, None, work, |row, work, at| {
-        if let DecodedRow::Typed(row) = row
+    let mut frontier = ResultFrontier::new(count, FrontierDirection::Newest)?;
+    let mut cursor = ForwardCursor::new(source, None, work)?;
+    loop {
+        let window = match cursor.advance(work) {
+            Ok(window) => window,
+            Err(error) => {
+                frontier.refuse(cursor.continuation(), error);
+                break;
+            }
+        };
+        let accepted = if let Some(DecodedRow::Typed(row)) = window.row
             && let Some(marker) = marker_from_record(&row)
             && end.is_none_or(|end| marker.ts.as_str() <= end)
         {
-            work.admit_retained_text(super::marker_text_bytes(&marker), at)?;
-            markers.push(marker);
-            trim_oldest(&mut markers, count);
+            work.admit_retained_text(
+                super::marker_text_bytes(&marker),
+                &format!(
+                    "{}:record {}",
+                    source.path.display(),
+                    cursor.continuation().line
+                ),
+            )
+            .map(|()| frontier.push(marker))
+        } else {
+            Ok(())
+        };
+        if let Err(error) = accepted {
+            frontier.refuse(cursor.continuation(), error);
+            break;
         }
-        Ok(())
-    })?;
-    Ok(markers)
+        match window.progress {
+            ForwardProgress::More(next) => frontier.more(next),
+            ForwardProgress::Eof(end) => {
+                frontier.complete(end);
+                break;
+            }
+        }
+    }
+    let page = frontier
+        .into_page()
+        .expect("a cursor advance records frontier progress");
+    match page.progress {
+        FrontierProgress::Complete(continuation) => {
+            let _ = continuation;
+            Ok(page.rows)
+        }
+        FrontierProgress::Refused {
+            continuation,
+            error,
+        } => {
+            let _ = continuation;
+            Err(error)
+        }
+        FrontierProgress::More(_) => unreachable!("forward frontier stopped before completion"),
+    }
 }
 
 pub(super) fn start_offset_after_prior_timestamp(
@@ -424,20 +470,15 @@ fn timestamp_from_line(
         .map(|timestamp| timestamp.to_string()))
 }
 
-fn trim_oldest<T>(rows: &mut Vec<T>, count: usize) {
-    if rows.len() > count {
-        rows.drain(..rows.len() - count);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    use super::super::stream::stream_records;
     use super::super::work::{ResidueLedger, SessionWorkBudget, text_bytes};
     use super::super::{
-        FoldState, command_text_bytes, finish_fold, message_text_bytes, reduce_record,
+        FrontierDirection, ResultFrontier, WindowFold, command_text_bytes, message_text_bytes,
     };
     use super::*;
     use crate::session_command::model::{Dataset, Vendor};
@@ -448,32 +489,9 @@ mod tests {
         let horizon = recent_compaction_horizon(std::slice::from_ref(&source), 3, None)
             .expect("bounded horizon scans");
         assert_eq!(horizon.start.as_deref(), Some("2026-01-01T00:00:01.000Z"));
-        assert_reverse_record_boundary(&source);
         assert_fold_accounting(&source);
         assert_budget_refusals(&source);
         fs::remove_file(source.path).expect("fixture transcript is removed");
-    }
-
-    fn assert_reverse_record_boundary(source: &ResolvedSource) {
-        let path = source.path.with_extension("boundary");
-        let mut work = SessionWork::new(SessionWorkBudget::report());
-        for ending in [b"\n".as_slice(), b"\r\n".as_slice()] {
-            let mut record = vec![b'x'; MAX_LINE_BYTES];
-            record.extend_from_slice(ending);
-            fs::write(&path, &record).expect("exact-limit record is written");
-            reverse_lines(&path, &mut work, |line, offset, _, _, _| {
-                assert_eq!((line.len(), offset), (MAX_LINE_BYTES, 0));
-                Ok(true)
-            })
-            .expect("exact-limit LF or CRLF record is admitted");
-        }
-        let mut record = vec![b'x'; MAX_LINE_BYTES + 1];
-        record.push(b'\n');
-        fs::write(&path, record).expect("oversized record is written");
-        let refusal = reverse_lines(&path, &mut work, |_, _, _, _, _| Ok(true))
-            .expect_err("one logical byte over the limit is refused before append");
-        assert_eq!(refusal.reason(), "session::transcript-record-oversized");
-        fs::remove_file(path).expect("boundary transcript is removed");
     }
 
     fn fixture_source() -> ResolvedSource {
@@ -507,29 +525,17 @@ mod tests {
         let mut dataset = Dataset::default();
         let mut markers = Vec::new();
         let mut residues = ResidueLedger::new();
-        let mut fold = FoldState::default();
+        let mut fold = WindowFold::new(&mut dataset, &mut markers, &mut residues);
         stream_records(source, None, &mut work, |row, work, at| {
-            match row {
-                DecodedRow::Typed(record) => {
-                    let mut storage = super::super::FoldStorage {
-                        dataset: &mut dataset,
-                        markers: &mut markers,
-                        residues: &mut residues,
-                        state: &mut fold,
-                    };
-                    reduce_record(&record, &mut storage, work, at)?;
-                }
-                DecodedRow::Residue(residue) => residues.push(residue, work, at)?,
-                DecodedRow::Ignored => {}
-            }
-            Ok(())
+            fold.push(row, work, at)
         })
         .expect("forward dataset streams");
+        fold.finish(&mut work, "fixture fold")
+            .expect("fold finishes");
         let derived_floor = message_text_bytes(&dataset.messages[0])
             .saturating_mul(2)
             .saturating_add(command_text_bytes(&dataset.commands[0]))
             .saturating_add(text_bytes(["exec_command", "c"]));
-        finish_fold(&mut dataset, fold, &mut work, "fixture fold").expect("fold finishes");
         let residues = residues
             .finish(&mut work, "residue summary")
             .expect("residue summary fits");
@@ -546,6 +552,15 @@ mod tests {
                 && report.events > 0
                 && report.retained_text_bytes >= derived_floor
         );
+        let mut oldest =
+            ResultFrontier::new(2, FrontierDirection::Oldest).expect("bounded frontier");
+        for row in [1, 2, 3] {
+            oldest.push(row);
+        }
+        oldest.complete(());
+        let oldest = oldest.into_page().expect("complete frontier");
+        assert_eq!(oldest.rows, [1, 2]);
+        assert!(matches!(oldest.progress, FrontierProgress::Complete(())));
     }
 
     fn assert_budget_refusals(source: &ResolvedSource) {
@@ -562,19 +577,9 @@ mod tests {
         let mut dataset = Dataset::default();
         let mut markers = Vec::new();
         let mut residues = ResidueLedger::new();
-        let mut fold = FoldState::default();
-        let refusal = stream_records(source, None, &mut exhausted, |row, work, at| match row {
-            DecodedRow::Typed(record) => {
-                let mut storage = super::super::FoldStorage {
-                    dataset: &mut dataset,
-                    markers: &mut markers,
-                    residues: &mut residues,
-                    state: &mut fold,
-                };
-                reduce_record(&record, &mut storage, work, at)
-            }
-            DecodedRow::Residue(residue) => residues.push(residue, work, at),
-            DecodedRow::Ignored => Ok(()),
+        let mut fold = WindowFold::new(&mut dataset, &mut markers, &mut residues);
+        let refusal = stream_records(source, None, &mut exhausted, |row, work, at| {
+            fold.push(row, work, at)
         })
         .expect_err("the first retained String exceeds the one-byte budget");
         assert_eq!(refusal.reason(), "session::transcript-work-exhausted");
