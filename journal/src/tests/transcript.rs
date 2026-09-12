@@ -46,6 +46,15 @@ fn an_accounted_batch_and_its_checkpoint_round_trip_through_the_write_path() {
         .expect("read the written checkpoint")
         .expect("the write path stored the checkpoint");
     assert_eq!(stored.body(), &head);
+    let indexed_lane: String = journal
+        .connection
+        .query_row(
+            "SELECT lane FROM transcript_source_heads WHERE stream = ?1",
+            [head.key().as_str()],
+            |row| row.get(0),
+        )
+        .expect("written lane predicate reads");
+    assert_eq!(indexed_lane, head.lane.to_string());
 
     let snapshot = journal.fact_snapshot().expect("fact snapshot");
     let decoded: wire::body::JournalIngested = snapshot.facts()[0]
@@ -67,13 +76,29 @@ fn an_accounted_batch_and_its_checkpoint_round_trip_through_the_write_path() {
 #[test]
 fn a_transcript_head_whose_stream_disagrees_with_its_row_is_refused() {
     let journal = authority_fixture();
+    journal
+        .connection
+        .execute(
+            "UPDATE transcript_source_heads SET lane = \
+             '018f82d4-6f59-7d06-92e3-bce913116399'",
+            [],
+        )
+        .expect("corrupt transcript lane predicate");
+    assert!(refused_violations(&journal).iter().any(|violation| {
+        violation.class == ViolationClass::Head
+            && violation.detail.contains("lane predicate disagrees")
+    }));
+
     let mut renamed = transcript_source_head();
     renamed.stream = "sidecar".to_owned();
     journal
         .connection
         .execute(
-            "UPDATE transcript_source_heads SET body = ?1",
-            params![wire::encode(&renamed).expect("encode renamed transcript head")],
+            "UPDATE transcript_source_heads SET lane = ?1, body = ?2",
+            params![
+                renamed.lane.to_string(),
+                wire::encode(&renamed).expect("encode renamed transcript head")
+            ],
         )
         .expect("corrupt transcript head fixture");
 
@@ -152,8 +177,9 @@ fn a_captured_bundle_verifies_the_transcript_head_it_carries() {
 /// three fields rather than on the stream name it used to take.
 #[test]
 fn a_transcript_head_is_addressed_by_lane_vendor_and_stream_together() {
-    let journal = authority_fixture();
+    let mut journal = authority_fixture();
     let head = transcript_source_head();
+    let before = measured_lane_heads(&journal, &head.lane);
 
     let addressed = wire::TranscriptStreamKey::new(&head.lane, &head.vendor, &head.stream);
     let stored = journal
@@ -162,13 +188,10 @@ fn a_transcript_head_is_addressed_by_lane_vendor_and_stream_together() {
         .expect("the three logical fields address the stored head");
     assert_eq!(stored.body(), &head);
 
-    let elsewhere = wire::TranscriptStreamKey::new(
-        &"018f82d4-6f59-7d06-92e3-bce913116306"
-            .parse::<CanonicalUuid>()
-            .expect("a second lane identity"),
-        &head.vendor,
-        &head.stream,
-    );
+    let other_lane = "018f82d4-6f59-7d06-92e3-bce913116306"
+        .parse::<CanonicalUuid>()
+        .expect("a second lane identity");
+    let elsewhere = wire::TranscriptStreamKey::new(&other_lane, &head.vendor, &head.stream);
     assert!(
         journal
             .read(|read| read.transcript_source_head(&elsewhere))
@@ -176,6 +199,63 @@ fn a_transcript_head_is_addressed_by_lane_vendor_and_stream_together() {
             .is_none(),
         "the same stream name under another lane resolved to this lane's head",
     );
+
+    let transaction = journal
+        .connection
+        .transaction()
+        .expect("unrelated transcript growth transaction begins");
+    for offset in 0..64 {
+        let mut unrelated = head.clone();
+        unrelated.lane = other_lane;
+        unrelated.stream = format!("retained-{offset:03}");
+        transaction
+            .execute(
+                "INSERT INTO transcript_source_heads(stream, lane, head_seq, body) \
+                 VALUES (?1, ?2, 2, ?3)",
+                params![
+                    unrelated.key().as_str(),
+                    unrelated.lane.to_string(),
+                    wire::encode(&unrelated).expect("encode unrelated transcript head")
+                ],
+            )
+            .expect("insert unrelated transcript head");
+    }
+    transaction
+        .commit()
+        .expect("unrelated transcript heads commit");
+
+    assert_eq!(measured_lane_heads(&journal, &head.lane), before);
+    assert_eq!(before.queries, 1);
+    assert_eq!(before.rows, 1);
+    assert!(before.decoded_bytes > 0);
+    let plan = journal
+        .connection
+        .prepare(
+            "EXPLAIN QUERY PLAN SELECT stream, lane, head_seq, body \
+             FROM transcript_source_heads WHERE lane = ?1 ORDER BY stream",
+        )
+        .expect("lane query plan prepares")
+        .query_map([head.lane.to_string()], |row| row.get::<_, String>(3))
+        .expect("lane query plan rows")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("lane query plan reads")
+        .join("\n");
+    assert!(
+        plan.contains("transcript_source_heads_lane_stream"),
+        "lane transcript lookup must use its covering order: {plan}"
+    );
+}
+
+fn measured_lane_heads(
+    journal: &Journal,
+    lane: &CanonicalUuid,
+) -> crate::guard::IndexedReadMetrics {
+    crate::guard::reset_indexed_read_metrics();
+    let heads = journal
+        .read(|read| read.transcript_source_heads(lane))
+        .expect("lane transcript heads read");
+    assert_eq!(heads.len(), 1);
+    crate::guard::indexed_read_metrics()
 }
 
 /// One batch that advanced the fixture checkpoint to where it now stands.

@@ -652,13 +652,16 @@ fn apply_heads(
                 .map_err(sqlite_fault)?;
             continue;
         }
+        if row.transcript_lane.is_some() {
+            apply_transcript_head(transaction, &row)?;
+            continue;
+        }
         let statement = format!(
             "INSERT INTO {table}({key}, head_seq, body) VALUES (?1, ?2, ?3) \
              ON CONFLICT({key}) DO UPDATE SET head_seq = excluded.head_seq, body = excluded.body",
             table = row.table,
             key = row.key_column,
         );
-        let claim = row.claim;
         match &row.key {
             HeadKey::Text(key) => transaction
                 .execute(&statement, params![key, to_sql(row.seq)?, &row.body])
@@ -667,22 +670,54 @@ fn apply_heads(
                 .execute(&statement, params![1_i64, to_sql(row.seq)?, &row.body])
                 .map_err(sqlite_fault)?,
         };
-        if let Some(claim) = claim {
-            let HeadKey::Text(stamp) = &row.key else {
-                unreachable!("claim head construction always supplies its task stamp")
-            };
-            transaction
-                .execute(
-                    "INSERT INTO claim_index(stamp, actor, disposition, head_seq) \
-                     VALUES (?1, ?2, ?3, ?4) \
-                     ON CONFLICT(stamp) DO UPDATE SET \
-                        actor = excluded.actor, disposition = excluded.disposition, \
-                        head_seq = excluded.head_seq",
-                    params![stamp, claim.actor, claim.disposition, to_sql(row.seq)?],
-                )
-                .map_err(sqlite_fault)?;
+        if row.claim.is_some() {
+            apply_claim_index(transaction, &row)?;
         }
     }
+    Ok(())
+}
+
+fn apply_transcript_head(
+    transaction: &rusqlite::Transaction<'_>,
+    row: &HeadRow,
+) -> Result<(), CommitError> {
+    let (HeadKey::Text(stream), Some(lane)) = (&row.key, &row.transcript_lane) else {
+        unreachable!("transcript head construction supplies its stream and lane")
+    };
+    transaction
+        .execute(
+            "INSERT INTO transcript_source_heads(stream, lane, head_seq, body) \
+             VALUES (?1, ?2, ?3, ?4) \
+             ON CONFLICT(stream) DO UPDATE SET lane = excluded.lane, \
+                head_seq = excluded.head_seq, body = excluded.body",
+            params![stream, lane, to_sql(row.seq)?, &row.body],
+        )
+        .map_err(sqlite_fault)?;
+    Ok(())
+}
+
+fn apply_claim_index(
+    transaction: &rusqlite::Transaction<'_>,
+    row: &HeadRow,
+) -> Result<(), CommitError> {
+    let (HeadKey::Text(stamp), Some(claim)) = (&row.key, &row.claim) else {
+        unreachable!("claim head construction supplies its task stamp and predicates")
+    };
+    transaction
+        .execute(
+            "INSERT INTO claim_index(stamp, actor, lane, disposition, head_seq) \
+             VALUES (?1, ?2, ?3, ?4, ?5) \
+             ON CONFLICT(stamp) DO UPDATE SET actor = excluded.actor, lane = excluded.lane, \
+                disposition = excluded.disposition, head_seq = excluded.head_seq",
+            params![
+                stamp,
+                claim.actor,
+                claim.lane,
+                claim.disposition,
+                to_sql(row.seq)?
+            ],
+        )
+        .map_err(sqlite_fault)?;
     Ok(())
 }
 

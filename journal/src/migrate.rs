@@ -10,6 +10,7 @@ mod claim_index;
 mod creation_context;
 mod fact_bounds;
 mod identity_stamp;
+mod lane_predicates;
 mod release_notes;
 mod renewal_organization;
 mod residency_lineage;
@@ -610,6 +611,7 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (19, MigrationStep::FactIndexes),
     (20, MigrationStep::FactEnvelopeBounds),
     (21, MigrationStep::FactEnvelopeTriggers),
+    (22, MigrationStep::Rust(lane_predicates::migrate)),
 ];
 
 /// Schema 19 to 20: bounded fact-kind recovery.
@@ -848,13 +850,16 @@ CREATE TABLE claim_heads (
 CREATE TABLE claim_index (
     stamp TEXT PRIMARY KEY REFERENCES claim_heads(stamp),
     actor TEXT NOT NULL,
+    lane TEXT NOT NULL,
     disposition TEXT NOT NULL CHECK (disposition IN ('active', 'freed', 'lapsed')),
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq)
 ) STRICT;
 CREATE INDEX claim_index_actor_disposition_stamp
-    ON claim_index(actor, disposition, stamp);
+    ON claim_index(actor, disposition, stamp, lane, head_seq);
 CREATE INDEX claim_index_disposition_actor
     ON claim_index(disposition, actor);
+CREATE INDEX claim_index_disposition_lane_stamp
+    ON claim_index(disposition, lane, stamp, head_seq);
 CREATE TABLE lease_heads (
     stamp TEXT PRIMARY KEY REFERENCES task_heads(stamp),
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
@@ -877,9 +882,12 @@ CREATE TABLE finding_heads (
 ) STRICT;
 CREATE TABLE transcript_source_heads (
     stream TEXT PRIMARY KEY,
+    lane TEXT NOT NULL,
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
     body BLOB NOT NULL
 ) STRICT;
+CREATE INDEX transcript_source_heads_lane_stream
+    ON transcript_source_heads(lane, stream, head_seq);
 CREATE TABLE steering_heads (
     directive TEXT PRIMARY KEY,
     steer_key TEXT NOT NULL UNIQUE,
@@ -925,8 +933,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 22, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 23, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 22;
+PRAGMA user_version = 23;
 "#;

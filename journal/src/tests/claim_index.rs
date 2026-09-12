@@ -1,58 +1,60 @@
-//! Bounded current-claim authority and schema-8 index admission.
+//! Bounded current-claim authority and indexed predicate admission.
 
 use super::*;
 
 use crate::{FactCause, JournalWrite};
-use wire::body::{ClaimFreed, ClaimWon, SourceBoundary, TaskAdded, TaskNoted};
+use wire::body::{ClaimFreed, ClaimWon, SourceBoundary, TaskAdded};
 use wire::{ClaimCell, Producer};
 
 #[test]
-fn exact_actor_and_peer_count_work_stay_constant_as_board_and_history_grow() {
+fn actor_and_active_lane_work_stay_constant_as_inactive_claim_heads_grow() {
     let mut journal = authority_fixture();
     let before = measured_claim_authority(&journal);
 
-    let mut notes = JournalWrite::new(
+    let peers = (1..=64)
+        .map(|offset| add_claimed_task(&mut journal, offset, Actor::Operator))
+        .collect::<Vec<_>>();
+    let mut free = JournalWrite::new(
         Actor::Operator,
-        "task:claim-index-scale".parse().expect("scale origin"),
+        "task:claim-index-peer".parse().expect("peer origin"),
         instant(),
         Producer::CommandDoor,
     );
-    for offset in 0..256 {
-        notes
+    for task in peers {
+        let mut head = journal
+            .read(|read| read.claim_head(&task))
+            .expect("peer claim reads")
+            .expect("peer claim exists")
+            .into_body();
+        let fact = free
             .fact(
-                TaskNoted {
-                    task: task_head().born,
-                    note: format!("unrelated history {offset}"),
+                ClaimFreed {
+                    task: task.clone(),
+                    actor: Actor::Operator,
                 },
-                FactCause::Root,
+                FactCause::Existing(head.claimed),
             )
-            .expect("unrelated fact builds");
+            .expect("peer release fact builds");
+        head.disposition = ClaimDisposition::Freed;
+        free.claim_head(task, fact, move |position| {
+            head.fact = position;
+            head
+        });
     }
-    journal.apply(notes).expect("unrelated facts commit");
-
-    let mut tasks = JournalWrite::new(
-        Actor::Operator,
-        "task:claim-index-scale".parse().expect("scale origin"),
-        instant(),
-        Producer::CommandDoor,
-    );
-    for offset in 1..=256_u64 {
-        add_unclaimed_task(&mut tasks, offset);
-    }
-    journal.apply(tasks).expect("unrelated board tasks commit");
+    journal.apply(free).expect("inactive claim heads commit");
 
     let after = measured_claim_authority(&journal);
     assert_eq!(after, before);
     assert_eq!(
-        before.queries, 5,
-        "claim, three exact heads, and peer count"
+        before.queries, 6,
+        "claim, three exact heads, peer count, and active lanes"
     );
-    assert_eq!(before.rows, 5, "only the selected bundle and aggregate row");
+    assert_eq!(before.rows, 6, "only the selected heads and aggregates");
     assert!(before.decoded_bytes > 0, "the selected bundle was decoded");
 
     let actor_plan = query_plan(
         &journal,
-        "SELECT indexed.stamp, indexed.actor, indexed.disposition, \
+        "SELECT indexed.stamp, indexed.actor, indexed.lane, indexed.disposition, \
                 indexed.head_seq, heads.head_seq, heads.body \
          FROM claim_index AS indexed \
          JOIN claim_heads AS heads ON heads.stamp = indexed.stamp \
@@ -71,6 +73,19 @@ fn exact_actor_and_peer_count_work_stay_constant_as_board_and_history_grow() {
     assert!(
         peer_plan.contains("claim_index_disposition_actor"),
         "peer count must use the active-disposition index: {peer_plan}"
+    );
+    let lane_plan = query_plan(
+        &journal,
+        "SELECT indexed.stamp, indexed.lane, indexed.disposition, \
+                indexed.head_seq, heads.head_seq, heads.body \
+         FROM claim_index AS indexed \
+         JOIN claim_heads AS heads ON heads.stamp = indexed.stamp \
+         WHERE indexed.disposition = 'active' \
+         ORDER BY indexed.lane, indexed.stamp",
+    );
+    assert!(
+        lane_plan.contains("claim_index_disposition_lane_stamp"),
+        "active lane lookup must use its covering order: {lane_plan}"
     );
 }
 
@@ -134,14 +149,24 @@ fn claim_disposition_update_replaces_the_index_predicate_atomically() {
             FactCause::Existing(observed.claimed),
         )
         .expect("peer release fact builds");
+    let expected_lane = observed.lane;
     let mut inactive = observed;
     inactive.disposition = ClaimDisposition::Freed;
-    free.claim_head(peer, freed, move |position| {
+    free.claim_head(peer.clone(), freed, move |position| {
         inactive.fact = position;
         inactive
     });
     journal.apply(free).expect("peer release commits");
 
+    let indexed_lane: String = journal
+        .connection
+        .query_row(
+            "SELECT lane FROM claim_index WHERE stamp = ?1",
+            [peer.as_str()],
+            |row| row.get(0),
+        )
+        .expect("indexed claim lane reads");
+    assert_eq!(indexed_lane, expected_lane.to_string());
     assert_eq!(
         journal
             .read(|read| read.active_claim_count_excluding(&Actor::Spice))
@@ -156,10 +181,11 @@ fn verification_names_claim_index_predicate_disagreement() {
     journal
         .connection
         .execute(
-            "UPDATE claim_index SET actor = 'operator' WHERE stamp = '1kKRRsDP'",
+            "UPDATE claim_index SET lane = '018f82d4-6f59-7d06-92e3-bce913116399' \
+             WHERE stamp = '1kKRRsDP'",
             [],
         )
-        .expect("corrupt indexed actor fixture");
+        .expect("corrupt indexed lane fixture");
 
     let error = journal
         .verify()
@@ -201,11 +227,12 @@ fn schema_seven_claim_heads_backfill_the_index_once() {
 
 fn measured_claim_authority(journal: &Journal) -> crate::guard::IndexedReadMetrics {
     crate::guard::reset_indexed_read_metrics();
-    let (own, peers) = journal
+    let (own, peers, lanes) = journal
         .read(|read| {
             Ok((
                 read.active_claim_for_actor(&Actor::Spice)?,
                 read.active_claim_count_excluding(&Actor::Spice)?,
+                read.actively_claimed_lanes()?,
             ))
         })
         .expect("bounded claim authority reads");
@@ -214,6 +241,7 @@ fn measured_claim_authority(journal: &Journal) -> crate::guard::IndexedReadMetri
         task_head().born
     );
     assert_eq!(peers, 0);
+    assert_eq!(lanes, vec![claim_head().lane]);
     crate::guard::indexed_read_metrics()
 }
 

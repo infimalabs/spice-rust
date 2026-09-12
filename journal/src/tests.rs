@@ -968,8 +968,8 @@ fn insert_heads(journal: &Journal) {
     journal
         .connection
         .execute(
-            "INSERT INTO claim_index(stamp, actor, disposition, head_seq) \
-             VALUES ('1kKRRsDP', 'spice', 'active', 2)",
+            "INSERT INTO claim_index(stamp, actor, lane, disposition, head_seq) \
+             VALUES ('1kKRRsDP', 'spice', '018f82d4-6f59-7d06-92e3-bce913116302', 'active', 2)",
             [],
         )
         .expect("insert claim index fixture");
@@ -1018,14 +1018,18 @@ fn insert_heads(journal: &Journal) {
         },
     );
     let transcript = transcript_source_head();
-    insert_head(
-        &journal.connection,
-        "transcript_source_heads",
-        "stream",
-        transcript.key().as_str(),
-        2,
-        &transcript,
-    );
+    journal
+        .connection
+        .execute(
+            "INSERT INTO transcript_source_heads(stream, lane, head_seq, body) \
+             VALUES (?1, ?2, 2, ?3)",
+            params![
+                transcript.key().as_str(),
+                transcript.lane.to_string(),
+                wire::encode(&transcript).expect("encode transcript source head")
+            ],
+        )
+        .expect("insert transcript source head fixture");
     journal
         .connection
         .execute(

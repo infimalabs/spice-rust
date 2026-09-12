@@ -783,16 +783,7 @@ fn verify_heads(
                 .ok_or_else(|| "finding identity disagrees with the row".to_owned())
         },
     )?;
-    count += verify_keyed_heads::<wire::TranscriptSourceHead>(
-        connection,
-        "transcript_source_heads",
-        violations,
-        |key, _seq, head| {
-            (head.key().as_str() == key)
-                .then_some(())
-                .ok_or_else(|| "transcript stream disagrees with the row".to_owned())
-        },
-    )?;
+    count += verify_transcript_heads(connection, violations)?;
     count += verify_residency(connection, violations)?;
     Ok(count)
 }
@@ -804,7 +795,7 @@ fn verify_claim_index(
     let mut statement = connection
         .prepare(
             "SELECT keys.stamp, heads.head_seq, heads.body, \
-                    indexed.actor, indexed.disposition, indexed.head_seq \
+                    indexed.actor, indexed.lane, indexed.disposition, indexed.head_seq \
              FROM (SELECT stamp FROM claim_heads UNION SELECT stamp FROM claim_index) AS keys \
              LEFT JOIN claim_heads AS heads ON heads.stamp = keys.stamp \
              LEFT JOIN claim_index AS indexed ON indexed.stamp = keys.stamp \
@@ -819,12 +810,13 @@ fn verify_claim_index(
                 row.get::<_, Option<Vec<u8>>>(2)?,
                 row.get::<_, Option<String>>(3)?,
                 row.get::<_, Option<String>>(4)?,
-                row.get::<_, Option<i64>>(5)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<i64>>(6)?,
             ))
         })
         .map_err(VerifyError::Sqlite)?;
     for row in rows {
-        let (stamp, head_seq, body, actor, disposition, indexed_seq) =
+        let (stamp, head_seq, body, actor, lane, disposition, indexed_seq) =
             row.map_err(VerifyError::Sqlite)?;
         let locus = format!("claim_index:{stamp}");
         let (Some(head_seq), Some(body)) = (head_seq, body) else {
@@ -835,7 +827,8 @@ fn verify_claim_index(
             ));
             continue;
         };
-        let (Some(actor), Some(disposition), Some(indexed_seq)) = (actor, disposition, indexed_seq)
+        let (Some(actor), Some(lane), Some(disposition), Some(indexed_seq)) =
+            (actor, lane, disposition, indexed_seq)
         else {
             violations.push(Violation::new(
                 ViolationClass::Head,
@@ -859,7 +852,10 @@ fn verify_claim_index(
             wire::ClaimDisposition::Freed => "freed",
             wire::ClaimDisposition::Lapsed => "lapsed",
         };
-        if actor != head.actor.to_string() || disposition != expected_disposition {
+        if actor != head.actor.to_string()
+            || lane != head.lane.to_string()
+            || disposition != expected_disposition
+        {
             violations.push(Violation::new(
                 ViolationClass::Head,
                 locus,
@@ -868,6 +864,54 @@ fn verify_claim_index(
         }
     }
     Ok(())
+}
+
+fn verify_transcript_heads(
+    connection: &Connection,
+    violations: &mut Vec<Violation>,
+) -> Result<usize, VerifyError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT stream, lane, head_seq, body \
+             FROM transcript_source_heads ORDER BY stream",
+        )
+        .map_err(VerifyError::Sqlite)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, Vec<u8>>(3)?,
+            ))
+        })
+        .map_err(VerifyError::Sqlite)?;
+    let mut count = 0;
+    for row in rows {
+        let (stream, lane, _seq, body) = row.map_err(VerifyError::Sqlite)?;
+        count += 1;
+        let locus = format!("transcript_source_heads:{stream}");
+        match decode_canonical::<wire::TranscriptSourceHead>(&body) {
+            Ok(head) => {
+                if head.key().as_str() != stream {
+                    violations.push(Violation::new(
+                        ViolationClass::Head,
+                        locus.clone(),
+                        "transcript stream disagrees with the row",
+                    ));
+                }
+                if head.lane.to_string() != lane {
+                    violations.push(Violation::new(
+                        ViolationClass::Head,
+                        locus,
+                        "transcript lane predicate disagrees with the row",
+                    ));
+                }
+            }
+            Err(detail) => violations.push(Violation::new(ViolationClass::Head, locus, detail)),
+        }
+    }
+    Ok(count)
 }
 
 fn verify_keyed_heads<T>(

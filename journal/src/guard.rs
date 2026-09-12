@@ -709,7 +709,7 @@ impl JournalWrite {
             move |seq| {
                 let head = build(seq);
                 let key = head.key().into_string();
-                HeadRow::text("transcript_source_heads", "stream", key, seq, &head)
+                HeadRow::transcript(key, seq, &head)
             },
         ));
     }
@@ -827,10 +827,12 @@ struct HeadRow {
     body: Vec<u8>,
     steering: Option<SteeringHeadColumns>,
     claim: Option<ClaimIndexColumns>,
+    transcript_lane: Option<String>,
 }
 
 struct ClaimIndexColumns {
     actor: String,
+    lane: String,
     disposition: &'static str,
 }
 
@@ -861,6 +863,7 @@ impl HeadRow {
             body: wire::encode(body).map_err(|error| error.to_string())?,
             steering: None,
             claim: None,
+            transcript_lane: None,
         })
     }
 
@@ -877,6 +880,7 @@ impl HeadRow {
             body: wire::encode(body).map_err(|error| error.to_string())?,
             steering: None,
             claim: None,
+            transcript_lane: None,
         })
     }
 
@@ -893,8 +897,10 @@ impl HeadRow {
             steering: None,
             claim: Some(ClaimIndexColumns {
                 actor: head.actor.to_string(),
+                lane: head.lane.to_string(),
                 disposition: claim_disposition_name(head.disposition),
             }),
+            transcript_lane: None,
         })
     }
 
@@ -919,7 +925,18 @@ impl HeadRow {
                 minted_micros: head.minted_micros,
             }),
             claim: None,
+            transcript_lane: None,
         })
+    }
+
+    fn transcript(
+        key: String,
+        seq: wire::Seq,
+        head: &wire::TranscriptSourceHead,
+    ) -> Result<Self, String> {
+        let mut row = Self::text("transcript_source_heads", "stream", key, seq, head)?;
+        row.transcript_lane = Some(head.lane.to_string());
+        Ok(row)
     }
 }
 
