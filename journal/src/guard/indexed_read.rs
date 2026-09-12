@@ -495,32 +495,7 @@ impl JournalRead<'_> {
     /// The union makes loose workflow, claim, and lease rows observable rather
     /// than silently treating the statement table as the complete key set.
     pub fn task_heads(&self) -> Result<Vec<TaskHeads>, GuardError> {
-        let mut statement = self
-            .connection
-            .prepare(
-                "SELECT stamp FROM (\
-                    SELECT stamp FROM task_heads UNION \
-                    SELECT stamp FROM workflow_heads UNION \
-                    SELECT stamp FROM claim_heads UNION \
-                    SELECT stamp FROM lease_heads\
-                 ) ORDER BY stamp",
-            )
-            .map_err(GuardError::Store)?;
-        let rows = statement
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(GuardError::Store)?;
-        let mut bundles = Vec::new();
-        for row in rows {
-            let indexed = row.map_err(GuardError::Store)?;
-            let stamp = indexed.parse::<wire::TaskStamp>().map_err(|error| {
-                GuardError::Invalid(format!("task head key {indexed:?} is invalid: {error}"))
-            })?;
-            bundles.push(
-                self.task_heads_for(&stamp)?
-                    .expect("the union query names at least one head plane"),
-            );
-        }
-        Ok(bundles)
+        head_page::complete_task_heads(self)
     }
 
     /// Current storage bundle for one exact task birth stamp.
@@ -699,25 +674,7 @@ impl JournalRead<'_> {
 
     /// Every current executable trust head in ascending digest order.
     pub fn trust_heads(&self) -> Result<Vec<JournalHead<wire::TrustHead>>, GuardError> {
-        let mut statement = self
-            .connection
-            .prepare("SELECT digest FROM trust_heads ORDER BY digest")
-            .map_err(GuardError::Store)?;
-        let rows = statement
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(GuardError::Store)?;
-        let mut heads = Vec::new();
-        for row in rows {
-            let indexed = row.map_err(GuardError::Store)?;
-            let digest = indexed.parse::<wire::Digest>().map_err(|error| {
-                GuardError::Invalid(format!("trust head key {indexed:?} is invalid: {error}"))
-            })?;
-            let head = self.trust_head(&digest)?.ok_or_else(|| {
-                GuardError::Invalid(format!("trust head indexed as {digest} disappeared"))
-            })?;
-            heads.push(head);
-        }
-        Ok(heads)
+        head_page::complete_trust_heads(self)
     }
 
     /// Current finding head, when the identity exists.

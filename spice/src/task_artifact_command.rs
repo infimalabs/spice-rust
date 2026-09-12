@@ -153,7 +153,10 @@ fn snapshot() -> Result<Snapshot, Failure> {
         )
     })?;
     let (cursor, heads) = reader
-        .read(|read| Ok((read.cursor()?, read.task_heads()?)))
+        .read(|read| {
+            let page = read.task_head_page(None, journal::FactReadBudget::RETAINED)?;
+            Ok((page.witness.cursor, page.into_complete()?))
+        })
         .map_err(|error| {
             Failure::fault(
                 FaultClass::Store,

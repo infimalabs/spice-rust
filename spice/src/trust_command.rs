@@ -160,9 +160,14 @@ pub(crate) fn report(contract: &Contract) -> Outcome<TrustReport> {
             );
         }
     };
-    let (cursor, residency, heads) = match reader
-        .read(|read| Ok((read.cursor()?, read.residency_head()?, read.trust_heads()?)))
-    {
+    let (cursor, residency, heads) = match reader.read(|read| {
+        let page = read.trust_head_page(None, journal::FactReadBudget::RETAINED)?;
+        Ok((
+            page.witness.cursor,
+            read.residency_head()?,
+            page.into_complete()?,
+        ))
+    }) {
         Ok(snapshot) => snapshot,
         Err(error) => {
             return fault(
