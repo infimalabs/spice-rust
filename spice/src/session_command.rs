@@ -336,6 +336,8 @@ fn build(
         project::summary_recent(matches)?;
     } else if action == "phases" {
         project::phase_options(matches)?;
+    } else if matches!(action, "briefing" | "sweep" | "slices") {
+        project::validate_window_options(matches, action)?;
     }
     let files = project::values(matches, "FILES");
     let sources = source::resolve_inputs(&files, environment)?;
@@ -361,8 +363,7 @@ fn build_resolved(
         let options = project::phase_options(matches)?;
         return dataset::Aggregate::scan_phases(&sources, options, filters);
     }
-    let data = if matches!(action, "briefing" | "sweep") {
-        let count = project::horizon_count(matches, action)?;
+    let data = if let Some(count) = project::window_horizon_count(matches, action)? {
         let horizon = dataset::recent_compaction_horizon(&sources, count, filters.end_bound())?;
         let start = filters.start_bound().or(horizon.start.as_deref());
         dataset::load_since(&sources, start)?
