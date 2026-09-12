@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io;
 use std::num::NonZeroUsize;
 use std::path::Path;
@@ -54,6 +54,130 @@ struct Marker {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CompactionHorizon {
     pub(crate) start: Option<String>,
+}
+
+pub(crate) struct MessageQuery {
+    start: Option<String>,
+    end: Option<String>,
+    contains: Option<String>,
+    turn_ids: BTreeSet<String>,
+    sides: BTreeSet<String>,
+    phases: BTreeSet<String>,
+    flavors: BTreeSet<String>,
+    limit: NonZeroUsize,
+    oldest_first: bool,
+}
+
+pub(crate) struct MessageDataset {
+    pub(crate) sources: Vec<SourceView>,
+    pub(crate) rows: Vec<MessageRecord>,
+    pub(crate) residues: Vec<Residue>,
+}
+
+impl MessageQuery {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "message query syntax owns its filter and pagination fields"
+    )]
+    pub(crate) fn new(
+        start: Option<String>,
+        end: Option<String>,
+        contains: Option<String>,
+        turn_ids: BTreeSet<String>,
+        sides: BTreeSet<String>,
+        phases: BTreeSet<String>,
+        flavors: BTreeSet<String>,
+        limit: usize,
+        oldest_first: bool,
+    ) -> Result<Self, Refusal> {
+        Ok(Self {
+            start,
+            end,
+            contains,
+            turn_ids,
+            sides,
+            phases,
+            flavors,
+            limit: frontier_limit(limit)?,
+            oldest_first,
+        })
+    }
+}
+
+pub(crate) fn messages(
+    sources: &[ResolvedSource],
+    query: &MessageQuery,
+) -> Result<MessageDataset, Refusal> {
+    aggregate::admit_sources(sources)?;
+    let mut selected = Vec::with_capacity(sources.len().saturating_mul(query.limit.get()));
+    let mut source_views = Vec::with_capacity(sources.len());
+    let mut residues = ResidueLedger::new();
+    let mut work = SessionWork::new(SessionWorkBudget::report());
+    for source in sources {
+        let direction = if query.oldest_first {
+            FrontierDirection::Oldest
+        } else {
+            FrontierDirection::Newest
+        };
+        let scan =
+            if query.oldest_first || query.start.is_some() || stream::compressed(&source.path) {
+                aggregate::scan_message_source(
+                    source,
+                    query.start.as_deref(),
+                    query,
+                    direction,
+                    &mut work,
+                )?
+            } else {
+                let mut turn_count = query.limit.get();
+                loop {
+                    let start = horizon::recent_turn_start(source, turn_count, &mut work)?;
+                    let scan = aggregate::scan_message_source(
+                        source,
+                        start.as_deref(),
+                        query,
+                        direction,
+                        &mut work,
+                    )?;
+                    if scan.rows.len() == query.limit.get() || start.is_none() {
+                        break scan;
+                    }
+                    turn_count = turn_count.saturating_add(query.limit.get());
+                }
+            };
+        selected.extend(scan.rows);
+        for residue in scan.residues {
+            residues.push(residue, &mut work, "message source residue")?;
+        }
+        let source_name = source.path.display().to_string();
+        let source_view = SourceView {
+            name: source.path.file_name().map_or_else(
+                || source_name.clone(),
+                |name| name.to_string_lossy().into_owned(),
+            ),
+            path: source_name,
+            vendor: scan.vendor,
+            thread: source.thread.clone(),
+            compressed: source.path.to_string_lossy().ends_with(".gz"),
+        };
+        work.admit_retained_text(source_view_text_bytes(&source_view), &source_view.path)?;
+        source_views.push(source_view);
+    }
+    selected.sort_by(|left, right| {
+        (&left.ts, &left.source, &left.side).cmp(&(&right.ts, &right.source, &right.side))
+    });
+    if selected.len() > query.limit.get() {
+        if query.oldest_first {
+            selected.truncate(query.limit.get());
+        } else {
+            selected.drain(..selected.len() - query.limit.get());
+        }
+    }
+    Ok(MessageDataset {
+        sources: source_views,
+        rows: selected,
+        residues: residues.finish(&mut work, "message residue summary")?,
+    })
 }
 
 #[derive(Debug)]
@@ -395,6 +519,14 @@ impl<T> ResultFrontier<T> {
             self.rows.pop_front();
             self.rows.push_back(row);
         }
+    }
+
+    fn is_full(&self) -> bool {
+        self.rows.len() == self.limit.get()
+    }
+
+    fn into_rows(self) -> Vec<T> {
+        self.rows.into()
     }
 
     fn into_page<C>(self, progress: FrontierProgress<C>) -> FrontierPage<T, C> {

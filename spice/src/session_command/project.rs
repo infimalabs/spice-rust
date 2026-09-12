@@ -4,6 +4,7 @@ use std::path::Path;
 use clap::ArgMatches;
 use wire::Refusal;
 
+use super::dataset::{MessageDataset, MessageQuery};
 use super::model::{
     ActivityView, CommandAudit, CommandRecord, CommandView, CommitView, CompactionRecord,
     CompactionView, Dataset, DialogueLine, MessageRecord, MessageView, PhaseExample, PruningView,
@@ -54,6 +55,12 @@ struct WindowInterval<'a> {
     start: Option<&'a str>,
     end: Option<&'a str>,
     anchors: Vec<&'a CompactionRecord>,
+}
+
+pub(crate) struct MessageOptions {
+    pub(crate) query: MessageQuery,
+    max_text: usize,
+    oldest_first: bool,
 }
 
 #[derive(Debug, Default)]
@@ -501,7 +508,7 @@ pub(crate) fn slices(dataset: &Dataset, matches: &ArgMatches) -> Result<Report, 
     })
 }
 
-pub(crate) fn messages(dataset: &Dataset, matches: &ArgMatches) -> Result<Report, Refusal> {
+pub(crate) fn message_options(matches: &ArgMatches) -> Result<MessageOptions, Refusal> {
     let filters = Filters::from_matches(matches)?;
     let sides = values(matches, "side").into_iter().collect::<BTreeSet<_>>();
     let phases = values(matches, "phase-kind")
@@ -512,44 +519,50 @@ pub(crate) fn messages(dataset: &Dataset, matches: &ArgMatches) -> Result<Report
         .collect::<BTreeSet<_>>();
     let limit = number(matches, "limit", DEFAULT_MESSAGES_LIMIT)?;
     let max_text = number(matches, "max-text", DEFAULT_MESSAGE_TEXT)?;
+    if max_text > MAX_WINDOW_TEXT {
+        return Err(refusal(
+            "session::bound-exceeded",
+            Some(format!("--max-text={max_text} maximum={MAX_WINDOW_TEXT}")),
+            "pass a message text bound within the repository ceiling",
+        ));
+    }
+    let oldest_first = flag(matches, "oldest-first");
+    let query = MessageQuery::new(
+        filters.start,
+        filters.end,
+        filters.contains,
+        filters.turn_ids,
+        sides,
+        phases,
+        flavors,
+        limit,
+        oldest_first,
+    )?;
+    Ok(MessageOptions {
+        query,
+        max_text,
+        oldest_first,
+    })
+}
+
+pub(crate) fn messages(dataset: MessageDataset, options: MessageOptions) -> Report {
     let mut rows = dataset
-        .messages
+        .rows
         .iter()
-        .filter(|row| {
-            filters.start.as_ref().is_none_or(|start| row.ts >= *start)
-                && filters.end.as_ref().is_none_or(|end| row.ts <= *end)
-                && filters
-                    .contains
-                    .as_ref()
-                    .is_none_or(|needle| row.text.to_lowercase().contains(needle))
-                && (filters.turn_ids.is_empty()
-                    || row
-                        .turn_id
-                        .as_ref()
-                        .is_some_and(|turn_id| filters.turn_ids.contains(turn_id)))
-        })
-        .filter(|row| sides.is_empty() || sides.contains(&row.side))
-        .filter(|row| phases.is_empty() || phases.contains(&row.phase))
-        .filter(|row| {
-            flavors.is_empty()
-                || flavors.contains(&row.primary_flavor)
-                || row.flavor_tags.iter().any(|tag| flavors.contains(tag))
-        })
         .map(|row| {
             let mut view = message_view(row);
-            view.text = clip(&view.text, max_text);
+            view.text = clip(&view.text, options.max_text);
             view
         })
         .collect::<Vec<_>>();
-    if !flag(matches, "oldest-first") {
+    if !options.oldest_first {
         rows.reverse();
     }
-    rows.truncate(limit);
-    Ok(Report::Messages {
-        sources: dataset.sources.clone(),
+    Report::Messages {
+        sources: dataset.sources,
         rows,
-        residues: dataset.residues.clone(),
-    })
+        residues: dataset.residues,
+    }
 }
 
 pub(crate) fn commits(dataset: &Dataset, matches: &ArgMatches) -> Result<Report, Refusal> {

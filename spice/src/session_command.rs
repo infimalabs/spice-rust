@@ -336,6 +336,8 @@ fn build(
         project::summary_recent(matches)?;
     } else if action == "phases" {
         project::phase_options(matches)?;
+    } else if action == "messages" {
+        project::message_options(matches)?;
     } else if matches!(action, "briefing" | "sweep" | "slices") {
         project::validate_window_options(matches, action)?;
     }
@@ -351,6 +353,11 @@ fn build_resolved(
     sources: Vec<source::ResolvedSource>,
     environment: &Environment,
 ) -> Result<Report, Refusal> {
+    if action == "messages" {
+        let options = project::message_options(matches)?;
+        let messages = dataset::messages(&sources, &options.query)?;
+        return Ok(project::messages(messages, options));
+    }
     let filters = project::Filters::from_matches(matches)?;
     if action == "summary" {
         let recent = project::summary_recent(matches)?;
@@ -380,7 +387,6 @@ fn build_resolved(
         "turns" => project::turns(&data, matches, &filters),
         "compactions" => project::compactions(&data, matches),
         "slices" => project::slices(&data, matches),
-        "messages" => project::messages(&data, matches),
         "commits" => project::commits(&data, matches),
         "commands" => project::commands(&data, matches),
         _ => Err(refusal(

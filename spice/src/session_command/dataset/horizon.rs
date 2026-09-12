@@ -52,6 +52,54 @@ pub(crate) fn recent_compaction_horizon(
     })
 }
 
+pub(super) fn recent_turn_start(
+    source: &ResolvedSource,
+    count: usize,
+    work: &mut SessionWork,
+) -> Result<Option<String>, Refusal> {
+    debug_assert!(count > 0);
+    let source_name = source.path.display().to_string();
+    work.begin_pass(&source_name)?;
+    let mut cursor = ReverseCursor::new(&source.path)?;
+    let mut observed = 0_usize;
+    loop {
+        let ReverseWindow {
+            bytes,
+            records,
+            progress,
+        } = cursor.advance(work)?;
+        let mut oldest_start = None;
+        for record in records.into_iter().rev() {
+            let at = format!("{source_name}:byte {}", record.offset);
+            work.admit_record(&at)?;
+            let row = decode_reverse_row(
+                source,
+                &bytes[record.start..record.end],
+                record.offset,
+                source.thread.is_some() && record.terminal,
+                work,
+                &at,
+            )?;
+            if let Some(DecodedRow::Typed(row)) = row
+                && row.context.turn == Some(listen::TurnMoment::Started)
+            {
+                observed = observed.saturating_add(1);
+                oldest_start = Some(record_timestamp(&row).to_owned());
+            }
+        }
+        if observed >= count {
+            return Ok(oldest_start);
+        }
+        match progress {
+            ReverseProgress::More(next) => debug_assert!(cursor.is_at(next)),
+            ReverseProgress::Eof(end) => {
+                debug_assert!(cursor.is_at(end));
+                return Ok(None);
+            }
+        }
+    }
+}
+
 fn read_recent_compaction_markers(
     source: &ResolvedSource,
     count: usize,
