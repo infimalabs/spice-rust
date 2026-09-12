@@ -84,13 +84,13 @@ async fn bind_fixture_canvas(
     app: canvas::AppSource,
 ) -> (canvas::axum::Server, canvas::axum::Control) {
     let version = canvas_version(&app, journal::SCHEMA_VERSION).expect("Canvas identity builds");
-    canvas::axum::Server::bind(
+    canvas::axum::Server::bind(canvas::axum::Generation::new(
         epoch,
         capabilities,
         version,
         app,
         canvas::SpeechConfig::default(),
-    )
+    ))
     .await
     .expect("Canvas server binds")
 }

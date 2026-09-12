@@ -5,15 +5,9 @@ use super::*;
 #[tokio::test(flavor = "current_thread")]
 async fn etags_revalidate_without_retransmitting_the_asset() {
     let app = TestApp::new();
-    let (server, _control) = Server::bind(
-        epoch(),
-        Capabilities::default(),
-        app.version(),
-        app.source(),
-        speech(),
-    )
-    .await
-    .expect("binds");
+    let (server, _control) = Server::bind(generation(&app, Capabilities::default()))
+        .await
+        .expect("binds");
     let address = server.local_addr().expect("local address");
     let task = tokio::spawn(server.up());
 

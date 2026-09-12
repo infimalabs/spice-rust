@@ -14,10 +14,9 @@ async fn authenticated_session_routes_multiple_typed_commands_and_correlates_ans
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, mut control) =
-        Server::bind(epoch(), capabilities, app.version(), app.source(), speech())
-            .await
-            .expect("binds");
+    let (server, mut control) = Server::bind(generation(&app, capabilities))
+        .await
+        .expect("binds");
     let address = server.local_addr().expect("local address");
     let (shutdown, stopped) = oneshot::channel();
     let server_task = tokio::spawn(server.up_until(async move {
@@ -132,11 +131,7 @@ async fn dark_drains_an_earlier_same_socket_response_before_closing() {
         .expect("operator capability");
     let (server, mut control) = Server::bind_with_capacity(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
-        epoch(),
-        capabilities,
-        app.version(),
-        app.source(),
-        speech(),
+        generation(&app, capabilities),
         None,
         2,
     )
@@ -201,10 +196,9 @@ async fn shutdown_closes_partial_upgrade_pre_hello_and_active_sockets() {
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) =
-        Server::bind(epoch(), capabilities, app.version(), app.source(), speech())
-            .await
-            .expect("binds");
+    let (server, _control) = Server::bind(generation(&app, capabilities))
+        .await
+        .expect("binds");
     let state = Arc::clone(&server.state);
     let address = server.local_addr().expect("local address");
     let (shutdown, stopped) = oneshot::channel();
@@ -249,10 +243,9 @@ async fn shutdown_forces_transport_closed_when_a_session_cannot_finish_draining(
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) =
-        Server::bind(epoch(), capabilities, app.version(), app.source(), speech())
-            .await
-            .expect("binds");
+    let (server, _control) = Server::bind(generation(&app, capabilities))
+        .await
+        .expect("binds");
     let state = Arc::clone(&server.state);
     let session = SessionGuard::enter(&state);
 
@@ -281,10 +274,9 @@ async fn operator_lane_replacement_and_reconnect_cross_the_live_door() {
     capabilities
         .insert(lane_capability, wire::Actor::Lane(lane))
         .expect("lane capability");
-    let (server, mut control) =
-        Server::bind(epoch(), capabilities, app.version(), app.source(), speech())
-            .await
-            .expect("binds");
+    let (server, mut control) = Server::bind(generation(&app, capabilities))
+        .await
+        .expect("binds");
     let address = server.local_addr().expect("local address");
     let (shutdown, stopped) = oneshot::channel();
     let server_task = tokio::spawn(server.up_until(async move {
@@ -400,11 +392,7 @@ async fn saturated_queue_orders_concurrent_work_before_dark_and_refuses_later_wo
         .expect("operator capability");
     let (server, mut control) = Server::bind_with_capacity(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
-        epoch(),
-        capabilities,
-        app.version(),
-        app.source(),
-        speech(),
+        generation(&app, capabilities),
         None,
         1,
     )
@@ -490,11 +478,7 @@ async fn a_saturated_ordinary_class_cannot_block_an_authenticated_demand() {
         .expect("operator capability");
     let (server, mut control) = Server::bind_with_capacity(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
-        epoch(),
-        capabilities,
-        app.version(),
-        app.source(),
-        speech(),
+        generation(&app, capabilities),
         None,
         1,
     )
@@ -558,11 +542,7 @@ async fn priority_is_three_to_one_and_dark_waits_for_both_classes() {
         .expect("operator capability");
     let (server, mut control) = Server::bind_with_capacity(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
-        epoch(),
-        capabilities,
-        app.version(),
-        app.source(),
-        speech(),
+        generation(&app, capabilities),
         None,
         8,
     )
@@ -702,11 +682,7 @@ async fn shutdown_interrupts_a_queue_reservation_blocked_by_saturation() {
         .expect("operator capability");
     let (server, _control) = Server::bind_with_capacity(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
-        epoch(),
-        capabilities,
-        app.version(),
-        app.source(),
-        speech(),
+        generation(&app, capabilities),
         None,
         1,
     )

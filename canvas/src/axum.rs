@@ -614,22 +614,42 @@ pub struct Server {
     state: Arc<SurfaceState>,
 }
 
-impl Server {
-    /// Bind an ephemeral IPv4 loopback port with one resolved lane app.
-    pub async fn bind(
+/// Identity, capabilities, app, and speech configuration for one server generation.
+#[derive(Debug)]
+pub struct Generation {
+    epoch: wire::CanonicalUuid,
+    capabilities: Capabilities,
+    version: wire::Version,
+    app: crate::AppSource,
+    speech: crate::SpeechConfig,
+}
+
+impl Generation {
+    /// Bundle the values that must remain aligned for one bound server generation.
+    #[must_use]
+    pub fn new(
         epoch: wire::CanonicalUuid,
         capabilities: Capabilities,
         version: wire::Version,
         app: crate::AppSource,
         speech: crate::SpeechConfig,
-    ) -> Result<(Self, Control), std::io::Error> {
-        Self::bind_with_capacity(
-            Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
+    ) -> Self {
+        Self {
             epoch,
             capabilities,
             version,
             app,
             speech,
+        }
+    }
+}
+
+impl Server {
+    /// Bind an ephemeral IPv4 loopback port with one resolved lane app.
+    pub async fn bind(generation: Generation) -> Result<(Self, Control), std::io::Error> {
+        Self::bind_with_capacity(
+            Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
+            generation,
             None,
             64,
         )
@@ -643,21 +663,14 @@ impl Server {
     /// and a port that survives a restart, so neither can be decided here.
     pub async fn bind_streaming(
         binding: Binding,
-        epoch: wire::CanonicalUuid,
-        capabilities: Capabilities,
-        version: wire::Version,
-        app: crate::AppSource,
-        speech: crate::SpeechConfig,
+        generation: Generation,
         bus: bus::BusReader,
         rows: usize,
     ) -> Result<(Self, Control), std::io::Error> {
+        let epoch = generation.epoch;
         Self::bind_with_capacity(
             binding,
-            epoch,
-            capabilities,
-            version,
-            app,
-            speech,
+            generation,
             Some(crate::stream::Source::new(bus, epoch, rows)),
             64,
         )
@@ -666,15 +679,18 @@ impl Server {
 
     async fn bind_with_capacity(
         binding: Binding,
-        epoch: wire::CanonicalUuid,
-        capabilities: Capabilities,
-        version: wire::Version,
-        app: crate::AppSource,
-        speech: crate::SpeechConfig,
+        generation: Generation,
         stream: Option<crate::stream::Source>,
         class_capacity: usize,
     ) -> Result<(Self, Control), std::io::Error> {
         let Binding { requested, access } = binding;
+        let Generation {
+            epoch,
+            capabilities,
+            version,
+            app,
+            speech,
+        } = generation;
         if !requested.ip().is_loopback() && !access.allows_non_loopback() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
