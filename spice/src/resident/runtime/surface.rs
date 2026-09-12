@@ -223,6 +223,7 @@ pub(super) async fn run_surface(
         &mut publication,
     )
     .await?;
+    let mut inbox_projections = InboxProjections::new();
     let Some(message_startup) = await_message_startup(
         &mut message_startup,
         bus,
@@ -232,6 +233,7 @@ pub(super) async fn run_surface(
         &mut timers,
         &mut control,
         &mut server_task,
+        &mut inbox_projections,
         progress,
     )
     .await?
@@ -264,6 +266,7 @@ pub(super) async fn run_surface(
         timers,
         timer_commits,
         lifecycle,
+        inbox_projections,
     )
     .await
 }
@@ -346,6 +349,7 @@ async fn await_message_startup(
     timers: &mut timers::Runtime,
     control: &mut canvas::axum::Control,
     server_task: &mut tokio::task::JoinHandle<Result<(), io::Error>>,
+    inbox_projections: &mut InboxProjections,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<Option<MessageStartup>> {
     loop {
@@ -357,9 +361,9 @@ async fn await_message_startup(
                 ))?;
                 return ready.map(Some);
             }
-            request = control.recv() => {
-                let dispatched = dispatch_control(
-                    command_surface, seats, lifecycle, control, request,
+            request = control.recv(), if inbox_projections.is_empty() => {
+                let dispatched = dispatch_control_burst(
+                    command_surface, seats, lifecycle, control, request, inbox_projections,
                 ).await?;
                 if dispatched.reached_dark {
                     return Ok(None);
@@ -369,6 +373,9 @@ async fn await_message_startup(
                         bus, command_surface, seats, diagnostic, timers, lifecycle,
                     )?;
                 }
+            }
+            () = std::future::ready(()), if !inbox_projections.is_empty() => {
+                project_next_inbox(command_surface, inbox_projections)?;
             }
             ending = &mut *server_task => return Err(server_outcome(ending)),
         }
@@ -481,6 +488,7 @@ pub(super) async fn drive_surface(
     mut timers: timers::Runtime,
     mut timer_commits: bus::BroadcastSubscriber,
     mut lifecycle: lifecycle::Runtime,
+    mut inbox_projections: InboxProjections,
 ) -> CommandResult<()> {
     let compaction_interval = message_surface::SESSION_COMPACTION_POLL_INTERVAL;
     let mut session_compaction_poll = tokio::time::interval_at(
@@ -490,9 +498,10 @@ pub(super) async fn drive_surface(
     session_compaction_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
-            request = control.recv() => {
-                let dispatched = dispatch_control(
+            request = control.recv(), if inbox_projections.is_empty() => {
+                let dispatched = dispatch_control_burst(
                     command_surface, seats, &mut lifecycle, &mut control, request,
+                    &mut inbox_projections,
                 ).await?;
                 if dispatched.reached_dark {
                     timers.synchronize(bus)?;
@@ -503,6 +512,9 @@ pub(super) async fn drive_surface(
                         bus, command_surface, seats, diagnostic, &mut timers, &mut lifecycle,
                     )?;
                 }
+            }
+            () = std::future::ready(()), if !inbox_projections.is_empty() => {
+                project_next_inbox(command_surface, &mut inbox_projections)?;
             }
             record = records.recv() => {
                 let residency = current_residency(bus, epoch)?;
@@ -821,6 +833,7 @@ fn reconcile_wakes(
 pub(in crate::resident) struct ControlDispatch {
     pub(in crate::resident) reached_dark: bool,
     pub(in crate::resident) lifecycle_released: bool,
+    inbox_projection: Option<CanonicalUuid>,
 }
 
 pub(in crate::resident) async fn dispatch_control(
@@ -848,14 +861,53 @@ pub(in crate::resident) async fn dispatch_control(
     let (outcome, effects) = dispatched.into_parts();
     let reached_dark = !is_replay && dark && matches!(outcome, Outcome::Reply(_));
     complete_response(request, outcome).await;
-    apply_command_effects(command_surface, effects)?;
     if reached_dark {
         control.close();
     }
     Ok(ControlDispatch {
         reached_dark,
         lifecycle_released,
+        inbox_projection: effects.inbox_projection,
     })
+}
+
+pub(in crate::resident) async fn dispatch_control_burst(
+    command_surface: &command_surface::Surface<'_>,
+    seats: &mut Seats,
+    lifecycle: &mut lifecycle::Runtime,
+    control: &mut canvas::axum::Control,
+    request: Option<canvas::axum::ControlRequest>,
+    inbox_projections: &mut InboxProjections,
+) -> CommandResult<ControlDispatch> {
+    let mut request = request;
+    let mut burst = ControlDispatch {
+        reached_dark: false,
+        lifecycle_released: false,
+        inbox_projection: None,
+    };
+    for turn in 0..canvas::axum::Control::FAIR_CYCLE_LIMIT {
+        let dispatched =
+            dispatch_control(command_surface, seats, lifecycle, control, request.take()).await?;
+        if let Some(lane) = dispatched.inbox_projection {
+            inbox_projections.insert(lane);
+        }
+        burst.reached_dark |= dispatched.reached_dark;
+        burst.lifecycle_released |= dispatched.lifecycle_released;
+        if burst.reached_dark
+            || burst.lifecycle_released
+            || turn + 1 == canvas::axum::Control::FAIR_CYCLE_LIMIT
+        {
+            break;
+        }
+        request = match control.try_recv() {
+            Ok(request) => Some(request),
+            Err(
+                tokio::sync::mpsc::error::TryRecvError::Empty
+                | tokio::sync::mpsc::error::TryRecvError::Disconnected,
+            ) => break,
+        };
+    }
+    Ok(burst)
 }
 
 async fn complete_response(request: canvas::axum::ControlRequest, outcome: Outcome<CommandAnswer>) {
@@ -864,13 +916,20 @@ async fn complete_response(request: canvas::axum::ControlRequest, outcome: Outco
     }
 }
 
-fn apply_command_effects(
+pub(in crate::resident) fn project_next_inbox(
     command_surface: &command_surface::Surface<'_>,
-    effects: CommandEffects,
+    inbox_projections: &mut InboxProjections,
 ) -> CommandResult<()> {
-    effects
-        .inbox_projection
-        .map_or(Ok(()), |lane| command_surface.project_inbox(lane))
+    let lane = inbox_projections
+        .pop()
+        .expect("a projection turn requires one retained lane");
+    if matches!(
+        command_surface.project_inbox_once(lane)?,
+        steering::FoldAttempt::Moved
+    ) {
+        inbox_projections.insert(lane);
+    }
+    Ok(())
 }
 
 fn is_dark_command(command: &wire::AdmittedCommand) -> bool {

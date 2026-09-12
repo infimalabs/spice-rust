@@ -583,9 +583,17 @@ pub struct Control {
 }
 
 impl Control {
+    /// One complete turn through the scheduler's bounded 3:1 fairness rule.
+    pub const FAIR_CYCLE_LIMIT: usize = control::FAIR_CYCLE_LIMIT;
+
     /// Wait for the next request under the scheduler's bounded 3:1 demand rule.
     pub async fn recv(&mut self) -> Option<ControlRequest> {
         self.receiver.recv().await
+    }
+
+    /// Receive already-scheduled work without waiting for another producer.
+    pub fn try_recv(&mut self) -> Result<ControlRequest, tokio::sync::mpsc::error::TryRecvError> {
+        self.receiver.try_recv()
     }
 
     /// Stop admitting senders while preserving requests already in the queue.

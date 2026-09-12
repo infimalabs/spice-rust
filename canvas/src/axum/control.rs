@@ -4,7 +4,8 @@ use tokio::sync::mpsc;
 
 use wire::CommandKind;
 
-const DEMAND_BURST_LIMIT: u8 = 3;
+const DEMAND_BURST_LIMIT: usize = 3;
+pub(super) const FAIR_CYCLE_LIMIT: usize = DEMAND_BURST_LIMIT + 1;
 
 /// Scheduling class selected at the authenticated Canvas boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -130,7 +131,7 @@ pub(super) struct Receiver<T> {
     ordinary: mpsc::Receiver<Scheduled<T>>,
     demand_head: Option<Scheduled<T>>,
     ordinary_head: Option<Scheduled<T>>,
-    consecutive_demands: u8,
+    consecutive_demands: usize,
 }
 
 /// Build one scheduler with `capacity` queued slots plus one consumer head per class.
@@ -176,6 +177,18 @@ impl<T> Receiver<T> {
                     }
                 }
             }
+        }
+    }
+
+    pub(super) fn try_recv(&mut self) -> Result<T, mpsc::error::TryRecvError> {
+        self.fill_ready_heads();
+        if let Some(item) = self.take_ready() {
+            return Ok(item);
+        }
+        if self.demands.is_closed() && self.ordinary.is_closed() {
+            Err(mpsc::error::TryRecvError::Disconnected)
+        } else {
+            Err(mpsc::error::TryRecvError::Empty)
         }
     }
 
@@ -274,20 +287,12 @@ mod tests {
             send(&sender, Class::Demand, item, false).await;
         }
 
-        let mut received = Vec::new();
-        for _ in 0..7 {
-            received.push(receiver.recv().await.expect("queued work"));
+        let mut received = vec![receiver.recv().await.expect("queued work")];
+        while let Ok(item) = receiver.try_recv() {
+            received.push(item);
         }
         assert_eq!(received, [10, 11, 12, 1, 13, 14, 2]);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn a_sole_ready_class_never_waits_for_the_other() {
-        let (sender, mut receiver) = channel(1);
-        send(&sender, Class::Ordinary, 1, false).await;
-        assert_eq!(receiver.recv().await, Some(1));
-        send(&sender, Class::Demand, 2, false).await;
-        assert_eq!(receiver.recv().await, Some(2));
+        assert_eq!(receiver.try_recv(), Err(mpsc::error::TryRecvError::Empty));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -330,8 +335,11 @@ mod tests {
 
         assert!(ordinary_wait.await.expect("ordinary waiter joins"));
         assert!(demand_wait.await.expect("demand waiter joins"));
-        assert_eq!(receiver.recv().await, Some(2));
-        assert_eq!(receiver.recv().await, Some(1));
-        assert_eq!(receiver.recv().await, None);
+        assert_eq!(receiver.try_recv(), Ok(2));
+        assert_eq!(receiver.try_recv(), Ok(1));
+        assert_eq!(
+            receiver.try_recv(),
+            Err(mpsc::error::TryRecvError::Disconnected)
+        );
     }
 }

@@ -335,6 +335,7 @@ impl SocketFanoutDispatch<'_> {
         self,
         control: &mut canvas::axum::Control,
         lanes: [(CanonicalUuid, CanonicalUuid); 3],
+        responses_done: tokio::sync::oneshot::Receiver<()>,
     ) {
         let reads =
             read_materializations::CurrentReads::start(self.bus, self.paths, &self.config.consent)
@@ -354,28 +355,36 @@ impl SocketFanoutDispatch<'_> {
         );
         let mut seats = Seats::new();
         let mut lifecycle = lifecycle::Runtime::new(&self.config.lane);
-        for (index, _) in lanes.iter().enumerate() {
-            let request = tokio::time::timeout(Duration::from_secs(3), control.recv())
-                .await
-                .expect("control request arrives before socket dispatch stalls")
-                .expect("control receives command");
-            assert_eq!(
-                request.command().id(),
-                test_uuid(84 + u8::try_from(index).expect("fixture index fits"))
-            );
-            assert!(
-                !runtime::dispatch_control(
-                    &command_surface,
-                    &mut seats,
-                    &mut lifecycle,
-                    control,
-                    Some(request),
-                )
-                .await
-                .expect("socket steering dispatch completes")
-                .reached_dark,
-                "steering send must not request resident shutdown"
-            );
+        let request = tokio::time::timeout(Duration::from_secs(3), control.recv())
+            .await
+            .expect("control request arrives before socket dispatch stalls")
+            .expect("control receives command");
+        assert_eq!(request.command().id(), test_uuid(84));
+        let mut projections = InboxProjections::new();
+        let dispatched = runtime::dispatch_control_burst(
+            &command_surface,
+            &mut seats,
+            &mut lifecycle,
+            control,
+            Some(request),
+            &mut projections,
+        )
+        .await
+        .expect("socket steering burst completes");
+        assert!(!dispatched.reached_dark);
+        assert!(!dispatched.lifecycle_released);
+        assert_eq!(
+            projections.len(),
+            lanes.len(),
+            "one ready fanout cycle retains every exact lane before folding"
+        );
+        tokio::time::timeout(Duration::from_secs(3), responses_done)
+            .await
+            .expect("socket responses are read before inbox projection")
+            .expect("client observes every response");
+        while !projections.is_empty() {
+            runtime::project_next_inbox(&command_surface, &mut projections)
+                .expect("one scheduled lane projection completes");
         }
     }
 }
@@ -696,12 +705,8 @@ async fn socket_dispatch_replies_then_projects_three_lane_fanout() {
         discovery: &discovery,
         epoch,
     }
-    .run(&mut control, lanes)
+    .run(&mut control, lanes, responses_done)
     .await;
-    tokio::time::timeout(Duration::from_secs(3), responses_done)
-        .await
-        .expect("socket responses are read before client stalls")
-        .expect("client observes every response");
     assert_socket_fanout_published(&bus, &paths, fanout, lanes);
     stop_canvas_fixture(shutdown, server_task).await;
     client.await.expect("client thread joins");

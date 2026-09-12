@@ -142,6 +142,7 @@ async fn run_liveness_surface(setup: &mut LivenessSetup) -> String {
         timers,
         timer_commits,
         lifecycle,
+        InboxProjections::new(),
     );
     let (driven, judge_pid) = tokio::join!(drive, exercise);
     driven.expect("Down stops the live surface");

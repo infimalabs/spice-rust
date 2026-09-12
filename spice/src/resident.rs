@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::fs;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -30,6 +31,40 @@ impl CommandEffects {
             self.inbox_projection.replace(lane).is_none(),
             "one command cannot project more than one lane inbox"
         );
+    }
+}
+
+struct InboxProjections(VecDeque<CanonicalUuid>);
+
+impl InboxProjections {
+    fn new() -> Self {
+        Self(VecDeque::with_capacity(
+            canvas::axum::Control::FAIR_CYCLE_LIMIT,
+        ))
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn insert(&mut self, lane: CanonicalUuid) {
+        if self.0.contains(&lane) {
+            return;
+        }
+        assert!(
+            self.0.len() < canvas::axum::Control::FAIR_CYCLE_LIMIT,
+            "one control fairness cycle bounds retained inbox projections"
+        );
+        self.0.push_back(lane);
+    }
+
+    fn pop(&mut self) -> Option<CanonicalUuid> {
+        self.0.pop_front()
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.0.len()
     }
 }
 
