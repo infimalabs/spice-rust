@@ -115,22 +115,10 @@ fn reverse_lines<F>(path: &Path, work: &mut SessionWork, mut visit: F) -> Result
 where
     F: FnMut(&[u8], u64, u64, bool, &mut SessionWork) -> Result<bool, Refusal>,
 {
-    let mut file = File::open(path).map_err(|error| {
-        refusal(
-            "session::transcript-unreadable",
-            Some(format!("{}: {error}", path.display())),
-            "restore read access to the transcript and retry",
-        )
-    })?;
+    let mut file = File::open(path).map_err(|error| unreadable(path, &error))?;
     let mut position = file
         .metadata()
-        .map_err(|error| {
-            refusal(
-                "session::transcript-unreadable",
-                Some(format!("{}: {error}", path.display())),
-                "restore read access to the transcript and retry",
-            )
-        })?
+        .map_err(|error| unreadable(path, &error))?
         .len();
     let transcript_length = position;
     let mut carry = Vec::new();
@@ -140,22 +128,12 @@ where
         let read = position.min(BACKWARD_CHUNK_BYTES);
         work.admit_source_bytes(read, &at)?;
         position -= read;
-        file.seek(SeekFrom::Start(position)).map_err(|error| {
-            refusal(
-                "session::transcript-unreadable",
-                Some(format!("{}: {error}", path.display())),
-                "restore read access to the transcript and retry",
-            )
-        })?;
+        file.seek(SeekFrom::Start(position))
+            .map_err(|error| unreadable(path, &error))?;
         let mut block = vec![0_u8; read as usize];
-        file.read_exact(&mut block).map_err(|error| {
-            refusal(
-                "session::transcript-unreadable",
-                Some(format!("{}: {error}", path.display())),
-                "restore read access to the transcript and retry",
-            )
-        })?;
-        admit_reverse_carry(&block, carry.len(), path, position)?;
+        file.read_exact(&mut block)
+            .map_err(|error| unreadable(path, &error))?;
+        admit_reverse_carry(&block, &carry, path, position)?;
         block.extend_from_slice(&carry);
         let parse_start = if position == 0 {
             0
@@ -205,9 +183,17 @@ where
     Ok(())
 }
 
+fn unreadable(path: &Path, error: &std::io::Error) -> Refusal {
+    refusal(
+        "session::transcript-unreadable",
+        Some(format!("{}: {error}", path.display())),
+        "restore read access to the transcript and retry",
+    )
+}
+
 fn admit_reverse_carry(
     block: &[u8],
-    carry_bytes: usize,
+    carry: &[u8],
     path: &Path,
     position: u64,
 ) -> Result<(), Refusal> {
@@ -215,12 +201,13 @@ fn admit_reverse_carry(
         .iter()
         .rposition(|byte| *byte == b'\n')
         .map_or(0, |newline| newline + 1);
-    if block
+    let terminal_cr = carry.last().or_else(|| block[suffix_start..].last()) == Some(&b'\r');
+    let logical_bytes = block
         .len()
         .saturating_sub(suffix_start)
-        .saturating_add(carry_bytes)
-        > MAX_LINE_BYTES.saturating_add(2)
-    {
+        .saturating_add(carry.len())
+        .saturating_sub(usize::from(terminal_cr));
+    if logical_bytes > MAX_LINE_BYTES {
         return Err(refusal(
             "session::transcript-record-oversized",
             Some(format!(
@@ -362,13 +349,32 @@ mod tests {
         let horizon = recent_compaction_horizon(std::slice::from_ref(&source), 3, None)
             .expect("bounded horizon scans");
         assert_eq!(horizon.start.as_deref(), Some("2026-01-01T00:00:01.000Z"));
-        assert!(admit_reverse_carry(b"older\nxx", MAX_LINE_BYTES, &source.path, 0).is_ok());
-        let refusal = admit_reverse_carry(b"older\nxxx", MAX_LINE_BYTES, &source.path, 0)
-            .expect_err("one byte beyond the reverse carry limit is refused");
-        assert_eq!(refusal.reason(), "session::transcript-record-oversized");
+        assert_reverse_record_boundary(&source);
         assert_fold_accounting(&source);
         assert_budget_refusals(&source);
         fs::remove_file(source.path).expect("fixture transcript is removed");
+    }
+
+    fn assert_reverse_record_boundary(source: &ResolvedSource) {
+        let path = source.path.with_extension("boundary");
+        let mut work = SessionWork::new(SessionWorkBudget::report());
+        for ending in [b"\n".as_slice(), b"\r\n".as_slice()] {
+            let mut record = vec![b'x'; MAX_LINE_BYTES];
+            record.extend_from_slice(ending);
+            fs::write(&path, &record).expect("exact-limit record is written");
+            reverse_lines(&path, &mut work, |line, offset, _, _, _| {
+                assert_eq!((line.len(), offset), (MAX_LINE_BYTES, 0));
+                Ok(true)
+            })
+            .expect("exact-limit LF or CRLF record is admitted");
+        }
+        let mut record = vec![b'x'; MAX_LINE_BYTES + 1];
+        record.push(b'\n');
+        fs::write(&path, record).expect("oversized record is written");
+        let refusal = reverse_lines(&path, &mut work, |_, _, _, _, _| Ok(true))
+            .expect_err("one logical byte over the limit is refused before append");
+        assert_eq!(refusal.reason(), "session::transcript-record-oversized");
+        fs::remove_file(path).expect("boundary transcript is removed");
     }
 
     fn fixture_source() -> ResolvedSource {
@@ -444,23 +450,16 @@ mod tests {
     }
 
     fn assert_budget_refusals(source: &ResolvedSource) {
-        let budget = SessionWorkBudget::new(1, 1, 1, 1, 1, std::time::Duration::from_secs(1))
-            .expect("tiny positive budget is admitted");
+        let deadline = std::time::Duration::from_secs(1);
+        let budget = SessionWorkBudget::new(1, 1, 1, 1, 1, deadline).expect("positive budget");
         let mut exhausted = SessionWork::new(budget);
         let refusal = stream_records(source, None, &mut exhausted, |_, _, _| Ok(()))
             .expect_err("source bytes stop before the first record");
         assert_eq!(refusal.reason(), "session::transcript-work-exhausted");
         assert_eq!(exhausted.report().source_bytes, 0);
 
-        let retained_budget = SessionWorkBudget::new(
-            1_024 * 1_024,
-            16,
-            16,
-            1,
-            1,
-            std::time::Duration::from_secs(1),
-        )
-        .expect("retained-text boundary is positive");
+        let retained_budget =
+            SessionWorkBudget::new(1_048_576, 16, 16, 1, 1, deadline).expect("positive budget");
         let mut exhausted = SessionWork::new(retained_budget);
         let mut dataset = Dataset::default();
         let mut markers = Vec::new();
@@ -483,6 +482,6 @@ mod tests {
         assert_eq!(refusal.reason(), "session::transcript-work-exhausted");
         assert_eq!(exhausted.report().retained_text_bytes, 0);
 
-        assert!(SessionWorkBudget::new(0, 1, 1, 1, 1, std::time::Duration::from_secs(1),).is_err());
+        assert!(SessionWorkBudget::new(0, 1, 1, 1, 1, deadline).is_err());
     }
 }
