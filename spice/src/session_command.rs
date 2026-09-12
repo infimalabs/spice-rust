@@ -522,31 +522,20 @@ mod tests {
         let rendering = context("briefing", &["input.jsonl"], budget);
         let render_refusal = timeout(&rendering, Some(&["/canonical/input.jsonl"]));
         assert_eq!(render_refusal.reason(), "session::deadline-exceeded");
+        let render_diagnostic = render_refusal.diagnostic().expect("deadline is diagnostic");
         assert_eq!(
-            render_refusal
-                .diagnostic()
-                .and_then(wire::RefusalDiagnostic::observed),
+            render_diagnostic.observed(),
             Some("action=briefing inputs=resolved[\"/canonical/input.jsonl\"] budget=0.001s")
         );
-    }
-
-    #[test]
-    fn a_deadline_refusal_carries_source_identity_but_no_partial_report_data() {
-        let context = context(
-            "briefing",
-            &["private-thread-identity"],
-            std::time::Duration::from_millis(1),
+        assert!(
+            !render_diagnostic
+                .observed()
+                .expect("deadline carries its witness")
+                .contains("verbatim transcript secret")
         );
-        let refusal = timeout(&context, Some(&["/private/session.jsonl"]));
-        let diagnostic = refusal.diagnostic().expect("deadline is diagnostic");
-        let observed = diagnostic
-            .observed()
-            .expect("the deadline carries its witness");
-        assert!(observed.contains("/private/session.jsonl"));
-        assert!(!observed.contains("verbatim transcript secret"));
-        assert_eq!(diagnostic.witness(), Some("session-query"));
+        assert_eq!(render_diagnostic.witness(), Some("session-query"));
         assert_eq!(
-            diagnostic.expected(),
+            render_diagnostic.expected(),
             Some("one registered read-only transcript query")
         );
     }
