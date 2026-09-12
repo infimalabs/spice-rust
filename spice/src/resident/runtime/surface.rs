@@ -841,13 +841,14 @@ pub(in crate::resident) async fn dispatch_control(
         command_surface.prepare_explicit_lifecycle(lifecycle, request.command())?
     };
     let dark = is_dark_command(request.command());
-    let outcome =
-        replayed.unwrap_or_else(|| command_surface.dispatch_fresh(seats, request.command()));
+    let dispatched = replayed.map_or_else(
+        || command_surface.dispatch_fresh(seats, request.command()),
+        CommandDispatch::ordinary,
+    );
+    let (outcome, effects) = dispatched.into_parts();
     let reached_dark = !is_replay && dark && matches!(outcome, Outcome::Reply(_));
-    let response = request.respond(outcome);
-    if let Ok(response) = response {
-        response.wait().await;
-    }
+    complete_response(request, outcome).await;
+    apply_command_effects(command_surface, effects)?;
     if reached_dark {
         control.close();
     }
@@ -855,6 +856,21 @@ pub(in crate::resident) async fn dispatch_control(
         reached_dark,
         lifecycle_released,
     })
+}
+
+async fn complete_response(request: canvas::axum::ControlRequest, outcome: Outcome<CommandAnswer>) {
+    if let Ok(response) = request.respond(outcome) {
+        response.wait().await;
+    }
+}
+
+fn apply_command_effects(
+    command_surface: &command_surface::Surface<'_>,
+    effects: CommandEffects,
+) -> CommandResult<()> {
+    effects
+        .inbox_projection
+        .map_or(Ok(()), |lane| command_surface.project_inbox(lane))
 }
 
 fn is_dark_command(command: &wire::AdmittedCommand) -> bool {

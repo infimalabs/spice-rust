@@ -19,8 +19,8 @@ use wire::{
 };
 
 use super::{
-    CommandResult, RuntimePaths, commit, current_residency, environment_fault, seq, store_fault,
-    typed_outcome, typed_protocol_fault, typed_store_fault, write,
+    CommandEffects, CommandResult, RuntimePaths, commit, current_residency, environment_fault, seq,
+    store_fault, typed_outcome, typed_protocol_fault, typed_store_fault, write,
 };
 
 mod preview;
@@ -1249,29 +1249,16 @@ fn miss_guard(expected: wire::body::SteerMissed) -> JournalGuard {
 
 fn finish(
     bus: &Bus,
-    paths: &RuntimePaths,
-    residency: &ResidencyHead,
     lane: CanonicalUuid,
     proposal: JournalWrite,
-    mut answer: DirectiveAnswer,
+    answer: DirectiveAnswer,
+    effects: &mut CommandEffects,
 ) -> Outcome<CommandAnswer> {
     let committed = match commit(bus, proposal) {
         Ok(committed) => committed,
         Err(outcome) => return typed_outcome(outcome),
     };
-    let selected = match residency.lanes.iter().find(|row| row.lane == lane) {
-        Some(selected) => selected,
-        None => {
-            return typed_store_fault(
-                "steer::lane-missing-after-commit",
-                &format!("lane {lane} disappeared while publishing its inbox"),
-            );
-        }
-    };
-    answer.delivery = match fold_lane_inbox(bus, paths, selected) {
-        Ok(delivery) => Box::new(delivery),
-        Err(outcome) => return typed_outcome(outcome),
-    };
+    effects.project_inbox(lane);
     Outcome::Reply(Reply {
         position: ReplyPosition::Committed(SeqRange {
             first: seq(committed.first()),
