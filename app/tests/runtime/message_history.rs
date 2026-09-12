@@ -155,6 +155,31 @@ fn seed_three_member_frontiers(runtime: &mut CanvasRuntime, session: &Session) {
     assert_eq!(target_offset(runtime, THIRD_LANE), Some(300));
 }
 
+#[test]
+fn empty_open_pages_rearm_only_the_completed_lane_at_the_same_cursor() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    seed_three_member_frontiers(&mut runtime, &session);
+
+    let empty = history_page(LANE, 100, Vec::new(), true);
+    assert!(
+        apply(&mut runtime, &session, &empty),
+        "an admitted empty completion republishes the paging surface",
+    );
+    assert_eq!(target_offset(&runtime, LANE), Some(100));
+    assert_eq!(target_offset(&runtime, THIRD_LANE), Some(300));
+
+    assert!(apply(&mut runtime, &session, &empty));
+    assert_eq!(target_offset(&runtime, LANE), Some(100));
+    assert_eq!(target_offset(&runtime, THIRD_LANE), Some(300));
+
+    let exhausted = history_page(LANE, 100, Vec::new(), false);
+    assert!(apply(&mut runtime, &session, &exhausted));
+    assert_eq!(target_offset(&runtime, LANE), None);
+    assert_eq!(target_offset(&runtime, THIRD_LANE), Some(300));
+}
+
 fn interleave_live_work_and_member_pages(runtime: &mut CanvasRuntime, session: &Session) {
     let third_page = history_page(
         THIRD_LANE,

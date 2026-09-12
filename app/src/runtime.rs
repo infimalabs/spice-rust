@@ -462,6 +462,8 @@ pub struct CanvasRuntime {
     operator_messages: Vec<OperatorMessage>,
     /// Exact oldest admitted card each independently paged member can extend.
     message_history: BTreeMap<CanonicalUuid, MessageLocus>,
+    /// Admitted response completions that re-arm each member-local frontier.
+    message_history_completions: BTreeMap<CanonicalUuid, u64>,
     /// A same-scope subscription snapshot merges into retained hydrated cards.
     message_reconnect_pending: bool,
     /// Re-arms member-local paging after a same-scope subscription refresh.
@@ -488,6 +490,7 @@ impl CanvasRuntime {
             message_cards: message_cards::MessageCards::default(),
             operator_messages: Vec::new(),
             message_history: BTreeMap::new(),
+            message_history_completions: BTreeMap::new(),
             message_reconnect_pending: false,
             message_history_revision: 0,
             resume: None,
@@ -563,6 +566,16 @@ impl CanvasRuntime {
     #[must_use]
     pub fn message_history_target(&self, lane: CanonicalUuid) -> Option<MessageLocus> {
         self.message_history.get(&lane).copied()
+    }
+
+    /// Admitted completion generation for one member-local history request.
+    #[cfg(target_arch = "wasm32")]
+    #[must_use]
+    pub(crate) fn message_history_completion(&self, lane: CanonicalUuid) -> u64 {
+        self.message_history_completions
+            .get(&lane)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Subscription generation owning the current member-local frontiers.

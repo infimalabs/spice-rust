@@ -100,7 +100,7 @@ export function createMessageHistoryFixture({
     live: make(first, "history concurrent live", "2031-05-17T12:00:06.000Z", 70_150),
     stale: make(third, "history stale response", "2031-05-17T12:00:01.500Z", 72_260),
   };
-  const bulk = Array.from({ length: 36 }, (_, index) => {
+  const bulk = Array.from({ length: 75 }, (_, index) => {
     const frame = frames[index % frames.length];
     const text = index === 17
       ? [
@@ -125,6 +125,7 @@ export function createMessageHistoryFixture({
   const initialHeads = [records.firstHead, records.boundary, records.thirdHead];
   const currentHeads = [records.live, records.boundary, records.thirdHead];
   const pages = {
+    empty: { messages: [], more: true },
     first: { messages: [records.firstOlder], more: true },
     firstReplay: { messages: [records.firstHead, records.firstOlder], more: true },
     firstFinal: { messages: [...bulkByLane.get(lanes[0]), records.firstDeep], more: false },

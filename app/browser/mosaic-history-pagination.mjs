@@ -77,6 +77,21 @@ async function assertChronology(plane, expected, label) {
   assert.equal(new Set(keys).size, keys.length, `${label} renders every card identity once`);
 }
 
+async function assertAgentHistoryDepth(plane, lanes, minimum) {
+  const counts = await plane.locator(
+    '.mosaic-message-card[data-layout-phase="committed"]',
+  ).evaluateAll((cards) => cards.reduce((observed, card) => {
+    const lane = card.dataset.agentLane;
+    observed[lane] = (observed[lane] ?? 0) + 1;
+    return observed;
+  }, {}));
+  for (const lane of lanes) {
+    assert.ok(counts[lane] >= minimum,
+      `automatic bounded hydration restores at least ${minimum} cards for ${lane}: `
+        + JSON.stringify(counts));
+  }
+}
+
 async function readOrgWorktrees(organization) {
   await organization.getByRole("tab", { name: /^Team/ }).click();
   const cards = organization.locator(".organization-detail-card");
@@ -239,8 +254,34 @@ export async function assertStagedMosaicHydration(
   await waitForCard(page, history.keys.thirdHead, "three unequal retained heads render");
   assert.equal(initialRequests.size, 3, "three member-local requests are outstanding together");
 
+  let nextRequest = history.requestCount();
+  history.answer(initialRequests.get(firstLane), history.pages.empty);
+  const firstSparseContinuation = await history.waitForRequest(
+    firstLane,
+    history.records.firstHead.locus,
+    history.generation,
+    nextRequest,
+  );
+  let outstanding = history.requestsForGeneration(history.generation)
+    .filter((request) => !request.answered);
+  assert.equal(new Set(outstanding.map((request) => request.lane)).size, outstanding.length,
+    "an empty completion re-arms only its lane and keeps one request in flight per lane");
+
+  nextRequest = history.requestCount();
+  history.answer(firstSparseContinuation, history.pages.empty);
+  const firstVisibleContinuation = await history.waitForRequest(
+    firstLane,
+    history.records.firstHead.locus,
+    history.generation,
+    nextRequest,
+  );
+  outstanding = history.requestsForGeneration(history.generation)
+    .filter((request) => !request.answered);
+  assert.equal(new Set(outstanding.map((request) => request.lane)).size, outstanding.length,
+    "successive empty pages advance the server while sibling requests remain singular");
+
   const backfillProbe = await armPlacementProbe(plane);
-  history.answer(initialRequests.get(firstLane), history.pages.first);
+  history.answer(firstVisibleContinuation, history.pages.first);
   await waitForCard(page, history.keys.firstOlder, "the first lane backfills independently");
   const backfilled = await finishPlacementProbe(plane, backfillProbe);
   assert.equal(backfilled.transition, "backfill", "the older first page is a prefix backfill");
@@ -297,6 +338,7 @@ export async function assertStagedMosaicHydration(
   await waitForReady(page, "the third lane exhausts independently");
   history.answer(initialRequests.get(secondLane), history.pages.second);
   await assertChronology(plane, history.expectedKeys(), "the independently paged run");
+  await assertAgentHistoryDepth(plane, history.lanes, 25);
   const staged = await placement(plane);
 
   const linkedRoot = dirname(organizationWorktrees[1]);

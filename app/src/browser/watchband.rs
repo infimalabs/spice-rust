@@ -198,9 +198,12 @@ fn render_compose(
         .members
         .iter()
         .filter_map(|member| {
-            runtime
-                .message_history_target(member.lane)
-                .map(|before| (member.lane, before))
+            runtime.message_history_target(member.lane).map(|before| {
+                (
+                    member.lane,
+                    (before, runtime.message_history_completion(member.lane)),
+                )
+            })
         })
         .collect();
     html! {
@@ -378,7 +381,7 @@ fn render_activity(
 
 struct HistoryPaging<'a> {
     sender: &'a SenderHandle,
-    targets: BTreeMap<CanonicalUuid, wire::MessageLocus>,
+    targets: BTreeMap<CanonicalUuid, (wire::MessageLocus, u64)>,
     revision: u64,
 }
 
