@@ -279,6 +279,32 @@ export async function assertStagedMosaicHydration(
   assert.equal(new Set(outstanding.map((request) => request.lane)).size, outstanding.length,
     "successive empty pages advance the server while sibling requests remain singular");
 
+  nextRequest = history.requestCount();
+  history.answer(initialRequests.get(thirdLane), history.pages.empty);
+  const thirdSparseContinuation = await history.waitForRequest(
+    thirdLane,
+    history.records.thirdHead.locus,
+    history.generation,
+    nextRequest,
+  );
+  outstanding = history.requestsForGeneration(history.generation)
+    .filter((request) => !request.answered);
+  assert.equal(new Set(outstanding.map((request) => request.lane)).size, outstanding.length,
+    "a second lane independently re-arms its unchanged sparse cursor");
+
+  nextRequest = history.requestCount();
+  history.answer(thirdSparseContinuation, history.pages.empty);
+  const thirdVisibleContinuation = await history.waitForRequest(
+    thirdLane,
+    history.records.thirdHead.locus,
+    history.generation,
+    nextRequest,
+  );
+  outstanding = history.requestsForGeneration(history.generation)
+    .filter((request) => !request.answered);
+  assert.equal(new Set(outstanding.map((request) => request.lane)).size, outstanding.length,
+    "successive sparse completions remain independent across both lanes");
+
   const epochExcluded = await plane.locator(".mosaic-message-card").evaluateAll(
     (cards, retained) => cards
       .filter((card) => card.dataset.mosaicCardKey !== retained)
@@ -286,7 +312,7 @@ export async function assertStagedMosaicHydration(
     history.keys.boundary,
   );
   const epochProbe = await armPlacementProbe(plane, epochExcluded);
-  history.answer(initialRequests.get(thirdLane), history.pages.third);
+  history.answer(thirdVisibleContinuation, history.pages.third);
   await waitForCard(page, history.keys.thirdAfterBoundary,
     "the compaction-crossing member history page renders");
   const epoch = await finishPlacementProbe(plane, epochProbe);
