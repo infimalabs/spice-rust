@@ -363,23 +363,25 @@ async fn await_message_startup(
                 ))?;
                 return ready.map(Some);
             }
-            request = control.recv(), if inbox_projections.is_empty()
-                && !lifecycle_reconciliation.is_pending() => {
-                let dispatched = dispatch_control_burst(
-                    command_surface, seats, lifecycle, control, request, inbox_projections,
-                ).await?;
-                if dispatched.reached_dark {
-                    return Ok(None);
+            (turn, request) = control_projection_turn(
+                control, inbox_projections, !lifecycle_reconciliation.is_pending(),
+            ) => match turn {
+                ControlProjectionTurn::Control => {
+                    if dispatch_control_projection_burst(
+                        command_surface, seats, lifecycle, control, request, inbox_projections,
+                        lifecycle_reconciliation,
+                    ).await? {
+                        return Ok(None);
+                    }
                 }
-                request_lifecycle_reconciliation(lifecycle_reconciliation, &dispatched);
-            }
+                ControlProjectionTurn::Projection => {
+                    project_owed_inbox(command_surface, inbox_projections).await?;
+                }
+            },
             () = std::future::ready(()), if lifecycle_reconciliation.is_pending() => {
                 lifecycle_reconciliation.reconcile(
                     bus, command_surface, seats, diagnostic, timers, lifecycle,
                 )?;
-            }
-            () = std::future::ready(()), if !inbox_projections.is_empty() => {
-                project_next_inbox(command_surface, inbox_projections)?;
             }
             ending = &mut *server_task => return Err(server_outcome(ending)),
         }
@@ -498,25 +500,26 @@ pub(super) async fn drive_surface(
     let mut session_compaction_poll = session_compaction_poll();
     loop {
         tokio::select! {
-            request = control.recv(), if inbox_projections.is_empty()
-                && !lifecycle_reconciliation.is_pending() => {
-                let dispatched = dispatch_control_burst(
-                    command_surface, seats, &mut lifecycle, &mut control, request,
-                    &mut inbox_projections,
-                ).await?;
-                if dispatched.reached_dark {
-                    timers.synchronize(bus)?;
-                    return stop_surface(publication, shutdown, server_task).await;
+            (turn, request) = control_projection_turn(
+                &mut control, &inbox_projections, !lifecycle_reconciliation.is_pending(),
+            ) => match turn {
+                ControlProjectionTurn::Control => {
+                    if dispatch_control_projection_burst(
+                        command_surface, seats, &mut lifecycle, &mut control, request,
+                        &mut inbox_projections, &mut lifecycle_reconciliation,
+                    ).await? {
+                        timers.synchronize(bus)?;
+                        return stop_surface(publication, shutdown, server_task).await;
+                    }
                 }
-                request_lifecycle_reconciliation(&mut lifecycle_reconciliation, &dispatched);
-            }
+                ControlProjectionTurn::Projection => {
+                    project_owed_inbox(command_surface, &mut inbox_projections).await?;
+                }
+            },
             () = std::future::ready(()), if lifecycle_reconciliation.is_pending() => {
                 lifecycle_reconciliation.reconcile(
                     bus, command_surface, seats, diagnostic, &mut timers, &mut lifecycle,
                 )?;
-            }
-            () = std::future::ready(()), if !inbox_projections.is_empty() => {
-                project_next_inbox(command_surface, &mut inbox_projections)?;
             }
             record = records.recv() => {
                 let residency = current_residency(bus, epoch)?;
@@ -584,6 +587,71 @@ pub(super) async fn drive_surface(
             ending = &mut server_task => return Err(server_outcome(ending)),
         }
     }
+}
+
+enum ControlProjectionTurn {
+    Control,
+    Projection,
+}
+
+async fn control_projection_turn(
+    control: &mut canvas::axum::Control,
+    inbox_projections: &InboxProjections,
+    control_enabled: bool,
+) -> (ControlProjectionTurn, Option<canvas::axum::ControlRequest>) {
+    if inbox_projections.is_empty() {
+        return if control_enabled {
+            (ControlProjectionTurn::Control, control.recv().await)
+        } else {
+            std::future::pending().await
+        };
+    }
+    if !control_enabled {
+        return (ControlProjectionTurn::Projection, None);
+    }
+    tokio::select! {
+        biased;
+        request = control.recv() => (ControlProjectionTurn::Control, request),
+        () = std::future::ready(()) => (ControlProjectionTurn::Projection, None),
+    }
+}
+
+async fn dispatch_control_projection_burst(
+    command_surface: &command_surface::Surface<'_>,
+    seats: &mut Seats,
+    lifecycle: &mut lifecycle::Runtime,
+    control: &mut canvas::axum::Control,
+    request: Option<canvas::axum::ControlRequest>,
+    inbox_projections: &mut InboxProjections,
+    lifecycle_reconciliation: &mut LifecycleReconciliation,
+) -> CommandResult<bool> {
+    let dispatched = dispatch_control_burst(
+        command_surface,
+        seats,
+        lifecycle,
+        control,
+        request,
+        inbox_projections,
+    )
+    .await?;
+    request_lifecycle_reconciliation(lifecycle_reconciliation, &dispatched);
+    if !dispatched.reached_dark {
+        project_owed_inbox(command_surface, inbox_projections).await?;
+    }
+    Ok(dispatched.reached_dark)
+}
+
+/// Pay one scheduled fold turn, then let readiness produced during that
+/// synchronous attempt reach the current-thread executor before choosing again.
+pub(in crate::resident) async fn project_owed_inbox(
+    command_surface: &command_surface::Surface<'_>,
+    inbox_projections: &mut InboxProjections,
+) -> CommandResult<()> {
+    if !inbox_projections.is_empty() {
+        project_next_inbox(command_surface, inbox_projections)?;
+        tokio::task::yield_now().await;
+    }
+    Ok(())
 }
 
 fn session_compaction_poll() -> tokio::time::Interval {

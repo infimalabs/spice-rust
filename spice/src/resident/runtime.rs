@@ -1015,7 +1015,7 @@ use surface::{
 };
 #[cfg(test)]
 pub(in crate::resident) use surface::{
-    dispatch_control_burst, project_next_inbox, publish_ready_surface,
+    dispatch_control_burst, project_next_inbox, project_owed_inbox, publish_ready_surface,
 };
 
 #[cfg(test)]

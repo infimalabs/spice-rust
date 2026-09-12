@@ -486,58 +486,58 @@ async fn socket_dispatch_replies_then_projects_three_lane_fanout() {
     let server_task = tokio::spawn(server.up_until(async move {
         let _ = stopped.await;
     }));
-    let (commands_sent, commands_ready) = tokio::sync::oneshot::channel();
-    let (responses_read, responses_done) = tokio::sync::oneshot::channel();
+    let (responses_read, mut responses_done) = tokio::sync::oneshot::channel();
     let client = tokio::task::spawn_blocking(move || {
         let mut socket = connect_fixture_socket(address, operator, epoch, Actor::Operator);
         for (index, (lane, occupant)) in lanes.into_iter().enumerate() {
+            let id = test_uuid(84 + u8::try_from(index).expect("fixture index fits"));
             send_steer_send(
                 &mut socket,
-                test_uuid(84 + u8::try_from(index).expect("fixture index fits")),
+                id,
                 epoch,
                 fanout,
                 lane,
                 occupant,
                 format!("BROADCAST: socket delivery to lane {index}"),
             );
-        }
-        let _ = commands_sent.send(());
-        for index in 0..lanes.len() {
-            assert_steer_send_response(
-                &mut socket,
-                test_uuid(84 + u8::try_from(index).expect("fixture index fits")),
-            );
+            assert_steer_send_response(&mut socket, id);
         }
         let _ = responses_read.send(());
     });
-    commands_ready.await.expect("client submits commands");
     let mut seats = Seats::new();
     let mut lifecycle = lifecycle::Runtime::new(&config.lane);
-    let request = tokio::time::timeout(Duration::from_secs(3), control.recv())
-        .await
-        .expect("control request arrives before socket dispatch stalls")
-        .expect("control receives command");
-    assert_eq!(request.command().id(), test_uuid(84));
     let mut projections = InboxProjections::new();
-    let dispatched = runtime::dispatch_control_burst(
-        &command_surface,
-        &mut seats,
-        &mut lifecycle,
-        &mut control,
-        Some(request),
-        &mut projections,
-    )
-    .await
-    .expect("socket steering burst completes");
-    assert!(!dispatched.reached_dark && !dispatched.lifecycle_released);
-    tokio::time::timeout(Duration::from_secs(3), responses_done)
+    for (index, (lane, _)) in lanes.into_iter().enumerate() {
+        let id = test_uuid(84 + u8::try_from(index).expect("fixture index fits"));
+        let request = tokio::time::timeout(Duration::from_secs(3), control.recv())
+            .await
+            .expect("staggered server-admitted control arrives")
+            .expect("control remains open");
+        assert_eq!(request.command().id(), id);
+        let dispatched = runtime::dispatch_control_burst(
+            &command_surface,
+            &mut seats,
+            &mut lifecycle,
+            &mut control,
+            Some(request),
+            &mut projections,
+        )
         .await
-        .expect("socket responses are read before inbox projection")
-        .expect("client observes every response");
-    while !projections.is_empty() {
-        runtime::project_next_inbox(&command_surface, &mut projections)
-            .expect("one scheduled lane projection completes");
+        .expect("socket steering burst completes");
+        assert!(!dispatched.reached_dark && !dispatched.lifecycle_released);
+        runtime::project_owed_inbox(&command_surface, &mut projections)
+            .await
+            .expect("burst pays one projection turn");
+        if index == 0 {
+            let first = fs::read_to_string(steer::inbox::path(&paths.inbox, lane))
+                .expect("first staggered lane inbox reads");
+            assert!(first.contains("socket delivery") && projections.is_empty());
+        }
     }
+    tokio::time::timeout(Duration::from_secs(3), &mut responses_done)
+        .await
+        .expect("staggered socket responses complete")
+        .expect("client observes every response");
     assert_socket_fanout_published(&bus, &paths, fanout, lanes);
     shutdown.send(()).expect("shutdown signals");
     server_task
