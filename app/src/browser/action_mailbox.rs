@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use futures_channel::mpsc;
 
-use super::ClientAction;
+use crate::client_action::ClientAction;
 
 const ACTION_RECORD_LIMIT: usize = 64;
 const HISTORY_RECORD_LIMIT: usize = 32;
@@ -41,16 +41,12 @@ impl ActionQueue {
         self.rearm()
     }
 
-    pub(super) fn lease(&self) -> Option<ClientAction> {
-        self.mailbox.borrow_mut().lease()
-    }
-
-    pub(super) fn commit(&self) {
-        self.mailbox.borrow_mut().commit();
-    }
-
-    pub(super) fn restore(&self) {
-        self.mailbox.borrow_mut().restore();
+    pub(super) fn lease(&self) -> Option<ActionLease> {
+        let action = self.mailbox.borrow_mut().lease()?;
+        Some(ActionLease {
+            queue: self.clone(),
+            action: Some(action),
+        })
     }
 
     pub(super) fn rearm(&self) -> Result<(), ActionAdmissionError> {
@@ -105,11 +101,58 @@ struct ActionMailbox {
 struct QueuedAction {
     action: ClientAction,
     payload_bytes: usize,
+    history: Option<(wire::CanonicalUuid, wire::MessageLocus)>,
+    class: ActionClass,
 }
 
 struct LeasedAction {
-    queued: QueuedAction,
     index: usize,
+    payload_bytes: usize,
+    history: Option<(wire::CanonicalUuid, wire::MessageLocus)>,
+    class: ActionClass,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ActionClass {
+    Refresh,
+    DrainSubmissions,
+    FastMode,
+    Other,
+}
+
+pub(super) struct ActionLease {
+    queue: ActionQueue,
+    action: Option<ClientAction>,
+}
+
+impl ActionLease {
+    pub(super) fn action(&self) -> &ClientAction {
+        self.action
+            .as_ref()
+            .expect("an unsettled lease owns its action")
+    }
+
+    pub(super) fn commit(mut self) -> ClientAction {
+        let action = self.action.take().expect("an unsettled lease commits");
+        self.queue.mailbox.borrow_mut().commit();
+        action
+    }
+
+    pub(super) fn restore(mut self) {
+        self.restore_inner();
+    }
+
+    fn restore_inner(&mut self) {
+        if let Some(action) = self.action.take() {
+            self.queue.mailbox.borrow_mut().restore(action);
+        }
+    }
+}
+
+impl Drop for ActionLease {
+    fn drop(&mut self) {
+        self.restore_inner();
+    }
 }
 
 impl ClientAction {
@@ -163,35 +206,24 @@ impl ClientAction {
 
 impl ActionMailbox {
     fn admit(&mut self, action: ClientAction) -> Result<(), ActionAdmissionError> {
-        let singleton = matches!(
-            action,
-            ClientAction::Refresh | ClientAction::DrainSubmissions
-        );
-        if singleton
+        let class = ActionClass::of(&action);
+        if matches!(class, ActionClass::Refresh | ActionClass::DrainSubmissions)
             && self
                 .records
                 .iter()
-                .chain(self.leased.iter().map(|leased| &leased.queued))
-                .any(|queued| {
-                    matches!(
-                        (&queued.action, &action),
-                        (ClientAction::Refresh, ClientAction::Refresh)
-                            | (
-                                ClientAction::DrainSubmissions,
-                                ClientAction::DrainSubmissions
-                            )
-                    )
-                })
+                .map(|queued| queued.class)
+                .chain(self.leased.iter().map(|leased| leased.class))
+                .any(|retained| retained == class)
         {
             return Ok(());
         }
-        if let ClientAction::FastMode(value) = &action
+        if class == ActionClass::FastMode
             && let Some(queued) = self
                 .records
                 .iter_mut()
-                .find(|queued| matches!(queued.action, ClientAction::FastMode(_)))
+                .find(|queued| queued.class == ActionClass::FastMode)
         {
-            queued.action = ClientAction::FastMode(*value);
+            queued.action = action;
             return Ok(());
         }
         let history = match &action {
@@ -218,6 +250,8 @@ impl ActionMailbox {
         self.records.push_back(QueuedAction {
             action,
             payload_bytes,
+            history,
+            class,
         });
         Ok(())
     }
@@ -230,40 +264,97 @@ impl ActionMailbox {
             .position(|queued| queued.action.is_mutation() == self.mutation_turn)
             .unwrap_or(0);
         let queued = self.records.remove(index)?;
-        let action = queued.action.clone();
-        self.leased = Some(LeasedAction { queued, index });
-        Some(action)
+        self.leased = Some(LeasedAction {
+            index,
+            payload_bytes: queued.payload_bytes,
+            history: queued.history,
+            class: queued.class,
+        });
+        Some(queued.action)
     }
 
     fn commit(&mut self) {
         let leased = self.leased.take().expect("one leased action commits");
-        self.release_accounting(&leased.queued);
+        self.release_accounting(&leased);
         self.mutation_turn = !self.mutation_turn;
     }
 
-    fn restore(&mut self) {
+    fn restore(&mut self, action: ClientAction) {
         let leased = self.leased.take().expect("one leased action restores");
-        if matches!(leased.queued.action, ClientAction::FastMode(_))
+        assert!(
+            ActionClass::of(&action) == leased.class,
+            "a lease restores its exact action class"
+        );
+        if leased.class == ActionClass::FastMode
             && self
                 .records
                 .iter()
-                .any(|queued| matches!(queued.action, ClientAction::FastMode(_)))
+                .any(|queued| queued.class == ActionClass::FastMode)
         {
-            self.release_accounting(&leased.queued);
+            self.release_accounting(&leased);
             return;
         }
-        self.records
-            .insert(leased.index.min(self.records.len()), leased.queued);
+        let index = leased.index.min(self.records.len());
+        self.records.insert(
+            index,
+            QueuedAction {
+                action,
+                payload_bytes: leased.payload_bytes,
+                history: leased.history,
+                class: leased.class,
+            },
+        );
     }
 
-    fn release_accounting(&mut self, queued: &QueuedAction) {
-        if let ClientAction::MessageHistory { lane, before } = &queued.action {
-            self.history.remove(&(*lane, *before));
+    fn release_accounting(&mut self, leased: &LeasedAction) {
+        if let Some(history) = leased.history {
+            self.history.remove(&history);
         }
-        self.payload_bytes = self.payload_bytes.saturating_sub(queued.payload_bytes);
+        self.payload_bytes = self.payload_bytes.saturating_sub(leased.payload_bytes);
     }
 
     fn is_empty(&self) -> bool {
         self.records.is_empty()
+    }
+}
+
+impl ActionClass {
+    fn of(action: &ClientAction) -> Self {
+        match action {
+            ClientAction::Refresh => Self::Refresh,
+            ClientAction::DrainSubmissions => Self::DrainSubmissions,
+            ClientAction::FastMode(_) => Self::FastMode,
+            _ => Self::Other,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_action_allocation_survives_lease_restore_and_commit() {
+        let (queue, _wakes) = ActionQueue::new();
+        let id = "018f82d4-6f59-7d06-92e3-bce913116301"
+            .parse()
+            .expect("fixture identity");
+        let note = "retained action payload".repeat(1024);
+        let ptr = note.as_ptr();
+        queue
+            .admit(ClientAction::Note {
+                id,
+                task: "TASKS-1kKRRsDP".parse().expect("fixture task"),
+                note,
+            })
+            .expect("action admits");
+        let lease = queue.lease().expect("action leases");
+        assert!(matches!(lease.action(), ClientAction::Note { note, .. } if note.as_ptr() == ptr));
+        lease.restore();
+        let lease = queue.lease().expect("failed dispatch restores lease");
+        assert!(matches!(lease.action(), ClientAction::Note { note, .. } if note.as_ptr() == ptr));
+        let action = lease.commit();
+        assert!(matches!(action, ClientAction::Note { note, .. } if note.as_ptr() == ptr));
+        assert!(queue.lease().is_none());
     }
 }

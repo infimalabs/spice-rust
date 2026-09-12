@@ -712,7 +712,7 @@ pub(super) fn drop_on_lane(
         let (Some(id), Some(fanout)) = (action_identity(&sender), action_identity(&sender)) else {
             return;
         };
-        let _admitted = admit_action(
+        if !admit_action(
             &sender,
             ClientAction::Steer {
                 id,
@@ -723,7 +723,9 @@ pub(super) fn drop_on_lane(
                 message,
                 attachments: Vec::new(),
             },
-        );
+        ) {
+            transfer.set_drop_effect("none");
+        }
     })
 }
 

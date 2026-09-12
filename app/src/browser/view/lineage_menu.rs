@@ -150,9 +150,9 @@ fn render_global_settings(runtime: Option<&CanvasRuntime>, sender: &SenderHandle
     let enabled = settings.is_some()
         && runtime.is_some_and(|runtime| runtime.offers(CommandKind::GlobalSettingsSet));
     let sender = sender.clone();
-    let onclick = Callback::from(move |_| {
-        if enabled {
-            let _admitted = admit_action(&sender, ClientAction::FastMode(!fast_mode));
+    let onclick = Callback::from(move |event: MouseEvent| {
+        if enabled && admit_action(&sender, ClientAction::FastMode(!fast_mode)) {
+            event.stop_propagation();
         }
     });
     html! {
@@ -589,8 +589,11 @@ fn drop_into_lineage(
         let Some(member) = dragged_member(&event) else {
             return;
         };
-        if enabled && !current.contains(&member) {
-            send_member(&sender, target, member, topology_revision);
+        if enabled
+            && !current.contains(&member)
+            && send_member(&sender, target, member, topology_revision)
+        {
+            event.stop_propagation();
         }
     })
 }
@@ -606,8 +609,8 @@ fn drop_into_new_lineage(
         let Some(member) = dragged_member(&event) else {
             return;
         };
-        if enabled {
-            send_member(&sender, target, member, topology_revision);
+        if enabled && send_member(&sender, target, member, topology_revision) {
+            event.stop_propagation();
         }
     })
 }
@@ -623,8 +626,11 @@ fn drop_into_solo_lineage(
         let Some(member) = dragged_member(&event) else {
             return;
         };
-        if enabled && !current.contains(&member) {
-            send_member(&sender, member, member, topology_revision);
+        if enabled
+            && !current.contains(&member)
+            && send_member(&sender, member, member, topology_revision)
+        {
+            event.stop_propagation();
         }
     })
 }
@@ -634,8 +640,8 @@ fn send_member(
     lineage: CanonicalUuid,
     member: CanonicalUuid,
     topology_revision: u64,
-) {
-    let _admitted = admit_action(
+) -> bool {
+    admit_action(
         sender,
         ClientAction::ConfigureLineage {
             topology_revision,
@@ -643,5 +649,5 @@ fn send_member(
             member: Some(member),
             life: None,
         },
-    );
+    )
 }
