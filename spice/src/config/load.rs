@@ -3,8 +3,8 @@
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
-use std::fs::Metadata;
-use std::io;
+use std::fs::{File, Metadata};
+use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 
 use wire::ConfigSource;
@@ -16,13 +16,12 @@ use std::ffi::OsStr;
 #[cfg(not(unix))]
 use std::fs;
 #[cfg(unix)]
-use std::fs::File;
-#[cfg(unix)]
-use std::io::Read as _;
-#[cfg(unix)]
 use std::path::Component;
 
-use super::{Document, FlagOverride, Inputs, ResolveError, Resolved, resolve};
+use super::{
+    DOCUMENT_BYTE_LIMIT, Document, FlagOverride, GENERATION_BYTE_LIMIT, Inputs, ResolveError,
+    Resolved, resolve,
+};
 use crate::repository::{Repository, ResolveError as RepositoryError};
 
 const TRACKED_FILE: &str = "spice-rust.toml";
@@ -117,6 +116,10 @@ struct FileIdentity {
 struct Acquired {
     text: Option<String>,
     generation: DocumentGeneration,
+}
+
+struct CaptureBudget {
+    used: u64,
 }
 
 #[cfg(unix)]
@@ -222,6 +225,8 @@ pub enum AcquisitionKind {
     Unreadable,
     /// The regular file does not contain UTF-8.
     NonUtf8,
+    /// The regular file or complete generation exceeds its byte ceiling.
+    Oversized,
 }
 
 /// One typed refusal acquiring an exact configuration path.
@@ -275,6 +280,54 @@ impl AcquisitionIssue {
             cause: Some(cause),
         }
     }
+
+    fn oversized(
+        source: ConfigSource,
+        path: &Path,
+        observed: u64,
+        limit: u64,
+        scope: &str,
+    ) -> Self {
+        Self {
+            source,
+            path: path.to_path_buf(),
+            kind: AcquisitionKind::Oversized,
+            cause: Some(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("scope={scope} observed={observed} maximum={limit}"),
+            )),
+        }
+    }
+}
+
+impl CaptureBudget {
+    fn read_limit(
+        &self,
+        source: ConfigSource,
+        path: &Path,
+        bytes: u64,
+    ) -> Result<u64, AcquisitionIssue> {
+        if bytes > DOCUMENT_BYTE_LIMIT {
+            return Err(AcquisitionIssue::oversized(
+                source,
+                path,
+                bytes,
+                DOCUMENT_BYTE_LIMIT,
+                "document",
+            ));
+        }
+        let total = self.used.saturating_add(bytes);
+        if total > GENERATION_BYTE_LIMIT {
+            return Err(AcquisitionIssue::oversized(
+                source,
+                path,
+                total,
+                GENERATION_BYTE_LIMIT,
+                "generation",
+            ));
+        }
+        Ok(DOCUMENT_BYTE_LIMIT.min(GENERATION_BYTE_LIMIT - self.used))
+    }
 }
 
 impl fmt::Display for AcquisitionIssue {
@@ -290,6 +343,7 @@ impl fmt::Display for AcquisitionIssue {
                 AcquisitionKind::NonRegular => "not a regular file",
                 AcquisitionKind::Unreadable => "unreadable",
                 AcquisitionKind::NonUtf8 => "not UTF-8",
+                AcquisitionKind::Oversized => "larger than the configuration byte bound",
             }
         )?;
         if let Some(cause) = &self.cause {
@@ -445,22 +499,26 @@ pub fn capture_repository(
     let local_path = locations.local();
 
     let mut acquisition = Vec::new();
+    let mut budget = CaptureBudget { used: 0 };
     let tracked = acquire(
         ConfigSource::Tracked,
         repository.worktree_root(),
         Path::new(TRACKED_FILE),
+        &mut budget,
         &mut acquisition,
     );
     let worktree = acquire(
         ConfigSource::Worktree,
         repository.worktree_root(),
         Path::new(WORKTREE_FILE),
+        &mut budget,
         &mut acquisition,
     );
     let local = acquire(
         ConfigSource::Local,
         repository.common_dir(),
         Path::new(LOCAL_FILE),
+        &mut budget,
         &mut acquisition,
     );
     let tracked_location = tracked_path.display().to_string();
@@ -511,9 +569,10 @@ fn acquire(
     source: ConfigSource,
     root: &Path,
     relative: &Path,
+    budget: &mut CaptureBudget,
     issues: &mut Vec<AcquisitionIssue>,
 ) -> Option<Acquired> {
-    match acquire_document(source, root, relative) {
+    match acquire_document(source, root, relative, budget) {
         Ok(document) => Some(document),
         Err(issue) => {
             issues.push(issue);
@@ -527,8 +586,9 @@ fn acquire_document(
     source: ConfigSource,
     root: &Path,
     relative: &Path,
+    budget: &mut CaptureBudget,
 ) -> Result<Acquired, AcquisitionIssue> {
-    acquire_document_with(source, root, relative, || {})
+    acquire_document_with(source, root, relative, budget, || {})
 }
 
 #[cfg(unix)]
@@ -536,6 +596,7 @@ fn acquire_document_with<F>(
     source: ConfigSource,
     root: &Path,
     relative: &Path,
+    budget: &mut CaptureBudget,
     before_read: F,
 ) -> Result<Acquired, AcquisitionIssue>
 where
@@ -544,7 +605,7 @@ where
     match walk_to_document_parent(source, root, relative)? {
         ParentCapture::Missing(document) => Ok(document),
         ParentCapture::Open(parent) => {
-            acquire_from_parent(source, root, relative, parent, before_read)
+            acquire_from_parent(source, root, relative, parent, budget, before_read)
         }
     }
 }
@@ -623,6 +684,7 @@ fn acquire_from_parent<F>(
     root: &Path,
     relative: &Path,
     parent: OpenParent,
+    budget: &mut CaptureBudget,
     before_read: F,
 ) -> Result<Acquired, AcquisitionIssue>
 where
@@ -663,7 +725,11 @@ where
         .directories
         .last()
         .expect("configuration parent is open");
-    let (bytes, identity) = read_opened_file(source, &path, opened_parent, file_name, before_read)?;
+    let file = open_file_at(opened_parent, file_name)
+        .map_err(|error| AcquisitionIssue::unreadable(source, &path, error))?;
+    let (bytes, identity) = read_bounded_file(source, &path, file, budget, before_read, || {
+        open_file_at(opened_parent, file_name).and_then(|file| file.metadata())
+    })?;
     let generation = DocumentGeneration {
         root: parent.root,
         directories: parent.generations,
@@ -747,19 +813,18 @@ fn require_regular_file(
     Err(AcquisitionIssue::shape(source, path, kind))
 }
 
-#[cfg(unix)]
-fn read_opened_file<F>(
+fn read_bounded_file<F, N>(
     source: ConfigSource,
     path: &Path,
-    parent: &File,
-    file_name: &OsStr,
+    mut file: File,
+    budget: &mut CaptureBudget,
     before_read: F,
+    named_metadata: N,
 ) -> Result<(Vec<u8>, FileIdentity), AcquisitionIssue>
 where
     F: FnOnce(),
+    N: FnOnce() -> io::Result<Metadata>,
 {
-    let mut file = open_file_at(parent, file_name)
-        .map_err(|error| AcquisitionIssue::unreadable(source, path, error))?;
     let opened = file
         .metadata()
         .map_err(|error| AcquisitionIssue::unreadable(source, path, error))?;
@@ -771,22 +836,31 @@ where
         ));
     }
     let identity = FileIdentity::from_metadata(&opened);
+    let limit = budget.read_limit(source, path, identity.len)?;
     before_read();
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
+    let mut bytes = Vec::with_capacity(
+        usize::try_from(identity.len).expect("admitted configuration length fits usize"),
+    );
+    file.by_ref()
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
         .map_err(|error| AcquisitionIssue::unreadable(source, path, error))?;
     let after = file
         .metadata()
         .map_err(|error| AcquisitionIssue::unreadable(source, path, error))?;
-    let named = open_file_at(parent, file_name)
-        .and_then(|file| file.metadata())
-        .map_err(|error| AcquisitionIssue::unreadable(source, path, error))?;
-    if FileIdentity::from_metadata(&after) != identity
+    let named =
+        named_metadata().map_err(|error| AcquisitionIssue::unreadable(source, path, error))?;
+    if !named.is_file()
+        || FileIdentity::from_metadata(&after) != identity
         || FileIdentity::from_metadata(&named) != identity
         || u64::try_from(bytes.len()).ok() != Some(identity.len)
     {
         return Err(generation_moved(source, path));
     }
+    budget.used = budget
+        .used
+        .checked_add(identity.len)
+        .expect("admitted configuration generation cannot overflow");
     Ok((bytes, identity))
 }
 
@@ -795,6 +869,7 @@ fn acquire_document(
     source: ConfigSource,
     root: &Path,
     relative: &Path,
+    budget: &mut CaptureBudget,
 ) -> Result<Acquired, AcquisitionIssue> {
     let path = root.join(relative);
     let root_metadata = fs::symlink_metadata(root)
@@ -843,9 +918,16 @@ fn acquire_document(
             AcquisitionKind::NonRegular,
         ));
     }
-    let bytes =
-        fs::read(&path).map_err(|error| AcquisitionIssue::unreadable(source, &path, error))?;
-    let identity = FileIdentity::from_metadata(&metadata);
+    let file =
+        File::open(&path).map_err(|error| AcquisitionIssue::unreadable(source, &path, error))?;
+    let (bytes, identity) = read_bounded_file(
+        source,
+        &path,
+        file,
+        budget,
+        || {},
+        || fs::symlink_metadata(&path),
+    )?;
     let text = String::from_utf8(bytes)
         .map_err(|_| AcquisitionIssue::shape(source, &path, AcquisitionKind::NonUtf8))?;
     Ok(Acquired {
@@ -1057,7 +1139,6 @@ impl FileIdentity {
     }
 }
 
-#[cfg(unix)]
 fn generation_moved(source: ConfigSource, path: &Path) -> AcquisitionIssue {
     AcquisitionIssue::unreadable(
         source,
@@ -1068,22 +1149,13 @@ fn generation_moved(source: ConfigSource, path: &Path) -> AcquisitionIssue {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use std::{
-        env, fs as file_system,
-        sync::atomic::{AtomicU64, Ordering},
-    };
+    use std::{env, fs as file_system};
 
     use super::*;
 
-    static NEXT_CAPTURE: AtomicU64 = AtomicU64::new(0);
-
     #[test]
     fn replacement_while_an_open_file_is_read_refuses_the_whole_capture() {
-        let root = env::temp_dir().join(format!(
-            "spice-config-capture-{}-{}",
-            std::process::id(),
-            NEXT_CAPTURE.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root = env::temp_dir().join(format!("spice-config-capture-{}", std::process::id()));
         file_system::create_dir(&root).expect("create capture fixture");
         let admitted_root = file_system::canonicalize(&root).expect("canonical capture fixture");
         let path = admitted_root.join(TRACKED_FILE);
@@ -1093,10 +1165,12 @@ mod tests {
         file_system::write(&replacement, b"[listen]\nwindow = \"2m\"\n")
             .expect("write same-byte replacement");
 
+        let mut budget = CaptureBudget { used: 0 };
         let error = acquire_document_with(
             ConfigSource::Tracked,
             &admitted_root,
             Path::new(TRACKED_FILE),
+            &mut budget,
             || {
                 file_system::rename(&path, &displaced).expect("displace opened generation");
                 file_system::rename(&replacement, &path).expect("publish replacement generation");
@@ -1106,10 +1180,12 @@ mod tests {
 
         assert_eq!(error.kind(), AcquisitionKind::Unreadable);
         assert_eq!(error.path(), path);
-        assert_eq!(
-            file_system::read(&displaced).expect("read displaced generation"),
-            file_system::read(&path).expect("read replacement generation")
-        );
+        for (used, bytes) in [(0, DOCUMENT_BYTE_LIMIT + 1), (GENERATION_BYTE_LIMIT, 1)] {
+            let error = CaptureBudget { used }
+                .read_limit(ConfigSource::Tracked, &path, bytes)
+                .expect_err("document and generation metadata are bounded before allocation");
+            assert_eq!(error.kind(), AcquisitionKind::Oversized);
+        }
         file_system::remove_dir_all(root).expect("remove capture fixture");
     }
 }
