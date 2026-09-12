@@ -39,6 +39,10 @@ const DEFAULT_COMMITS_LIMIT: usize = 25;
 const DEFAULT_COMMANDS_LIMIT: usize = 80;
 const DEFAULT_COMMAND_TEXT: usize = 220;
 const MAX_AGGREGATE_RECENT: usize = 256;
+const MAX_WINDOW_COUNT: usize = 256;
+const MAX_WINDOW_LINES: usize = 4_096;
+const MAX_WINDOW_BYTES: usize = 1_048_576;
+const MAX_WINDOW_TEXT: usize = 16_384;
 
 struct WindowPlan<'a> {
     horizon_start: Option<&'a str>,
@@ -168,6 +172,61 @@ pub(crate) fn horizon_count(matches: &ArgMatches, action: &str) -> Result<usize,
         number(matches, "count", DEFAULT_HORIZON_COMPACTIONS)
     } else {
         Ok(DEFAULT_HORIZON_COMPACTIONS)
+    }
+}
+
+pub(crate) fn validate_window_options(matches: &ArgMatches, action: &str) -> Result<(), Refusal> {
+    let bounded = |name: &str, value: usize, maximum: usize| {
+        if value <= maximum {
+            Ok(())
+        } else {
+            Err(refusal(
+                "session::bound-exceeded",
+                Some(format!("--{name}={value} maximum={maximum}")),
+                "pass a session window bound within the repository ceiling",
+            ))
+        }
+    };
+    match action {
+        "briefing" => {
+            bounded(
+                "max-lines",
+                number(matches, "max-lines", DEFAULT_RECALL_MAX_LINES)?,
+                MAX_WINDOW_LINES,
+            )?;
+            bounded(
+                "max-bytes",
+                number(matches, "max-bytes", DEFAULT_RECALL_MAX_BYTES)?,
+                MAX_WINDOW_BYTES,
+            )
+        }
+        "sweep" => bounded("count", horizon_count(matches, action)?, MAX_WINDOW_COUNT),
+        "slices" => {
+            bounded(
+                "limit",
+                number_allow_zero(matches, "limit", DEFAULT_SLICES_LIMIT)?,
+                MAX_WINDOW_COUNT,
+            )?;
+            bounded(
+                "max-text",
+                number(matches, "max-text", DEFAULT_SLICE_TEXT)?,
+                MAX_WINDOW_TEXT,
+            )
+        }
+        _ => Ok(()),
+    }
+}
+
+pub(crate) fn window_horizon_count(
+    matches: &ArgMatches,
+    action: &str,
+) -> Result<Option<usize>, Refusal> {
+    match action {
+        "briefing" | "sweep" => horizon_count(matches, action).map(Some),
+        "slices" if values(matches, "slice-id").is_empty() => {
+            number_allow_zero(matches, "limit", DEFAULT_SLICES_LIMIT).map(Some)
+        }
+        _ => Ok(None),
     }
 }
 
