@@ -839,16 +839,16 @@ fn accept_commit(
 
 /// One owed event turn; `lifecycle::Runtime` retains cursor and movement authority.
 #[derive(Default)]
-pub(super) struct LifecycleReconciliation {
+pub(in crate::resident) struct LifecycleReconciliation {
     pending: bool,
 }
 
 impl LifecycleReconciliation {
-    fn is_pending(&self) -> bool {
+    pub(in crate::resident) fn is_pending(&self) -> bool {
         self.pending
     }
 
-    fn request(&mut self) {
+    pub(in crate::resident) fn request(&mut self) {
         self.pending = true;
     }
 
@@ -856,7 +856,7 @@ impl LifecycleReconciliation {
         self.pending = false;
     }
 
-    fn reconcile(
+    pub(in crate::resident) fn reconcile(
         &mut self,
         bus: &Bus,
         command_surface: &command_surface::Surface<'_>,
@@ -868,6 +868,26 @@ impl LifecycleReconciliation {
         reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle)?;
         self.settle();
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(in crate::resident) fn reconcile_fixture(
+        &mut self,
+        bus: &Bus,
+        command_surface: &command_surface::Surface<'_>,
+        seats: &mut Seats,
+        lifecycle: &mut lifecycle::Runtime,
+    ) -> CommandResult<()> {
+        let config = command_surface.config;
+        let mut timers = timers::Runtime::start(config.projects.clone(), config.steering.clone())?;
+        self.reconcile(
+            bus,
+            command_surface,
+            seats,
+            &mut Vec::new(),
+            &mut timers,
+            lifecycle,
+        )
     }
 }
 

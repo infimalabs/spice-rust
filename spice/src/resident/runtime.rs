@@ -963,11 +963,12 @@ mod surface;
 pub(super) use surface::announce_canvas;
 use surface::run_surface;
 #[cfg(test)]
-use surface::{LifecycleReconciliation, StartedSurface, drive_surface, start_surface};
-#[cfg(test)]
 pub(in crate::resident) use surface::{
-    dispatch_control, dispatch_control_burst, project_next_inbox, publish_ready_surface,
+    LifecycleReconciliation, dispatch_control, dispatch_control_burst, project_next_inbox,
+    publish_ready_surface,
 };
+#[cfg(test)]
+use surface::{StartedSurface, drive_surface, start_surface};
 
 #[cfg(test)]
 #[path = "tests/judge_liveness.rs"]
