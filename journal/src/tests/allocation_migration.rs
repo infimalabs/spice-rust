@@ -23,10 +23,10 @@ fn schema_three_heads_gain_durable_queue_and_claim_origins_once() {
             .map(|migration| (migration.from(), migration.to())),
         Some((3, SCHEMA_VERSION)),
     );
-    let heads = journal
-        .read(|read| read.task_heads())
-        .expect("migrated heads read");
-    let task = heads.first().expect("one task");
+    let task = journal
+        .read(|read| read.task_heads_for(&STAMP.parse().expect("task stamp")))
+        .expect("migrated heads read")
+        .expect("one task");
     assert_eq!(task.statement().body().born.as_str(), STAMP);
     assert_eq!(task.statement().body().queue_origin, seq(1));
     let claim = task.claim().expect("one claim").body();

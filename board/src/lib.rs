@@ -85,7 +85,21 @@ impl Snapshot {
         projects: &ProjectPolicy,
     ) -> Result<Self, SnapshotReadError> {
         let (cursor, heads, trust) = journal
-            .read(|read| Ok((read.cursor()?, read.task_heads()?, read.trust_heads()?)))
+            .read(|read| {
+                let tasks = read.task_head_page(None, journal::FactReadBudget::RETAINED)?;
+                if let Some(continuation) = tasks.continuation {
+                    return Err(journal::GuardError::Invalid(format!(
+                        "board task heads require continuation after {continuation}"
+                    )));
+                }
+                let trust = read.trust_head_page(None, journal::FactReadBudget::RETAINED)?;
+                if let Some(continuation) = trust.continuation {
+                    return Err(journal::GuardError::Invalid(format!(
+                        "board trust heads require continuation after {continuation}"
+                    )));
+                }
+                Ok((read.cursor()?, tasks.rows, trust.rows))
+            })
             .map_err(SnapshotReadError::Journal)?;
         let entries = heads
             .into_iter()

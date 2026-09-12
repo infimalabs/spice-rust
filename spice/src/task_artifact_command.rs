@@ -145,26 +145,28 @@ fn snapshot() -> Result<Snapshot, Failure> {
     })?;
     let projects = task_project_policy(&repository)?;
     let state = repository.admit_state().map_err(state_failure)?;
-    let reader = journal::JournalReader::open(state.journal()).map_err(|error| {
+    let journal = journal::Journal::open(state.journal()).map_err(|error| {
         Failure::fault(
             FaultClass::Store,
             "artifact::journal-unreadable",
             error.to_string(),
         )
     })?;
-    let (cursor, heads) = reader
-        .read(|read| {
-            let page = read.task_head_page(None, journal::FactReadBudget::RETAINED)?;
-            Ok((page.witness.cursor, page.into_complete()?))
-        })
-        .map_err(|error| {
-            Failure::fault(
-                FaultClass::Store,
-                "artifact::task-heads-unreadable",
-                error.to_string(),
-            )
-        })?;
-    let cursor = cursor.ok_or_else(|| {
+    let bus = bus::Bus::start(journal).map_err(|error| {
+        Failure::fault(
+            FaultClass::Store,
+            "artifact::journal-unreadable",
+            error.to_string(),
+        )
+    })?;
+    let authority = bus.task_snapshot().map_err(|error| {
+        Failure::fault(
+            FaultClass::Store,
+            "artifact::task-heads-unreadable",
+            error.to_string(),
+        )
+    })?;
+    let cursor = authority.cursor().ok_or_else(|| {
         Failure::fault(
             FaultClass::Store,
             "artifact::cursor-missing",
@@ -172,16 +174,21 @@ fn snapshot() -> Result<Snapshot, Failure> {
         )
     })?;
     let mut statuses = BTreeMap::new();
-    for heads in heads {
-        let (statement, workflow, claim, lease) = heads.into_bodies();
-        let entry =
-            board::Entry::new(statement, workflow, claim, lease, &projects).map_err(|error| {
-                Failure::fault(
-                    FaultClass::Store,
-                    "artifact::task-head-invalid",
-                    error.to_string(),
-                )
-            })?;
+    for heads in authority.tasks() {
+        let entry = board::Entry::new(
+            heads.statement().body().clone(),
+            heads.workflow().body().clone(),
+            heads.claim().map(|head| head.body().clone()),
+            heads.lease().map(|head| head.body().clone()),
+            &projects,
+        )
+        .map_err(|error| {
+            Failure::fault(
+                FaultClass::Store,
+                "artifact::task-head-invalid",
+                error.to_string(),
+            )
+        })?;
         statuses.insert(
             entry.born().clone(),
             (entry.handle().clone(), entry.workflow().status.clone()),

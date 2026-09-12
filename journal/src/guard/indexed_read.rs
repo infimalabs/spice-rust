@@ -490,14 +490,6 @@ impl JournalRead<'_> {
         page.finish(limit, horizon)
     }
 
-    /// Every current task storage bundle in ascending birth order.
-    ///
-    /// The union makes loose workflow, claim, and lease rows observable rather
-    /// than silently treating the statement table as the complete key set.
-    pub fn task_heads(&self) -> Result<Vec<TaskHeads>, GuardError> {
-        head_page::complete_task_heads(self)
-    }
-
     /// Current storage bundle for one exact task birth stamp.
     pub fn task_heads_for(&self, stamp: &wire::TaskStamp) -> Result<Option<TaskHeads>, GuardError> {
         let statement = self.task_head(stamp)?;
@@ -670,11 +662,6 @@ impl JournalRead<'_> {
             )));
         }
         Ok(head)
-    }
-
-    /// Every current executable trust head in ascending digest order.
-    pub fn trust_heads(&self) -> Result<Vec<JournalHead<wire::TrustHead>>, GuardError> {
-        head_page::complete_trust_heads(self)
     }
 
     /// Current finding head, when the identity exists.

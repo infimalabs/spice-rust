@@ -4,34 +4,6 @@ use rusqlite::{Row, params};
 
 use super::{FactReadBudget, GuardError, JournalHead, JournalRead, TaskHeads, read_metrics};
 
-pub(super) fn complete_task_heads(read: &JournalRead<'_>) -> Result<Vec<TaskHeads>, GuardError> {
-    let mut rows = Vec::new();
-    let mut after = None;
-    loop {
-        let page = read.task_head_page(after.as_ref(), FactReadBudget::RETAINED)?;
-        rows.extend(page.rows);
-        match page.continuation {
-            Some(continuation) => after = Some(continuation),
-            None => return Ok(rows),
-        }
-    }
-}
-
-pub(super) fn complete_trust_heads(
-    read: &JournalRead<'_>,
-) -> Result<Vec<JournalHead<wire::TrustHead>>, GuardError> {
-    let mut rows = Vec::new();
-    let mut after = None;
-    loop {
-        let page = read.trust_head_page(after.as_ref(), FactReadBudget::RETAINED)?;
-        rows.extend(page.rows);
-        match page.continuation {
-            Some(continuation) => after = Some(continuation),
-            None => return Ok(rows),
-        }
-    }
-}
-
 /// Cursor identity shared by every page in one current-head projection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CurrentHeadWitness {
@@ -50,18 +22,6 @@ pub struct TaskHeadPage {
     pub witness: CurrentHeadWitness,
 }
 
-impl TaskHeadPage {
-    /// Consume a page only when it is the complete current projection.
-    pub fn into_complete(self) -> Result<Vec<TaskHeads>, GuardError> {
-        if let Some(continuation) = self.continuation {
-            return Err(GuardError::Invalid(format!(
-                "task head projection requires continuation after {continuation}"
-            )));
-        }
-        Ok(self.rows)
-    }
-}
-
 /// One ordered bounded page of current trust heads.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TrustHeadPage {
@@ -71,18 +31,6 @@ pub struct TrustHeadPage {
     pub continuation: Option<wire::Digest>,
     /// Cursor identity of the projection this page observed.
     pub witness: CurrentHeadWitness,
-}
-
-impl TrustHeadPage {
-    /// Consume a page only when it is the complete current projection.
-    pub fn into_complete(self) -> Result<Vec<JournalHead<wire::TrustHead>>, GuardError> {
-        if let Some(continuation) = self.continuation {
-            return Err(GuardError::Invalid(format!(
-                "trust head projection requires continuation after {continuation}"
-            )));
-        }
-        Ok(self.rows)
-    }
 }
 
 impl JournalRead<'_> {

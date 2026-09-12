@@ -26,11 +26,12 @@ fn schema_four_publication_absence_is_materialized_once_and_remains_replayable()
         version_records(&journal.connection),
         (SCHEMA_VERSION, SCHEMA_VERSION)
     );
-    let heads = journal
-        .read(|read| read.task_heads())
-        .expect("combined migration task heads read");
+    let task = journal
+        .read(|read| read.task_heads_for(&TASK_STAMP.parse().expect("task stamp")))
+        .expect("combined migration task heads read")
+        .expect("one task");
     assert_eq!(
-        heads[0].statement().body().born.as_str(),
+        task.statement().body().born.as_str(),
         TASK_STAMP,
         "the release crossing composes through sole task identity",
     );

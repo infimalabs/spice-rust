@@ -418,7 +418,15 @@ fn verify_authority(
     }
     let verified = reader.verify().map_err(BackupVerifyError::Replay)?;
     let tasks = reader
-        .read(|read| read.task_heads())
+        .read(|read| {
+            let page = read.task_head_page(None, crate::FactReadBudget::RETAINED)?;
+            if let Some(continuation) = page.continuation {
+                return Err(crate::GuardError::Invalid(format!(
+                    "backup authority task heads require continuation after {continuation}"
+                )));
+            }
+            Ok(page.rows)
+        })
         .map_err(BackupVerifyError::AuthorityView)?
         .into_iter()
         .map(|heads| heads.statement().body().born.clone())

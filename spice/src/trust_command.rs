@@ -150,59 +150,23 @@ pub(crate) fn report(contract: &Contract) -> Outcome<TrustReport> {
         Ok(surface) => surface,
         Err(error) => return load_failure(&error),
     };
-    let reader = match journal::JournalReader::open(state.journal()) {
-        Ok(reader) => reader,
-        Err(error) => {
-            return fault(
-                FaultClass::Store,
-                "trust::journal-unreadable",
-                error.to_string(),
-            );
-        }
+    let board = match crate::board_command::current_board(&repository) {
+        Ok(board) => board,
+        Err(outcome) => return retag(outcome),
     };
-    let (cursor, residency, heads) = match reader.read(|read| {
-        let page = read.trust_head_page(None, journal::FactReadBudget::RETAINED)?;
-        Ok((
-            page.witness.cursor,
-            read.residency_head()?,
-            page.into_complete()?,
-        ))
-    }) {
-        Ok(snapshot) => snapshot,
-        Err(error) => {
-            return fault(
-                FaultClass::Store,
-                "trust::journal-unreadable",
-                error.to_string(),
-            );
-        }
-    };
-    let Some(residency) = residency else {
-        return fault(
-            FaultClass::Store,
-            "trust::residency-missing",
-            "the authenticated resident has no durable residency head".to_owned(),
-        );
-    };
-    if residency.body().epoch != epoch {
+    if board.residency.body.epoch != epoch {
         return refusal(
             "trust::epoch-moved",
             Some(epoch.to_string()),
-            Some(residency.body().epoch.to_string()),
+            Some(board.residency.body.epoch.to_string()),
             "reconnect through the current resident discovery and retry",
         );
     }
-    let Some(cursor) = cursor else {
-        return fault(
-            FaultClass::Store,
-            "trust::cursor-missing",
-            "the authenticated resident has no durable journal position".to_owned(),
-        );
-    };
-    let standing = heads
+    let standing = board
+        .trust
         .iter()
-        .find(|head| head.body().digest == *surface.digest())
-        .map(|head| head.body().state);
+        .find(|head| head.body.digest == *surface.digest())
+        .map(|head| head.body.state);
     let Some(standing) = standing else {
         return refusal(
             "trust::digest-unknown",
@@ -226,16 +190,17 @@ pub(crate) fn report(contract: &Contract) -> Outcome<TrustReport> {
             "retry against the current tracked and local policy documents",
         );
     }
-    let rulings = heads
+    let rulings = board
+        .trust
         .into_iter()
         .map(|head| TrustRuling {
-            current: head.body().digest == *surface.digest(),
-            digest: head.body().digest.clone(),
-            standing: head.body().state,
+            current: head.body.digest == *surface.digest(),
+            digest: head.body.digest,
+            standing: head.body.state,
         })
         .collect();
     Outcome::Reply(Reply {
-        position: ReplyPosition::Snapshot(cursor),
+        position: ReplyPosition::Snapshot(board.cursor),
         body: TrustReport {
             surface: SURFACE_NAME.to_owned(),
             digest: surface.digest().clone(),

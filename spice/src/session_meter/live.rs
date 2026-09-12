@@ -194,7 +194,13 @@ fn collect(
     prior_handle: Option<&str>,
 ) -> Result<BoardObservation, journal::GuardError> {
     let residency = read.residency_head()?;
-    let tasks = read.task_heads()?;
+    let tasks = read.task_head_page(None, journal::FactReadBudget::RETAINED)?;
+    if let Some(continuation) = tasks.continuation {
+        return Err(journal::GuardError::Invalid(format!(
+            "session claim observation requires continuation after {continuation}"
+        )));
+    }
+    let tasks = tasks.rows;
     let prior_active = prior_handle.and_then(|handle| active_authority(&tasks, handle));
     let Some(residency) = residency.filter(|head| head.body().state == ResidentState::Seated)
     else {

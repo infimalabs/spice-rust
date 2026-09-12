@@ -534,7 +534,11 @@ fn lease_head(fixture: &Fixture, task: &TaskStamp) -> journal::JournalHead<wire:
 fn active_claim_count(fixture: &Fixture) -> usize {
     Journal::open(fixture.journal())
         .expect("claim journal opens")
-        .read(|read| read.task_heads())
+        .read(|read| {
+            let page = read.task_head_page(None, journal::FactReadBudget::RETAINED)?;
+            assert!(page.continuation.is_none(), "fixture fits one task page");
+            Ok(page.rows)
+        })
         .expect("task heads read")
         .into_iter()
         .filter(|heads| {

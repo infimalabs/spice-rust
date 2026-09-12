@@ -635,15 +635,23 @@ impl Runtime {
 }
 
 fn timer_snapshot(bus: &Bus) -> CommandResult<TimerSnapshot> {
-    bus.read(|read| {
-        Ok(TimerSnapshot {
-            tasks: read.task_heads()?,
-            residency: read.residency_head()?,
-            steering: crate::steering_read::pending(read, None)?,
-            horizon: read.cursor()?,
-        })
-    })
-    .map_err(|error| store_fault("bus::timer-snapshot-failed", &error.to_string()))
+    loop {
+        let authority = bus
+            .task_snapshot()
+            .map_err(|error| store_fault("bus::timer-snapshot-failed", &error.to_string()))?;
+        let (steering, horizon) = bus
+            .read(|read| Ok((crate::steering_read::pending(read, None)?, read.cursor()?)))
+            .map_err(|error| store_fault("bus::timer-snapshot-failed", &error.to_string()))?;
+        if horizon != authority.cursor() {
+            continue;
+        }
+        return Ok(TimerSnapshot {
+            tasks: authority.tasks().to_vec(),
+            residency: authority.residency().cloned(),
+            steering,
+            horizon,
+        });
+    }
 }
 
 impl TimerFacts {

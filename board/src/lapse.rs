@@ -482,12 +482,9 @@ mod tests {
     /// carries the command receipt beside them, so `command` is spent here
     /// exactly as a real claim would spend it.
     fn claim(journal: &mut Journal, command: u8) {
-        let heads = journal
-            .read_with(|read| read.task_heads())
-            .expect("heads before the claim");
-        let selected = heads
-            .iter()
-            .find(|heads| heads.statement().body().born == born())
+        let selected = journal
+            .read_with(|read| read.task_heads_for(&born()))
+            .expect("heads before the claim")
             .expect("the fixture task is on the board");
         let workflow = selected.workflow().body().clone();
         let expected = vec![
