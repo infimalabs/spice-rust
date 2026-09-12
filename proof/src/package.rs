@@ -1,6 +1,9 @@
 //! Canonical external package index and closed package tree.
 
 use std::fmt;
+use std::fs::{File, Metadata};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -94,12 +97,32 @@ impl<'a> PackageInput<'a> {
 }
 
 /// One exact regular file in the deterministic package tree.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct PackageMember {
     path: String,
     mode: u32,
-    bytes: Vec<u8>,
+    length: u64,
     digest: Digest,
+    body: MemberBody,
+}
+
+#[derive(Clone, Debug)]
+enum MemberBody {
+    Inline(Arc<[u8]>),
+    File {
+        file: Arc<Mutex<File>>,
+        identity: MemberFileIdentity,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MemberFileIdentity {
+    length: u64,
+    modified: Option<std::time::SystemTime>,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
 }
 
 impl PackageMember {
@@ -115,9 +138,64 @@ impl PackageMember {
         Self {
             path,
             mode,
-            bytes,
+            length: bytes.len() as u64,
             digest,
+            body: MemberBody::Inline(bytes.into()),
         }
+    }
+
+    /// Admit one complete inline document under an explicit positive ceiling.
+    ///
+    /// # Errors
+    ///
+    /// Refuses zero or a body larger than `limit` before retaining it.
+    pub fn admit_inline(
+        path: impl Into<String>,
+        mode: u32,
+        bytes: impl Into<Vec<u8>>,
+        limit: u64,
+    ) -> Result<Self, PackageError> {
+        let bytes = bytes.into();
+        if limit == 0 || bytes.len() as u64 > limit {
+            return Err(member_error(
+                &path.into(),
+                &format!("length={} maximum={limit}", bytes.len()),
+            ));
+        }
+        Ok(Self::new(path, mode, bytes))
+    }
+
+    /// Admit one already-confined regular file without retaining its body.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a zero ceiling, non-regular input, overflow, read failure, or
+    /// movement while the exact domain digest is streamed.
+    pub fn admit_file(
+        path: impl Into<String>,
+        mode: u32,
+        file: File,
+        limit: u64,
+    ) -> Result<Self, PackageError> {
+        let path = path.into();
+        let identity = MemberFileIdentity::capture(&file, &path)?;
+        let (length, digest) = digest_file(&file, &path, limit)?;
+        if length != identity.length || MemberFileIdentity::capture(&file, &path)? != identity {
+            return Err(member_error(
+                &path,
+                "file moved while its digest was admitted",
+            ));
+        }
+        Ok(Self {
+            path,
+            mode,
+            length,
+            digest,
+            body: MemberBody::File {
+                file: Arc::new(Mutex::new(file)),
+                identity,
+            },
+        })
     }
 
     #[must_use]
@@ -131,13 +209,178 @@ impl PackageMember {
     }
 
     #[must_use]
+    pub const fn length(&self) -> u64 {
+        self.length
+    }
+
+    #[must_use]
     pub fn bytes(&self) -> &[u8] {
-        &self.bytes
+        match &self.body {
+            MemberBody::Inline(bytes) => bytes,
+            MemberBody::File { .. } => panic!("file-backed package members must be streamed"),
+        }
     }
 
     #[must_use]
     pub const fn digest(&self) -> &Digest {
         &self.digest
+    }
+
+    /// Read a canonical document only after its complete size is admitted.
+    ///
+    /// # Errors
+    ///
+    /// Refuses zero/insufficient bounds, read failures, or file movement.
+    pub fn read_bounded(&self, limit: u64) -> Result<Vec<u8>, PackageError> {
+        if limit == 0 || self.length > limit {
+            return Err(member_error(
+                &self.path,
+                &format!("length={} maximum={limit}", self.length),
+            ));
+        }
+        match &self.body {
+            MemberBody::Inline(bytes) => Ok(bytes.to_vec()),
+            MemberBody::File { file, identity } => {
+                let mut file = file
+                    .lock()
+                    .expect("package member file lock is not poisoned");
+                require_file_identity(&file, &self.path, identity)?;
+                file.seek(SeekFrom::Start(0))
+                    .map_err(|error| member_error(&self.path, &error.to_string()))?;
+                let mut bytes = Vec::with_capacity(
+                    usize::try_from(self.length).expect("bounded package member fits usize"),
+                );
+                Read::by_ref(&mut *file)
+                    .take(limit.saturating_add(1))
+                    .read_to_end(&mut bytes)
+                    .map_err(|error| member_error(&self.path, &error.to_string()))?;
+                require_file_identity(&file, &self.path, identity)?;
+                if bytes.len() as u64 != self.length
+                    || Digest::compute(member_domain(&self.path), &bytes) != self.digest
+                {
+                    return Err(member_error(&self.path, "file moved while it was read"));
+                }
+                Ok(bytes)
+            }
+        }
+    }
+
+    /// Copy one verified member body without retaining another full body.
+    ///
+    /// # Errors
+    ///
+    /// Refuses destination failures or file movement before or after the copy.
+    pub fn copy_to(&self, writer: &mut dyn Write) -> Result<u64, PackageError> {
+        match &self.body {
+            MemberBody::Inline(bytes) => {
+                writer
+                    .write_all(bytes)
+                    .map_err(|error| member_error(&self.path, &error.to_string()))?;
+            }
+            MemberBody::File { file, identity } => {
+                self.verify_file(file, identity)?;
+                let mut guard = file
+                    .lock()
+                    .expect("package member file lock is not poisoned");
+                guard
+                    .seek(SeekFrom::Start(0))
+                    .map_err(|error| member_error(&self.path, &error.to_string()))?;
+                let copied =
+                    std::io::copy(&mut Read::by_ref(&mut *guard).take(self.length), writer)
+                        .map_err(|error| member_error(&self.path, &error.to_string()))?;
+                if copied != self.length {
+                    return Err(member_error(&self.path, "file moved while it was copied"));
+                }
+                drop(guard);
+                self.verify_file(file, identity)?;
+            }
+        }
+        Ok(self.length)
+    }
+
+    fn verify_file(
+        &self,
+        file: &Arc<Mutex<File>>,
+        identity: &MemberFileIdentity,
+    ) -> Result<(), PackageError> {
+        let file = file
+            .lock()
+            .expect("package member file lock is not poisoned");
+        require_file_identity(&file, &self.path, identity)?;
+        let (length, digest) = digest_file(&file, &self.path, self.length)?;
+        if length != self.length || digest != self.digest {
+            return Err(member_error(
+                &self.path,
+                "file content moved after admission",
+            ));
+        }
+        require_file_identity(&file, &self.path, identity)
+    }
+}
+
+impl PartialEq for PackageMember {
+    fn eq(&self, other: &Self) -> bool {
+        self.path == other.path
+            && self.mode == other.mode
+            && self.length == other.length
+            && self.digest == other.digest
+    }
+}
+
+impl Eq for PackageMember {}
+
+impl MemberFileIdentity {
+    fn capture(file: &File, path: &str) -> Result<Self, PackageError> {
+        let metadata = file
+            .metadata()
+            .map_err(|error| member_error(path, &error.to_string()))?;
+        if !metadata.is_file() {
+            return Err(member_error(path, "source is not a regular file"));
+        }
+        Ok(Self::from_metadata(&metadata))
+    }
+
+    fn from_metadata(metadata: &Metadata) -> Self {
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt as _;
+
+        Self {
+            length: metadata.len(),
+            modified: metadata.modified().ok(),
+            #[cfg(unix)]
+            device: metadata.dev(),
+            #[cfg(unix)]
+            inode: metadata.ino(),
+        }
+    }
+}
+
+fn digest_file(file: &File, path: &str, limit: u64) -> Result<(u64, Digest), PackageError> {
+    let mut file = file
+        .try_clone()
+        .map_err(|error| member_error(path, &error.to_string()))?;
+    file.seek(SeekFrom::Start(0))
+        .map_err(|error| member_error(path, &error.to_string()))?;
+    Digest::compute_reader(member_domain(path), file, limit)
+        .map_err(|error| member_error(path, &error.to_string()))
+}
+
+fn require_file_identity(
+    file: &File,
+    path: &str,
+    identity: &MemberFileIdentity,
+) -> Result<(), PackageError> {
+    if MemberFileIdentity::capture(file, path)? == *identity {
+        Ok(())
+    } else {
+        Err(member_error(path, "file identity moved after admission"))
+    }
+}
+
+fn member_error(path: &str, detail: &str) -> PackageError {
+    PackageError::Member {
+        path: path.to_owned(),
+        detail: detail.to_owned(),
     }
 }
 
@@ -587,6 +830,10 @@ fn app_path(file: &str) -> String {
 /// Why an external release package was refused.
 #[derive(Debug, PartialEq, Eq)]
 pub enum PackageError {
+    Member {
+        path: String,
+        detail: String,
+    },
     Decode {
         label: &'static str,
         detail: String,
@@ -628,6 +875,9 @@ pub enum PackageError {
 impl fmt::Display for PackageError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Member { path, detail } => {
+                write!(formatter, "release package member {path} refuses: {detail}")
+            }
             Self::Decode { label, detail } => {
                 write!(formatter, "{label} does not decode: {detail}")
             }
@@ -757,6 +1007,26 @@ mod tests {
         assert_eq!(admitted, *tree.package());
         assert_eq!(admitted.document().product_version.as_str(), "1.2.3");
         assert_eq!(admitted.document().targets.len(), 2);
+        let path =
+            std::env::temp_dir().join(format!("proof-package-member-{}", std::process::id()));
+        std::fs::write(&path, b"streamed").expect("file member writes");
+        let member = PackageMember::admit_file(
+            "app/index.html",
+            DATA_MODE,
+            File::open(&path).expect("file member opens"),
+            8,
+        )
+        .expect("file member admits");
+        assert_eq!(
+            (member.length(), member.digest()),
+            (8, &Digest::compute(Domain::DistArtifact, b"streamed"))
+        );
+        assert_eq!(member.read_bounded(8).expect("member reads"), b"streamed");
+        let mut copied = Vec::new();
+        assert_eq!(member.copy_to(&mut copied).expect("member streams"), 8);
+        assert_eq!(copied, b"streamed");
+        assert!(PackageMember::admit_inline("release/notes.md", DATA_MODE, b"x", 0).is_err());
+        std::fs::remove_file(path).expect("file member removes");
     }
 
     #[test]
