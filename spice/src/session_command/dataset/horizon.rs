@@ -155,6 +155,7 @@ where
                 "restore read access to the transcript and retry",
             )
         })?;
+        admit_reverse_carry(&block, carry.len(), path, position)?;
         block.extend_from_slice(&carry);
         let parse_start = if position == 0 {
             0
@@ -200,6 +201,35 @@ where
                 return Ok(());
             }
         }
+    }
+    Ok(())
+}
+
+fn admit_reverse_carry(
+    block: &[u8],
+    carry_bytes: usize,
+    path: &Path,
+    position: u64,
+) -> Result<(), Refusal> {
+    let suffix_start = block
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |newline| newline + 1);
+    if block
+        .len()
+        .saturating_sub(suffix_start)
+        .saturating_add(carry_bytes)
+        > MAX_LINE_BYTES.saturating_add(2)
+    {
+        return Err(refusal(
+            "session::transcript-record-oversized",
+            Some(format!(
+                "{}:byte {} exceeds {MAX_LINE_BYTES} bytes",
+                path.display(),
+                position.saturating_add(suffix_start as u64)
+            )),
+            "restore a bounded transcript record or select an earlier intact copy",
+        ));
     }
     Ok(())
 }
@@ -324,8 +354,7 @@ mod tests {
         FoldState, command_text_bytes, finish_fold, message_text_bytes, reduce_record,
     };
     use super::*;
-    use crate::session_command::model::Dataset;
-    use crate::session_command::model::Vendor;
+    use crate::session_command::model::{Dataset, Vendor};
 
     #[test]
     fn bounded_stream_and_reverse_horizon_share_canonical_complete_records() {
@@ -333,6 +362,10 @@ mod tests {
         let horizon = recent_compaction_horizon(std::slice::from_ref(&source), 3, None)
             .expect("bounded horizon scans");
         assert_eq!(horizon.start.as_deref(), Some("2026-01-01T00:00:01.000Z"));
+        assert!(admit_reverse_carry(b"older\nxx", MAX_LINE_BYTES, &source.path, 0).is_ok());
+        let refusal = admit_reverse_carry(b"older\nxxx", MAX_LINE_BYTES, &source.path, 0)
+            .expect_err("one byte beyond the reverse carry limit is refused");
+        assert_eq!(refusal.reason(), "session::transcript-record-oversized");
         assert_fold_accounting(&source);
         assert_budget_refusals(&source);
         fs::remove_file(source.path).expect("fixture transcript is removed");
@@ -395,22 +428,19 @@ mod tests {
         let residues = residues
             .finish(&mut work, "residue summary")
             .expect("residue summary fits");
-        assert_eq!(
-            markers.len(),
-            1,
-            "the forward decoder sees the canonical marker"
-        );
+        assert_eq!(markers.len(), 1);
         assert_eq!(dataset.messages.len(), 1);
         assert_eq!(dataset.turns[0].messages, dataset.messages);
         assert_eq!(dataset.commands.len(), 1);
         assert_eq!(residues.len(), 1);
         assert_eq!(residues[0].kind, "live-tail-truncated");
         let report = work.report();
-        assert_eq!(report.records, 5);
-        assert!(report.source_bytes > 0);
-        assert!(report.events > 0);
-        assert!(report.retained_text_bytes >= derived_floor);
-        assert_eq!(report.passes, 1);
+        assert_eq!((report.records, report.passes), (5, 1));
+        assert!(
+            report.source_bytes > 0
+                && report.events > 0
+                && report.retained_text_bytes >= derived_floor
+        );
     }
 
     fn assert_budget_refusals(source: &ResolvedSource) {
