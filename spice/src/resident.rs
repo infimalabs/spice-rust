@@ -34,37 +34,111 @@ impl CommandEffects {
     }
 }
 
-struct InboxProjections(VecDeque<CanonicalUuid>);
+enum InboxProjections {
+    Exact(VecDeque<CanonicalUuid>),
+    Full { witness: Option<Seq>, next: usize },
+}
+
+enum InboxProjection {
+    Exact(CanonicalUuid),
+    Full {
+        lane: CanonicalUuid,
+        witness: Seq,
+        last: bool,
+    },
+}
+
+impl InboxProjection {
+    fn lane(&self) -> CanonicalUuid {
+        match self {
+            Self::Exact(lane) | Self::Full { lane, .. } => *lane,
+        }
+    }
+}
 
 impl InboxProjections {
     fn new() -> Self {
-        Self(VecDeque::with_capacity(
+        Self::Exact(VecDeque::with_capacity(
             canvas::axum::Control::FAIR_CYCLE_LIMIT,
         ))
     }
 
     fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        matches!(self, Self::Exact(lanes) if lanes.is_empty())
     }
 
     fn insert(&mut self, lane: CanonicalUuid) {
-        if self.0.contains(&lane) {
+        if let Self::Full { witness, next } = self {
+            *witness = None;
+            *next = 0;
             return;
         }
-        assert!(
-            self.0.len() < canvas::axum::Control::FAIR_CYCLE_LIMIT,
-            "one control fairness cycle bounds retained inbox projections"
-        );
-        self.0.push_back(lane);
+        let Self::Exact(lanes) = self else {
+            unreachable!("full projection state returned above")
+        };
+        if !lanes.contains(&lane) {
+            if lanes.len() == canvas::axum::Control::FAIR_CYCLE_LIMIT {
+                *self = Self::Full {
+                    witness: None,
+                    next: 0,
+                };
+            } else {
+                lanes.push_back(lane);
+            }
+        }
     }
 
-    fn pop(&mut self) -> Option<CanonicalUuid> {
-        self.0.pop_front()
+    fn next(&mut self, residency: &journal::JournalHead<ResidencyHead>) -> Option<InboxProjection> {
+        match self {
+            Self::Exact(lanes) => lanes.pop_front().map(InboxProjection::Exact),
+            Self::Full { witness, next } => {
+                if *witness != Some(residency.position()) {
+                    *witness = Some(residency.position());
+                    *next = 0;
+                }
+                let Some(lane) = residency.body().lanes.get(*next).map(|lane| lane.lane) else {
+                    *self = Self::new();
+                    return None;
+                };
+                Some(InboxProjection::Full {
+                    lane,
+                    witness: residency.position(),
+                    last: *next + 1 == residency.body().lanes.len(),
+                })
+            }
+        }
+    }
+
+    fn complete(&mut self, projection: InboxProjection, attempt: steering::FoldAttempt) {
+        match projection {
+            InboxProjection::Exact(lane) => {
+                if attempt == steering::FoldAttempt::Moved {
+                    self.insert(lane);
+                }
+            }
+            InboxProjection::Full { witness, last, .. } => {
+                let Self::Full {
+                    witness: current,
+                    next,
+                } = self
+                else {
+                    unreachable!("a full projection turn completes against full state")
+                };
+                debug_assert_eq!(*current, Some(witness));
+                if attempt == steering::FoldAttempt::Settled {
+                    if last {
+                        *self = Self::new();
+                    } else {
+                        *next += 1;
+                    }
+                }
+            }
+        }
     }
 
     #[cfg(test)]
-    fn len(&self) -> usize {
-        self.0.len()
+    fn is_full(&self) -> bool {
+        matches!(self, Self::Full { .. })
     }
 }
 

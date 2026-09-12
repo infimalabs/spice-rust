@@ -920,15 +920,12 @@ pub(in crate::resident) fn project_next_inbox(
     command_surface: &command_surface::Surface<'_>,
     inbox_projections: &mut InboxProjections,
 ) -> CommandResult<()> {
-    let lane = inbox_projections
-        .pop()
-        .expect("a projection turn requires one retained lane");
-    if matches!(
-        command_surface.project_inbox_once(lane)?,
-        steering::FoldAttempt::Moved
-    ) {
-        inbox_projections.insert(lane);
-    }
+    let residency = command_surface.inbox_residency()?;
+    let Some(projection) = inbox_projections.next(&residency) else {
+        return Ok(());
+    };
+    let attempt = command_surface.project_inbox_once(residency.body(), projection.lane())?;
+    inbox_projections.complete(projection, attempt);
     Ok(())
 }
 
