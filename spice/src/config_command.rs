@@ -309,10 +309,11 @@ impl Documents {
     fn read(repository: &Repository) -> Result<Self, Outcome<()>> {
         admit_repository_owner(repository)?;
         let locations = config::locations(repository);
+        let mut remaining = config::GENERATION_BYTE_LIMIT;
         Ok(Self {
-            tracked: read_optional(locations.tracked())?,
-            worktree: read_optional(locations.worktree())?,
-            local: read_optional(locations.local())?,
+            tracked: read_optional(locations.tracked(), &mut remaining)?,
+            worktree: read_optional(locations.worktree(), &mut remaining)?,
+            local: read_optional(locations.local(), &mut remaining)?,
             tracked_path: locations.tracked().to_path_buf(),
             worktree_path: locations.worktree().to_path_buf(),
             local_path: locations.local().to_path_buf(),
@@ -349,7 +350,7 @@ impl Documents {
             refusal(
                 target.malformed_reason(),
                 Some(target.path(self).display().to_string()),
-                &error.to_string(),
+                error.message(),
             )
         })
     }
@@ -590,16 +591,17 @@ impl AdmittedParent {
 
     fn ensure_unchanged(&self, documents: &Documents) -> Result<(), Outcome<()>> {
         self.verify_named()?;
-        let tracked = read_optional(&documents.tracked_path)?;
+        let mut remaining = config::GENERATION_BYTE_LIMIT;
+        let tracked = read_optional(&documents.tracked_path, &mut remaining)?;
         let worktree = if self.target_path == documents.worktree_path {
-            self.read_target()?
+            self.read_target(&mut remaining)?
         } else {
-            read_optional(&documents.worktree_path)?
+            read_optional(&documents.worktree_path, &mut remaining)?
         };
         let local = if self.target_path == documents.local_path {
-            self.read_target()?
+            self.read_target(&mut remaining)?
         } else {
-            read_optional(&documents.local_path)?
+            read_optional(&documents.local_path, &mut remaining)?
         };
         self.verify_named()?;
         if tracked == documents.tracked
@@ -616,7 +618,7 @@ impl AdmittedParent {
         }
     }
 
-    fn read_target(&self) -> Result<Option<Vec<u8>>, Outcome<()>> {
+    fn read_target(&self, remaining: &mut u64) -> Result<Option<Vec<u8>>, Outcome<()>> {
         let descriptor = match unix_fs::openat(
             &self.directory,
             &self.target_name,
@@ -653,24 +655,7 @@ impl AdmittedParent {
                 "replace the source with one regular file",
             ));
         }
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes).map_err(|error| {
-            environment_fault(
-                "config::source-unreadable",
-                &format!("{}: {error}", self.target_path.display()),
-            )
-        })?;
-        let finished = file.metadata().map_err(|error| {
-            environment_fault(
-                "config::source-unreadable",
-                &format!("{}: {error}", self.target_path.display()),
-            )
-        })?;
-        if same_generation(&opened, &finished) {
-            Ok(Some(bytes))
-        } else {
-            Err(source_moved(&self.target_path))
-        }
+        read_bounded_source(&mut file, &opened, &self.target_path, remaining).map(Some)
     }
 
     fn publish_candidate(
@@ -922,13 +907,8 @@ fn selection(resolved: &Resolved, key: &str) -> Result<Selection, Outcome<()>> {
 
 fn parse_key(raw: &str) -> Result<Vec<String>, Outcome<()>> {
     let document = format!("{raw} = 0");
-    let mut value: toml::Value = toml::from_str(&document).map_err(|error| {
-        refusal(
-            "config::key-refused",
-            Some(raw.to_owned()),
-            &error.to_string(),
-        )
-    })?;
+    let mut value: toml::Value = toml::from_str(&document)
+        .map_err(|error| refusal("config::key-refused", Some(raw.to_owned()), error.message()))?;
     let mut keys = Vec::new();
     loop {
         let toml::Value::Table(table) = value else {
@@ -1022,7 +1002,7 @@ fn path_matches(path: &config::ConcretePath, keys: &[String]) -> bool {
             .all(|(segment, key)| matches!(segment, PathSegment::Key(found) if *found == key))
 }
 
-fn read_optional(path: &Path) -> Result<Option<Vec<u8>>, Outcome<()>> {
+fn read_optional(path: &Path, remaining: &mut u64) -> Result<Option<Vec<u8>>, Outcome<()>> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -1059,24 +1039,51 @@ fn read_optional(path: &Path) -> Result<Option<Vec<u8>>, Outcome<()>> {
     if !opened.is_file() || !same_file(&metadata, &opened) {
         return Err(source_moved(path));
     }
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes).map_err(|error| {
-        environment_fault(
-            "config::source-unreadable",
-            &format!("{}: {error}", path.display()),
-        )
-    })?;
+    read_bounded_source(&mut file, &opened, path, remaining).map(Some)
+}
+
+fn read_bounded_source(
+    file: &mut fs::File,
+    opened: &fs::Metadata,
+    path: &Path,
+    remaining: &mut u64,
+) -> Result<Vec<u8>, Outcome<()>> {
+    let limit = config::DOCUMENT_BYTE_LIMIT.min(*remaining);
+    if opened.len() > limit {
+        return Err(refusal(
+            "config::source-oversized",
+            Some(format!(
+                "{} bytes={} maximum={limit}",
+                path.display(),
+                opened.len()
+            )),
+            "reduce the tracked, worktree, and local configuration generation",
+        ));
+    }
+    let mut bytes = Vec::with_capacity(
+        usize::try_from(opened.len()).expect("admitted configuration length fits usize"),
+    );
+    Read::by_ref(file)
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| {
+            environment_fault(
+                "config::source-unreadable",
+                &format!("{}: {error}", path.display()),
+            )
+        })?;
     let finished = file.metadata().map_err(|error| {
         environment_fault(
             "config::source-unreadable",
             &format!("{}: {error}", path.display()),
         )
     })?;
-    if same_generation(&opened, &finished) {
-        Ok(Some(bytes))
-    } else {
-        Err(source_moved(path))
+    if !same_generation(opened, &finished) || u64::try_from(bytes.len()).ok() != Some(opened.len())
+    {
+        return Err(source_moved(path));
     }
+    *remaining -= opened.len();
+    Ok(bytes)
 }
 
 #[cfg(unix)]

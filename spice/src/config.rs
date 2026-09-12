@@ -17,6 +17,11 @@ mod registry;
 mod resolve;
 mod task_migration;
 
+/// Maximum bytes admitted from one repository configuration document.
+pub const DOCUMENT_BYTE_LIMIT: u64 = 1024 * 1024;
+/// Maximum bytes admitted across tracked, worktree, and local documents.
+pub const GENERATION_BYTE_LIMIT: u64 = 2 * 1024 * 1024;
+
 pub use load::{
     AcquisitionIssue, AcquisitionKind, CaptureGeneration, LoadError, Loaded, Locations,
     capture_repository, load, load_repository, locations,
