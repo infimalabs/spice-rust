@@ -157,10 +157,11 @@ fn send_socket<T: serde::Serialize>(
         .expect("fixture frame sends");
 }
 
-fn connect_operator_socket(
+fn connect_socket(
     address: SocketAddr,
-    operator: CanonicalUuid,
+    capability: CanonicalUuid,
     epoch: CanonicalUuid,
+    actor: Actor,
 ) -> tungstenite::WebSocket<std::net::TcpStream> {
     use tungstenite::client::IntoClientRequest;
     use tungstenite::http::header::ORIGIN;
@@ -178,20 +179,21 @@ fn connect_operator_socket(
         &mut socket,
         &wire::Hello {
             wire: wire::WireVersion::CURRENT,
-            capability: operator,
+            capability,
             epoch,
         },
     );
     let accepted = socket.read().expect("accepted frame").into_data();
     let accepted: wire::Accepted = wire::decode(&accepted).expect("accepted decodes");
-    assert_eq!(accepted.actor, Actor::Operator);
+    assert_eq!(accepted.actor, actor);
     socket
 }
 
-fn send_lane_read(
+fn send_lane_recall(
     socket: &mut tungstenite::WebSocket<std::net::TcpStream>,
     command_id: CanonicalUuid,
     epoch: CanonicalUuid,
+    lane: CanonicalUuid,
 ) {
     send_socket(
         socket,
@@ -199,10 +201,10 @@ fn send_lane_read(
             v: wire::WireVersion::CURRENT,
             id: command_id,
             epoch,
-            kind: CommandKind::LaneRead,
+            kind: CommandKind::LaneRecall,
             expected: Vec::new(),
-            body: serde_json::to_value(wire::intent::LaneRead {})
-                .expect("lane read command encodes"),
+            body: serde_json::to_value(wire::intent::LaneRecall { lane: Some(lane) })
+                .expect("lane recall command encodes"),
         },
     );
 }
@@ -256,7 +258,7 @@ fn seed_initial_socket_fanout_lanes(
     lanes
 }
 
-fn assert_lane_read_response(
+fn assert_command_response(
     socket: &mut tungstenite::WebSocket<std::net::TcpStream>,
     command_id: CanonicalUuid,
 ) {
@@ -278,11 +280,8 @@ fn assert_steer_send_response(
     let Outcome::Reply(reply) = response.outcome else {
         panic!("steering send must reply: {response:?}");
     };
-    assert_eq!(
-        reply.body.get("disposition"),
-        Some(&serde_json::json!("live"))
-    );
-    assert_eq!(reply.body.get("delivery"), None);
+    assert_eq!(reply.body["disposition"], "live");
+    assert!(reply.body.get("delivery").is_none());
 }
 
 fn assert_socket_fanout_published(
@@ -297,9 +296,8 @@ fn assert_socket_fanout_published(
         .iter()
         .filter(|fact| fact.fact.kind() == wire::FactKind::SteerSent);
     assert_eq!(sent.clone().count(), 3);
-    assert!(
-        sent.all(|fact| { fact.fact.body().get("fanout") == Some(&serde_json::json!(fanout)) })
-    );
+    let fanout = serde_json::json!(fanout);
+    assert!(sent.all(|fact| fact.fact.body()["fanout"] == fanout));
     for (lane, _) in lanes {
         let inbox = fs::read_to_string(steer::inbox::path(&paths.inbox, lane))
             .expect("selected lane inbox is published");
@@ -312,6 +310,26 @@ fn assert_socket_fanout_published(
             DeliveryStanding::Published { .. }
         ));
     }
+}
+
+fn socket_capabilities(operator: CanonicalUuid, lane: CanonicalUuid) -> canvas::axum::Capabilities {
+    let capabilities = canvas::axum::Capabilities::default();
+    assert!(capabilities.insert(operator, Actor::Operator).is_ok());
+    assert!(capabilities.insert(test_uuid(9), Actor::Lane(lane)).is_ok());
+    capabilities
+}
+
+fn drain_projections(
+    surface: &command_surface::Surface<'_>,
+    mut projections: InboxProjections,
+    expected: usize,
+) {
+    let mut settled = 1;
+    while !projections.is_empty() {
+        runtime::project_next_inbox(surface, &mut projections).expect("projection advances");
+        settled += 1;
+    }
+    assert_eq!(settled, expected);
 }
 
 fn restarted_projection_fixture(
@@ -502,99 +520,79 @@ fn runtime_paths_follow_the_repository_common_directory() {
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn control_dispatch_waits_until_the_socket_response_is_attempted() {
-    let (root, paths) = resident_fixture("control-response-receipt");
-    stage_canvas_app(&root);
-    let repository = Repository::discover(&root).expect("fixture repository resolves");
-    let StartupSurface { config, trust } =
-        load_startup_surface(&repository).expect("startup surface loads");
-    let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
-    let bus = Bus::start(journal).expect("fixture bus starts");
-    let epoch = test_uuid(81);
-    commit_startup(&bus, &repository, &trust, epoch, None).expect("resident seats");
-    let operator = test_uuid(82);
-    let capabilities = canvas::axum::Capabilities::default();
-    capabilities
-        .insert(operator, Actor::Operator)
-        .expect("operator capability registers");
-    let app = canvas::AppSource::resolve(&root).expect("fixture app resolves");
-    let (server, mut control) = bind_fixture_canvas(epoch, capabilities.clone(), app).await;
-    let address = server.local_addr().expect("server publishes address");
-    let discovery = server
-        .discovery(operator)
-        .expect("server discovery describes operator access");
-    let (shutdown, stopped) = tokio::sync::oneshot::channel();
-    let server_task = tokio::spawn(server.up_until(async move {
-        let _ = stopped.await;
-    }));
+async fn exercise_post_response_lifecycle_turn(
+    bus: &Bus,
+    address: SocketAddr,
+    epoch: CanonicalUuid,
+    lane: (CanonicalUuid, CanonicalUuid, CanonicalUuid),
+    control: &mut canvas::axum::Control,
+    command_surface: &command_surface::Surface<'_>,
+) {
+    let (lane, occupant, capability) = lane;
     let (sent_command, command_sent) = tokio::sync::oneshot::channel();
     let (read_requested, read_response) = std::sync::mpsc::sync_channel(0);
     let (answered, response_read) = tokio::sync::oneshot::channel();
-    let command_id = test_uuid(83);
+    let (command_id, second_id) = (test_uuid(80), test_uuid(81));
     let client = tokio::task::spawn_blocking(move || {
-        let mut socket = connect_operator_socket(address, operator, epoch);
-        send_lane_read(&mut socket, command_id, epoch);
+        let mut socket = connect_socket(address, capability, epoch, Actor::Lane(lane));
+        send_lane_recall(&mut socket, command_id, epoch, lane);
+        send_lane_recall(&mut socket, second_id, epoch, lane);
         let _ = sent_command.send(());
         read_response.recv().expect("test releases response read");
-        assert_lane_read_response(&mut socket, command_id);
+        assert_command_response(&mut socket, command_id);
         let _ = answered.send(());
+        assert_command_response(&mut socket, second_id);
     });
     command_sent.await.expect("client submits command");
     let request = control.recv().await.expect("control receives command");
-    assert_eq!(request.command().id(), command_id);
-    {
-        let reads = read_materializations::CurrentReads::start(&bus, &paths, &config.consent)
-            .expect("read materializations start");
-        let reporter = Arc::new(NoopCaptureReporter);
-        let command_surface = command_surface::Surface::new(
-            &bus,
-            &repository,
-            &paths,
-            epoch,
-            command_surface::Runtimes::new(
-                lane_surface::Runtime::new(&capabilities, &discovery, reporter.clone()),
-                lane_recovery::Runtime::new(reporter),
-            ),
-            &config,
-            &reads,
-        );
-        let mut seats = Seats::new();
-        let mut lifecycle = lifecycle::Runtime::new(&config.lane);
-        let mut dispatch = std::pin::pin!(runtime::dispatch_control(
-            &command_surface,
+    let mut seats = Seats::new();
+    seats
+        .seat_detached(
+            lane,
+            occupant,
+            Box::new(DetachedFixture {
+                dropped: Arc::default(),
+            }),
+        )
+        .expect("fixture occupant is observed");
+    let mut lifecycle = lifecycle::Runtime::new(&command_surface.config.lane);
+    let mut inbox_projections = InboxProjections::new();
+    let dispatched = {
+        let mut dispatch = std::pin::pin!(runtime::dispatch_control_burst(
+            command_surface,
             &mut seats,
             &mut lifecycle,
-            &mut control,
+            control,
             Some(request),
+            &mut inbox_projections,
         ));
-        let waker = std::task::Waker::noop();
-        let mut context = std::task::Context::from_waker(waker);
-        assert!(
-            matches!(
-                std::future::Future::poll(dispatch.as_mut(), &mut context),
-                std::task::Poll::Pending
-            ),
-            "dispatch must wait for the socket response receipt before returning"
+        let pending = std::future::Future::poll(
+            dispatch.as_mut(),
+            &mut std::task::Context::from_waker(std::task::Waker::noop()),
         );
-        read_requested
-            .send(())
-            .expect("client response read is released");
-        let dispatched = dispatch.await.expect("lane read keeps resident seated");
-        assert!(
-            !dispatched.reached_dark,
-            "lane read must not request resident shutdown"
-        );
-    }
-    response_read.await.expect("client observed response");
-    shutdown.send(()).expect("shutdown signals");
-    server_task
-        .await
-        .expect("server task joins")
-        .expect("server stops");
+        assert!(matches!(pending, std::task::Poll::Pending));
+        read_requested.send(()).expect("client may read response");
+        dispatch.await.expect("lane recall keeps resident seated")
+    };
+    assert!(!dispatched.reached_dark && dispatched.lifecycle_released);
+    response_read.await.expect("client observed first response");
+    let mut reconciliation = LifecycleReconciliation::default();
+    reconciliation.request();
+    reconciliation
+        .reconcile_fixture(bus, command_surface, &mut seats, &mut lifecycle)
+        .expect("one post-response lifecycle turn settles");
+    assert!(!reconciliation.is_pending());
+    let request = control.recv().await.expect("queued control remains");
+    runtime::dispatch_control(
+        command_surface,
+        &mut seats,
+        &mut lifecycle,
+        control,
+        Some(request),
+    )
+    .await
+    .expect("second recall completes after reconciliation");
     client.await.expect("client thread joins");
-    bus.shutdown().expect("fixture bus stops");
-    fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -609,16 +607,13 @@ async fn socket_dispatch_replies_then_projects_three_lane_fanout() {
     let (epoch, lineage, fanout) = (test_uuid(91), test_uuid(92), test_uuid(93));
     commit_startup(&bus, &repository, &trust, epoch, None).expect("resident seats");
     let lanes = seed_initial_socket_fanout_lanes(&bus, epoch, lineage, &root);
-    let operator = test_uuid(89);
-    let capabilities = canvas::axum::Capabilities::default();
-    capabilities
-        .insert(operator, Actor::Operator)
-        .expect("operator capability registers");
+    let (operator, lane_capability) = (test_uuid(89), test_uuid(9));
+    let capabilities = socket_capabilities(operator, lanes[0].0);
     let app = canvas::AppSource::resolve(&root).expect("fixture app resolves");
     let (server, mut control) = bind_fixture_canvas(epoch, capabilities.clone(), app).await;
     let address = server.local_addr().expect("server publishes address");
     let discovery = server.discovery(operator).expect("operator discovery");
-    let (mut projections, moved_lanes) =
+    let (projections, moved_lanes) =
         restarted_projection_fixture(&bus, epoch, lineage, &root, lanes);
     let reads = read_materializations::CurrentReads::start(&bus, &paths, &config.consent)
         .expect("read materializations start");
@@ -635,21 +630,24 @@ async fn socket_dispatch_replies_then_projects_three_lane_fanout() {
         &config,
         &reads,
     );
-    let mut settled = 1;
-    while !projections.is_empty() {
-        runtime::project_next_inbox(&command_surface, &mut projections)
-            .expect("full reconciliation advances one current lane");
-        settled += 1;
-    }
-    assert_eq!(settled, moved_lanes);
+    drain_projections(&command_surface, projections, moved_lanes);
     let (shutdown, stopped) = tokio::sync::oneshot::channel();
     let server_task = tokio::spawn(server.up_until(async move {
         let _ = stopped.await;
     }));
+    exercise_post_response_lifecycle_turn(
+        &bus,
+        address,
+        epoch,
+        (lanes[0].0, lanes[0].1, lane_capability),
+        &mut control,
+        &command_surface,
+    )
+    .await;
     let (commands_sent, commands_ready) = tokio::sync::oneshot::channel();
     let (responses_read, responses_done) = tokio::sync::oneshot::channel();
     let client = tokio::task::spawn_blocking(move || {
-        let mut socket = connect_operator_socket(address, operator, epoch);
+        let mut socket = connect_socket(address, operator, epoch, Actor::Operator);
         for (index, (lane, occupant)) in lanes.into_iter().enumerate() {
             send_steer_send(
                 &mut socket,
