@@ -195,6 +195,17 @@ fn seed_initial_socket_fanout_lanes(
     lanes
 }
 
+fn settings_read(id: CanonicalUuid, epoch: CanonicalUuid) -> Command<serde_json::Value> {
+    Command {
+        v: wire::WireVersion::CURRENT,
+        id,
+        epoch,
+        kind: CommandKind::GlobalSettingsRead,
+        expected: Vec::new(),
+        body: serde_json::json!({}),
+    }
+}
+
 fn run_socket_client(
     address: SocketAddr,
     ids: (CanonicalUuid, CanonicalUuid, CanonicalUuid),
@@ -203,6 +214,7 @@ fn run_socket_client(
 ) {
     let (operator, epoch, fanout) = ids;
     let mut socket = connect_fixture_socket(address, operator, epoch, Actor::Operator);
+    let ordinary = test_uuid(88);
     for (index, (lane, occupant)) in lanes.into_iter().enumerate() {
         let id = test_uuid(84 + u8::try_from(index).expect("fixture index fits"));
         send_steer_send(
@@ -214,23 +226,17 @@ fn run_socket_client(
             occupant,
             format!("BROADCAST: socket delivery to lane {index}"),
         );
-        let reply = runtime::receive_fixture_reply(&mut socket, id);
-        assert_eq!(reply.body["disposition"], "live");
-        assert!(reply.body.get("delivery").is_none());
+        if index == 1 {
+            send_fixture_socket(&mut socket, &settings_read(ordinary, epoch));
+            for id in [84, 85] {
+                let reply = runtime::receive_fixture_reply(&mut socket, test_uuid(id));
+                assert_eq!(reply.body["disposition"], "live");
+                assert!(reply.body.get("delivery").is_none());
+            }
+            runtime::receive_fixture_reply(&mut socket, ordinary);
+        }
     }
-    let id = test_uuid(88);
-    send_fixture_socket(
-        &mut socket,
-        &Command {
-            v: wire::WireVersion::CURRENT,
-            id,
-            epoch,
-            kind: CommandKind::GlobalSettingsRead,
-            expected: Vec::new(),
-            body: serde_json::json!({}),
-        },
-    );
-    runtime::receive_fixture_reply(&mut socket, id);
+    runtime::receive_fixture_reply(&mut socket, test_uuid(86));
     let _ = responses_read.send(());
 }
 
@@ -269,23 +275,20 @@ fn socket_capabilities(operator: CanonicalUuid, lane: CanonicalUuid) -> canvas::
     capabilities
 }
 
-async fn control_after_moved_projections(
+async fn admit_mixed_control(
     control: &mut canvas::axum::Control,
-    projections: &mut InboxProjections,
-    residency: &journal::JournalHead<ResidencyHead>,
-) -> canvas::axum::ControlRequest {
-    tokio::time::timeout(Duration::from_secs(3), async {
-        loop {
-            let (turn, request) =
-                runtime::control_projection_turn(control, projections, true).await;
-            if matches!(turn, runtime::ControlProjectionTurn::Control) {
-                return request.expect("control remains open");
-            }
-            runtime::project_moved(projections, residency).await;
-        }
-    })
-    .await
-    .expect("Control wins a moved-projection tie")
+) -> Vec<canvas::axum::ControlRequest> {
+    let mut admitted = Vec::new();
+    while admitted.len() < 3 {
+        admitted.push(control.recv().await.expect("Control admission"));
+    }
+    let demands = admitted
+        .iter()
+        .filter(|request| request.command().kind() == CommandKind::SteerSend)
+        .map(|request| request.command().id())
+        .collect::<Vec<_>>();
+    assert_eq!(demands, [test_uuid(84), test_uuid(85)]);
+    admitted
 }
 
 /// The surface listens exactly where the operator requested or at one stable default.
@@ -475,19 +478,16 @@ async fn socket_dispatch_replies_then_projects_three_lane_fanout() {
     let server_task = tokio::spawn(server.up_until(async move {
         let _ = stopped.await;
     }));
-    let (responses_read, mut responses_done) = tokio::sync::oneshot::channel();
+    let (responses_read, responses_done) = tokio::sync::oneshot::channel();
     let client = tokio::task::spawn_blocking(move || {
         run_socket_client(address, (operator, epoch, fanout), lanes, responses_read);
     });
+    let mut commits = bus.reader().subscribe();
     let mut seats = Seats::new();
     let mut lifecycle = lifecycle::Runtime::new(&config.lane);
     let mut projections = InboxProjections::new();
     let residency = current_residency(&bus, epoch).expect("residency reads");
-    for (index, _) in lanes.into_iter().enumerate() {
-        let id = test_uuid(84 + u8::try_from(index).expect("fixture index fits"));
-        let request =
-            control_after_moved_projections(&mut control, &mut projections, &residency).await;
-        assert_eq!(request.command().id(), id);
+    for request in admit_mixed_control(&mut control).await {
         let dispatched = runtime::dispatch_control_burst(
             &command_surface,
             &mut seats,
@@ -499,13 +499,21 @@ async fn socket_dispatch_replies_then_projects_three_lane_fanout() {
         .await
         .expect("socket steering burst completes");
         assert!(!dispatched.reached_dark && !dispatched.lifecycle_released);
-        runtime::project_moved(&mut projections, &residency).await;
-        if index == 0 {
-            assert!(!projections.is_empty(), "moved projection remains owed");
+        if !projections.is_empty() {
+            runtime::project_moved(&mut projections, &residency).await;
         }
     }
-    let request = control_after_moved_projections(&mut control, &mut projections, &residency).await;
-    assert_eq!(request.command().id(), test_uuid(88));
+    commits.recv().await.expect("outer commit");
+    assert!(!projections.is_empty(), "outer turn preserves owed work");
+    let request = loop {
+        let (turn, request) =
+            runtime::control_projection_turn(&mut control, &projections, true).await;
+        if matches!(turn, runtime::ControlProjectionTurn::Control) {
+            break request.expect("control remains open");
+        }
+        runtime::project_moved(&mut projections, &residency).await;
+    };
+    assert_eq!(request.command().id(), test_uuid(86));
     runtime::dispatch_control_burst(
         &command_surface,
         &mut seats,
@@ -515,15 +523,14 @@ async fn socket_dispatch_replies_then_projects_three_lane_fanout() {
         &mut projections,
     )
     .await
-    .expect("non-steering control completes");
+    .expect("staggered steering control completes");
     while !projections.is_empty() {
         runtime::project_owed_inbox(&command_surface, &mut projections)
             .await
             .expect("real projection eventually settles");
     }
-    tokio::time::timeout(Duration::from_secs(3), &mut responses_done)
+    responses_done
         .await
-        .expect("staggered socket responses complete")
         .expect("client observes every response");
     assert_socket_fanout_published(&bus, &paths, fanout, lanes);
     shutdown.send(()).expect("shutdown signals");
