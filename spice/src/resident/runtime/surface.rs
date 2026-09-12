@@ -219,6 +219,7 @@ pub(super) async fn run_surface(
     )
     .await?;
     let mut inbox_projections = InboxProjections::new();
+    let mut lifecycle_reconciliation = LifecycleReconciliation::default();
     let Some(message_startup) = await_message_startup(
         &mut message_startup,
         bus,
@@ -229,6 +230,7 @@ pub(super) async fn run_surface(
         &mut control,
         &mut server_task,
         &mut inbox_projections,
+        &mut lifecycle_reconciliation,
         progress,
     )
     .await?
@@ -262,6 +264,7 @@ pub(super) async fn run_surface(
         timer_commits,
         lifecycle,
         inbox_projections,
+        lifecycle_reconciliation,
     )
     .await
 }
@@ -345,6 +348,7 @@ async fn await_message_startup(
     control: &mut canvas::axum::Control,
     server_task: &mut tokio::task::JoinHandle<Result<(), io::Error>>,
     inbox_projections: &mut InboxProjections,
+    lifecycle_reconciliation: &mut LifecycleReconciliation,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<Option<MessageStartup>> {
     loop {
@@ -356,7 +360,8 @@ async fn await_message_startup(
                 ))?;
                 return ready.map(Some);
             }
-            request = control.recv(), if inbox_projections.is_empty() => {
+            request = control.recv(), if inbox_projections.is_empty()
+                && !lifecycle_reconciliation.is_pending() => {
                 let dispatched = dispatch_control_burst(
                     command_surface, seats, lifecycle, control, request, inbox_projections,
                 ).await?;
@@ -364,10 +369,13 @@ async fn await_message_startup(
                     return Ok(None);
                 }
                 if dispatched.lifecycle_released {
-                    reconcile_wakes(
-                        bus, command_surface, seats, diagnostic, timers, lifecycle,
-                    )?;
+                    lifecycle_reconciliation.request();
                 }
+            }
+            () = std::future::ready(()), if lifecycle_reconciliation.is_pending() => {
+                lifecycle_reconciliation.reconcile(
+                    bus, command_surface, seats, diagnostic, timers, lifecycle,
+                )?;
             }
             () = std::future::ready(()), if !inbox_projections.is_empty() => {
                 project_next_inbox(command_surface, inbox_projections)?;
@@ -484,11 +492,13 @@ pub(super) async fn drive_surface(
     mut timer_commits: bus::BroadcastSubscriber,
     mut lifecycle: lifecycle::Runtime,
     mut inbox_projections: InboxProjections,
+    mut lifecycle_reconciliation: LifecycleReconciliation,
 ) -> CommandResult<()> {
     let mut session_compaction_poll = session_compaction_poll();
     loop {
         tokio::select! {
-            request = control.recv(), if inbox_projections.is_empty() => {
+            request = control.recv(), if inbox_projections.is_empty()
+                && !lifecycle_reconciliation.is_pending() => {
                 let dispatched = dispatch_control_burst(
                     command_surface, seats, &mut lifecycle, &mut control, request,
                     &mut inbox_projections,
@@ -498,10 +508,13 @@ pub(super) async fn drive_surface(
                     return stop_surface(publication, shutdown, server_task).await;
                 }
                 if dispatched.lifecycle_released {
-                    reconcile_wakes(
-                        bus, command_surface, seats, diagnostic, &mut timers, &mut lifecycle,
-                    )?;
+                    lifecycle_reconciliation.request();
                 }
+            }
+            () = std::future::ready(()), if lifecycle_reconciliation.is_pending() => {
+                lifecycle_reconciliation.reconcile(
+                    bus, command_surface, seats, diagnostic, &mut timers, &mut lifecycle,
+                )?;
             }
             () = std::future::ready(()), if !inbox_projections.is_empty() => {
                 project_next_inbox(command_surface, &mut inbox_projections)?;
@@ -557,14 +570,18 @@ pub(super) async fn drive_surface(
                 ))?;
                 let fired = timers.consume(bus, timer)?;
                 accept_timer_fired(bus, command_surface, &mut lifecycle, fired)?;
-                reconcile_wakes(
+                lifecycle_reconciliation.reconcile(
                     bus, command_surface, seats, diagnostic, &mut timers, &mut lifecycle,
                 )?;
             }
-            committed = timer_commits.recv() => accept_commit(
-                bus, command_surface, seats, diagnostic, &mut timers,
-                &mut lifecycle, committed,
-            )?,
+            committed = timer_commits.recv() => {
+                if accept_commit(
+                    bus, command_surface, seats, diagnostic, &mut timers,
+                    &mut lifecycle, committed,
+                )? {
+                    lifecycle_reconciliation.settle();
+                }
+            }
             ending = &mut server_task => return Err(server_outcome(ending)),
         }
     }
@@ -795,23 +812,59 @@ fn accept_commit(
     timers: &mut timers::Runtime,
     lifecycle: &mut lifecycle::Runtime,
     committed: Result<JournalCommit, tokio::sync::broadcast::error::RecvError>,
-) -> CommandResult<()> {
+) -> CommandResult<bool> {
     match committed {
         Ok(commit) => {
             command_surface.refresh_reads()?;
             if timers.covers(commit) {
-                return Ok(());
+                return Ok(false);
             }
             reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle)
+                .map(|()| true)
         }
         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
             command_surface.refresh_reads()?;
             reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle)
+                .map(|()| true)
         }
         Err(tokio::sync::broadcast::error::RecvError::Closed) => Err(environment_fault(
             "bus::lifecycle-commits-closed",
             "the durable commit stream closed while the resident was live",
         )),
+    }
+}
+
+/// One owed event turn; `lifecycle::Runtime` retains cursor and movement authority.
+#[derive(Default)]
+pub(super) struct LifecycleReconciliation {
+    pending: bool,
+}
+
+impl LifecycleReconciliation {
+    fn is_pending(&self) -> bool {
+        self.pending
+    }
+
+    fn request(&mut self) {
+        self.pending = true;
+    }
+
+    fn settle(&mut self) {
+        self.pending = false;
+    }
+
+    fn reconcile(
+        &mut self,
+        bus: &Bus,
+        command_surface: &command_surface::Surface<'_>,
+        seats: &mut Seats,
+        diagnostic: &mut dyn io::Write,
+        timers: &mut timers::Runtime,
+        lifecycle: &mut lifecycle::Runtime,
+    ) -> CommandResult<()> {
+        reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle)?;
+        self.settle();
+        Ok(())
     }
 }
 

@@ -106,10 +106,9 @@ async fn run_liveness_surface(setup: &mut LivenessSetup) -> String {
     .expect("live surface publishes before the liveness exercise");
     let pending_events = setup.adjudication.observe_pending();
     let (submitter, completions) = setup.adjudication.parts();
-    let entered_path = setup.judge.entered.clone();
-    let entered = tokio::task::spawn_blocking(move || {
-        fs::read_to_string(entered_path).expect("judge entry FIFO reports its process")
-    });
+    let path = setup.judge.entered.clone();
+    let entered =
+        tokio::task::spawn_blocking(move || fs::read_to_string(path).expect("judge enters"));
     let exercise = exercise_live_surface(
         bus,
         paths,
@@ -142,6 +141,7 @@ async fn run_liveness_surface(setup: &mut LivenessSetup) -> String {
         timer_commits,
         lifecycle,
         InboxProjections::new(),
+        LifecycleReconciliation::default(),
     );
     let (driven, judge_pid) = tokio::join!(drive, exercise);
     driven.expect("Down stops the live surface");
