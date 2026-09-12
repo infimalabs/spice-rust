@@ -958,17 +958,65 @@ pub(super) fn latest_surface_digest(bus: &Bus) -> CommandResult<Option<wire::Dig
         .cloned())
 }
 
+#[cfg(test)]
+pub(in crate::resident) fn send_fixture_socket<T: serde::Serialize>(
+    socket: &mut tungstenite::WebSocket<std::net::TcpStream>,
+    value: &T,
+) {
+    socket
+        .send(tungstenite::Message::Binary(
+            wire::encode(value).expect("fixture frame encodes").into(),
+        ))
+        .expect("fixture frame sends");
+}
+
+#[cfg(test)]
+pub(in crate::resident) fn connect_fixture_socket(
+    address: SocketAddr,
+    capability: CanonicalUuid,
+    epoch: CanonicalUuid,
+    actor: Actor,
+) -> tungstenite::WebSocket<std::net::TcpStream> {
+    use tungstenite::client::IntoClientRequest as _;
+    use tungstenite::http::header::ORIGIN;
+
+    let stream = std::net::TcpStream::connect(address).expect("client connects");
+    let mut request = format!("ws://{address}/socket")
+        .into_client_request()
+        .expect("socket request builds");
+    request.headers_mut().insert(
+        ORIGIN,
+        format!("http://{address}").parse().expect("origin builds"),
+    );
+    let (mut socket, _) = tungstenite::client(request, stream).expect("socket opens");
+    send_fixture_socket(
+        &mut socket,
+        &wire::Hello {
+            wire: wire::WireVersion::CURRENT,
+            capability,
+            epoch,
+        },
+    );
+    let accepted: wire::Accepted =
+        wire::decode(&socket.read().expect("accepted frame").into_data())
+            .expect("accepted decodes");
+    assert_eq!(accepted.actor, actor);
+    socket
+}
+
 mod surface;
 #[cfg(test)]
 pub(super) use surface::announce_canvas;
 use surface::run_surface;
 #[cfg(test)]
-pub(in crate::resident) use surface::{
-    LifecycleReconciliation, dispatch_control, dispatch_control_burst, project_next_inbox,
-    publish_ready_surface,
+use surface::{
+    LifecycleReconciliation, StartedSurface, SurfacePublication, drive_surface,
+    request_lifecycle_reconciliation, start_surface,
 };
 #[cfg(test)]
-use surface::{StartedSurface, drive_surface, start_surface};
+pub(in crate::resident) use surface::{
+    dispatch_control_burst, project_next_inbox, publish_ready_surface,
+};
 
 #[cfg(test)]
 #[path = "tests/judge_liveness.rs"]

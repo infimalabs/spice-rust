@@ -371,9 +371,7 @@ async fn await_message_startup(
                 if dispatched.reached_dark {
                     return Ok(None);
                 }
-                if dispatched.lifecycle_released {
-                    lifecycle_reconciliation.request();
-                }
+                request_lifecycle_reconciliation(lifecycle_reconciliation, &dispatched);
             }
             () = std::future::ready(()), if lifecycle_reconciliation.is_pending() => {
                 lifecycle_reconciliation.reconcile(
@@ -510,9 +508,7 @@ pub(super) async fn drive_surface(
                     timers.synchronize(bus)?;
                     return stop_surface(publication, shutdown, server_task).await;
                 }
-                if dispatched.lifecycle_released {
-                    lifecycle_reconciliation.request();
-                }
+                request_lifecycle_reconciliation(&mut lifecycle_reconciliation, &dispatched);
             }
             () = std::future::ready(()), if lifecycle_reconciliation.is_pending() => {
                 lifecycle_reconciliation.reconcile(
@@ -839,24 +835,32 @@ fn accept_commit(
 
 /// One owed event turn; `lifecycle::Runtime` retains cursor and movement authority.
 #[derive(Default)]
-pub(in crate::resident) struct LifecycleReconciliation {
+pub(super) struct LifecycleReconciliation {
     pending: bool,
+    #[cfg(test)]
+    turns: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
 }
 
 impl LifecycleReconciliation {
-    pub(in crate::resident) fn is_pending(&self) -> bool {
+    fn is_pending(&self) -> bool {
         self.pending
     }
 
-    pub(in crate::resident) fn request(&mut self) {
+    fn request(&mut self) {
         self.pending = true;
     }
 
     fn settle(&mut self) {
+        #[cfg(test)]
+        if self.pending
+            && let Some(turns) = &self.turns
+        {
+            turns.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
         self.pending = false;
     }
 
-    pub(in crate::resident) fn reconcile(
+    fn reconcile(
         &mut self,
         bus: &Bus,
         command_surface: &command_surface::Surface<'_>,
@@ -871,23 +875,20 @@ impl LifecycleReconciliation {
     }
 
     #[cfg(test)]
-    pub(in crate::resident) fn reconcile_fixture(
-        &mut self,
-        bus: &Bus,
-        command_surface: &command_surface::Surface<'_>,
-        seats: &mut Seats,
-        lifecycle: &mut lifecycle::Runtime,
-    ) -> CommandResult<()> {
-        let config = command_surface.config;
-        let mut timers = timers::Runtime::start(config.projects.clone(), config.steering.clone())?;
-        self.reconcile(
-            bus,
-            command_surface,
-            seats,
-            &mut Vec::new(),
-            &mut timers,
-            lifecycle,
-        )
+    pub(super) fn with_turns(turns: std::sync::Arc<std::sync::atomic::AtomicU64>) -> Self {
+        Self {
+            pending: false,
+            turns: Some(turns),
+        }
+    }
+}
+
+pub(super) fn request_lifecycle_reconciliation(
+    reconciliation: &mut LifecycleReconciliation,
+    dispatched: &ControlDispatch,
+) {
+    if dispatched.lifecycle_released {
+        reconciliation.request();
     }
 }
 

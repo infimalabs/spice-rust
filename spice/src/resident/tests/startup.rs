@@ -146,69 +146,6 @@ fn admitted_lane_seat(
     .expect("operator lane seat command admits")
 }
 
-fn send_socket<T: serde::Serialize>(
-    socket: &mut tungstenite::WebSocket<std::net::TcpStream>,
-    value: &T,
-) {
-    socket
-        .send(tungstenite::Message::Binary(
-            wire::encode(value).expect("fixture frame encodes").into(),
-        ))
-        .expect("fixture frame sends");
-}
-
-fn connect_socket(
-    address: SocketAddr,
-    capability: CanonicalUuid,
-    epoch: CanonicalUuid,
-    actor: Actor,
-) -> tungstenite::WebSocket<std::net::TcpStream> {
-    use tungstenite::client::IntoClientRequest;
-    use tungstenite::http::header::ORIGIN;
-
-    let stream = std::net::TcpStream::connect(address).expect("client connects");
-    let mut request = format!("ws://{address}/socket")
-        .into_client_request()
-        .expect("socket request builds");
-    request.headers_mut().insert(
-        ORIGIN,
-        format!("http://{address}").parse().expect("origin builds"),
-    );
-    let (mut socket, _) = tungstenite::client(request, stream).expect("socket opens");
-    send_socket(
-        &mut socket,
-        &wire::Hello {
-            wire: wire::WireVersion::CURRENT,
-            capability,
-            epoch,
-        },
-    );
-    let accepted = socket.read().expect("accepted frame").into_data();
-    let accepted: wire::Accepted = wire::decode(&accepted).expect("accepted decodes");
-    assert_eq!(accepted.actor, actor);
-    socket
-}
-
-fn send_lane_recall(
-    socket: &mut tungstenite::WebSocket<std::net::TcpStream>,
-    command_id: CanonicalUuid,
-    epoch: CanonicalUuid,
-    lane: CanonicalUuid,
-) {
-    send_socket(
-        socket,
-        &Command {
-            v: wire::WireVersion::CURRENT,
-            id: command_id,
-            epoch,
-            kind: CommandKind::LaneRecall,
-            expected: Vec::new(),
-            body: serde_json::to_value(wire::intent::LaneRecall { lane: Some(lane) })
-                .expect("lane recall command encodes"),
-        },
-    );
-}
-
 fn send_steer_send(
     socket: &mut tungstenite::WebSocket<std::net::TcpStream>,
     command_id: CanonicalUuid,
@@ -224,7 +161,7 @@ fn send_steer_send(
         message,
         attachments: Vec::new(),
     };
-    send_socket(
+    send_fixture_socket(
         socket,
         &Command {
             v: wire::WireVersion::CURRENT,
@@ -256,17 +193,6 @@ fn seed_initial_socket_fanout_lanes(
         seed_lane_in_lineage(bus, epoch, lane, lineage, occupant, root);
     }
     lanes
-}
-
-fn assert_command_response(
-    socket: &mut tungstenite::WebSocket<std::net::TcpStream>,
-    command_id: CanonicalUuid,
-) {
-    let response = socket.read().expect("response frame").into_data();
-    let response: wire::Response<serde_json::Value> =
-        wire::decode(&response).expect("response decodes");
-    assert_eq!(response.id, command_id);
-    assert!(matches!(response.outcome, Outcome::Reply(_)));
 }
 
 fn assert_steer_send_response(
@@ -520,81 +446,6 @@ fn runtime_paths_follow_the_repository_common_directory() {
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
-async fn exercise_post_response_lifecycle_turn(
-    bus: &Bus,
-    address: SocketAddr,
-    epoch: CanonicalUuid,
-    lane: (CanonicalUuid, CanonicalUuid, CanonicalUuid),
-    control: &mut canvas::axum::Control,
-    command_surface: &command_surface::Surface<'_>,
-) {
-    let (lane, occupant, capability) = lane;
-    let (sent_command, command_sent) = tokio::sync::oneshot::channel();
-    let (read_requested, read_response) = std::sync::mpsc::sync_channel(0);
-    let (answered, response_read) = tokio::sync::oneshot::channel();
-    let (command_id, second_id) = (test_uuid(80), test_uuid(81));
-    let client = tokio::task::spawn_blocking(move || {
-        let mut socket = connect_socket(address, capability, epoch, Actor::Lane(lane));
-        send_lane_recall(&mut socket, command_id, epoch, lane);
-        send_lane_recall(&mut socket, second_id, epoch, lane);
-        let _ = sent_command.send(());
-        read_response.recv().expect("test releases response read");
-        assert_command_response(&mut socket, command_id);
-        let _ = answered.send(());
-        assert_command_response(&mut socket, second_id);
-    });
-    command_sent.await.expect("client submits command");
-    let request = control.recv().await.expect("control receives command");
-    let mut seats = Seats::new();
-    seats
-        .seat_detached(
-            lane,
-            occupant,
-            Box::new(DetachedFixture {
-                dropped: Arc::default(),
-            }),
-        )
-        .expect("fixture occupant is observed");
-    let mut lifecycle = lifecycle::Runtime::new(&command_surface.config.lane);
-    let mut inbox_projections = InboxProjections::new();
-    let dispatched = {
-        let mut dispatch = std::pin::pin!(runtime::dispatch_control_burst(
-            command_surface,
-            &mut seats,
-            &mut lifecycle,
-            control,
-            Some(request),
-            &mut inbox_projections,
-        ));
-        let pending = std::future::Future::poll(
-            dispatch.as_mut(),
-            &mut std::task::Context::from_waker(std::task::Waker::noop()),
-        );
-        assert!(matches!(pending, std::task::Poll::Pending));
-        read_requested.send(()).expect("client may read response");
-        dispatch.await.expect("lane recall keeps resident seated")
-    };
-    assert!(!dispatched.reached_dark && dispatched.lifecycle_released);
-    response_read.await.expect("client observed first response");
-    let mut reconciliation = LifecycleReconciliation::default();
-    reconciliation.request();
-    reconciliation
-        .reconcile_fixture(bus, command_surface, &mut seats, &mut lifecycle)
-        .expect("one post-response lifecycle turn settles");
-    assert!(!reconciliation.is_pending());
-    let request = control.recv().await.expect("queued control remains");
-    runtime::dispatch_control(
-        command_surface,
-        &mut seats,
-        &mut lifecycle,
-        control,
-        Some(request),
-    )
-    .await
-    .expect("second recall completes after reconciliation");
-    client.await.expect("client thread joins");
-}
-
 #[tokio::test(flavor = "current_thread")]
 async fn socket_dispatch_replies_then_projects_three_lane_fanout() {
     let (root, paths) = resident_fixture("socket-three-lane-fanout");
@@ -607,7 +458,7 @@ async fn socket_dispatch_replies_then_projects_three_lane_fanout() {
     let (epoch, lineage, fanout) = (test_uuid(91), test_uuid(92), test_uuid(93));
     commit_startup(&bus, &repository, &trust, epoch, None).expect("resident seats");
     let lanes = seed_initial_socket_fanout_lanes(&bus, epoch, lineage, &root);
-    let (operator, lane_capability) = (test_uuid(89), test_uuid(9));
+    let operator = test_uuid(89);
     let capabilities = socket_capabilities(operator, lanes[0].0);
     let app = canvas::AppSource::resolve(&root).expect("fixture app resolves");
     let (server, mut control) = bind_fixture_canvas(epoch, capabilities.clone(), app).await;
@@ -635,19 +486,10 @@ async fn socket_dispatch_replies_then_projects_three_lane_fanout() {
     let server_task = tokio::spawn(server.up_until(async move {
         let _ = stopped.await;
     }));
-    exercise_post_response_lifecycle_turn(
-        &bus,
-        address,
-        epoch,
-        (lanes[0].0, lanes[0].1, lane_capability),
-        &mut control,
-        &command_surface,
-    )
-    .await;
     let (commands_sent, commands_ready) = tokio::sync::oneshot::channel();
     let (responses_read, responses_done) = tokio::sync::oneshot::channel();
     let client = tokio::task::spawn_blocking(move || {
-        let mut socket = connect_socket(address, operator, epoch, Actor::Operator);
+        let mut socket = connect_fixture_socket(address, operator, epoch, Actor::Operator);
         for (index, (lane, occupant)) in lanes.into_iter().enumerate() {
             send_steer_send(
                 &mut socket,
