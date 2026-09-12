@@ -10,6 +10,8 @@ use super::{Environment, model::Vendor};
 
 const THREAD_HEX_LEN: usize = 32;
 const SEARCH_DEPTH: usize = 8;
+const INDEX_ROW_LIMIT: usize = 128;
+const INDEX_PATH_BYTES_LIMIT: usize = 64 * 1024;
 
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedSource {
@@ -261,27 +263,40 @@ pub(super) fn find_thread(
         layout.default_home,
     )?;
     let mut state_failure = None;
-    let mut indexed_paths = Vec::new();
     if let Some(vendor::TranscriptIndex::CodexStateV5 { file }) = layout.state_index {
         let state = root.join(file);
-        if state.is_file() {
-            match codex_state_paths(&state, &lookup) {
-                Ok(indexed) => {
-                    indexed_paths.extend(indexed.into_iter().filter(|path| path.is_file()));
+        match fs::symlink_metadata(&state) {
+            Ok(metadata) if metadata.file_type().is_file() => {
+                match codex_state_path(&state, &lookup) {
+                    Ok(Some(indexed)) => return Ok(vec![indexed]),
+                    Ok(None) => {}
+                    Err(StateIndexError::Invalid(error)) => {
+                        state_failure = Some(format!("{}: {error}", state.display()));
+                    }
+                    Err(StateIndexError::Refused(error)) => {
+                        return Err(format!("{}: {error}", state.display()));
+                    }
                 }
-                Err(error) => state_failure = Some(format!("{}: {error}", state.display())),
             }
-        } else {
-            state_failure = Some(format!(
-                "missing {} state database {}",
-                vendor.label(),
-                state.display()
-            ));
+            Ok(_) => {
+                return Err(format!(
+                    "{} state database {} is not a real regular file",
+                    vendor.label(),
+                    state.display()
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                state_failure = Some(format!(
+                    "missing {} state database {}",
+                    vendor.label(),
+                    state.display()
+                ))
+            }
+            Err(error) => state_failure = Some(format!("{}: {error}", state.display())),
         }
     }
     let discovered = match find_named_transcript(&root.join(layout.sessions_directory), &lookup) {
         Ok(matches) => matches,
-        Err(_) if !indexed_paths.is_empty() => return Ok(indexed_paths),
         Err(error) => {
             return Err(state_failure.map_or_else(
                 || error.to_string(),
@@ -289,10 +304,7 @@ pub(super) fn find_thread(
             ));
         }
     };
-    let paths = discovered
-        .into_iter()
-        .chain(indexed_paths)
-        .collect::<BTreeSet<_>>();
+    let paths = discovered.into_iter().collect::<BTreeSet<_>>();
     if !paths.is_empty() {
         return Ok(paths.into_iter().collect());
     }
@@ -305,27 +317,71 @@ pub(super) fn find_thread(
     }))
 }
 
-fn codex_state_paths(state: &Path, thread: &str) -> Result<Vec<PathBuf>, String> {
+enum StateIndexError {
+    Invalid(String),
+    Refused(String),
+}
+
+fn codex_state_path(state: &Path, thread: &str) -> Result<Option<PathBuf>, StateIndexError> {
     let connection = Connection::open_with_flags(
         state,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| StateIndexError::Invalid(error.to_string()))?;
     let mut statement = connection
         .prepare("SELECT rollout_path FROM threads WHERE replace(lower(id), '-', '') = ?1")
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| StateIndexError::Invalid(error.to_string()))?;
     let mut rows = statement
         .query([thread])
-        .map_err(|error| error.to_string())?;
-    let mut paths = BTreeSet::new();
-    while let Some(row) = rows.next().map_err(|error| error.to_string())? {
-        let path = row
+        .map_err(|error| StateIndexError::Invalid(error.to_string()))?;
+    let mut found: Option<PathBuf> = None;
+    let mut row_count = 0_usize;
+    let mut path_bytes = 0_usize;
+    while let Some(row) = rows
+        .next()
+        .map_err(|error| StateIndexError::Invalid(error.to_string()))?
+    {
+        row_count = row_count.saturating_add(1);
+        if row_count > INDEX_ROW_LIMIT {
+            return Err(StateIndexError::Refused(format!(
+                "thread index exceeded the {INDEX_ROW_LIMIT}-row lookup limit"
+            )));
+        }
+        let spelling = row
             .get::<_, String>(0)
-            .map(PathBuf::from)
-            .map_err(|error| error.to_string())?;
-        paths.insert(path);
+            .map_err(|error| StateIndexError::Invalid(error.to_string()))?;
+        path_bytes = path_bytes.saturating_add(spelling.len());
+        if path_bytes > INDEX_PATH_BYTES_LIMIT {
+            return Err(StateIndexError::Refused(format!(
+                "thread index exceeded the {INDEX_PATH_BYTES_LIMIT}-byte path limit"
+            )));
+        }
+        let path = PathBuf::from(&spelling);
+        let metadata = fs::symlink_metadata(&path).map_err(|error| {
+            StateIndexError::Refused(format!(
+                "indexed transcript {spelling:?} is unavailable: {error}"
+            ))
+        })?;
+        if !metadata.file_type().is_file() || !transcript_extension(&path) {
+            return Err(StateIndexError::Refused(format!(
+                "indexed transcript {spelling:?} is not a real regular JSONL file"
+            )));
+        }
+        let canonical = path.canonicalize().map_err(|error| {
+            StateIndexError::Refused(format!(
+                "indexed transcript {spelling:?} cannot be canonicalized: {error}"
+            ))
+        })?;
+        if found.as_ref().is_some_and(|known| known != &canonical) {
+            return Err(StateIndexError::Refused(format!(
+                "thread index is ambiguous between {} and {}",
+                found.as_ref().expect("checked path").display(),
+                canonical.display()
+            )));
+        }
+        found = Some(canonical);
     }
-    Ok(paths.into_iter().collect())
+    Ok(found)
 }
 
 #[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -636,7 +692,7 @@ mod tests {
                 &codex_environment(scratch.path()),
             )
             .expect("incomplete discovery cannot erase indexed authority"),
-            [indexed],
+            [indexed.canonicalize().expect("indexed path canonicalizes")],
         );
     }
 
@@ -666,32 +722,30 @@ mod tests {
         read_result.expect_err("fixture must force a real read_dir failure");
         assert_eq!(
             lookup.expect("incomplete discovery cannot erase indexed authority"),
-            [indexed],
+            [indexed.canonicalize().expect("indexed path canonicalizes")],
         );
     }
 
     #[test]
-    fn complete_codex_discovery_merges_indexed_paths_in_global_order() {
-        let scratch = Scratch::new("indexed-merge");
+    fn ambiguous_codex_index_refuses_without_walking_the_complete_sessions_tree() {
+        let scratch = Scratch::new("indexed-ambiguous");
         let sessions = scratch.path().join("sessions");
         fs::create_dir_all(&sessions).expect("Codex sessions directory exists");
-        let first = sessions.join(format!("a-{THREAD}.jsonl"));
-        let middle = sessions.join("m-indexed.jsonl");
-        let last = sessions.join(format!("z-{THREAD}.jsonl"));
-        for path in [&first, &middle, &last] {
+        let first = sessions.join("first.jsonl");
+        let second = sessions.join("second.jsonl");
+        for path in [&first, &second] {
             fs::write(path, b"\n").expect("Codex transcript exists");
         }
-        write_codex_state(scratch.path(), &[&last, &middle, &last]);
+        write_codex_state(scratch.path(), &[&first, &second]);
 
-        assert_eq!(
-            find_thread(
-                THREAD,
-                &spice::extension::CODEX,
-                &codex_environment(scratch.path()),
-            )
-            .expect("complete discovery augments indexed authority"),
-            [first, middle, last],
-        );
+        let error = find_thread(
+            THREAD,
+            &spice::extension::CODEX,
+            &codex_environment(scratch.path()),
+        )
+        .expect_err("a second canonical index path is bounded ambiguity");
+        assert!(error.contains("ambiguous"), "{error}");
+        assert!(!error.contains(" absent "), "{error}");
     }
 
     #[cfg(unix)]
