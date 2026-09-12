@@ -2,18 +2,18 @@
 
 use super::*;
 
-pub(super) struct StartedSurface<'a> {
-    pub(super) capabilities: canvas::axum::Capabilities,
-    pub(super) discovery: canvas::Discovery,
-    pub(super) control: canvas::axum::Control,
-    pub(super) publication: SurfacePublication<'a>,
-    pub(super) shutdown: oneshot::Sender<()>,
-    pub(super) server_task: tokio::task::JoinHandle<Result<(), io::Error>>,
-    pub(super) message_publisher: canvas::stream::MessagePublisher,
-    pub(super) progress: &'a mut dyn io::Write,
+struct StartedSurface<'a> {
+    capabilities: canvas::axum::Capabilities,
+    discovery: canvas::Discovery,
+    control: canvas::axum::Control,
+    publication: SurfacePublication<'a>,
+    shutdown: oneshot::Sender<()>,
+    server_task: tokio::task::JoinHandle<Result<(), io::Error>>,
+    message_publisher: canvas::stream::MessagePublisher,
+    progress: &'a mut dyn io::Write,
 }
 
-pub(in crate::resident) struct SurfacePublication<'a> {
+struct SurfacePublication<'a> {
     discovery: canvas::Discovery,
     published: PublishedDiscovery,
     app_description: String,
@@ -56,7 +56,7 @@ impl SurfacePublication<'_> {
     }
 }
 
-pub(super) async fn start_surface<'a>(
+async fn start_surface<'a>(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
@@ -276,7 +276,7 @@ pub(super) async fn run_surface(
     clippy::too_many_arguments,
     reason = "readiness joins the resident's command, timer, lifecycle, and publication owners"
 )]
-pub(in crate::resident) async fn publish_ready_surface(
+async fn publish_ready_surface(
     bus: &Bus,
     epoch: CanonicalUuid,
     command_surface: &command_surface::Surface<'_>,
@@ -472,7 +472,7 @@ fn surface_capabilities(
     clippy::too_many_arguments,
     reason = "the resident loop owns one receiver for each closed event source"
 )]
-pub(super) async fn drive_surface(
+async fn drive_surface(
     bus: &Bus,
     epoch: CanonicalUuid,
     seats: &mut Seats,
@@ -522,7 +522,6 @@ pub(super) async fn drive_surface(
                 )?;
             }
             record = records.recv() => {
-                lifecycle_reconciliation.observe_outer_turn();
                 let residency = current_residency(bus, epoch)?;
                 session_compactions.synchronize(
                     bus, epoch, residency.body(), &message_publisher,
@@ -549,7 +548,6 @@ pub(super) async fn drive_surface(
                 )?;
             }
             failure = failures.recv() => {
-                lifecycle_reconciliation.observe_outer_turn();
                 accept_failure(
                     bus, epoch, seats, command_surface, &mut lifecycle, failure,
                 )?;
@@ -917,10 +915,8 @@ fn accept_commit(
 
 /// One owed event turn; `lifecycle::Runtime` retains cursor and movement authority.
 #[derive(Default)]
-pub(super) struct LifecycleReconciliation {
+struct LifecycleReconciliation {
     pending: bool,
-    #[cfg(test)]
-    turns: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
 }
 
 impl LifecycleReconciliation {
@@ -929,10 +925,6 @@ impl LifecycleReconciliation {
     }
 
     fn is_ready(&self) -> bool {
-        #[cfg(test)]
-        if self.turns.is_some() {
-            return false;
-        }
         self.pending
     }
 
@@ -941,25 +933,7 @@ impl LifecycleReconciliation {
     }
 
     fn settle(&mut self) {
-        #[cfg(test)]
-        if self.pending
-            && let Some(turns) = &self.turns
-        {
-            if turns.load(std::sync::atomic::Ordering::SeqCst) == 0 {
-                return;
-            }
-            turns.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        }
         self.pending = false;
-    }
-
-    fn observe_outer_turn(&self) {
-        #[cfg(test)]
-        if self.pending
-            && let Some(turns) = &self.turns
-        {
-            turns.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        }
     }
 
     fn reconcile(
@@ -974,14 +948,6 @@ impl LifecycleReconciliation {
         reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle)?;
         self.settle();
         Ok(())
-    }
-
-    #[cfg(test)]
-    pub(super) fn with_turns(turns: std::sync::Arc<std::sync::atomic::AtomicU64>) -> Self {
-        Self {
-            pending: false,
-            turns: Some(turns),
-        }
     }
 }
 
