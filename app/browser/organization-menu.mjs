@@ -32,6 +32,9 @@ async function assertCanvasIdentity(page, panel, label) {
     String(authoritative.version.journal),
   );
   assert.equal(await version.getAttribute("data-served-app-generation"), authoritative.generation);
+  assert.equal(await version.evaluate((node) => node.tagName), "STRONG");
+  assert.equal(await panel.locator(".canvas-menu-version--update").count(), 0);
+  assert.equal(await panel.locator(".canvas-menu-update").count(), 0);
   assert.equal(
     await version.getAttribute("data-loaded-app-generation"),
     await page.locator("#app").getAttribute("data-canvas-generation"),

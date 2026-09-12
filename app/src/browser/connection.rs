@@ -507,6 +507,7 @@ async fn open_socket(
         (!version.is_current() || generation != loaded_generation).then(|| CanvasUpdate {
             version,
             generation: generation.clone(),
+            loaded_generation: loaded_generation.clone(),
         })
     }));
     if let Err(fault) = Session::admit_canvas(canvas) {

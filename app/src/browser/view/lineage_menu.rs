@@ -199,18 +199,14 @@ fn render_version_footer(
         label,
         details,
         accessible,
-        update_product,
     } = identity_presentation(identity);
-    let update_presentation = update.map(|update| {
-        let generation = update.generation.as_str()[..8].to_owned();
-        let label = format!("Reload Spice{update_product} app {generation}");
-        (
-            generation,
-            label,
-            update.version.to_string(),
-            update.generation.to_string(),
-        )
-    });
+    let product_version = identity.map(|identity| identity.version.product.to_string());
+    let native_binary = identity.map(|identity| identity.version.binary.to_string());
+    let wire_schema = identity.map(|identity| identity.version.wire.to_string());
+    let journal_schema = identity.map(|identity| identity.version.journal.to_string());
+    let canvas_protocol = identity.map(|identity| identity.version.canvas.to_string());
+    let loaded_app = identity.map(|identity| identity.loaded_app.to_string());
+    let served_app = identity.map(|identity| identity.version.app.to_string());
     let reload = Callback::from(move |_| {
         web_sys::window()
             .expect("Canvas update action has a browser window")
@@ -218,33 +214,61 @@ fn render_version_footer(
             .reload()
             .expect("Canvas update action reloads the current document");
     });
+    let version = if let Some(update) = update {
+        let product = product_version.as_deref().unwrap_or("loading");
+        let update_product = product_version
+            .as_deref()
+            .map_or_else(String::new, |product| format!(" {product}"));
+        let update_details = format!(
+            "Current product: {product}\nLoaded app generation: {}\nAvailable Canvas protocol: {}\nServed app generation: {}\nAction: Reload to update",
+            update.loaded_generation, update.version, update.generation,
+        );
+        let update_accessible = format!(
+            "Reload Spice{update_product} to update; loaded app generation {}; available Canvas protocol {}; served app generation {}",
+            update.loaded_generation, update.version, update.generation,
+        );
+        html! {
+            <button
+                class="canvas-menu-version canvas-menu-version--update"
+                type="button"
+                aria-label={update_accessible}
+                title={update_details}
+                data-product-version={product_version}
+                data-native-binary={native_binary}
+                data-wire-schema={wire_schema}
+                data-journal-schema={journal_schema}
+                data-canvas-protocol={update.version.to_string()}
+                data-loaded-app-generation={update.loaded_generation.to_string()}
+                data-served-app-generation={update.generation.to_string()}
+                data-canvas-update-version={update.version.to_string()}
+                data-canvas-update-generation={update.generation.to_string()}
+                onclick={reload}
+            >
+                <span class="canvas-menu-version-label">{label}</span>
+                <span class="canvas-menu-version-indicator" aria-hidden="true">{"↻"}</span>
+            </button>
+        }
+    } else {
+        html! {
+            <strong
+                class="canvas-menu-version"
+                tabindex="0"
+                aria-label={accessible}
+                title={details}
+                data-product-version={product_version}
+                data-native-binary={native_binary}
+                data-wire-schema={wire_schema}
+                data-journal-schema={journal_schema}
+                data-canvas-protocol={canvas_protocol}
+                data-loaded-app-generation={loaded_app}
+                data-served-app-generation={served_app}
+            >{label}</strong>
+        }
+    };
     html! {
         <footer class="canvas-menu-footer">
             <div class="canvas-menu-version-group">
-                <strong
-                    class="canvas-menu-version"
-                    tabindex="0"
-                    aria-label={accessible}
-                    title={details}
-                    data-product-version={identity.map(|identity| identity.version.product.to_string())}
-                    data-native-binary={identity.map(|identity| identity.version.binary.to_string())}
-                    data-wire-schema={identity.map(|identity| identity.version.wire.to_string())}
-                    data-journal-schema={identity.map(|identity| identity.version.journal.to_string())}
-                    data-canvas-protocol={identity.map(|identity| identity.version.canvas.to_string())}
-                    data-loaded-app-generation={identity.map(|identity| identity.loaded_app.to_string())}
-                    data-served-app-generation={identity.map(|identity| identity.version.app.to_string())}
-                >{label}</strong>
-                if let Some((generation, label, update_version, update_generation)) = update_presentation {
-                    <button
-                        class="canvas-menu-update"
-                        type="button"
-                        aria-label={label.clone()}
-                        title={label}
-                        data-canvas-update-version={update_version}
-                        data-canvas-update-generation={update_generation}
-                        onclick={reload}
-                    >{format!("Update {generation}")}</button>
-                }
+                {version}
             </div>
             <span class="bar-meta canvas-menu-cursor" aria-label="Global cursor">
                 {format!("cursor {cursor}")}
@@ -257,7 +281,6 @@ struct IdentityPresentation {
     label: String,
     details: Option<String>,
     accessible: String,
-    update_product: String,
 }
 
 fn identity_presentation(identity: Option<&CanvasIdentity>) -> IdentityPresentation {
@@ -266,7 +289,6 @@ fn identity_presentation(identity: Option<&CanvasIdentity>) -> IdentityPresentat
             label: "Spice".to_owned(),
             details: None,
             accessible: "Spice product identity is loading".to_owned(),
-            update_product: String::new(),
         };
     };
     let mut rows = vec![
@@ -285,7 +307,6 @@ fn identity_presentation(identity: Option<&CanvasIdentity>) -> IdentityPresentat
         label: format!("Spice {}", identity.version.product),
         accessible: details.replace('\n', "; "),
         details: Some(details),
-        update_product: format!(" {}", identity.version.product),
     }
 }
 

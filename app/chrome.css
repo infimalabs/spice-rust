@@ -262,7 +262,7 @@ body:has(.shell--mosaic),
   color: var(--muted);
   font: .66rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.canvas-menu-footer:has(.canvas-menu-update) {
+.canvas-menu-footer:has(.canvas-menu-version--update) {
   grid-template-columns: minmax(min-content, 1fr) minmax(0, auto);
 }
 .canvas-theme-selector {
@@ -313,6 +313,32 @@ body:has(.shell--mosaic),
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.canvas-menu-version--update {
+  display: inline-flex;
+  flex: 0 1 auto;
+  width: auto;
+  max-width: 100%;
+  min-height: 23px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 7px;
+  border-color: color-mix(in srgb, var(--focus) 56%, var(--line));
+  background: color-mix(in srgb, var(--control) 84%, var(--focus) 16%);
+  color: color-mix(in srgb, var(--focus) 78%, var(--ink));
+  font: 700 .66rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.canvas-menu-version--update:hover { border-color: var(--focus); }
+.canvas-menu-version-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.canvas-menu-version-indicator {
+  flex: 0 0 auto;
+  font-size: .82rem;
+  line-height: 1;
+}
 .canvas-menu-version:focus-visible {
   border-radius: 3px;
   outline: 2px solid var(--focus);
@@ -324,16 +350,6 @@ body:has(.shell--mosaic),
   gap: 6px;
   min-width: 0;
 }
-.canvas-menu-update {
-  flex: 0 0 auto;
-  min-height: 23px;
-  padding: 0 7px;
-  border-color: color-mix(in srgb, var(--focus) 56%, var(--line));
-  background: color-mix(in srgb, var(--control) 84%, var(--focus) 16%);
-  color: color-mix(in srgb, var(--focus) 78%, var(--ink));
-  font: 600 .6rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-.canvas-menu-update:hover { border-color: var(--focus); }
 .canvas-menu-cursor {
   min-width: 0;
   overflow: hidden;
