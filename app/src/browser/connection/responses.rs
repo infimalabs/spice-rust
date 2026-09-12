@@ -38,7 +38,7 @@ pub(super) fn handle_incoming(
     handles: &SurfaceHandles,
     data: &SurfaceData,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
-    demands: &mut DemandQueue<ClientAction>,
+    actions: &ActionQueue,
     bytes: &[u8],
     publish: bool,
 ) -> Result<(Vec<StreamDirective>, bool, crate::Stale), String> {
@@ -47,28 +47,42 @@ pub(super) fn handle_incoming(
         return handle_stream_frame(session, &handles.surface, data, bytes, publish);
     }
     let identity: ResponseIdentity = wire::decode(bytes).map_err(|error| error.to_string())?;
-    let kind = pending
-        .remove(&identity.id)
-        .ok_or_else(|| format!("response named unknown command {}", identity.id))?;
-    let demand = kind.is_demand();
-    let demand_response = demand
-        .then(|| classify_demand_response(session, bytes))
+    let ordinary_kind = pending.remove(&identity.id);
+    let topology_kind = actions
+        .map_in_flight_topology(identity.id, topology_pending_kind)
+        .ok();
+    let (kind, topology) = match (ordinary_kind, topology_kind) {
+        (Some(_), Some(_)) => {
+            return Err(format!(
+                "response identity {} names both ordinary and topology commands",
+                identity.id
+            ));
+        }
+        (Some(kind), None) => (kind, false),
+        (None, Some(kind)) => (kind, true),
+        (None, None) => {
+            return Err(format!("response named unknown command {}", identity.id));
+        }
+    };
+    let topology_response = topology
+        .then(|| classify_topology_response(session, bytes))
         .transpose()?;
-    if let Some(DemandResponse::Committed(range)) = &demand_response {
-        demands.admit(identity.id, *range)?;
+    if let Some(TopologyResponse::Committed(range)) = &topology_response {
+        actions.admit_topology(identity.id, *range)?;
     }
     let mut runtime_slot = data.write();
     let runtime = runtime_slot
         .as_mut()
         .ok_or_else(|| "response arrived before runtime acceptance".to_owned())?;
     let application = apply_command_response(session, handles, runtime, identity.id, kind, bytes)?;
-    if !demand && application.lane_authority {
-        demands.observe_authority();
+    if !topology && application.lane_authority {
+        actions.observe_topology_authority();
     }
-    if let Some(response) = demand_response {
-        let committed = settle_demand(demands, identity.id, application.lane_authority, response)?;
+    if let Some(response) = topology_response {
+        let committed =
+            settle_topology(actions, identity.id, application.lane_authority, response)?;
         if application.refresh {
-            demands.await_authority(committed);
+            actions.await_topology_authority(committed);
         }
     }
     drop(runtime_slot);
@@ -92,24 +106,38 @@ impl CommandApplication {
     }
 }
 
-fn classify_demand_response(session: &Session, bytes: &[u8]) -> Result<DemandResponse, String> {
-    let admitted: crate::Admitted<Response<serde_json::Value>> = admit_response(session, bytes)?;
-    classify_demand_outcome(admitted.get().id, &admitted.get().outcome)
+enum TopologyResponse {
+    Committed(wire::SeqRange),
+    Refused,
 }
 
-fn settle_demand(
-    demands: &mut DemandQueue<ClientAction>,
+fn classify_topology_response(session: &Session, bytes: &[u8]) -> Result<TopologyResponse, String> {
+    let admitted: crate::Admitted<Response<serde_json::Value>> = admit_response(session, bytes)?;
+    match &admitted.get().outcome {
+        wire::Outcome::Reply(reply) => match reply.position {
+            wire::ReplyPosition::Committed(range) => Ok(TopologyResponse::Committed(range)),
+            wire::ReplyPosition::Snapshot(_) | wire::ReplyPosition::Direct {} => Err(format!(
+                "topology command {} returned a non-committed position",
+                admitted.get().id
+            )),
+        },
+        wire::Outcome::Refusal(_) | wire::Outcome::Fault(_) => Ok(TopologyResponse::Refused),
+    }
+}
+
+fn settle_topology(
+    actions: &ActionQueue,
     id: CanonicalUuid,
     rebase_next: bool,
-    response: DemandResponse,
+    response: TopologyResponse,
 ) -> Result<bool, String> {
     match response {
-        DemandResponse::Committed(range) => {
-            demands.commit(id, range, rebase_next)?;
+        TopologyResponse::Committed(range) => {
+            actions.settle_topology(id, Some(range), rebase_next)?;
             Ok(true)
         }
-        DemandResponse::Refused(issue) => {
-            demands.refuse(id, issue)?;
+        TopologyResponse::Refused => {
+            actions.settle_topology(id, None, false)?;
             Ok(false)
         }
     }

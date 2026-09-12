@@ -5,6 +5,7 @@ use std::collections::{HashSet, VecDeque};
 use std::rc::Rc;
 
 use futures_channel::mpsc;
+use wire::{CanonicalUuid, SeqRange};
 
 use crate::client_action::ClientAction;
 
@@ -33,11 +34,15 @@ impl ActionQueue {
         )
     }
 
-    pub(super) fn admit(&self, action: ClientAction) -> Result<(), ActionAdmissionError> {
+    pub(super) fn admit(
+        &self,
+        action: ClientAction,
+        topology_id: Option<CanonicalUuid>,
+    ) -> Result<(), ActionAdmissionError> {
         if self.wake.borrow().is_closed() {
             return Err(ActionAdmissionError::Unavailable);
         }
-        self.mailbox.borrow_mut().admit(action)?;
+        self.mailbox.borrow_mut().admit(action, topology_id)?;
         self.rearm()
     }
 
@@ -50,7 +55,7 @@ impl ActionQueue {
     }
 
     pub(super) fn rearm(&self) -> Result<(), ActionAdmissionError> {
-        if self.mailbox.borrow().is_empty() {
+        if !self.mailbox.borrow().has_ready() {
             return Ok(());
         }
         match self.wake.borrow_mut().try_send(()) {
@@ -59,11 +64,49 @@ impl ActionQueue {
             Err(_) => Err(ActionAdmissionError::Unavailable),
         }
     }
+
+    pub(super) fn reconnect(&self) {
+        self.mailbox.borrow_mut().reconnect();
+    }
+
+    pub(super) fn admit_topology(&self, id: CanonicalUuid, range: SeqRange) -> Result<(), String> {
+        self.mailbox.borrow_mut().admit_topology(id, range)
+    }
+
+    pub(super) fn settle_topology(
+        &self,
+        id: CanonicalUuid,
+        range: Option<SeqRange>,
+        rebase_next: bool,
+    ) -> Result<(), String> {
+        self.mailbox
+            .borrow_mut()
+            .settle_topology(id, range, rebase_next)
+    }
+
+    pub(super) fn await_topology_authority(&self, rebase_next: bool) {
+        self.mailbox
+            .borrow_mut()
+            .await_topology_authority(rebase_next);
+    }
+
+    pub(super) fn observe_topology_authority(&self) {
+        self.mailbox.borrow_mut().observe_topology_authority();
+    }
+
+    pub(super) fn map_in_flight_topology<R>(
+        &self,
+        id: CanonicalUuid,
+        map: impl FnOnce(&ClientAction) -> R,
+    ) -> Result<R, String> {
+        self.mailbox.borrow().map_in_flight_topology(id, map)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ActionAdmissionError {
     Unavailable,
+    Identity,
     Records,
     Payload,
     History,
@@ -73,6 +116,7 @@ impl std::fmt::Display for ActionAdmissionError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Unavailable => formatter.write_str("Canvas action delivery is unavailable."),
+            Self::Identity => formatter.write_str("Canvas could not reserve a command identity."),
             Self::Records => write!(
                 formatter,
                 "Canvas already retains {ACTION_RECORD_LIMIT} unsent actions; wait for delivery before retrying."
@@ -93,9 +137,14 @@ impl std::fmt::Display for ActionAdmissionError {
 struct ActionMailbox {
     records: VecDeque<QueuedAction>,
     leased: Option<LeasedAction>,
+    in_flight: Option<InFlightAction>,
+    topology_ids: HashSet<CanonicalUuid>,
     history: HashSet<(wire::CanonicalUuid, wire::MessageLocus)>,
     payload_bytes: usize,
     mutation_turn: bool,
+    awaiting_topology_authority: bool,
+    rebase_ready: bool,
+    rebase_on_authority: bool,
 }
 
 struct QueuedAction {
@@ -103,6 +152,7 @@ struct QueuedAction {
     payload_bytes: usize,
     history: Option<(wire::CanonicalUuid, wire::MessageLocus)>,
     class: ActionClass,
+    topology: Option<TopologyAction>,
 }
 
 struct LeasedAction {
@@ -110,6 +160,28 @@ struct LeasedAction {
     payload_bytes: usize,
     history: Option<(wire::CanonicalUuid, wire::MessageLocus)>,
     class: ActionClass,
+    topology: Option<TopologyAction>,
+}
+
+struct InFlightAction {
+    queued: QueuedAction,
+    index: usize,
+    admitted: Option<SeqRange>,
+}
+
+#[derive(Clone, Copy)]
+struct TopologyAction {
+    id: CanonicalUuid,
+    prepared: bool,
+    served: bool,
+    renewal: Option<RenewalKey>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct RenewalKey {
+    lineage: CanonicalUuid,
+    lane: CanonicalUuid,
+    requested: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -130,6 +202,31 @@ impl ActionLease {
         self.action
             .as_ref()
             .expect("an unsettled lease owns its action")
+    }
+
+    pub(super) fn action_mut(&mut self) -> &mut ClientAction {
+        self.action
+            .as_mut()
+            .expect("an unsettled lease owns its action")
+    }
+
+    pub(super) fn prepare_topology(
+        &mut self,
+        topology_revision: u64,
+    ) -> Result<CanonicalUuid, String> {
+        let (id, rebase) = self.queue.mailbox.borrow_mut().prepare_topology()?;
+        if rebase {
+            self.action_mut().set_topology_revision(topology_revision);
+        }
+        Ok(id)
+    }
+
+    pub(super) fn submit_topology(mut self) {
+        let action = self
+            .action
+            .take()
+            .expect("an unsettled topology lease submits");
+        self.queue.mailbox.borrow_mut().submit_topology(action);
     }
 
     pub(super) fn commit(mut self) -> ClientAction {
@@ -202,11 +299,78 @@ impl ClientAction {
     pub(super) const fn is_mutation(&self) -> bool {
         !matches!(self, Self::Refresh | Self::MessageHistory { .. })
     }
+
+    pub(super) const fn is_topology_mutation(&self) -> bool {
+        matches!(
+            self,
+            Self::Seat { .. }
+                | Self::ArrangeLane { .. }
+                | Self::RenewLane { .. }
+                | Self::ConfigureLineage { .. }
+                | Self::ArrangeLineages { .. }
+        )
+    }
+
+    fn renewal_key(&self) -> Option<RenewalKey> {
+        match self {
+            Self::RenewLane {
+                lineage,
+                lane,
+                requested,
+                ..
+            } => Some(RenewalKey {
+                lineage: *lineage,
+                lane: *lane,
+                requested: *requested,
+            }),
+            _ => None,
+        }
+    }
+
+    fn set_topology_revision(&mut self, revision: u64) {
+        match self {
+            Self::Seat {
+                topology_revision, ..
+            }
+            | Self::ArrangeLane {
+                topology_revision, ..
+            }
+            | Self::RenewLane {
+                topology_revision, ..
+            }
+            | Self::ConfigureLineage {
+                topology_revision, ..
+            }
+            | Self::ArrangeLineages {
+                topology_revision, ..
+            } => *topology_revision = revision,
+            _ => unreachable!("only topology mutations are prepared by the scheduler"),
+        }
+    }
 }
 
 impl ActionMailbox {
-    fn admit(&mut self, action: ClientAction) -> Result<(), ActionAdmissionError> {
+    fn admit(
+        &mut self,
+        action: ClientAction,
+        topology_id: Option<CanonicalUuid>,
+    ) -> Result<(), ActionAdmissionError> {
         let class = ActionClass::of(&action);
+        let renewal = action.renewal_key();
+        if renewal.is_some_and(|key| {
+            self.records
+                .iter()
+                .filter_map(|queued| queued.topology)
+                .chain(self.leased.iter().filter_map(|leased| leased.topology))
+                .chain(
+                    self.in_flight
+                        .iter()
+                        .filter_map(|in_flight| in_flight.queued.topology),
+                )
+                .any(|topology| topology.renewal == Some(key))
+        }) {
+            return Ok(());
+        }
         if matches!(class, ActionClass::Refresh | ActionClass::DrainSubmissions)
             && self
                 .records
@@ -236,7 +400,11 @@ impl ActionMailbox {
         if history.is_some() && self.history.len() >= HISTORY_RECORD_LIMIT {
             return Err(ActionAdmissionError::History);
         }
-        if self.records.len() + usize::from(self.leased.is_some()) >= ACTION_RECORD_LIMIT {
+        if self.records.len()
+            + usize::from(self.leased.is_some())
+            + usize::from(self.in_flight.is_some())
+            >= ACTION_RECORD_LIMIT
+        {
             return Err(ActionAdmissionError::Records);
         }
         let payload_bytes = action.payload_bytes();
@@ -246,35 +414,108 @@ impl ActionMailbox {
         if let Some(key) = history {
             self.history.insert(key);
         }
+        let topology = if action.is_topology_mutation() {
+            let id = topology_id.ok_or(ActionAdmissionError::Identity)?;
+            if !self.topology_ids.insert(id) {
+                return Err(ActionAdmissionError::Identity);
+            }
+            Some(TopologyAction {
+                id,
+                prepared: false,
+                served: false,
+                renewal,
+            })
+        } else {
+            if topology_id.is_some() {
+                return Err(ActionAdmissionError::Identity);
+            }
+            None
+        };
         self.payload_bytes = self.payload_bytes.saturating_add(payload_bytes);
         self.records.push_back(QueuedAction {
             action,
             payload_bytes,
             history,
             class,
+            topology,
         });
         Ok(())
     }
 
     fn lease(&mut self) -> Option<ClientAction> {
         assert!(self.leased.is_none(), "only one action may be leased");
+        let topology_ready = self.in_flight.is_none() && !self.awaiting_topology_authority;
         let index = self
             .records
             .iter()
-            .position(|queued| queued.action.is_mutation() == self.mutation_turn)
-            .unwrap_or(0);
+            .enumerate()
+            .filter(|(_, queued)| queued.topology.is_none() || topology_ready)
+            .find(|(_, queued)| queued.action.is_mutation() == self.mutation_turn)
+            .or_else(|| {
+                self.records
+                    .iter()
+                    .enumerate()
+                    .find(|(_, queued)| queued.topology.is_none() || topology_ready)
+            })
+            .map(|(index, _)| index)?;
         let queued = self.records.remove(index)?;
         self.leased = Some(LeasedAction {
             index,
             payload_bytes: queued.payload_bytes,
             history: queued.history,
             class: queued.class,
+            topology: queued.topology,
         });
         Some(queued.action)
     }
 
+    fn prepare_topology(&mut self) -> Result<(CanonicalUuid, bool), String> {
+        let topology = self
+            .leased
+            .as_mut()
+            .and_then(|leased| leased.topology.as_mut())
+            .ok_or_else(|| "leased action is not a topology mutation".to_owned())?;
+        let rebase = !topology.prepared && self.rebase_ready;
+        if !topology.prepared {
+            topology.prepared = true;
+            self.rebase_ready = false;
+        }
+        Ok((topology.id, rebase))
+    }
+
+    fn submit_topology(&mut self, action: ClientAction) {
+        assert!(
+            self.in_flight.is_none(),
+            "only one topology mutation may be in flight"
+        );
+        let mut leased = self.leased.take().expect("one topology lease submits");
+        let topology = leased
+            .topology
+            .as_mut()
+            .expect("a submitted topology lease has scheduler identity");
+        if !topology.served {
+            topology.served = true;
+            self.mutation_turn = !self.mutation_turn;
+        }
+        self.in_flight = Some(InFlightAction {
+            queued: QueuedAction {
+                action,
+                payload_bytes: leased.payload_bytes,
+                history: leased.history,
+                class: leased.class,
+                topology: leased.topology,
+            },
+            index: leased.index,
+            admitted: None,
+        });
+    }
+
     fn commit(&mut self) {
         let leased = self.leased.take().expect("one leased action commits");
+        assert!(
+            leased.topology.is_none(),
+            "topology mutations settle after their response"
+        );
         self.release_accounting(&leased);
         self.mutation_turn = !self.mutation_turn;
     }
@@ -302,8 +543,87 @@ impl ActionMailbox {
                 payload_bytes: leased.payload_bytes,
                 history: leased.history,
                 class: leased.class,
+                topology: leased.topology,
             },
         );
+    }
+
+    fn reconnect(&mut self) {
+        if let Some(in_flight) = self.in_flight.take() {
+            let index = in_flight.index.min(self.records.len());
+            self.records.insert(index, in_flight.queued);
+        }
+    }
+
+    fn admit_topology(&mut self, id: CanonicalUuid, range: SeqRange) -> Result<(), String> {
+        let in_flight = self.in_flight_mut(id)?;
+        if in_flight.admitted.is_some() {
+            return Err(format!("topology command {id} was admitted twice"));
+        }
+        in_flight.admitted = Some(range);
+        Ok(())
+    }
+
+    fn settle_topology(
+        &mut self,
+        id: CanonicalUuid,
+        range: Option<SeqRange>,
+        rebase_next: bool,
+    ) -> Result<(), String> {
+        let in_flight = self.in_flight_mut(id)?;
+        if in_flight.admitted != range {
+            return Err(format!(
+                "topology command {id} settled a range other than its admission"
+            ));
+        }
+        let in_flight = self
+            .in_flight
+            .take()
+            .expect("validated topology command remains in flight");
+        self.topology_ids.remove(&id);
+        self.release_queued_accounting(&in_flight.queued);
+        self.rebase_ready = range.is_some()
+            && rebase_next
+            && self.records.iter().any(|queued| queued.topology.is_some());
+        Ok(())
+    }
+
+    fn await_topology_authority(&mut self, rebase_next: bool) {
+        self.awaiting_topology_authority = true;
+        self.rebase_on_authority = rebase_next;
+    }
+
+    fn observe_topology_authority(&mut self) {
+        self.awaiting_topology_authority = false;
+        self.rebase_ready =
+            self.rebase_on_authority && self.records.iter().any(|queued| queued.topology.is_some());
+        self.rebase_on_authority = false;
+    }
+
+    fn map_in_flight_topology<R>(
+        &self,
+        id: CanonicalUuid,
+        map: impl FnOnce(&ClientAction) -> R,
+    ) -> Result<R, String> {
+        if !self.topology_ids.contains(&id) {
+            return Err(format!("response named unknown topology command {id}"));
+        }
+        let in_flight = self
+            .in_flight
+            .as_ref()
+            .filter(|in_flight| in_flight.topology_id() == id)
+            .ok_or_else(|| format!("topology command {id} is not in flight"))?;
+        Ok(map(&in_flight.queued.action))
+    }
+
+    fn in_flight_mut(&mut self, id: CanonicalUuid) -> Result<&mut InFlightAction, String> {
+        if !self.topology_ids.contains(&id) {
+            return Err(format!("response named unknown topology command {id}"));
+        }
+        self.in_flight
+            .as_mut()
+            .filter(|in_flight| in_flight.topology_id() == id)
+            .ok_or_else(|| format!("topology command {id} is not in flight"))
     }
 
     fn release_accounting(&mut self, leased: &LeasedAction) {
@@ -313,8 +633,27 @@ impl ActionMailbox {
         self.payload_bytes = self.payload_bytes.saturating_sub(leased.payload_bytes);
     }
 
-    fn is_empty(&self) -> bool {
-        self.records.is_empty()
+    fn release_queued_accounting(&mut self, queued: &QueuedAction) {
+        if let Some(history) = queued.history {
+            self.history.remove(&history);
+        }
+        self.payload_bytes = self.payload_bytes.saturating_sub(queued.payload_bytes);
+    }
+
+    fn has_ready(&self) -> bool {
+        let topology_ready = self.in_flight.is_none() && !self.awaiting_topology_authority;
+        self.records
+            .iter()
+            .any(|queued| queued.topology.is_none() || topology_ready)
+    }
+}
+
+impl InFlightAction {
+    fn topology_id(&self) -> CanonicalUuid {
+        self.queued
+            .topology
+            .expect("an in-flight topology action has scheduler metadata")
+            .id
     }
 }
 
@@ -326,5 +665,115 @@ impl ActionClass {
             ClientAction::FastMode(_) => Self::FastMode,
             _ => Self::Other,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn id(suffix: u8) -> CanonicalUuid {
+        format!("018f82d4-6f59-7d06-92e3-bce9131163{suffix:02x}")
+            .parse()
+            .expect("fixture identity")
+    }
+
+    fn range(position: u64) -> SeqRange {
+        let position = wire::Seq::new(position).expect("positive fixture position");
+        SeqRange {
+            first: position,
+            last: position,
+        }
+    }
+
+    fn arrange(revision: u64, suffix: u8) -> ClientAction {
+        ClientAction::ArrangeLane {
+            topology_revision: revision,
+            lane: id(suffix),
+            before: id(suffix + 1),
+        }
+    }
+
+    #[test]
+    fn topology_order_replay_and_authority_rebase_share_one_scheduler_record() {
+        let (queue, _wakes) = ActionQueue::new();
+        queue
+            .admit(arrange(1, 10), Some(id(1)))
+            .expect("first action");
+        queue
+            .admit(arrange(2, 20), Some(id(2)))
+            .expect("second action");
+
+        let mut first = queue.lease().expect("first action leases");
+        assert_eq!(first.prepare_topology(7).unwrap(), id(1));
+        assert!(matches!(
+            first.action(),
+            ClientAction::ArrangeLane {
+                topology_revision: 1,
+                ..
+            }
+        ));
+        first.submit_topology();
+        assert!(
+            queue.lease().is_none(),
+            "one topology mutation is in flight"
+        );
+
+        queue.reconnect();
+        let mut replay = queue.lease().expect("reconnect restores the first action");
+        assert_eq!(replay.prepare_topology(8).unwrap(), id(1));
+        assert!(matches!(
+            replay.action(),
+            ClientAction::ArrangeLane {
+                topology_revision: 1,
+                ..
+            }
+        ));
+        replay.submit_topology();
+        queue.admit_topology(id(1), range(1)).unwrap();
+        queue.settle_topology(id(1), Some(range(1)), false).unwrap();
+        queue.await_topology_authority(true);
+        assert!(
+            queue.lease().is_none(),
+            "the authority barrier holds the next mutation"
+        );
+
+        queue.observe_topology_authority();
+        let mut second = queue
+            .lease()
+            .expect("fresh authority releases the second action");
+        assert_eq!(second.prepare_topology(9).unwrap(), id(2));
+        assert!(matches!(
+            second.action(),
+            ClientAction::ArrangeLane {
+                topology_revision: 9,
+                ..
+            }
+        ));
+        second.submit_topology();
+        assert!(queue.map_in_flight_topology(id(2), |_| ()).is_ok());
+        queue.settle_topology(id(2), None, false).unwrap();
+        assert!(queue.map_in_flight_topology(id(2), |_| ()).is_err());
+
+        queue.admit(ClientAction::Refresh, None).unwrap();
+        queue.lease().expect("ordinary action leases").restore();
+        drop(queue.lease().expect("ordinary action restores").commit());
+
+        let renewal = || ClientAction::RenewLane {
+            topology_revision: 9,
+            lineage: id(30),
+            lane: id(31),
+            requested: true,
+        };
+        queue.admit(renewal(), Some(id(3))).unwrap();
+        queue.admit(renewal(), Some(id(4))).unwrap();
+        let mut renewal = queue.lease().expect("one renewal leases");
+        assert_eq!(renewal.prepare_topology(9).unwrap(), id(3));
+        renewal.submit_topology();
+        queue.settle_topology(id(3), None, false).unwrap();
+        assert!(
+            queue.lease().is_none(),
+            "an exact duplicate renewal coalesces"
+        );
     }
 }

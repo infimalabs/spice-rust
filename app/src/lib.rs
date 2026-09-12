@@ -35,13 +35,11 @@
 //! with, a head-direct answer is held as [`Answer::HeadDirect`] with nowhere
 //! to keep them, and that difference survives every floor above.
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", test))]
 #[path = "browser/action_mailbox.rs"]
 mod action_mailbox;
-#[cfg(target_arch = "wasm32")]
-mod client_action;
 #[cfg(any(target_arch = "wasm32", test))]
-mod command_demands;
+mod client_action;
 pub mod compose;
 #[cfg(any(target_arch = "wasm32", test))]
 mod composer_drafts;

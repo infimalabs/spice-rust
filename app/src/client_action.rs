@@ -2,7 +2,6 @@ use wire::body::DirectiveAttachment;
 use wire::intent::{LineageArrangement, LineageLife};
 use wire::{CanonicalUuid, TaskHandle};
 
-#[derive(Clone)]
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
 pub(crate) enum ClientAction {
     /// Wake the connection vendor after a composer synchronously queues work.
