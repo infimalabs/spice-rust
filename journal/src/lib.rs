@@ -6,7 +6,7 @@
 /// open when `migrate::MIGRATIONS` carries the step, and refused by name when it
 /// does not. A newer version is always refused: this build cannot know what the
 /// release that wrote it added.
-pub const SCHEMA_VERSION: u32 = 21;
+pub const SCHEMA_VERSION: u32 = 22;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod guard;
@@ -23,8 +23,8 @@ mod restore;
 pub use guard::{
     Applied, BuildError, CommandReplay, CommitError, CommitFault, FactCause, FactPageStart,
     FactReadBudget, GuardError, GuardRefusal, JournalGuard, JournalHead, JournalRead, JournalWrite,
-    MAX_RETAINED_FACT_PAGE_BYTES, MAX_RETAINED_FACT_PAGE_ROWS, MAX_STEERING_PAGE_ROWS, PendingFact,
-    ReadError, SelectedFactPage, SteeringPage, TaskHeads,
+    MAX_DURABLE_FACT_ENVELOPE_BYTES, MAX_RETAINED_FACT_PAGE_BYTES, MAX_RETAINED_FACT_PAGE_ROWS,
+    MAX_STEERING_PAGE_ROWS, PendingFact, ReadError, SelectedFactPage, SteeringPage, TaskHeads,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use migrate::{Migration, MigrationError, OpenError};

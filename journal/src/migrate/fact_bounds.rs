@@ -1,9 +1,9 @@
-//! Schema-21 certification and enforcement of the durable fact-envelope maximum.
+//! Certification and schema-22 enforcement of the durable fact-envelope maximum.
 
 use rusqlite::Connection;
 
 use super::{IndexActivation, MigrationError, OpenError};
-use crate::MAX_RETAINED_FACT_PAGE_BYTES;
+use crate::MAX_DURABLE_FACT_ENVELOPE_BYTES;
 
 pub(crate) const FACT_BOUND_VALIDATION_ROW_LIMIT: u64 = 4_096;
 pub(crate) const FACT_BOUND_VALIDATION_BYTE_LIMIT: u64 = 16 * 1024 * 1024;
@@ -21,7 +21,7 @@ BEGIN
     SELECT RAISE(ABORT, 'fact envelope exceeds {limit} bytes');
 END
 "#,
-        limit = MAX_RETAINED_FACT_PAGE_BYTES,
+        limit = MAX_DURABLE_FACT_ENVELOPE_BYTES,
     )
 }
 
@@ -35,7 +35,7 @@ BEGIN
     SELECT RAISE(ABORT, 'fact envelope exceeds {limit} bytes');
 END
 "#,
-        limit = MAX_RETAINED_FACT_PAGE_BYTES,
+        limit = MAX_DURABLE_FACT_ENVELOPE_BYTES,
     )
 }
 
@@ -46,6 +46,13 @@ pub(crate) fn bounds_sql() -> String {
         insert_sql(),
         update_sql(),
     )
+}
+
+/// Replace schema-21's one-MiB triggers with the current durable ceiling.
+pub(super) fn refresh(connection: &Connection) -> Result<(), OpenError> {
+    connection
+        .execute_batch(&bounds_sql())
+        .map_err(OpenError::Sqlite)
 }
 
 /// Validate only SQLite length metadata, then publish the two exact triggers.
@@ -86,7 +93,7 @@ pub(super) fn migrate(
             row: seq.to_string(),
             detail: format!("envelope length {length} is negative"),
         })?;
-        let limit = u64::try_from(MAX_RETAINED_FACT_PAGE_BYTES)
+        let limit = u64::try_from(MAX_DURABLE_FACT_ENVELOPE_BYTES)
             .expect("fact envelope limit fits the migration counter");
         if observed > limit {
             return Err(MigrationError::OversizedFactEnvelope {
@@ -108,7 +115,5 @@ pub(super) fn migrate(
         }
     }
     drop(statement);
-    connection
-        .execute_batch(&bounds_sql())
-        .map_err(OpenError::Sqlite)
+    refresh(connection)
 }

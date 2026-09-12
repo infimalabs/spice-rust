@@ -557,6 +557,7 @@ enum MigrationStep {
     Rust(fn(&Connection) -> Result<(), OpenError>),
     FactIndexes,
     FactEnvelopeBounds,
+    FactEnvelopeTriggers,
 }
 
 impl MigrationStep {
@@ -566,6 +567,7 @@ impl MigrationStep {
             Self::Rust(migrate) => migrate(connection),
             Self::FactIndexes => migrate_schema_19(connection, activation),
             Self::FactEnvelopeBounds => fact_bounds::migrate(connection, activation),
+            Self::FactEnvelopeTriggers => fact_bounds::refresh(connection),
         }
     }
 }
@@ -607,6 +609,7 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (18, MigrationStep::Rust(task_creator_scope::migrate)),
     (19, MigrationStep::FactIndexes),
     (20, MigrationStep::FactEnvelopeBounds),
+    (21, MigrationStep::FactEnvelopeTriggers),
 ];
 
 /// Schema 19 to 20: bounded fact-kind recovery.
@@ -922,8 +925,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 21, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 22, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 21;
+PRAGMA user_version = 22;
 "#;

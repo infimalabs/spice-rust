@@ -457,11 +457,11 @@ fn prepare_facts(
             fact: proposed.fact.clone(),
         };
         let bytes = wire::encode(&envelope).map_err(wire_fault)?;
-        if bytes.len() > MAX_RETAINED_FACT_PAGE_BYTES {
+        if bytes.len() > MAX_DURABLE_FACT_ENVELOPE_BYTES {
             return Err(CommitError::Refused(GuardRefusal::new(format!(
                 "fact envelope sequence {seq} has {} bytes, exceeding the {}-byte durable limit",
                 bytes.len(),
-                MAX_RETAINED_FACT_PAGE_BYTES,
+                MAX_DURABLE_FACT_ENVELOPE_BYTES,
             ))));
         }
         prepared.push(PreparedFact {

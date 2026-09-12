@@ -41,7 +41,8 @@ impl CausalPage {
         let length =
             admitted_envelope_length(seq, row.get::<_, i64>(5).map_err(GuardError::Store)?)?;
         if self.facts.len() == budget.rows()
-            || self.decoded_bytes.saturating_add(length) > budget.decoded_bytes()
+            || (!self.facts.is_empty()
+                && self.decoded_bytes.saturating_add(length) > budget.decoded_bytes())
         {
             let continuation = u64::try_from(seq)
                 .ok()
@@ -229,13 +230,7 @@ impl JournalRead<'_> {
             }
             let length =
                 admitted_envelope_length(seq, row.get::<_, i64>(2).map_err(GuardError::Store)?)?;
-            if decoded_bytes.saturating_add(length) > budget.decoded_bytes() {
-                if facts.is_empty() {
-                    return Err(GuardError::Invalid(format!(
-                        "fact envelope sequence {seq} has {length} bytes, exceeding this call's {}-byte decoded budget",
-                        budget.decoded_bytes(),
-                    )));
-                }
+            if !facts.is_empty() && decoded_bytes.saturating_add(length) > budget.decoded_bytes() {
                 continuation = facts.last().map(|fact| fact.seq);
                 break;
             }
@@ -315,13 +310,7 @@ impl JournalRead<'_> {
             }
             let length =
                 admitted_envelope_length(seq, row.get::<_, i64>(2).map_err(GuardError::Store)?)?;
-            if decoded_bytes.saturating_add(length) > budget.decoded_bytes() {
-                if facts.is_empty() {
-                    return Err(GuardError::Invalid(format!(
-                        "fact envelope sequence {seq} has {length} bytes, exceeding this call's {}-byte decoded budget",
-                        budget.decoded_bytes(),
-                    )));
-                }
+            if !facts.is_empty() && decoded_bytes.saturating_add(length) > budget.decoded_bytes() {
                 continuation = facts.last().map(|fact| fact.seq);
                 break;
             }
@@ -422,7 +411,9 @@ impl JournalRead<'_> {
             read_metrics::observe_row();
             let length =
                 admitted_envelope_length(seq, row.get::<_, i64>(2).map_err(GuardError::Store)?)?;
-            if facts.len() == limit || decoded_bytes.saturating_add(length) > budget.decoded_bytes()
+            if facts.len() == limit
+                || (!facts.is_empty()
+                    && decoded_bytes.saturating_add(length) > budget.decoded_bytes())
             {
                 continuation = u64::try_from(seq).ok().and_then(wire::Seq::new);
                 break;

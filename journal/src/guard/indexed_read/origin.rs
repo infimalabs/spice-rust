@@ -70,13 +70,7 @@ impl JournalRead<'_> {
             }
             let length =
                 admitted_envelope_length(seq, row.get::<_, i64>(2).map_err(GuardError::Store)?)?;
-            if decoded_bytes.saturating_add(length) > budget.decoded_bytes() {
-                if facts.is_empty() {
-                    return Err(GuardError::Invalid(format!(
-                        "fact envelope sequence {seq} has {length} bytes, exceeding this call's {}-byte decoded budget",
-                        budget.decoded_bytes(),
-                    )));
-                }
+            if !facts.is_empty() && decoded_bytes.saturating_add(length) > budget.decoded_bytes() {
                 continuation = facts
                     .last()
                     .map(|fact: &wire::Envelope<wire::AnyFact>| fact.seq);

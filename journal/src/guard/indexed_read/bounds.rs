@@ -10,10 +10,10 @@ pub(super) fn admitted_envelope_length(seq: i64, observed: i64) -> Result<usize,
             "fact envelope sequence {seq} has invalid length {observed}"
         ))
     })?;
-    if observed > crate::MAX_RETAINED_FACT_PAGE_BYTES {
+    if observed > crate::MAX_DURABLE_FACT_ENVELOPE_BYTES {
         return Err(GuardError::Invalid(format!(
             "fact envelope sequence {seq} has {observed} bytes, exceeding the {}-byte durable limit",
-            crate::MAX_RETAINED_FACT_PAGE_BYTES,
+            crate::MAX_DURABLE_FACT_ENVELOPE_BYTES,
         )));
     }
     Ok(observed)

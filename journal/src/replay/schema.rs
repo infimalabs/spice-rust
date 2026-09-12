@@ -36,7 +36,7 @@ pub(super) fn verify_fact_envelope_bound_objects(
                 violations.push(Violation::new(
                     ViolationClass::Schema,
                     name,
-                    "durable fact-envelope size enforcement trigger differs from schema 21",
+                    "durable fact-envelope size enforcement trigger differs from schema 22",
                 ));
             }
             Some(_) => {}

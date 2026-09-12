@@ -1,4 +1,4 @@
-//! Durable fact-envelope size admission and schema-21 certification.
+//! Durable fact-envelope size admission and schema certification.
 
 use super::*;
 use crate::{FactCause, JournalWrite};
@@ -54,7 +54,7 @@ fn note_write(note_bytes: usize) -> JournalWrite {
 #[test]
 fn writes_admit_the_exact_limit_and_refuse_a_larger_batch_before_any_effect() {
     let mut exact = authority_fixture();
-    let exact_note = note_bytes_for_envelope(MAX_RETAINED_FACT_PAGE_BYTES, 3);
+    let exact_note = note_bytes_for_envelope(MAX_DURABLE_FACT_ENVELOPE_BYTES, 3);
     let applied = exact
         .apply(note_write(exact_note))
         .expect("exact-limit fact commits");
@@ -67,7 +67,7 @@ fn writes_admit_the_exact_limit_and_refuse_a_larger_batch_before_any_effect() {
             |row| row.get(0),
         )
         .expect("exact-limit fact length reads");
-    assert_eq!(stored, MAX_RETAINED_FACT_PAGE_BYTES as i64);
+    assert_eq!(stored, MAX_DURABLE_FACT_ENVELOPE_BYTES as i64);
 
     let mut refused = authority_fixture();
     let before = authority_shape(&refused.connection);
@@ -76,7 +76,10 @@ fn writes_admit_the_exact_limit_and_refuse_a_larger_batch_before_any_effect() {
         .fact(
             wire::body::TaskNoted {
                 task: "1kKRRsDP".parse().expect("fixture task"),
-                note: "x".repeat(note_bytes_for_envelope(MAX_RETAINED_FACT_PAGE_BYTES + 1, 4)),
+                note: "x".repeat(note_bytes_for_envelope(
+                    MAX_DURABLE_FACT_ENVELOPE_BYTES + 1,
+                    4,
+                )),
             },
             FactCause::Existing(seq(2)),
         )
@@ -88,7 +91,7 @@ fn writes_admit_the_exact_limit_and_refuse_a_larger_batch_before_any_effect() {
     assert!(
         error
             .to_string()
-            .contains(&(MAX_RETAINED_FACT_PAGE_BYTES + 1).to_string())
+            .contains(&(MAX_DURABLE_FACT_ENVELOPE_BYTES + 1).to_string())
     );
     assert_eq!(authority_shape(&refused.connection), before);
 }
@@ -182,6 +185,68 @@ fn version_and_triggers(connection: &Connection) -> (u32, u32, i64) {
         )
         .expect("bound triggers read");
     (row, pragma, triggers)
+}
+
+#[test]
+fn schema_twenty_one_refreshes_its_one_mib_triggers_without_rewriting_facts() {
+    let scratch = Scratch::new();
+    let path = scratch
+        .path()
+        .join("schema-twenty-one-trigger-refresh.sqlite3");
+    let mut journal = authority_file_fixture(&path);
+    let retained = journal
+        .apply(note_write(note_bytes_for_envelope(
+            MAX_RETAINED_FACT_PAGE_BYTES + 1,
+            3,
+        )))
+        .expect("current authority admits a fact above the page target");
+    assert_eq!(retained.last(), seq(3));
+    let legacy_limit = MAX_RETAINED_FACT_PAGE_BYTES;
+    journal
+        .connection
+        .execute_batch(&format!(
+            "DROP TRIGGER fact_envelopes_envelope_size_insert;
+             DROP TRIGGER fact_envelopes_envelope_size_update;
+             CREATE TRIGGER fact_envelopes_envelope_size_insert
+             BEFORE INSERT ON fact_envelopes WHEN length(NEW.envelope) > {legacy_limit}
+             BEGIN SELECT RAISE(ABORT, 'fact envelope exceeds {legacy_limit} bytes'); END;
+             CREATE TRIGGER fact_envelopes_envelope_size_update
+             BEFORE UPDATE OF envelope ON fact_envelopes WHEN length(NEW.envelope) > {legacy_limit}
+             BEGIN SELECT RAISE(ABORT, 'fact envelope exceeds {legacy_limit} bytes'); END;
+             UPDATE journal_schema SET version = 21 WHERE singleton = 1;
+             PRAGMA user_version = 21;"
+        ))
+        .expect("restore schema twenty-one trigger contract");
+    drop(journal);
+
+    let migrated = Journal::open(&path).expect("schema twenty-one refreshes to current");
+    assert_eq!(
+        version_and_triggers(&migrated.connection),
+        (SCHEMA_VERSION, SCHEMA_VERSION, 2)
+    );
+    let retained_length: i64 = migrated
+        .connection
+        .query_row(
+            "SELECT length(envelope) FROM fact_envelopes WHERE seq = 3",
+            [],
+            |row| row.get(0),
+        )
+        .expect("retained fact length reads");
+    assert!(retained_length > MAX_RETAINED_FACT_PAGE_BYTES as i64);
+    for trigger in [
+        crate::migrate::FACT_ENVELOPE_INSERT_TRIGGER,
+        crate::migrate::FACT_ENVELOPE_UPDATE_TRIGGER,
+    ] {
+        let sql: String = migrated
+            .connection
+            .query_row(
+                "SELECT sql FROM sqlite_schema WHERE type = 'trigger' AND name = ?1",
+                [trigger],
+                |row| row.get(0),
+            )
+            .expect("refreshed trigger reads");
+        assert!(sql.contains(&MAX_DURABLE_FACT_ENVELOPE_BYTES.to_string()));
+    }
 }
 
 #[test]
@@ -312,7 +377,7 @@ fn migration_rejects_an_oversized_row_and_finalized_triggers_defend_insert_and_u
         .connection
         .execute(
             "UPDATE fact_envelopes SET envelope = zeroblob(?1) WHERE seq = 2",
-            [MAX_RETAINED_FACT_PAGE_BYTES as i64 + 1],
+            [MAX_DURABLE_FACT_ENVELOPE_BYTES as i64 + 1],
         )
         .expect("plant oversized predecessor row");
     drop(journal);
@@ -324,24 +389,31 @@ fn migration_rejects_an_oversized_row_and_finalized_triggers_defend_insert_and_u
             seq: 2,
             observed,
             limit,
-        }) if observed == MAX_RETAINED_FACT_PAGE_BYTES as u64 + 1
-            && limit == MAX_RETAINED_FACT_PAGE_BYTES as u64
+        }) if observed == MAX_DURABLE_FACT_ENVELOPE_BYTES as u64 + 1
+            && limit == MAX_DURABLE_FACT_ENVELOPE_BYTES as u64
     ));
     let connection = Connection::open(&path).expect("refused predecessor reopens");
     assert_eq!(version_and_triggers(&connection), (20, 20, 0));
 
     let current = authority_fixture();
+    let oversized = MAX_DURABLE_FACT_ENVELOPE_BYTES + 1;
     for sql in [
-        "UPDATE fact_envelopes SET envelope = zeroblob(1048577) WHERE seq = 1",
-        "INSERT INTO fact_envelopes(seq, wire_version, instant, actor, origin, cause, kind, envelope)
-         SELECT 3, wire_version, instant, actor, origin, NULL, kind, zeroblob(1048577)
-         FROM fact_envelopes WHERE seq = 1",
+        format!("UPDATE fact_envelopes SET envelope = zeroblob({oversized}) WHERE seq = 1"),
+        format!(
+            "INSERT INTO fact_envelopes(seq, wire_version, instant, actor, origin, cause, kind, envelope)
+             SELECT 3, wire_version, instant, actor, origin, NULL, kind, zeroblob({oversized})
+             FROM fact_envelopes WHERE seq = 1"
+        ),
     ] {
         let error = current
             .connection
-            .execute(sql, [])
+            .execute(&sql, [])
             .expect_err("direct SQL cannot cross the durable size maximum");
-        assert!(error.to_string().contains("fact envelope exceeds 1048576 bytes"));
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("fact envelope exceeds {MAX_DURABLE_FACT_ENVELOPE_BYTES} bytes"))
+        );
     }
 
     current
@@ -352,7 +424,7 @@ fn migration_rejects_an_oversized_row_and_finalized_triggers_defend_insert_and_u
         .connection
         .execute(
             "UPDATE fact_envelopes SET envelope = zeroblob(?1) WHERE seq = 1",
-            [MAX_RETAINED_FACT_PAGE_BYTES as i64 + 1],
+            [MAX_DURABLE_FACT_ENVELOPE_BYTES as i64 + 1],
         )
         .expect("plant oversized current-schema corruption beneath removed update trigger");
     let violations = refused_violations(&current);
@@ -366,6 +438,6 @@ fn migration_rejects_an_oversized_row_and_finalized_triggers_defend_insert_and_u
             && violation.subject == "1"
             && violation
                 .detail
-                .contains(&(MAX_RETAINED_FACT_PAGE_BYTES + 1).to_string())
+                .contains(&(MAX_DURABLE_FACT_ENVELOPE_BYTES + 1).to_string())
     }));
 }

@@ -136,11 +136,12 @@ fn retained_fact_pages_bound_matching_rows_and_bytes_independently_of_history() 
     let too_small = FactReadBudget::new(MAX_RETAINED_FACT_PAGE_ROWS, first_bytes - 1)
         .expect("smaller positive byte budget is admitted");
     reset_indexed_read_metrics();
-    let error = journal
+    let indivisible = journal
         .read(|read| read.selected_fact_page(&[FactKind::TaskPhased], None, too_small))
-        .expect_err("a call cannot decode even its first row beyond budget");
-    assert!(error.to_string().contains("this call's"));
-    assert_eq!(indexed_read_metrics().decoded_bytes, 0);
+        .expect("a first indivisible row advances beyond the aggregate target");
+    assert_eq!(indivisible.rows.len(), 1);
+    assert_eq!(indivisible.continuation, Some(seq(2)));
+    assert_eq!(indexed_read_metrics().decoded_bytes, first_bytes as u64);
 
     reset_indexed_read_metrics();
     let recent = journal
@@ -157,7 +158,7 @@ fn retained_fact_pages_bound_matching_rows_and_bytes_independently_of_history() 
 }
 
 #[test]
-fn every_retained_page_surface_keeps_decoded_bytes_within_the_durable_maximum() {
+fn ordinary_retained_pages_keep_decoded_bytes_within_the_aggregate_target() {
     let journal = authority_fixture();
     for (position, cause) in [(3, 2), (4, 3)] {
         insert_fact(
@@ -188,7 +189,7 @@ fn every_retained_page_surface_keeps_decoded_bytes_within_the_durable_maximum() 
         let _ = read();
         assert!(
             indexed_read_metrics().decoded_bytes <= MAX_RETAINED_FACT_PAGE_BYTES as u64,
-            "one retained page decoded beyond the durable maximum"
+            "an ordinary retained page decoded beyond its aggregate target"
         );
     };
     assert_bounded(&|| {
@@ -306,7 +307,7 @@ fn retained_fact_readers_refuse_oversized_corruption_before_decoding_it() {
             FactKind::TaskAdded,
             json!({
                 "task": "2kKRRsDP",
-                "title": "x".repeat(MAX_RETAINED_FACT_PAGE_BYTES + 1),
+                "title": "x".repeat(MAX_DURABLE_FACT_ENVELOPE_BYTES + 1),
                 "project": "journal",
                 "tags": [],
                 "depends": [],

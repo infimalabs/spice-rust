@@ -126,11 +126,17 @@ pub enum FactPageStart {
 /// Repository-owned ceiling for one retained-fact projection read.
 pub const MAX_RETAINED_FACT_PAGE_ROWS: usize = 256;
 
-/// Repository-owned hard aggregate byte ceiling for one retained-fact read.
+/// Repository-owned aggregate byte target for one retained-fact read.
 ///
-/// Schema enforcement guarantees every durable envelope fits independently;
-/// each page stops before decoding a row that would cross this call's budget.
+/// A page always admits its first indivisible envelope so its cursor can
+/// advance, then stops before another envelope would cross this target.
 pub const MAX_RETAINED_FACT_PAGE_BYTES: usize = 1024 * 1024;
+
+/// Repository-owned hard ceiling for one durable fact envelope.
+///
+/// This independently bounds the exceptional first row a retained-fact page
+/// may decode when that row is larger than its aggregate byte target.
+pub const MAX_DURABLE_FACT_ENVELOPE_BYTES: usize = 4 * 1024 * 1024;
 
 /// Positive, repository-bounded work admitted for one retained-fact page.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -170,7 +176,7 @@ impl FactReadBudget {
         self.rows
     }
 
-    /// Greatest aggregate envelope bytes this call may decode.
+    /// Aggregate envelope byte target after the first indivisible row.
     #[must_use]
     pub const fn decoded_bytes(self) -> usize {
         self.decoded_bytes
@@ -180,7 +186,7 @@ impl FactReadBudget {
 /// One bounded retained-kind page and its explicit resume cursor.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SelectedFactPage {
-    /// Matching rows decoded within both the row and byte ceilings.
+    /// Matching rows within the targets, or one larger indivisible first row.
     pub rows: Vec<wire::Envelope<wire::AnyFact>>,
     /// Last returned cursor when another matching row remains.
     pub continuation: Option<wire::Seq>,
