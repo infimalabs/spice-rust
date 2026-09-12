@@ -365,11 +365,10 @@ enum FrontierProgress<C> {
     Refused { continuation: C, error: Refusal },
 }
 
-struct ResultFrontier<T, C> {
+struct ResultFrontier<T> {
     direction: FrontierDirection,
     limit: NonZeroUsize,
     rows: VecDeque<T>,
-    progress: Option<FrontierProgress<C>>,
 }
 
 struct FrontierPage<T, C> {
@@ -377,14 +376,13 @@ struct FrontierPage<T, C> {
     progress: FrontierProgress<C>,
 }
 
-impl<T, C> ResultFrontier<T, C> {
+impl<T> ResultFrontier<T> {
     fn new(limit: usize, direction: FrontierDirection) -> Result<Self, Refusal> {
         let limit = frontier_limit(limit)?;
         Ok(Self {
             direction,
             limit,
             rows: VecDeque::with_capacity(limit.get()),
-            progress: None,
         })
     }
 
@@ -397,30 +395,11 @@ impl<T, C> ResultFrontier<T, C> {
         }
     }
 
-    fn is_full(&self) -> bool {
-        self.rows.len() == self.limit.get()
-    }
-
-    fn more(&mut self, continuation: C) {
-        self.progress = Some(FrontierProgress::More(continuation));
-    }
-
-    fn complete(&mut self, continuation: C) {
-        self.progress = Some(FrontierProgress::Complete(continuation));
-    }
-
-    fn refuse(&mut self, continuation: C, error: Refusal) {
-        self.progress = Some(FrontierProgress::Refused {
-            continuation,
-            error,
-        });
-    }
-
-    fn into_page(self) -> Option<FrontierPage<T, C>> {
-        self.progress.map(|progress| FrontierPage {
+    fn into_page<C>(self, progress: FrontierProgress<C>) -> FrontierPage<T, C> {
+        FrontierPage {
             rows: self.rows.into(),
             progress,
-        })
+        }
     }
 }
 
