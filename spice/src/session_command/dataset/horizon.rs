@@ -478,10 +478,12 @@ mod tests {
     use super::super::stream::stream_records;
     use super::super::work::{ResidueLedger, SessionWorkBudget, text_bytes};
     use super::super::{
-        FrontierDirection, ResultFrontier, WindowFold, command_text_bytes, message_text_bytes,
+        Aggregate, FrontierDirection, ResultFrontier, WindowFold, command_text_bytes,
+        message_text_bytes,
     };
     use super::*;
-    use crate::session_command::model::{Dataset, Vendor};
+    use crate::session_command::model::{Dataset, Report, Vendor};
+    use crate::session_command::project::{Filters, PhaseOptions};
 
     #[test]
     fn bounded_stream_and_reverse_horizon_share_canonical_complete_records() {
@@ -490,6 +492,7 @@ mod tests {
             .expect("bounded horizon scans");
         assert_eq!(horizon.start.as_deref(), Some("2026-01-01T00:00:01.000Z"));
         assert_fold_accounting(&source);
+        assert_phase_source_order(&source);
         assert_budget_refusals(&source);
         fs::remove_file(source.path).expect("fixture transcript is removed");
     }
@@ -561,6 +564,31 @@ mod tests {
         let oldest = oldest.into_page().expect("complete frontier");
         assert_eq!(oldest.rows, [1, 2]);
         assert!(matches!(oldest.progress, FrontierProgress::Complete(())));
+    }
+
+    fn assert_phase_source_order(source: &ResolvedSource) {
+        let mut earlier = source.clone();
+        earlier.path.set_extension("earlier");
+        fs::write(
+            &earlier.path,
+            b"{\"timestamp\":\"2026-01-01T00:00:00Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"early\"}]}}\n",
+        )
+        .expect("earlier source is written");
+        let report = Aggregate::scan_phases(
+            &[source.clone(), earlier.clone()],
+            PhaseOptions {
+                rows: 2,
+                examples: 0,
+                max_text: 1,
+            },
+            Filters::default(),
+        )
+        .expect("reverse-listed sources merge by canonical turn order");
+        let Report::Phases { rows, .. } = report else {
+            panic!("phase scan returns phases");
+        };
+        assert_eq!(rows[0].start, "2026-01-01T00:00:00.000Z");
+        fs::remove_file(earlier.path).expect("earlier source is removed");
     }
 
     fn assert_budget_refusals(source: &ResolvedSource) {
