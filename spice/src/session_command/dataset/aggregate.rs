@@ -1,6 +1,6 @@
 //! Bounded retained state for complete-scan session aggregates.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use wire::Refusal;
 
@@ -12,6 +12,7 @@ use super::super::project::{
     Filters, PhaseOptions, authored_message_view, phase_example, turn_end, turn_family, turn_view,
 };
 use super::super::source::ResolvedSource;
+use super::stream::{ForwardCursor, ForwardProgress};
 use super::{
     DecodedRow, FoldState, FoldStorage, Marker, ResidueLedger, SessionWork, SessionWorkBudget,
     finish_fold, reduce_record, refusal, source_view_text_bytes, stream_records,
@@ -135,11 +136,47 @@ impl Aggregate {
         };
         let mut residues = ResidueLedger::new();
         let mut work = SessionWork::new(SessionWorkBudget::report());
-        for source in sources {
-            aggregate.scan_source(source, 0, &mut residues, &mut work)?;
-        }
+        aggregate.scan_phase_sources(sources, &mut residues, &mut work)?;
         aggregate.residues = residues.finish(&mut work, "phase residue summary")?;
         Ok(aggregate)
+    }
+
+    fn scan_phase_sources(
+        &mut self,
+        sources: &[ResolvedSource],
+        residues: &mut ResidueLedger,
+        work: &mut SessionWork,
+    ) -> Result<(), Refusal> {
+        let mut streams = sources
+            .iter()
+            .map(|source| PhaseSource::new(source, work))
+            .collect::<Result<Vec<_>, _>>()?;
+        for stream in &mut streams {
+            stream.advance(residues, work)?;
+        }
+        while let Some(index) = streams
+            .iter()
+            .enumerate()
+            .filter(|(_, stream)| !stream.ready.is_empty())
+            .min_by_key(|(_, stream)| {
+                let turn = stream.ready.front().expect("filtered nonempty frontier");
+                (&turn.start_ts, &turn.source)
+            })
+            .map(|(index, _)| index)
+        {
+            let turn = streams[index]
+                .ready
+                .pop_front()
+                .expect("selected phase frontier is nonempty");
+            self.add_turn(turn)?;
+            streams[index].advance(residues, work)?;
+        }
+        for stream in streams {
+            let source = stream.source_view();
+            work.admit_retained_text(source_view_text_bytes(&source), &source.path)?;
+            self.sources.push(source);
+        }
+        Ok(())
     }
 
     fn scan_source(
@@ -238,43 +275,7 @@ impl Aggregate {
                 retain_recent(&mut self.finals, message, recent);
             }
         }
-        scratch.commands.clear();
-        for pending in fold.pending.values_mut() {
-            pending.command = None;
-        }
-        let retain = if finish {
-            scratch.turns.len()
-        } else {
-            fold.current
-                .into_iter()
-                .chain(fold.pending.values().map(|pending| pending.turn))
-                .min()
-                .unwrap_or(scratch.turns.len())
-        };
-        for turn in scratch.turns.drain(..retain) {
-            self.add_turn(turn)?;
-        }
-        if retain > 0 {
-            fold.current = fold.current.map(|index| index - retain);
-            for pending in fold.pending.values_mut() {
-                pending.turn -= retain;
-            }
-        }
-        if scratch.turns.len() > OPEN_TURN_LIMIT {
-            return Err(refusal(
-                "session::aggregate-open-turn-limit",
-                Some(format!("limit={OPEN_TURN_LIMIT} at={at:?}")),
-                "repair unresolved tool spans or narrow the immutable transcript inputs",
-            ));
-        }
-        if fold.pending.len() > OPEN_TOOL_LIMIT {
-            return Err(refusal(
-                "session::aggregate-open-tool-limit",
-                Some(format!("limit={OPEN_TOOL_LIMIT} at={at:?}")),
-                "repair unresolved tool spans or narrow the immutable transcript inputs",
-            ));
-        }
-        Ok(())
+        drain_fold_turns(scratch, fold, finish, at, |turn| self.add_turn(turn))
     }
 
     fn add_turn(&mut self, turn: TurnRecord) -> Result<(), Refusal> {
@@ -379,13 +380,184 @@ impl Aggregate {
     }
 }
 
+struct PhaseSource<'a> {
+    source: &'a ResolvedSource,
+    cursor: ForwardCursor<'a>,
+    scratch: super::super::model::Dataset,
+    markers: Vec<Marker>,
+    fold: FoldState,
+    ready: VecDeque<TurnRecord>,
+    complete: bool,
+}
+
+impl<'a> PhaseSource<'a> {
+    fn new(source: &'a ResolvedSource, work: &mut SessionWork) -> Result<Self, Refusal> {
+        Ok(Self {
+            source,
+            cursor: ForwardCursor::new(source, None, work)?,
+            scratch: super::super::model::Dataset::default(),
+            markers: Vec::new(),
+            fold: FoldState::default(),
+            ready: VecDeque::with_capacity(OPEN_TURN_LIMIT),
+            complete: false,
+        })
+    }
+
+    fn advance(
+        &mut self,
+        residues: &mut ResidueLedger,
+        work: &mut SessionWork,
+    ) -> Result<(), Refusal> {
+        while self.ready.is_empty() && !self.complete {
+            let window = self.cursor.advance(work)?;
+            if let Some(row) = window.row {
+                match row {
+                    DecodedRow::Typed(record) => {
+                        let before = self.markers.len();
+                        reduce_record(
+                            &record,
+                            &mut FoldStorage {
+                                dataset: &mut self.scratch,
+                                markers: &mut self.markers,
+                                residues,
+                                state: &mut self.fold,
+                                tokens: None,
+                            },
+                            work,
+                            &format!(
+                                "{}:record {}",
+                                self.source.path.display(),
+                                self.cursor.continuation().line
+                            ),
+                        )?;
+                        let added = self.markers.len() - before;
+                        if added > 0
+                            && let Some(turn) = self
+                                .fold
+                                .current
+                                .or_else(|| self.scratch.turns.len().checked_sub(1))
+                                .and_then(|index| self.scratch.turns.get_mut(index))
+                        {
+                            turn.compaction_count =
+                                turn.compaction_count.saturating_add(added as u64);
+                        }
+                        self.markers.clear();
+                    }
+                    DecodedRow::Residue(residue) => residues.push(
+                        residue,
+                        work,
+                        &format!(
+                            "{}:record {}",
+                            self.source.path.display(),
+                            self.cursor.continuation().line
+                        ),
+                    )?,
+                    DecodedRow::Ignored => {}
+                }
+                self.scratch.messages.clear();
+                drain_fold_turns(
+                    &mut self.scratch,
+                    &mut self.fold,
+                    false,
+                    &self.source.path.display().to_string(),
+                    |turn| {
+                        self.ready.push_back(turn);
+                        Ok(())
+                    },
+                )?;
+            }
+            if matches!(window.progress, ForwardProgress::Eof(_)) {
+                let state = std::mem::take(&mut self.fold);
+                finish_fold(
+                    &mut self.scratch,
+                    state,
+                    work,
+                    &self.source.path.display().to_string(),
+                )?;
+                drain_fold_turns(
+                    &mut self.scratch,
+                    &mut self.fold,
+                    true,
+                    &self.source.path.display().to_string(),
+                    |turn| {
+                        self.ready.push_back(turn);
+                        Ok(())
+                    },
+                )?;
+                self.complete = true;
+            }
+        }
+        Ok(())
+    }
+
+    fn source_view(self) -> SourceView {
+        let path = self.source.path.display().to_string();
+        SourceView {
+            name: self
+                .source
+                .path
+                .file_name()
+                .map_or_else(|| path.clone(), |name| name.to_string_lossy().into_owned()),
+            path,
+            vendor: self.cursor.vendor(),
+            thread: self.source.thread.clone(),
+            compressed: self.source.path.to_string_lossy().ends_with(".gz"),
+        }
+    }
+}
+
+fn drain_fold_turns(
+    scratch: &mut super::super::model::Dataset,
+    fold: &mut FoldState,
+    finish: bool,
+    at: &str,
+    mut accept: impl FnMut(TurnRecord) -> Result<(), Refusal>,
+) -> Result<(), Refusal> {
+    scratch.commands.clear();
+    for pending in fold.pending.values_mut() {
+        pending.command = None;
+    }
+    let retain = if finish {
+        scratch.turns.len()
+    } else {
+        fold.current
+            .into_iter()
+            .chain(fold.pending.values().map(|pending| pending.turn))
+            .min()
+            .unwrap_or(scratch.turns.len())
+    };
+    for turn in scratch.turns.drain(..retain) {
+        accept(turn)?;
+    }
+    if retain > 0 {
+        fold.current = fold.current.map(|index| index - retain);
+        for pending in fold.pending.values_mut() {
+            pending.turn -= retain;
+        }
+    }
+    if scratch.turns.len() > OPEN_TURN_LIMIT {
+        return Err(refusal(
+            "session::aggregate-open-turn-limit",
+            Some(format!("limit={OPEN_TURN_LIMIT} at={at:?}")),
+            "repair unresolved tool spans or narrow the immutable transcript inputs",
+        ));
+    }
+    if fold.pending.len() > OPEN_TOOL_LIMIT {
+        return Err(refusal(
+            "session::aggregate-open-tool-limit",
+            Some(format!("limit={OPEN_TOOL_LIMIT} at={at:?}")),
+            "repair unresolved tool spans or narrow the immutable transcript inputs",
+        ));
+    }
+    Ok(())
+}
+
 struct PhaseState {
     options: PhaseOptions,
     filters: Filters,
     current: Option<PhaseAccumulator>,
     candidate: Vec<PhaseTurn>,
     rows: Vec<PhaseView>,
-    last_key: Option<(String, String)>,
 }
 
 impl PhaseState {
@@ -396,20 +568,10 @@ impl PhaseState {
             current: None,
             candidate: Vec::with_capacity(2),
             rows: Vec::with_capacity(options.rows),
-            last_key: None,
         }
     }
 
     fn push(&mut self, turn: &TurnRecord) -> Result<(), Refusal> {
-        let key = (turn.start_ts.clone(), turn.source.clone());
-        if self.last_key.as_ref().is_some_and(|last| key < *last) {
-            return Err(refusal(
-                "session::phase-source-order-unbounded",
-                Some(format!("previous={:?} next={key:?}", self.last_key)),
-                "select chronologically non-overlapping transcript sources or narrow to one source",
-            ));
-        }
-        self.last_key = Some(key);
         if !self.filters.turn_matches(turn) {
             return Ok(());
         }
