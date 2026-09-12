@@ -197,22 +197,17 @@ fn ordinary_retained_pages_keep_decoded_bytes_within_the_aggregate_target() {
                 &[FactKind::TaskNoted],
                 Some(seq(2)),
                 FactReadBudget::RETAINED,
-            )?;
-            Ok(())
+            )
+            .map(drop)
         })
     });
     assert_bounded(&|| {
         journal.read(|read| {
-            read.recent_fact_page(FactKind::TaskNoted, None, FactReadBudget::RETAINED)?;
-            Ok(())
+            read.recent_fact_page(FactKind::TaskNoted, None, FactReadBudget::RETAINED)
+                .map(drop)
         })
     });
-    assert_bounded(&|| {
-        journal.read(|read| {
-            read.latest_fact(FactKind::TaskNoted)?;
-            Ok(())
-        })
-    });
+    assert_bounded(&|| journal.read(|read| read.latest_fact(FactKind::TaskNoted).map(drop)));
     assert_bounded(&|| {
         journal.read(|read| {
             read.recent_origin_facts(
@@ -220,22 +215,17 @@ fn ordinary_retained_pages_keep_decoded_bytes_within_the_aggregate_target() {
                 FactKind::TaskNoted,
                 None,
                 fact_budget(2),
-            )?;
-            Ok(())
+            )
+            .map(drop)
         })
     });
     assert_bounded(&|| {
         journal.read(|read| {
-            read.fact_page(FactPageStart::At(seq(3)), seq(4), fact_budget(2))?;
-            Ok(())
+            read.fact_page(FactPageStart::At(seq(3)), seq(4), fact_budget(2))
+                .map(drop)
         })
     });
-    assert_bounded(&|| {
-        journal.read(|read| {
-            read.causal_page(seq(4), fact_budget(2))?;
-            Ok(())
-        })
-    });
+    assert_bounded(&|| journal.read(|read| read.causal_page(seq(4), fact_budget(2)).map(drop)));
 }
 
 #[test]
@@ -416,149 +406,160 @@ fn newest_fact_reads_are_indexed_and_obey_their_page_limit() {
 }
 
 #[test]
-fn scoped_read_returns_owned_cursor_complete_task_bundles_without_mutation() {
+fn bounded_current_head_pages_resume_with_exact_work_and_witnesses() {
     let journal = authority_fixture();
+    let db = &journal.connection;
     let mut second = task_head();
     second.born = "1kKRRsDQ".parse().expect("second task stamp");
     second.title = "Second journal task".to_owned();
-    insert_head(
-        &journal.connection,
-        "task_heads",
-        "stamp",
-        "1kKRRsDQ",
-        1,
-        &second,
+    insert_head(db, "task_heads", "stamp", "1kKRRsDQ", 1, &second);
+    let workflow = workflow_head();
+    insert_head(db, "workflow_heads", "stamp", "1kKRRsDQ", 2, &workflow);
+    let (first_digest, second_digest) = (digest("a"), digest("b"));
+    let second_trust = TrustHead {
+        digest: second_digest.clone(),
+        state: TrustState::Granted,
+        worktree: None,
+    };
+    let trust_key = second_digest.as_str();
+    insert_head(db, "trust_heads", "digest", trust_key, 2, &second_trust);
+    let bytes = |sql| {
+        let value = db
+            .query_row(sql, [], |row| row.get::<_, i64>(0))
+            .expect("measure stored head bodies");
+        usize::try_from(value).expect("stored body length fits usize")
+    };
+    let task_bytes = bytes(
+        "SELECT length(t.body)+length(w.body)+length(c.body)+length(l.body) FROM task_heads t JOIN workflow_heads w USING(stamp) JOIN claim_heads c USING(stamp) JOIN lease_heads l USING(stamp) WHERE stamp='1kKRRsDP'",
     );
-    insert_head(
-        &journal.connection,
-        "workflow_heads",
-        "stamp",
-        "1kKRRsDQ",
-        2,
-        &workflow_head(),
+    let trust_bytes = bytes("SELECT max(length(body)) FROM trust_heads");
+    let task_budget = FactReadBudget::new(2, task_bytes).expect("task byte budget");
+    let trust_budget = FactReadBudget::new(2, trust_bytes).expect("trust byte budget");
+    let assert_work = |rows, bytes| {
+        let metrics = indexed_read_metrics();
+        assert_eq!((metrics.queries, metrics.rows), (1, rows));
+        assert!((1..=bytes as u64).contains(&metrics.decoded_bytes));
+    };
+    reset_indexed_read_metrics();
+    let task_first = journal
+        .read(|read| read.task_head_page(None, task_budget))
+        .expect("first task byte page reads");
+    assert_eq!(
+        task_first.continuation.as_ref().map(TaskStamp::as_str),
+        Some("1kKRRsDP")
+    );
+    assert_work(2, task_bytes);
+    reset_indexed_read_metrics();
+    let task_second = journal
+        .read(|read| read.task_head_page(task_first.continuation.as_ref(), task_budget))
+        .expect("task page resumes after its stable stamp");
+    assert_eq!(task_second.continuation, None);
+    assert_eq!(task_second.witness, task_first.witness);
+    assert_work(1, task_bytes);
+    assert_eq!(task_first.witness.cursor, Seq::new(2));
+    assert_eq!(
+        task_first.rows[0].statement().body().born.as_str(),
+        "1kKRRsDP"
+    );
+    assert_eq!(
+        task_second.rows[0].statement().body().born.as_str(),
+        "1kKRRsDQ"
     );
     reset_indexed_read_metrics();
-    let (first, trust) = journal
-        .read(|read| {
-            Ok((
-                read.task_head_page(None, fact_budget(1))?,
-                read.trust_head_page(None, fact_budget(1))?,
-            ))
-        })
-        .expect("coherent bounded head read");
-    assert_eq!(trust.witness, first.witness);
-    assert!(first.continuation.is_some());
-    assert!(trust.continuation.is_none());
-    let metrics = indexed_read_metrics();
-    assert_eq!((metrics.queries, metrics.rows), (2, 3));
-    assert!(metrics.decoded_bytes <= (2 * MAX_RETAINED_FACT_PAGE_BYTES) as u64);
-    let second = journal
-        .read(|read| read.task_head_page(first.continuation.as_ref(), fact_budget(1)))
-        .expect("task page resumes after its stable stamp");
-    assert!(second.continuation.is_none());
-    let heads = first
-        .rows
-        .into_iter()
-        .chain(second.rows)
-        .collect::<Vec<_>>();
-    let handles = heads
-        .into_iter()
-        .map(|heads| heads.into_bodies().0.born.to_string())
-        .collect::<Vec<_>>();
-    assert_eq!(first.witness.cursor, Seq::new(2));
-    assert_eq!(handles, ["1kKRRsDP", "1kKRRsDQ"]);
+    let trust_first = journal
+        .read(|read| read.trust_head_page(None, trust_budget))
+        .expect("first trust byte page reads");
+    assert_eq!(trust_first.continuation, Some(first_digest.clone()));
+    assert_eq!(trust_first.rows[0].body().digest, first_digest);
+    assert_work(2, trust_bytes);
+    reset_indexed_read_metrics();
+    let trust_second = journal
+        .read(|read| read.trust_head_page(trust_first.continuation.as_ref(), trust_budget))
+        .expect("trust page resumes after its stable digest");
+    assert_eq!(trust_second.continuation, None);
+    assert_eq!(trust_second.witness, trust_first.witness);
+    assert_eq!(trust_second.rows[0].body().digest, second_digest);
+    assert_work(1, trust_bytes);
 }
 
 #[test]
 fn task_bundle_read_names_every_incomplete_or_malformed_head_class() {
-    let missing_workflow = authority_fixture();
-    missing_workflow
-        .connection
-        .execute("DELETE FROM workflow_heads WHERE stamp = '1kKRRsDP'", [])
-        .expect("remove required workflow head");
-    let loose_claim = authority_fixture();
-    loose_claim
-        .connection
-        .pragma_update(None, "foreign_keys", false)
-        .expect("disable foreign keys for corrupt fixture");
-    insert_head(
-        &loose_claim.connection,
-        "claim_heads",
-        "stamp",
-        "1kKRRsDQ",
-        2,
-        &claim_head(),
-    );
-    loose_claim
-        .connection
-        .pragma_update(None, "foreign_keys", true)
-        .expect("restore foreign keys");
-    let mismatched_key = authority_fixture();
-    let mut wrong_task = task_head();
-    wrong_task.born = "1kKRRsDQ".parse().expect("alternate task stamp");
-    mismatched_key
-        .connection
-        .execute(
-            "UPDATE task_heads SET body = ?1 WHERE stamp = '1kKRRsDP'",
-            params![wire::encode(&wrong_task).expect("encode wrong task")],
-        )
-        .expect("mismatch indexed key and body");
-    let invalid_bytes = authority_fixture();
-    invalid_bytes
-        .connection
-        .execute(
-            "UPDATE workflow_heads SET body = X'00' WHERE stamp = '1kKRRsDP'",
-            [],
-        )
-        .expect("corrupt canonical body");
-    let beyond_cursor = authority_fixture();
-    insert_fact(
-        &beyond_cursor,
-        fact(
-            3,
-            Some(2),
-            FactKind::TaskNoted,
-            json!({"task": "1kKRRsDP", "note": "future head fixture"}),
-        ),
-    );
-    beyond_cursor
-        .connection
-        .execute(
-            "UPDATE workflow_heads SET head_seq = 3 WHERE stamp = '1kKRRsDP'",
-            [],
-        )
-        .expect("move head beyond visible cursor");
-
-    for (journal, expected) in [
-        (
-            missing_workflow,
-            "task 1kKRRsDP has a statement head but no workflow head",
-        ),
-        (loose_claim, "task 1kKRRsDQ has loose claim head(s)"),
-        (
-            mismatched_key,
-            "task head indexed as 1kKRRsDP carries body stamp 1kKRRsDQ",
-        ),
-        (
-            invalid_bytes,
-            "workflow_heads stamp \"1kKRRsDP\" is invalid",
-        ),
-        (
-            beyond_cursor,
-            "workflow_heads stamp \"1kKRRsDP\" head position 3 is beyond cursor Some(2)",
-        ),
-    ] {
+    const A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let corrupted = |sql: &str| {
+        let journal = authority_fixture();
+        let db = &journal.connection;
+        db.pragma_update(None, "foreign_keys", false)
+            .expect("allow corrupt fixture");
+        db.execute_batch(sql).expect("plant corruption");
+        journal
+    };
+    let assert_error = |journal: &Journal, trust, expected: &str| {
         let error = journal
             .read(|read| {
-                read.task_head_page(None, FactReadBudget::RETAINED)
-                    .map(drop)
+                if trust {
+                    read.trust_head_page(None, FactReadBudget::RETAINED)
+                        .map(drop)
+                } else {
+                    read.task_head_page(None, FactReadBudget::RETAINED)
+                        .map(drop)
+                }
             })
-            .expect_err("malformed task heads refuse");
+            .expect_err("malformed heads refuse");
         assert!(
             error.to_string().contains(expected),
             "expected {expected:?}, found {error}"
         );
-    }
+    };
+    let missing = corrupted("DELETE FROM workflow_heads WHERE stamp='1kKRRsDP'");
+    assert_error(
+        &missing,
+        false,
+        "task 1kKRRsDP has a statement head but no workflow head",
+    );
+    let loose = corrupted(
+        "INSERT INTO claim_heads(stamp,head_seq,body) SELECT '1kKRRsDQ',head_seq,body FROM claim_heads WHERE stamp='1kKRRsDP'",
+    );
+    assert_error(&loose, false, "task 1kKRRsDQ has loose claim head(s)");
+    let mismatch = corrupted(&format!(
+        "INSERT INTO task_heads(stamp,head_seq,body) SELECT '1kKRRsDQ',head_seq,body FROM task_heads WHERE stamp='1kKRRsDP'; INSERT INTO workflow_heads(stamp,head_seq,body) SELECT '1kKRRsDQ',head_seq,body FROM workflow_heads WHERE stamp='1kKRRsDP'; UPDATE trust_heads SET digest='{B}' WHERE digest='{A}';"
+    ));
+    assert_error(
+        &mismatch,
+        false,
+        "task head indexed as 1kKRRsDQ carries body stamp 1kKRRsDP",
+    );
+    assert_error(
+        &mismatch,
+        true,
+        &format!("trust head indexed as {B} carries body digest {A}"),
+    );
+    let malformed = corrupted(&format!(
+        "UPDATE workflow_heads SET body=X'00' WHERE stamp='1kKRRsDP'; UPDATE trust_heads SET body=X'00' WHERE digest='{A}';"
+    ));
+    assert_error(
+        &malformed,
+        false,
+        "workflow_heads stamp \"1kKRRsDP\" is invalid",
+    );
+    assert_error(
+        &malformed,
+        true,
+        &format!("trust_heads digest \"{A}\" is invalid"),
+    );
+    let beyond = corrupted(&format!(
+        "UPDATE workflow_heads SET head_seq=3 WHERE stamp='1kKRRsDP'; UPDATE trust_heads SET head_seq=3 WHERE digest='{A}';"
+    ));
+    assert_error(
+        &beyond,
+        false,
+        "workflow_heads stamp \"1kKRRsDP\" head position 3 is beyond cursor Some(2)",
+    );
+    assert_error(
+        &beyond,
+        true,
+        &format!("trust_heads digest \"{A}\" head position 3 is beyond cursor Some(2)"),
+    );
 }
 
 #[test]
@@ -571,7 +572,6 @@ fn cursor_storage_refuses_backward_movement() {
             [],
         )
         .expect_err("cursor cannot move backward");
-
     assert!(
         error
             .to_string()
