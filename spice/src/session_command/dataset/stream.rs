@@ -9,7 +9,7 @@ use listen::{Decoded, RecordDecodeError, ResidueKind};
 use wire::Refusal;
 
 use super::horizon::start_offset_after_prior_timestamp;
-use super::work::{SessionWork, decoded_row_work};
+use super::work::{SessionWork, decoded_row_events};
 use super::{
     DecodedRow, MAX_LINE_BYTES, Residue, ResolvedSource, Vendor, decode_row, read_residue,
     record_refusal, record_timestamp, refusal,
@@ -25,7 +25,7 @@ pub(super) fn stream_records(
     source: &ResolvedSource,
     start: Option<&str>,
     work: &mut SessionWork,
-    mut accept: impl FnMut(DecodedRow) -> Result<(), Refusal>,
+    mut accept: impl FnMut(DecodedRow, &mut SessionWork, &str) -> Result<(), Refusal>,
 ) -> Result<Vendor, Refusal> {
     let mut reader = transcript_reader(source, start, work)?;
     work.begin_pass(&source.path.display().to_string())?;
@@ -52,9 +52,8 @@ pub(super) fn stream_records(
                 {
                     dialect = Some(observed);
                     let row = DecodedRow::Residue(residue);
-                    let (events, retained) = decoded_row_work(&row);
-                    work.admit_decoded(events, retained, &at)?;
-                    accept(row)?;
+                    work.admit_decoded(decoded_row_events(&row), &at)?;
+                    accept(row, work, &at)?;
                     line = line.saturating_add(1);
                     continue;
                 }
@@ -63,9 +62,8 @@ pub(super) fn stream_records(
             RecordRead::Interrupted(error) => {
                 let row =
                     DecodedRow::Residue(read_residue(&source.path, line.saturating_add(1), &error));
-                let (events, retained) = decoded_row_work(&row);
-                work.admit_decoded(events, retained, &at)?;
-                accept(row)?;
+                work.admit_decoded(decoded_row_events(&row), &at)?;
+                accept(row, work, &at)?;
                 break;
             }
             RecordRead::Eof => break,
@@ -80,8 +78,7 @@ pub(super) fn stream_records(
         debug_assert!(read > 0);
         let (observed, row) = decode_row(source, line, &buffer, dialect)?;
         dialect = observed.or(dialect);
-        let (events, retained) = decoded_row_work(&row);
-        work.admit_decoded(events, retained, &at)?;
+        work.admit_decoded(decoded_row_events(&row), &at)?;
         match row {
             DecodedRow::Typed(record) => {
                 if !within_horizon && start.is_some_and(|start| record_timestamp(&record) >= start)
@@ -89,11 +86,11 @@ pub(super) fn stream_records(
                     within_horizon = true;
                 }
                 if within_horizon {
-                    accept(DecodedRow::Typed(record))?;
+                    accept(DecodedRow::Typed(record), work, &at)?;
                 }
             }
-            DecodedRow::Residue(residue) => accept(DecodedRow::Residue(residue))?,
-            DecodedRow::Ignored => accept(DecodedRow::Ignored)?,
+            DecodedRow::Residue(residue) => accept(DecodedRow::Residue(residue), work, &at)?,
+            DecodedRow::Ignored => accept(DecodedRow::Ignored, work, &at)?,
         }
     }
     Ok(if source.vendor.is_unknown() {

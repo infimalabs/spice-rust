@@ -4,7 +4,7 @@ use std::path::Path;
 
 use listen::{
     Decoded, Dialect, Event, ProseRole, RecordContext, RecordDecodeError, ResidueKind,
-    SourcedEvent, Span, ToolMoment, ToolOutcome, ToolResult, TurnMoment,
+    SourcedEvent, Span, ToolMoment, ToolResult, TurnMoment,
 };
 use serde_json::Value;
 use spice::session_meter::ContextSnapshot;
@@ -26,7 +26,7 @@ mod work;
 
 pub(crate) use horizon::recent_compaction_horizon;
 use stream::stream_records;
-use work::{ResidueLedger, SessionWork, SessionWorkBudget};
+use work::{ResidueLedger, SessionWork, SessionWorkBudget, text_bytes};
 
 const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
 
@@ -79,22 +79,21 @@ pub(crate) fn load_since(
     for source in sources {
         let source_name = source.path.display().to_string();
         let mut fold = FoldState::default();
-        let vendor = stream_records(source, start, &mut work, |row| match row {
-            DecodedRow::Typed(record) => reduce_record(
-                &record,
-                &mut dataset,
-                &mut markers,
-                &mut residues,
-                &mut fold,
-            ),
-            DecodedRow::Residue(residue) => {
-                residues.push(residue);
-                Ok(())
+        let vendor = stream_records(source, start, &mut work, |row, work, at| match row {
+            DecodedRow::Typed(record) => {
+                let mut storage = FoldStorage {
+                    dataset: &mut dataset,
+                    markers: &mut markers,
+                    residues: &mut residues,
+                    state: &mut fold,
+                };
+                reduce_record(&record, &mut storage, work, at)
             }
+            DecodedRow::Residue(residue) => residues.push(residue, work, at),
             DecodedRow::Ignored => Ok(()),
         })?;
-        finish_fold(&mut dataset, fold);
-        dataset.sources.push(SourceView {
+        finish_fold(&mut dataset, fold, &mut work, &source_name)?;
+        let source_view = SourceView {
             name: source.path.file_name().map_or_else(
                 || source_name.clone(),
                 |name| name.to_string_lossy().into_owned(),
@@ -103,10 +102,12 @@ pub(crate) fn load_since(
             vendor,
             thread: source.thread.clone(),
             compressed: source.path.to_string_lossy().ends_with(".gz"),
-        });
+        };
+        work.admit_retained_text(source_view_text_bytes(&source_view), &source_view.path)?;
+        dataset.sources.push(source_view);
     }
-    dataset.residues = residues.finish();
-    reconstruct_compactions(&markers, &mut dataset);
+    dataset.residues = residues.finish(&mut work, "residue summary")?;
+    reconstruct_compactions(&markers, &mut dataset, &mut work)?;
     account_compactions(&mut dataset);
     sort_dataset(&mut dataset);
     Ok(dataset)
@@ -303,113 +304,213 @@ struct FoldState {
     pending: BTreeMap<String, PendingTool>,
 }
 
+struct FoldStorage<'a> {
+    dataset: &'a mut Dataset,
+    markers: &'a mut Vec<Marker>,
+    residues: &'a mut ResidueLedger,
+    state: &'a mut FoldState,
+}
+
 fn reduce_record(
     record: &TypedRecord,
-    dataset: &mut Dataset,
-    markers: &mut Vec<Marker>,
-    residues: &mut ResidueLedger,
-    state: &mut FoldState,
+    storage: &mut FoldStorage<'_>,
+    work: &mut SessionWork,
+    at: &str,
 ) -> Result<(), Refusal> {
     let timestamp = record_timestamp(record);
     match record.context.turn {
         Some(TurnMoment::Started) => {
-            if let Some(index) = state.current {
-                finish_turn(dataset, index, timestamp, false);
+            if let Some(index) = storage.state.current {
+                finish_turn(storage.dataset, index, timestamp, false, work, at)?;
             }
-            state.current = Some(start_turn(
-                dataset,
+            storage.state.current = Some(start_turn(
+                storage.dataset,
                 record,
                 record.context.turn_id.as_deref(),
-            ));
+                work,
+                at,
+            )?);
         }
         Some(TurnMoment::Observed) => {
-            state.current = Some(observe_turn(dataset, record, state.current));
+            storage.state.current = Some(observe_turn(
+                storage.dataset,
+                record,
+                storage.state.current,
+                work,
+                at,
+            )?);
         }
         Some(TurnMoment::Completed) | None => {}
     }
 
     for sourced in &record.events {
-        match &sourced.event {
-            Event::Session(_) => {}
-            Event::Prose(prose) => {
-                let index = ensure_turn(dataset, record, &mut state.current);
-                let side = match prose.role {
-                    ProseRole::Operator => "user",
-                    ProseRole::Assistant => "assistant",
-                };
-                let phase = if prose.role == ProseRole::Operator {
-                    "prompt"
-                } else if prose.phase.as_deref() == Some("final_answer")
-                    || record.context.turn == Some(TurnMoment::Completed)
-                {
-                    "final_answer"
-                } else {
-                    prose.phase.as_deref().unwrap_or("commentary")
-                };
-                if !(phase == "final_answer" && last_final_matches(dataset, index, &prose.text)) {
-                    push_message(dataset, index, record, side, phase, &prose.text);
-                }
-            }
-            Event::Reasoning(_) => {
-                let index = ensure_turn(dataset, record, &mut state.current);
-                touch_turn(dataset, index, timestamp);
-            }
-            Event::Tool(tool) => match &tool.moment {
-                ToolMoment::Call { name, arguments } => {
-                    let index = ensure_turn(dataset, record, &mut state.current);
-                    register_tool_call(
-                        dataset,
-                        index,
-                        record,
-                        &tool.call_id,
-                        name,
-                        arguments,
-                        &mut state.pending,
-                    )?;
-                }
-                ToolMoment::Update { .. } => {
-                    if let Some(tool) = state.pending.get(&tool.call_id) {
-                        touch_turn(dataset, tool.turn, timestamp);
-                    }
-                }
-                ToolMoment::Result(outcome) => complete_tool_call(
-                    dataset,
-                    record,
-                    &tool.call_id,
-                    outcome,
-                    &mut state.pending,
-                    residues,
-                ),
-            },
-            Event::Usage(usage) => push_usage(dataset, record, usage),
-            Event::Compaction(compaction) => markers.push(Marker {
-                source: record.source.clone(),
-                position: record.line,
-                ts: timestamp.to_owned(),
-                summary: compaction.summary.clone().unwrap_or_default(),
-            }),
-            Event::Failure(_) => {
-                let index = ensure_turn(dataset, record, &mut state.current);
-                dataset.turns[index].error_count =
-                    dataset.turns[index].error_count.saturating_add(1);
-                touch_turn(dataset, index, timestamp);
-            }
-        }
+        reduce_event(record, &sourced.event, storage, work, at)?;
     }
 
     if record.context.turn == Some(TurnMoment::Completed) {
-        let index = ensure_turn(dataset, record, &mut state.current);
-        finish_turn(dataset, index, timestamp, true);
-        state.current = None;
+        let index = ensure_turn(
+            storage.dataset,
+            record,
+            &mut storage.state.current,
+            work,
+            at,
+        )?;
+        finish_turn(storage.dataset, index, timestamp, true, work, at)?;
+        storage.state.current = None;
     }
     Ok(())
 }
 
-fn finish_fold(dataset: &mut Dataset, state: FoldState) {
+fn reduce_event(
+    record: &TypedRecord,
+    event: &Event,
+    storage: &mut FoldStorage<'_>,
+    work: &mut SessionWork,
+    at: &str,
+) -> Result<(), Refusal> {
+    let timestamp = record_timestamp(record);
+    match event {
+        Event::Session(_) => {}
+        Event::Prose(prose) => reduce_prose(record, prose, storage, work, at)?,
+        Event::Reasoning(_) => {
+            let index = ensure_turn(
+                storage.dataset,
+                record,
+                &mut storage.state.current,
+                work,
+                at,
+            )?;
+            touch_turn(storage.dataset, index, timestamp, work, at)?;
+        }
+        Event::Tool(tool) => reduce_tool(record, tool, storage, work, at)?,
+        Event::Usage(usage) => push_usage(storage.dataset, record, usage, work, at)?,
+        Event::Compaction(compaction) => {
+            let marker = Marker {
+                source: record.source.clone(),
+                position: record.line,
+                ts: timestamp.to_owned(),
+                summary: compaction.summary.clone().unwrap_or_default(),
+            };
+            work.admit_retained_text(marker_text_bytes(&marker), at)?;
+            storage.markers.push(marker);
+        }
+        Event::Failure(_) => {
+            let index = ensure_turn(
+                storage.dataset,
+                record,
+                &mut storage.state.current,
+                work,
+                at,
+            )?;
+            storage.dataset.turns[index].error_count =
+                storage.dataset.turns[index].error_count.saturating_add(1);
+            touch_turn(storage.dataset, index, timestamp, work, at)?;
+        }
+    }
+    Ok(())
+}
+
+fn reduce_prose(
+    record: &TypedRecord,
+    prose: &listen::Prose,
+    storage: &mut FoldStorage<'_>,
+    work: &mut SessionWork,
+    at: &str,
+) -> Result<(), Refusal> {
+    let index = ensure_turn(
+        storage.dataset,
+        record,
+        &mut storage.state.current,
+        work,
+        at,
+    )?;
+    let side = match prose.role {
+        ProseRole::Operator => "user",
+        ProseRole::Assistant => "assistant",
+    };
+    let phase = if prose.role == ProseRole::Operator {
+        "prompt"
+    } else if prose.phase.as_deref() == Some("final_answer")
+        || record.context.turn == Some(TurnMoment::Completed)
+    {
+        "final_answer"
+    } else {
+        prose.phase.as_deref().unwrap_or("commentary")
+    };
+    if phase != "final_answer" || !last_final_matches(storage.dataset, index, &prose.text) {
+        push_message(
+            storage.dataset,
+            index,
+            record,
+            (side, phase, &prose.text),
+            work,
+            at,
+        )?;
+    }
+    Ok(())
+}
+
+fn reduce_tool(
+    record: &TypedRecord,
+    tool: &listen::Tool,
+    storage: &mut FoldStorage<'_>,
+    work: &mut SessionWork,
+    at: &str,
+) -> Result<(), Refusal> {
+    match &tool.moment {
+        ToolMoment::Call { .. } => {
+            let index = ensure_turn(
+                storage.dataset,
+                record,
+                &mut storage.state.current,
+                work,
+                at,
+            )?;
+            register_tool_call(
+                storage.dataset,
+                index,
+                record,
+                tool,
+                &mut storage.state.pending,
+                work,
+                at,
+            )
+        }
+        ToolMoment::Update { .. } => {
+            if let Some(pending) = storage.state.pending.get(&tool.call_id) {
+                touch_turn(
+                    storage.dataset,
+                    pending.turn,
+                    record_timestamp(record),
+                    work,
+                    at,
+                )?;
+            }
+            Ok(())
+        }
+        ToolMoment::Result(_) => complete_tool_call(
+            storage.dataset,
+            record,
+            tool,
+            &mut storage.state.pending,
+            storage.residues,
+            work,
+            at,
+        ),
+    }
+}
+
+fn finish_fold(
+    dataset: &mut Dataset,
+    state: FoldState,
+    work: &mut SessionWork,
+    at: &str,
+) -> Result<(), Refusal> {
     if let Some(index) = state.current {
         let end = dataset.turns[index].last_activity_ts.clone();
-        finish_turn(dataset, index, &end, false);
+        finish_turn(dataset, index, &end, false, work, at)?;
     }
+    Ok(())
 }
 
 fn record_timestamp(record: &TypedRecord) -> &str {
@@ -420,32 +521,120 @@ fn record_timestamp(record: &TypedRecord) -> &str {
         .expect("typed session records require normalized timestamps")
 }
 
-fn observe_turn(dataset: &mut Dataset, record: &TypedRecord, current: Option<usize>) -> usize {
+fn source_view_text_bytes(source: &SourceView) -> u64 {
+    text_bytes(
+        [source.path.as_str(), source.name.as_str()]
+            .into_iter()
+            .chain(source.thread.iter().map(String::as_str)),
+    )
+}
+
+fn marker_text_bytes(marker: &Marker) -> u64 {
+    text_bytes([
+        marker.source.as_str(),
+        marker.ts.as_str(),
+        marker.summary.as_str(),
+    ])
+}
+
+fn turn_text_bytes(turn: &TurnRecord) -> u64 {
+    text_bytes(
+        [
+            turn.source.as_str(),
+            turn.start_ts.as_str(),
+            turn.last_activity_ts.as_str(),
+        ]
+        .into_iter()
+        .chain(turn.turn_id.iter().map(String::as_str))
+        .chain(turn.end_ts.iter().map(String::as_str)),
+    )
+}
+
+fn message_text_bytes(message: &MessageRecord) -> u64 {
+    text_bytes(
+        [
+            message.source.as_str(),
+            message.ts.as_str(),
+            message.side.as_str(),
+            message.phase.as_str(),
+            message.text.as_str(),
+            message.primary_flavor.as_str(),
+        ]
+        .into_iter()
+        .chain(message.turn_id.iter().map(String::as_str))
+        .chain(message.flavor_tags.iter().map(String::as_str))
+        .chain(message.matched_cues.iter().map(String::as_str))
+        .chain(message.authored.iter().map(String::as_str)),
+    )
+}
+
+fn command_text_bytes(command: &CommandRecord) -> u64 {
+    text_bytes(
+        [
+            command.source.as_str(),
+            command.ts.as_str(),
+            command.command.as_str(),
+            command.status.as_str(),
+        ]
+        .into_iter()
+        .chain(command.turn_id.iter().map(String::as_str))
+        .chain(command.cwd.iter().map(String::as_str)),
+    )
+}
+
+fn token_text_bytes(token: &TokenRecord) -> u64 {
+    text_bytes([token.source.as_str(), token.ts.as_str()])
+}
+
+fn compaction_text_bytes(compaction: &CompactionRecord) -> u64 {
+    text_bytes([
+        compaction.source.as_str(),
+        compaction.ts.as_str(),
+        compaction.assistant_before.as_str(),
+        compaction.summary_after.as_str(),
+        compaction.intent.as_str(),
+        compaction.user_after.as_str(),
+    ])
+}
+
+fn observe_turn(
+    dataset: &mut Dataset,
+    record: &TypedRecord,
+    current: Option<usize>,
+    work: &mut SessionWork,
+    at: &str,
+) -> Result<usize, Refusal> {
     if let Some(turn_id) = record.context.turn_id.as_deref() {
         if let Some(index) = current
             && dataset.turns[index].turn_id.as_deref() == Some(turn_id)
         {
-            return index;
+            return Ok(index);
         }
         if let Some(index) = current {
-            finish_turn(dataset, index, record_timestamp(record), false);
+            finish_turn(dataset, index, record_timestamp(record), false, work, at)?;
         }
         if let Some(index) = dataset.turns.iter().rposition(|turn| {
             turn.source == record.source
                 && turn.turn_id.as_deref() == Some(turn_id)
                 && !turn.completed
         }) {
-            return index;
+            return Ok(index);
         }
-        return start_turn(dataset, record, Some(turn_id));
+        return start_turn(dataset, record, Some(turn_id), work, at);
     }
-    current.unwrap_or_else(|| start_turn(dataset, record, None))
+    current.map_or_else(|| start_turn(dataset, record, None, work, at), Ok)
 }
 
-fn start_turn(dataset: &mut Dataset, record: &TypedRecord, turn_id: Option<&str>) -> usize {
+fn start_turn(
+    dataset: &mut Dataset,
+    record: &TypedRecord,
+    turn_id: Option<&str>,
+    work: &mut SessionWork,
+    at: &str,
+) -> Result<usize, Refusal> {
     let timestamp = record_timestamp(record);
     let index = dataset.turns.len();
-    dataset.turns.push(TurnRecord {
+    let turn = TurnRecord {
         source: record.source.clone(),
         vendor: record.vendor,
         turn_id: turn_id.map(str::to_owned),
@@ -461,11 +650,19 @@ fn start_turn(dataset: &mut Dataset, record: &TypedRecord, turn_id: Option<&str>
         error_count: 0,
         web_search_count: 0,
         compaction_count: 0,
-    });
-    index
+    };
+    work.admit_retained_text(turn_text_bytes(&turn), at)?;
+    dataset.turns.push(turn);
+    Ok(index)
 }
 
-fn ensure_turn(dataset: &mut Dataset, record: &TypedRecord, current: &mut Option<usize>) -> usize {
+fn ensure_turn(
+    dataset: &mut Dataset,
+    record: &TypedRecord,
+    current: &mut Option<usize>,
+    work: &mut SessionWork,
+    at: &str,
+) -> Result<usize, Refusal> {
     if let Some(turn_id) = record.context.turn_id.as_deref()
         && let Some(index) = dataset.turns.iter().rposition(|turn| {
             turn.source == record.source
@@ -474,25 +671,42 @@ fn ensure_turn(dataset: &mut Dataset, record: &TypedRecord, current: &mut Option
         })
     {
         *current = Some(index);
-        return index;
+        return Ok(index);
     }
     if let Some(index) = *current {
-        return index;
+        return Ok(index);
     }
-    let index = start_turn(dataset, record, record.context.turn_id.as_deref());
+    let index = start_turn(dataset, record, record.context.turn_id.as_deref(), work, at)?;
     *current = Some(index);
-    index
+    Ok(index)
 }
 
-fn finish_turn(dataset: &mut Dataset, index: usize, ts: &str, completed: bool) {
+fn finish_turn(
+    dataset: &mut Dataset,
+    index: usize,
+    ts: &str,
+    completed: bool,
+    work: &mut SessionWork,
+    at: &str,
+) -> Result<(), Refusal> {
+    work.admit_retained_text(text_bytes([ts, ts]), at)?;
     let turn = &mut dataset.turns[index];
     turn.end_ts = Some(ts.to_owned());
     turn.last_activity_ts = ts.to_owned();
     turn.completed = completed;
+    Ok(())
 }
 
-fn touch_turn(dataset: &mut Dataset, index: usize, ts: &str) {
+fn touch_turn(
+    dataset: &mut Dataset,
+    index: usize,
+    ts: &str,
+    work: &mut SessionWork,
+    at: &str,
+) -> Result<(), Refusal> {
+    work.admit_retained_text(text_bytes([ts]), at)?;
     dataset.turns[index].last_activity_ts = ts.to_owned();
+    Ok(())
 }
 
 fn last_final_matches(dataset: &Dataset, index: usize, text: &str) -> bool {
@@ -508,12 +722,13 @@ fn push_message(
     dataset: &mut Dataset,
     index: usize,
     record: &TypedRecord,
-    side: &str,
-    phase: &str,
-    text: &str,
-) {
+    message: (&str, &str, &str),
+    work: &mut SessionWork,
+    at: &str,
+) -> Result<(), Refusal> {
+    let (side, phase, text) = message;
     if text.trim().is_empty() {
-        return;
+        return Ok(());
     }
     let timestamp = record_timestamp(record);
     let (primary_flavor, flavor_tags, matched_cues) = classify_message(side, phase, text);
@@ -538,11 +753,12 @@ fn push_message(
             && row.phase == message.phase
             && row.text == message.text
     }) {
-        return;
+        return Ok(());
     }
+    work.admit_retained_text(message_text_bytes(&message).saturating_mul(2), at)?;
     dataset.turns[index].messages.push(message.clone());
     dataset.messages.push(message);
-    touch_turn(dataset, index, timestamp);
+    touch_turn(dataset, index, timestamp, work, at)
 }
 
 fn classify_message(side: &str, phase: &str, text: &str) -> (String, Vec<String>, Vec<String>) {
@@ -670,17 +886,26 @@ fn register_tool_call(
     dataset: &mut Dataset,
     index: usize,
     record: &TypedRecord,
-    call_id: &str,
-    name: &str,
-    arguments: &str,
+    tool: &listen::Tool,
     pending: &mut BTreeMap<String, PendingTool>,
+    work: &mut SessionWork,
+    at: &str,
 ) -> Result<(), Refusal> {
+    let ToolMoment::Call { name, arguments } = &tool.moment else {
+        unreachable!("tool-call reduction passes only invocation events")
+    };
+    let name = name.as_str();
+    let arguments = arguments.as_str();
+    let call_id = tool.call_id.as_str();
     if pending.contains_key(call_id) {
         return Err(refusal(
             "session::tool-invocation-duplicate",
             Some(call_id.to_owned()),
             "restore one invocation per vendor call identity",
         ));
+    }
+    if !dataset.turns[index].tool_calls.contains_key(name) {
+        work.admit_retained_text(text_bytes([name]), at)?;
     }
     *dataset.turns[index]
         .tool_calls
@@ -692,6 +917,9 @@ fn register_tool_call(
     ) {
         dataset.turns[index].patch_count = dataset.turns[index].patch_count.saturating_add(1);
         for path in tool_paths(arguments) {
+            if !dataset.turns[index].touched_files.contains(&path) {
+                work.admit_retained_text(text_bytes([path.as_str()]), at)?;
+            }
             dataset.turns[index].touched_files.insert(path);
         }
     }
@@ -705,7 +933,7 @@ fn register_tool_call(
     ) {
         let (command, cwd) = tool_command(arguments);
         let command_index = dataset.commands.len();
-        dataset.commands.push(CommandRecord {
+        let command = CommandRecord {
             source: record.source.clone(),
             ts: record_timestamp(record).to_owned(),
             turn_id: dataset.turns[index].turn_id.clone(),
@@ -713,12 +941,15 @@ fn register_tool_call(
             command,
             exit_code: None,
             status: "called".to_owned(),
-        });
+        };
+        work.admit_retained_text(command_text_bytes(&command), at)?;
+        dataset.commands.push(command);
         dataset.turns[index].command_count = dataset.turns[index].command_count.saturating_add(1);
         Some(command_index)
     } else {
         None
     };
+    work.admit_retained_text(text_bytes([call_id]), at)?;
     pending.insert(
         call_id.to_owned(),
         PendingTool {
@@ -726,8 +957,7 @@ fn register_tool_call(
             command,
         },
     );
-    touch_turn(dataset, index, record_timestamp(record));
-    Ok(())
+    touch_turn(dataset, index, record_timestamp(record), work, at)
 }
 
 fn tool_command(arguments: &str) -> (String, Option<String>) {
@@ -789,13 +1019,19 @@ fn tool_paths(arguments: &str) -> Vec<String> {
 fn complete_tool_call(
     dataset: &mut Dataset,
     record: &TypedRecord,
-    call_id: &str,
-    outcome: &ToolOutcome,
+    tool: &listen::Tool,
     pending: &mut BTreeMap<String, PendingTool>,
     residues: &mut ResidueLedger,
-) {
+    work: &mut SessionWork,
+    at: &str,
+) -> Result<(), Refusal> {
+    let ToolMoment::Result(outcome) = &tool.moment else {
+        unreachable!("tool-result reduction passes only completion events")
+    };
+    let call_id = tool.call_id.as_str();
     let Some(pending) = pending.remove(call_id) else {
-        residues.push(Residue {
+        return residues.push(
+            Residue {
             source: record.source.clone(),
             line: record.line,
             kind: "tool-invocation-missing".to_owned(),
@@ -804,8 +1040,10 @@ fn complete_tool_call(
             ),
             recovery: "restore the matching invocation to account this outcome; independent session evidence remains available"
                 .to_owned(),
-        });
-        return;
+            },
+            work,
+            at,
+        );
     };
     let failed =
         outcome.result == ToolResult::Failed || outcome.exit_code.is_some_and(|code| code != 0);
@@ -815,7 +1053,7 @@ fn complete_tool_call(
     }
     if let Some(command) = pending.command {
         dataset.commands[command].exit_code = outcome.exit_code;
-        dataset.commands[command].status = if outcome.output.as_deref().is_some_and(|output| {
+        let status = if outcome.output.as_deref().is_some_and(|output| {
             output.contains("Process running with session ID")
                 || output.contains("Script running with cell ID")
         }) {
@@ -826,11 +1064,19 @@ fn complete_tool_call(
             "called"
         }
         .to_owned();
+        work.admit_retained_text(text_bytes([status.as_str()]), at)?;
+        dataset.commands[command].status = status;
     }
-    touch_turn(dataset, pending.turn, record_timestamp(record));
+    touch_turn(dataset, pending.turn, record_timestamp(record), work, at)
 }
 
-fn push_usage(dataset: &mut Dataset, record: &TypedRecord, usage: &listen::Usage) {
+fn push_usage(
+    dataset: &mut Dataset,
+    record: &TypedRecord,
+    usage: &listen::Usage,
+    work: &mut SessionWork,
+    at: &str,
+) -> Result<(), Refusal> {
     let context = ContextSnapshot::admit(
         record_timestamp(record),
         record.context.model_context_window,
@@ -842,9 +1088,9 @@ fn push_usage(dataset: &mut Dataset, record: &TypedRecord, usage: &listen::Usage
         .saturating_add(usage.output_tokens)
         .saturating_add(reasoning);
     if total == 0 {
-        return;
+        return Ok(());
     }
-    dataset.tokens.push(TokenRecord {
+    let token = TokenRecord {
         source: record.source.clone(),
         ts: context.at.to_string(),
         input: usage.input_tokens,
@@ -853,10 +1099,17 @@ fn push_usage(dataset: &mut Dataset, record: &TypedRecord, usage: &listen::Usage
         reasoning,
         total,
         model_context_window: context.model_context_window,
-    });
+    };
+    work.admit_retained_text(token_text_bytes(&token), at)?;
+    dataset.tokens.push(token);
+    Ok(())
 }
 
-fn reconstruct_compactions(markers: &[Marker], dataset: &mut Dataset) {
+fn reconstruct_compactions(
+    markers: &[Marker],
+    dataset: &mut Dataset,
+    work: &mut SessionWork,
+) -> Result<(), Refusal> {
     let mut ordered = markers.iter().collect::<Vec<_>>();
     ordered.sort_by_key(|marker| (&marker.source, marker.position));
     for (index, marker) in ordered.iter().enumerate() {
@@ -897,15 +1150,21 @@ fn reconstruct_compactions(markers: &[Marker], dataset: &mut Dataset) {
             .find(|message| message.side == "user" && message.shape.is_authored())
             .and_then(|message| message.authored.clone())
             .unwrap_or_default();
-        dataset.compactions.push(CompactionRecord {
+        let compaction = CompactionRecord {
             source: marker.source.clone(),
             ts: marker.ts.clone(),
             assistant_before: before,
             intent: compaction_intent(&summary),
             summary_after: summary,
             user_after,
-        });
+        };
+        work.admit_retained_text(
+            compaction_text_bytes(&compaction),
+            "compaction reconstruction",
+        )?;
+        dataset.compactions.push(compaction);
     }
+    Ok(())
 }
 
 fn compaction_intent(summary: &str) -> String {
