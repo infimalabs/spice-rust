@@ -382,7 +382,6 @@ fn newest_fact_reads_are_indexed_and_obey_their_page_limit() {
         origin_plan.contains("fact_envelopes_origin_kind_seq"),
         "recent origin read must use its compound index: {origin_plan}"
     );
-
     reset_indexed_read_metrics();
     let (latest, recent) = journal
         .read(|read| {
@@ -409,6 +408,7 @@ fn newest_fact_reads_are_indexed_and_obey_their_page_limit() {
 fn bounded_current_head_pages_resume_with_exact_work_and_witnesses() {
     let journal = authority_fixture();
     let db = &journal.connection;
+    crate::guard::verify_task_page_plan(db).expect("task page plan stays engine-bounded");
     let mut second = task_head();
     second.born = "1kKRRsDQ".parse().expect("second task stamp");
     second.title = "Second journal task".to_owned();
