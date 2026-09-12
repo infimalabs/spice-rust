@@ -17,6 +17,7 @@ mod steering_index;
 
 use commit::visible_cursor;
 pub(crate) use commit::{steering_fact_identity, steering_head_agrees};
+pub use indexed_read::{CurrentHeadWitness, TaskHeadPage, TrustHeadPage};
 #[cfg(test)]
 pub(crate) use read_metrics::{
     IndexedReadMetrics, indexed_read_metrics, reset_indexed_read_metrics,
