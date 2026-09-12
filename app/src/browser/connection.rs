@@ -755,7 +755,7 @@ async fn dispatch_authored_action(
 ) -> Result<(), String> {
     match action {
         ClientAction::Note { id, task, note } => {
-            send_task_note(principal, writer, pending, *id, task.clone(), note.clone()).await
+            send_task_note(principal, writer, pending, *id, task, note).await
         }
         ClientAction::Steer {
             id,
@@ -775,8 +775,8 @@ async fn dispatch_authored_action(
                 *lane,
                 *occupant,
                 *epoch,
-                message.clone(),
-                attachments.clone(),
+                message,
+                attachments,
             )
             .await
         }
@@ -831,10 +831,10 @@ async fn send_steer(
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     epoch: CanonicalUuid,
-    message: String,
-    attachments: Vec<DirectiveAttachment>,
+    message: &str,
+    attachments: &[DirectiveAttachment],
 ) -> Result<(), String> {
-    let body = SteerSend {
+    let body = BorrowedSteerSend {
         fanout,
         lane,
         message,
@@ -1018,16 +1018,13 @@ async fn send_task_note(
     writer: &mut SocketWriter,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     id: CanonicalUuid,
-    task: TaskHandle,
-    note: String,
+    task: &TaskHandle,
+    note: &str,
 ) -> Result<(), String> {
     let born = task
         .born()
         .map_err(|error| format!("task handle {task} has no canonical birth stamp: {error}"))?;
-    let body = TaskNote {
-        task: task.clone(),
-        note,
-    };
+    let body = BorrowedTaskNote { task, note };
     let expected = vec![Witness::Existence { task: born }];
     send_typed_as(
         principal,
@@ -1040,6 +1037,25 @@ async fn send_task_note(
         body,
     )
     .await
+}
+
+#[derive(Serialize)]
+struct BorrowedTaskNote<'a> {
+    task: &'a TaskHandle,
+    note: &'a str,
+}
+
+#[derive(Serialize)]
+struct BorrowedSteerSend<'a> {
+    fanout: CanonicalUuid,
+    lane: CanonicalUuid,
+    message: &'a str,
+    #[serde(skip_serializing_if = "slice_is_empty")]
+    attachments: &'a [DirectiveAttachment],
+}
+
+fn slice_is_empty<T>(value: &&[T]) -> bool {
+    value.is_empty()
 }
 
 pub(super) async fn request_external_speech(

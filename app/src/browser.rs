@@ -16,7 +16,7 @@ use wire::body::DirectiveAttachment;
 use wire::intent::{
     BoardRead, GlobalSettingsRead, GlobalSettingsSet, LaneAction, LaneArrange, LaneRead,
     LaneRenewal, LaneSeat, LaneState, LineageArrange, LineageArrangement, LineageConfigure,
-    LineageLife, SteerInbox, SteerSend, TaskAnswer, TaskNote,
+    LineageLife, SteerInbox, SteerSend, TaskAnswer,
 };
 use wire::{CanonicalUuid, CommandKind, Response, StreamRequest, TaskHandle, WireVersion, Witness};
 use yew::prelude::*;

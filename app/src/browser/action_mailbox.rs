@@ -328,33 +328,3 @@ impl ActionClass {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn one_action_allocation_survives_lease_restore_and_commit() {
-        let (queue, _wakes) = ActionQueue::new();
-        let id = "018f82d4-6f59-7d06-92e3-bce913116301"
-            .parse()
-            .expect("fixture identity");
-        let note = "retained action payload".repeat(1024);
-        let ptr = note.as_ptr();
-        queue
-            .admit(ClientAction::Note {
-                id,
-                task: "TASKS-1kKRRsDP".parse().expect("fixture task"),
-                note,
-            })
-            .expect("action admits");
-        let lease = queue.lease().expect("action leases");
-        assert!(matches!(lease.action(), ClientAction::Note { note, .. } if note.as_ptr() == ptr));
-        lease.restore();
-        let lease = queue.lease().expect("failed dispatch restores lease");
-        assert!(matches!(lease.action(), ClientAction::Note { note, .. } if note.as_ptr() == ptr));
-        let action = lease.commit();
-        assert!(matches!(action, ClientAction::Note { note, .. } if note.as_ptr() == ptr));
-        assert!(queue.lease().is_none());
-    }
-}

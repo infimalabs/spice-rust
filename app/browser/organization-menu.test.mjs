@@ -94,7 +94,7 @@ test("the theme authority resolves before styles and exposes one current prefere
   assert.match(renderer, /\[\("light", "Light"\), \("system", "System"\), \("dark", "Dark"\)\]/);
 });
 
-test("the product version itself becomes the complete update control", async () => {
+test("the product version and retained action payload each keep one owner", async () => {
   const [renderer, connection, browser, compatibility, chrome, responsive] = await Promise.all([
     readFile(resolve(root, "app/src/browser/view/lineage_menu.rs"), "utf8"),
     readFile(resolve(root, "app/src/browser/connection.rs"), "utf8"),
@@ -106,6 +106,13 @@ test("the product version itself becomes the complete update control", async () 
 
   assert.match(browser, /struct CanvasUpdate \{[\s\S]*loaded_generation: wire::Digest,/);
   assert.match(connection, /loaded_generation: loaded_generation\.clone\(\),/);
+  const authored = connection.slice(
+    connection.indexOf("async fn dispatch_authored_action"),
+    connection.indexOf("async fn send_fast_mode"),
+  );
+  assert.match(connection, /struct BorrowedSteerSend<'a>[\s\S]*message: &'a str,[\s\S]*attachments: &'a \[DirectiveAttachment\]/);
+  assert.match(connection, /struct BorrowedTaskNote<'a>[\s\S]*note: &'a str/);
+  assert.doesNotMatch(authored, /message\.clone\(\)|attachments\.clone\(\)|note\.clone\(\)/);
   assert.match(renderer, /if let Some\(update\) = update \{[\s\S]*<button[\s\S]*class="canvas-menu-version canvas-menu-version--update"/);
   assert.match(renderer, /<strong\s+class="canvas-menu-version"[\s\S]*tabindex="0"/);
   assert.match(renderer, /<span class="canvas-menu-version-label">\{label\}<\/span>/);
