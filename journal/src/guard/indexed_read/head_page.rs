@@ -195,8 +195,14 @@ impl JournalRead<'_> {
 }
 
 const TASK_PAGE_SQL: &str = "WITH task_keys(stamp) AS (\
-    SELECT stamp FROM task_heads UNION SELECT stamp FROM workflow_heads \
-    UNION SELECT stamp FROM claim_heads UNION SELECT stamp FROM lease_heads\
+    SELECT stamp FROM (SELECT stamp FROM task_heads \
+        WHERE stamp > COALESCE(?1, '') ORDER BY stamp LIMIT ?2) \
+    UNION SELECT stamp FROM (SELECT stamp FROM workflow_heads \
+        WHERE stamp > COALESCE(?1, '') ORDER BY stamp LIMIT ?2) \
+    UNION SELECT stamp FROM (SELECT stamp FROM claim_heads \
+        WHERE stamp > COALESCE(?1, '') ORDER BY stamp LIMIT ?2) \
+    UNION SELECT stamp FROM (SELECT stamp FROM lease_heads \
+        WHERE stamp > COALESCE(?1, '') ORDER BY stamp LIMIT ?2)\
 ) SELECT keys.stamp, statement.head_seq, length(statement.body), statement.body, \
          workflow.head_seq, length(workflow.body), workflow.body, \
          claim.head_seq, length(claim.body), claim.body, \
@@ -206,7 +212,33 @@ const TASK_PAGE_SQL: &str = "WITH task_keys(stamp) AS (\
   LEFT JOIN workflow_heads AS workflow ON workflow.stamp = keys.stamp \
   LEFT JOIN claim_heads AS claim ON claim.stamp = keys.stamp \
   LEFT JOIN lease_heads AS lease ON lease.stamp = keys.stamp \
- WHERE (?1 IS NULL OR keys.stamp > ?1) ORDER BY keys.stamp LIMIT ?2";
+ ORDER BY keys.stamp LIMIT ?2";
+
+#[cfg(test)]
+pub(crate) fn verify_task_page_plan(connection: &rusqlite::Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare(&format!("EXPLAIN QUERY PLAN {TASK_PAGE_SQL}"))
+        .map_err(|error| error.to_string())?;
+    let plan = statement
+        .query_map(params![Option::<String>::None, 3_i64], |row| {
+            row.get::<_, String>(3)
+        })
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    let seeks = plan
+        .iter()
+        .filter(|step| step.contains("(stamp>?)"))
+        .count();
+    let full_scan = plan.iter().any(|step| {
+        ["task_heads", "workflow_heads", "claim_heads", "lease_heads"]
+            .iter()
+            .any(|table| step.contains(&format!("SCAN {table} ")))
+    });
+    (seeks == 4 && !full_scan)
+        .then_some(())
+        .ok_or_else(|| format!("expected four bounded task-head range seeks, found {plan:?}"))
+}
 
 fn task_row_bytes(row: &Row<'_>, indexed: &str) -> Result<usize, GuardError> {
     [2, 5, 8, 11]
