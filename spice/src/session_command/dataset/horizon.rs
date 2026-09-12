@@ -45,29 +45,22 @@ fn read_recent_compaction_markers(
     end: Option<&str>,
     work: &mut SessionWork,
 ) -> Result<Vec<Marker>, Refusal> {
-    if count == 0 {
-        return Ok(Vec::new());
-    }
     if compressed(&source.path) {
         return read_recent_compaction_markers_forward(source, count, end, work);
     }
     let source_name = source.path.display().to_string();
     let mut frontier = ResultFrontier::new(count, FrontierDirection::Oldest)?;
     work.begin_pass(&source_name)?;
-    reverse_lines(&source.path, work, |line, offset, _, terminal, work| {
+    let progress = reverse_lines(&source.path, work, |line, offset, _, terminal, work| {
         let live_tail = source.thread.is_some() && terminal;
         if let Some(marker) = marker_from_line(source, &source_name, line, offset, live_tail, work)?
             && end.is_none_or(|end| marker.ts.as_str() <= end)
         {
             frontier.push(marker);
         }
-        Ok(!frontier.is_full())
+        Ok(frontier.rows.len() < count)
     })?;
-    frontier.complete(());
-    let mut markers = frontier
-        .into_page()
-        .expect("completed reverse frontier records progress")
-        .rows;
+    let mut markers = frontier_rows(frontier.into_page(progress))?;
     markers.reverse();
     Ok(markers)
 }
@@ -80,12 +73,14 @@ fn read_recent_compaction_markers_forward(
 ) -> Result<Vec<Marker>, Refusal> {
     let mut frontier = ResultFrontier::new(count, FrontierDirection::Newest)?;
     let mut cursor = ForwardCursor::new(source, None, work)?;
-    loop {
+    let progress = loop {
         let window = match cursor.advance(work) {
             Ok(window) => window,
             Err(error) => {
-                frontier.refuse(cursor.continuation(), error);
-                break;
+                break FrontierProgress::Refused {
+                    continuation: cursor.continuation(),
+                    error,
+                };
             }
         };
         let accepted = if let Some(DecodedRow::Typed(row)) = window.row
@@ -105,25 +100,22 @@ fn read_recent_compaction_markers_forward(
             Ok(())
         };
         if let Err(error) = accepted {
-            frontier.refuse(cursor.continuation(), error);
-            break;
+            break FrontierProgress::Refused {
+                continuation: cursor.continuation(),
+                error,
+            };
         }
         match window.progress {
-            ForwardProgress::More(next) => frontier.more(next),
-            ForwardProgress::Eof(end) => {
-                frontier.complete(end);
-                break;
-            }
+            ForwardProgress::More(_) => {}
+            ForwardProgress::Eof(end) => break FrontierProgress::Complete(end),
         }
-    }
-    let page = frontier
-        .into_page()
-        .expect("a cursor advance records frontier progress");
+    };
+    frontier_rows(frontier.into_page(progress))
+}
+
+fn frontier_rows<T, C>(page: super::FrontierPage<T, C>) -> Result<Vec<T>, Refusal> {
     match page.progress {
-        FrontierProgress::Complete(continuation) => {
-            let _ = continuation;
-            Ok(page.rows)
-        }
+        FrontierProgress::More(_) | FrontierProgress::Complete(_) => Ok(page.rows),
         FrontierProgress::Refused {
             continuation,
             error,
@@ -131,7 +123,6 @@ fn read_recent_compaction_markers_forward(
             let _ = continuation;
             Err(error)
         }
-        FrontierProgress::More(_) => unreachable!("forward frontier stopped before completion"),
     }
 }
 
@@ -142,7 +133,7 @@ pub(super) fn start_offset_after_prior_timestamp(
 ) -> Result<u64, Refusal> {
     let mut offset = 0_u64;
     let mut context = None;
-    reverse_lines(&source.path, work, |line, current, _, _, work| {
+    let progress = reverse_lines(&source.path, work, |line, current, _, _, work| {
         if let Some(remaining) = context.as_mut() {
             offset = current;
             *remaining -= 1;
@@ -154,6 +145,9 @@ pub(super) fn start_offset_after_prior_timestamp(
         }
         Ok(true)
     })?;
+    if let FrontierProgress::Refused { error, .. } = progress {
+        return Err(error);
+    }
     Ok(offset)
 }
 
@@ -191,7 +185,11 @@ pub(super) struct ReverseCursor {
     carry: Vec<u8>,
 }
 
-fn reverse_lines<F>(path: &Path, work: &mut SessionWork, mut visit: F) -> Result<(), Refusal>
+fn reverse_lines<F>(
+    path: &Path,
+    work: &mut SessionWork,
+    mut visit: F,
+) -> Result<FrontierProgress<ReverseContinuation>, Refusal>
 where
     F: FnMut(&[u8], u64, u64, bool, &mut SessionWork) -> Result<bool, Refusal>,
 {
@@ -201,27 +199,53 @@ where
             bytes,
             records,
             progress,
-        } = cursor.advance(work)?;
+        } = match cursor.advance(work) {
+            Ok(window) => window,
+            Err(error) => return Ok(refused(cursor.continuation(), error)),
+        };
         for record in records.into_iter().rev() {
             let at = format!("{}:byte {}", path.display(), record.offset);
-            work.admit_record(&at)?;
-            if !visit(
+            if let Err(error) = work.admit_record(&at) {
+                return Ok(refused(reverse_continuation(record.next), error));
+            }
+            let keep_going = match visit(
                 &bytes[record.start..record.end],
                 record.offset,
                 record.next,
                 record.terminal,
                 work,
-            )? {
-                return Ok(());
+            ) {
+                Ok(keep_going) => keep_going,
+                Err(error) => return Ok(refused(reverse_continuation(record.next), error)),
+            };
+            if !keep_going && record.offset > 0 {
+                return Ok(FrontierProgress::More(reverse_continuation(record.offset)));
             }
         }
         match progress {
             ReverseProgress::More(next) => debug_assert!(cursor.is_at(next)),
             ReverseProgress::Eof(end) => {
                 debug_assert!(cursor.is_at(end));
-                return Ok(());
+                return Ok(FrontierProgress::Complete(end));
             }
         }
+    }
+}
+
+fn reverse_continuation(position: u64) -> ReverseContinuation {
+    ReverseContinuation {
+        position,
+        carry_bytes: 0,
+    }
+}
+
+fn refused(
+    continuation: ReverseContinuation,
+    error: Refusal,
+) -> FrontierProgress<ReverseContinuation> {
+    FrontierProgress::Refused {
+        continuation,
+        error,
     }
 }
 
@@ -249,17 +273,18 @@ impl ReverseCursor {
         work.check_deadline(&at)?;
         let read = self.position.min(BACKWARD_CHUNK_BYTES);
         work.admit_source_bytes(read, &at)?;
-        self.position -= read;
+        let position = self.position - read;
         self.file
-            .seek(SeekFrom::Start(self.position))
+            .seek(SeekFrom::Start(position))
             .map_err(|error| unreadable(&self.path, &error))?;
         let mut block = vec![0_u8; read as usize];
         self.file
             .read_exact(&mut block)
             .map_err(|error| unreadable(&self.path, &error))?;
-        let carry = std::mem::take(&mut self.carry);
-        admit_reverse_carry(&block, &carry, &self.path, self.position)?;
-        block.extend_from_slice(&carry);
+        admit_reverse_carry(&block, &self.carry, &self.path, position)?;
+        block.extend_from_slice(&self.carry);
+        self.carry.clear();
+        self.position = position;
         let parse_start = if self.position == 0 {
             0
         } else if let Some(split) = block.iter().position(|byte| *byte == b'\n') {
@@ -281,6 +306,13 @@ impl ReverseCursor {
             self.push_record(&block, &mut records, start, block.len(), block.len());
         }
         Ok(self.window(block, records))
+    }
+
+    fn continuation(&self) -> ReverseContinuation {
+        ReverseContinuation {
+            position: self.position,
+            carry_bytes: self.carry.len(),
+        }
     }
 
     fn push_record(
@@ -307,10 +339,7 @@ impl ReverseCursor {
     }
 
     fn window(&self, bytes: Vec<u8>, records: Vec<ReverseRecordRange>) -> ReverseWindow {
-        let continuation = ReverseContinuation {
-            position: self.position,
-            carry_bytes: self.carry.len(),
-        };
+        let continuation = self.continuation();
         let progress = if self.position == 0 {
             ReverseProgress::Eof(continuation)
         } else {
@@ -477,10 +506,7 @@ mod tests {
 
     use super::super::stream::stream_records;
     use super::super::work::{ResidueLedger, SessionWorkBudget, text_bytes};
-    use super::super::{
-        Aggregate, FrontierDirection, ResultFrontier, WindowFold, command_text_bytes,
-        message_text_bytes,
-    };
+    use super::super::{Aggregate, WindowFold, command_text_bytes, message_text_bytes};
     use super::*;
     use crate::session_command::model::{Dataset, Report, Vendor};
     use crate::session_command::project::{Filters, PhaseOptions};
@@ -555,15 +581,9 @@ mod tests {
                 && report.events > 0
                 && report.retained_text_bytes >= derived_floor
         );
-        let mut oldest =
-            ResultFrontier::new(2, FrontierDirection::Oldest).expect("bounded frontier");
-        for row in [1, 2, 3] {
-            oldest.push(row);
-        }
-        oldest.complete(());
-        let oldest = oldest.into_page().expect("complete frontier");
-        assert_eq!(oldest.rows, [1, 2]);
-        assert!(matches!(oldest.progress, FrontierProgress::Complete(())));
+        let progress = reverse_lines(&source.path, &mut work, |_, _, _, _, _| Ok(false))
+            .expect("reverse cursor stops at a record boundary");
+        assert!(matches!(progress, FrontierProgress::More(_)));
     }
 
     fn assert_phase_source_order(source: &ResolvedSource) {
