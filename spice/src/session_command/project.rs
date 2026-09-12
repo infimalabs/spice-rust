@@ -6,9 +6,8 @@ use wire::Refusal;
 
 use super::model::{
     ActivityView, CommandAudit, CommandRecord, CommandView, CommitView, CompactionRecord,
-    CompactionView, Dataset, DialogueLine, MessageRecord, MessageView, PhaseExample, PhaseView,
-    PruningView, RecallAuthorities, RecallWindow, Report, SliceView, ThreadView, TimelineView,
-    TokenRecord, TokenView, TurnRecord, TurnView,
+    CompactionView, Dataset, DialogueLine, MessageRecord, MessageView, PhaseExample, PruningView,
+    RecallAuthorities, RecallWindow, Report, SliceView, TimelineView, TurnRecord, TurnView,
 };
 
 // Two report families are split out by `mod` rather than left inline, following
@@ -20,7 +19,7 @@ mod command;
 mod phase;
 
 pub(crate) use command::commands;
-pub(crate) use phase::phases;
+pub(crate) use phase::{PhaseOptions, options as phase_options, phase_example, turn_family};
 
 const DEFAULT_RECALL_MAX_LINES: usize = 120;
 const DEFAULT_RECALL_MAX_BYTES: usize = 20_000;
@@ -39,6 +38,7 @@ const DEFAULT_MESSAGE_TEXT: usize = 180;
 const DEFAULT_COMMITS_LIMIT: usize = 25;
 const DEFAULT_COMMANDS_LIMIT: usize = 80;
 const DEFAULT_COMMAND_TEXT: usize = 220;
+const MAX_AGGREGATE_RECENT: usize = 256;
 
 struct WindowPlan<'a> {
     horizon_start: Option<&'a str>,
@@ -91,7 +91,7 @@ impl Filters {
         self.end.as_deref()
     }
 
-    fn turn_matches(&self, turn: &TurnRecord) -> bool {
+    pub(crate) fn turn_matches(&self, turn: &TurnRecord) -> bool {
         if self
             .start
             .as_ref()
@@ -149,6 +149,17 @@ impl Filters {
             ));
         }
         Ok(())
+    }
+
+    pub(crate) fn validate_turn_identity_available(&self, available: bool) -> Result<(), Refusal> {
+        if self.turn_ids.is_empty() || available {
+            return Ok(());
+        }
+        Err(refusal(
+            "session::turn-id-unavailable",
+            Some(self.turn_ids.iter().cloned().collect::<Vec<_>>().join(",")),
+            "filter by --start, --end, or --contains; this transcript carries no turn identities",
+        ))
     }
 }
 
@@ -308,64 +319,20 @@ fn turn_overlaps_interval(turn: &TurnRecord, start: Option<&str>, end: Option<&s
         && end.is_none_or(|end| turn.start_ts.as_str() < end)
 }
 
-pub(crate) fn summary(dataset: &Dataset, matches: &ArgMatches) -> Result<Report, Refusal> {
+pub(crate) fn summary_recent(matches: &ArgMatches) -> Result<usize, Refusal> {
     let recent = number(matches, "recent", DEFAULT_SUMMARY_RECENT)?;
-    let prompts = dataset
-        .messages
-        .iter()
-        .filter(|row| row.side == "user" && row.authored.is_some())
-        .rev()
-        .take(recent)
-        .map(authored_message_view)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-    let finals = dataset
-        .messages
-        .iter()
-        .filter(|row| {
-            row.side == "assistant" && row.phase == "final_answer" && row.authored.is_some()
-        })
-        .rev()
-        .take(recent)
-        .map(authored_message_view)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-    Ok(Report::Summary {
-        sources: dataset.sources.clone(),
-        turns: dataset.turns.len(),
-        completed: dataset.turns.iter().filter(|turn| turn.completed).count(),
-        compactions: dataset.compactions.len(),
-        activity: activity(dataset.turns.iter().collect()),
-        recent_prompts: prompts,
-        recent_finals: finals,
-        residues: dataset.residues.clone(),
-    })
+    if recent > MAX_AGGREGATE_RECENT {
+        return Err(refusal(
+            "session::bound-exceeded",
+            Some(format!("--recent={recent} maximum={MAX_AGGREGATE_RECENT}")),
+            "pass a recent-message bound within the repository ceiling",
+        ));
+    }
+    Ok(recent)
 }
 
-pub(crate) fn tokens(dataset: &Dataset, matches: &ArgMatches) -> Report {
-    let by_file = flag(matches, "by-file") || dataset.sources.len() > 1;
-    let mut rows = Vec::new();
-    if by_file {
-        for source in &dataset.sources {
-            rows.push(token_view(
-                &source.name,
-                dataset
-                    .tokens
-                    .iter()
-                    .filter(|row| row.source == source.path),
-            ));
-        }
-    }
-    rows.push(token_view("TOTAL", dataset.tokens.iter()));
-    Report::Tokens {
-        sources: dataset.sources.clone(),
-        usage: rows,
-        residues: dataset.residues.clone(),
-    }
+pub(crate) fn tokens_by_file(matches: &ArgMatches) -> bool {
+    flag(matches, "by-file")
 }
 
 pub(crate) fn timeline(
@@ -582,36 +549,6 @@ pub(crate) fn commits(dataset: &Dataset, matches: &ArgMatches) -> Result<Report,
     })
 }
 
-pub(crate) fn thread(dataset: &Dataset, id: String) -> Report {
-    let source = dataset
-        .sources
-        .last()
-        .cloned()
-        .expect("one resolved thread yields at least one source");
-    let latest = dataset.turns.last();
-    let thread = ThreadView {
-        id,
-        vendor: source.vendor,
-        transcript: source.path.clone(),
-        transcripts: dataset
-            .sources
-            .iter()
-            .map(|source| source.path.clone())
-            .collect(),
-        turns: dataset.turns.len(),
-        compactions: dataset.compactions.len(),
-        start: dataset.turns.first().map(|turn| turn.start_ts.clone()),
-        end: dataset.turns.last().map(turn_end),
-        latest_turn: latest.map(|turn| turn_view(turn, false, DEFAULT_TIMELINE_TEXT, false)),
-    };
-    Report::Thread {
-        source,
-        sources: dataset.sources.clone(),
-        thread,
-        residues: dataset.residues.clone(),
-    }
-}
-
 fn recall_window(
     index: usize,
     turns: &[&TurnRecord],
@@ -673,7 +610,12 @@ fn estimated_budget(turns: &[&TurnRecord]) -> (usize, usize) {
     (lines, bytes)
 }
 
-fn turn_view(turn: &TurnRecord, full: bool, max_text: usize, authored_only: bool) -> TurnView {
+pub(crate) fn turn_view(
+    turn: &TurnRecord,
+    full: bool,
+    max_text: usize,
+    authored_only: bool,
+) -> TurnView {
     TurnView {
         source: turn.source.clone(),
         vendor: turn.vendor,
@@ -724,7 +666,7 @@ fn message_view(row: &MessageRecord) -> MessageView {
     }
 }
 
-fn authored_message_view(row: &MessageRecord) -> MessageView {
+pub(crate) fn authored_message_view(row: &MessageRecord) -> MessageView {
     let mut view = message_view(row);
     view.text = row
         .authored
@@ -741,25 +683,6 @@ fn compaction_view(row: &CompactionRecord) -> CompactionView {
         summary_after: clip(&row.summary_after, DEFAULT_TIMELINE_TEXT),
         intent: clip(&row.intent, DEFAULT_TIMELINE_TEXT),
         user_after: clip(&row.user_after, DEFAULT_TIMELINE_TEXT),
-    }
-}
-
-fn token_view<'a>(source: &str, records: impl Iterator<Item = &'a TokenRecord>) -> TokenView {
-    let rows = records.collect::<Vec<_>>();
-    let input = rows.iter().map(|row| row.input).sum();
-    let cached = rows.iter().map(|row| row.cached).sum();
-    TokenView {
-        source: source.to_owned(),
-        total: rows.iter().map(|row| row.total).sum(),
-        input,
-        cached,
-        uncached: input.saturating_sub(cached),
-        output: rows.iter().map(|row| row.output).sum(),
-        reasoning: rows.iter().map(|row| row.reasoning).sum(),
-        model_context_window: rows.last().and_then(|row| row.model_context_window),
-        snapshots: rows.len() as u64,
-        first_snapshot: rows.first().map(|row| row.ts.clone()),
-        last_snapshot: rows.last().map(|row| row.ts.clone()),
     }
 }
 
@@ -944,7 +867,7 @@ fn commit_line(line: &str) -> bool {
         })
 }
 
-fn turn_end(turn: &TurnRecord) -> String {
+pub(crate) fn turn_end(turn: &TurnRecord) -> String {
     turn.end_ts
         .clone()
         .unwrap_or_else(|| turn.last_activity_ts.clone())
