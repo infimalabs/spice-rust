@@ -109,7 +109,7 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
   const trigger = menu.locator(":scope > summary");
   assert.equal(await menu.getAttribute("open"), null, "the pending update leaves the menu closed");
   await trigger.click();
-  const update = menu.getByRole("button", { name: /Reload Spice .* app/ });
+  const update = menu.locator("button.canvas-menu-version--update");
   await update.waitFor();
   await page.keyboard.press("Escape");
   await update.waitFor({ state: "hidden" });
@@ -117,7 +117,11 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
   await page.keyboard.press("Enter");
   await update.waitFor();
   assert.equal(await update.getAttribute("data-canvas-update-generation"), alternateGeneration);
-  assert.match(await update.innerText(), new RegExp(alternateGeneration.slice(0, 8)));
+  assert.match((await update.innerText()).trim(), /^Spice \S+\s+↻$/);
+  assert.equal((await update.locator(".canvas-menu-version-indicator").innerText()).trim(), "↻");
+  assert.match(await update.getAttribute("aria-label"), /^Reload Spice \S+ to update;/);
+  assert.match(await update.getAttribute("title"), /Available Canvas protocol:/);
+  assert.match(await update.getAttribute("title"), /Action: Reload to update/);
   assert.match(await trigger.getAttribute("title"), /update available/);
   await assertGenerationIdentity(menu, currentGeneration, alternateGeneration);
   const themes = menu.getByRole("group", { name: "Canvas theme" });
@@ -207,7 +211,7 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
   await page.setViewportSize({ width: 332, height: 720 });
   const narrow = await menu.evaluate((menuNode) => {
     const footer = menuNode.querySelector(".canvas-menu-footer");
-    const button = footer.querySelector(".canvas-menu-update").getBoundingClientRect();
+    const button = footer.querySelector(".canvas-menu-version--update").getBoundingClientRect();
     const global = menuNode.querySelector(".canvas-menu-global-controls");
     const globalBounds = global.getBoundingClientRect();
     const fast = global.querySelector(".canvas-fast-setting").getBoundingClientRect();
@@ -222,7 +226,8 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
     const bounds = footer.getBoundingClientRect();
     const originalCursor = cursorNode.textContent;
     cursorNode.textContent = `cursor ${"1234567890".repeat(12)}`;
-    const constrainedButton = footer.querySelector(".canvas-menu-update").getBoundingClientRect();
+    const constrainedButton = footer.querySelector(".canvas-menu-version--update")
+      .getBoundingClientRect();
     const constrainedCursor = cursorNode.getBoundingClientRect();
     const constrained = {
       contained: constrainedButton.left >= bounds.left - 0.5
@@ -276,7 +281,7 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
     "a protocol mismatch is named without opening another socket",
     CONNECT_MS,
     (version) => {
-      const button = document.querySelector(".canvas-menu-update");
+      const button = document.querySelector(".canvas-menu-version--update");
       return button?.dataset.canvasUpdateVersion === version;
     },
     String(Number(currentVersion) - 1),
@@ -287,11 +292,11 @@ async function assertExplicitCanvasUpdate(browser, endpoint) {
   assert.equal(await agents.isVisible(), true, "a protocol mismatch preserves Agents");
   assert.equal(await menu.getAttribute("open"), null, "the refusal preserves closed menu state");
   await trigger.click();
-  await menu.getByRole("button", { name: /Reload Spice .* app/ }).waitFor();
+  await menu.locator("button.canvas-menu-version--update").waitFor();
 
   bootstrapMode = "current";
   const navigation = page.waitForEvent("framenavigated", (frame) => frame === page.mainFrame());
-  await menu.getByRole("button", { name: /Reload Spice .* app/ }).click();
+  await menu.locator("button.canvas-menu-version--update").click();
   await navigation;
   await page.waitForLoadState("networkidle");
   await waitForPageFunction(

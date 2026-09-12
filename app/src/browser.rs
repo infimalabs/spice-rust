@@ -107,6 +107,7 @@ struct SurfaceHandles {
 struct CanvasUpdate {
     version: wire::CanvasVersion,
     generation: wire::Digest,
+    loaded_generation: wire::Digest,
 }
 
 #[derive(Clone, PartialEq, Eq)]

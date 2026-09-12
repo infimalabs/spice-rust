@@ -94,6 +94,43 @@ test("the theme authority resolves before styles and exposes one current prefere
   assert.match(renderer, /\[\("light", "Light"\), \("system", "System"\), \("dark", "Dark"\)\]/);
 });
 
+test("the product version itself becomes the complete update control", async () => {
+  const [renderer, connection, browser, compatibility, chrome, responsive] = await Promise.all([
+    readFile(resolve(root, "app/src/browser/view/lineage_menu.rs"), "utf8"),
+    readFile(resolve(root, "app/src/browser/connection.rs"), "utf8"),
+    readFile(resolve(root, "app/src/browser.rs"), "utf8"),
+    readFile(resolve(root, "app/browser/canvas-compatibility.mjs"), "utf8"),
+    readFile(resolve(root, "app/chrome.css"), "utf8"),
+    readFile(resolve(root, "app/responsive.css"), "utf8"),
+  ]);
+
+  assert.match(browser, /struct CanvasUpdate \{[\s\S]*loaded_generation: wire::Digest,/);
+  assert.match(connection, /loaded_generation: loaded_generation\.clone\(\),/);
+  assert.match(renderer, /if let Some\(update\) = update \{[\s\S]*<button[\s\S]*class="canvas-menu-version canvas-menu-version--update"/);
+  assert.match(renderer, /<strong\s+class="canvas-menu-version"[\s\S]*tabindex="0"/);
+  assert.match(renderer, /<span class="canvas-menu-version-label">\{label\}<\/span>/);
+  assert.match(renderer, /<span class="canvas-menu-version-indicator" aria-hidden="true">\{"↻"\}<\/span>/);
+  assert.match(renderer, /"Reload Spice\{update_product\} to update;/);
+  for (const detail of [
+    "Current product:",
+    "Loaded app generation:",
+    "Available Canvas protocol:",
+    "Served app generation:",
+    "Action: Reload to update",
+  ]) assert.ok(renderer.includes(detail), `update details include ${detail}`);
+  assert.match(renderer, /data-canvas-update-version=\{update\.version\.to_string\(\)\}/);
+  assert.match(renderer, /data-canvas-update-generation=\{update\.generation\.to_string\(\)\}/);
+  assert.doesNotMatch(renderer, /class="canvas-menu-update"|Update \{generation\}/);
+  assert.doesNotMatch(chrome, /\.canvas-menu-update\b/);
+  assert.match(chrome, /\.canvas-menu-footer:has\(\.canvas-menu-version--update\) \{\s*grid-template-columns: minmax\(min-content, 1fr\) minmax\(0, auto\);/);
+  assert.match(chrome, /\.canvas-menu-version--update \{[\s\S]*display: inline-flex;[\s\S]*flex: 0 1 auto;[\s\S]*max-width: 100%;/);
+  assert.match(chrome, /\.canvas-menu-version-label \{[\s\S]*min-width: 0;[\s\S]*text-overflow: ellipsis;/);
+  assert.match(chrome, /\.canvas-menu-version-indicator \{[\s\S]*flex: 0 0 auto;/);
+  assert.match(responsive, /\.canvas-menu-version--update \{ padding-inline: 5px; \}/);
+  assert.match(compatibility, /button\.canvas-menu-version--update/);
+  assert.doesNotMatch(compatibility, /\.canvas-menu-update\b|Reload Spice .* app/);
+});
+
 test("cursor assertion failures capture their engine and viewport before rethrow", async () => {
   const captures = [];
   const page = {
