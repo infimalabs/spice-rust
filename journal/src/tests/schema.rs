@@ -9,7 +9,7 @@
 use super::*;
 
 #[test]
-fn empty_database_reaches_the_same_finalized_baseline_once() {
+fn baseline_and_schema_twenty_two_converge_on_lane_predicates_once() {
     let mut journal = Journal::in_memory().expect("empty journal migrates");
     let migration = journal.migration().expect("empty journal migrated");
     assert_eq!((migration.from(), migration.to()), (0, SCHEMA_VERSION));
@@ -33,6 +33,67 @@ fn empty_database_reaches_the_same_finalized_baseline_once() {
     assert_eq!(verified.receipts, 0);
     assert_eq!(verified.heads, 0);
     assert_eq!(verified.threads, 0);
+
+    let scratch = Scratch::new();
+    let path = scratch.path().join("schema-twenty-two.sqlite3");
+    let old = authority_file_fixture(&path);
+    downgrade_lane_predicates_to_twenty_two(&old.connection);
+    drop(old);
+
+    let migrated = Journal::open(&path).expect("schema twenty-two migrates");
+    assert_eq!(
+        migrated.migration().map(|step| (step.from(), step.to())),
+        Some((22, SCHEMA_VERSION))
+    );
+    let claim_lane: String = migrated
+        .connection
+        .query_row("SELECT lane FROM claim_index", [], |row| row.get(0))
+        .expect("backfilled claim lane reads");
+    let transcript_lane: String = migrated
+        .connection
+        .query_row("SELECT lane FROM transcript_source_heads", [], |row| {
+            row.get(0)
+        })
+        .expect("backfilled transcript lane reads");
+    assert_eq!(claim_lane, claim_head().lane.to_string());
+    assert_eq!(transcript_lane, transcript_source_head().lane.to_string());
+    migrated.verify().expect("backfilled predicates verify");
+}
+
+fn downgrade_lane_predicates_to_twenty_two(connection: &Connection) {
+    connection
+        .execute_batch(
+            "DROP INDEX claim_index_actor_disposition_stamp;
+             DROP INDEX claim_index_disposition_actor;
+             DROP INDEX claim_index_disposition_lane_stamp;
+             CREATE TABLE claim_index_v22 (
+                 stamp TEXT PRIMARY KEY REFERENCES claim_heads(stamp),
+                 actor TEXT NOT NULL,
+                 disposition TEXT NOT NULL CHECK (disposition IN ('active', 'freed', 'lapsed')),
+                 head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq)
+             ) STRICT;
+             INSERT INTO claim_index_v22(stamp, actor, disposition, head_seq)
+                 SELECT stamp, actor, disposition, head_seq FROM claim_index;
+             DROP TABLE claim_index;
+             ALTER TABLE claim_index_v22 RENAME TO claim_index;
+             CREATE INDEX claim_index_actor_disposition_stamp
+                 ON claim_index(actor, disposition, stamp);
+             CREATE INDEX claim_index_disposition_actor
+                 ON claim_index(disposition, actor);
+             DROP INDEX transcript_source_heads_lane_stream;
+             CREATE TABLE transcript_source_heads_v22 (
+                 stream TEXT PRIMARY KEY,
+                 head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
+                 body BLOB NOT NULL
+             ) STRICT;
+             INSERT INTO transcript_source_heads_v22(stream, head_seq, body)
+                 SELECT stream, head_seq, body FROM transcript_source_heads;
+             DROP TABLE transcript_source_heads;
+             ALTER TABLE transcript_source_heads_v22 RENAME TO transcript_source_heads;
+             UPDATE journal_schema SET version = 22 WHERE singleton = 1;
+             PRAGMA user_version = 22;",
+        )
+        .expect("downgrade lane predicates to schema twenty-two");
 }
 
 #[test]

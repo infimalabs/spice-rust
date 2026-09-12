@@ -15,7 +15,7 @@ impl JournalRead<'_> {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT indexed.stamp, indexed.actor, indexed.disposition, \
+                "SELECT indexed.stamp, indexed.actor, indexed.lane, indexed.disposition, \
                         indexed.head_seq, heads.head_seq, heads.body \
                  FROM claim_index AS indexed \
                  JOIN claim_heads AS heads ON heads.stamp = indexed.stamp \
@@ -30,9 +30,10 @@ impl JournalRead<'_> {
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
-                    row.get::<_, i64>(3)?,
+                    row.get::<_, String>(3)?,
                     row.get::<_, i64>(4)?,
-                    row.get::<_, Vec<u8>>(5)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, Vec<u8>>(6)?,
                 ))
             })
             .map_err(GuardError::Store)?
@@ -46,7 +47,7 @@ impl JournalRead<'_> {
                 "actor {actor} holds more than one active claim"
             )));
         }
-        let Some((stamp, indexed_actor, disposition, indexed_seq, head_seq, bytes)) =
+        let Some((stamp, indexed_actor, indexed_lane, disposition, indexed_seq, head_seq, bytes)) =
             rows.into_iter().next()
         else {
             return Ok(None);
@@ -66,6 +67,11 @@ impl JournalRead<'_> {
         if indexed_actor != actor_text || claim.body.actor != *actor {
             return Err(GuardError::Invalid(format!(
                 "claim index for task {stamp} disagrees with claim actor"
+            )));
+        }
+        if indexed_lane != claim.body.lane.to_string() {
+            return Err(GuardError::Invalid(format!(
+                "claim index for task {stamp} disagrees with claim lane"
             )));
         }
         if disposition != claim_disposition_name(claim.body.disposition)

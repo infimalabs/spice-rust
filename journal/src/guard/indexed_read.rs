@@ -6,7 +6,7 @@ use serde::Serialize;
 use super::commit::decode_seq;
 use super::{
     FactPageStart, FactReadBudget, GuardError, JournalHead, JournalRead, SelectedFactPage,
-    TaskHeads, read_metrics,
+    TaskHeads, claim_disposition_name, read_metrics,
 };
 use wire::body::SourceBoundary;
 
@@ -755,35 +755,46 @@ impl JournalRead<'_> {
     /// accounted beneath it. One lane hosts several vendors over its life, which
     /// makes the whole set the honest answer rather than a convenience.
     ///
-    /// The lane is matched against each decoded body rather than against a
-    /// pattern over the stored key, because the body is the durable spelling and
-    /// a stored key disagreeing with it is a head violation. That violation is
-    /// reported instead of being silently included or dropped, and it is checked
-    /// for every row rather than only the matching ones: the journal is one
-    /// authority, so a corrupt row is corrupt no matter whose lane asked.
+    /// The redundant lane predicate selects only matching rows; each selected
+    /// value is then proved against its canonical body. Global verification owns
+    /// corruption outside this scoped read, so another lane's retained history
+    /// cannot make this lane's current boundary progressively more expensive.
     pub fn transcript_source_heads(
         &self,
         lane: &wire::CanonicalUuid,
     ) -> Result<Vec<JournalHead<wire::TranscriptSourceHead>>, GuardError> {
+        let lane_text = lane.to_string();
         let mut statement = self
             .connection
-            .prepare("SELECT stream, head_seq, body FROM transcript_source_heads ORDER BY stream")
+            .prepare(
+                "SELECT stream, lane, head_seq, body FROM transcript_source_heads \
+                 WHERE lane = ?1 ORDER BY stream",
+            )
             .map_err(GuardError::Store)?;
+        read_metrics::observe_query();
         let rows = statement
-            .query_map([], |row| {
+            .query_map([&lane_text], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, Vec<u8>>(2)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, Vec<u8>>(3)?,
                 ))
             })
             .map_err(GuardError::Store)?;
         let mut heads = Vec::new();
         for row in rows {
-            let (stream, position, bytes) = row.map_err(GuardError::Store)?;
-            heads.push(self.decoded_source_head(&stream, position, &bytes)?);
+            let (stream, indexed_lane, position, bytes) = row.map_err(GuardError::Store)?;
+            read_metrics::observe_row();
+            read_metrics::observe_decode(bytes.len());
+            let head = self.decoded_source_head(&stream, position, &bytes)?;
+            if indexed_lane != lane_text || head.body.lane != *lane {
+                return Err(GuardError::Invalid(format!(
+                    "transcript source head {stream:?} lane predicate disagrees with its body"
+                )));
+            }
+            heads.push(head);
         }
-        heads.retain(|head: &JournalHead<wire::TranscriptSourceHead>| &head.body.lane == lane);
         Ok(heads)
     }
 
@@ -820,29 +831,58 @@ impl JournalRead<'_> {
     /// A membership transition records boundaries only for these, because a
     /// lane nobody is working spends nothing across the move and a boundary for
     /// it would be attribution noise the reducer has to filter back out. The
-    /// disposition is read from the decoded head rather than from a query
-    /// predicate so an ended claim can never be counted as live.
+    /// active predicate selects only matching index rows, then every selected
+    /// predicate and position is proved against its joined canonical head.
     pub fn actively_claimed_lanes(&self) -> Result<Vec<wire::CanonicalUuid>, GuardError> {
         let mut statement = self
             .connection
-            .prepare("SELECT stamp, head_seq, body FROM claim_heads ORDER BY stamp")
+            .prepare(
+                "SELECT indexed.stamp, indexed.lane, indexed.disposition, \
+                        indexed.head_seq, heads.head_seq, heads.body \
+                 FROM claim_index AS indexed \
+                 JOIN claim_heads AS heads ON heads.stamp = indexed.stamp \
+                 WHERE indexed.disposition = 'active' \
+                 ORDER BY indexed.lane, indexed.stamp",
+            )
             .map_err(GuardError::Store)?;
+        read_metrics::observe_query();
         let rows = statement
             .query_map([], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, Vec<u8>>(2)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, Vec<u8>>(5)?,
                 ))
             })
             .map_err(GuardError::Store)?;
         let mut lanes = Vec::new();
         for row in rows {
-            let (stamp, position, bytes) = row.map_err(GuardError::Store)?;
-            let head = self.decoded_claim_head(&stamp, position, &bytes)?;
-            if head.body.disposition == wire::ClaimDisposition::Active {
-                lanes.push(head.body.lane);
+            let (stamp, indexed_lane, disposition, indexed_seq, head_seq, bytes) =
+                row.map_err(GuardError::Store)?;
+            read_metrics::observe_row();
+            if indexed_seq != head_seq {
+                return Err(GuardError::Invalid(format!(
+                    "claim index for task {stamp} disagrees with claim head position"
+                )));
             }
+            read_metrics::observe_decode(bytes.len());
+            let head = self.decoded_claim_head(&stamp, head_seq, &bytes)?;
+            if indexed_lane != head.body.lane.to_string() {
+                return Err(GuardError::Invalid(format!(
+                    "claim index for task {stamp} disagrees with claim lane"
+                )));
+            }
+            if disposition != claim_disposition_name(head.body.disposition)
+                || head.body.disposition != wire::ClaimDisposition::Active
+            {
+                return Err(GuardError::Invalid(format!(
+                    "claim index for task {stamp} disagrees with claim disposition"
+                )));
+            }
+            lanes.push(head.body.lane);
         }
         Ok(lanes)
     }
