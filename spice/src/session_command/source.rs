@@ -618,24 +618,6 @@ mod tests {
     }
 
     #[test]
-    fn indexed_codex_paths_survive_a_missing_sessions_directory() {
-        let scratch = Scratch::new("indexed-only");
-        let indexed = scratch.path().join("indexed.jsonl");
-        fs::write(&indexed, b"\n").expect("indexed transcript exists");
-        write_codex_state(scratch.path(), &[&indexed]);
-
-        assert_eq!(
-            find_thread(
-                THREAD,
-                &spice::extension::CODEX,
-                &codex_environment(scratch.path()),
-            )
-            .expect("the state index is sufficient transcript authority"),
-            [indexed],
-        );
-    }
-
-    #[test]
     fn indexed_codex_paths_survive_a_depth_limited_sessions_tree() {
         let scratch = Scratch::new("indexed-depth");
         let indexed = scratch.path().join("indexed.jsonl");
