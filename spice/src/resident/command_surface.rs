@@ -294,12 +294,18 @@ impl<'a> Surface<'a> {
         }
     }
 
+    pub(super) fn inbox_residency(
+        &self,
+    ) -> super::CommandResult<journal::JournalHead<wire::ResidencyHead>> {
+        current_residency(self.bus, self.epoch)
+    }
+
     pub(super) fn project_inbox_once(
         &self,
+        residency: &wire::ResidencyHead,
         lane: CanonicalUuid,
     ) -> super::CommandResult<steering::FoldAttempt> {
-        let residency = current_residency(self.bus, self.epoch)?;
-        steering::publish_inbox_once(self.bus, self.paths, residency.body(), lane)
+        steering::publish_inbox_once(self.bus, self.paths, residency, lane)
     }
 
     pub(super) fn reconcile_lifecycle(

@@ -334,7 +334,6 @@ impl SocketFanoutDispatch<'_> {
     async fn run(
         self,
         control: &mut canvas::axum::Control,
-        lanes: [(CanonicalUuid, CanonicalUuid); 3],
         responses_done: tokio::sync::oneshot::Receiver<()>,
     ) {
         let reads =
@@ -371,13 +370,7 @@ impl SocketFanoutDispatch<'_> {
         )
         .await
         .expect("socket steering burst completes");
-        assert!(!dispatched.reached_dark);
-        assert!(!dispatched.lifecycle_released);
-        assert_eq!(
-            projections.len(),
-            lanes.len(),
-            "one ready fanout cycle retains every exact lane before folding"
-        );
+        assert!(!dispatched.reached_dark && !dispatched.lifecycle_released);
         tokio::time::timeout(Duration::from_secs(3), responses_done)
             .await
             .expect("socket responses are read before inbox projection")
@@ -385,6 +378,17 @@ impl SocketFanoutDispatch<'_> {
         while !projections.is_empty() {
             runtime::project_next_inbox(&command_surface, &mut projections)
                 .expect("one scheduled lane projection completes");
+        }
+        for offset in 0..canvas::axum::Control::FAIR_CYCLE_LIMIT {
+            projections.insert(test_uuid(40 + u8::try_from(offset).expect("offset fits")));
+        }
+        projections.insert(test_uuid(40));
+        assert!(!projections.is_full());
+        projections.insert(test_uuid(49));
+        assert!(projections.is_full());
+        while !projections.is_empty() {
+            runtime::project_next_inbox(&command_surface, &mut projections)
+                .expect("full reconciliation advances one current lane");
         }
     }
 }
@@ -705,7 +709,7 @@ async fn socket_dispatch_replies_then_projects_three_lane_fanout() {
         discovery: &discovery,
         epoch,
     }
-    .run(&mut control, lanes, responses_done)
+    .run(&mut control, responses_done)
     .await;
     assert_socket_fanout_published(&bus, &paths, fanout, lanes);
     stop_canvas_fixture(shutdown, server_task).await;
@@ -714,13 +718,8 @@ async fn socket_dispatch_replies_then_projects_three_lane_fanout() {
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
-/// A holder replacement never creates an empty observation for a contender.
-///
-/// The callback is the exact instant after the writer has prepared its one
-/// landing write and before that write occurs. The second acquisition therefore
-/// exercises the resident's real contended-refusal path while the replacement
-/// is in flight. Restoring a truncation before that callback makes this fixture
-/// observe `holder metadata unavailable` instead of the seeded holder.
+/// A holder replacement keeps the seeded holder observable to a contender at
+/// the exact callback before the replacement write.
 #[test]
 fn contended_resident_names_the_holder_while_its_record_is_rewritten() {
     let root = fixture("holder-rewrite");

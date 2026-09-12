@@ -387,6 +387,7 @@ pub(super) fn apply_deadline(
 const FOLD_RETRIES: usize = 4;
 static FOLD_AUTHORITY: Mutex<()> = Mutex::new(());
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum FoldAttempt {
     Settled,
     Moved,
