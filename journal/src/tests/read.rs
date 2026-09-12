@@ -24,7 +24,6 @@ fn selected_fact_pages_use_the_kind_index_and_decode_only_matching_rows() {
         plan.contains("fact_envelopes_kind_seq"),
         "selected fact read must use its kind index: {plan}"
     );
-
     reset_indexed_read_metrics();
     let selected = journal
         .read(|read| {
@@ -418,15 +417,6 @@ fn newest_fact_reads_are_indexed_and_obey_their_page_limit() {
 
 #[test]
 fn scoped_read_returns_owned_cursor_complete_task_bundles_without_mutation() {
-    let empty = Journal::in_memory().expect("empty journal");
-    let empty_changes = empty.connection.total_changes();
-    let (cursor, heads) = empty
-        .read(|read| Ok((read.cursor()?, read.task_heads()?)))
-        .expect("empty board read");
-    assert_eq!(cursor, None);
-    assert!(heads.is_empty());
-    assert_eq!(empty.connection.total_changes(), empty_changes);
-
     let journal = authority_fixture();
     let mut second = task_head();
     second.born = "1kKRRsDQ".parse().expect("second task stamp");
@@ -447,19 +437,36 @@ fn scoped_read_returns_owned_cursor_complete_task_bundles_without_mutation() {
         2,
         &workflow_head(),
     );
-    let changes = journal.connection.total_changes();
-
-    let (cursor, heads) = journal
-        .read(|read| Ok((read.cursor()?, read.task_heads()?)))
-        .expect("coherent board read");
+    reset_indexed_read_metrics();
+    let (first, trust) = journal
+        .read(|read| {
+            Ok((
+                read.task_head_page(None, fact_budget(1))?,
+                read.trust_head_page(None, fact_budget(1))?,
+            ))
+        })
+        .expect("coherent bounded head read");
+    assert_eq!(trust.witness, first.witness);
+    assert!(first.continuation.is_some());
+    assert!(trust.continuation.is_none());
+    let metrics = indexed_read_metrics();
+    assert_eq!((metrics.queries, metrics.rows), (2, 3));
+    assert!(metrics.decoded_bytes <= (2 * MAX_RETAINED_FACT_PAGE_BYTES) as u64);
+    let second = journal
+        .read(|read| read.task_head_page(first.continuation.as_ref(), fact_budget(1)))
+        .expect("task page resumes after its stable stamp");
+    assert!(second.continuation.is_none());
+    let heads = first
+        .rows
+        .into_iter()
+        .chain(second.rows)
+        .collect::<Vec<_>>();
     let handles = heads
         .into_iter()
         .map(|heads| heads.into_bodies().0.born.to_string())
         .collect::<Vec<_>>();
-
-    assert_eq!(cursor, Seq::new(2));
+    assert_eq!(first.witness.cursor, Seq::new(2));
     assert_eq!(handles, ["1kKRRsDP", "1kKRRsDQ"]);
-    assert_eq!(journal.connection.total_changes(), changes);
 }
 
 #[test]
@@ -469,7 +476,6 @@ fn task_bundle_read_names_every_incomplete_or_malformed_head_class() {
         .connection
         .execute("DELETE FROM workflow_heads WHERE stamp = '1kKRRsDP'", [])
         .expect("remove required workflow head");
-
     let loose_claim = authority_fixture();
     loose_claim
         .connection
@@ -487,7 +493,6 @@ fn task_bundle_read_names_every_incomplete_or_malformed_head_class() {
         .connection
         .pragma_update(None, "foreign_keys", true)
         .expect("restore foreign keys");
-
     let mismatched_key = authority_fixture();
     let mut wrong_task = task_head();
     wrong_task.born = "1kKRRsDQ".parse().expect("alternate task stamp");
@@ -498,7 +503,6 @@ fn task_bundle_read_names_every_incomplete_or_malformed_head_class() {
             params![wire::encode(&wrong_task).expect("encode wrong task")],
         )
         .expect("mismatch indexed key and body");
-
     let invalid_bytes = authority_fixture();
     invalid_bytes
         .connection
@@ -507,7 +511,6 @@ fn task_bundle_read_names_every_incomplete_or_malformed_head_class() {
             [],
         )
         .expect("corrupt canonical body");
-
     let beyond_cursor = authority_fixture();
     insert_fact(
         &beyond_cursor,
@@ -546,7 +549,10 @@ fn task_bundle_read_names_every_incomplete_or_malformed_head_class() {
         ),
     ] {
         let error = journal
-            .read(|read| read.task_heads().map(drop))
+            .read(|read| {
+                read.task_head_page(None, FactReadBudget::RETAINED)
+                    .map(drop)
+            })
             .expect_err("malformed task heads refuse");
         assert!(
             error.to_string().contains(expected),

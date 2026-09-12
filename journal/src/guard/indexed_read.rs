@@ -11,9 +11,11 @@ use super::{
 use wire::body::SourceBoundary;
 
 mod bounds;
+mod head_page;
 mod origin;
 
 use bounds::{admitted_envelope_length, decode_bounded_fact};
+pub use head_page::{CurrentHeadWitness, TaskHeadPage, TrustHeadPage};
 
 struct CausalPage {
     facts: Vec<wire::Envelope<wire::AnyFact>>,
