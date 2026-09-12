@@ -182,14 +182,9 @@ pub(super) async fn run_surface(
         message_publisher,
         progress,
     } = started;
-    let capture::Channels {
-        reporter,
-        records,
-        failures,
-        exits,
-    } = capture::channels();
+    let channels = capture::channels();
     let supervisor_reports = capture::SupervisorReports::bind(paths)?;
-    lane_surface::restore_seats(bus, paths, epoch, seats, &reporter)?;
+    lane_surface::restore_seats(bus, paths, epoch, seats, &channels.reporter)?;
     ingest_transcripts(bus, paths, None, progress)?;
     let mut message_startup = launch_message_startup(bus, paths, epoch, &message_publisher)?;
     let reads = read_materializations::CurrentReads::start(bus, paths, &config.consent)
@@ -200,12 +195,13 @@ pub(super) async fn run_surface(
         paths,
         epoch,
         command_surface::Runtimes::new(
-            lane_surface::Runtime::new(&capabilities, &discovery, reporter.clone()),
-            lane_recovery::Runtime::new(reporter),
+            lane_surface::Runtime::new(&capabilities, &discovery, channels.reporter.clone()),
+            lane_recovery::Runtime::new(channels.reporter.clone()),
         ),
         config,
         &reads,
     );
+    let inbox_projections = inbox_projection::Scheduler::start(bus.reader(), paths.clone(), epoch)?;
     let (taste_submitter, taste_completions) = taste_adjudication
         .as_mut()
         .map(taste_surface::AdjudicationRuntime::parts)
@@ -229,6 +225,7 @@ pub(super) async fn run_surface(
         &command_surface,
         seats,
         &mut lifecycle,
+        &inbox_projections,
         &mut timers,
         &mut control,
         &mut server_task,
@@ -256,14 +253,15 @@ pub(super) async fn run_surface(
         session_compactions,
         taste_submitter,
         taste_completions,
-        records,
-        failures,
-        exits,
+        channels.records,
+        channels.failures,
+        channels.exits,
         supervisor_reports,
         progress,
         timers,
         timer_commits,
         lifecycle,
+        inbox_projections,
     )
     .await
 }
@@ -343,6 +341,7 @@ async fn await_message_startup(
     command_surface: &command_surface::Surface<'_>,
     seats: &mut Seats,
     lifecycle: &mut lifecycle::Runtime,
+    inbox_projections: &inbox_projection::Scheduler,
     timers: &mut timers::Runtime,
     control: &mut canvas::axum::Control,
     server_task: &mut tokio::task::JoinHandle<Result<(), io::Error>>,
@@ -361,6 +360,7 @@ async fn await_message_startup(
                 let dispatched = dispatch_control(
                     command_surface, seats, lifecycle, control, request,
                 ).await?;
+                schedule_projection(inbox_projections, dispatched.effects, diagnostic);
                 if dispatched.reached_dark {
                     return Ok(None);
                 }
@@ -481,19 +481,16 @@ pub(super) async fn drive_surface(
     mut timers: timers::Runtime,
     mut timer_commits: bus::BroadcastSubscriber,
     mut lifecycle: lifecycle::Runtime,
+    mut inbox_projections: inbox_projection::Scheduler,
 ) -> CommandResult<()> {
-    let compaction_interval = message_surface::SESSION_COMPACTION_POLL_INTERVAL;
-    let mut session_compaction_poll = tokio::time::interval_at(
-        tokio::time::Instant::now() + compaction_interval,
-        compaction_interval,
-    );
-    session_compaction_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut session_compaction_poll = session_compaction_poll();
     loop {
         tokio::select! {
             request = control.recv() => {
                 let dispatched = dispatch_control(
                     command_surface, seats, &mut lifecycle, &mut control, request,
                 ).await?;
+                schedule_projection(&inbox_projections, dispatched.effects, diagnostic);
                 if dispatched.reached_dark {
                     timers.synchronize(bus)?;
                     return stop_surface(publication, shutdown, server_task).await;
@@ -563,8 +560,39 @@ pub(super) async fn drive_surface(
                 bus, command_surface, seats, diagnostic, &mut timers,
                 &mut lifecycle, committed,
             )?,
+            completed = inbox_projections.recv() => report_projection(completed?, diagnostic),
             ending = &mut server_task => return Err(server_outcome(ending)),
         }
+    }
+}
+
+fn session_compaction_poll() -> tokio::time::Interval {
+    let interval = message_surface::SESSION_COMPACTION_POLL_INTERVAL;
+    let mut poll = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
+    poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    poll
+}
+
+fn schedule_projection(
+    scheduler: &inbox_projection::Scheduler,
+    effects: CommandEffects,
+    diagnostic: &mut dyn io::Write,
+) {
+    if let Err(outcome) = scheduler.schedule(effects) {
+        let _ = writeln!(
+            diagnostic,
+            "inbox projection was not scheduled: {outcome:?}"
+        );
+    }
+}
+
+fn report_projection(completed: inbox_projection::Completion, diagnostic: &mut dyn io::Write) {
+    if let Err(outcome) = completed.result {
+        let _ = writeln!(
+            diagnostic,
+            "inbox projection for lane {} failed: {outcome:?}",
+            completed.lane,
+        );
     }
 }
 
@@ -821,6 +849,7 @@ fn reconcile_wakes(
 pub(in crate::resident) struct ControlDispatch {
     pub(in crate::resident) reached_dark: bool,
     pub(in crate::resident) lifecycle_released: bool,
+    pub(in crate::resident) effects: CommandEffects,
 }
 
 pub(in crate::resident) async fn dispatch_control(
@@ -848,13 +877,13 @@ pub(in crate::resident) async fn dispatch_control(
     let (outcome, effects) = dispatched.into_parts();
     let reached_dark = !is_replay && dark && matches!(outcome, Outcome::Reply(_));
     complete_response(request, outcome).await;
-    apply_command_effects(command_surface, effects)?;
     if reached_dark {
         control.close();
     }
     Ok(ControlDispatch {
         reached_dark,
         lifecycle_released,
+        effects,
     })
 }
 
@@ -862,15 +891,6 @@ async fn complete_response(request: canvas::axum::ControlRequest, outcome: Outco
     if let Ok(response) = request.respond(outcome) {
         response.wait().await;
     }
-}
-
-fn apply_command_effects(
-    command_surface: &command_surface::Surface<'_>,
-    effects: CommandEffects,
-) -> CommandResult<()> {
-    effects
-        .inbox_projection
-        .map_or(Ok(()), |lane| command_surface.project_inbox(lane))
 }
 
 fn is_dark_command(command: &wire::AdmittedCommand) -> bool {

@@ -34,8 +34,7 @@ async fn run_liveness_surface(setup: &mut LivenessSetup) -> String {
     let config = &setup.config;
     let epoch = setup.epoch;
     let lanes = setup.lanes;
-    let timer_commits = bus.reader().subscribe();
-    let proof_commits = bus.reader().subscribe();
+    let (timer_commits, proof_commits) = (bus.reader().subscribe(), bus.reader().subscribe());
     let mut timers = timers::Runtime::start(config.projects.clone(), config.steering.clone())
         .expect("timer authority starts");
     let mut lifecycle = lifecycle::Runtime::new(&config.lane);
@@ -142,10 +141,20 @@ async fn run_liveness_surface(setup: &mut LivenessSetup) -> String {
         timers,
         timer_commits,
         lifecycle,
+        projection_scheduler(bus, paths, epoch),
     );
     let (driven, judge_pid) = tokio::join!(drive, exercise);
     driven.expect("Down stops the live surface");
     judge_pid
+}
+
+fn projection_scheduler(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+) -> inbox_projection::Scheduler {
+    inbox_projection::Scheduler::start(bus.reader(), paths.clone(), epoch)
+        .expect("inbox projection scheduler starts")
 }
 
 struct LivenessSurfaceContext<'a> {

@@ -5,7 +5,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
 
-use bus::Bus;
+use bus::{Bus, BusReader};
 use journal::{FactCause, GuardError, JournalGuard, JournalWrite, PendingFact};
 use steer::{Miss, Outcome as ScanOutcome};
 use wire::body::TranscriptLocus;
@@ -387,6 +387,44 @@ pub(super) fn apply_deadline(
 const FOLD_RETRIES: usize = 4;
 static FOLD_AUTHORITY: Mutex<()> = Mutex::new(());
 
+#[cfg(test)]
+pub(super) struct FoldAuthorityBlock {
+    release: Option<std::sync::mpsc::Sender<()>>,
+    holder: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(test)]
+impl FoldAuthorityBlock {
+    pub(super) fn start() -> Self {
+        let (held, observed) = std::sync::mpsc::sync_channel(0);
+        let (release, released) = std::sync::mpsc::channel();
+        let holder = std::thread::spawn(move || {
+            let _authority = FOLD_AUTHORITY.lock().expect("fixture holds fold authority");
+            held.send(()).expect("fixture reports held fold authority");
+            released.recv().expect("fixture releases fold authority");
+        });
+        observed
+            .recv()
+            .expect("fixture observes held fold authority");
+        Self {
+            release: Some(release),
+            holder: Some(holder),
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for FoldAuthorityBlock {
+    fn drop(&mut self) {
+        if let Some(release) = self.release.take() {
+            let _ = release.send(());
+        }
+        if let Some(holder) = self.holder.take() {
+            let _ = holder.join();
+        }
+    }
+}
+
 pub(super) fn publish_lane_discoveries(
     paths: &RuntimePaths,
     operator: &canvas::Discovery,
@@ -479,6 +517,25 @@ pub(super) fn publish_inbox(
     fold_lane_inbox(bus, paths, lane).map(|_| ())
 }
 
+pub(super) fn publish_inbox_once(
+    reader: &BusReader,
+    paths: &RuntimePaths,
+    residency: &ResidencyHead,
+    selected: CanonicalUuid,
+) -> CommandResult<()> {
+    let lane = residency
+        .lanes
+        .iter()
+        .find(|lane| lane.lane == selected)
+        .ok_or_else(|| {
+            store_fault(
+                "steer::lane-missing-after-commit",
+                &format!("lane {selected} disappeared while publishing its inbox"),
+            )
+        })?;
+    fold_lane_inbox_once(reader, paths, lane).map(|_| ())
+}
+
 fn fold_lane_inbox(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -499,8 +556,9 @@ pub(super) fn fold_lane_inbox_with(
     let _authority = FOLD_AUTHORITY
         .lock()
         .map_err(|error| store_fault("steer::fold-authority-poisoned", &error.to_string()))?;
+    let reader = bus.reader();
     for attempt in 0..FOLD_RETRIES {
-        let (source, heads) = bus
+        let (source, heads) = reader
             .read({
                 let selected = lane.lane;
                 move |read| {
@@ -522,7 +580,7 @@ pub(super) fn fold_lane_inbox_with(
         let keys = pending_keys(&ledger, lane.lane);
         let publication = publish_lane_inbox(paths, lane, &ledger);
         after_publication(attempt);
-        let current = bus
+        let current = reader
             .read({
                 let selected = lane.lane;
                 move |read| crate::steering_read::pending(read, Some(selected))
@@ -540,23 +598,65 @@ pub(super) fn fold_lane_inbox_with(
                 "lane steering authority moved throughout the bounded fold refill",
             ));
         }
-        let delivery = match publication {
-            Ok(()) => DeliveryStanding::Published { source },
-            Err(Outcome::Fault(fault)) => DeliveryStanding::Parked {
-                source,
-                keys,
-                failure: format!("{}: {}", fault.reason, fault.detail),
-                repair: format!("spice steer repair {}", lane.lane),
-            },
-            Err(outcome) => return Err(outcome),
-        };
-        let record = steer::fold::Record::new(lane.lane, delivery.clone());
-        steer::fold::publish(&paths.data, &record).map_err(|error| {
-            environment_fault("steer::fold-progress-unwritable", &error.to_string())
-        })?;
-        return Ok(delivery);
+        return record_delivery(paths, lane.lane, source, keys, publication);
     }
     unreachable!("the final fold attempt returns instead of retrying")
+}
+
+fn fold_lane_inbox_once(
+    reader: &BusReader,
+    paths: &RuntimePaths,
+    lane: &wire::LaneResidency,
+) -> CommandResult<DeliveryStanding> {
+    let _authority = FOLD_AUTHORITY
+        .lock()
+        .map_err(|error| store_fault("steer::fold-authority-poisoned", &error.to_string()))?;
+    let (source, heads) = reader
+        .read({
+            let selected = lane.lane;
+            move |read| {
+                Ok((
+                    read.cursor()?,
+                    crate::steering_read::pending(read, Some(selected))?,
+                ))
+            }
+        })
+        .map_err(|error| store_fault("steer::index-unreadable", &error.to_string()))?;
+    let source = source.ok_or_else(|| {
+        store_fault(
+            "steer::journal-empty",
+            "a running resident has no durable startup fact",
+        )
+    })?;
+    let ledger = steer::Ledger::from_authority_heads(heads.iter().map(|head| head.body()))
+        .map_err(|error| store_fault("steer::index-invalid", &error.to_string()))?;
+    let keys = pending_keys(&ledger, lane.lane);
+    let publication = publish_lane_inbox(paths, lane, &ledger);
+    record_delivery(paths, lane.lane, source, keys, publication)
+}
+
+fn record_delivery(
+    paths: &RuntimePaths,
+    lane: CanonicalUuid,
+    source: Seq,
+    keys: Vec<String>,
+    publication: CommandResult<()>,
+) -> CommandResult<DeliveryStanding> {
+    let delivery = match publication {
+        Ok(()) => DeliveryStanding::Published { source },
+        Err(Outcome::Fault(fault)) => DeliveryStanding::Parked {
+            source,
+            keys,
+            failure: format!("{}: {}", fault.reason, fault.detail),
+            repair: format!("spice steer repair {lane}"),
+        },
+        Err(outcome) => return Err(outcome),
+    };
+    let record = steer::fold::Record::new(lane, delivery.clone());
+    steer::fold::publish(&paths.data, &record).map_err(|error| {
+        environment_fault("steer::fold-progress-unwritable", &error.to_string())
+    })?;
+    Ok(delivery)
 }
 
 fn pending_keys(ledger: &steer::Ledger, lane: CanonicalUuid) -> Vec<String> {

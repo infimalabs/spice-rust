@@ -9,10 +9,9 @@ use wire::intent::{CommandAnswer, Intent};
 use wire::{Actor, CanonicalUuid, CommandKind, Outcome, Refusal, Reply};
 
 use super::{
-    CommandDispatch, CommandEffects, RuntimePaths, SurfaceConfig, current_residency,
-    dispatch_proof_recognize, dispatch_release_publish, dispatch_up_change, lane_recovery,
-    lane_surface, lifecycle, policy_surface, read_materializations::CurrentReads, settings_surface,
-    steering,
+    CommandDispatch, CommandEffects, RuntimePaths, SurfaceConfig, dispatch_proof_recognize,
+    dispatch_release_publish, dispatch_up_change, lane_recovery, lane_surface, lifecycle,
+    policy_surface, read_materializations::CurrentReads, settings_surface, steering,
 };
 
 pub(super) struct Surface<'a> {
@@ -292,11 +291,6 @@ impl<'a> Surface<'a> {
             }
             _ => None,
         }
-    }
-
-    pub(super) fn project_inbox(&self, lane: CanonicalUuid) -> super::CommandResult<()> {
-        let residency = current_residency(self.bus, self.epoch)?;
-        steering::publish_inbox(self.bus, self.paths, residency.body(), lane)
     }
 
     pub(super) fn reconcile_lifecycle(

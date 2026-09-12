@@ -277,6 +277,31 @@ mod runtime {
     }
 
     impl BusReader {
+        /// Run one bounded indexed read through the sole journal queue.
+        pub fn read<T, F>(&self, query: F) -> Result<T, BusReadError>
+        where
+            T: Send + 'static,
+            F: for<'a> FnOnce(&journal::JournalRead<'a>) -> Result<T, GuardError> + Send + 'static,
+        {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            let transaction = Box::new(move |journal: &mut Journal| {
+                let result = journal.read(query).map_err(BusReadError::Head);
+                let respond = Box::new(move || {
+                    let _ = answer.send(result);
+                });
+                TransactionCompletion {
+                    commit: None,
+                    respond,
+                }
+            });
+            self.requests
+                .send(Request::Transaction { transaction })
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
+            receiver
+                .recv()
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?
+        }
+
         /// Read only the current durable cursor at one queued barrier.
         pub fn cursor(&self) -> Result<Option<journal::crossing::Seq>, BusReadError> {
             let (answer, receiver) = mpsc::sync_channel(1);
@@ -562,10 +587,7 @@ mod runtime {
             T: Send + 'static,
             F: for<'a> FnOnce(&journal::JournalRead<'a>) -> Result<T, GuardError> + Send + 'static,
         {
-            self.transact(move |journal| {
-                JournalTransaction::settled(journal.read(query).map_err(BusReadError::Head))
-            })
-            .map_err(BusReadError::Bus)?
+            self.reader().read(query)
         }
 
         /// Subscribe to commits that become durable after registration.
