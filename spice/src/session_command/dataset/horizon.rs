@@ -111,76 +111,175 @@ pub(super) fn start_offset_after_prior_timestamp(
     Ok(offset)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct ReverseContinuation {
+    pub(super) position: u64,
+    pub(super) carry_bytes: usize,
+}
+
+pub(super) enum ReverseProgress {
+    More(ReverseContinuation),
+    Eof(ReverseContinuation),
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct ReverseRecordRange {
+    pub(super) start: usize,
+    pub(super) end: usize,
+    pub(super) offset: u64,
+    pub(super) next: u64,
+    pub(super) terminal: bool,
+}
+
+pub(super) struct ReverseWindow {
+    pub(super) bytes: Vec<u8>,
+    pub(super) records: Vec<ReverseRecordRange>,
+    pub(super) progress: ReverseProgress,
+}
+
+pub(super) struct ReverseCursor {
+    file: File,
+    path: std::path::PathBuf,
+    position: u64,
+    transcript_length: u64,
+    carry: Vec<u8>,
+}
+
 fn reverse_lines<F>(path: &Path, work: &mut SessionWork, mut visit: F) -> Result<(), Refusal>
 where
     F: FnMut(&[u8], u64, u64, bool, &mut SessionWork) -> Result<bool, Refusal>,
 {
-    let mut file = File::open(path).map_err(|error| unreadable(path, &error))?;
-    let mut position = file
-        .metadata()
-        .map_err(|error| unreadable(path, &error))?
-        .len();
-    let transcript_length = position;
-    let mut carry = Vec::new();
-    while position > 0 {
-        let at = format!("{}:byte {position}", path.display());
-        work.check_deadline(&at)?;
-        let read = position.min(BACKWARD_CHUNK_BYTES);
-        work.admit_source_bytes(read, &at)?;
-        position -= read;
-        file.seek(SeekFrom::Start(position))
-            .map_err(|error| unreadable(path, &error))?;
-        let mut block = vec![0_u8; read as usize];
-        file.read_exact(&mut block)
-            .map_err(|error| unreadable(path, &error))?;
-        admit_reverse_carry(&block, &carry, path, position)?;
-        block.extend_from_slice(&carry);
-        let parse_start = if position == 0 {
-            0
-        } else if let Some(split) = block.iter().position(|byte| *byte == b'\n') {
-            carry = block[..split].to_vec();
-            split + 1
-        } else {
-            carry = block;
-            continue;
-        };
-        let mut ranges = Vec::new();
-        let mut line_start = parse_start;
-        for (index, byte) in block.iter().enumerate().skip(parse_start) {
-            if *byte == b'\n' {
-                ranges.push((line_start, index, index + 1));
-                line_start = index + 1;
-            }
-        }
-        if line_start < block.len() {
-            ranges.push((line_start, block.len(), block.len()));
-        }
-        for (start, mut end, next) in ranges.into_iter().rev() {
-            while end > start && block[end - 1] == b'\r' {
-                end -= 1;
-            }
-            if start == end {
-                continue;
-            }
-            let next = position.saturating_add(next as u64);
-            let at = format!(
-                "{}:byte {}",
-                path.display(),
-                position.saturating_add(start as u64)
-            );
+    let mut cursor = ReverseCursor::new(path)?;
+    loop {
+        let ReverseWindow {
+            bytes,
+            records,
+            progress,
+        } = cursor.advance(work)?;
+        for record in records.into_iter().rev() {
+            let at = format!("{}:byte {}", path.display(), record.offset);
             work.admit_record(&at)?;
             if !visit(
-                &block[start..end],
-                position.saturating_add(start as u64),
-                next,
-                next == transcript_length,
+                &bytes[record.start..record.end],
+                record.offset,
+                record.next,
+                record.terminal,
                 work,
             )? {
                 return Ok(());
             }
         }
+        match progress {
+            ReverseProgress::More(next) => debug_assert!(cursor.is_at(next)),
+            ReverseProgress::Eof(end) => {
+                debug_assert!(cursor.is_at(end));
+                return Ok(());
+            }
+        }
     }
-    Ok(())
+}
+
+impl ReverseCursor {
+    pub(super) fn new(path: &Path) -> Result<Self, Refusal> {
+        let file = File::open(path).map_err(|error| unreadable(path, &error))?;
+        let position = file
+            .metadata()
+            .map_err(|error| unreadable(path, &error))?
+            .len();
+        Ok(Self {
+            file,
+            path: path.to_owned(),
+            position,
+            transcript_length: position,
+            carry: Vec::new(),
+        })
+    }
+
+    pub(super) fn advance(&mut self, work: &mut SessionWork) -> Result<ReverseWindow, Refusal> {
+        if self.position == 0 {
+            return Ok(self.window(Vec::new(), Vec::new()));
+        }
+        let at = format!("{}:byte {}", self.path.display(), self.position);
+        work.check_deadline(&at)?;
+        let read = self.position.min(BACKWARD_CHUNK_BYTES);
+        work.admit_source_bytes(read, &at)?;
+        self.position -= read;
+        self.file
+            .seek(SeekFrom::Start(self.position))
+            .map_err(|error| unreadable(&self.path, &error))?;
+        let mut block = vec![0_u8; read as usize];
+        self.file
+            .read_exact(&mut block)
+            .map_err(|error| unreadable(&self.path, &error))?;
+        let carry = std::mem::take(&mut self.carry);
+        admit_reverse_carry(&block, &carry, &self.path, self.position)?;
+        block.extend_from_slice(&carry);
+        let parse_start = if self.position == 0 {
+            0
+        } else if let Some(split) = block.iter().position(|byte| *byte == b'\n') {
+            self.carry = block[..split].to_vec();
+            split + 1
+        } else {
+            self.carry = block;
+            return Ok(self.window(Vec::new(), Vec::new()));
+        };
+        let mut records = Vec::new();
+        let mut start = parse_start;
+        for (index, byte) in block.iter().enumerate().skip(parse_start) {
+            if *byte == b'\n' {
+                self.push_record(&block, &mut records, start, index, index + 1);
+                start = index + 1;
+            }
+        }
+        if start < block.len() {
+            self.push_record(&block, &mut records, start, block.len(), block.len());
+        }
+        Ok(self.window(block, records))
+    }
+
+    fn push_record(
+        &self,
+        block: &[u8],
+        records: &mut Vec<ReverseRecordRange>,
+        start: usize,
+        mut end: usize,
+        next: usize,
+    ) {
+        while end > start && block[end - 1] == b'\r' {
+            end -= 1;
+        }
+        if start != end {
+            let next = self.position.saturating_add(next as u64);
+            records.push(ReverseRecordRange {
+                start,
+                end,
+                offset: self.position.saturating_add(start as u64),
+                next,
+                terminal: next == self.transcript_length,
+            });
+        }
+    }
+
+    fn window(&self, bytes: Vec<u8>, records: Vec<ReverseRecordRange>) -> ReverseWindow {
+        let continuation = ReverseContinuation {
+            position: self.position,
+            carry_bytes: self.carry.len(),
+        };
+        let progress = if self.position == 0 {
+            ReverseProgress::Eof(continuation)
+        } else {
+            ReverseProgress::More(continuation)
+        };
+        ReverseWindow {
+            bytes,
+            records,
+            progress,
+        }
+    }
+
+    fn is_at(&self, continuation: ReverseContinuation) -> bool {
+        self.position == continuation.position && self.carry.len() == continuation.carry_bytes
+    }
 }
 
 fn unreadable(path: &Path, error: &std::io::Error) -> Refusal {
@@ -390,7 +489,7 @@ mod tests {
                 "{\"timestamp\":\"2026-01-01T00:00:01Z\",\"type\":\"compacted\",\"payload\":{}}\n",
                 "{\"timestamp\":\"2026-01-01T00:00:02Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"context_compacted\"}}\n",
                 "{\"timestamp\":\"2026-01-01T00:00:03Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"x\"}]}}\n",
-                "{\"timestamp\":\"2026-01-01T00:00:04Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"exec_command\",\"call_id\":\"c\",\"arguments\":\"{\\\"cmd\\\":\\\"x\\\"}\"}}\n",
+                "{\"timestamp\":\"2026-01-01T00:00:04Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"exec_command\",\"call_id\":\"c\",\"arguments\":\"{\\\"cmd\\\":\\\"\\\"}\"}}\n",
                 "{\"timestamp\":\"2026-01-01T00:00:05Z\",\"type\":\"compacted\"",
             ),
         )
@@ -480,7 +579,6 @@ mod tests {
         .expect_err("the first retained String exceeds the one-byte budget");
         assert_eq!(refusal.reason(), "session::transcript-work-exhausted");
         assert_eq!(exhausted.report().retained_text_bytes, 0);
-
         assert!(SessionWorkBudget::new(0, 1, 1, 1, 1, deadline).is_err());
     }
 }
