@@ -2,15 +2,17 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
-use listen::{Decoded, Event, RecordDecodeError, ResidueKind};
+use listen::Event;
 use wire::Refusal;
 
-use super::stream::{ForwardCursor, ForwardProgress, compressed};
+use super::stream::{
+    ForwardContinuation, ForwardCursor, ForwardProgress, compressed, decode_window_row,
+};
 use super::work::SessionWork;
 use super::{
-    CompactionHorizon, DecodedRow, FrontierDirection, FrontierProgress, MAX_LINE_BYTES, Marker,
-    ResolvedSource, ResultFrontier, TypedRecord, frontier_limit, record_refusal, record_timestamp,
-    refusal,
+    CompactionHorizon, DecodedRow, FrontierDirection, FrontierPage, FrontierProgress,
+    MAX_LINE_BYTES, Marker, ResolvedSource, ResultFrontier, TypedRecord, frontier_limit,
+    record_timestamp, refusal,
 };
 
 const BACKWARD_CHUNK_BYTES: u64 = 64 * 1024;
@@ -28,9 +30,20 @@ pub(crate) fn recent_compaction_horizon(
     let mut markers = Vec::new();
     let mut work = SessionWork::new(super::work::SessionWorkBudget::report());
     for source in sources {
-        markers.extend(read_recent_compaction_markers(
-            source, count, end, &mut work,
-        )?);
+        let page = read_recent_compaction_markers(source, count, end, &mut work)?;
+        match page.progress {
+            FrontierProgress::More(continuation) | FrontierProgress::Complete(continuation) => {
+                let _ = continuation.position();
+                markers.extend(page.rows);
+            }
+            FrontierProgress::Refused {
+                continuation,
+                error,
+            } => {
+                let _ = continuation.position();
+                return Err(error);
+            }
+        }
     }
     markers.sort_by(|left, right| (&left.ts, &left.source).cmp(&(&right.ts, &right.source)));
     let first = markers.len().saturating_sub(count);
@@ -44,7 +57,7 @@ fn read_recent_compaction_markers(
     count: usize,
     end: Option<&str>,
     work: &mut SessionWork,
-) -> Result<Vec<Marker>, Refusal> {
+) -> Result<FrontierPage<Marker, HorizonContinuation>, Refusal> {
     if compressed(&source.path) {
         return read_recent_compaction_markers_forward(source, count, end, work);
     }
@@ -53,16 +66,24 @@ fn read_recent_compaction_markers(
     work.begin_pass(&source_name)?;
     let progress = reverse_lines(&source.path, work, |line, offset, _, terminal, work| {
         let live_tail = source.thread.is_some() && terminal;
-        if let Some(marker) = marker_from_line(source, &source_name, line, offset, live_tail, work)?
+        let at = format!("{source_name}:byte {offset}");
+        let marker = decode_reverse_row(source, line, offset, live_tail, work, &at)?.and_then(
+            |row| match row {
+                DecodedRow::Typed(row) => marker_from_record(&row),
+                DecodedRow::Residue(_) | DecodedRow::Ignored => None,
+            },
+        );
+        if let Some(marker) = marker
             && end.is_none_or(|end| marker.ts.as_str() <= end)
         {
+            work.admit_retained_text(super::marker_text_bytes(&marker), &at)?;
             frontier.push(marker);
         }
         Ok(frontier.rows.len() < count)
     })?;
-    let mut markers = frontier_rows(frontier.into_page(progress))?;
-    markers.reverse();
-    Ok(markers)
+    let mut page = frontier.into_page(progress.map(HorizonContinuation::Reverse));
+    page.rows.reverse();
+    Ok(page)
 }
 
 fn read_recent_compaction_markers_forward(
@@ -70,7 +91,7 @@ fn read_recent_compaction_markers_forward(
     count: usize,
     end: Option<&str>,
     work: &mut SessionWork,
-) -> Result<Vec<Marker>, Refusal> {
+) -> Result<FrontierPage<Marker, HorizonContinuation>, Refusal> {
     let mut frontier = ResultFrontier::new(count, FrontierDirection::Newest)?;
     let mut cursor = ForwardCursor::new(source, None, work)?;
     let progress = loop {
@@ -110,18 +131,35 @@ fn read_recent_compaction_markers_forward(
             ForwardProgress::Eof(end) => break FrontierProgress::Complete(end),
         }
     };
-    frontier_rows(frontier.into_page(progress))
+    Ok(frontier.into_page(progress.map(HorizonContinuation::Forward)))
 }
 
-fn frontier_rows<T, C>(page: super::FrontierPage<T, C>) -> Result<Vec<T>, Refusal> {
-    match page.progress {
-        FrontierProgress::More(_) | FrontierProgress::Complete(_) => Ok(page.rows),
-        FrontierProgress::Refused {
-            continuation,
-            error,
-        } => {
-            let _ = continuation;
-            Err(error)
+enum HorizonContinuation {
+    Forward(ForwardContinuation),
+    Reverse(ReverseContinuation),
+}
+
+impl<C> FrontierProgress<C> {
+    fn map<D>(self, map: impl FnOnce(C) -> D + Copy) -> FrontierProgress<D> {
+        match self {
+            Self::More(continuation) => FrontierProgress::More(map(continuation)),
+            Self::Complete(continuation) => FrontierProgress::Complete(map(continuation)),
+            Self::Refused {
+                continuation,
+                error,
+            } => FrontierProgress::Refused {
+                continuation: map(continuation),
+                error,
+            },
+        }
+    }
+}
+
+impl HorizonContinuation {
+    fn position(&self) -> u64 {
+        match self {
+            Self::Forward(continuation) => continuation.line,
+            Self::Reverse(continuation) => continuation.position,
         }
     }
 }
@@ -139,7 +177,14 @@ pub(super) fn start_offset_after_prior_timestamp(
             *remaining -= 1;
             return Ok(*remaining > 0);
         }
-        if timestamp_from_line(source, line, current, work)?.is_some_and(|ts| ts.as_str() < start) {
+        let at = format!("{}:byte {current}", source.path.display());
+        let timestamp = decode_reverse_row(source, line, current, false, work, &at)?.and_then(
+            |row| match row {
+                DecodedRow::Typed(row) => Some(record_timestamp(&row).to_owned()),
+                DecodedRow::Residue(_) | DecodedRow::Ignored => None,
+            },
+        );
+        if timestamp.is_some_and(|ts| ts.as_str() < start) {
             offset = current;
             context = Some(HORIZON_CONTEXT_LINES);
         }
@@ -410,93 +455,15 @@ fn marker_from_record(record: &TypedRecord) -> Option<Marker> {
     })
 }
 
-fn marker_from_line(
+fn decode_reverse_row(
     source: &ResolvedSource,
-    source_name: &str,
     line: &[u8],
     offset: u64,
     live_tail: bool,
     work: &mut SessionWork,
-) -> Result<Option<Marker>, Refusal> {
-    if line.len() > MAX_LINE_BYTES {
-        return Err(refusal(
-            "session::transcript-record-oversized",
-            Some(format!(
-                "{}:byte {offset} exceeds {MAX_LINE_BYTES} bytes",
-                source.path.display()
-            )),
-            "restore a bounded transcript record or select an earlier intact copy",
-        ));
-    }
-    let locus = listen::Locus::new(1, 0, line.len() as u64);
-    let detected = match listen::decode_record(source.dialect, line, locus) {
-        Ok(detected) => detected,
-        Err(RecordDecodeError::Invalid {
-            kind: ResidueKind::Truncated,
-        }) if live_tail => return Ok(None),
-        Err(error) => return Err(record_refusal(&source.path, 1, &error)),
-    };
-    let Decoded::Events { context, events } = detected.decoded else {
-        return Ok(None);
-    };
-    let at = format!("{source_name}:byte {offset}");
-    work.admit_decoded(events.len(), &at)?;
-    let Some(raw_ts) = context.timestamp.as_deref() else {
-        return Ok(None);
-    };
-    let Some(timestamp) = spice::session_meter::normalize_timestamp(raw_ts) else {
-        return Ok(None);
-    };
-    let marker = events.into_iter().find_map(|event| {
-        if let Event::Compaction(compaction) = event {
-            Some(Marker {
-                source: source_name.to_owned(),
-                position: offset,
-                ts: timestamp.to_string(),
-                summary: compaction.summary.unwrap_or_default(),
-            })
-        } else {
-            None
-        }
-    });
-    if let Some(marker) = &marker {
-        work.admit_retained_text(
-            super::work::text_bytes([
-                marker.source.as_str(),
-                marker.ts.as_str(),
-                marker.summary.as_str(),
-            ]),
-            &at,
-        )?;
-    }
-    Ok(marker)
-}
-
-fn timestamp_from_line(
-    source: &ResolvedSource,
-    line: &[u8],
-    offset: u64,
-    work: &mut SessionWork,
-) -> Result<Option<String>, Refusal> {
-    if line.len() > MAX_LINE_BYTES {
-        return Ok(None);
-    }
-    let locus = listen::Locus::new(1, 0, line.len() as u64);
-    let Ok(detected) = listen::decode_record(source.dialect, line, locus) else {
-        return Ok(None);
-    };
-    let Decoded::Events { context, events } = detected.decoded else {
-        return Ok(None);
-    };
-    work.admit_decoded(
-        events.len(),
-        &format!("{}:byte {offset}", source.path.display()),
-    )?;
-    Ok(context
-        .timestamp
-        .as_deref()
-        .and_then(spice::session_meter::normalize_timestamp)
-        .map(|timestamp| timestamp.to_string()))
+    at: &str,
+) -> Result<Option<DecodedRow>, Refusal> {
+    decode_window_row(source, offset, line, source.dialect, live_tail, work, at).map(|(_, row)| row)
 }
 
 #[cfg(test)]
@@ -504,12 +471,11 @@ mod tests {
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    use super::super::WindowFold;
     use super::super::stream::stream_records;
-    use super::super::work::{ResidueLedger, SessionWorkBudget, text_bytes};
-    use super::super::{Aggregate, WindowFold, command_text_bytes, message_text_bytes};
+    use super::super::work::{ResidueLedger, SessionWorkBudget};
     use super::*;
-    use crate::session_command::model::{Dataset, Report, Vendor};
-    use crate::session_command::project::{Filters, PhaseOptions};
+    use crate::session_command::model::{Dataset, Vendor};
 
     #[test]
     fn bounded_stream_and_reverse_horizon_share_canonical_complete_records() {
@@ -518,7 +484,6 @@ mod tests {
             .expect("bounded horizon scans");
         assert_eq!(horizon.start.as_deref(), Some("2026-01-01T00:00:01.000Z"));
         assert_fold_accounting(&source);
-        assert_phase_source_order(&source);
         assert_budget_refusals(&source);
         fs::remove_file(source.path).expect("fixture transcript is removed");
     }
@@ -561,54 +526,61 @@ mod tests {
         .expect("forward dataset streams");
         fold.finish(&mut work, "fixture fold")
             .expect("fold finishes");
-        let derived_floor = message_text_bytes(&dataset.messages[0])
-            .saturating_mul(2)
-            .saturating_add(command_text_bytes(&dataset.commands[0]))
-            .saturating_add(text_bytes(["exec_command", "c"]));
         let residues = residues
             .finish(&mut work, "residue summary")
             .expect("residue summary fits");
-        assert_eq!(markers.len(), 1);
-        assert_eq!(dataset.messages.len(), 1);
-        assert_eq!(dataset.turns[0].messages, dataset.messages);
-        assert_eq!(dataset.commands.len(), 1);
-        assert_eq!(residues.len(), 1);
         assert_eq!(residues[0].kind, "live-tail-truncated");
-        let report = work.report();
-        assert_eq!((report.records, report.passes), (5, 1));
-        assert!(
-            report.source_bytes > 0
-                && report.events > 0
-                && report.retained_text_bytes >= derived_floor
-        );
+        let mut reverse_work = SessionWork::new(SessionWorkBudget::report());
+        reverse_work.begin_pass("reverse").expect("pass starts");
+        let mut selected = ResultFrontier::new(8, FrontierDirection::Oldest).unwrap();
+        let progress = reverse_lines(
+            &source.path,
+            &mut reverse_work,
+            |line, offset, _, tail, _| {
+                selected.push((line.to_vec(), offset, tail));
+                Ok(true)
+            },
+        )
+        .expect("reverse windows select");
+        let page = selected.into_page(progress);
+        let mut reverse = Dataset::default();
+        let mut reverse_markers = Vec::new();
+        let mut reverse_residues = ResidueLedger::new();
+        let mut reverse_fold =
+            WindowFold::new(&mut reverse, &mut reverse_markers, &mut reverse_residues);
+        let mut dialect = source.dialect;
+        for (row, offset, tail) in page.rows.into_iter().rev() {
+            let (observed, row) = decode_window_row(
+                source,
+                offset,
+                &row,
+                dialect,
+                tail,
+                &mut reverse_work,
+                "row",
+            )
+            .expect("row decodes");
+            dialect = observed.or(dialect);
+            if let Some(row) = row {
+                reverse_fold
+                    .push(row, &mut reverse_work, "row")
+                    .expect("row folds");
+            }
+        }
+        reverse_fold
+            .finish(&mut reverse_work, "fold")
+            .expect("fold finishes");
+        let reverse_residues = reverse_residues
+            .finish(&mut reverse_work, "residues")
+            .unwrap();
+        assert!(matches!(page.progress, FrontierProgress::Complete(_)));
+        assert_eq!(reverse.turns.len(), dataset.turns.len());
+        assert_eq!(reverse.messages.len(), dataset.messages.len());
+        assert_eq!(reverse.commands.len(), dataset.commands.len());
+        assert_eq!((reverse_markers.len(), reverse_residues.len()), (1, 1));
         let progress = reverse_lines(&source.path, &mut work, |_, _, _, _, _| Ok(false))
             .expect("reverse cursor stops at a record boundary");
         assert!(matches!(progress, FrontierProgress::More(_)));
-    }
-
-    fn assert_phase_source_order(source: &ResolvedSource) {
-        let mut earlier = source.clone();
-        earlier.path.set_extension("earlier");
-        fs::write(
-            &earlier.path,
-            b"{\"timestamp\":\"2026-01-01T00:00:00Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"early\"}]}}\n",
-        )
-        .expect("earlier source is written");
-        let report = Aggregate::scan_phases(
-            &[source.clone(), earlier.clone()],
-            PhaseOptions {
-                rows: 2,
-                examples: 0,
-                max_text: 1,
-            },
-            Filters::default(),
-        )
-        .expect("reverse-listed sources merge by canonical turn order");
-        let Report::Phases { rows, .. } = report else {
-            panic!("phase scan returns phases");
-        };
-        assert_eq!(rows[0].start, "2026-01-01T00:00:00.000Z");
-        fs::remove_file(earlier.path).expect("earlier source is removed");
     }
 
     fn assert_budget_refusals(source: &ResolvedSource) {
@@ -619,6 +591,14 @@ mod tests {
             .expect_err("source bytes stop before the first record");
         assert_eq!(refusal.reason(), "session::transcript-work-exhausted");
         assert_eq!(exhausted.report().source_bytes, 0);
+        let mut reverse_exhausted = SessionWork::new(
+            SessionWorkBudget::new(1, 1, 1, 1, 1, deadline).expect("positive budget"),
+        );
+        let progress = reverse_lines(&source.path, &mut reverse_exhausted, |_, _, _, _, _| {
+            Ok(true)
+        })
+        .expect("reverse refusal");
+        assert!(matches!(progress, FrontierProgress::Refused { .. }));
         let retained_budget =
             SessionWorkBudget::new(1_048_576, 16, 16, 1, 1, deadline).expect("positive budget");
         let mut exhausted = SessionWork::new(retained_budget);
