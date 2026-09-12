@@ -278,7 +278,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn continuously_ready_classes_follow_three_to_one_fairness_and_fifo() {
+    async fn server_ready_work_exposes_one_fair_fifo_burst_then_its_tail() {
         let (sender, mut receiver) = channel(8);
         for item in [1, 2] {
             send(&sender, Class::Ordinary, item, false).await;
@@ -287,7 +287,11 @@ mod tests {
             send(&sender, Class::Demand, item, false).await;
         }
 
-        let mut received = vec![receiver.recv().await.expect("queued work")];
+        let mut received = Vec::new();
+        for _ in 0..FAIR_CYCLE_LIMIT {
+            received.push(receiver.try_recv().expect("server-scheduled burst"));
+        }
+        assert_eq!(received, [10, 11, 12, 1]);
         while let Ok(item) = receiver.try_recv() {
             received.push(item);
         }
