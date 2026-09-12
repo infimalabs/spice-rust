@@ -27,6 +27,7 @@
 //! `1970-01-01T00:00:00Z`, reintroducing this very defect in a narrower range.
 
 use std::fmt;
+use std::io;
 use std::str::FromStr;
 
 use serde::de::{Deserializer, Error as DeError};
@@ -357,6 +358,21 @@ impl Digest {
     #[must_use]
     pub fn compute(domain: Domain, bytes: &[u8]) -> Self {
         Self(digest::compute(domain, bytes).to_hex().as_str().to_owned())
+    }
+
+    /// Stream at most `limit` body bytes into one domain-separated digest.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a zero limit, a reader failure, or the first byte beyond the
+    /// admitted limit. The returned length counts only complete body bytes.
+    pub fn compute_reader(
+        domain: Domain,
+        reader: impl io::Read,
+        limit: u64,
+    ) -> io::Result<(u64, Self)> {
+        digest::compute_reader(domain, reader, limit)
+            .map(|(length, digest)| (length, Self(digest.to_hex().as_str().to_owned())))
     }
 
     /// The digest as written.

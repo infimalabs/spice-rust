@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::thread;
 
 use blake3::hazmat::{
@@ -10,6 +11,7 @@ use super::Domain;
 
 const PARALLEL_INPUT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_HASH_WORKERS: usize = 16;
+const READER_BUFFER_BYTES: usize = 64 * 1024;
 
 // Preserve the standard BLAKE3 tree and domain framing while distributing only
 // the large executable inputs that dominate installed-hook authentication.
@@ -32,11 +34,53 @@ pub(super) fn compute(domain: Domain, bytes: &[u8]) -> Hash {
 }
 
 fn sequential(domain: Domain, bytes: &[u8]) -> Hash {
+    let mut hasher = framed_hasher(domain);
+    hasher.update(bytes);
+    hasher.finalize()
+}
+
+pub(super) fn compute_reader(
+    domain: Domain,
+    mut reader: impl Read,
+    limit: u64,
+) -> std::io::Result<(u64, Hash)> {
+    if limit == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "digest reader byte limit must be positive",
+        ));
+    }
+    let mut hasher = framed_hasher(domain);
+    let mut buffer = [0_u8; READER_BUFFER_BYTES];
+    let mut length = 0_u64;
+    loop {
+        let remaining = limit - length;
+        if remaining == 0 {
+            return match reader.read(&mut buffer[..1]) {
+                Ok(0) => Ok((length, hasher.finalize())),
+                Ok(_) => Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("digest reader exceeds its {limit}-byte limit"),
+                )),
+                Err(error) => Err(error),
+            };
+        }
+        let capacity = usize::try_from(remaining.min(READER_BUFFER_BYTES as u64))
+            .expect("reader buffer capacity fits usize");
+        let read = reader.read(&mut buffer[..capacity])?;
+        if read == 0 {
+            return Ok((length, hasher.finalize()));
+        }
+        hasher.update(&buffer[..read]);
+        length += read as u64;
+    }
+}
+
+fn framed_hasher(domain: Domain) -> Hasher {
     let mut hasher = Hasher::new();
     hasher.update(domain.tag().as_bytes());
     hasher.update(&[0]);
-    hasher.update(bytes);
-    hasher.finalize()
+    hasher
 }
 
 #[derive(Clone, Copy)]
@@ -121,7 +165,18 @@ fn divide_workers(workers: usize) -> (usize, usize) {
 
 #[cfg(test)]
 mod tests {
+    use std::io;
+
     use super::*;
+
+    struct FailingReader;
+
+    impl Read for FailingReader {
+        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+            let _ = bytes;
+            Err(io::Error::other("fixture read failure"))
+        }
+    }
 
     #[test]
     fn parallel_tree_matches_blake3_for_irregular_boundaries() {
@@ -147,5 +202,28 @@ mod tests {
                 );
             }
         }
+        let body = b"bounded reader";
+        let (length, streamed) =
+            compute_reader(Domain::DistArtifact, body.as_slice(), body.len() as u64)
+                .expect("exact-limit body streams");
+        assert_eq!(length, body.len() as u64);
+        assert_eq!(streamed, compute(Domain::DistArtifact, body));
+        for (limit, kind) in [
+            (0, io::ErrorKind::InvalidInput),
+            (body.len() as u64 - 1, io::ErrorKind::InvalidData),
+        ] {
+            assert_eq!(
+                compute_reader(Domain::DistArtifact, body.as_slice(), limit)
+                    .expect_err("invalid bound refuses")
+                    .kind(),
+                kind
+            );
+        }
+        assert_eq!(
+            compute_reader(Domain::DistArtifact, FailingReader, 1)
+                .expect_err("reader failure remains explicit")
+                .kind(),
+            io::ErrorKind::Other
+        );
     }
 }
