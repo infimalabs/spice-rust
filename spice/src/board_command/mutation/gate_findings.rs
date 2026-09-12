@@ -1293,7 +1293,13 @@ fn guard_gate_finding_plan(
     instrument_tasks: std::collections::BTreeSet<wire::TaskStamp>,
 ) {
     write.guard(JournalGuard::new(move |read| {
-        let heads = read.task_heads()?;
+        let page = read.task_head_page(None, journal::FactReadBudget::RETAINED)?;
+        if let Some(continuation) = page.continuation {
+            return Err(GuardError::refused(format!(
+                "gate finding guard requires task continuation after {continuation}"
+            )));
+        }
+        let heads = page.rows;
         if current_open_instrument_tasks(&heads, instrument)? != instrument_tasks {
             return Err(GuardError::refused(
                 "gate::finding-instrument-moved".to_owned(),

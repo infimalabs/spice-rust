@@ -19,13 +19,20 @@ impl Change {
         };
         let expected = self.trust_blocked;
         write.guard(JournalGuard::new(move |read| {
-            let environment = wire::Environment::journal_schema(journal::SCHEMA_VERSION)
-                .expect("the compiled journal schema is positive")
-                .with_trust_heads(
-                    read.trust_heads()?
+            let mut environment = wire::Environment::journal_schema(journal::SCHEMA_VERSION)
+                .expect("the compiled journal schema is positive");
+            if let Some(digest) = requirements.as_slice().iter().find_map(|requirement| {
+                let wire::EnvironmentRequirement::TrustGrant { value } = requirement else {
+                    return None;
+                };
+                Some(value)
+            }) {
+                environment = environment.with_trust_heads(
+                    read.trust_head(digest)?
                         .into_iter()
                         .map(journal::JournalHead::into_body),
                 );
+            }
             if requirements.has_unsatisfied_trust_grant(&environment) == expected {
                 Ok(())
             } else {

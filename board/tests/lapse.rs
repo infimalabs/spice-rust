@@ -84,12 +84,9 @@ fn claim(journal: &mut Journal, command: u8) {
 
 /// Seed that same claim with a caller-chosen opening boundary.
 fn claim_opening(journal: &mut Journal, command: u8, source: body::SourceBoundary) {
-    let heads = journal
-        .read_with(|read| read.task_heads())
-        .expect("heads before the claim");
-    let selected = heads
-        .iter()
-        .find(|heads| heads.statement().body().born == born())
+    let selected = journal
+        .read_with(|read| read.task_heads_for(&born()))
+        .expect("heads before the claim")
         .expect("the fixture task is on the board");
     let workflow = selected.workflow().body().clone();
     let expected = vec![
@@ -174,12 +171,9 @@ fn claim_opening(journal: &mut Journal, command: u8, source: body::SourceBoundar
 /// witnesses, so both writers below re-read the heads instead of restating
 /// positions an earlier write happened to leave behind.
 fn possession(journal: &Journal) -> (ClaimHead, LeaseHead, Vec<Witness>) {
-    let heads = journal
-        .read_with(|read| read.task_heads())
-        .expect("heads before the possession change");
-    let selected = heads
-        .iter()
-        .find(|heads| heads.statement().body().born == born())
+    let selected = journal
+        .read_with(|read| read.task_heads_for(&born()))
+        .expect("heads before the possession change")
         .expect("the fixture task is on the board");
     let claim = selected.claim().expect("the fixture task is claimed");
     let lease = selected.lease().expect("an active claim carries its lease");

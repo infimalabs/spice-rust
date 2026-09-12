@@ -126,13 +126,19 @@ impl Authority {
             let _ = read
                 .cursor()
                 .map_err(|error| format!("journal cursor is invalid: {error}"))?;
+            let tasks = read
+                .task_head_page(None, journal::FactReadBudget::RETAINED)
+                .map_err(|error| format!("journal task heads are invalid: {error}"))?;
+            if let Some(continuation) = tasks.continuation {
+                return Err(format!(
+                    "journal task heads require continuation after {continuation}"
+                ));
+            }
             Ok(AuthoritySnapshot {
                 facts: read
                     .fact_snapshot()
                     .map_err(|error| format!("journal facts are invalid: {error}"))?,
-                task_heads: read
-                    .task_heads()
-                    .map_err(|error| format!("journal task heads are invalid: {error}"))?,
+                task_heads: tasks.rows,
                 residency: read
                     .residency_head()
                     .map_err(|error| format!("journal residency head is invalid: {error}"))?
