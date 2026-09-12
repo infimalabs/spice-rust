@@ -2,7 +2,9 @@ use super::*;
 
 mod guard;
 pub(super) use guard::guard_allocation;
-use guard::{refuse_active_claim_conflict, witnesses_hold};
+use guard::{
+    current_task_heads, current_trust_heads, refuse_active_claim_conflict, witnesses_hold,
+};
 mod capture;
 pub(super) use capture::guard_capture;
 

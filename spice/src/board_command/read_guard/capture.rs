@@ -11,13 +11,7 @@ pub(in crate::board_command) fn guard_capture(
 ) {
     write.guard(JournalGuard::new(move |read| {
         witnesses_hold(read, &expected)?;
-        let page = read.task_head_page(None, journal::FactReadBudget::RETAINED)?;
-        if let Some(continuation) = page.continuation {
-            return Err(GuardError::refused(format!(
-                "capture guard requires task continuation after {continuation}"
-            )));
-        }
-        let heads = page.rows;
+        let heads = current_task_heads(read)?;
         let current = heads
             .iter()
             .map(|task| {
@@ -58,15 +52,10 @@ pub(in crate::board_command) fn guard_capture(
             .iter()
             .find(|entry| entry.handle() == &task)
             .ok_or_else(|| GuardError::refused("board::witness-moved: capture task disappeared"))?;
-        let trust = read.trust_head_page(None, journal::FactReadBudget::RETAINED)?;
-        if let Some(continuation) = trust.continuation {
-            return Err(GuardError::refused(format!(
-                "capture guard requires trust continuation after {continuation}"
-            )));
-        }
+        let trust = current_trust_heads(read)?;
         let environment = wire::Environment::journal_schema(journal::SCHEMA_VERSION)
             .expect("the compiled journal schema is positive")
-            .with_trust_heads(trust.rows.into_iter().map(journal::JournalHead::into_body));
+            .with_trust_heads(trust.into_iter().map(journal::JournalHead::into_body));
         let eligible = match possession {
             Possession::Capture => board::capturable_entry(&entries, entry, &actor, &environment),
             Possession::Steal => board::stealable_entry(&entries, entry, &actor, &environment),

@@ -39,22 +39,11 @@ pub(in crate::board_command) fn guard_allocation(
                 "board::witness-moved: allocator subscription head changed",
             ));
         }
-        let page = read.task_head_page(None, journal::FactReadBudget::RETAINED)?;
-        if let Some(continuation) = page.continuation {
-            return Err(GuardError::refused(format!(
-                "allocator guard requires task continuation after {continuation}"
-            )));
-        }
-        let heads = page.rows;
-        let trust = read.trust_head_page(None, journal::FactReadBudget::RETAINED)?;
-        if let Some(continuation) = trust.continuation {
-            return Err(GuardError::refused(format!(
-                "allocator guard requires trust continuation after {continuation}"
-            )));
-        }
+        let heads = current_task_heads(read)?;
+        let trust = current_trust_heads(read)?;
         let environment = wire::Environment::journal_schema(journal::SCHEMA_VERSION)
             .expect("the compiled journal schema is positive")
-            .with_trust_heads(trust.rows.into_iter().map(journal::JournalHead::into_body));
+            .with_trust_heads(trust.into_iter().map(journal::JournalHead::into_body));
         let current = heads
             .iter()
             .map(|task| {
@@ -268,14 +257,7 @@ fn board_witness_holds(read: &JournalRead<'_>, witness: &Witness) -> Result<bool
 }
 
 fn board_barrier_from_read(read: &JournalRead<'_>) -> Result<Digest, GuardError> {
-    let page = read.task_head_page(None, journal::FactReadBudget::RETAINED)?;
-    if let Some(continuation) = page.continuation {
-        return Err(GuardError::refused(format!(
-            "board barrier requires task continuation after {continuation}"
-        )));
-    }
-    let heads = page
-        .rows
+    let heads = current_task_heads(read)?
         .into_iter()
         .map(|task| {
             (
@@ -291,4 +273,34 @@ fn board_barrier_from_read(read: &JournalRead<'_>) -> Result<Digest, GuardError>
     let bytes = wire::encode(&heads)
         .map_err(|error| GuardError::Invalid(format!("board barrier did not encode: {error}")))?;
     Ok(Digest::compute(Domain::BoardBarrier, &bytes))
+}
+
+pub(super) fn current_task_heads(
+    read: &JournalRead<'_>,
+) -> Result<Vec<journal::TaskHeads>, GuardError> {
+    let mut heads = Vec::new();
+    let mut after = None;
+    loop {
+        let page = read.task_head_page(after.as_ref(), journal::FactReadBudget::RETAINED)?;
+        heads.extend(page.rows);
+        let Some(continuation) = page.continuation else {
+            return Ok(heads);
+        };
+        after = Some(continuation);
+    }
+}
+
+pub(super) fn current_trust_heads(
+    read: &JournalRead<'_>,
+) -> Result<Vec<journal::JournalHead<wire::TrustHead>>, GuardError> {
+    let mut heads = Vec::new();
+    let mut after = None;
+    loop {
+        let page = read.trust_head_page(after.as_ref(), journal::FactReadBudget::RETAINED)?;
+        heads.extend(page.rows);
+        let Some(continuation) = page.continuation else {
+            return Ok(heads);
+        };
+        after = Some(continuation);
+    }
 }

@@ -5,7 +5,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{self, BufRead as _, BufReader, Read as _, Seek as _, SeekFrom};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 #[cfg(unix)]
@@ -272,7 +272,7 @@ impl SessionCompactions {
     fn report_scan_once(
         &mut self,
         lane: CanonicalUuid,
-        path: &PathBuf,
+        path: &Path,
         error: io::Error,
         diagnostic: &mut dyn io::Write,
     ) {
@@ -291,7 +291,7 @@ impl SessionCompactions {
             );
         self.report_once(
             lane,
-            (Some(path.clone()), class),
+            (Some(path.to_path_buf()), class),
             format!("{}: {error}", path.display()),
             diagnostic,
         );
