@@ -4,7 +4,7 @@
 //! observes one immutable generation only after a scalar authority barrier
 //! proves that generation current.
 
-use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
+use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant as Monotonic};
@@ -40,6 +40,8 @@ struct ReadState {
     generation: Option<Arc<Generation>>,
     consent: Arc<consent::Queue>,
     initial: Option<InitialCatchUp>,
+    current: Option<CurrentCatchUp>,
+    budget: journal::FactReadBudget,
 }
 
 #[derive(Clone, Copy)]
@@ -47,6 +49,13 @@ struct InitialCatchUp {
     after: Option<Seq>,
     authority: Seq,
     budget: journal::FactReadBudget,
+    steps: u64,
+}
+
+#[derive(Clone, Copy)]
+struct CurrentCatchUp {
+    next: Seq,
+    authority: Seq,
     steps: u64,
 }
 
@@ -67,6 +76,7 @@ struct Publication {
 }
 
 const CURRENT_WAIT: Duration = Duration::from_secs(10);
+const STOP_WAIT: Duration = Duration::from_millis(250);
 
 /// One coalescing background publisher and its latest immutable generation.
 pub(super) struct CurrentReads {
@@ -74,6 +84,7 @@ pub(super) struct CurrentReads {
     published: Arc<(Mutex<Publication>, Condvar)>,
     refresh: Option<SyncSender<()>>,
     worker: Option<JoinHandle<()>>,
+    stopped: Option<Receiver<()>>,
 }
 
 impl CurrentReads {
@@ -105,10 +116,12 @@ impl CurrentReads {
         let worker_reader = reader.clone();
         let worker_published = Arc::clone(&published);
         let worker_state = Arc::clone(&state);
+        let (stopped, stopped_receiver) = mpsc::sync_channel(1);
         let worker = thread::Builder::new()
             .name("spice-read-materializer".to_owned())
             .spawn(move || {
                 run_worker(worker_reader, requests, worker_state, worker_published);
+                let _ = stopped.send(());
             })
             .map_err(|error| format!("read materializer thread did not start: {error}"))?;
         refresh
@@ -119,6 +132,7 @@ impl CurrentReads {
             published,
             refresh: Some(refresh),
             worker: Some(worker),
+            stopped: Some(stopped_receiver),
         })
     }
 
@@ -203,7 +217,11 @@ fn validate_progress(through: Option<Seq>, target: Seq, authority: Seq) -> Resul
 impl Drop for CurrentReads {
     fn drop(&mut self) {
         drop(self.refresh.take());
-        if let Some(worker) = self.worker.take() {
+        let stopped = self
+            .stopped
+            .take()
+            .is_some_and(|stopped| stopped.recv_timeout(STOP_WAIT).is_ok());
+        if stopped && let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
     }
@@ -216,19 +234,31 @@ fn run_worker(
     published: Arc<(Mutex<Publication>, Condvar)>,
 ) {
     while requests.recv().is_ok() {
-        while let Ok(()) = requests.try_recv() {}
-        let replacement = match advance_generation(&reader, &state) {
-            Ok(publication) => publication,
-            Err(error) => Published::Fault(error),
-        };
-        let (current, changed) = &*published;
-        let Ok(mut current) = current.lock() else {
-            return;
-        };
-        current.revision = current.revision.wrapping_add(1);
-        current.value = replacement;
-        drop(current);
-        changed.notify_all();
+        loop {
+            loop {
+                match requests.try_recv() {
+                    Ok(()) => {}
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => return,
+                }
+            }
+            let replacement = match advance_generation(&reader, &state) {
+                Ok(publication) => publication,
+                Err(error) => Published::Fault(error),
+            };
+            let pending = matches!(replacement, Published::Pending { .. });
+            let (current, changed) = &*published;
+            let Ok(mut current) = current.lock() else {
+                return;
+            };
+            current.revision = current.revision.wrapping_add(1);
+            current.value = replacement;
+            drop(current);
+            changed.notify_all();
+            if !pending {
+                break;
+            }
+        }
     }
 }
 
@@ -306,10 +336,12 @@ fn advance_current_generation(
         .cursor()
         .map_err(|error| format!("authority cursor is unreadable: {error}"))?
         .ok_or_else(|| "running resident has no durable fact cursor".to_owned())?;
-    let generation = state
-        .generation
-        .as_ref()
-        .ok_or_else(|| "read materializer has no admitted generation".to_owned())?;
+    let generation = Arc::clone(
+        state
+            .generation
+            .as_ref()
+            .ok_or_else(|| "read materializer has no admitted generation".to_owned())?,
+    );
     let admitted = generation.cursor;
     if authority < admitted {
         return Err(format!(
@@ -317,61 +349,71 @@ fn advance_current_generation(
         ));
     }
     if authority == admitted {
-        return Ok(Published::Ready(Arc::clone(generation)));
+        return Ok(Published::Ready(generation));
     }
 
-    let count = usize::try_from(authority.get() - admitted.get())
-        .map_err(|_| "committed read-materialization delta exceeds this platform".to_owned())?;
-    let mut start = journal::FactPageStart::After(Some(admitted));
-    let mut rows = Vec::new();
-    let mut steps = 0_u64;
-    loop {
-        let packed = reader
-            .canvas_facts(start, authority, journal::FactReadBudget::RETAINED)
-            .map_err(|error| format!("read materialization delta is unreadable: {error}"))?;
-        steps = steps.saturating_add(1);
-        if packed.rows.is_empty() {
-            return Err(format!(
-                "read materialization page ended before authority {authority}"
-            ));
-        }
-        rows.extend(packed.rows);
-        let Some(overflow) = packed.overflow else {
-            break;
-        };
-        start = journal::FactPageStart::At(overflow.continuation);
+    let mut catch_up = state.current.unwrap_or(CurrentCatchUp {
+        next: Seq::new(admitted.get().saturating_add(1))
+            .ok_or_else(|| "read materialization cursor range is exhausted".to_owned())?,
+        authority,
+        steps: 0,
+    });
+    if authority > catch_up.authority {
+        catch_up.authority = authority;
     }
-    if rows.len() != count
-        || rows.first().map(|row| row.seq.get()) != Some(admitted.get() + 1)
-        || rows.last().map(|row| row.seq) != Some(authority)
-    {
+    let packed = reader
+        .canvas_facts(
+            journal::FactPageStart::At(catch_up.next),
+            catch_up.authority,
+            state.budget,
+        )
+        .map_err(|error| format!("read materialization delta is unreadable: {error}"))?;
+    catch_up.steps = catch_up.steps.saturating_add(1);
+    if packed.rows.first().map(|row| row.seq) != Some(catch_up.next) {
         return Err(format!(
-            "read materialization expected committed range {}..={authority}, received {:?}..={:?}",
-            admitted.get() + 1,
-            rows.first().map(|row| row.seq),
-            rows.last().map(|row| row.seq)
+            "read materialization expected page at {}, received {:?}..={:?}",
+            catch_up.next,
+            packed.rows.first().map(|row| row.seq),
+            packed.rows.last().map(|row| row.seq),
         ));
     }
 
-    let consent_rebuilt = rows
+    let consent_rebuilt = packed
+        .rows
         .iter()
         .any(|row| consent::Queue::observes(row.fact.kind()));
     let consent = if consent_rebuilt {
         let mut consent = state.consent.as_ref().clone();
         consent
-            .advance(rows.iter())
+            .advance(packed.rows.iter())
             .map_err(|error| format!("consent materialization is invalid: {error}"))?;
         Arc::new(consent)
     } else {
         Arc::clone(&state.consent)
     };
+    state.consent = Arc::clone(&consent);
+    if let Some(overflow) = packed.overflow {
+        let through = packed.rows.last().map(|row| row.seq);
+        catch_up.next = overflow.continuation;
+        state.current = Some(catch_up);
+        return Ok(Published::Pending {
+            through,
+            authority: catch_up.authority,
+        });
+    }
+    if packed.rows.last().map(|row| row.seq) != Some(catch_up.authority) {
+        return Err(format!(
+            "read materialization page ended before authority {}",
+            catch_up.authority
+        ));
+    }
     let generation = Arc::new(Generation {
-        cursor: authority,
+        cursor: catch_up.authority,
         consent: Arc::clone(&consent),
-        materialization_steps: steps,
+        materialization_steps: catch_up.steps,
     });
-    state.consent = consent;
     state.generation = Some(Arc::clone(&generation));
+    state.current = None;
     Ok(Published::Ready(generation))
 }
 
@@ -402,6 +444,8 @@ fn build_initial(
                 budget,
                 steps: 0,
             }),
+            current: None,
+            budget,
         },
     ))
 }
