@@ -552,12 +552,7 @@ fn commit_life_callback(
         let input: HtmlInputElement = event.target_unchecked_into();
         let index = input.value().parse::<usize>().unwrap_or(0).min(2);
         let life = LineageLife::ALL[index];
-        controls.dispatch(LineageControlAction::RequestLife {
-            lineage,
-            authoritative_life,
-            life,
-        });
-        send_action(
+        if !admit_action(
             &sender,
             ClientAction::ConfigureLineage {
                 topology_revision,
@@ -565,7 +560,14 @@ fn commit_life_callback(
                 member: None,
                 life: Some(life.wire()),
             },
-        );
+        ) {
+            return;
+        }
+        controls.dispatch(LineageControlAction::RequestLife {
+            lineage,
+            authoritative_life,
+            life,
+        });
     })
 }
 

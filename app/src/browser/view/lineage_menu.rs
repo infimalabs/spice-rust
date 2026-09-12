@@ -152,7 +152,7 @@ fn render_global_settings(runtime: Option<&CanvasRuntime>, sender: &SenderHandle
     let sender = sender.clone();
     let onclick = Callback::from(move |_| {
         if enabled {
-            send_action(&sender, ClientAction::FastMode(!fast_mode));
+            let _admitted = admit_action(&sender, ClientAction::FastMode(!fast_mode));
         }
     });
     html! {
@@ -635,7 +635,7 @@ fn send_member(
     member: CanonicalUuid,
     topology_revision: u64,
 ) {
-    send_action(
+    let _admitted = admit_action(
         sender,
         ClientAction::ConfigureLineage {
             topology_revision,

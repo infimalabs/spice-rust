@@ -407,6 +407,7 @@ enum ClientAction {
         lineages: Vec<LineageArrangement>,
     },
     Note {
+        id: CanonicalUuid,
         task: TaskHandle,
         note: String,
     },
@@ -417,6 +418,8 @@ enum ClientAction {
     /// tile was drawn from. Recomputing them at the socket would let the tile
     /// name one lane while the command named another.
     Steer {
+        id: CanonicalUuid,
+        fanout: CanonicalUuid,
         lane: CanonicalUuid,
         occupant: CanonicalUuid,
         epoch: CanonicalUuid,
@@ -800,9 +803,13 @@ fn note_submit_callback(
         event.prevent_default();
         match compose::note(&note_task, &note_text) {
             Ok(note) => {
+                let Some(id) = action_identity(&sender) else {
+                    return;
+                };
                 if admit_action(
                     &sender,
                     ClientAction::Note {
+                        id,
                         task: note.task,
                         note: note.text,
                     },
@@ -818,7 +825,7 @@ fn note_submit_callback(
 
 fn refresh_callback(sender: SenderHandle, _axis: UseStateHandle<Axis>) -> Callback<MouseEvent> {
     Callback::from(move |_| {
-        send_action(&sender, ClientAction::Refresh);
+        let _admitted = admit_action(&sender, ClientAction::Refresh);
     })
 }
 
@@ -986,8 +993,7 @@ fn seat_submit(
                 let Ok(lane) = random_uuid() else {
                     return;
                 };
-                notice.set(Notice::none());
-                send_action(
+                if admit_action(
                     &sender,
                     ClientAction::Seat {
                         topology_revision,
@@ -997,7 +1003,9 @@ fn seat_submit(
                         life: seat.life,
                         vendor: seat.vendor,
                     },
-                );
+                ) {
+                    notice.set(Notice::none());
+                }
             }
             Err(refusal) => notice.set(refusal.into()),
         }
@@ -1152,11 +1160,8 @@ fn binary_message(message: Message) -> Result<Vec<u8>, String> {
     }
 }
 
-fn send_action(sender: &SenderHandle, action: ClientAction) {
-    let _admitted = admit_action(sender, action);
-}
-
 fn admit_action(sender: &SenderHandle, action: ClientAction) -> bool {
+    let clears_issue = action.is_mutation();
     let result = sender
         .queue
         .borrow()
@@ -1165,7 +1170,7 @@ fn admit_action(sender: &SenderHandle, action: ClientAction) -> bool {
         .and_then(|queue| queue.admit(action));
     match result {
         Ok(()) => {
-            if sender.issue.is_some() {
+            if clears_issue && sender.issue.is_some() {
                 sender.issue.set(None);
             }
             true
@@ -1173,6 +1178,16 @@ fn admit_action(sender: &SenderHandle, action: ClientAction) -> bool {
         Err(error) => {
             sender.issue.set(Some(error.to_string()));
             false
+        }
+    }
+}
+
+fn action_identity(sender: &SenderHandle) -> Option<CanonicalUuid> {
+    match random_uuid() {
+        Ok(id) => Some(id),
+        Err(error) => {
+            sender.issue.set(Some(error));
+            None
         }
     }
 }

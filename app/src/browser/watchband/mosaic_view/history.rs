@@ -16,7 +16,7 @@ impl HistorySender {
     }
 
     fn request(&self, lane: CanonicalUuid, before: wire::MessageLocus) {
-        send_action(&self.0, ClientAction::MessageHistory { lane, before });
+        let _admitted = admit_action(&self.0, ClientAction::MessageHistory { lane, before });
     }
 }
 
