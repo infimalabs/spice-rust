@@ -25,11 +25,6 @@ use history_authentication::{advance_history_authentication, observe_history_sou
 pub(super) use identity::session_member;
 use presentation::publish;
 
-/// Polling is intentionally modest: compaction is rare, while the first
-/// record after it must still place the divider before later authored prose.
-pub(in crate::resident) const POLL_INTERVAL: std::time::Duration =
-    std::time::Duration::from_millis(500);
-
 /// Per-resident cursors over canonical session JSONL files.
 ///
 /// Codex's `exec --json` stream does not expose the `compacted` record stored
@@ -41,7 +36,7 @@ pub(in crate::resident) const POLL_INTERVAL: std::time::Duration =
 pub(in crate::resident) struct SessionCompactions {
     environment: crate::session_command::Environment,
     cursors: BTreeMap<CanonicalUuid, Cursor>,
-    reported: BTreeMap<CanonicalUuid, String>,
+    reported: BTreeMap<CanonicalUuid, (Option<PathBuf>, String)>,
 }
 
 struct Cursor {
@@ -127,13 +122,15 @@ impl SessionCompactions {
         &mut self,
         bus: &Bus,
         epoch: CanonicalUuid,
-        residency: &wire::ResidencyHead,
+        selection: (&wire::ResidencyHead, CanonicalUuid),
         publisher: &impl AgentMessagePublisher,
         state: &mut MessageState,
         diagnostic: &mut dyn io::Write,
     ) -> CommandResult<()> {
-        self.synchronize_with(
+        let (residency, lane) = selection;
+        self.synchronize_selected_with(
             residency,
+            Some(lane),
             publisher,
             state,
             diagnostic,
@@ -144,9 +141,25 @@ impl SessionCompactions {
         )
     }
 
+    #[cfg(test)]
     fn synchronize_with<F>(
         &mut self,
         residency: &wire::ResidencyHead,
+        publisher: &impl AgentMessagePublisher,
+        state: &mut MessageState,
+        diagnostic: &mut dyn io::Write,
+        recover: F,
+    ) -> CommandResult<()>
+    where
+        F: FnMut(CanonicalUuid, CanonicalUuid, &str, listen::Locus) -> CommandResult<()>,
+    {
+        self.synchronize_selected_with(residency, None, publisher, state, diagnostic, recover)
+    }
+
+    fn synchronize_selected_with<F>(
+        &mut self,
+        residency: &wire::ResidencyHead,
+        selected: Option<CanonicalUuid>,
         publisher: &impl AgentMessagePublisher,
         state: &mut MessageState,
         diagnostic: &mut dyn io::Write,
@@ -164,7 +177,10 @@ impl SessionCompactions {
         self.cursors.retain(|lane, _| lanes.contains(lane));
         self.reported.retain(|lane, _| lanes.contains(lane));
 
-        for (lane, session) in current {
+        for (lane, session) in current
+            .into_iter()
+            .filter(|(lane, _)| selected.is_none_or(|selected| selected == *lane))
+        {
             self.ensure_cursor(lane, session, diagnostic);
             let Some((scanned, startup_recovery, path, worktree, author, dialect, thread)) =
                 self.cursors.get_mut(&lane).map(|cursor| {
@@ -190,7 +206,6 @@ impl SessionCompactions {
             };
             match scanned {
                 Ok(records) => {
-                    self.reported.remove(&lane);
                     if dialect == listen::Dialect::Codex
                         && let Some(locus) = startup_recovery
                     {
@@ -203,9 +218,7 @@ impl SessionCompactions {
                         publish(record, lane, author, &worktree, publisher, state)?;
                     }
                 }
-                Err(error) => {
-                    self.report_once(lane, format!("{}: {error}", path.display()), diagnostic)
-                }
+                Err(error) => self.report_scan_once(lane, &path, error, diagnostic),
             }
         }
         Ok(())
@@ -252,15 +265,49 @@ impl SessionCompactions {
                     ),
                 );
             }
-            Err(error) => self.report_once(lane, error, diagnostic),
+            Err(error) => self.report_once(lane, (None, error.clone()), error, diagnostic),
         }
     }
 
-    fn report_once(&mut self, lane: CanonicalUuid, detail: String, diagnostic: &mut dyn io::Write) {
-        if self.reported.get(&lane) == Some(&detail) {
+    fn report_scan_once(
+        &mut self,
+        lane: CanonicalUuid,
+        path: &PathBuf,
+        error: io::Error,
+        diagnostic: &mut dyn io::Write,
+    ) {
+        let class = error
+            .get_ref()
+            .and_then(|error| error.downcast_ref::<HistoryExhaustion>())
+            .map_or_else(
+                || format!("{:?}: {error}", error.kind()),
+                |error| {
+                    if error.oversized_record {
+                        "history-record-oversized".to_owned()
+                    } else {
+                        "history-work-exhausted".to_owned()
+                    }
+                },
+            );
+        self.report_once(
+            lane,
+            (Some(path.clone()), class),
+            format!("{}: {error}", path.display()),
+            diagnostic,
+        );
+    }
+
+    fn report_once(
+        &mut self,
+        lane: CanonicalUuid,
+        key: (Option<PathBuf>, String),
+        detail: String,
+        diagnostic: &mut dyn io::Write,
+    ) {
+        if self.reported.get(&lane) == Some(&key) {
             return;
         }
-        self.reported.insert(lane, detail.clone());
+        self.reported.insert(lane, key);
         let _ = writeln!(
             diagnostic,
             "canvas session compaction unavailable for lane {lane}: {detail}",

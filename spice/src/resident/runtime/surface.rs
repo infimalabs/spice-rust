@@ -497,7 +497,6 @@ async fn drive_surface(
     mut inbox_projections: InboxProjections,
     mut lifecycle_reconciliation: LifecycleReconciliation,
 ) -> CommandResult<()> {
-    let mut session_compaction_poll = session_compaction_poll();
     loop {
         tokio::select! {
             (turn, request) = control_projection_turn(
@@ -522,11 +521,14 @@ async fn drive_surface(
                 )?;
             }
             record = records.recv() => {
+                let lane = record.as_ref().map(|record| record.lane);
                 let residency = current_residency(bus, epoch)?;
-                session_compactions.synchronize(
-                    bus, epoch, residency.body(), &message_publisher,
-                    &mut message_state, diagnostic,
-                )?;
+                if let Some(lane) = lane {
+                    session_compactions.synchronize(
+                        bus, epoch, (residency.body(), lane), &message_publisher,
+                        &mut message_state, diagnostic,
+                    )?;
+                }
                 accept_record(
                     bus, epoch, seats, command_surface, &message_publisher,
                     taste_submitter.as_deref_mut(), record, &mut message_state, diagnostic,
@@ -560,13 +562,6 @@ async fn drive_surface(
                 taste_submitter.as_deref_mut(), &mut lifecycle, report,
                 &mut message_state, diagnostic,
             )?,
-            _ = session_compaction_poll.tick() => {
-                let residency = current_residency(bus, epoch)?;
-                session_compactions.synchronize(
-                    bus, epoch, residency.body(), &message_publisher, &mut message_state,
-                    diagnostic,
-                )?;
-            }
             timer = timers.recv() => {
                 let timer = timer.ok_or_else(|| environment_fault(
                     "bus::timer-events-closed",
@@ -664,13 +659,6 @@ async fn project_owed_inbox_with(
         tokio::task::yield_now().await;
     }
     Ok(())
-}
-
-fn session_compaction_poll() -> tokio::time::Interval {
-    let interval = message_surface::SESSION_COMPACTION_POLL_INTERVAL;
-    let mut poll = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
-    poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    poll
 }
 
 #[allow(

@@ -24,9 +24,7 @@ const SESSION_MESSAGE_MEMBER_NAMESPACE: u64 = 1_u64 << 63;
 #[cfg(test)]
 pub(super) use backlog::restore_agent_messages;
 pub(super) use backlog::{BacklogReader, restore_agent_messages_indexed};
-pub(super) use session_compaction::{
-    POLL_INTERVAL as SESSION_COMPACTION_POLL_INTERVAL, SessionCompactions,
-};
+pub(super) use session_compaction::SessionCompactions;
 pub(super) use tool_preview::CallPreviews;
 
 /// Captured-generation policy and disposable publishers used after one record
