@@ -110,27 +110,20 @@ impl<'a> ForwardCursor<'a> {
             };
         self.line = self.line.saturating_add(1);
         self.live_tail = !terminated && self.source.thread.is_some();
-        if self.live_tail
-            && let Some((observed, residue)) =
-                live_tail_truncated_residue(self.source, self.line, &self.buffer, self.dialect)?
-        {
-            self.dialect = Some(observed);
-            let row = DecodedRow::Residue(residue);
-            work.admit_decoded(decoded_row_events(&row), &at)?;
-            return Ok(self.window(Some(row), false));
-        }
-        while matches!(self.buffer.last(), Some(b'\n' | b'\r')) {
-            self.buffer.pop();
-        }
-        if self.buffer.is_empty() {
-            return Ok(self.window(None, terminated));
-        }
         debug_assert!(read > 0 && read <= MAX_LINE_BYTES.saturating_add(2));
-        let (observed, row) = decode_row(self.source, self.line, &self.buffer, self.dialect)?;
+        let (observed, row) = decode_window_row(
+            self.source,
+            self.line,
+            &self.buffer,
+            self.dialect,
+            self.live_tail,
+            work,
+            &at,
+        )?;
         self.dialect = observed.or(self.dialect);
-        work.admit_decoded(decoded_row_events(&row), &at)?;
         let row = match row {
-            DecodedRow::Typed(record) => {
+            None => None,
+            Some(DecodedRow::Typed(record)) => {
                 if !self.within_horizon
                     && self
                         .start
@@ -141,7 +134,7 @@ impl<'a> ForwardCursor<'a> {
                 }
                 self.within_horizon.then_some(DecodedRow::Typed(record))
             }
-            row => Some(row),
+            Some(row) => Some(row),
         };
         Ok(self.window(row, terminated))
     }
@@ -189,6 +182,35 @@ impl<'a> ForwardCursor<'a> {
             self.source.vendor
         }
     }
+}
+
+pub(super) fn decode_window_row(
+    source: &ResolvedSource,
+    line: u64,
+    buffer: &[u8],
+    dialect: Option<listen::Dialect>,
+    live_tail: bool,
+    work: &mut SessionWork,
+    at: &str,
+) -> Result<(Option<listen::Dialect>, Option<DecodedRow>), Refusal> {
+    if live_tail
+        && let Some((observed, residue)) =
+            live_tail_truncated_residue(source, line, buffer, dialect)?
+    {
+        let row = DecodedRow::Residue(residue);
+        work.admit_decoded(decoded_row_events(&row), at)?;
+        return Ok((Some(observed), Some(row)));
+    }
+    let end = buffer
+        .iter()
+        .rposition(|byte| !matches!(byte, b'\n' | b'\r'))
+        .map_or(0, |last| last + 1);
+    if end == 0 {
+        return Ok((dialect, None));
+    }
+    let (observed, row) = decode_row(source, line, &buffer[..end], dialect)?;
+    work.admit_decoded(decoded_row_events(&row), at)?;
+    Ok((observed, Some(row)))
 }
 
 fn read_record(
@@ -242,7 +264,7 @@ fn read_record(
     }
 }
 
-fn live_tail_truncated_residue(
+pub(super) fn live_tail_truncated_residue(
     source: &ResolvedSource,
     line: u64,
     buffer: &[u8],
