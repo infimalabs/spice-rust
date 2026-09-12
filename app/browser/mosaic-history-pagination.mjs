@@ -24,8 +24,8 @@ async function waitForReady(page, label = "progressive Mosaic settles") {
   });
 }
 
-async function waitForCard(page, key, label) {
-  await waitForPage(page, label, TRANSITION_MS, (expected) => {
+async function waitForCard(page, key, label, timeout = TRANSITION_MS) {
+  await waitForPage(page, label, timeout, (expected) => {
     const plane = document.querySelector(
       '[data-pane="agent-console"] .organization-surface .lane-mosaic-plane',
     );
@@ -210,7 +210,6 @@ async function answerReplay(history, requests, generation, plane) {
   history.answer(requests.get(thirdLane), history.pages.third);
   history.answer(requests.get(firstLane), history.pages.firstReplay);
 
-  await revealHistoryEdge(plane, history.keys.firstOlder);
   await revealHistoryEdge(plane, history.keys.thirdBeforeBoundary);
 
   const firstNext = await history.waitForRequest(
@@ -280,20 +279,6 @@ export async function assertStagedMosaicHydration(
   assert.equal(new Set(outstanding.map((request) => request.lane)).size, outstanding.length,
     "successive empty pages advance the server while sibling requests remain singular");
 
-  const backfillProbe = await armPlacementProbe(plane);
-  history.answer(firstVisibleContinuation, history.pages.first);
-  await waitForCard(page, history.keys.firstOlder, "the first lane backfills independently");
-  const backfilled = await finishPlacementProbe(plane, backfillProbe);
-  assert.equal(backfilled.transition, "backfill", "the older first page is a prefix backfill");
-  assertPlacementStable(backfillProbe, backfilled, "the independent prefix backfill");
-  assert.equal(
-    history.records.firstOlder.activity,
-    undefined,
-    "the repeated history cursor is ordinary prose rather than a compaction boundary",
-  );
-  await revealHistoryEdge(plane, history.keys.firstOlder);
-  const firstNext = await history.waitForRequest(firstLane, history.records.firstOlder.locus);
-
   const epochExcluded = await plane.locator(".mosaic-message-card").evaluateAll(
     (cards, retained) => cards
       .filter((card) => card.dataset.mosaicCardKey !== retained)
@@ -308,6 +293,43 @@ export async function assertStagedMosaicHydration(
   assert.equal(epoch.transition, "epoch-replay",
     "a member page spanning the compaction boundary replays one structural epoch");
   assertPlacementStable(epochProbe, epoch, "the unaffected compaction divider");
+
+  const eagerViewport = page.viewportSize();
+  assert.ok(eagerViewport, "eager hydration has a viewport to restore");
+  await page.setViewportSize({ width: eagerViewport.width, height: 568 });
+  await waitForReady(page, "the eager-depth viewport settles");
+  const backfillProbe = await armPlacementProbe(plane);
+  history.answer(firstVisibleContinuation, history.pages.first);
+  await waitForCard(
+    page,
+    history.keys.firstOlder,
+    "the first lane backfills independently",
+    TRANSITION_MS * 4,
+  );
+  const backfilled = await finishPlacementProbe(plane, backfillProbe);
+  assert.equal(backfilled.transition, "backfill", "the older first page is a prefix backfill");
+  assertPlacementStable(backfillProbe, backfilled, "the independent prefix backfill");
+  assert.equal(
+    history.records.firstOlder.activity,
+    undefined,
+    "the repeated history cursor is ordinary prose rather than a compaction boundary",
+  );
+  const eagerGeometry = await plane.evaluate((element, key) => {
+    const card = element.querySelector(`[data-mosaic-card-key="${key}"]`);
+    if (!card) throw new Error("the eager history cursor card is rendered");
+    const viewport = element.getBoundingClientRect();
+    const bounds = card.getBoundingClientRect();
+    return {
+      atEdge: element.scrollHeight - element.clientHeight - element.scrollTop <= 400,
+      targetIsNear: bounds.top <= viewport.bottom + 400
+        && bounds.bottom >= viewport.top - 400,
+    };
+  }, history.keys.firstOlder);
+  assert.deepEqual(eagerGeometry, { atEdge: false, targetIsNear: false },
+    "sub-25 hydration continues after the cursor leaves both geometry gates");
+  const firstNext = await history.waitForRequest(firstLane, history.records.firstOlder.locus);
+  await page.setViewportSize(eagerViewport);
+  await waitForReady(page, "the integrated hydration viewport restores");
 
   const hiddenProbe = await armPlacementProbe(plane);
   await surface.getByRole("tab", { name: /^Board/ }).click();
