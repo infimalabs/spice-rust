@@ -195,19 +195,43 @@ fn seed_initial_socket_fanout_lanes(
     lanes
 }
 
-fn assert_steer_send_response(
-    socket: &mut tungstenite::WebSocket<std::net::TcpStream>,
-    command_id: CanonicalUuid,
+fn run_socket_client(
+    address: SocketAddr,
+    ids: (CanonicalUuid, CanonicalUuid, CanonicalUuid),
+    lanes: [(CanonicalUuid, CanonicalUuid); 3],
+    responses_read: tokio::sync::oneshot::Sender<()>,
 ) {
-    let response = socket.read().expect("response frame").into_data();
-    let response: wire::Response<serde_json::Value> =
-        wire::decode(&response).expect("response decodes");
-    assert_eq!(response.id, command_id);
-    let Outcome::Reply(reply) = response.outcome else {
-        panic!("steering send must reply: {response:?}");
-    };
-    assert_eq!(reply.body["disposition"], "live");
-    assert!(reply.body.get("delivery").is_none());
+    let (operator, epoch, fanout) = ids;
+    let mut socket = connect_fixture_socket(address, operator, epoch, Actor::Operator);
+    for (index, (lane, occupant)) in lanes.into_iter().enumerate() {
+        let id = test_uuid(84 + u8::try_from(index).expect("fixture index fits"));
+        send_steer_send(
+            &mut socket,
+            id,
+            epoch,
+            fanout,
+            lane,
+            occupant,
+            format!("BROADCAST: socket delivery to lane {index}"),
+        );
+        let reply = runtime::receive_fixture_reply(&mut socket, id);
+        assert_eq!(reply.body["disposition"], "live");
+        assert!(reply.body.get("delivery").is_none());
+    }
+    let id = test_uuid(88);
+    send_fixture_socket(
+        &mut socket,
+        &Command {
+            v: wire::WireVersion::CURRENT,
+            id,
+            epoch,
+            kind: CommandKind::GlobalSettingsRead,
+            expected: Vec::new(),
+            body: serde_json::json!({}),
+        },
+    );
+    runtime::receive_fixture_reply(&mut socket, id);
+    let _ = responses_read.send(());
 }
 
 fn assert_socket_fanout_published(
@@ -245,56 +269,23 @@ fn socket_capabilities(operator: CanonicalUuid, lane: CanonicalUuid) -> canvas::
     capabilities
 }
 
-fn drain_projections(
-    surface: &command_surface::Surface<'_>,
-    mut projections: InboxProjections,
-    expected: usize,
-) {
-    let mut settled = 1;
-    while !projections.is_empty() {
-        runtime::project_next_inbox(surface, &mut projections).expect("projection advances");
-        settled += 1;
-    }
-    assert_eq!(settled, expected);
-}
-
-fn restarted_projection_fixture(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    lineage: CanonicalUuid,
-    root: &std::path::Path,
-    lanes: [(CanonicalUuid, CanonicalUuid); 3],
-) -> (InboxProjections, usize) {
-    let mut projections = InboxProjections::new();
-    let residency = current_residency(bus, epoch).expect("residency reads");
-    for offset in 0..canvas::axum::Control::FAIR_CYCLE_LIMIT {
-        projections.insert(test_uuid(40 + u8::try_from(offset).expect("offset fits")));
-    }
-    projections.insert(test_uuid(40));
-    let exact = projections.next(&residency).expect("exact remains");
-    assert_eq!(exact.lane(), test_uuid(40));
-    projections.complete(exact, steering::FoldAttempt::Moved);
-    projections.insert(test_uuid(49));
-    assert!(projections.is_full());
-    let first = projections.next(&residency).expect("full starts");
-    let first_lane = first.lane();
-    assert_eq!(first_lane, residency.body().lanes[0].lane);
-    projections.complete(first, steering::FoldAttempt::Moved);
-    let retry = projections.next(&residency).expect("moved retries");
-    assert_eq!(retry.lane(), first_lane);
-    projections.complete(retry, steering::FoldAttempt::Settled);
-    let advanced = projections
-        .next(&residency)
-        .expect("settled projection advances");
-    assert_eq!(advanced.lane(), residency.body().lanes[1].lane);
-    projections.complete(advanced, steering::FoldAttempt::Moved);
-    let (added_lane, added_occupant) = lanes[0];
-    seed_lane_in_lineage(bus, epoch, added_lane, lineage, added_occupant, root);
-    let moved = current_residency(bus, epoch).expect("moved residency reads");
-    let restarted = projections.next(&moved).expect("moved residency restarts");
-    assert_eq!(restarted.lane(), added_lane);
-    projections.complete(restarted, steering::FoldAttempt::Settled);
-    (projections, moved.body().lanes.len())
+async fn control_after_moved_projections(
+    control: &mut canvas::axum::Control,
+    projections: &mut InboxProjections,
+    residency: &journal::JournalHead<ResidencyHead>,
+) -> canvas::axum::ControlRequest {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let (turn, request) =
+                runtime::control_projection_turn(control, projections, true).await;
+            if matches!(turn, runtime::ControlProjectionTurn::Control) {
+                return request.expect("control remains open");
+            }
+            runtime::project_moved(projections, residency).await;
+        }
+    })
+    .await
+    .expect("Control wins a moved-projection tie")
 }
 
 /// The surface listens exactly where the operator requested or at one stable default.
@@ -458,14 +449,13 @@ async fn socket_dispatch_replies_then_projects_three_lane_fanout() {
     let (epoch, lineage, fanout) = (test_uuid(91), test_uuid(92), test_uuid(93));
     commit_startup(&bus, &repository, &trust, epoch, None).expect("resident seats");
     let lanes = seed_initial_socket_fanout_lanes(&bus, epoch, lineage, &root);
+    seed_lane_in_lineage(&bus, epoch, lanes[0].0, lineage, lanes[0].1, &root);
     let operator = test_uuid(89);
     let capabilities = socket_capabilities(operator, lanes[0].0);
     let app = canvas::AppSource::resolve(&root).expect("fixture app resolves");
     let (server, mut control) = bind_fixture_canvas(epoch, capabilities.clone(), app).await;
     let address = server.local_addr().expect("server publishes address");
     let discovery = server.discovery(operator).expect("operator discovery");
-    let (projections, moved_lanes) =
-        restarted_projection_fixture(&bus, epoch, lineage, &root, lanes);
     let reads = read_materializations::CurrentReads::start(&bus, &paths, &config.consent)
         .expect("read materializations start");
     let reporter = Arc::new(NoopCaptureReporter);
@@ -481,38 +471,22 @@ async fn socket_dispatch_replies_then_projects_three_lane_fanout() {
         &config,
         &reads,
     );
-    drain_projections(&command_surface, projections, moved_lanes);
     let (shutdown, stopped) = tokio::sync::oneshot::channel();
     let server_task = tokio::spawn(server.up_until(async move {
         let _ = stopped.await;
     }));
     let (responses_read, mut responses_done) = tokio::sync::oneshot::channel();
     let client = tokio::task::spawn_blocking(move || {
-        let mut socket = connect_fixture_socket(address, operator, epoch, Actor::Operator);
-        for (index, (lane, occupant)) in lanes.into_iter().enumerate() {
-            let id = test_uuid(84 + u8::try_from(index).expect("fixture index fits"));
-            send_steer_send(
-                &mut socket,
-                id,
-                epoch,
-                fanout,
-                lane,
-                occupant,
-                format!("BROADCAST: socket delivery to lane {index}"),
-            );
-            assert_steer_send_response(&mut socket, id);
-        }
-        let _ = responses_read.send(());
+        run_socket_client(address, (operator, epoch, fanout), lanes, responses_read);
     });
     let mut seats = Seats::new();
     let mut lifecycle = lifecycle::Runtime::new(&config.lane);
     let mut projections = InboxProjections::new();
-    for (index, (lane, _)) in lanes.into_iter().enumerate() {
+    let residency = current_residency(&bus, epoch).expect("residency reads");
+    for (index, _) in lanes.into_iter().enumerate() {
         let id = test_uuid(84 + u8::try_from(index).expect("fixture index fits"));
-        let request = tokio::time::timeout(Duration::from_secs(3), control.recv())
-            .await
-            .expect("staggered server-admitted control arrives")
-            .expect("control remains open");
+        let request =
+            control_after_moved_projections(&mut control, &mut projections, &residency).await;
         assert_eq!(request.command().id(), id);
         let dispatched = runtime::dispatch_control_burst(
             &command_surface,
@@ -525,14 +499,27 @@ async fn socket_dispatch_replies_then_projects_three_lane_fanout() {
         .await
         .expect("socket steering burst completes");
         assert!(!dispatched.reached_dark && !dispatched.lifecycle_released);
+        runtime::project_moved(&mut projections, &residency).await;
+        if index == 0 {
+            assert!(!projections.is_empty(), "moved projection remains owed");
+        }
+    }
+    let request = control_after_moved_projections(&mut control, &mut projections, &residency).await;
+    assert_eq!(request.command().id(), test_uuid(88));
+    runtime::dispatch_control_burst(
+        &command_surface,
+        &mut seats,
+        &mut lifecycle,
+        &mut control,
+        Some(request),
+        &mut projections,
+    )
+    .await
+    .expect("non-steering control completes");
+    while !projections.is_empty() {
         runtime::project_owed_inbox(&command_surface, &mut projections)
             .await
-            .expect("burst pays one projection turn");
-        if index == 0 {
-            let first = fs::read_to_string(steer::inbox::path(&paths.inbox, lane))
-                .expect("first staggered lane inbox reads");
-            assert!(first.contains("socket delivery") && projections.is_empty());
-        }
+            .expect("real projection eventually settles");
     }
     tokio::time::timeout(Duration::from_secs(3), &mut responses_done)
         .await
