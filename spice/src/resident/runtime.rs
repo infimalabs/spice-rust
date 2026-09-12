@@ -971,6 +971,21 @@ pub(in crate::resident) fn send_fixture_socket<T: serde::Serialize>(
 }
 
 #[cfg(test)]
+pub(in crate::resident) fn receive_fixture_reply(
+    socket: &mut tungstenite::WebSocket<std::net::TcpStream>,
+    command_id: CanonicalUuid,
+) -> wire::Reply<serde_json::Value> {
+    let response = socket.read().expect("response frame").into_data();
+    let response: wire::Response<serde_json::Value> =
+        wire::decode(&response).expect("response decodes");
+    assert_eq!(response.id, command_id);
+    let Outcome::Reply(reply) = response.outcome else {
+        panic!("command must reply: {response:?}");
+    };
+    reply
+}
+
+#[cfg(test)]
 pub(in crate::resident) fn connect_fixture_socket(
     address: SocketAddr,
     capability: CanonicalUuid,
@@ -1009,13 +1024,14 @@ mod surface;
 pub(super) use surface::announce_canvas;
 use surface::run_surface;
 #[cfg(test)]
+pub(in crate::resident) use surface::{
+    ControlProjectionTurn, control_projection_turn, dispatch_control_burst, project_moved,
+    project_owed_inbox, publish_ready_surface,
+};
+#[cfg(test)]
 use surface::{
     LifecycleReconciliation, StartedSurface, SurfacePublication, drive_surface,
     request_lifecycle_reconciliation, start_surface,
-};
-#[cfg(test)]
-pub(in crate::resident) use surface::{
-    dispatch_control_burst, project_next_inbox, project_owed_inbox, publish_ready_surface,
 };
 
 #[cfg(test)]

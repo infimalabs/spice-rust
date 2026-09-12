@@ -135,11 +135,6 @@ impl InboxProjections {
             }
         }
     }
-
-    #[cfg(test)]
-    fn is_full(&self) -> bool {
-        matches!(self, Self::Full { .. })
-    }
 }
 
 struct CommandDispatch {

@@ -589,12 +589,12 @@ pub(super) async fn drive_surface(
     }
 }
 
-enum ControlProjectionTurn {
+pub(in crate::resident) enum ControlProjectionTurn {
     Control,
     Projection,
 }
 
-async fn control_projection_turn(
+pub(in crate::resident) async fn control_projection_turn(
     control: &mut canvas::axum::Control,
     inbox_projections: &InboxProjections,
     control_enabled: bool,
@@ -647,11 +647,35 @@ pub(in crate::resident) async fn project_owed_inbox(
     command_surface: &command_surface::Surface<'_>,
     inbox_projections: &mut InboxProjections,
 ) -> CommandResult<()> {
+    project_owed_inbox_with(inbox_projections, |projections| {
+        project_next_inbox(command_surface, projections)
+    })
+    .await
+}
+
+async fn project_owed_inbox_with(
+    inbox_projections: &mut InboxProjections,
+    project: impl FnOnce(&mut InboxProjections) -> CommandResult<()>,
+) -> CommandResult<()> {
     if !inbox_projections.is_empty() {
-        project_next_inbox(command_surface, inbox_projections)?;
+        project(inbox_projections)?;
         tokio::task::yield_now().await;
     }
     Ok(())
+}
+
+#[cfg(test)]
+pub(in crate::resident) async fn project_moved(
+    inbox_projections: &mut InboxProjections,
+    residency: &journal::JournalHead<ResidencyHead>,
+) {
+    project_owed_inbox_with(inbox_projections, |projections| {
+        let projection = projections.next(residency).expect("projection owed");
+        projections.complete(projection, steering::FoldAttempt::Moved);
+        Ok(())
+    })
+    .await
+    .expect("moved projection yields one turn");
 }
 
 fn session_compaction_poll() -> tokio::time::Interval {
