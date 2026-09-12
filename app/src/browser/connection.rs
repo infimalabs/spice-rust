@@ -12,7 +12,8 @@ use super::*;
 pub(super) async fn run_surface(
     active: Rc<Cell<bool>>,
     handles: SurfaceHandles,
-    mut actions: UnboundedReceiver<ClientAction>,
+    actions: ActionQueue,
+    mut action_wakes: mpsc::Receiver<()>,
 ) {
     let mut data = SurfaceData::default();
     let mut backoff = crate::reconnect::Backoff::new();
@@ -21,7 +22,15 @@ pub(super) async fn run_surface(
         if matches!(&*handles.connection, Connection::Starting) {
             handles.connection.set(Connection::Connecting);
         }
-        let result = run_connection(&active, &handles, &mut data, &mut actions, &mut demands).await;
+        let result = run_connection(
+            &active,
+            &handles,
+            &mut data,
+            &actions,
+            &mut action_wakes,
+            &mut demands,
+        )
+        .await;
         if !active.get() {
             break;
         }
@@ -55,7 +64,8 @@ async fn run_connection(
     active: &Rc<Cell<bool>>,
     handles: &SurfaceHandles,
     data: &mut SurfaceData,
-    actions: &mut UnboundedReceiver<ClientAction>,
+    actions: &ActionQueue,
+    action_wakes: &mut mpsc::Receiver<()>,
     demands: &mut DemandQueue<ClientAction>,
 ) -> Result<(), Ended> {
     let abort = web_sys::AbortController::new().map_err(|_| Ended {
@@ -95,12 +105,20 @@ async fn run_connection(
     // the acceptance frame has been admitted and the runtime published. Deriving
     // the flag from control flow rather than from a separate variable keeps the
     // two from ever disagreeing about whether this connection counted.
-    pump_session(active, handles, data, actions, demands, established)
-        .await
-        .map_err(|reason| Ended {
-            reason,
-            admitted: true,
-        })
+    pump_session(
+        active,
+        handles,
+        data,
+        actions,
+        action_wakes,
+        demands,
+        established,
+    )
+    .await
+    .map_err(|reason| Ended {
+        reason,
+        admitted: true,
+    })
 }
 
 /// Carry one admitted session until it fails or the surface goes away.
@@ -120,7 +138,8 @@ async fn pump_session(
     active: &Rc<Cell<bool>>,
     handles: &SurfaceHandles,
     data: &SurfaceData,
-    actions: &mut UnboundedReceiver<ClientAction>,
+    actions: &ActionQueue,
+    action_wakes: &mut mpsc::Receiver<()>,
     demands: &mut DemandQueue<ClientAction>,
     established: EstablishedConnection,
 ) -> Result<(), String> {
@@ -136,12 +155,13 @@ async fn pump_session(
     send_refresh(&principal, &mut writer, &mut pending, &handles.submissions).await?;
     drain_submissions(&principal, &mut writer, &mut pending, &handles.submissions).await?;
     drain_demands(&principal, data, &mut writer, &mut pending, demands).await?;
+    actions.rearm().map_err(|error| error.to_string())?;
     let mut silence = TimeoutFuture::new(LIVENESS_PROBE_MILLIS).fuse();
     let mut probed = false;
     while active.get() {
         let incoming = reader.next().fuse();
-        let action = actions.next().fuse();
-        futures_util::pin_mut!(incoming, action);
+        let action_wake = action_wakes.next().fuse();
+        futures_util::pin_mut!(incoming, action_wake);
         let mut rearm = false;
         futures_util::select_biased! {
             frame = incoming => {
@@ -170,13 +190,17 @@ async fn pump_session(
                         epoch: principal.epoch().to_string(),
                     });
                     hydrating = false;
+                    actions.rearm().map_err(|error| error.to_string())?;
                 }
             },
-            action = action => {
-                let action = action.ok_or_else(|| "canvas command channel closed".to_owned())?;
+            wake = action_wake => {
+                wake.ok_or_else(|| "canvas command channel closed".to_owned())?;
                 if hydrating {
                     continue;
                 }
+                let Some(action) = actions.pop() else {
+                    continue;
+                };
                 dispatch_client_action(
                     &principal,
                     data,
@@ -186,6 +210,7 @@ async fn pump_session(
                     demands,
                     action,
                 ).await?;
+                actions.rearm().map_err(|error| error.to_string())?;
             },
             () = silence => {
                 if probed {
