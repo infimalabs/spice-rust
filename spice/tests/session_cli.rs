@@ -798,7 +798,7 @@ fn every_session_query_accepts_current_filters_and_crosses_both_forms() {
 }
 
 fn assert_codex_final_rows(codex: &str) {
-    let finals = reply_forms(
+    let oldest = reply_forms(
         &strings(&[
             "session",
             "messages",
@@ -812,26 +812,27 @@ fn assert_codex_final_rows(codex: &str) {
         &[],
         "messages",
     );
-    assert_eq!(finals["rows"].as_array().map(Vec::len), Some(3));
+    assert_eq!(oldest["rows"].as_array().map(Vec::len), Some(3));
     assert_eq!(
-        finals["rows"][0]["text"],
+        oldest["rows"][0]["text"],
         "Committed abcdef1 after verification."
     );
     assert_eq!(
-        finals["rows"][1]["text"],
+        oldest["rows"][1]["text"],
         "Commit 1234abc completes the port."
     );
     assert_eq!(
-        finals["rows"][2]["text"],
+        oldest["rows"][2]["text"],
         "Commit 1234abc remains visible in a distinct task-complete final."
     );
-
-    let summary = reply_forms(
-        &strings(&["session", "summary", codex, "--recent", "8"]),
-        &[],
-        "summary",
+    assert_eq!(
+        reply_forms(
+            &strings(&["session", "messages", codex, "--limit", "1"]),
+            &[],
+            "messages"
+        )["rows"][0]["text"],
+        "Interrupt this turn cleanly."
     );
-    assert_eq!(summary["recent_finals"].as_array().map(Vec::len), Some(3));
 }
 
 fn assert_codex_turn_and_recall_rows(codex: &str) {

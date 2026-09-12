@@ -1,12 +1,12 @@
 //! Bounded retained state for complete-scan session aggregates.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use wire::Refusal;
 
 use super::super::model::{
-    ActivityView, MessageRecord, PhaseExample, PhaseView, Report, SourceView, ThreadView,
-    TokenRecord, TokenView, TurnRecord,
+    ActivityView, Dataset, MessageRecord, PhaseExample, PhaseView, Report, Residue, SourceView,
+    ThreadView, TokenRecord, TokenView, TurnRecord, Vendor,
 };
 use super::super::project::{
     Filters, PhaseOptions, authored_message_view, phase_example, turn_end, turn_family, turn_view,
@@ -14,8 +14,9 @@ use super::super::project::{
 use super::super::source::ResolvedSource;
 use super::stream::{ForwardCursor, ForwardProgress};
 use super::{
-    DecodedRow, FoldState, FoldStorage, Marker, ResidueLedger, SessionWork, SessionWorkBudget,
-    finish_fold, reduce_record, refusal, source_view_text_bytes, stream_records,
+    DecodedRow, FoldState, FoldStorage, FrontierDirection, Marker, MessageQuery, ResidueLedger,
+    ResultFrontier, SessionWork, SessionWorkBudget, finish_fold, message_text_bytes, reduce_record,
+    refusal, source_view_text_bytes, stream_records,
 };
 
 const OPEN_TURN_LIMIT: usize = 64;
@@ -23,6 +24,199 @@ const OPEN_TOOL_LIMIT: usize = 1_024;
 const PHASE_GAP_SECONDS: i64 = 45 * 60;
 const PHASE_PATH_LIMIT: usize = 4_096;
 const SOURCE_LIMIT: usize = 64;
+const MAX_MESSAGE_IDENTITIES: usize = 4 * 1_024;
+
+impl MessageQuery {
+    fn matches(&self, row: &MessageRecord) -> bool {
+        self.start.as_ref().is_none_or(|start| row.ts >= *start)
+            && self.end.as_ref().is_none_or(|end| row.ts <= *end)
+            && self
+                .contains
+                .as_ref()
+                .is_none_or(|needle| row.text.to_lowercase().contains(needle))
+            && (self.turn_ids.is_empty()
+                || row
+                    .turn_id
+                    .as_ref()
+                    .is_some_and(|turn_id| self.turn_ids.contains(turn_id)))
+            && (self.sides.is_empty() || self.sides.contains(&row.side))
+            && (self.phases.is_empty() || self.phases.contains(&row.phase))
+            && (self.flavors.is_empty()
+                || self.flavors.contains(&row.primary_flavor)
+                || row.flavor_tags.iter().any(|tag| self.flavors.contains(tag)))
+    }
+}
+
+pub(super) struct MessageSourceScan {
+    pub(super) rows: Vec<MessageRecord>,
+    pub(super) residues: Vec<Residue>,
+    pub(super) vendor: Vendor,
+}
+
+#[derive(Eq, Ord, PartialEq, PartialOrd)]
+enum MessageIdentity {
+    Final {
+        turn: Option<String>,
+        generation: u64,
+        text: String,
+    },
+    Other {
+        turn: Option<String>,
+        generation: u64,
+        ts: String,
+        side: String,
+        phase: String,
+        text: String,
+    },
+}
+
+struct MessageDedup {
+    identities: BTreeSet<MessageIdentity>,
+    generation: u64,
+}
+
+impl MessageDedup {
+    fn new() -> Self {
+        Self {
+            identities: BTreeSet::new(),
+            generation: 0,
+        }
+    }
+
+    fn begin(&mut self, moment: Option<listen::TurnMoment>) {
+        if moment == Some(listen::TurnMoment::Started) {
+            self.generation = self.generation.saturating_add(1);
+        }
+    }
+
+    fn finish(&mut self, moment: Option<listen::TurnMoment>) {
+        if moment == Some(listen::TurnMoment::Completed) {
+            self.generation = self.generation.saturating_add(1);
+        }
+    }
+
+    fn admit(
+        &mut self,
+        message: &MessageRecord,
+        work: &mut SessionWork,
+        at: &str,
+    ) -> Result<bool, Refusal> {
+        work.admit_retained_text(message_text_bytes(message), at)?;
+        let identity = if message.side == "assistant" && message.phase == "final_answer" {
+            MessageIdentity::Final {
+                turn: message.turn_id.clone(),
+                generation: self.generation,
+                text: message.text.clone(),
+            }
+        } else {
+            MessageIdentity::Other {
+                turn: message.turn_id.clone(),
+                generation: self.generation,
+                ts: message.ts.clone(),
+                side: message.side.clone(),
+                phase: message.phase.clone(),
+                text: message.text.clone(),
+            }
+        };
+        if self.identities.contains(&identity) {
+            return Ok(false);
+        }
+        if self.identities.len() == MAX_MESSAGE_IDENTITIES {
+            return Err(refusal(
+                "session::message-identity-limit",
+                Some(format!("limit={MAX_MESSAGE_IDENTITIES} at={at:?}")),
+                "narrow the message window or filters and retry",
+            ));
+        }
+        self.identities.insert(identity);
+        Ok(true)
+    }
+}
+
+pub(super) fn scan_message_source(
+    source: &ResolvedSource,
+    start: Option<&str>,
+    query: &MessageQuery,
+    direction: FrontierDirection,
+    work: &mut SessionWork,
+) -> Result<MessageSourceScan, Refusal> {
+    let mut frontier = ResultFrontier::new(query.limit.get(), direction)?;
+    let mut cursor = ForwardCursor::new(source, start, work)?;
+    let mut scratch = Dataset::default();
+    let mut markers = Vec::new();
+    let mut residues = ResidueLedger::new();
+    let mut state = FoldState::default();
+    let mut dedup = MessageDedup::new();
+    loop {
+        let window = cursor.advance(work)?;
+        if let Some(row) = window.row {
+            let at = format!(
+                "{}:record {}",
+                source.path.display(),
+                cursor.continuation().line
+            );
+            let moment = match row {
+                DecodedRow::Typed(record) => {
+                    let moment = record.context.turn;
+                    dedup.begin(moment);
+                    reduce_record(
+                        &record,
+                        &mut FoldStorage {
+                            dataset: &mut scratch,
+                            markers: &mut markers,
+                            residues: &mut residues,
+                            state: &mut state,
+                            tokens: None,
+                        },
+                        work,
+                        &at,
+                    )?;
+                    moment
+                }
+                DecodedRow::Residue(residue) => {
+                    residues.push(residue, work, &at)?;
+                    None
+                }
+                DecodedRow::Ignored => None,
+            };
+            markers.clear();
+            for message in scratch.messages.drain(..) {
+                if dedup.admit(&message, work, &at)? && query.matches(&message) {
+                    frontier.push(message);
+                }
+            }
+            for turn in &mut scratch.turns {
+                turn.messages.clear();
+            }
+            dedup.finish(moment);
+            drain_fold_turns(
+                &mut scratch,
+                &mut state,
+                false,
+                &source.path.display().to_string(),
+                |_| Ok(()),
+            )?;
+            if query.oldest_first && frontier.is_full() {
+                break;
+            }
+        }
+        if matches!(window.progress, ForwardProgress::Eof(_)) {
+            let state = std::mem::take(&mut state);
+            finish_fold(
+                &mut scratch,
+                state,
+                work,
+                &source.path.display().to_string(),
+            )?;
+            break;
+        }
+    }
+    Ok(MessageSourceScan {
+        rows: frontier.into_rows(),
+        residues: residues.finish(work, "message source residue summary")?,
+        vendor: cursor.vendor(),
+    })
+}
 
 pub(crate) struct Aggregate {
     sources: Vec<SourceView>,
@@ -835,7 +1029,7 @@ fn retain_recent(rows: &mut Vec<MessageRecord>, row: MessageRecord, limit: usize
     }
 }
 
-fn admit_sources(sources: &[ResolvedSource]) -> Result<(), Refusal> {
+pub(super) fn admit_sources(sources: &[ResolvedSource]) -> Result<(), Refusal> {
     if sources.len() <= SOURCE_LIMIT {
         return Ok(());
     }

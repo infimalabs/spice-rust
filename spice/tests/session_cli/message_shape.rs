@@ -12,12 +12,11 @@ fn one_message_shape_fold_drives_session_reports_and_recall_dialogue() {
     assert_message_shape_message_rows(&file);
     assert_message_shape_summary(&file);
     assert_message_shape_recall_dialogue(&file);
+    assert_image_message_rows(&scratch);
     scratch.remove();
 }
 
-#[test]
-fn image_message_blocks_recover_one_authored_dialogue_entry() {
-    let scratch = Scratch::new("image-message-shapes");
+fn assert_image_message_rows(scratch: &Scratch) {
     let transcript = scratch.path().join("image-message-shapes.jsonl");
     write_jsonl(&transcript, &image_message_rows());
     let file = transcript.to_string_lossy().into_owned();
@@ -46,7 +45,6 @@ fn image_message_blocks_recover_one_authored_dialogue_entry() {
             "generated image wrapper leaked into briefing: {generated}"
         );
     }
-    scratch.remove();
 }
 
 fn image_message_rows() -> Vec<Value> {
