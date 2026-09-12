@@ -51,20 +51,7 @@ pub(super) fn render(
     let member_count = lineage.members.len();
     let close = context.controls.clone();
     let import = context.controls.clone();
-    let split = watchband::split_lineage(context.topology, identity).map(|rows| topology(&rows));
-    let split_enabled = context.can_arrange && split.is_some();
-    let split_controls = context.controls.clone();
-    let split_sender = context.sender.clone();
-    let original = topology(context.topology);
-    let restore = control.previous_topology.clone();
-    let restore_count = restore
-        .as_ref()
-        .and_then(|rows| rows.iter().find(|row| row.lineage_id == identity))
-        .map_or(0, |row| row.lanes.len());
-    let restore_enabled = context.can_arrange && restore.is_some();
-    let restore_controls = context.controls.clone();
-    let restore_sender = context.sender.clone();
-    let topology_revision = context.topology_revision;
+    let topology_actions = render_topology_actions(identity, control, context);
     html! {
         <div
             class="organization-action-menu"
@@ -94,6 +81,32 @@ pub(super) fn render(
                 <span class="organization-action-label">{"Import agent"}</span>
                 <span class="organization-action-detail">{"choose agent"}</span>
             </button>
+            {topology_actions}
+        </div>
+    }
+}
+
+fn render_topology_actions(
+    identity: CanonicalUuid,
+    control: &LineageControl,
+    context: &Context<'_>,
+) -> Html {
+    let split = watchband::split_lineage(context.topology, identity).map(|rows| topology(&rows));
+    let split_enabled = context.can_arrange && split.is_some();
+    let split_controls = context.controls.clone();
+    let split_sender = context.sender.clone();
+    let original = topology(context.topology);
+    let restore = control.previous_topology.clone();
+    let restore_count = restore
+        .as_ref()
+        .and_then(|rows| rows.iter().find(|row| row.lineage_id == identity))
+        .map_or(0, |row| row.lanes.len());
+    let restore_enabled = context.can_arrange && restore.is_some();
+    let restore_controls = context.controls.clone();
+    let restore_sender = context.sender.clone();
+    let topology_revision = context.topology_revision;
+    html! {
+        <>
             <button
                 type="button"
                 class="organization-action"
@@ -101,17 +114,19 @@ pub(super) fn render(
                 disabled={!split_enabled}
                 onclick={Callback::from(move |_| {
                     let Some(lineages) = split.clone() else { return; };
-                    split_controls.dispatch(LineageControlAction::SaveSplit {
-                        lineage: identity,
-                        topology: original.clone(),
-                    });
-                    send_action(
+                    if !admit_action(
                         &split_sender,
                         ClientAction::ArrangeLineages {
                             topology_revision,
                             lineages,
                         },
-                    );
+                    ) {
+                        return;
+                    }
+                    split_controls.dispatch(LineageControlAction::SaveSplit {
+                        lineage: identity,
+                        topology: original.clone(),
+                    });
                 })}
             >
                 <span class="organization-action-label">{"Split into individuals"}</span>
@@ -126,16 +141,18 @@ pub(super) fn render(
                 disabled={!restore_enabled}
                 onclick={Callback::from(move |_| {
                     let Some(lineages) = restore.clone() else { return; };
-                    restore_controls.dispatch(LineageControlAction::ClearRestore {
-                        lineage: identity,
-                    });
-                    send_action(
+                    if !admit_action(
                         &restore_sender,
                         ClientAction::ArrangeLineages {
                             topology_revision,
                             lineages,
                         },
-                    );
+                    ) {
+                        return;
+                    }
+                    restore_controls.dispatch(LineageControlAction::ClearRestore {
+                        lineage: identity,
+                    });
                 })}
             >
                 <span class="organization-action-label">{"Restore previous organization"}</span>
@@ -143,7 +160,7 @@ pub(super) fn render(
                     if restore_enabled { members(restore_count) } else { "no saved subgroup".to_owned() }
                 }</span>
             </button>
-        </div>
+        </>
     }
 }
 
@@ -184,13 +201,15 @@ fn render_arrangement(lineage: CanonicalUuid, context: &Context<'_>) -> Html {
                         data-lineage-arrangement={kind}
                         data-lineage-arrangement-target={target.to_string()}
                         onclick={Callback::from(move |_| {
-                            send_action(
+                            if !admit_action(
                                 &sender,
                                 ClientAction::ArrangeLineages {
                                     topology_revision,
                                     lineages: lineages.clone(),
                                 },
-                            );
+                            ) {
+                                return;
+                            }
                             controls.dispatch(LineageControlAction::CloseMenus);
                         })}
                     >
@@ -248,7 +267,7 @@ fn render_import(lineage: &crate::runtime::LaneRow, context: &Context<'_>) -> Ht
                             class="organization-import-choice"
                             role="menuitem"
                             onclick={Callback::from(move |_| {
-                                send_action(
+                                if !admit_action(
                                     &sender,
                                     ClientAction::ConfigureLineage {
                                         topology_revision,
@@ -256,7 +275,9 @@ fn render_import(lineage: &crate::runtime::LaneRow, context: &Context<'_>) -> Ht
                                         member: Some(member),
                                         life: None,
                                     },
-                                );
+                                ) {
+                                    return;
+                                }
                                 controls.dispatch(LineageControlAction::ToggleImport {
                                     lineage: identity,
                                 });

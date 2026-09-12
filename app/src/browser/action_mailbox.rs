@@ -41,8 +41,16 @@ impl ActionQueue {
         self.rearm()
     }
 
-    pub(super) fn pop(&self) -> Option<ClientAction> {
-        self.mailbox.borrow_mut().pop()
+    pub(super) fn lease(&self) -> Option<ClientAction> {
+        self.mailbox.borrow_mut().lease()
+    }
+
+    pub(super) fn commit(&self) {
+        self.mailbox.borrow_mut().commit();
+    }
+
+    pub(super) fn restore(&self) {
+        self.mailbox.borrow_mut().restore();
     }
 
     pub(super) fn rearm(&self) -> Result<(), ActionAdmissionError> {
@@ -52,10 +60,7 @@ impl ActionQueue {
         match self.wake.borrow_mut().try_send(()) {
             Ok(()) => Ok(()),
             Err(error) if error.is_full() => Ok(()),
-            Err(_) => {
-                self.mailbox.borrow_mut().clear();
-                Err(ActionAdmissionError::Unavailable)
-            }
+            Err(_) => Err(ActionAdmissionError::Unavailable),
         }
     }
 }
@@ -91,6 +96,7 @@ impl std::fmt::Display for ActionAdmissionError {
 #[derive(Default)]
 struct ActionMailbox {
     records: VecDeque<QueuedAction>,
+    leased: Option<LeasedAction>,
     history: HashSet<(wire::CanonicalUuid, wire::MessageLocus)>,
     payload_bytes: usize,
     mutation_turn: bool,
@@ -99,6 +105,11 @@ struct ActionMailbox {
 struct QueuedAction {
     action: ClientAction,
     payload_bytes: usize,
+}
+
+struct LeasedAction {
+    queued: QueuedAction,
+    index: usize,
 }
 
 impl ClientAction {
@@ -124,7 +135,7 @@ impl ClientAction {
                     )
                 },
             ),
-            Self::Note { task, note } => task.as_str().len().saturating_add(note.len()),
+            Self::Note { task, note, .. } => task.as_str().len().saturating_add(note.len()),
             Self::Steer {
                 message,
                 attachments,
@@ -145,7 +156,7 @@ impl ClientAction {
         }
     }
 
-    const fn is_mutation(&self) -> bool {
+    pub(super) const fn is_mutation(&self) -> bool {
         !matches!(self, Self::Refresh | Self::MessageHistory { .. })
     }
 }
@@ -157,16 +168,20 @@ impl ActionMailbox {
             ClientAction::Refresh | ClientAction::DrainSubmissions
         );
         if singleton
-            && self.records.iter().any(|queued| {
-                matches!(
-                    (&queued.action, &action),
-                    (ClientAction::Refresh, ClientAction::Refresh)
-                        | (
-                            ClientAction::DrainSubmissions,
-                            ClientAction::DrainSubmissions
-                        )
-                )
-            })
+            && self
+                .records
+                .iter()
+                .chain(self.leased.iter().map(|leased| &leased.queued))
+                .any(|queued| {
+                    matches!(
+                        (&queued.action, &action),
+                        (ClientAction::Refresh, ClientAction::Refresh)
+                            | (
+                                ClientAction::DrainSubmissions,
+                                ClientAction::DrainSubmissions
+                            )
+                    )
+                })
         {
             return Ok(());
         }
@@ -189,7 +204,7 @@ impl ActionMailbox {
         if history.is_some() && self.history.len() >= HISTORY_RECORD_LIMIT {
             return Err(ActionAdmissionError::History);
         }
-        if self.records.len() >= ACTION_RECORD_LIMIT {
+        if self.records.len() + usize::from(self.leased.is_some()) >= ACTION_RECORD_LIMIT {
             return Err(ActionAdmissionError::Records);
         }
         let payload_bytes = action.payload_bytes();
@@ -207,26 +222,48 @@ impl ActionMailbox {
         Ok(())
     }
 
-    fn pop(&mut self) -> Option<ClientAction> {
+    fn lease(&mut self) -> Option<ClientAction> {
+        assert!(self.leased.is_none(), "only one action may be leased");
         let index = self
             .records
             .iter()
             .position(|queued| queued.action.is_mutation() == self.mutation_turn)
             .unwrap_or(0);
         let queued = self.records.remove(index)?;
+        let action = queued.action.clone();
+        self.leased = Some(LeasedAction { queued, index });
+        Some(action)
+    }
+
+    fn commit(&mut self) {
+        let leased = self.leased.take().expect("one leased action commits");
+        self.release_accounting(&leased.queued);
+        self.mutation_turn = !self.mutation_turn;
+    }
+
+    fn restore(&mut self) {
+        let leased = self.leased.take().expect("one leased action restores");
+        if matches!(leased.queued.action, ClientAction::FastMode(_))
+            && self
+                .records
+                .iter()
+                .any(|queued| matches!(queued.action, ClientAction::FastMode(_)))
+        {
+            self.release_accounting(&leased.queued);
+            return;
+        }
+        self.records
+            .insert(leased.index.min(self.records.len()), leased.queued);
+    }
+
+    fn release_accounting(&mut self, queued: &QueuedAction) {
         if let ClientAction::MessageHistory { lane, before } = &queued.action {
             self.history.remove(&(*lane, *before));
         }
         self.payload_bytes = self.payload_bytes.saturating_sub(queued.payload_bytes);
-        self.mutation_turn = !self.mutation_turn;
-        Some(queued.action)
     }
 
     fn is_empty(&self) -> bool {
         self.records.is_empty()
-    }
-
-    fn clear(&mut self) {
-        *self = Self::default();
     }
 }

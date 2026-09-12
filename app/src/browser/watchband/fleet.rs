@@ -341,7 +341,7 @@ fn lineage_drop(
         };
         event.prevent_default();
         event.stop_propagation();
-        send_action(
+        let _admitted = admit_action(
             &sender,
             ClientAction::ArrangeLineages {
                 topology_revision,

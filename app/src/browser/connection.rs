@@ -174,21 +174,7 @@ async fn pump_session(
                     !hydrating,
                 ).await?;
                 if hydrating && pending.values().all(|entry| entry.current_read().is_none()) {
-                    let complete = data
-                        .read()
-                        .as_ref()
-                        .is_some_and(CanvasRuntime::is_hydrated);
-                    if !complete {
-                        return Err(
-                            "replacement Canvas scope settled without every current snapshot"
-                                .to_owned(),
-                        );
-                    }
-                    handles.surface.set(data.publication());
-                    handles.connection.set(Connection::Online {
-                        actor: principal.actor().to_string(),
-                        epoch: principal.epoch().to_string(),
-                    });
+                    finish_hydration(handles, data, &principal)?;
                     hydrating = false;
                     actions.rearm().map_err(|error| error.to_string())?;
                 }
@@ -198,19 +184,15 @@ async fn pump_session(
                 if hydrating {
                     continue;
                 }
-                let Some(action) = actions.pop() else {
-                    continue;
-                };
-                dispatch_client_action(
+                service_action_wake(
                     &principal,
                     data,
                     &mut writer,
                     &mut pending,
                     &handles.submissions,
                     demands,
-                    action,
+                    actions,
                 ).await?;
-                actions.rearm().map_err(|error| error.to_string())?;
             },
             () = silence => {
                 if probed {
@@ -229,6 +211,50 @@ async fn pump_session(
         }
     }
     Ok(())
+}
+
+fn finish_hydration(
+    handles: &SurfaceHandles,
+    data: &SurfaceData,
+    principal: &Principal,
+) -> Result<(), String> {
+    let complete = data.read().as_ref().is_some_and(CanvasRuntime::is_hydrated);
+    if !complete {
+        return Err("replacement Canvas scope settled without every current snapshot".to_owned());
+    }
+    handles.surface.set(data.publication());
+    handles.connection.set(Connection::Online {
+        actor: principal.actor().to_string(),
+        epoch: principal.epoch().to_string(),
+    });
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn service_action_wake(
+    principal: &Principal,
+    data: &SurfaceData,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    submissions: &SubmissionHandle,
+    demands: &mut DemandQueue<ClientAction>,
+    actions: &ActionQueue,
+) -> Result<(), String> {
+    let Some(action) = actions.lease() else {
+        return Ok(());
+    };
+    dispatch_client_action(
+        principal,
+        data,
+        writer,
+        pending,
+        submissions,
+        demands,
+        actions,
+        action,
+    )
+    .await?;
+    actions.rearm().map_err(|error| error.to_string())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -271,13 +297,31 @@ async fn dispatch_client_action(
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     submissions: &SubmissionHandle,
     demands: &mut DemandQueue<ClientAction>,
+    actions: &ActionQueue,
     action: ClientAction,
 ) -> Result<(), String> {
     if is_demand(&action) {
-        demands.submit(random_uuid()?, action)?;
+        let submitted = random_uuid().and_then(|id| demands.submit(id, action));
+        if let Err(error) = submitted {
+            actions.restore();
+            return Err(error);
+        }
+        actions.commit();
         drain_demands(principal, data, writer, pending, demands).await
+    } else if matches!(action, ClientAction::DrainSubmissions) {
+        actions.commit();
+        drain_submissions(principal, writer, pending, submissions).await
     } else {
-        dispatch_action(principal, writer, pending, submissions, action).await
+        match dispatch_action(principal, writer, pending, submissions, action).await {
+            Ok(()) => {
+                actions.commit();
+                Ok(())
+            }
+            Err(error) => {
+                actions.restore();
+                Err(error)
+            }
+        }
     }
 }
 
@@ -692,75 +736,32 @@ async fn dispatch_action(
         ClientAction::MessageHistory { lane, before } => {
             send_message_history(principal, writer, lane, before).await
         }
-        ClientAction::Seat {
-            topology_revision,
-            lane,
-            name,
-            worktree,
-            life,
-            vendor,
-        } => {
-            send_lane_seat(
-                principal,
-                writer,
-                pending,
-                topology_revision,
-                lane,
-                name,
-                worktree,
-                life,
-                vendor,
-            )
-            .await
+        ClientAction::Seat { .. }
+        | ClientAction::ArrangeLane { .. }
+        | ClientAction::RenewLane { .. }
+        | ClientAction::ArrangeLineages { .. }
+        | ClientAction::ConfigureLineage { .. } => {
+            unreachable!("topology demand dispatch is partitioned")
         }
-        ClientAction::ArrangeLane {
-            topology_revision,
-            lane,
-            before,
-        } => {
-            send_typed(
-                principal,
-                writer,
-                pending,
-                PendingKind::LaneArrange,
-                CommandKind::LaneArrange,
-                vec![],
-                LaneArrange {
-                    topology_revision,
-                    lane,
-                    before,
-                },
-            )
-            .await
+        action @ (ClientAction::Note { .. } | ClientAction::Steer { .. }) => {
+            dispatch_authored_action(principal, writer, pending, action).await
         }
-        ClientAction::RenewLane { .. } => unreachable!("renewal dispatch is partitioned"),
-        ClientAction::ArrangeLineages {
-            topology_revision,
-            lineages,
-        } => {
-            send_lineage_arrangement(principal, writer, pending, topology_revision, lineages).await
-        }
-        ClientAction::ConfigureLineage {
-            topology_revision,
-            lineage,
-            member,
-            life,
-        } => {
-            send_lineage_configuration(
-                principal,
-                writer,
-                pending,
-                topology_revision,
-                lineage,
-                member,
-                life,
-            )
-            .await
-        }
-        ClientAction::Note { task, note } => {
-            send_task_note(principal, writer, pending, task, note).await
+    }
+}
+
+async fn dispatch_authored_action(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    action: ClientAction,
+) -> Result<(), String> {
+    match action {
+        ClientAction::Note { id, task, note } => {
+            send_task_note(principal, writer, pending, id, task, note).await
         }
         ClientAction::Steer {
+            id,
+            fanout,
             lane,
             occupant,
             epoch,
@@ -771,6 +772,8 @@ async fn dispatch_action(
                 principal,
                 writer,
                 pending,
+                id,
+                fanout,
                 lane,
                 occupant,
                 epoch,
@@ -779,6 +782,7 @@ async fn dispatch_action(
             )
             .await
         }
+        _ => unreachable!("authored action dispatch is partitioned"),
     }
 }
 
@@ -824,6 +828,8 @@ async fn send_steer(
     principal: &Principal,
     writer: &mut SocketWriter,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    id: CanonicalUuid,
+    fanout: CanonicalUuid,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     epoch: CanonicalUuid,
@@ -831,7 +837,7 @@ async fn send_steer(
     attachments: Vec<DirectiveAttachment>,
 ) -> Result<(), String> {
     let body = SteerSend {
-        fanout: random_uuid()?,
+        fanout,
         lane,
         message,
         attachments,
@@ -841,42 +847,15 @@ async fn send_steer(
         occupant,
         epoch,
     }];
-    send_typed(
-        principal,
-        writer,
-        pending,
-        PendingKind::Steer,
-        CommandKind::SteerSend,
-        expected,
-        body,
-    )
-    .await
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn send_lane_seat(
-    principal: &Principal,
-    writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
-    topology_revision: u64,
-    lane: CanonicalUuid,
-    name: Option<String>,
-    worktree: String,
-    life: String,
-    vendor: wire::Name,
-) -> Result<(), String> {
-    let id = random_uuid()?;
-    send_lane_seat_as(
+    send_typed_as(
         principal,
         writer,
         pending,
         id,
-        topology_revision,
-        lane,
-        name,
-        worktree,
-        life,
-        vendor,
+        PendingKind::Steer,
+        CommandKind::SteerSend,
+        expected,
+        body,
     )
     .await
 }
@@ -915,17 +894,6 @@ async fn send_lane_seat_as(
         body,
     )
     .await
-}
-
-async fn send_lineage_arrangement(
-    principal: &Principal,
-    writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
-    topology_revision: u64,
-    lineages: Vec<LineageArrangement>,
-) -> Result<(), String> {
-    let id = random_uuid()?;
-    send_lineage_arrangement_as(principal, writer, pending, id, topology_revision, lineages).await
 }
 
 async fn send_lineage_arrangement_as(
@@ -1018,29 +986,6 @@ async fn drain_submissions(
     Ok(())
 }
 
-async fn send_lineage_configuration(
-    principal: &Principal,
-    writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
-    topology_revision: u64,
-    lineage: CanonicalUuid,
-    member: Option<CanonicalUuid>,
-    life: Option<LineageLife>,
-) -> Result<(), String> {
-    let id = random_uuid()?;
-    send_lineage_configuration_as(
-        principal,
-        writer,
-        pending,
-        id,
-        topology_revision,
-        lineage,
-        member,
-        life,
-    )
-    .await
-}
-
 #[allow(clippy::too_many_arguments)]
 async fn send_lineage_configuration_as(
     principal: &Principal,
@@ -1074,6 +1019,7 @@ async fn send_task_note(
     principal: &Principal,
     writer: &mut SocketWriter,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    id: CanonicalUuid,
     task: TaskHandle,
     note: String,
 ) -> Result<(), String> {
@@ -1085,10 +1031,11 @@ async fn send_task_note(
         note,
     };
     let expected = vec![Witness::Existence { task: born }];
-    send_typed(
+    send_typed_as(
         principal,
         writer,
         pending,
+        id,
         PendingKind::Note,
         CommandKind::TaskNote,
         expected,

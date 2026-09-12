@@ -709,9 +709,14 @@ pub(super) fn drop_on_lane(
         if message.is_empty() {
             return;
         }
-        send_action(
+        let (Some(id), Some(fanout)) = (action_identity(&sender), action_identity(&sender)) else {
+            return;
+        };
+        let _admitted = admit_action(
             &sender,
             ClientAction::Steer {
+                id,
+                fanout,
                 lane,
                 occupant,
                 epoch,

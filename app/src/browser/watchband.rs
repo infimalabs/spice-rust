@@ -690,7 +690,7 @@ fn renewal_callback(
 ) -> Callback<MouseEvent> {
     let sender = sender.clone();
     Callback::from(move |_| {
-        send_action(
+        let _admitted = admit_action(
             &sender,
             ClientAction::RenewLane {
                 topology_revision,
@@ -781,7 +781,7 @@ fn primary_composer_dragging(
             return;
         };
         if enabled && source != lane {
-            send_action(
+            let _admitted = admit_action(
                 &sender,
                 ClientAction::ArrangeLane {
                     topology_revision,
