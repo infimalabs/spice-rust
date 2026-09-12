@@ -668,20 +668,6 @@ async fn project_owed_inbox_with(
     Ok(())
 }
 
-#[cfg(test)]
-pub(in crate::resident) async fn project_moved(
-    inbox_projections: &mut InboxProjections,
-    residency: &journal::JournalHead<ResidencyHead>,
-) {
-    project_owed_inbox_with(inbox_projections, |projections| {
-        let projection = projections.next(residency).expect("projection owed");
-        projections.complete(projection, steering::FoldAttempt::Moved);
-        Ok(())
-    })
-    .await
-    .expect("moved projection yields one turn");
-}
-
 fn session_compaction_poll() -> tokio::time::Interval {
     let interval = message_surface::SESSION_COMPACTION_POLL_INTERVAL;
     let mut poll = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
