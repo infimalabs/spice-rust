@@ -21,9 +21,12 @@ use super::model::{
 use super::source::ResolvedSource;
 
 mod horizon;
+mod stream;
+mod work;
 
-use horizon::read_records;
 pub(crate) use horizon::recent_compaction_horizon;
+use stream::stream_records;
+use work::{ResidueLedger, SessionWork, SessionWorkBudget};
 
 const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
 
@@ -71,9 +74,26 @@ pub(crate) fn load_since(
 ) -> Result<Dataset, Refusal> {
     let mut dataset = Dataset::default();
     let mut markers = Vec::new();
+    let mut residues = ResidueLedger::new();
+    let mut work = SessionWork::new(SessionWorkBudget::report());
     for source in sources {
         let source_name = source.path.display().to_string();
-        let (records, mut residues, vendor) = read_records(source, start)?;
+        let mut fold = FoldState::default();
+        let vendor = stream_records(source, start, &mut work, |row| match row {
+            DecodedRow::Typed(record) => reduce_record(
+                &record,
+                &mut dataset,
+                &mut markers,
+                &mut residues,
+                &mut fold,
+            ),
+            DecodedRow::Residue(residue) => {
+                residues.push(residue);
+                Ok(())
+            }
+            DecodedRow::Ignored => Ok(()),
+        })?;
+        finish_fold(&mut dataset, fold);
         dataset.sources.push(SourceView {
             name: source.path.file_name().map_or_else(
                 || source_name.clone(),
@@ -84,9 +104,8 @@ pub(crate) fn load_since(
             thread: source.thread.clone(),
             compressed: source.path.to_string_lossy().ends_with(".gz"),
         });
-        reduce(&records, &mut dataset, &mut markers)?;
-        dataset.residues.append(&mut residues);
     }
+    dataset.residues = residues.finish();
     reconstruct_compactions(&markers, &mut dataset);
     account_compactions(&mut dataset);
     sort_dataset(&mut dataset);
@@ -278,108 +297,119 @@ fn read_residue(path: &Path, line: u64, error: &io::Error) -> Residue {
     }
 }
 
-fn reduce(
-    records: &[TypedRecord],
+#[derive(Default)]
+struct FoldState {
+    current: Option<usize>,
+    pending: BTreeMap<String, PendingTool>,
+}
+
+fn reduce_record(
+    record: &TypedRecord,
     dataset: &mut Dataset,
     markers: &mut Vec<Marker>,
+    residues: &mut ResidueLedger,
+    state: &mut FoldState,
 ) -> Result<(), Refusal> {
-    let mut current = None;
-    let mut pending = BTreeMap::new();
-    for record in records {
-        let timestamp = record_timestamp(record);
-        match record.context.turn {
-            Some(TurnMoment::Started) => {
-                if let Some(index) = current {
-                    finish_turn(dataset, index, timestamp, false);
+    let timestamp = record_timestamp(record);
+    match record.context.turn {
+        Some(TurnMoment::Started) => {
+            if let Some(index) = state.current {
+                finish_turn(dataset, index, timestamp, false);
+            }
+            state.current = Some(start_turn(
+                dataset,
+                record,
+                record.context.turn_id.as_deref(),
+            ));
+        }
+        Some(TurnMoment::Observed) => {
+            state.current = Some(observe_turn(dataset, record, state.current));
+        }
+        Some(TurnMoment::Completed) | None => {}
+    }
+
+    for sourced in &record.events {
+        match &sourced.event {
+            Event::Session(_) => {}
+            Event::Prose(prose) => {
+                let index = ensure_turn(dataset, record, &mut state.current);
+                let side = match prose.role {
+                    ProseRole::Operator => "user",
+                    ProseRole::Assistant => "assistant",
+                };
+                let phase = if prose.role == ProseRole::Operator {
+                    "prompt"
+                } else if prose.phase.as_deref() == Some("final_answer")
+                    || record.context.turn == Some(TurnMoment::Completed)
+                {
+                    "final_answer"
+                } else {
+                    prose.phase.as_deref().unwrap_or("commentary")
+                };
+                if !(phase == "final_answer" && last_final_matches(dataset, index, &prose.text)) {
+                    push_message(dataset, index, record, side, phase, &prose.text);
                 }
-                current = Some(start_turn(
+            }
+            Event::Reasoning(_) => {
+                let index = ensure_turn(dataset, record, &mut state.current);
+                touch_turn(dataset, index, timestamp);
+            }
+            Event::Tool(tool) => match &tool.moment {
+                ToolMoment::Call { name, arguments } => {
+                    let index = ensure_turn(dataset, record, &mut state.current);
+                    register_tool_call(
+                        dataset,
+                        index,
+                        record,
+                        &tool.call_id,
+                        name,
+                        arguments,
+                        &mut state.pending,
+                    )?;
+                }
+                ToolMoment::Update { .. } => {
+                    if let Some(tool) = state.pending.get(&tool.call_id) {
+                        touch_turn(dataset, tool.turn, timestamp);
+                    }
+                }
+                ToolMoment::Result(outcome) => complete_tool_call(
                     dataset,
                     record,
-                    record.context.turn_id.as_deref(),
-                ));
+                    &tool.call_id,
+                    outcome,
+                    &mut state.pending,
+                    residues,
+                ),
+            },
+            Event::Usage(usage) => push_usage(dataset, record, usage),
+            Event::Compaction(compaction) => markers.push(Marker {
+                source: record.source.clone(),
+                position: record.line,
+                ts: timestamp.to_owned(),
+                summary: compaction.summary.clone().unwrap_or_default(),
+            }),
+            Event::Failure(_) => {
+                let index = ensure_turn(dataset, record, &mut state.current);
+                dataset.turns[index].error_count =
+                    dataset.turns[index].error_count.saturating_add(1);
+                touch_turn(dataset, index, timestamp);
             }
-            Some(TurnMoment::Observed) => {
-                current = Some(observe_turn(dataset, record, current));
-            }
-            Some(TurnMoment::Completed) | None => {}
-        }
-
-        for sourced in &record.events {
-            match &sourced.event {
-                Event::Session(_) => {}
-                Event::Prose(prose) => {
-                    let index = ensure_turn(dataset, record, &mut current);
-                    let side = match prose.role {
-                        ProseRole::Operator => "user",
-                        ProseRole::Assistant => "assistant",
-                    };
-                    let phase = if prose.role == ProseRole::Operator {
-                        "prompt"
-                    } else if prose.phase.as_deref() == Some("final_answer")
-                        || record.context.turn == Some(TurnMoment::Completed)
-                    {
-                        "final_answer"
-                    } else {
-                        prose.phase.as_deref().unwrap_or("commentary")
-                    };
-                    if !(phase == "final_answer" && last_final_matches(dataset, index, &prose.text))
-                    {
-                        push_message(dataset, index, record, side, phase, &prose.text);
-                    }
-                }
-                Event::Reasoning(_) => {
-                    let index = ensure_turn(dataset, record, &mut current);
-                    touch_turn(dataset, index, timestamp);
-                }
-                Event::Tool(tool) => match &tool.moment {
-                    ToolMoment::Call { name, arguments } => {
-                        let index = ensure_turn(dataset, record, &mut current);
-                        register_tool_call(
-                            dataset,
-                            index,
-                            record,
-                            &tool.call_id,
-                            name,
-                            arguments,
-                            &mut pending,
-                        )?;
-                    }
-                    ToolMoment::Update { .. } => {
-                        if let Some(tool) = pending.get(&tool.call_id) {
-                            touch_turn(dataset, tool.turn, timestamp);
-                        }
-                    }
-                    ToolMoment::Result(outcome) => {
-                        complete_tool_call(dataset, record, &tool.call_id, outcome, &mut pending);
-                    }
-                },
-                Event::Usage(usage) => push_usage(dataset, record, usage),
-                Event::Compaction(compaction) => markers.push(Marker {
-                    source: record.source.clone(),
-                    position: record.line,
-                    ts: timestamp.to_owned(),
-                    summary: compaction.summary.clone().unwrap_or_default(),
-                }),
-                Event::Failure(_) => {
-                    let index = ensure_turn(dataset, record, &mut current);
-                    dataset.turns[index].error_count =
-                        dataset.turns[index].error_count.saturating_add(1);
-                    touch_turn(dataset, index, timestamp);
-                }
-            }
-        }
-
-        if record.context.turn == Some(TurnMoment::Completed) {
-            let index = ensure_turn(dataset, record, &mut current);
-            finish_turn(dataset, index, timestamp, true);
-            current = None;
         }
     }
-    if let Some(index) = current {
+
+    if record.context.turn == Some(TurnMoment::Completed) {
+        let index = ensure_turn(dataset, record, &mut state.current);
+        finish_turn(dataset, index, timestamp, true);
+        state.current = None;
+    }
+    Ok(())
+}
+
+fn finish_fold(dataset: &mut Dataset, state: FoldState) {
+    if let Some(index) = state.current {
         let end = dataset.turns[index].last_activity_ts.clone();
         finish_turn(dataset, index, &end, false);
     }
-    Ok(())
 }
 
 fn record_timestamp(record: &TypedRecord) -> &str {
@@ -762,9 +792,10 @@ fn complete_tool_call(
     call_id: &str,
     outcome: &ToolOutcome,
     pending: &mut BTreeMap<String, PendingTool>,
+    residues: &mut ResidueLedger,
 ) {
     let Some(pending) = pending.remove(call_id) else {
-        dataset.residues.push(Residue {
+        residues.push(Residue {
             source: record.source.clone(),
             line: record.line,
             kind: "tool-invocation-missing".to_owned(),

@@ -504,6 +504,10 @@ mod tests {
 
     #[test]
     fn source_discovery_and_report_construction_share_one_deadline() {
+        let default = deadline_duration_value(None, "briefing").expect("default is valid");
+        let explicit = deadline_duration_value(Some("1.2500"), "sweep").expect("explicit is valid");
+        assert_eq!(duration_label(default), "30s");
+        assert_eq!(duration_label(explicit), "1.25s");
         let budget = std::time::Duration::from_millis(1);
         let discovering = context("sweep", &["thread-identity"], budget);
         let discovery_refusal = timeout(&discovering, None);
@@ -524,14 +528,6 @@ mod tests {
                 .and_then(wire::RefusalDiagnostic::observed),
             Some("action=briefing inputs=resolved[\"/canonical/input.jsonl\"] budget=0.001s")
         );
-    }
-
-    #[test]
-    fn default_and_explicit_deadline_witnesses_are_canonical() {
-        let default = deadline_duration_value(None, "briefing").expect("default is valid");
-        let explicit = deadline_duration_value(Some("1.2500"), "sweep").expect("explicit is valid");
-        assert_eq!(duration_label(default), "30s");
-        assert_eq!(duration_label(explicit), "1.25s");
     }
 
     #[test]

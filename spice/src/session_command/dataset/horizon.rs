@@ -1,14 +1,15 @@
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
-use flate2::read::GzDecoder;
 use listen::{Decoded, Event, RecordDecodeError, ResidueKind};
 use wire::Refusal;
 
+use super::stream::{compressed, stream_records};
+use super::work::SessionWork;
 use super::{
-    CompactionHorizon, DecodedRow, MAX_LINE_BYTES, Marker, Residue, ResolvedSource, TypedRecord,
-    Vendor, decode_row, read_residue, record_refusal, record_timestamp, refusal,
+    CompactionHorizon, DecodedRow, MAX_LINE_BYTES, Marker, ResolvedSource, TypedRecord,
+    record_refusal, record_timestamp, refusal,
 };
 
 const BACKWARD_CHUNK_BYTES: u64 = 64 * 1024;
@@ -23,8 +24,11 @@ pub(crate) fn recent_compaction_horizon(
         return Ok(CompactionHorizon { start: None });
     }
     let mut markers = Vec::new();
+    let mut work = SessionWork::new(super::work::SessionWorkBudget::report());
     for source in sources {
-        markers.extend(read_recent_compaction_markers(source, count, end)?);
+        markers.extend(read_recent_compaction_markers(
+            source, count, end, &mut work,
+        )?);
     }
     markers.sort_by(|left, right| (&left.ts, &left.source).cmp(&(&right.ts, &right.source)));
     let first = markers.len().saturating_sub(count);
@@ -34,159 +38,24 @@ pub(crate) fn recent_compaction_horizon(
     })
 }
 
-pub(super) fn read_records(
-    source: &ResolvedSource,
-    start: Option<&str>,
-) -> Result<(Vec<TypedRecord>, Vec<Residue>, Vendor), Refusal> {
-    let mut reader = transcript_reader(source, start)?;
-    let mut dialect = source.dialect;
-    let mut rows = Vec::new();
-    let mut residues = Vec::new();
-    let mut buffer = Vec::new();
-    let mut line = 0_u64;
-    let mut within_horizon = start.is_none();
-    loop {
-        buffer.clear();
-        let read = match reader.read_until(b'\n', &mut buffer) {
-            Ok(read) => read,
-            Err(error) => {
-                residues.push(read_residue(&source.path, line.saturating_add(1), &error));
-                break;
-            }
-        };
-        if read == 0 {
-            break;
-        }
-        line = line.saturating_add(1);
-        let terminated = matches!(buffer.last(), Some(b'\n'));
-        while matches!(buffer.last(), Some(b'\n' | b'\r')) {
-            buffer.pop();
-        }
-        if buffer.is_empty() {
-            continue;
-        }
-        if !terminated
-            && let Some((observed, residue)) =
-                live_tail_truncated_residue(source, line, &buffer, dialect)?
-        {
-            dialect = Some(observed);
-            residues.push(residue);
-            continue;
-        }
-        let (observed, row) = decode_row(source, line, &buffer, dialect)?;
-        dialect = observed.or(dialect);
-        match row {
-            DecodedRow::Typed(row) => {
-                if !within_horizon && start.is_some_and(|start| record_timestamp(&row) >= start) {
-                    within_horizon = true;
-                }
-                if within_horizon {
-                    rows.push(row);
-                }
-            }
-            DecodedRow::Residue(residue) => residues.push(residue),
-            DecodedRow::Ignored => {}
-        }
-    }
-    let vendor = if source.vendor.is_unknown() {
-        dialect.map_or(source.vendor, Vendor::inferred)
-    } else {
-        source.vendor
-    };
-    Ok((rows, residues, vendor))
-}
-
-fn live_tail_truncated_residue(
-    source: &ResolvedSource,
-    line: u64,
-    buffer: &[u8],
-    dialect: Option<listen::Dialect>,
-) -> Result<Option<(listen::Dialect, Residue)>, Refusal> {
-    if source.thread.is_none() || compressed(&source.path) {
-        return Ok(None);
-    }
-    let Some(expected) = dialect else {
-        return Ok(None);
-    };
-    let locus = listen::Locus::new(line, 0, buffer.len() as u64);
-    let truncated = match listen::decode_record(Some(expected), buffer, locus) {
-        Ok(detected) => match detected.decoded {
-            Decoded::Residue(residue) => matches!(residue.kind, ResidueKind::Truncated),
-            Decoded::Events { .. } => false,
-        },
-        Err(RecordDecodeError::Invalid {
-            kind: ResidueKind::Truncated,
-        }) => true,
-        Err(error) => return Err(record_refusal(&source.path, line, &error)),
-    };
-    Ok(truncated.then(|| {
-        (
-            expected,
-            Residue {
-                source: source.path.display().to_string(),
-                line,
-                kind: "live-tail-truncated".to_owned(),
-                detail: "final live transcript row ended before a complete JSON record".to_owned(),
-                recovery: "retry after the vendor finishes appending the current transcript record"
-                    .to_owned(),
-            },
-        )
-    }))
-}
-
-pub(super) fn transcript_reader(
-    source: &ResolvedSource,
-    start: Option<&str>,
-) -> Result<Box<dyn BufRead>, Refusal> {
-    let file = open_transcript(source)?;
-    if compressed(&source.path) {
-        Ok(Box::new(BufReader::new(GzDecoder::new(file))))
-    } else {
-        let mut file = file;
-        if let Some(start) = start {
-            let offset = start_offset_after_prior_timestamp(source, start)?;
-            file.seek(SeekFrom::Start(offset)).map_err(|error| {
-                refusal(
-                    "session::transcript-unreadable",
-                    Some(format!("{}: {error}", source.path.display())),
-                    "restore read access to the transcript and retry",
-                )
-            })?;
-        }
-        Ok(Box::new(BufReader::new(file)))
-    }
-}
-
-fn open_transcript(source: &ResolvedSource) -> Result<File, Refusal> {
-    File::open(&source.path).map_err(|error| {
-        refusal(
-            "session::transcript-unreadable",
-            Some(format!("{}: {error}", source.path.display())),
-            "restore read access to the transcript and retry",
-        )
-    })
-}
-
-fn compressed(path: &Path) -> bool {
-    path.to_string_lossy().ends_with(".gz")
-}
-
 fn read_recent_compaction_markers(
     source: &ResolvedSource,
     count: usize,
     end: Option<&str>,
+    work: &mut SessionWork,
 ) -> Result<Vec<Marker>, Refusal> {
     if count == 0 {
         return Ok(Vec::new());
     }
     if compressed(&source.path) {
-        return read_recent_compaction_markers_forward(source, count, end);
+        return read_recent_compaction_markers_forward(source, count, end, work);
     }
     let source_name = source.path.display().to_string();
     let mut markers = Vec::new();
-    reverse_lines(&source.path, |line, offset, _, terminal| {
+    work.begin_pass(&source_name)?;
+    reverse_lines(&source.path, work, |line, offset, _, terminal, work| {
         let live_tail = source.thread.is_some() && terminal;
-        if let Some(marker) = marker_from_line(source, &source_name, line, offset, live_tail)?
+        if let Some(marker) = marker_from_line(source, &source_name, line, offset, live_tail, work)?
             && end.is_none_or(|end| marker.ts.as_str() <= end)
         {
             markers.push(marker);
@@ -204,33 +73,10 @@ fn read_recent_compaction_markers_forward(
     source: &ResolvedSource,
     count: usize,
     end: Option<&str>,
+    work: &mut SessionWork,
 ) -> Result<Vec<Marker>, Refusal> {
-    let mut reader = transcript_reader(source, None)?;
-    let mut dialect = source.dialect;
     let mut markers = Vec::new();
-    let mut buffer = Vec::new();
-    let mut line = 0_u64;
-    loop {
-        buffer.clear();
-        let read = reader.read_until(b'\n', &mut buffer).map_err(|error| {
-            refusal(
-                "session::transcript-unreadable",
-                Some(format!("{}: {error}", source.path.display())),
-                "restore read access to the transcript and retry",
-            )
-        })?;
-        if read == 0 {
-            break;
-        }
-        line = line.saturating_add(1);
-        while matches!(buffer.last(), Some(b'\n' | b'\r')) {
-            buffer.pop();
-        }
-        if buffer.is_empty() {
-            continue;
-        }
-        let (observed, row) = decode_row(source, line, &buffer, dialect)?;
-        dialect = observed.or(dialect);
+    stream_records(source, None, work, |row| {
         if let DecodedRow::Typed(row) = row
             && let Some(marker) = marker_from_record(&row)
             && end.is_none_or(|end| marker.ts.as_str() <= end)
@@ -238,23 +84,25 @@ fn read_recent_compaction_markers_forward(
             markers.push(marker);
             trim_oldest(&mut markers, count);
         }
-    }
+        Ok(())
+    })?;
     Ok(markers)
 }
 
-fn start_offset_after_prior_timestamp(
+pub(super) fn start_offset_after_prior_timestamp(
     source: &ResolvedSource,
     start: &str,
+    work: &mut SessionWork,
 ) -> Result<u64, Refusal> {
     let mut offset = 0_u64;
     let mut context = None;
-    reverse_lines(&source.path, |line, current, _, _| {
+    reverse_lines(&source.path, work, |line, current, _, _, work| {
         if let Some(remaining) = context.as_mut() {
             offset = current;
             *remaining -= 1;
             return Ok(*remaining > 0);
         }
-        if timestamp_from_line(source, line).is_some_and(|ts| ts.as_str() < start) {
+        if timestamp_from_line(source, line, current, work)?.is_some_and(|ts| ts.as_str() < start) {
             offset = current;
             context = Some(HORIZON_CONTEXT_LINES);
         }
@@ -263,9 +111,9 @@ fn start_offset_after_prior_timestamp(
     Ok(offset)
 }
 
-fn reverse_lines<F>(path: &Path, mut visit: F) -> Result<(), Refusal>
+fn reverse_lines<F>(path: &Path, work: &mut SessionWork, mut visit: F) -> Result<(), Refusal>
 where
-    F: FnMut(&[u8], u64, u64, bool) -> Result<bool, Refusal>,
+    F: FnMut(&[u8], u64, u64, bool, &mut SessionWork) -> Result<bool, Refusal>,
 {
     let mut file = File::open(path).map_err(|error| {
         refusal(
@@ -287,7 +135,10 @@ where
     let transcript_length = position;
     let mut carry = Vec::new();
     while position > 0 {
+        let at = format!("{}:byte {position}", path.display());
+        work.check_deadline(&at)?;
         let read = position.min(BACKWARD_CHUNK_BYTES);
+        work.admit_source_bytes(read, &at)?;
         position -= read;
         file.seek(SeekFrom::Start(position)).map_err(|error| {
             refusal(
@@ -333,11 +184,18 @@ where
                 continue;
             }
             let next = position.saturating_add(next as u64);
+            let at = format!(
+                "{}:byte {}",
+                path.display(),
+                position.saturating_add(start as u64)
+            );
+            work.admit_record(&at)?;
             if !visit(
                 &block[start..end],
                 position.saturating_add(start as u64),
                 next,
                 next == transcript_length,
+                work,
             )? {
                 return Ok(());
             }
@@ -367,6 +225,7 @@ fn marker_from_line(
     line: &[u8],
     offset: u64,
     live_tail: bool,
+    work: &mut SessionWork,
 ) -> Result<Option<Marker>, Refusal> {
     if line.len() > MAX_LINE_BYTES {
         return Err(refusal(
@@ -389,6 +248,11 @@ fn marker_from_line(
     let Decoded::Events { context, events } = detected.decoded else {
         return Ok(None);
     };
+    work.admit_decoded(
+        events.len(),
+        line.len() as u64,
+        &format!("{source_name}:byte {offset}"),
+    )?;
     let Some(raw_ts) = context.timestamp.as_deref() else {
         return Ok(None);
     };
@@ -409,20 +273,32 @@ fn marker_from_line(
     }))
 }
 
-fn timestamp_from_line(source: &ResolvedSource, line: &[u8]) -> Option<String> {
+fn timestamp_from_line(
+    source: &ResolvedSource,
+    line: &[u8],
+    offset: u64,
+    work: &mut SessionWork,
+) -> Result<Option<String>, Refusal> {
     if line.len() > MAX_LINE_BYTES {
-        return None;
+        return Ok(None);
     }
     let locus = listen::Locus::new(1, 0, line.len() as u64);
-    let detected = listen::decode_record(source.dialect, line, locus).ok()?;
-    let Decoded::Events { context, .. } = detected.decoded else {
-        return None;
+    let Ok(detected) = listen::decode_record(source.dialect, line, locus) else {
+        return Ok(None);
     };
-    context
+    let Decoded::Events { context, events } = detected.decoded else {
+        return Ok(None);
+    };
+    work.admit_decoded(
+        events.len(),
+        line.len() as u64,
+        &format!("{}:byte {offset}", source.path.display()),
+    )?;
+    Ok(context
         .timestamp
         .as_deref()
         .and_then(spice::session_meter::normalize_timestamp)
-        .map(|timestamp| timestamp.to_string())
+        .map(|timestamp| timestamp.to_string()))
 }
 
 fn trim_oldest<T>(rows: &mut Vec<T>, count: usize) {
@@ -436,10 +312,12 @@ mod tests {
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    use super::super::work::{ResidueLedger, SessionWorkBudget};
     use super::*;
+    use crate::session_command::model::Vendor;
 
     #[test]
-    fn live_truncated_tail_cannot_outrank_the_one_complete_marker() {
+    fn bounded_stream_and_reverse_horizon_share_canonical_complete_records() {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(
             "spice-session-horizon-{}-{}.jsonl",
@@ -465,14 +343,40 @@ mod tests {
         let horizon = recent_compaction_horizon(std::slice::from_ref(&source), 3, None)
             .expect("bounded horizon scans");
         assert_eq!(horizon.start.as_deref(), Some("2026-01-01T00:00:01.000Z"));
-        let (records, residues, _) = read_records(&source, None).expect("forward dataset scans");
-        assert_eq!(
-            records.iter().filter_map(marker_from_record).count(),
-            1,
-            "the forward decoder sees the same canonical marker",
-        );
+        let mut work = SessionWork::new(SessionWorkBudget::report());
+        let mut markers = 0;
+        let mut residues = ResidueLedger::new();
+        stream_records(&source, None, &mut work, |row| {
+            match row {
+                DecodedRow::Typed(record) => {
+                    markers += usize::from(marker_from_record(&record).is_some());
+                }
+                DecodedRow::Residue(residue) => residues.push(residue),
+                DecodedRow::Ignored => {}
+            }
+            Ok(())
+        })
+        .expect("forward dataset streams");
+        let residues = residues.finish();
+        assert_eq!(markers, 1, "the forward decoder sees the canonical marker");
         assert_eq!(residues.len(), 1);
         assert_eq!(residues[0].kind, "live-tail-truncated");
+        let report = work.report();
+        assert_eq!(report.records, 3);
+        assert!(report.source_bytes > 0);
+        assert!(report.events > 0);
+        assert!(report.retained_text_bytes > 0);
+        assert_eq!(report.passes, 1);
+
+        let budget = SessionWorkBudget::new(1, 1, 1, 1, 1, std::time::Duration::from_secs(1))
+            .expect("tiny positive budget is admitted");
+        let mut exhausted = SessionWork::new(budget);
+        let refusal = stream_records(&source, None, &mut exhausted, |_| Ok(()))
+            .expect_err("source bytes stop before the first record");
+        assert_eq!(refusal.reason(), "session::transcript-work-exhausted");
+        assert_eq!(exhausted.report().source_bytes, 0);
+
+        assert!(SessionWorkBudget::new(0, 1, 1, 1, 1, std::time::Duration::from_secs(1),).is_err());
 
         fs::remove_file(path).expect("fixture transcript is removed");
     }
