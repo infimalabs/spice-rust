@@ -664,9 +664,7 @@ async fn socket_dispatch_replies_then_projects_three_lane_fanout() {
     let app = canvas::AppSource::resolve(&root).expect("fixture app resolves");
     let (server, mut control) = bind_fixture_canvas(epoch, capabilities.clone(), app).await;
     let address = server.local_addr().expect("server publishes address");
-    let discovery = server
-        .discovery(operator)
-        .expect("server discovery describes operator access");
+    let discovery = server.discovery(operator).expect("operator discovery");
     let (shutdown, stopped) = tokio::sync::oneshot::channel();
     let server_task = tokio::spawn(server.up_until(async move {
         let _ = stopped.await;

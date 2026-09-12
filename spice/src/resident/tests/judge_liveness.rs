@@ -34,8 +34,7 @@ async fn run_liveness_surface(setup: &mut LivenessSetup) -> String {
     let config = &setup.config;
     let epoch = setup.epoch;
     let lanes = setup.lanes;
-    let timer_commits = bus.reader().subscribe();
-    let proof_commits = bus.reader().subscribe();
+    let (timer_commits, proof_commits) = (bus.reader().subscribe(), bus.reader().subscribe());
     let mut timers = timers::Runtime::start(config.projects.clone(), config.steering.clone())
         .expect("timer authority starts");
     let mut lifecycle = lifecycle::Runtime::new(&config.lane);

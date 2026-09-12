@@ -182,14 +182,9 @@ pub(super) async fn run_surface(
         message_publisher,
         progress,
     } = started;
-    let capture::Channels {
-        reporter,
-        records,
-        failures,
-        exits,
-    } = capture::channels();
+    let channels = capture::channels();
     let supervisor_reports = capture::SupervisorReports::bind(paths)?;
-    lane_surface::restore_seats(bus, paths, epoch, seats, &reporter)?;
+    lane_surface::restore_seats(bus, paths, epoch, seats, &channels.reporter)?;
     ingest_transcripts(bus, paths, None, progress)?;
     let mut message_startup = launch_message_startup(bus, paths, epoch, &message_publisher)?;
     let reads = read_materializations::CurrentReads::start(bus, paths, &config.consent)
@@ -200,8 +195,8 @@ pub(super) async fn run_surface(
         paths,
         epoch,
         command_surface::Runtimes::new(
-            lane_surface::Runtime::new(&capabilities, &discovery, reporter.clone()),
-            lane_recovery::Runtime::new(reporter),
+            lane_surface::Runtime::new(&capabilities, &discovery, channels.reporter.clone()),
+            lane_recovery::Runtime::new(channels.reporter.clone()),
         ),
         config,
         &reads,
@@ -258,9 +253,9 @@ pub(super) async fn run_surface(
         session_compactions,
         taste_submitter,
         taste_completions,
-        records,
-        failures,
-        exits,
+        channels.records,
+        channels.failures,
+        channels.exits,
         supervisor_reports,
         progress,
         timers,
@@ -490,12 +485,7 @@ pub(super) async fn drive_surface(
     mut lifecycle: lifecycle::Runtime,
     mut inbox_projections: InboxProjections,
 ) -> CommandResult<()> {
-    let compaction_interval = message_surface::SESSION_COMPACTION_POLL_INTERVAL;
-    let mut session_compaction_poll = tokio::time::interval_at(
-        tokio::time::Instant::now() + compaction_interval,
-        compaction_interval,
-    );
-    session_compaction_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut session_compaction_poll = session_compaction_poll();
     loop {
         tokio::select! {
             request = control.recv(), if inbox_projections.is_empty() => {
@@ -578,6 +568,13 @@ pub(super) async fn drive_surface(
             ending = &mut server_task => return Err(server_outcome(ending)),
         }
     }
+}
+
+fn session_compaction_poll() -> tokio::time::Interval {
+    let interval = message_surface::SESSION_COMPACTION_POLL_INTERVAL;
+    let mut poll = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
+    poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    poll
 }
 
 #[allow(
