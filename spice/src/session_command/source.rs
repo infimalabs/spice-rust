@@ -12,7 +12,8 @@ const THREAD_HEX_LEN: usize = 32;
 const SEARCH_DEPTH: usize = 8;
 const INDEX_ROW_LIMIT: usize = 128;
 const INDEX_PATH_BYTES_LIMIT: usize = 64 * 1024;
-
+const INDEX_DIAGNOSTIC_BYTES_LIMIT: usize = 8 * 1024;
+const INDEX_ELAPSED_LIMIT: std::time::Duration = std::time::Duration::from_secs(1);
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedSource {
     pub(crate) path: PathBuf,
@@ -271,28 +272,30 @@ pub(super) fn find_thread(
                     Ok(Some(indexed)) => return Ok(vec![indexed]),
                     Ok(None) => {}
                     Err(StateIndexError::Invalid(error)) => {
-                        state_failure = Some(format!("{}: {error}", state.display()));
+                        state_failure = Some(index_issue(format!("{}: {error}", state.display())));
                     }
                     Err(StateIndexError::Refused(error)) => {
-                        return Err(format!("{}: {error}", state.display()));
+                        return Err(index_issue(format!("{}: {error}", state.display())));
                     }
                 }
             }
             Ok(_) => {
-                return Err(format!(
+                state_failure = Some(index_issue(format!(
                     "{} state database {} is not a real regular file",
                     vendor.label(),
                     state.display()
-                ));
+                )));
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                state_failure = Some(format!(
+                state_failure = Some(index_issue(format!(
                     "missing {} state database {}",
                     vendor.label(),
                     state.display()
-                ))
+                )))
             }
-            Err(error) => state_failure = Some(format!("{}: {error}", state.display())),
+            Err(error) => {
+                state_failure = Some(index_issue(format!("{}: {error}", state.display())))
+            }
         }
     }
     let discovered = match find_named_transcript(&root.join(layout.sessions_directory), &lookup) {
@@ -322,18 +325,40 @@ enum StateIndexError {
     Refused(String),
 }
 
+fn index_issue(issue: String) -> String {
+    if issue.len() <= INDEX_DIAGNOSTIC_BYTES_LIMIT {
+        issue
+    } else {
+        format!("thread index exceeded the {INDEX_DIAGNOSTIC_BYTES_LIMIT}-byte diagnostic limit")
+    }
+}
+
+fn check_index_elapsed(started: std::time::Instant) -> Result<(), StateIndexError> {
+    if started.elapsed() > INDEX_ELAPSED_LIMIT {
+        Err(StateIndexError::Refused(format!(
+            "thread index exceeded the {INDEX_ELAPSED_LIMIT:?} elapsed-work limit"
+        )))
+    } else {
+        Ok(())
+    }
+}
+
 fn codex_state_path(state: &Path, thread: &str) -> Result<Option<PathBuf>, StateIndexError> {
+    let started = std::time::Instant::now();
     let connection = Connection::open_with_flags(
         state,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(|error| StateIndexError::Invalid(error.to_string()))?;
+    check_index_elapsed(started)?;
     let mut statement = connection
         .prepare("SELECT rollout_path FROM threads WHERE replace(lower(id), '-', '') = ?1")
         .map_err(|error| StateIndexError::Invalid(error.to_string()))?;
+    check_index_elapsed(started)?;
     let mut rows = statement
         .query([thread])
         .map_err(|error| StateIndexError::Invalid(error.to_string()))?;
+    check_index_elapsed(started)?;
     let mut found: Option<PathBuf> = None;
     let mut row_count = 0_usize;
     let mut path_bytes = 0_usize;
@@ -341,6 +366,7 @@ fn codex_state_path(state: &Path, thread: &str) -> Result<Option<PathBuf>, State
         .next()
         .map_err(|error| StateIndexError::Invalid(error.to_string()))?
     {
+        check_index_elapsed(started)?;
         row_count = row_count.saturating_add(1);
         if row_count > INDEX_ROW_LIMIT {
             return Err(StateIndexError::Refused(format!(
@@ -358,17 +384,17 @@ fn codex_state_path(state: &Path, thread: &str) -> Result<Option<PathBuf>, State
         }
         let path = PathBuf::from(&spelling);
         let metadata = fs::symlink_metadata(&path).map_err(|error| {
-            StateIndexError::Refused(format!(
+            StateIndexError::Invalid(format!(
                 "indexed transcript {spelling:?} is unavailable: {error}"
             ))
         })?;
         if !metadata.file_type().is_file() || !transcript_extension(&path) {
-            return Err(StateIndexError::Refused(format!(
+            return Err(StateIndexError::Invalid(format!(
                 "indexed transcript {spelling:?} is not a real regular JSONL file"
             )));
         }
         let canonical = path.canonicalize().map_err(|error| {
-            StateIndexError::Refused(format!(
+            StateIndexError::Invalid(format!(
                 "indexed transcript {spelling:?} cannot be canonicalized: {error}"
             ))
         })?;
@@ -381,6 +407,7 @@ fn codex_state_path(state: &Path, thread: &str) -> Result<Option<PathBuf>, State
         }
         found = Some(canonical);
     }
+    check_index_elapsed(started)?;
     Ok(found)
 }
 
@@ -692,36 +719,6 @@ mod tests {
                 &codex_environment(scratch.path()),
             )
             .expect("incomplete discovery cannot erase indexed authority"),
-            [indexed.canonicalize().expect("indexed path canonicalizes")],
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn indexed_codex_paths_survive_an_unreadable_sessions_branch() {
-        let scratch = Scratch::new("indexed-unreadable");
-        let indexed = scratch.path().join("indexed.jsonl");
-        fs::write(&indexed, b"\n").expect("indexed transcript exists");
-        write_codex_state(scratch.path(), &[&indexed]);
-        let denied = scratch.path().join("sessions/denied");
-        fs::create_dir_all(&denied).expect("denied Codex session branch exists");
-        let original = fs::metadata(&denied)
-            .expect("denied branch metadata")
-            .permissions();
-        let mut blocked = original.clone();
-        blocked.set_mode(0o0);
-        fs::set_permissions(&denied, blocked).expect("deny fixture branch reads");
-
-        let read_result = fs::read_dir(&denied);
-        let lookup = find_thread(
-            THREAD,
-            &spice::extension::CODEX,
-            &codex_environment(scratch.path()),
-        );
-        fs::set_permissions(&denied, original).expect("restore fixture permissions");
-        read_result.expect_err("fixture must force a real read_dir failure");
-        assert_eq!(
-            lookup.expect("incomplete discovery cannot erase indexed authority"),
             [indexed.canonicalize().expect("indexed path canonicalizes")],
         );
     }

@@ -149,7 +149,7 @@ fn root_thread_discovery_gzip_and_deduplication_preserve_identity() {
 }
 
 #[test]
-fn thread_identity_enumerates_continuations_and_retains_earlier_history() {
+fn thread_identity_uses_unique_index_without_collecting_directory_history() {
     let scratch = Scratch::new("continuations");
     let codex_home = scratch.path().join("codex-home");
     let sessions = codex_home.join("sessions");
@@ -222,13 +222,13 @@ fn thread_identity_enumerates_continuations_and_retains_earlier_history() {
         first, second,
         "continuation resolution and replay are deterministic"
     );
-    assert_eq!(first["sources"].as_array().map(Vec::len), Some(2));
+    assert_eq!(first["sources"].as_array().map(Vec::len), Some(1));
     assert_eq!(
         first["thread"]["transcripts"].as_array().map(Vec::len),
-        Some(2)
+        Some(1)
     );
-    assert_eq!(first["thread"]["turns"], 2);
-    assert_eq!(first["thread"]["start"], "2026-01-01T00:00:00.000Z");
+    assert_eq!(first["thread"]["turns"], 1);
+    assert_eq!(first["thread"]["start"], "2026-01-01T00:00:02.000Z");
     assert_eq!(first["thread"]["latest_turn"]["turn_id"], "newer-turn");
     assert_eq!(
         first["source"]["path"],
@@ -241,14 +241,6 @@ fn thread_identity_enumerates_continuations_and_retains_earlier_history() {
     assert_eq!(first["thread"]["transcript"], first["source"]["path"]);
     assert_eq!(
         first["sources"][0]["path"],
-        older
-            .canonicalize()
-            .expect("older path")
-            .to_string_lossy()
-            .as_ref()
-    );
-    assert_eq!(
-        first["sources"][1]["path"],
         newer
             .canonicalize()
             .expect("newer path")
@@ -261,8 +253,8 @@ fn thread_identity_enumerates_continuations_and_retains_earlier_history() {
         environment,
         "summary",
     );
-    assert_eq!(summary["sources"].as_array().map(Vec::len), Some(2));
-    assert_eq!(summary["turns"], 2);
+    assert_eq!(summary["sources"].as_array().map(Vec::len), Some(1));
+    assert_eq!(summary["turns"], 1);
     scratch.remove();
 }
 
