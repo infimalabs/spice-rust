@@ -36,6 +36,11 @@
 //! to keep them, and that difference survives every floor above.
 
 #[cfg(any(target_arch = "wasm32", test))]
+#[path = "browser/action_mailbox.rs"]
+mod action_mailbox;
+#[cfg(any(target_arch = "wasm32", test))]
+mod client_action;
+#[cfg(any(target_arch = "wasm32", test))]
 mod command_demands;
 pub mod compose;
 #[cfg(any(target_arch = "wasm32", test))]

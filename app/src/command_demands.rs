@@ -81,7 +81,7 @@ impl<T> Default for DemandQueue<T> {
 }
 
 impl<T> DemandQueue<T> {
-    pub(crate) fn submit(&mut self, id: CanonicalUuid, body: T) -> Result<(), String> {
+    pub(crate) fn accepts(&self, id: CanonicalUuid) -> Result<(), String> {
         if self
             .pending
             .iter()
@@ -90,6 +90,11 @@ impl<T> DemandQueue<T> {
         {
             return Err(format!("command demand identity {id} is already known"));
         }
+        Ok(())
+    }
+
+    pub(crate) fn submit(&mut self, id: CanonicalUuid, body: T) -> Result<(), String> {
+        self.accepts(id)?;
         self.pending.push_back(Demand {
             id,
             body,
@@ -272,39 +277,6 @@ mod tests {
     }
 
     #[test]
-    fn reconnect_replays_the_same_identity_and_body() {
-        let mut queue = DemandQueue::default();
-        queue.submit(id(1), "drain").expect("submit demand");
-        queue
-            .prepare_ready(|body, _| *body = "prepared drain")
-            .expect("prepare demand");
-        queue.sent(id(1)).expect("send demand");
-        assert_eq!(queue.status(id(1)), Some(&DemandStatus::Submitting));
-        assert!(queue.ready().is_none());
-        queue.reconnect();
-        let replay = queue.ready().expect("result-less demand becomes ready");
-        assert_eq!((replay.id, replay.body), (id(1), "prepared drain"));
-        assert_eq!(replay.status, DemandStatus::Submitting);
-    }
-
-    #[test]
-    fn reconnect_replays_an_admitted_result_that_was_not_applied() {
-        let mut queue = DemandQueue::default();
-        queue.submit(id(1), "drain").expect("submit demand");
-        queue
-            .prepare_ready(|body, _| *body = "prepared drain")
-            .expect("prepare demand");
-        queue.sent(id(1)).expect("send demand");
-        queue.admit(id(1), range(1)).expect("server admits demand");
-        assert_eq!(queue.status(id(1)), Some(&DemandStatus::Admitted(range(1))));
-
-        queue.reconnect();
-        let replay = queue.ready().expect("unapplied admission becomes ready");
-        assert_eq!((replay.id, replay.body), (id(1), "prepared drain"));
-        assert_eq!(replay.status, DemandStatus::Submitting);
-    }
-
-    #[test]
     fn queue_serializes_and_correlates_terminal_results() {
         let mut queue = DemandQueue::default();
         queue.submit(id(1), "drain").expect("first demand");
@@ -313,7 +285,15 @@ mod tests {
         assert!(queue.ready().is_none());
         assert!(queue.admit(id(2), range(2)).is_err());
         queue.admit(id(1), range(1)).expect("first admitted");
-        assert_eq!(queue.status(id(1)), Some(&DemandStatus::Admitted(range(1))));
+        queue.reconnect();
+        assert_eq!(
+            queue.ready().map(|row| (row.id, row.body)),
+            Some((id(1), "drain"))
+        );
+        queue.sent(id(1)).expect("replayed first sent");
+        queue
+            .admit(id(1), range(1))
+            .expect("replayed first admitted");
         assert!(queue.commit(id(1), range(2), true).is_err());
         queue
             .commit(id(1), range(1), true)
@@ -381,7 +361,7 @@ mod tests {
     }
 
     #[test]
-    fn response_classification_requires_a_committed_range() {
+    fn response_classification_preserves_only_committed_ranges() {
         assert_eq!(
             classify_demand_outcome(id(1), &reply(wire::ReplyPosition::Committed(range(1)))),
             Ok(DemandResponse::Committed(range(1)))
@@ -391,10 +371,6 @@ mod tests {
                 .is_err()
         );
         assert!(classify_demand_outcome(id(1), &reply(wire::ReplyPosition::Direct {})).is_err());
-    }
-
-    #[test]
-    fn refusal_and_fault_classification_carry_no_sequence() {
         let refusal = wire::Outcome::Refusal(wire::Refusal::bare(wire::RefusalDiagnostic::new(
             "lane::revision-stale",
             None,

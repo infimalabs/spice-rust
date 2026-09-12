@@ -240,7 +240,7 @@ async fn service_action_wake(
     demands: &mut DemandQueue<ClientAction>,
     actions: &ActionQueue,
 ) -> Result<(), String> {
-    let Some(action) = actions.lease() else {
+    let Some(lease) = actions.lease() else {
         return Ok(());
     };
     dispatch_client_action(
@@ -250,8 +250,7 @@ async fn service_action_wake(
         pending,
         submissions,
         demands,
-        actions,
-        action,
+        lease,
     )
     .await?;
     actions.rearm().map_err(|error| error.to_string())
@@ -297,28 +296,27 @@ async fn dispatch_client_action(
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     submissions: &SubmissionHandle,
     demands: &mut DemandQueue<ClientAction>,
-    actions: &ActionQueue,
-    action: ClientAction,
+    lease: ActionLease,
 ) -> Result<(), String> {
-    if is_demand(&action) {
-        let submitted = random_uuid().and_then(|id| demands.submit(id, action));
-        if let Err(error) = submitted {
-            actions.restore();
-            return Err(error);
-        }
-        actions.commit();
+    if is_demand(lease.action()) {
+        let id = random_uuid()?;
+        demands.accepts(id)?;
+        let action = lease.commit();
+        demands
+            .submit(id, action)
+            .expect("the preflighted demand identity remains vacant");
         drain_demands(principal, data, writer, pending, demands).await
-    } else if matches!(action, ClientAction::DrainSubmissions) {
-        actions.commit();
+    } else if matches!(lease.action(), ClientAction::DrainSubmissions) {
+        drop(lease.commit());
         drain_submissions(principal, writer, pending, submissions).await
     } else {
-        match dispatch_action(principal, writer, pending, submissions, action).await {
+        match dispatch_action(principal, writer, pending, submissions, lease.action()).await {
             Ok(()) => {
-                actions.commit();
+                drop(lease.commit());
                 Ok(())
             }
             Err(error) => {
-                actions.restore();
+                lease.restore();
                 Err(error)
             }
         }
@@ -720,7 +718,7 @@ async fn dispatch_action(
     writer: &mut SocketWriter,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     submissions: &SubmissionHandle,
-    action: ClientAction,
+    action: &ClientAction,
 ) -> Result<(), String> {
     if let Some(request) = action.renewal_request() {
         return send_lane_renewal(principal, writer, pending, request).await;
@@ -731,10 +729,10 @@ async fn dispatch_action(
         }
         ClientAction::Refresh => send_refresh(principal, writer, pending, submissions).await,
         ClientAction::FastMode(fast_mode) => {
-            send_fast_mode(principal, writer, pending, fast_mode).await
+            send_fast_mode(principal, writer, pending, *fast_mode).await
         }
         ClientAction::MessageHistory { lane, before } => {
-            send_message_history(principal, writer, lane, before).await
+            send_message_history(principal, writer, *lane, *before).await
         }
         ClientAction::Seat { .. }
         | ClientAction::ArrangeLane { .. }
@@ -753,11 +751,11 @@ async fn dispatch_authored_action(
     principal: &Principal,
     writer: &mut SocketWriter,
     pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
-    action: ClientAction,
+    action: &ClientAction,
 ) -> Result<(), String> {
     match action {
         ClientAction::Note { id, task, note } => {
-            send_task_note(principal, writer, pending, id, task, note).await
+            send_task_note(principal, writer, pending, *id, task.clone(), note.clone()).await
         }
         ClientAction::Steer {
             id,
@@ -772,13 +770,13 @@ async fn dispatch_authored_action(
                 principal,
                 writer,
                 pending,
-                id,
-                fanout,
-                lane,
-                occupant,
-                epoch,
-                message,
-                attachments,
+                *id,
+                *fanout,
+                *lane,
+                *occupant,
+                *epoch,
+                message.clone(),
+                attachments.clone(),
             )
             .await
         }

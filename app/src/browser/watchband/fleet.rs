@@ -341,7 +341,7 @@ fn lineage_drop(
         };
         event.prevent_default();
         event.stop_propagation();
-        let _admitted = admit_action(
+        if !admit_action(
             &sender,
             ClientAction::ArrangeLineages {
                 topology_revision,
@@ -350,7 +350,10 @@ fn lineage_drop(
                     .map(|(lineage_id, lanes)| LineageArrangement { lineage_id, lanes })
                     .collect(),
             },
-        );
+        ) && let Some(transfer) = event.data_transfer()
+        {
+            transfer.set_drop_effect("none");
+        }
     })
 }
 
