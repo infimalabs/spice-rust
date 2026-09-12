@@ -147,11 +147,7 @@ impl<'a> ForwardCursor<'a> {
     }
 
     fn window(&self, row: Option<DecodedRow>, more: bool) -> ForwardWindow {
-        let continuation = ForwardContinuation {
-            line: self.line,
-            dialect: self.dialect,
-            live_tail: self.live_tail,
-        };
+        let continuation = self.continuation();
         let progress = if more {
             ForwardProgress::More(continuation)
         } else {
@@ -164,6 +160,14 @@ impl<'a> ForwardCursor<'a> {
         self.line == continuation.line
             && self.dialect == continuation.dialect
             && self.live_tail == continuation.live_tail
+    }
+
+    pub(super) fn continuation(&self) -> ForwardContinuation {
+        ForwardContinuation {
+            line: self.line,
+            dialect: self.dialect,
+            live_tail: self.live_tail,
+        }
     }
 
     fn next_record_locus(&self) -> String {
