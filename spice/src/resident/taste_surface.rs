@@ -162,8 +162,6 @@ pub(super) struct AdjudicationSubmitter {
     cancellation: sill::CancellationToken,
     worker: Option<thread::JoinHandle<()>>,
     pending: BTreeSet<(Digest, Digest, u64)>,
-    #[cfg(test)]
-    pending_observer: Option<mpsc::Sender<usize>>,
 }
 
 /// The bounded completion side stays distinct so the resident select loop can
@@ -179,16 +177,6 @@ pub(super) struct AdjudicationRuntime {
 
 pub(super) fn start_adjudication() -> CommandResult<AdjudicationRuntime> {
     start_adjudication_with(ProcessAdjudicator::with_cancellation)
-}
-
-#[cfg(test)]
-pub(super) fn start_process_adjudication(
-    binary: String,
-    timeout: std::time::Duration,
-) -> CommandResult<AdjudicationRuntime> {
-    start_adjudication_with(move |cancellation| ProcessAdjudicator {
-        process: crate::judge::Process::with_contract(binary, timeout, cancellation),
-    })
 }
 
 fn start_adjudication_with<A>(
@@ -239,8 +227,6 @@ where
             cancellation,
             worker: Some(worker),
             pending: BTreeSet::new(),
-            #[cfg(test)]
-            pending_observer: None,
         },
         completions: AdjudicationCompletions {
             receiver: completion_receiver,
@@ -251,13 +237,6 @@ where
 impl AdjudicationRuntime {
     pub(super) fn parts(&mut self) -> (&mut AdjudicationSubmitter, &mut AdjudicationCompletions) {
         (&mut self.submitter, &mut self.completions)
-    }
-
-    #[cfg(test)]
-    pub(super) fn observe_pending(&mut self) -> mpsc::Receiver<usize> {
-        let (sender, receiver) = mpsc::channel();
-        self.submitter.pending_observer = Some(sender);
-        receiver
     }
 }
 
@@ -294,13 +273,7 @@ impl AdjudicationSubmitter {
             )
         })?;
         match sender.try_send(prepared) {
-            Ok(()) => {
-                #[cfg(test)]
-                if let Some(observer) = &self.pending_observer {
-                    let _ = observer.send(self.pending.len());
-                }
-                Ok(())
-            }
+            Ok(()) => Ok(()),
             Err(TrySendError::Full(prepared)) => {
                 self.forget(&prepared);
                 Err(environment_fault(
