@@ -32,9 +32,8 @@ pub(crate) fn recent_compaction_horizon(
     }
     markers.sort_by(|left, right| (&left.ts, &left.source).cmp(&(&right.ts, &right.source)));
     let first = markers.len().saturating_sub(count);
-    let selected = markers.into_iter().skip(first).collect::<Vec<_>>();
     Ok(CompactionHorizon {
-        start: selected.first().map(|marker| marker.ts.clone()),
+        start: markers.into_iter().nth(first).map(|marker| marker.ts),
     })
 }
 
@@ -76,11 +75,12 @@ fn read_recent_compaction_markers_forward(
     work: &mut SessionWork,
 ) -> Result<Vec<Marker>, Refusal> {
     let mut markers = Vec::new();
-    stream_records(source, None, work, |row| {
+    stream_records(source, None, work, |row, work, at| {
         if let DecodedRow::Typed(row) = row
             && let Some(marker) = marker_from_record(&row)
             && end.is_none_or(|end| marker.ts.as_str() <= end)
         {
+            work.admit_retained_text(super::marker_text_bytes(&marker), at)?;
             markers.push(marker);
             trim_oldest(&mut markers, count);
         }
@@ -248,18 +248,15 @@ fn marker_from_line(
     let Decoded::Events { context, events } = detected.decoded else {
         return Ok(None);
     };
-    work.admit_decoded(
-        events.len(),
-        line.len() as u64,
-        &format!("{source_name}:byte {offset}"),
-    )?;
+    let at = format!("{source_name}:byte {offset}");
+    work.admit_decoded(events.len(), &at)?;
     let Some(raw_ts) = context.timestamp.as_deref() else {
         return Ok(None);
     };
     let Some(timestamp) = spice::session_meter::normalize_timestamp(raw_ts) else {
         return Ok(None);
     };
-    Ok(events.into_iter().find_map(|event| {
+    let marker = events.into_iter().find_map(|event| {
         if let Event::Compaction(compaction) = event {
             Some(Marker {
                 source: source_name.to_owned(),
@@ -270,7 +267,18 @@ fn marker_from_line(
         } else {
             None
         }
-    }))
+    });
+    if let Some(marker) = &marker {
+        work.admit_retained_text(
+            super::work::text_bytes([
+                marker.source.as_str(),
+                marker.ts.as_str(),
+                marker.summary.as_str(),
+            ]),
+            &at,
+        )?;
+    }
+    Ok(marker)
 }
 
 fn timestamp_from_line(
@@ -291,7 +299,6 @@ fn timestamp_from_line(
     };
     work.admit_decoded(
         events.len(),
-        line.len() as u64,
         &format!("{}:byte {offset}", source.path.display()),
     )?;
     Ok(context
@@ -312,12 +319,26 @@ mod tests {
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use super::super::work::{ResidueLedger, SessionWorkBudget};
+    use super::super::work::{ResidueLedger, SessionWorkBudget, text_bytes};
+    use super::super::{
+        FoldState, command_text_bytes, finish_fold, message_text_bytes, reduce_record,
+    };
     use super::*;
+    use crate::session_command::model::Dataset;
     use crate::session_command::model::Vendor;
 
     #[test]
     fn bounded_stream_and_reverse_horizon_share_canonical_complete_records() {
+        let source = fixture_source();
+        let horizon = recent_compaction_horizon(std::slice::from_ref(&source), 3, None)
+            .expect("bounded horizon scans");
+        assert_eq!(horizon.start.as_deref(), Some("2026-01-01T00:00:01.000Z"));
+        assert_fold_accounting(&source);
+        assert_budget_refusals(&source);
+        fs::remove_file(source.path).expect("fixture transcript is removed");
+    }
+
+    fn fixture_source() -> ResolvedSource {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(
             "spice-session-horizon-{}-{}.jsonl",
@@ -329,55 +350,109 @@ mod tests {
             concat!(
                 "{\"timestamp\":\"2026-01-01T00:00:01Z\",\"type\":\"compacted\",\"payload\":{}}\n",
                 "{\"timestamp\":\"2026-01-01T00:00:02Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"context_compacted\"}}\n",
-                "{\"timestamp\":\"2026-01-01T00:00:03Z\",\"type\":\"compacted\"",
+                "{\"timestamp\":\"2026-01-01T00:00:03Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"working\"}]}}\n",
+                "{\"timestamp\":\"2026-01-01T00:00:04Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"exec_command\",\"call_id\":\"command-one\",\"arguments\":\"{\\\"cmd\\\":\\\"cargo test\\\"}\"}}\n",
+                "{\"timestamp\":\"2026-01-01T00:00:05Z\",\"type\":\"compacted\"",
             ),
         )
         .expect("live transcript is written");
-        let source = ResolvedSource {
-            path: path.clone(),
+        ResolvedSource {
+            path,
             vendor: Vendor::UNKNOWN,
             dialect: Some(listen::Dialect::Codex),
             thread: Some("018f7777-7777-7444-8888-999999999999".to_owned()),
-        };
+        }
+    }
 
-        let horizon = recent_compaction_horizon(std::slice::from_ref(&source), 3, None)
-            .expect("bounded horizon scans");
-        assert_eq!(horizon.start.as_deref(), Some("2026-01-01T00:00:01.000Z"));
+    fn assert_fold_accounting(source: &ResolvedSource) {
         let mut work = SessionWork::new(SessionWorkBudget::report());
-        let mut markers = 0;
+        let mut dataset = Dataset::default();
+        let mut markers = Vec::new();
         let mut residues = ResidueLedger::new();
-        stream_records(&source, None, &mut work, |row| {
+        let mut fold = FoldState::default();
+        stream_records(source, None, &mut work, |row, work, at| {
             match row {
                 DecodedRow::Typed(record) => {
-                    markers += usize::from(marker_from_record(&record).is_some());
+                    let mut storage = super::super::FoldStorage {
+                        dataset: &mut dataset,
+                        markers: &mut markers,
+                        residues: &mut residues,
+                        state: &mut fold,
+                    };
+                    reduce_record(&record, &mut storage, work, at)?;
                 }
-                DecodedRow::Residue(residue) => residues.push(residue),
+                DecodedRow::Residue(residue) => residues.push(residue, work, at)?,
                 DecodedRow::Ignored => {}
             }
             Ok(())
         })
         .expect("forward dataset streams");
-        let residues = residues.finish();
-        assert_eq!(markers, 1, "the forward decoder sees the canonical marker");
+        let derived_floor = message_text_bytes(&dataset.messages[0])
+            .saturating_mul(2)
+            .saturating_add(command_text_bytes(&dataset.commands[0]))
+            .saturating_add(text_bytes(["exec_command", "command-one"]));
+        finish_fold(&mut dataset, fold, &mut work, "fixture fold").expect("fold finishes");
+        let residues = residues
+            .finish(&mut work, "residue summary")
+            .expect("residue summary fits");
+        assert_eq!(
+            markers.len(),
+            1,
+            "the forward decoder sees the canonical marker"
+        );
+        assert_eq!(dataset.messages.len(), 1);
+        assert_eq!(dataset.turns[0].messages, dataset.messages);
+        assert_eq!(dataset.commands.len(), 1);
         assert_eq!(residues.len(), 1);
         assert_eq!(residues[0].kind, "live-tail-truncated");
         let report = work.report();
-        assert_eq!(report.records, 3);
+        assert_eq!(report.records, 5);
         assert!(report.source_bytes > 0);
         assert!(report.events > 0);
-        assert!(report.retained_text_bytes > 0);
+        assert!(report.retained_text_bytes >= derived_floor);
         assert_eq!(report.passes, 1);
+    }
 
+    fn assert_budget_refusals(source: &ResolvedSource) {
         let budget = SessionWorkBudget::new(1, 1, 1, 1, 1, std::time::Duration::from_secs(1))
             .expect("tiny positive budget is admitted");
         let mut exhausted = SessionWork::new(budget);
-        let refusal = stream_records(&source, None, &mut exhausted, |_| Ok(()))
+        let refusal = stream_records(source, None, &mut exhausted, |_, _, _| Ok(()))
             .expect_err("source bytes stop before the first record");
         assert_eq!(refusal.reason(), "session::transcript-work-exhausted");
         assert_eq!(exhausted.report().source_bytes, 0);
 
-        assert!(SessionWorkBudget::new(0, 1, 1, 1, 1, std::time::Duration::from_secs(1),).is_err());
+        let retained_budget = SessionWorkBudget::new(
+            1_024 * 1_024,
+            16,
+            16,
+            1,
+            1,
+            std::time::Duration::from_secs(1),
+        )
+        .expect("retained-text boundary is positive");
+        let mut exhausted = SessionWork::new(retained_budget);
+        let mut dataset = Dataset::default();
+        let mut markers = Vec::new();
+        let mut residues = ResidueLedger::new();
+        let mut fold = FoldState::default();
+        let refusal = stream_records(source, None, &mut exhausted, |row, work, at| match row {
+            DecodedRow::Typed(record) => {
+                let mut storage = super::super::FoldStorage {
+                    dataset: &mut dataset,
+                    markers: &mut markers,
+                    residues: &mut residues,
+                    state: &mut fold,
+                };
+                reduce_record(&record, &mut storage, work, at)
+            }
+            DecodedRow::Residue(residue) => residues.push(residue, work, at),
+            DecodedRow::Ignored => Ok(()),
+        })
+        .expect_err("the first retained String exceeds the one-byte budget");
+        assert_eq!(refusal.reason(), "session::transcript-work-exhausted");
+        assert_eq!(exhausted.report().retained_text_bytes, 0);
 
-        fs::remove_file(path).expect("fixture transcript is removed");
+        assert!(SessionWorkBudget::new(0, 1, 1, 1, 1, std::time::Duration::from_secs(1),).is_err());
     }
 }

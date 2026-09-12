@@ -2,8 +2,6 @@
 
 use std::time::{Duration, Instant};
 
-use listen::ReasoningContent;
-
 use super::*;
 
 const REPORT_SOURCE_BYTES: u64 = 512 * 1_024 * 1_024;
@@ -16,73 +14,18 @@ const MAX_RESIDUES: usize = 256;
 const MAX_RESIDUE_BYTES: u64 = 256 * 1_024;
 const RESIDUE_SUMMARY_RESERVE: u64 = 512;
 
-pub(super) fn decoded_row_work(row: &DecodedRow) -> (usize, u64) {
+pub(super) fn decoded_row_events(row: &DecodedRow) -> usize {
     match row {
-        DecodedRow::Typed(record) => (record.events.len(), typed_record_text_bytes(record)),
-        DecodedRow::Residue(residue) => (0, residue_bytes(residue)),
-        DecodedRow::Ignored => (0, 0),
+        DecodedRow::Typed(record) => record.events.len(),
+        DecodedRow::Residue(_) | DecodedRow::Ignored => 0,
     }
 }
 
-fn typed_record_text_bytes(record: &TypedRecord) -> u64 {
-    let context = context_text_bytes(&record.context);
-    let events = record
-        .events
-        .iter()
-        .map(|event| {
-            context_text_bytes(&event.context).saturating_add(event_text_bytes(&event.event))
-        })
-        .fold(0, u64::saturating_add);
-    usize_bytes(record.source.len())
-        .saturating_add(context)
-        .saturating_add(events)
-}
-
-fn context_text_bytes(context: &RecordContext) -> u64 {
-    context
-        .timestamp
-        .iter()
-        .chain(context.turn_id.iter())
-        .map(|value| usize_bytes(value.len()))
+pub(super) fn text_bytes<'a>(values: impl IntoIterator<Item = &'a str>) -> u64 {
+    values
+        .into_iter()
+        .map(|value| u64::try_from(value.len()).unwrap_or(u64::MAX))
         .fold(0, u64::saturating_add)
-}
-
-fn event_text_bytes(event: &Event) -> u64 {
-    match event {
-        Event::Session(session) => usize_bytes(session.identity.len()),
-        Event::Prose(prose) => usize_bytes(prose.text.len()).saturating_add(
-            prose
-                .phase
-                .as_ref()
-                .map_or(0, |phase| usize_bytes(phase.len())),
-        ),
-        Event::Reasoning(reasoning) => match &reasoning.content {
-            ReasoningContent::Plain(rows) => rows
-                .iter()
-                .map(|row| usize_bytes(row.len()))
-                .fold(0, u64::saturating_add),
-            ReasoningContent::Opaque => 0,
-        },
-        Event::Tool(tool) => usize_bytes(tool.call_id.len()).saturating_add(match &tool.moment {
-            ToolMoment::Call { name, arguments } | ToolMoment::Update { name, arguments } => {
-                usize_bytes(name.len()).saturating_add(usize_bytes(arguments.len()))
-            }
-            ToolMoment::Result(outcome) => outcome
-                .output
-                .as_ref()
-                .map_or(0, |output| usize_bytes(output.len())),
-        }),
-        Event::Usage(_) => 0,
-        Event::Compaction(compaction) => compaction
-            .summary
-            .as_ref()
-            .map_or(0, |summary| usize_bytes(summary.len())),
-        Event::Failure(failure) => usize_bytes(failure.message.len()),
-    }
-}
-
-fn usize_bytes(bytes: usize) -> u64 {
-    u64::try_from(bytes).unwrap_or(u64::MAX)
 }
 
 #[derive(Clone, Copy)]
@@ -147,6 +90,7 @@ pub(super) struct SessionWorkReport {
     pub(super) source_bytes: u64,
     pub(super) records: u64,
     pub(super) events: u64,
+    /// Cumulative logical bytes of each `String` admitted into fold state.
     pub(super) retained_text_bytes: u64,
     pub(super) passes: u32,
     pub(super) elapsed: Duration,
@@ -202,26 +146,24 @@ impl SessionWork {
         }
     }
 
-    pub(super) fn admit_decoded(
-        &mut self,
-        events: usize,
-        retained_text_bytes: u64,
-        at: &str,
-    ) -> Result<(), Refusal> {
+    pub(super) fn admit_decoded(&mut self, events: usize, at: &str) -> Result<(), Refusal> {
         self.check_deadline(at)?;
         let events = u64::try_from(events).unwrap_or(u64::MAX);
         let next_events = self.report.events.checked_add(events);
         if next_events.is_none_or(|next| next > self.budget.events) {
             return Err(self.exhausted("events", at));
         }
-        let next_text = self
-            .report
-            .retained_text_bytes
-            .checked_add(retained_text_bytes);
+        self.report.events = next_events.expect("admitted event sum exists");
+        Ok(())
+    }
+
+    /// Charge one allocation before its `String` enters retained fold state.
+    pub(super) fn admit_retained_text(&mut self, bytes: u64, at: &str) -> Result<(), Refusal> {
+        self.check_deadline(at)?;
+        let next_text = self.report.retained_text_bytes.checked_add(bytes);
         if next_text.is_none_or(|next| next > self.budget.retained_text_bytes) {
             return Err(self.exhausted("retained-text-bytes", at));
         }
-        self.report.events = next_events.expect("admitted event sum exists");
         self.report.retained_text_bytes = next_text.expect("admitted text-byte sum exists");
         Ok(())
     }
@@ -275,7 +217,12 @@ impl ResidueLedger {
         }
     }
 
-    pub(super) fn push(&mut self, residue: Residue) {
+    pub(super) fn push(
+        &mut self,
+        residue: Residue,
+        work: &mut SessionWork,
+        at: &str,
+    ) -> Result<(), Refusal> {
         let bytes = residue_bytes(&residue);
         let fits = self.rows.len() < MAX_RESIDUES.saturating_sub(1)
             && self
@@ -284,17 +231,23 @@ impl ResidueLedger {
                 .and_then(|bytes| bytes.checked_add(RESIDUE_SUMMARY_RESERVE))
                 .is_some_and(|bytes| bytes <= MAX_RESIDUE_BYTES);
         if fits {
+            work.admit_retained_text(bytes, at)?;
             self.bytes = self.bytes.saturating_add(bytes);
             self.rows.push(residue);
         } else {
             self.omitted = self.omitted.saturating_add(1);
             self.omitted_bytes = self.omitted_bytes.saturating_add(bytes);
         }
+        Ok(())
     }
 
-    pub(super) fn finish(mut self) -> Vec<Residue> {
+    pub(super) fn finish(
+        mut self,
+        work: &mut SessionWork,
+        at: &str,
+    ) -> Result<Vec<Residue>, Refusal> {
         if self.omitted > 0 {
-            self.rows.push(Residue {
+            let summary = Residue {
                 source: String::new(),
                 line: 0,
                 kind: "residue-overflow".to_owned(),
@@ -304,9 +257,11 @@ impl ResidueLedger {
                 ),
                 recovery: "narrow the transcript inputs to inspect omitted residue evidence"
                     .to_owned(),
-            });
+            };
+            work.admit_retained_text(residue_bytes(&summary), at)?;
+            self.rows.push(summary);
         }
-        self.rows
+        Ok(self.rows)
     }
 }
 
