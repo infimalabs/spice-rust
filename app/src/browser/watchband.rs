@@ -1268,33 +1268,28 @@ fn submit_broadcast(
     let Ok(fanout) = random_uuid() else {
         return false;
     };
+    let payload = Submission::payload(fanout, message, prepared.attachments);
+    let mut snapshot = Some(prepared.snapshot);
     let mut batch = Vec::with_capacity(targets.len());
     for target in targets {
         let Ok(id) = random_uuid() else {
             return false;
         };
         let residency = (target.occupant, target.epoch);
-        let submission = if target.lane == source_lane {
-            Submission::new(
-                id,
-                fanout,
-                target.lane,
-                residency,
-                message.clone(),
-                prepared.attachments.clone(),
-                prepared.snapshot.clone(),
-            )
+        let snapshot = if target.lane == source_lane {
+            snapshot.take().unwrap_or_default()
         } else {
-            Submission::broadcast_copy(
-                id,
-                fanout,
-                target.lane,
-                residency,
-                message.clone(),
-                prepared.attachments.clone(),
-                source_lane,
-            )
+            ComposerDraft::default()
         };
+        let submission = Submission::broadcast(
+            id,
+            fanout,
+            target.lane,
+            residency,
+            Rc::clone(&payload),
+            snapshot,
+            source_lane,
+        );
         batch.push(submission);
     }
     if !queue_submissions(sender, submissions, batch) {
