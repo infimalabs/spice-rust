@@ -104,11 +104,135 @@ async fn run_liveness_surface(setup: &mut LivenessSetup) -> String {
     )
     .await
     .expect("live surface publishes before the liveness exercise");
-    let pending_events = setup.adjudication.observe_pending();
-    let (submitter, completions) = setup.adjudication.parts();
-    let path = setup.judge.entered.clone();
-    let entered =
-        tokio::task::spawn_blocking(move || fs::read_to_string(path).expect("judge enters"));
+    drive_liveness_surface(LivenessDrive {
+        bus,
+        paths,
+        epoch,
+        lanes,
+        seats: &mut setup.seats,
+        adjudication: &mut setup.adjudication,
+        judge_entered: setup.judge.entered.clone(),
+        command_surface: &command_surface,
+        control,
+        publication,
+        shutdown,
+        server_task,
+        message_publisher,
+        reporter,
+        records,
+        failures,
+        exits,
+        supervisor_reports,
+        progress,
+        timers,
+        lifecycle,
+        timer_commits,
+        proof_commits,
+        discovery: &discovery,
+    })
+    .await
+}
+
+struct LivenessDrive<'a> {
+    bus: &'a Bus,
+    paths: &'a RuntimePaths,
+    epoch: CanonicalUuid,
+    lanes: LivenessLanes,
+    seats: &'a mut Seats,
+    adjudication: &'a mut taste_surface::AdjudicationRuntime,
+    judge_entered: PathBuf,
+    command_surface: &'a command_surface::Surface<'a>,
+    control: canvas::axum::Control,
+    publication: SurfacePublication<'a>,
+    shutdown: oneshot::Sender<()>,
+    server_task: tokio::task::JoinHandle<Result<(), io::Error>>,
+    message_publisher: canvas::stream::MessagePublisher,
+    reporter: std::sync::Arc<dyn lane::capture::CaptureReporter>,
+    records: tokio::sync::mpsc::Receiver<lane::capture::CaptureRecord>,
+    failures: tokio::sync::mpsc::UnboundedReceiver<lane::capture::CaptureFailure>,
+    exits: tokio::sync::mpsc::UnboundedReceiver<lane::capture::CaptureExit>,
+    supervisor_reports: capture::SupervisorReports,
+    progress: &'a mut dyn io::Write,
+    timers: timers::Runtime,
+    lifecycle: lifecycle::Runtime,
+    timer_commits: bus::BroadcastSubscriber,
+    proof_commits: bus::BroadcastSubscriber,
+    discovery: &'a canvas::Discovery,
+}
+
+async fn drive_liveness_surface(fixture: LivenessDrive<'_>) -> String {
+    let LivenessDrive {
+        bus,
+        paths,
+        epoch,
+        lanes,
+        seats,
+        adjudication,
+        judge_entered,
+        command_surface,
+        mut control,
+        publication,
+        shutdown,
+        server_task,
+        message_publisher,
+        reporter,
+        records,
+        failures,
+        exits,
+        supervisor_reports,
+        progress,
+        timers,
+        mut lifecycle,
+        timer_commits,
+        proof_commits,
+        discovery,
+    } = fixture;
+    let pending_events = adjudication.observe_pending();
+    let (submitter, completions) = adjudication.parts();
+    let lifecycle_turns = std::sync::Arc::new(AtomicU64::new(0));
+    let control_pair = lifecycle_control_pair(
+        discovery
+            .endpoint
+            .strip_prefix("http://")
+            .expect("fixture endpoint is HTTP")
+            .parse()
+            .expect("fixture endpoint carries a socket address"),
+        epoch,
+        lanes.taste_lane,
+        discovery.capability,
+        current_residency(bus, epoch)
+            .expect("fixture topology remains current")
+            .body()
+            .topology_revision,
+        std::sync::Arc::clone(&lifecycle_turns),
+    );
+    let mut inbox_projections = InboxProjections::new();
+    let request = control.recv().await.expect("lifecycle command is admitted");
+    let dispatched = dispatch_control_burst(
+        command_surface,
+        seats,
+        &mut lifecycle,
+        &mut control,
+        Some(request),
+        &mut inbox_projections,
+    )
+    .await
+    .expect("lifecycle command responds before its owed turn");
+    let mut lifecycle_reconciliation =
+        LifecycleReconciliation::with_turns(std::sync::Arc::clone(&lifecycle_turns));
+    request_lifecycle_reconciliation(&mut lifecycle_reconciliation, &dispatched);
+    assert_eq!(lifecycle_turns.load(Ordering::SeqCst), 0);
+    reporter
+        .record(taste_record(
+            lanes.taste_lane,
+            lanes.taste_occupant,
+            "polling now",
+            false,
+        ))
+        .expect("outer capture is ready beside lifecycle reconciliation");
+    let entered = tokio::task::spawn_blocking(move || {
+        fs::read_to_string(judge_entered).expect("judge enters")
+    });
     let exercise = exercise_live_surface(
         bus,
         paths,
@@ -117,12 +241,14 @@ async fn run_liveness_surface(setup: &mut LivenessSetup) -> String {
         entered,
         pending_events,
         lanes,
+        control_pair,
+        std::sync::Arc::clone(&lifecycle_turns),
     );
     let drive = drive_surface(
         bus,
         epoch,
-        &mut setup.seats,
-        &command_surface,
+        seats,
+        command_surface,
         control,
         publication,
         shutdown,
@@ -140,8 +266,8 @@ async fn run_liveness_surface(setup: &mut LivenessSetup) -> String {
         timers,
         timer_commits,
         lifecycle,
-        InboxProjections::new(),
-        LifecycleReconciliation::default(),
+        inbox_projections,
+        lifecycle_reconciliation,
     );
     let (driven, judge_pid) = tokio::join!(drive, exercise);
     driven.expect("Down stops the live surface");
@@ -360,15 +486,15 @@ async fn exercise_live_surface(
     entered: tokio::task::JoinHandle<String>,
     pending_events: Receiver<usize>,
     lanes: LivenessLanes,
+    control_pair: tokio::task::JoinHandle<()>,
+    lifecycle_turns: std::sync::Arc<AtomicU64>,
 ) -> String {
-    reporter
-        .record(taste_record(
-            lanes.taste_lane,
-            lanes.taste_occupant,
-            "polling now",
-            false,
-        ))
-        .expect("first taste record reports");
+    control_pair.await.expect("lifecycle control client joins");
+    assert_eq!(
+        lifecycle_turns.load(Ordering::SeqCst),
+        1,
+        "one owed lifecycle turn settles before the queued control response"
+    );
     let judge_pid = tokio::time::timeout(PROOF_BOUND, entered)
         .await
         .expect("real judge starts within the fixture bound")
@@ -425,6 +551,66 @@ async fn exercise_live_surface(
         .await,
     );
     judge_pid
+}
+
+fn lifecycle_control_pair(
+    address: std::net::SocketAddr,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    capability: CanonicalUuid,
+    topology_revision: u64,
+    lifecycle_turns: std::sync::Arc<AtomicU64>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::task::spawn_blocking(move || {
+        let mut socket = connect_fixture_socket(address, capability, epoch, Actor::Operator);
+        send_fixture_socket(
+            &mut socket,
+            &wire::Command {
+                v: wire::WireVersion::CURRENT,
+                id: uuid(40),
+                epoch,
+                kind: CommandKind::LineageConfigure,
+                expected: Vec::new(),
+                body: wire::intent::LineageConfigure {
+                    topology_revision,
+                    lineage_id: lane,
+                    member: None,
+                    life: Some(wire::intent::LineageLife::Drive),
+                },
+            },
+        );
+        send_fixture_socket(
+            &mut socket,
+            &wire::Command {
+                v: wire::WireVersion::CURRENT,
+                id: uuid(41),
+                epoch,
+                kind: CommandKind::LaneSeat,
+                expected: Vec::new(),
+                body: wire::intent::LaneSeat {
+                    topology_revision,
+                    lane,
+                    lineage_id: lane,
+                    name: None,
+                    worktree: "/already-seated".to_owned(),
+                    life: "drive".to_owned(),
+                    vendor: "claude".parse().expect("fixture vendor"),
+                    resume: None,
+                },
+            },
+        );
+        for id in [uuid(40), uuid(41)] {
+            let response: wire::Response<serde_json::Value> =
+                wire::decode(&socket.read().expect("lane response arrives").into_data())
+                    .expect("lane response decodes");
+            assert_eq!(response.id, id);
+        }
+        assert_eq!(
+            lifecycle_turns.load(Ordering::SeqCst),
+            1,
+            "the second admitted control waits behind exactly one reconciliation"
+        );
+    })
 }
 
 async fn wait_for_two_pending(pending_events: Receiver<usize>) {
