@@ -83,15 +83,18 @@ async fn run_liveness_surface(setup: &mut LivenessSetup) -> String {
         capture::SupervisorReports::bind(paths).expect("supervisor capture endpoint binds");
     let reads = read_materializations::CurrentReads::start(bus, paths, &config.consent)
         .expect("fixture read materializations start");
-    let context = LivenessSurfaceContext {
+    let command_surface = command_surface::Surface::new(
         bus,
-        repository: &setup.repository,
+        &setup.repository,
         paths,
         epoch,
+        command_surface::Runtimes::new(
+            lane_surface::Runtime::new(&capabilities, &discovery, reporter.clone()),
+            lane_recovery::Runtime::new(reporter.clone()),
+        ),
         config,
-    };
-    let command_surface =
-        liveness_command_surface(context, &capabilities, &discovery, reporter.clone(), &reads);
+        &reads,
+    );
     publish_ready_surface(
         bus,
         epoch,
@@ -170,7 +173,7 @@ async fn drive_liveness_surface(fixture: LivenessDrive<'_>) -> String {
         adjudication,
         judge_entered,
         command_surface,
-        mut control,
+        control,
         publication,
         shutdown,
         server_task,
@@ -182,7 +185,7 @@ async fn drive_liveness_surface(fixture: LivenessDrive<'_>) -> String {
         supervisor_reports,
         progress,
         timers,
-        mut lifecycle,
+        lifecycle,
         timer_commits,
         proof_commits,
         discovery,
@@ -198,38 +201,18 @@ async fn drive_liveness_surface(fixture: LivenessDrive<'_>) -> String {
             .parse()
             .expect("fixture endpoint carries a socket address"),
         epoch,
-        lanes.taste_lane,
+        lanes,
         discovery.capability,
         current_residency(bus, epoch)
             .expect("fixture topology remains current")
             .body()
             .topology_revision,
         std::sync::Arc::clone(&lifecycle_turns),
+        reporter.clone(),
     );
-    let mut inbox_projections = InboxProjections::new();
-    let request = control.recv().await.expect("lifecycle command is admitted");
-    let dispatched = dispatch_control_burst(
-        command_surface,
-        seats,
-        &mut lifecycle,
-        &mut control,
-        Some(request),
-        &mut inbox_projections,
-    )
-    .await
-    .expect("lifecycle command responds before its owed turn");
-    let mut lifecycle_reconciliation =
+    let lifecycle_reconciliation =
         LifecycleReconciliation::with_turns(std::sync::Arc::clone(&lifecycle_turns));
-    request_lifecycle_reconciliation(&mut lifecycle_reconciliation, &dispatched);
     assert_eq!(lifecycle_turns.load(Ordering::SeqCst), 0);
-    reporter
-        .record(taste_record(
-            lanes.taste_lane,
-            lanes.taste_occupant,
-            "polling now",
-            false,
-        ))
-        .expect("outer capture is ready beside lifecycle reconciliation");
     let entered = tokio::task::spawn_blocking(move || {
         fs::read_to_string(judge_entered).expect("judge enters")
     });
@@ -266,48 +249,12 @@ async fn drive_liveness_surface(fixture: LivenessDrive<'_>) -> String {
         timers,
         timer_commits,
         lifecycle,
-        inbox_projections,
+        InboxProjections::new(),
         lifecycle_reconciliation,
     );
     let (driven, judge_pid) = tokio::join!(drive, exercise);
     driven.expect("Down stops the live surface");
     judge_pid
-}
-
-struct LivenessSurfaceContext<'a> {
-    bus: &'a Bus,
-    repository: &'a Repository,
-    paths: &'a RuntimePaths,
-    epoch: CanonicalUuid,
-    config: &'a SurfaceConfig,
-}
-
-fn liveness_command_surface<'a>(
-    context: LivenessSurfaceContext<'a>,
-    capabilities: &'a canvas::axum::Capabilities,
-    discovery: &'a canvas::Discovery,
-    reporter: std::sync::Arc<dyn lane::capture::CaptureReporter>,
-    reads: &'a read_materializations::CurrentReads,
-) -> command_surface::Surface<'a> {
-    let LivenessSurfaceContext {
-        bus,
-        repository,
-        paths,
-        epoch,
-        config,
-    } = context;
-    command_surface::Surface::new(
-        bus,
-        repository,
-        paths,
-        epoch,
-        command_surface::Runtimes::new(
-            lane_surface::Runtime::new(capabilities, discovery, reporter.clone()),
-            lane_recovery::Runtime::new(reporter),
-        ),
-        config,
-        reads,
-    )
 }
 
 #[derive(Clone, Copy)]
@@ -492,9 +439,17 @@ async fn exercise_live_surface(
     control_pair.await.expect("lifecycle control client joins");
     assert_eq!(
         lifecycle_turns.load(Ordering::SeqCst),
-        1,
-        "one owed lifecycle turn settles before the queued control response"
+        2,
+        "one unrelated outer event and one settlement precede the queued response"
     );
+    reporter
+        .record(taste_record(
+            lanes.taste_lane,
+            lanes.taste_occupant,
+            "polling now",
+            false,
+        ))
+        .expect("first taste record reports");
     let judge_pid = tokio::time::timeout(PROOF_BOUND, entered)
         .await
         .expect("real judge starts within the fixture bound")
@@ -518,14 +473,6 @@ async fn exercise_live_surface(
         ))
         .expect("later taste record reports");
     wait_for_two_pending(pending_events).await;
-    reporter.failed(lane::capture::CaptureFailure {
-        lane: lanes.failure_lane,
-        occupant: lanes.failure_occupant,
-        failure: ObservationFailure::SinkRefused {
-            stream: OutputStream::Stdout,
-            detail: "fixture tape refusal".to_owned(),
-        },
-    });
     reporter.exited(lane::capture::CaptureExit {
         lane: lanes.exit_lane,
         occupant: lanes.exit_occupant,
@@ -556,12 +503,14 @@ async fn exercise_live_surface(
 fn lifecycle_control_pair(
     address: std::net::SocketAddr,
     epoch: CanonicalUuid,
-    lane: CanonicalUuid,
+    lanes: LivenessLanes,
     capability: CanonicalUuid,
     topology_revision: u64,
     lifecycle_turns: std::sync::Arc<AtomicU64>,
+    reporter: std::sync::Arc<dyn lane::capture::CaptureReporter>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::task::spawn_blocking(move || {
+        let lane = lanes.taste_lane;
         let mut socket = connect_fixture_socket(address, capability, epoch, Actor::Operator);
         send_fixture_socket(
             &mut socket,
@@ -579,6 +528,22 @@ fn lifecycle_control_pair(
                 },
             },
         );
+        let response: wire::Response<serde_json::Value> = wire::decode(
+            &socket
+                .read()
+                .expect("lifecycle response arrives")
+                .into_data(),
+        )
+        .expect("lifecycle response decodes");
+        assert_eq!(response.id, uuid(40));
+        reporter.failed(lane::capture::CaptureFailure {
+            lane: lanes.failure_lane,
+            occupant: lanes.failure_occupant,
+            failure: ObservationFailure::SinkRefused {
+                stream: OutputStream::Stdout,
+                detail: "fixture tape refusal".to_owned(),
+            },
+        });
         send_fixture_socket(
             &mut socket,
             &wire::Command {
@@ -599,16 +564,14 @@ fn lifecycle_control_pair(
                 },
             },
         );
-        for id in [uuid(40), uuid(41)] {
-            let response: wire::Response<serde_json::Value> =
-                wire::decode(&socket.read().expect("lane response arrives").into_data())
-                    .expect("lane response decodes");
-            assert_eq!(response.id, id);
-        }
+        let response: wire::Response<serde_json::Value> =
+            wire::decode(&socket.read().expect("lane response arrives").into_data())
+                .expect("lane response decodes");
+        assert_eq!(response.id, uuid(41));
         assert_eq!(
             lifecycle_turns.load(Ordering::SeqCst),
-            1,
-            "the second admitted control waits behind exactly one reconciliation"
+            2,
+            "the second control waits behind the outer event and one settlement"
         );
     })
 }
