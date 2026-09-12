@@ -125,11 +125,14 @@ fn trust_only_commits_refresh_immutable_task_snapshots_at_the_commit_cursor() {
         state: TrustState::Pended,
         worktree: Some("/producer/worktree".to_owned()),
     });
+    append_trust_fleet(&mut pended);
     let first = committed(bus.commit(pended).expect("trust pend commits"));
     let before = bus.task_snapshot().expect("pended snapshot reads");
     assert_eq!(before.cursor(), first.cursor().position());
-    assert_eq!(before.trust().len(), 1);
-    assert_eq!(before.trust()[0].body().state, TrustState::Pended);
+    assert_eq!(before.trust().len(), 300);
+    assert!(before.materialization_steps() >= 5);
+    let before_target = trust_head(&before, &digest);
+    assert_eq!(before_target.body().state, TrustState::Pended);
     assert_eq!(before.facts().latest_trust_digest("spice"), Some(&digest));
     let requirements = EnvironmentRequirements::one(
         journal::crossing::EnvironmentRequirement::trust_grant(digest.clone()),
@@ -148,10 +151,10 @@ fn trust_only_commits_refresh_immutable_task_snapshots_at_the_commit_cursor() {
                 surface: "spice".to_owned(),
                 digest: digest.clone(),
             },
-            FactCause::Existing(before.trust()[0].position()),
+            FactCause::Existing(before_target.position()),
         )
         .expect("trust grant fact builds");
-    let worktree = before.trust()[0].body().worktree.clone();
+    let worktree = before_target.body().worktree.clone();
     let granted_digest = digest.clone();
     granted.trust_head(fact, move |_| TrustHead {
         digest: granted_digest,
@@ -161,11 +164,12 @@ fn trust_only_commits_refresh_immutable_task_snapshots_at_the_commit_cursor() {
     let second = committed(bus.commit(granted).expect("trust grant commits"));
     let after = bus.task_snapshot().expect("granted snapshot reads");
     assert_eq!(after.cursor(), second.cursor().position());
-    assert_eq!(after.trust()[0].body().state, TrustState::Granted);
+    let after_target = trust_head(&after, &digest);
+    assert_eq!(after_target.body().state, TrustState::Granted);
     assert_eq!(after.facts().latest_trust_digest("spice"), Some(&digest));
     assert!(requirements.are_satisfied_by(&after.environment()));
     assert_eq!(
-        before.trust()[0].body().state,
+        before_target.body().state,
         TrustState::Pended,
         "the earlier snapshot remains immutable"
     );
@@ -186,19 +190,9 @@ fn multi_page_task_snapshots_resume_then_decode_only_the_committed_tail() {
         instant("2030-04-12T18:44:10.271Z"),
         Producer::CommandDoor,
     );
-    let padding = "x".repeat(32);
     let mut cause = FactCause::Existing(Seq::new(1).expect("initial cause"));
     for index in 1..RETAINED_FACTS {
-        let pending = bulk
-            .fact(
-                body::TaskNoted {
-                    task: stamp(),
-                    note: format!("{index:04}-{padding}"),
-                },
-                cause,
-            )
-            .expect("fleet fact builds");
-        cause = FactCause::Pending(pending);
+        cause = FactCause::Pending(append_retained_task(&mut bulk, index, cause));
     }
     let applied = journal.apply(bulk).expect("fleet history commits");
     assert_eq!(applied.last().get(), RETAINED_FACTS as u64);
@@ -209,12 +203,11 @@ fn multi_page_task_snapshots_resume_then_decode_only_the_committed_tail() {
     let retained = bus.fact_snapshot().expect("retained fact snapshot reads");
     assert_eq!(retained, cold);
     assert_eq!(before.facts().len(), RETAINED_FACTS);
+    assert_eq!(before.tasks().len(), RETAINED_FACTS);
     assert!(
         before.materialization_steps() > 1,
         "retained history was drained inside one materialization step"
     );
-    let shared_first = before.facts().iter().next().expect("history is nonempty");
-
     let mut tail = JournalWrite::new(
         Actor::Operator,
         "task:BUS-a1".parse().expect("origin"),
@@ -245,7 +238,11 @@ fn multi_page_task_snapshots_resume_then_decode_only_the_committed_tail() {
         after.facts().horizon().map(Seq::get),
         Some((RETAINED_FACTS + 1) as u64)
     );
-    assert_eq!(after.materialization_steps(), 1);
+    assert_eq!(
+        after.materialization_steps(),
+        4,
+        "one fact, two task-head pages, and one trust-head page complete the generation"
+    );
     let committed_tail = after.facts().after(before.cursor()).collect::<Vec<_>>();
     assert_eq!(
         committed_tail.len(),
@@ -253,26 +250,7 @@ fn multi_page_task_snapshots_resume_then_decode_only_the_committed_tail() {
         "a caught-up lifecycle consumer touches only the one-fact suffix"
     );
     assert_eq!(committed_tail[0].seq.get(), (RETAINED_FACTS + 1) as u64);
-    assert!(
-        std::ptr::eq(
-            shared_first,
-            after
-                .facts()
-                .iter()
-                .next()
-                .expect("history remains nonempty")
-        ),
-        "the one-fact commit rebuilt rather than shared retained facts"
-    );
-    assert_eq!(
-        after
-            .facts()
-            .iter()
-            .last()
-            .and_then(|fact| fact.fact.read::<body::TaskNoted>())
-            .map(|note| note.note),
-        Some("one proportional tail".to_owned())
-    );
+    assert_shared_fact_prefix(&before, &after);
     bus.shutdown().expect("writer shuts down");
 }
 
@@ -419,6 +397,136 @@ fn command_receipts_refuse_body_and_answer_shapes_from_another_binding() {
             .to_string()
             .contains("journal proposal is not current wire")
     );
+}
+
+fn append_trust_fleet(write: &mut JournalWrite) {
+    for index in 1..300_u16 {
+        let digest: Digest = format!("{index:064x}").parse().expect("fleet digest");
+        let fact = write
+            .fact(
+                body::TrustPended {
+                    surface: format!("fleet-{index}"),
+                    digest: digest.clone(),
+                    worktree: Some("/producer/worktree".to_owned()),
+                    previous: None,
+                },
+                FactCause::Root,
+            )
+            .expect("fleet trust fact builds");
+        write.trust_head(fact, move |_| TrustHead {
+            digest,
+            state: TrustState::Pended,
+            worktree: Some("/producer/worktree".to_owned()),
+        });
+    }
+}
+
+fn trust_head<'a>(
+    snapshot: &'a bus::TaskSnapshot,
+    digest: &Digest,
+) -> &'a journal::JournalHead<TrustHead> {
+    snapshot
+        .trust()
+        .iter()
+        .find(|head| &head.body().digest == digest)
+        .expect("target trust head remains present")
+}
+
+fn assert_shared_fact_prefix(before: &bus::TaskSnapshot, after: &bus::TaskSnapshot) {
+    assert!(
+        std::ptr::eq(
+            before.facts().iter().next().expect("history is nonempty"),
+            after
+                .facts()
+                .iter()
+                .next()
+                .expect("history remains nonempty")
+        ),
+        "the one-fact commit rebuilt rather than shared retained facts"
+    );
+    assert_eq!(
+        after
+            .facts()
+            .iter()
+            .last()
+            .and_then(|fact| fact.fact.read::<body::TaskNoted>())
+            .map(|note| note.note),
+        Some("one proportional tail".to_owned())
+    );
+}
+
+fn append_retained_task(
+    write: &mut JournalWrite,
+    index: usize,
+    cause: FactCause,
+) -> journal::PendingFact {
+    let task = journal::crossing::TaskStamp::for_micros(
+        i64::try_from(index + 1_000).expect("fleet moment"),
+    )
+    .expect("fleet stamp");
+    let task_phase = phase("todo");
+    let pending = write
+        .fact(
+            retained_added(task.clone(), index, task_phase.clone()),
+            cause,
+        )
+        .expect("fleet fact builds");
+    let head_task = task.clone();
+    write.task_head(pending, move |seq| {
+        retained_task_head(head_task, index, seq)
+    });
+    write.workflow_head(task, pending, move |_| WorkflowHead {
+        flow: vec![task_phase.clone()],
+        phase: task_phase,
+        status: "pending".to_owned(),
+        review: "unassigned".to_owned(),
+        assignment: None,
+        deferral: None,
+        completion: None,
+    });
+    pending
+}
+
+fn retained_added(
+    task: journal::crossing::TaskStamp,
+    index: usize,
+    phase: Phase,
+) -> body::TaskAdded {
+    body::TaskAdded {
+        task,
+        title: format!("Retained task {index}"),
+        description: None,
+        acceptance: Vec::new(),
+        requirements: EnvironmentRequirements::default(),
+        project: "bus".to_owned(),
+        tags: Vec::new(),
+        depends: Vec::new(),
+        flow: vec![phase.clone()],
+        phase,
+        revision: u32::try_from(index + 1).expect("fleet revision"),
+        creation: body::TaskCreationContext::unavailable(
+            body::TaskCreationUnavailable::OperatorActor,
+        ),
+    }
+}
+
+fn retained_task_head(task: journal::crossing::TaskStamp, index: usize, seq: Seq) -> TaskHead {
+    TaskHead {
+        born: task,
+        queue_origin: seq,
+        title: format!("Retained task {index}"),
+        description: None,
+        acceptance: Vec::new(),
+        requirements: EnvironmentRequirements::default(),
+        project: "bus".to_owned(),
+        tags: Vec::new(),
+        dependencies: Vec::new(),
+        provenance: "task:BUS-a1".parse().expect("fleet origin"),
+        creation: body::TaskCreationContext::unavailable(
+            body::TaskCreationUnavailable::OperatorActor,
+        ),
+        revision: seq,
+    }
 }
 
 fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>) -> JournalWrite {

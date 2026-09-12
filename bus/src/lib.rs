@@ -6,6 +6,7 @@ pub mod timer;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod runtime {
+    use std::collections::VecDeque;
     use std::error::Error;
     use std::fmt;
     use std::sync::Arc;
@@ -135,7 +136,7 @@ mod runtime {
     #[derive(Clone, Debug, Eq, PartialEq)]
     pub struct CanvasHeads {
         cursor: Option<journal::crossing::Seq>,
-        trust: Vec<JournalHead<journal::crossing::TrustHead>>,
+        trust: Arc<[JournalHead<journal::crossing::TrustHead>]>,
     }
 
     /// One exact steering head with the immutable facts that created and most
@@ -854,10 +855,13 @@ mod runtime {
     ) {
         let mut subscribers = Vec::<mpsc::Sender<JournalCommit>>::new();
         let mut task_snapshot = TaskSnapshotState::default();
-        let mut task_waiters = Vec::new();
-        while let Some(request) =
-            next_request(&journal, &requests, &mut task_snapshot, &mut task_waiters)
-        {
+        let mut snapshot_waiters = SnapshotWaiters::default();
+        while let Some(request) = next_request(
+            &journal,
+            &requests,
+            &mut task_snapshot,
+            &mut snapshot_waiters,
+        ) {
             match request {
                 Request::Commit { write, answer } => {
                     answer_commit(
@@ -889,20 +893,14 @@ mod runtime {
                     let _ = answer.send(journal.read(|read| read.cursor()));
                 }
                 Request::Tasks { answer } => {
-                    answer_tasks(&task_snapshot, &mut task_waiters, answer);
+                    answer_tasks(&task_snapshot, &mut snapshot_waiters.tasks, answer);
                 }
                 Request::Steering {
                     lane,
                     start,
                     answer,
                 } => {
-                    let snapshot = current_task_snapshot(&task_snapshot).and_then(|authority| {
-                        journal
-                            .read(|read| read.pending_steering(lane, start))
-                            .map_err(BusReadError::Head)
-                            .map(|pending| SteeringSnapshot { authority, pending })
-                    });
-                    let _ = answer.send(snapshot);
+                    let _ = answer.send(steering_snapshot(&journal, &task_snapshot, lane, start));
                 }
                 Request::SteeringPresentations { keys, answer } => {
                     let _ = answer.send(steering_presentations(&journal, keys));
@@ -920,7 +918,7 @@ mod runtime {
                         }));
                 }
                 Request::CanvasHeads { answer } => {
-                    let _ = answer.send(canvas_heads(&journal));
+                    let _ = answer.send(canvas_heads(&task_snapshot));
                 }
                 Request::CanvasFacts {
                     start,
@@ -964,24 +962,57 @@ mod runtime {
         }
     }
 
+    #[derive(Default)]
+    struct SnapshotWaiters {
+        tasks: Vec<SyncSender<Result<TaskSnapshot, BusReadError>>>,
+        requests: VecDeque<Request>,
+    }
+
     fn next_request(
         journal: &Journal,
         requests: &Receiver<Request>,
         task_snapshot: &mut TaskSnapshotState,
-        task_waiters: &mut Vec<SyncSender<Result<TaskSnapshot, BusReadError>>>,
+        waiters: &mut SnapshotWaiters,
     ) -> Option<Request> {
         loop {
             if !task_snapshot.needs_step() {
+                if let Some(request) = waiters.requests.pop_front() {
+                    return Some(request);
+                }
                 return requests.recv().ok();
             }
             let _ = advance_task_snapshot(journal, task_snapshot);
-            answer_waiting_tasks(task_snapshot, task_waiters);
-            match requests.try_recv() {
-                Ok(request) => return Some(request),
-                Err(TryRecvError::Empty) => {}
-                Err(TryRecvError::Disconnected) => return None,
+            answer_waiting_tasks(task_snapshot, &mut waiters.tasks);
+            match request_during_snapshot(requests, &mut waiters.requests) {
+                Ok(Some(request)) => return Some(request),
+                Ok(None) => {}
+                Err(()) => return None,
             }
         }
+    }
+
+    fn request_during_snapshot(
+        requests: &Receiver<Request>,
+        retained: &mut VecDeque<Request>,
+    ) -> Result<Option<Request>, ()> {
+        match requests.try_recv() {
+            Ok(request)
+                if request_needs_task_snapshot(&request) && retained.len() < REQUEST_CAPACITY =>
+            {
+                retained.push_back(request);
+                Ok(None)
+            }
+            Ok(request) => Ok(Some(request)),
+            Err(TryRecvError::Empty) => Ok(None),
+            Err(TryRecvError::Disconnected) => Err(()),
+        }
+    }
+
+    fn request_needs_task_snapshot(request: &Request) -> bool {
+        matches!(
+            request,
+            Request::Steering { .. } | Request::CanvasHeads { .. }
+        )
     }
 
     fn steering_presentations(
@@ -1113,17 +1144,25 @@ mod runtime {
         state.current()
     }
 
-    fn canvas_heads(journal: &Journal) -> Result<CanvasHeads, BusReadError> {
-        journal
-            .read_with(|read| {
-                let cursor = read.cursor().map_err(BusReadError::Head)?;
-                let trust = read.trust_heads().map_err(BusReadError::Head)?;
-                Ok(CanvasHeads { cursor, trust })
-            })
-            .map_err(|error| match error {
-                journal::ReadError::Journal(error) => BusReadError::Head(error),
-                journal::ReadError::Answer(error) => error,
-            })
+    fn steering_snapshot(
+        journal: &Journal,
+        state: &TaskSnapshotState,
+        lane: Option<journal::crossing::CanonicalUuid>,
+        start: journal::FactPageStart,
+    ) -> Result<SteeringSnapshot, BusReadError> {
+        current_task_snapshot(state).and_then(|authority| {
+            journal
+                .read(|read| read.pending_steering(lane, start))
+                .map_err(BusReadError::Head)
+                .map(|pending| SteeringSnapshot { authority, pending })
+        })
+    }
+
+    fn canvas_heads(state: &TaskSnapshotState) -> Result<CanvasHeads, BusReadError> {
+        current_task_snapshot(state).map(|snapshot| CanvasHeads {
+            cursor: snapshot.cursor,
+            trust: snapshot.trust.clone(),
+        })
     }
 
     struct TransactionCompletion {

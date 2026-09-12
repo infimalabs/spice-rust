@@ -162,10 +162,7 @@ impl Drop for TaskFacts {
 pub(super) enum TaskSnapshotState {
     #[default]
     Empty,
-    Building {
-        facts: TaskFacts,
-        steps: u64,
-    },
+    Building(TaskSnapshotBuild),
     Ready(TaskSnapshot),
     Fault(String),
 }
@@ -180,17 +177,52 @@ impl TaskSnapshotState {
             Self::Ready(snapshot) => Ok(snapshot.clone()),
             Self::Fault(detail) => Err(BusReadError::Head(GuardError::Invalid(detail.clone()))),
             Self::Empty => Err(pending_error(None)),
-            Self::Building { facts, .. } => Err(pending_error(facts.horizon())),
+            Self::Building(build) => Err(pending_error(build.facts.horizon())),
+        }
+    }
+}
+
+pub(super) struct TaskSnapshotBuild {
+    facts: TaskFacts,
+    cursor: Option<journal::crossing::Seq>,
+    tasks: Vec<journal::TaskHeads>,
+    task_after: Option<journal::crossing::TaskStamp>,
+    trust: Vec<JournalHead<journal::crossing::TrustHead>>,
+    trust_after: Option<journal::crossing::Digest>,
+    stage: SnapshotStage,
+    steps: u64,
+}
+
+#[derive(Clone, Copy)]
+enum SnapshotStage {
+    Facts,
+    Tasks,
+    Trust,
+}
+
+impl TaskSnapshotBuild {
+    fn new(facts: TaskFacts) -> Self {
+        Self {
+            facts,
+            cursor: None,
+            tasks: Vec::new(),
+            task_after: None,
+            trust: Vec::new(),
+            trust_after: None,
+            stage: SnapshotStage::Facts,
+            steps: 0,
         }
     }
 }
 
 pub(super) fn invalidate_task_snapshot(state: &mut TaskSnapshotState) {
-    if let TaskSnapshotState::Ready(snapshot) = state {
-        *state = TaskSnapshotState::Building {
-            facts: snapshot.facts.clone(),
-            steps: 0,
-        };
+    let facts = match state {
+        TaskSnapshotState::Ready(snapshot) => Some(snapshot.facts.clone()),
+        TaskSnapshotState::Building(build) => Some(build.facts.clone()),
+        TaskSnapshotState::Empty | TaskSnapshotState::Fault(_) => None,
+    };
+    if let Some(facts) = facts {
+        *state = TaskSnapshotState::Building(TaskSnapshotBuild::new(facts));
     }
 }
 
@@ -198,47 +230,28 @@ pub(super) fn advance_task_snapshot(
     journal: &Journal,
     state: &mut TaskSnapshotState,
 ) -> Result<(), BusReadError> {
-    let (facts, steps) = match state {
-        TaskSnapshotState::Empty => (TaskFacts::default(), 0),
-        TaskSnapshotState::Building { facts, steps } => (facts.clone(), *steps),
-        TaskSnapshotState::Ready(_) => return Ok(()),
+    let mut build = match std::mem::take(state) {
+        TaskSnapshotState::Empty => TaskSnapshotBuild::new(TaskFacts::default()),
+        TaskSnapshotState::Building(build) => build,
+        ready @ TaskSnapshotState::Ready(_) => {
+            *state = ready;
+            return Ok(());
+        }
         TaskSnapshotState::Fault(detail) => {
+            *state = TaskSnapshotState::Fault(detail.clone());
             return Err(BusReadError::Head(GuardError::Invalid(detail.clone())));
         }
     };
-    let after = facts.horizon();
-    let step = journal
-        .read_with(|read| {
-            let kinds = resident_authority_kinds();
-            let page = read
-                .selected_fact_page(&kinds, after, journal::FactReadBudget::RETAINED)
-                .map_err(BusReadError::Head)?;
-            let complete_through = page.continuation.or(page.horizon);
-            let facts = match complete_through {
-                Some(horizon) => facts
-                    .append_selected(page.rows, horizon)
-                    .map_err(BusReadError::Head)?,
-                None => facts,
-            };
-            if page.continuation.is_some() {
-                return Ok(BuildStep::Pending(facts));
-            }
-            Ok(BuildStep::Ready(TaskSnapshot {
-                cursor: page.horizon,
-                facts,
-                tasks: Arc::from(read.task_heads().map_err(BusReadError::Head)?),
-                trust: Arc::from(read.trust_heads().map_err(BusReadError::Head)?),
-                residency: read.residency_head().map_err(BusReadError::Head)?,
-                materialization_steps: steps.saturating_add(1),
-            }))
-        })
-        .map_err(map_read_error);
+    build.steps = build.steps.saturating_add(1);
+    let step = match build.stage {
+        SnapshotStage::Facts => advance_facts(journal, build),
+        SnapshotStage::Tasks => advance_tasks(journal, build),
+        SnapshotStage::Trust => advance_trust(journal, build),
+    }
+    .map_err(map_read_error);
     match step {
-        Ok(BuildStep::Pending(facts)) => {
-            *state = TaskSnapshotState::Building {
-                facts,
-                steps: steps.saturating_add(1),
-            };
+        Ok(BuildStep::Pending(build)) => {
+            *state = TaskSnapshotState::Building(build);
             Ok(())
         }
         Ok(BuildStep::Ready(snapshot)) => {
@@ -252,9 +265,98 @@ pub(super) fn advance_task_snapshot(
     }
 }
 
+fn advance_facts(
+    journal: &Journal,
+    mut build: TaskSnapshotBuild,
+) -> Result<BuildStep, journal::ReadError<BusReadError>> {
+    journal.read_with(|read| {
+        let page = read
+            .selected_fact_page(
+                &resident_authority_kinds(),
+                build.facts.horizon(),
+                journal::FactReadBudget::RETAINED,
+            )
+            .map_err(BusReadError::Head)?;
+        if let Some(horizon) = page.continuation.or(page.horizon) {
+            build.facts = build
+                .facts
+                .append_selected(page.rows, horizon)
+                .map_err(BusReadError::Head)?;
+        }
+        if page.continuation.is_none() {
+            build.cursor = page.horizon;
+            build.stage = SnapshotStage::Tasks;
+        }
+        Ok(BuildStep::Pending(build))
+    })
+}
+
+fn advance_tasks(
+    journal: &Journal,
+    mut build: TaskSnapshotBuild,
+) -> Result<BuildStep, journal::ReadError<BusReadError>> {
+    journal.read_with(|read| {
+        let page = read
+            .task_head_page(build.task_after.as_ref(), journal::FactReadBudget::RETAINED)
+            .map_err(BusReadError::Head)?;
+        require_cursor(page.witness, build.cursor)?;
+        build.tasks.extend(page.rows);
+        build.task_after = page.continuation;
+        if build.task_after.is_none() {
+            build.stage = SnapshotStage::Trust;
+        }
+        Ok(BuildStep::Pending(build))
+    })
+}
+
+fn advance_trust(
+    journal: &Journal,
+    mut build: TaskSnapshotBuild,
+) -> Result<BuildStep, journal::ReadError<BusReadError>> {
+    journal.read_with(|read| {
+        let page = read
+            .trust_head_page(
+                build.trust_after.as_ref(),
+                journal::FactReadBudget::RETAINED,
+            )
+            .map_err(BusReadError::Head)?;
+        require_cursor(page.witness, build.cursor)?;
+        build.trust.extend(page.rows);
+        build.trust_after = page.continuation;
+        if build.trust_after.is_some() {
+            return Ok(BuildStep::Pending(build));
+        }
+        let residency = read.residency_head().map_err(BusReadError::Head)?;
+        if read.cursor().map_err(BusReadError::Head)? != build.cursor {
+            return Err(BusReadError::Head(GuardError::Invalid(
+                "task snapshot authority moved during completion".to_owned(),
+            )));
+        }
+        Ok(BuildStep::Ready(TaskSnapshot {
+            cursor: build.cursor,
+            facts: build.facts,
+            tasks: Arc::from(build.tasks),
+            trust: Arc::from(build.trust),
+            residency,
+            materialization_steps: build.steps,
+        }))
+    })
+}
+
 enum BuildStep {
-    Pending(TaskFacts),
+    Pending(TaskSnapshotBuild),
     Ready(TaskSnapshot),
+}
+
+fn require_cursor(
+    witness: journal::CurrentHeadWitness,
+    expected: Option<journal::crossing::Seq>,
+) -> Result<(), BusReadError> {
+    (witness.cursor == expected).then_some(()).ok_or_else(|| {
+        BusReadError::Head(GuardError::Invalid(
+            "task snapshot authority moved between bounded pages".to_owned(),
+        ))
+    })
 }
 
 fn pending_error(through: Option<journal::crossing::Seq>) -> BusReadError {
