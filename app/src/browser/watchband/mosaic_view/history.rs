@@ -22,7 +22,7 @@ impl HistorySender {
 
 impl PartialEq for HistorySender {
     fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.0, &other.0)
+        Rc::ptr_eq(&self.0.queue, &other.0.queue)
     }
 }
 

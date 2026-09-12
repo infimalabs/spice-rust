@@ -2,7 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
-use futures_channel::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use futures_channel::mpsc;
 use futures_util::{FutureExt, SinkExt, StreamExt, select};
 use gloo_net::http::Request;
 use gloo_net::websocket::futures::WebSocket;
@@ -34,11 +34,13 @@ use crate::{
     StreamDirective, stale_reads,
 };
 
+mod action_mailbox;
 mod clock;
 mod connection;
 mod view;
 mod watchband;
 
+use action_mailbox::ActionQueue;
 use connection::{request_external_speech, run_surface};
 use view::{CanvasRender, render_canvas};
 use watchband::ComposerAction;
@@ -60,7 +62,11 @@ const NARRATION_CURSOR_STORAGE: &str = "spice:narration-cursors:v1";
 /// resident that did not answer rather than a resident with nothing to say.
 const LIVENESS_PROBE_MILLIS: u32 = 15_000;
 
-type SenderHandle = Rc<RefCell<Option<UnboundedSender<ClientAction>>>>;
+#[derive(Clone)]
+struct SenderHandle {
+    queue: Rc<RefCell<Option<ActionQueue>>>,
+    issue: UseStateHandle<Option<String>>,
+}
 type SocketWriter = futures_util::stream::SplitSink<WebSocket, Message>;
 type SocketReader = futures_util::stream::SplitStream<WebSocket>;
 
@@ -531,7 +537,11 @@ fn canvas_app() -> Html {
     let note_task = use_state(String::new);
     let note_text = use_state(String::new);
     let note_notice = use_state(Notice::none);
-    let sender = use_mut_ref(|| None::<UnboundedSender<ClientAction>>);
+    let action_issue = use_state(|| None::<String>);
+    let sender = SenderHandle {
+        queue: use_mut_ref(|| None::<ActionQueue>),
+        issue: action_issue.clone(),
+    };
     let speech = use_state(|| wire::SpeechPlayback::Disabled {});
     let speech_status = use_state(SpeechStatus::default);
     let speech_message = use_state(|| None::<String>);
@@ -601,6 +611,7 @@ fn canvas_app() -> Html {
         note_task: &note_task,
         note_text: &note_text,
         note_notice: &note_notice,
+        action_issue: &action_issue,
         submit_note,
         refresh,
     })
@@ -731,12 +742,12 @@ fn canvas_disclosure_contains(event: &web_sys::Event) -> bool {
 fn use_surface_connection(sender: SenderHandle, handles: SurfaceHandles) {
     use_effect_with((), move |()| {
         let active = Rc::new(Cell::new(true));
-        let (tx, rx) = mpsc::unbounded();
-        *sender.borrow_mut() = Some(tx);
-        spawn_local(run_surface(active.clone(), handles, rx));
+        let (queue, wakes) = ActionQueue::new();
+        *sender.queue.borrow_mut() = Some(queue.clone());
+        spawn_local(run_surface(active.clone(), handles, queue, wakes));
         move || {
             active.set(false);
-            sender.borrow_mut().take();
+            sender.queue.borrow_mut().take();
         }
     });
 }
@@ -789,15 +800,16 @@ fn note_submit_callback(
         event.prevent_default();
         match compose::note(&note_task, &note_text) {
             Ok(note) => {
-                note_notice.set(Notice::none());
-                send_action(
+                if admit_action(
                     &sender,
                     ClientAction::Note {
                         task: note.task,
                         note: note.text,
                     },
-                );
-                note_text.set(String::new());
+                ) {
+                    note_notice.set(Notice::none());
+                    note_text.set(String::new());
+                }
             }
             Err(refusal) => note_notice.set(refusal.into()),
         }
@@ -1140,11 +1152,29 @@ fn binary_message(message: Message) -> Result<Vec<u8>, String> {
     }
 }
 
-fn send_action(sender: &SenderHandle, action: ClientAction) -> bool {
-    sender
-        .borrow_mut()
-        .as_mut()
-        .is_some_and(|sender| sender.unbounded_send(action).is_ok())
+fn send_action(sender: &SenderHandle, action: ClientAction) {
+    let _admitted = admit_action(sender, action);
+}
+
+fn admit_action(sender: &SenderHandle, action: ClientAction) -> bool {
+    let result = sender
+        .queue
+        .borrow()
+        .as_ref()
+        .ok_or(action_mailbox::ActionAdmissionError::Unavailable)
+        .and_then(|queue| queue.admit(action));
+    match result {
+        Ok(()) => {
+            if sender.issue.is_some() {
+                sender.issue.set(None);
+            }
+            true
+        }
+        Err(error) => {
+            sender.issue.set(Some(error.to_string()));
+            false
+        }
+    }
 }
 
 fn queue_submission(
@@ -1157,7 +1187,7 @@ fn queue_submission(
         return false;
     }
     submissions.publish();
-    if send_action(sender, ClientAction::DrainSubmissions) {
+    if admit_action(sender, ClientAction::DrainSubmissions) {
         return true;
     }
     let removed = submissions.queue.borrow_mut().rollback(id);
@@ -1185,7 +1215,7 @@ fn queue_submissions(
         return false;
     }
     submissions.publish();
-    if send_action(sender, ClientAction::DrainSubmissions) {
+    if admit_action(sender, ClientAction::DrainSubmissions) {
         return true;
     }
     for id in identities {

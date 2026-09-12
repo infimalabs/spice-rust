@@ -56,6 +56,7 @@ pub(super) struct CanvasRender<'a> {
     pub note_task: &'a UseStateHandle<String>,
     pub note_text: &'a UseStateHandle<String>,
     pub note_notice: &'a UseStateHandle<Notice>,
+    pub action_issue: &'a UseStateHandle<Option<String>>,
     pub submit_note: Callback<SubmitEvent>,
     pub refresh: Callback<MouseEvent>,
 }
@@ -92,6 +93,9 @@ pub(super) fn render_canvas(render: CanvasRender<'_>) -> Html {
                 submissions: &render.submissions.status,
                 lineage_controls: render.lineage_controls,
             })}
+            if let Some(issue) = &**render.action_issue {
+                <p class="form-refusal" role="alert">{issue}</p>
+            }
             {render_workspace(&render, active_axis)}
         </div>
     }
