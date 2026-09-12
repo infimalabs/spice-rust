@@ -4,6 +4,9 @@ use std::collections::HashSet;
 
 use super::*;
 
+/// Cold advertised lanes hydrate this many visible cards before geometry gates paging.
+const EAGER_HISTORY_CARD_TARGET: usize = 25;
+
 #[derive(Clone)]
 pub(in crate::browser::watchband) struct HistorySender(SenderHandle);
 
@@ -27,6 +30,7 @@ impl PartialEq for HistorySender {
 struct HistoryTarget {
     lane: CanonicalUuid,
     before: wire::MessageLocus,
+    eager: bool,
     key: String,
     request_key: String,
 }
@@ -39,6 +43,12 @@ fn history_targets(
     targets
         .iter()
         .filter_map(|(lane, (before, completion))| {
+            let lane_cards = cards
+                .iter()
+                .filter(|card| {
+                    matches!(card, ActivityCard::Agent { message, .. } if message.lane == *lane)
+                })
+                .count();
             cards.iter().find_map(|card| match card {
                 ActivityCard::Agent { message, .. }
                     if message.lane == *lane && message.locus == *before =>
@@ -47,6 +57,7 @@ fn history_targets(
                     Some(HistoryTarget {
                         lane: *lane,
                         before: *before,
+                        eager: lane_cards < EAGER_HISTORY_CARD_TARGET,
                         request_key: format!("{revision}:{completion}:{key}"),
                         key,
                     })
@@ -100,7 +111,7 @@ pub(super) fn use_history_paging(
                         });
                     // Keep visible-cursor prefetching, but let the merged plane's
                     // trailing edge page a cursor buried above a deeper sibling column.
-                    if !at_edge && !target_is_near {
+                    if !target.eager && !at_edge && !target_is_near {
                         continue;
                     }
                     if !observed_requested

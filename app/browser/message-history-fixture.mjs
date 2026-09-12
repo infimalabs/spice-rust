@@ -84,6 +84,12 @@ export function createMessageHistoryFixture({
 
   const lanes = frames.map((frame) => frame.message.lane);
   const [first, second, third] = frames;
+  const firstWarm = Array.from({ length: 20 }, (_, index) => make(
+    first,
+    `history first bounded ${index + 1}`,
+    `2031-05-17T12:00:00.${String((index + 1) * 40).padStart(3, "0")}Z`,
+    70_060 + index,
+  ));
   const records = {
     firstDeep: make(first, "history first deep", "2031-05-17T11:59:58.000Z", 70_000),
     secondOlder: make(second, "history second exhausted", "2031-05-17T11:59:59.000Z", 71_000),
@@ -126,8 +132,8 @@ export function createMessageHistoryFixture({
   const currentHeads = [records.live, records.boundary, records.thirdHead];
   const pages = {
     empty: { messages: [], more: true },
-    first: { messages: [records.firstOlder], more: true },
-    firstReplay: { messages: [records.firstHead, records.firstOlder], more: true },
+    first: { messages: [records.firstOlder, ...firstWarm], more: true },
+    firstReplay: { messages: [records.firstOlder, ...firstWarm, records.firstHead], more: true },
     firstFinal: { messages: [...bulkByLane.get(lanes[0]), records.firstDeep], more: false },
     second: { messages: [...bulkByLane.get(lanes[1]), records.secondOlder], more: false },
     third: {
@@ -334,6 +340,7 @@ export function createMessageHistoryFixture({
     expectedKeys() {
       return [
         ...bulk,
+        ...firstWarm,
         records.firstDeep,
         records.secondOlder,
         records.firstOlder,
