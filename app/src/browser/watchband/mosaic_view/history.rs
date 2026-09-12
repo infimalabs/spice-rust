@@ -33,12 +33,12 @@ struct HistoryTarget {
 
 fn history_targets(
     cards: &[ActivityCard],
-    targets: &BTreeMap<CanonicalUuid, wire::MessageLocus>,
+    targets: &BTreeMap<CanonicalUuid, (wire::MessageLocus, u64)>,
     revision: u64,
 ) -> Vec<HistoryTarget> {
     targets
         .iter()
-        .filter_map(|(lane, before)| {
+        .filter_map(|(lane, (before, completion))| {
             cards.iter().find_map(|card| match card {
                 ActivityCard::Agent { message, .. }
                     if message.lane == *lane && message.locus == *before =>
@@ -47,7 +47,7 @@ fn history_targets(
                     Some(HistoryTarget {
                         lane: *lane,
                         before: *before,
-                        request_key: format!("{revision}:{key}"),
+                        request_key: format!("{revision}:{completion}:{key}"),
                         key,
                     })
                 }
@@ -62,7 +62,7 @@ fn history_targets(
 pub(super) fn use_history_paging(
     host: NodeRef,
     cards: &[ActivityCard],
-    targets: &BTreeMap<CanonicalUuid, wire::MessageLocus>,
+    targets: &BTreeMap<CanonicalUuid, (wire::MessageLocus, u64)>,
     revision: u64,
     request: HistorySender,
 ) {

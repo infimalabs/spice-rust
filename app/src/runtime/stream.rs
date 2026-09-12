@@ -381,6 +381,8 @@ impl CanvasRuntime {
             self.message_cards.snapshot(limit, messages)
         };
         let activities_changed = self.apply_activity_snapshot(limit, messages);
+        self.message_history_completions
+            .retain(|lane, _| next_history.contains_key(lane));
         self.message_history = next_history;
         if reconnect {
             self.message_history_revision = self.message_history_revision.saturating_add(1);
@@ -411,14 +413,17 @@ impl CanvasRuntime {
             .map(|message| message.locus)
             .filter(|next| *next != before);
         let previous = self.message_history.get(&lane).copied();
-        if more && let Some(next) = next {
-            self.message_history.insert(lane, next);
+        if more {
+            self.message_history.insert(lane, next.unwrap_or(before));
+            let completion = self.message_history_completions.entry(lane).or_default();
+            *completion = completion.saturating_add(1);
         } else {
             self.message_history.remove(&lane);
+            self.message_history_completions.remove(&lane);
         }
         StreamApplication::new(
             Vec::new(),
-            changed || self.message_history.get(&lane).copied() != previous,
+            changed || more || self.message_history.get(&lane).copied() != previous,
         )
     }
 
