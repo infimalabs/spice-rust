@@ -373,7 +373,7 @@ async fn await_message_startup(
                 }
                 request_lifecycle_reconciliation(lifecycle_reconciliation, &dispatched);
             }
-            () = std::future::ready(()), if lifecycle_reconciliation.is_pending() => {
+            () = std::future::ready(()), if lifecycle_reconciliation.is_ready() => {
                 lifecycle_reconciliation.reconcile(
                     bus, command_surface, seats, diagnostic, timers, lifecycle,
                 )?;
@@ -510,7 +510,7 @@ pub(super) async fn drive_surface(
                 }
                 request_lifecycle_reconciliation(&mut lifecycle_reconciliation, &dispatched);
             }
-            () = std::future::ready(()), if lifecycle_reconciliation.is_pending() => {
+            () = std::future::ready(()), if lifecycle_reconciliation.is_ready() => {
                 lifecycle_reconciliation.reconcile(
                     bus, command_surface, seats, diagnostic, &mut timers, &mut lifecycle,
                 )?;
@@ -519,6 +519,7 @@ pub(super) async fn drive_surface(
                 project_next_inbox(command_surface, &mut inbox_projections)?;
             }
             record = records.recv() => {
+                lifecycle_reconciliation.observe_outer_turn();
                 let residency = current_residency(bus, epoch)?;
                 session_compactions.synchronize(
                     bus, epoch, residency.body(), &message_publisher,
@@ -544,9 +545,12 @@ pub(super) async fn drive_surface(
                     completed,
                 )?;
             }
-            failure = failures.recv() => accept_failure(
-                bus, epoch, seats, command_surface, &mut lifecycle, failure,
-            )?,
+            failure = failures.recv() => {
+                lifecycle_reconciliation.observe_outer_turn();
+                accept_failure(
+                    bus, epoch, seats, command_surface, &mut lifecycle, failure,
+                )?;
+            }
             exit = exits.recv() => accept_exit(
                 bus, epoch, seats, command_surface, &mut lifecycle, exit,
             )?,
@@ -846,6 +850,14 @@ impl LifecycleReconciliation {
         self.pending
     }
 
+    fn is_ready(&self) -> bool {
+        #[cfg(test)]
+        if self.turns.is_some() {
+            return false;
+        }
+        self.pending
+    }
+
     fn request(&mut self) {
         self.pending = true;
     }
@@ -855,9 +867,21 @@ impl LifecycleReconciliation {
         if self.pending
             && let Some(turns) = &self.turns
         {
+            if turns.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                return;
+            }
             turns.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
         self.pending = false;
+    }
+
+    fn observe_outer_turn(&self) {
+        #[cfg(test)]
+        if self.pending
+            && let Some(turns) = &self.turns
+        {
+            turns.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
     }
 
     fn reconcile(
@@ -883,7 +907,7 @@ impl LifecycleReconciliation {
     }
 }
 
-pub(super) fn request_lifecycle_reconciliation(
+fn request_lifecycle_reconciliation(
     reconciliation: &mut LifecycleReconciliation,
     dispatched: &ControlDispatch,
 ) {

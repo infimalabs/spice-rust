@@ -1010,8 +1010,7 @@ pub(super) use surface::announce_canvas;
 use surface::run_surface;
 #[cfg(test)]
 use surface::{
-    LifecycleReconciliation, StartedSurface, SurfacePublication, drive_surface,
-    request_lifecycle_reconciliation, start_surface,
+    LifecycleReconciliation, StartedSurface, SurfacePublication, drive_surface, start_surface,
 };
 #[cfg(test)]
 pub(in crate::resident) use surface::{
