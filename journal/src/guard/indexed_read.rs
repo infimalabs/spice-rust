@@ -156,10 +156,10 @@ impl JournalRead<'_> {
         let position = self
             .connection
             .query_row(
-                "SELECT max(head_seq) FROM (\
-                    SELECT head_seq FROM task_heads UNION ALL \
-                    SELECT head_seq FROM workflow_heads\
-                 )",
+                "SELECT NULLIF(max(\
+                    coalesce((SELECT max(head_seq) FROM task_heads), 0), \
+                    coalesce((SELECT max(head_seq) FROM workflow_heads), 0)\
+                 ), 0)",
                 [],
                 |row| row.get::<_, Option<i64>>(0),
             )
