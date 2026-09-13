@@ -159,17 +159,15 @@ pub(super) fn document_slug_tag(slug: &str) -> String {
 }
 
 pub(super) fn board_barrier(board: &BoardAnswer) -> Digest {
-    let heads = board
+    let cursor = board
         .tasks
         .iter()
-        .map(|task| {
-            (
-                task.statement.body.handle.clone(),
-                task.statement.position,
-                task.workflow.position,
-            )
-        })
-        .collect::<Vec<_>>();
-    let bytes = wire::encode(&heads).expect("typed board barrier encodes");
+        .flat_map(|task| [task.statement.position, task.workflow.position])
+        .max();
+    task_projection_barrier(cursor)
+}
+
+pub(super) fn task_projection_barrier(cursor: Option<wire::Seq>) -> Digest {
+    let bytes = wire::encode(&cursor).expect("typed board projection cursor encodes");
     Digest::compute(Domain::BoardBarrier, &bytes)
 }

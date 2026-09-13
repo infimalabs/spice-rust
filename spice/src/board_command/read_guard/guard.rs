@@ -154,40 +154,9 @@ fn board_witness_holds(read: &JournalRead<'_>, witness: &Witness) -> Result<bool
         }
         Witness::Preview { .. } => true,
         Witness::Barrier { name, digest } => {
-            name.as_str() == "board" && board_barrier_from_read(read)? == *digest
+            name.as_str() == "board"
+                && task_projection_barrier(read.task_projection_cursor()?) == *digest
         }
         _ => unreachable!("board witness partition is closed"),
     })
-}
-
-fn board_barrier_from_read(read: &JournalRead<'_>) -> Result<Digest, GuardError> {
-    let heads = current_task_heads(read)?
-        .into_iter()
-        .map(|task| {
-            (
-                TaskHandle::for_project(
-                    &task.statement().body().project,
-                    &task.statement().body().born,
-                ),
-                task.statement().position(),
-                task.workflow().position(),
-            )
-        })
-        .collect::<Vec<_>>();
-    let bytes = wire::encode(&heads)
-        .map_err(|error| GuardError::Invalid(format!("board barrier did not encode: {error}")))?;
-    Ok(Digest::compute(Domain::BoardBarrier, &bytes))
-}
-
-fn current_task_heads(read: &JournalRead<'_>) -> Result<Vec<journal::TaskHeads>, GuardError> {
-    let mut heads = Vec::new();
-    let mut after = None;
-    loop {
-        let page = read.task_head_page(after.as_ref(), journal::FactReadBudget::RETAINED)?;
-        heads.extend(page.rows);
-        let Some(continuation) = page.continuation else {
-            return Ok(heads);
-        };
-        after = Some(continuation);
-    }
 }
