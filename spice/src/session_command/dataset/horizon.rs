@@ -864,9 +864,8 @@ mod tests {
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use super::super::WindowFold;
     use super::super::stream::stream_records;
-    use super::super::work::{ResidueLedger, SessionWorkBudget};
+    use super::super::work::{ResidueLedger, SessionWorkBudget, TestFold};
     use super::*;
     use crate::session_command::model::{Dataset, Vendor};
 
@@ -912,7 +911,7 @@ mod tests {
         let mut dataset = Dataset::default();
         let mut markers = Vec::new();
         let mut residues = ResidueLedger::new();
-        let mut fold = WindowFold::new(&mut dataset, &mut markers, &mut residues);
+        let mut fold = TestFold::new(&mut dataset, &mut markers, &mut residues);
         stream_records(source, None, &mut work, |row, work, at| {
             fold.push(row, work, at)
         })
@@ -940,7 +939,7 @@ mod tests {
         let mut reverse_markers = Vec::new();
         let mut reverse_residues = ResidueLedger::new();
         let mut reverse_fold =
-            WindowFold::new(&mut reverse, &mut reverse_markers, &mut reverse_residues);
+            TestFold::new(&mut reverse, &mut reverse_markers, &mut reverse_residues);
         let mut dialect = source.dialect;
         for (row, offset, tail) in page.rows.into_iter().rev() {
             let (observed, row) = decode_window_row(
@@ -998,7 +997,7 @@ mod tests {
         let mut dataset = Dataset::default();
         let mut markers = Vec::new();
         let mut residues = ResidueLedger::new();
-        let mut fold = WindowFold::new(&mut dataset, &mut markers, &mut residues);
+        let mut fold = TestFold::new(&mut dataset, &mut markers, &mut residues);
         let refusal = stream_records(source, None, &mut exhausted, |row, work, at| {
             fold.push(row, work, at)
         })
