@@ -67,6 +67,10 @@ pub(crate) enum WindowOptions {
     Compactions {
         compactions: usize,
     },
+    Slices {
+        compactions: usize,
+        oldest: bool,
+    },
 }
 
 impl WindowOptions {
@@ -74,7 +78,8 @@ impl WindowOptions {
         match self {
             Self::Briefing { compactions, .. }
             | Self::Sweep { compactions }
-            | Self::Compactions { compactions } => compactions,
+            | Self::Compactions { compactions }
+            | Self::Slices { compactions, .. } => compactions,
         }
     }
 
@@ -86,12 +91,26 @@ impl WindowOptions {
                 explain,
                 ..
             } => Some((max_lines, max_bytes, explain)),
-            Self::Sweep { .. } | Self::Compactions { .. } => None,
+            Self::Sweep { .. } | Self::Compactions { .. } | Self::Slices { .. } => None,
         }
     }
 
     const fn retains_turns(self) -> bool {
         !matches!(self, Self::Compactions { .. })
+    }
+
+    const fn scans_full_source(self) -> bool {
+        matches!(
+            self,
+            Self::Compactions { .. } | Self::Slices { oldest: true, .. }
+        )
+    }
+
+    const fn compaction_direction(self) -> FrontierDirection {
+        match self {
+            Self::Slices { oldest: true, .. } => FrontierDirection::Oldest,
+            _ => FrontierDirection::Newest,
+        }
     }
 }
 
@@ -154,15 +173,17 @@ impl WindowScan {
         admit_sources(sources)?;
         let mut work = SessionWork::new(SessionWorkBudget::report());
         let mut residues = ResidueLedger::new();
+        let cursor_start = (!options.scans_full_source()).then_some(start).flatten();
         let mut streams = sources
             .iter()
             .map(|source| {
                 PhaseSource::window(
                     source,
-                    options.retains_turns().then_some(start).flatten(),
+                    cursor_start,
                     start,
                     end,
                     options.compactions(),
+                    options.compaction_direction(),
                     &mut work,
                 )
             })
@@ -202,7 +223,7 @@ impl WindowScan {
             compaction_sources.push(VecDeque::from(compactions));
         }
         let mut compactions =
-            ResultFrontier::new(options.compactions(), FrontierDirection::Newest)?;
+            ResultFrontier::new(options.compactions(), options.compaction_direction())?;
         while let Some(index) = compaction_sources
             .iter()
             .enumerate()
@@ -255,8 +276,10 @@ impl WindowTurnFrontier {
         if !self.options.retains_turns() {
             return Ok(());
         }
-        if matches!(self.options, WindowOptions::Sweep { .. })
-            && self.rows.len() == WINDOW_TURN_LIMIT
+        if matches!(
+            self.options,
+            WindowOptions::Sweep { .. } | WindowOptions::Slices { .. }
+        ) && self.rows.len() == WINDOW_TURN_LIMIT
         {
             return Err(refusal(
                 "session::window-turn-limit",
@@ -811,6 +834,7 @@ struct PhaseSource<'a> {
     fold: FoldState,
     ready: VecDeque<TurnRecord>,
     last_turn: Option<String>,
+    turn_start: Option<String>,
     compactions: Option<CompactionTracker>,
     complete: bool,
 }
@@ -825,6 +849,7 @@ impl<'a> PhaseSource<'a> {
             fold: FoldState::default(),
             ready: VecDeque::with_capacity(OPEN_TURN_LIMIT),
             last_turn: None,
+            turn_start: None,
             compactions: None,
             complete: false,
         })
@@ -836,6 +861,7 @@ impl<'a> PhaseSource<'a> {
         marker_start: Option<&str>,
         end: Option<&str>,
         compactions: usize,
+        direction: FrontierDirection,
         work: &mut SessionWork,
     ) -> Result<Self, Refusal> {
         Ok(Self {
@@ -846,7 +872,13 @@ impl<'a> PhaseSource<'a> {
             fold: FoldState::default(),
             ready: VecDeque::with_capacity(OPEN_TURN_LIMIT),
             last_turn: None,
-            compactions: Some(CompactionTracker::new(compactions, marker_start, end)?),
+            turn_start: marker_start.map(str::to_owned),
+            compactions: Some(CompactionTracker::new(
+                compactions,
+                direction,
+                marker_start,
+                end,
+            )?),
             complete: false,
         })
     }
@@ -938,11 +970,14 @@ impl<'a> PhaseSource<'a> {
         let ordered = self.compactions.is_some();
         let ready = &mut self.ready;
         let last_turn = &mut self.last_turn;
+        let turn_start = self.turn_start.as_deref();
         drain_fold_turns(&mut self.scratch, &mut self.fold, finish, &at, |turn| {
             if ordered {
                 admit_source_order(last_turn, &turn.start_ts)?;
             }
-            ready.push_back(turn);
+            if turn_start.is_none_or(|start| turn_end(&turn).as_str() >= start) {
+                ready.push_back(turn);
+            }
             Ok(())
         })
     }
