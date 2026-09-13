@@ -612,7 +612,14 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (20, MigrationStep::FactEnvelopeBounds),
     (21, MigrationStep::FactEnvelopeTriggers),
     (22, MigrationStep::Rust(lane_predicates::migrate)),
+    (23, MigrationStep::Sql(MIGRATE_23_TO_24_SQL)),
 ];
+
+/// Schema 23 to 24: indexed task projection barrier reads.
+const MIGRATE_23_TO_24_SQL: &str = r#"
+CREATE INDEX IF NOT EXISTS task_heads_head_seq ON task_heads(head_seq);
+CREATE INDEX IF NOT EXISTS workflow_heads_head_seq ON workflow_heads(head_seq);
+"#;
 
 /// Schema 19 to 20: bounded fact-kind recovery.
 ///
@@ -842,6 +849,8 @@ CREATE TABLE workflow_heads (
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
     body BLOB NOT NULL
 ) STRICT;
+CREATE INDEX task_heads_head_seq ON task_heads(head_seq);
+CREATE INDEX workflow_heads_head_seq ON workflow_heads(head_seq);
 CREATE TABLE claim_heads (
     stamp TEXT PRIMARY KEY REFERENCES task_heads(stamp),
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
@@ -933,8 +942,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 23, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 24, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 23;
+PRAGMA user_version = 24;
 "#;
