@@ -465,19 +465,16 @@ pub(crate) fn turns(
     })
 }
 
-pub(crate) fn compactions(dataset: &Dataset, matches: &ArgMatches) -> Result<Report, Refusal> {
-    let limit = number(matches, "limit", DEFAULT_COMPACTIONS_LIMIT)?;
-    let mut rows = dataset
-        .compactions
-        .iter()
-        .map(compaction_view)
-        .collect::<Vec<_>>();
-    trim_oldest(&mut rows, limit);
-    Ok(Report::Compactions {
-        sources: dataset.sources.clone(),
-        rows,
-        residues: dataset.residues.clone(),
-    })
+pub(crate) fn compaction_limit(matches: &ArgMatches) -> Result<usize, Refusal> {
+    number(matches, "limit", DEFAULT_COMPACTIONS_LIMIT)
+}
+
+pub(crate) fn compactions(dataset: WindowScan) -> Report {
+    Report::Compactions {
+        sources: dataset.sources,
+        rows: dataset.compactions.iter().map(compaction_view).collect(),
+        residues: dataset.residues,
+    }
 }
 
 pub(crate) fn slices(dataset: &Dataset, matches: &ArgMatches) -> Result<Report, Refusal> {
