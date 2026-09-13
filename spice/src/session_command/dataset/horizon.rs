@@ -29,6 +29,7 @@ struct PendingCompaction {
 }
 
 pub(super) struct CompactionTracker {
+    stop_when_full: bool,
     last_assistant: Option<String>,
     last: Option<String>,
     pending: Option<PendingCompaction>,
@@ -45,6 +46,7 @@ impl CompactionTracker {
         end: Option<&str>,
     ) -> Result<Self, Refusal> {
         Ok(Self {
+            stop_when_full: matches!(direction, FrontierDirection::Oldest),
             last_assistant: None,
             last: None,
             pending: None,
@@ -63,6 +65,9 @@ impl CompactionTracker {
     ) -> Result<(), Refusal> {
         for marker in markers {
             self.finish_pending(work, at)?;
+            if self.complete() {
+                return Ok(());
+            }
             if self.start.as_ref().is_none_or(|start| marker.ts >= *start)
                 && self.end.as_ref().is_none_or(|end| marker.ts <= *end)
             {
@@ -104,6 +109,10 @@ impl CompactionTracker {
             self.finish_pending(work, at)?;
         }
         Ok(())
+    }
+
+    pub(super) fn complete(&self) -> bool {
+        self.stop_when_full && self.pending.is_none() && self.rows.is_full()
     }
 
     fn finish_pending(&mut self, work: &mut SessionWork, at: &str) -> Result<(), Refusal> {

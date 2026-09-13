@@ -891,6 +891,7 @@ impl<'a> PhaseSource<'a> {
         while self.ready.is_empty() && !self.complete {
             let window = self.cursor.advance(work)?;
             if let Some(row) = window.row {
+                let mut stop = false;
                 match row {
                     DecodedRow::Typed(record) => {
                         let before = self.markers.len();
@@ -932,6 +933,7 @@ impl<'a> PhaseSource<'a> {
                                     self.cursor.continuation().line
                                 ),
                             )?;
+                            stop = compactions.complete();
                         } else {
                             self.markers.clear();
                         }
@@ -948,9 +950,21 @@ impl<'a> PhaseSource<'a> {
                     DecodedRow::Ignored => {}
                 }
                 self.scratch.messages.clear();
-                self.drain_ready(false)?;
+                if stop {
+                    let state = std::mem::take(&mut self.fold);
+                    finish_fold(
+                        &mut self.scratch,
+                        state,
+                        work,
+                        &self.source.path.display().to_string(),
+                    )?;
+                    self.drain_ready(true)?;
+                    self.complete = true;
+                } else {
+                    self.drain_ready(false)?;
+                }
             }
-            if matches!(window.progress, ForwardProgress::Eof(_)) {
+            if !self.complete && matches!(window.progress, ForwardProgress::Eof(_)) {
                 let state = std::mem::take(&mut self.fold);
                 finish_fold(
                     &mut self.scratch,

@@ -182,6 +182,17 @@ fn write_jsonl(path: &Path, rows: &[Value]) -> Vec<u8> {
     bytes
 }
 
+fn append_jsonl(path: &Path, rows: &[Value]) {
+    let mut file = fs::OpenOptions::new()
+        .append(true)
+        .open(path)
+        .expect("fixture transcript reopens for append");
+    for row in rows {
+        serde_json::to_writer(&mut file, row).expect("fixture row appends");
+        std::io::Write::write_all(&mut file, b"\n").expect("fixture newline appends");
+    }
+}
+
 fn codex_first_turn_rows() -> Vec<Value> {
     let command_arguments = json!({
         "cmd": "cargo check | rg error",
@@ -788,6 +799,31 @@ fn every_session_query_accepts_current_filters_and_crosses_both_forms() {
     assert_phases_slices_and_summary(&file, start, end);
     assert_sweep_and_timeline(&file, start, end);
     assert_tokens_turns_and_pipelines(&file, start, end);
+    let tail = (0..=4_096)
+        .flat_map(|index| {
+            let timestamp = format!("2026-01-03T00:00:00.{index:06}Z");
+            let turn = format!("tail-{index}");
+            [
+                codex_event(
+                    &timestamp,
+                    "event_msg",
+                    json!({"type": "task_started", "turn_id": turn}),
+                ),
+                codex_event(
+                    &timestamp,
+                    "event_msg",
+                    json!({"type": "task_complete", "turn_id": turn}),
+                ),
+            ]
+        })
+        .collect::<Vec<_>>();
+    append_jsonl(&transcript, &tail);
+    let early = reply_forms(
+        &strings(&["session", "slices", &file, "--slice-id", "compaction-1"]),
+        &[],
+        "slices",
+    );
+    assert_eq!(early["rows"][0]["id"], "compaction-1");
     scratch.remove();
 }
 
