@@ -8,8 +8,8 @@ use super::*;
 ///
 /// It is unreachable because the head set precedes it. `AllocationHeads` carries
 /// every task's statement, workflow, claim and lease position, so a head set
-/// comparing equal means identical facts, and the entries rebuilt below are the
-/// entries the snapshot selected over. The `board` crate reads no clock at all,
+/// comparing equal means identical facts, and the captured entries are the
+/// entries whose positions were just revalidated. The `board` crate reads no clock at all,
 /// and eligibility turns on `workflow.deferral`, a head field only a commit can
 /// clear, so waiting changes nothing the selection reads. Actor, subscription
 /// and band all arrive from that same snapshot. Recomputing the selection here
@@ -39,60 +39,15 @@ pub(in crate::board_command) fn guard_allocation(
                 "board::witness-moved: allocator subscription head changed",
             ));
         }
-        let heads = current_task_heads(read)?;
-        let trust = current_trust_heads(read)?;
-        let environment = wire::Environment::journal_schema(journal::SCHEMA_VERSION)
-            .expect("the compiled journal schema is positive")
-            .with_trust_heads(trust.into_iter().map(journal::JournalHead::into_body));
-        let current = heads
-            .iter()
-            .map(|task| {
-                (
-                    TaskHandle::for_project(
-                        &task.statement().body().project,
-                        &task.statement().body().born,
-                    ),
-                    task.statement().position(),
-                    task.workflow().position(),
-                    task.claim().map(journal::JournalHead::position),
-                    task.lease().map(journal::JournalHead::position),
-                )
-            })
-            .collect::<AllocationHeads>();
-        if current != observed.heads {
+        if !task_heads_hold(read, &observed.heads)? {
             return Err(GuardError::refused(
                 "board::witness-moved: allocator head set changed",
             ));
         }
-        refuse_active_claim_conflict(&heads, &observed.actor)?;
-        let entries = heads
-            .iter()
-            .map(|task| {
-                let creator_lineage = observed
-                    .creator_lineages
-                    .get(&task.statement().body().born)
-                    .copied()
-                    .ok_or_else(|| {
-                        GuardError::Invalid(format!(
-                            "allocator task {} has no observed creator lineage",
-                            task.statement().body().born,
-                        ))
-                    })?;
-                Entry::new(
-                    task.statement().body().clone(),
-                    task.workflow().body().clone(),
-                    task.claim().map(|head| head.body().clone()),
-                    task.lease().map(|head| head.body().clone()),
-                    &observed.projects,
-                )
-                .map_err(|error| {
-                    GuardError::Invalid(format!("allocator current heads are invalid: {error}"))
-                })
-                .map(|entry| entry.with_creator_lineage(creator_lineage))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        refuse_active_entry_conflict(&observed.entries, &observed.actor)?;
+        let environment = current_environment(read, &observed.entries)?;
         if board::select(
-            &entries,
+            &observed.entries,
             &observed.actor,
             &observed.subscription,
             observed.band,
@@ -108,6 +63,77 @@ pub(in crate::board_command) fn guard_allocation(
             ))
         }
     }));
+}
+
+fn task_heads_hold(read: &JournalRead<'_>, expected: &AllocationHeads) -> Result<bool, GuardError> {
+    let mut observed = 0;
+    let mut after = None;
+    loop {
+        let page = read.task_head_page(after.as_ref(), journal::FactReadBudget::RETAINED)?;
+        for task in page.rows {
+            let current = (
+                TaskHandle::for_project(
+                    &task.statement().body().project,
+                    &task.statement().body().born,
+                ),
+                task.statement().position(),
+                task.workflow().position(),
+                task.claim().map(journal::JournalHead::position),
+                task.lease().map(journal::JournalHead::position),
+            );
+            if expected.get(observed) != Some(&current) {
+                return Ok(false);
+            }
+            observed += 1;
+        }
+        let Some(continuation) = page.continuation else {
+            return Ok(observed == expected.len());
+        };
+        after = Some(continuation);
+    }
+}
+
+fn current_environment(
+    read: &JournalRead<'_>,
+    entries: &[Entry],
+) -> Result<wire::Environment, GuardError> {
+    let digests = entries
+        .iter()
+        .flat_map(|entry| entry.statement().requirements.as_slice())
+        .filter_map(|requirement| match requirement {
+            wire::EnvironmentRequirement::TrustGrant { value } => Some(value.clone()),
+            wire::EnvironmentRequirement::JournalSchema { .. } => None,
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut heads = Vec::with_capacity(digests.len());
+    for digest in digests {
+        if let Some(head) = read.trust_head(&digest)? {
+            heads.push(head.into_body());
+        }
+    }
+    Ok(wire::Environment::journal_schema(journal::SCHEMA_VERSION)
+        .expect("the compiled journal schema is positive")
+        .with_trust_heads(heads))
+}
+
+fn refuse_active_entry_conflict(entries: &[Entry], actor: &Actor) -> Result<(), GuardError> {
+    let mut active = entries.iter().filter(|entry| {
+        entry.claim().is_some_and(|claim| {
+            claim.actor == *actor && claim.disposition == ClaimDisposition::Active
+        })
+    });
+    let Some(first) = active.next() else {
+        return Ok(());
+    };
+    if active.next().is_some() {
+        return Err(GuardError::Invalid(format!(
+            "one actor already holds multiple active claims before claim mint: {actor}"
+        )));
+    }
+    Err(GuardError::refused(format!(
+        "claim::active-exists: actor {actor} already holds active claim {}",
+        first.handle()
+    )))
 }
 
 pub(super) fn refuse_active_claim_conflict(

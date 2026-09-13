@@ -1083,13 +1083,11 @@ type AllocationHeads = Vec<(TaskHandle, Seq, Seq, Option<Seq>, Option<Seq>)>;
 
 pub(super) struct AllocationObservation {
     pub(super) heads: AllocationHeads,
-    pub(super) creator_lineages:
-        std::collections::BTreeMap<wire::TaskStamp, Option<wire::CanonicalUuid>>,
+    pub(super) entries: Vec<Entry>,
     pub(super) winner: TaskHandle,
     pub(super) actor: Actor,
     pub(super) subscription: wire::LineageSubscription,
     pub(super) residency_position: Seq,
-    pub(super) projects: ProjectPolicy,
     pub(super) band: u64,
     pub(super) recent_cell: Option<wire::ClaimCell>,
 }
@@ -1156,16 +1154,6 @@ pub(super) fn allocation_heads(board: &BoardAnswer) -> AllocationHeads {
                 task.lease.as_ref().map(|head| head.position),
             )
         })
-        .collect()
-}
-
-pub(super) fn allocation_creator_lineages(
-    board: &BoardAnswer,
-) -> std::collections::BTreeMap<wire::TaskStamp, Option<wire::CanonicalUuid>> {
-    board
-        .tasks
-        .iter()
-        .map(|task| (task.statement.body.born.clone(), task.creator_lineage))
         .collect()
 }
 

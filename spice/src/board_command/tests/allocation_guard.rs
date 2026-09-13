@@ -95,18 +95,17 @@ fn guard_observation(
     answer: &BoardAnswer,
     actor: &Actor,
     winner: TaskHandle,
-    projects: &ProjectPolicy,
+    _projects: &ProjectPolicy,
 ) -> AllocationObservation {
     AllocationObservation {
         heads: allocation_heads(answer),
-        creator_lineages: allocation_creator_lineages(answer),
+        entries: actor_entries(answer).expect("allocation guard entries validate"),
         winner,
         actor: actor.clone(),
         subscription: allocation_subscription(&answer.residency.body, actor)
             .expect("allocation guard fixture lane carries a subscription")
             .clone(),
         residency_position: answer.residency.position,
-        projects: projects.clone(),
         band: answer.allocation_band,
         recent_cell: answer.recent_cell.clone(),
     }
@@ -424,7 +423,7 @@ fn an_empty_allocator_retains_its_exact_diagnostic() {
         &next_rule(),
     );
 
-    let Err(Outcome::Refusal(refusal)) = claim_plan(
+    let Err(Outcome::Refusal(empty_refusal)) = claim_plan(
         &bus,
         &command,
         &next_rule(),
@@ -434,7 +433,36 @@ fn an_empty_allocator_retains_its_exact_diagnostic() {
     ) else {
         panic!("an exhausted allocator must return its typed refusal");
     };
-    assert_eq!(refusal.reason(), "board::allocator-empty");
+    assert_eq!(empty_refusal.reason(), "board::allocator-empty");
+
+    let mut attempts = 0;
+    let retried = retry_task_next(|| {
+        attempts += 1;
+        if attempts == 1 {
+            refusal("board::witness-moved", None, "refresh the board")
+        } else {
+            refusal(
+                "board::allocator-empty",
+                None,
+                "the refreshed board is empty",
+            )
+        }
+    });
+    assert_eq!(attempts, TASK_NEXT_ATTEMPTS);
+    assert!(
+        matches!(retried, Outcome::Refusal(ref refusal) if refusal.reason() == "board::allocator-empty"),
+        "one transient witness movement is retried against a fresh terminal board outcome",
+    );
+    attempts = 0;
+    let exhausted = retry_task_next(|| {
+        attempts += 1;
+        refusal("board::witness-moved", None, "the board remains active")
+    });
+    assert_eq!(attempts, TASK_NEXT_ATTEMPTS);
+    assert!(
+        matches!(exhausted, Outcome::Refusal(ref refusal) if refusal.reason() == "board::witness-moved"),
+        "the fixed retry bound preserves the final atomic refusal",
+    );
 
     clean(&root, bus);
 }

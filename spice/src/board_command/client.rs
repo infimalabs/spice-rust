@@ -143,45 +143,67 @@ fn client_ledger(
 }
 
 fn client_next(repository: &Repository, contract: &Contract) -> Outcome<CommandAnswer> {
-    mutate_from_board(repository, contract, |board| {
-        let entries = actor_entries(&board)?;
-        let subscription = allocation_subscription(&board.residency.body, &board.principal)?;
-        let environment = board.environment();
-        let selected = board::select(
-            &entries,
-            &board.principal,
-            subscription,
-            board.allocation_band,
-            board.recent_cell.as_ref(),
-            &environment,
-        )
-        .ok_or_else(|| {
-            refusal(
-                "board::allocator-empty",
-                None,
-                "add or wake eligible work before requesting task next",
+    retry_task_next(|| {
+        mutate_from_board(repository, contract, |board| {
+            let entries = actor_entries(&board)?;
+            let subscription = allocation_subscription(&board.residency.body, &board.principal)?;
+            let environment = board.environment();
+            let selected = board::select(
+                &entries,
+                &board.principal,
+                subscription,
+                board.allocation_band,
+                board.recent_cell.as_ref(),
+                &environment,
             )
-        })?;
-        let task = selected.entry().handle().clone();
-        let heads = task_heads(&board, &task)?;
-        let (lane, occupant) = actor_seat(&board)?;
-        let rule = "next".parse::<Name>().expect("next is a wire name");
-        Ok((
-            CommandKind::ClaimWin,
-            vec![
-                statement_witness(heads),
-                workflow_witness(heads),
-                claim_witness(heads),
-                Witness::Eligibility { rule: rule.clone() },
-                residency_witness(&board, lane, occupant),
-            ],
-            serde_json::to_value(ClaimWin {
-                rule,
-                recovery: None,
-            })
-            .expect("typed intent encodes"),
-        ))
+            .ok_or_else(|| {
+                refusal(
+                    "board::allocator-empty",
+                    None,
+                    "add or wake eligible work before requesting task next",
+                )
+            })?;
+            let task = selected.entry().handle().clone();
+            let heads = task_heads(&board, &task)?;
+            let (lane, occupant) = actor_seat(&board)?;
+            let rule = "next".parse::<Name>().expect("next is a wire name");
+            Ok((
+                CommandKind::ClaimWin,
+                vec![
+                    statement_witness(heads),
+                    workflow_witness(heads),
+                    claim_witness(heads),
+                    Witness::Eligibility { rule: rule.clone() },
+                    residency_witness(&board, lane, occupant),
+                ],
+                serde_json::to_value(ClaimWin {
+                    rule,
+                    recovery: None,
+                })
+                .expect("typed intent encodes"),
+            ))
+        })
     })
+}
+
+pub(super) const TASK_NEXT_ATTEMPTS: usize = 2;
+
+pub(super) fn retry_task_next(
+    mut attempt: impl FnMut() -> Outcome<CommandAnswer>,
+) -> Outcome<CommandAnswer> {
+    for index in 0..TASK_NEXT_ATTEMPTS {
+        let outcome = attempt();
+        if index + 1 < TASK_NEXT_ATTEMPTS
+            && matches!(
+                &outcome,
+                Outcome::Refusal(refusal) if refusal.reason() == "board::witness-moved"
+            )
+        {
+            continue;
+        }
+        return outcome;
+    }
+    unreachable!("task-next retry loop always returns")
 }
 
 fn client_reclaim(
