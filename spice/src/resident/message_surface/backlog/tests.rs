@@ -6,6 +6,35 @@ use super::*;
 
 const SPARSE_TOOL_RECORDS: usize = 400;
 
+fn visible_cards(scan: &listen::Scan) -> usize {
+    scan.records
+        .iter()
+        .map(|record| {
+            let turn = usize::from(
+                record.context.as_ref().and_then(|context| context.turn)
+                    == Some(listen::TurnMoment::Started),
+            );
+            let listen::RecordPayload::Events(events) = &record.payload else {
+                return turn;
+            };
+            turn + events
+                .iter()
+                .filter(|event| match &event.event {
+                    listen::Event::Prose(prose) => prose.role == listen::ProseRole::Assistant,
+                    listen::Event::Compaction(_) => true,
+                    listen::Event::Tool(tool) => match &tool.moment {
+                        listen::ToolMoment::Result(outcome) => !outcome.media.is_empty(),
+                        listen::ToolMoment::Call { .. } | listen::ToolMoment::Update { .. } => {
+                            false
+                        }
+                    },
+                    _ => false,
+                })
+                .count()
+        })
+        .sum()
+}
+
 #[test]
 fn startup_work_caps_lane_reads_and_total_source_bytes() {
     let mut aggregate = StartupWork::default();
@@ -104,6 +133,61 @@ fn codex_completed_turn_materializes_history_as_one_final_card() {
     assert_eq!(collected[0].text, "settled final");
     assert!(collected[0].final_answer);
     fs::remove_dir_all(root).expect("final history fixture cleanup");
+}
+
+#[test]
+fn replay_keeps_a_zero_event_turn_boundary_after_compaction() {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "spice-backlog-turn-boundary-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed),
+    ));
+    let tape = tape::Tape::open(&root).expect("turn boundary tape opens");
+    tape.tee(
+        concat!(
+            "{\"timestamp\":\"2026-08-09T01:00:00.000Z\",\"type\":\"compacted\",\"payload\":{}}\n",
+            "{\"timestamp\":\"2026-08-09T01:00:01.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"turn-2\"}}\n",
+            "{\"timestamp\":\"2026-08-09T01:00:02.000Z\",\"type\":\"item.completed\",\"item\":{\"id\":\"commentary\",\"type\":\"agent_message\",\"text\":\"resumed work\"}}\n",
+        )
+        .as_bytes(),
+    )
+    .expect("compacted turn sequence is durable");
+    let scan = listen::scan(&root, listen::Dialect::Codex, None).expect("turn sequence scans");
+    let messages = CollectedMessages::new(canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT);
+    let mut reader = BacklogReader::default();
+    let mut diagnostic = Vec::new();
+    publish_scan(
+        scan,
+        "018f82d4-6f59-7d06-92e3-bce9131163e5"
+            .parse()
+            .expect("fixture lane"),
+        "018f82d4-6f59-7d06-92e3-bce9131163ef"
+            .parse()
+            .expect("fixture author"),
+        Path::new("/fixture-worktree"),
+        &messages,
+        &mut reader,
+        &mut diagnostic,
+    )
+    .expect("compacted turn sequence materializes");
+
+    assert!(diagnostic.is_empty());
+    let collected = messages.inner.into_inner().expect("history lock").messages;
+    assert_eq!(
+        collected
+            .iter()
+            .map(|message| message.activity)
+            .collect::<Vec<_>>(),
+        vec![
+            wire::AgentActivityKind::Compaction,
+            wire::AgentActivityKind::Turn,
+            wire::AgentActivityKind::Prose,
+        ]
+    );
+    assert_eq!(collected[1].text, "New turn");
+    assert_eq!(collected[2].text, "resumed work");
+    fs::remove_dir_all(root).expect("turn boundary fixture cleanup");
 }
 
 fn timestamp(index: usize) -> String {

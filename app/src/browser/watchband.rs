@@ -620,9 +620,10 @@ struct ComposerHeader {
 
 /// Resolve one human-facing message once, then derive every header field from it.
 ///
-/// Tool previews and compaction boundaries remain useful activity cards, but
-/// neither is the assistant prose printed beside this age. Selecting them here
-/// would make the clock describe a different event from the text it labels.
+/// Tool previews, turn starts, and compaction boundaries remain useful activity
+/// cards, but none is the assistant prose printed beside this age. Selecting
+/// them here would make the clock describe a different event from the text it
+/// labels.
 fn primary_composer_header(
     cards: &[ActivityCard],
     lineage: &crate::runtime::LaneRow,

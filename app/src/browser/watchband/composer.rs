@@ -194,7 +194,7 @@ fn render_agent_message_card(
         source_id,
         attribution,
         footer_label,
-        is_compaction,
+        is_boundary,
         rendered_html,
         unlinked_media,
         image_only,
@@ -207,19 +207,19 @@ fn render_agent_message_card(
             id={source_id.clone()}
             class={classes!(
                 "mosaic-message-card",
-                is_compaction.then_some("mosaic-compaction-card"),
-                (!is_compaction && image_only).then_some("mosaic-message-card--image-only"),
+                is_boundary.then_some("mosaic-compaction-card"),
+                (!is_boundary && image_only).then_some("mosaic-message-card--image-only"),
                 message.final_answer.then_some("final"),
                 correspondent.speaking.then_some("now-playing"),
                 layout.lifecycle.as_str(),
             )}
             aria-label={card_label}
-            data-card-kind={agent_card_kind(is_compaction)}
+            data-card-kind={watchband::agent_card_kind(message.activity)}
             data-message-role="agent"
             data-mosaic-card-key={source_id}
             data-layout-phase={if layout.committed { "committed" } else { "measuring" }}
             data-agent-lane={member.lane.to_string()}
-            data-agent-activity={agent_activity_name(message.activity)}
+            data-agent-activity={watchband::agent_activity_name(message.activity)}
             data-message-ack-count={badges.acknowledgements.to_string()}
             data-message-taste-count={badges.tastes.to_string()}
             data-message-broadcast-count={badges.broadcasts.to_string()}
@@ -244,8 +244,8 @@ fn render_agent_message_card(
             data-candidate-spans={layout.candidate_spans.clone()}
             data-measure-span={layout.measure_span.to_string()}
         >
-            if is_compaction {
-                {render_compaction_boundary(message, &footer_label)}
+            if is_boundary {
+                {render_agent_boundary(message, &footer_label)}
             } else {
                 <div class="message-body markdown-body">{rendered_html}</div>
                 {render_agent_message_media(unlinked_media)}
@@ -265,7 +265,7 @@ struct AgentMessagePresentation<'a> {
     source_id: String,
     attribution: String,
     footer_label: String,
-    is_compaction: bool,
+    is_boundary: bool,
     rendered_html: Html,
     unlinked_media: Vec<&'a wire::Media>,
     image_only: bool,
@@ -285,11 +285,12 @@ fn agent_message_presentation<'a>(
     );
     let footer_label =
         watchband::agent_message_label(&member.worktree, member.name.as_deref()).to_owned();
-    let is_compaction = message.activity == wire::AgentActivityKind::Compaction;
+    let is_boundary = message.activity.is_boundary();
     let badges = message.badges;
     let rendered_markdown =
         crate::composer_markdown::render_received_with_badges(&message.text, badges);
     let card_label = match message.activity {
+        wire::AgentActivityKind::Turn => format!("New turn started by {footer_label}"),
         wire::AgentActivityKind::Compaction => format!("Context compacted by {footer_label}"),
         wire::AgentActivityKind::Tool if message.text.trim().is_empty() => {
             format!("Tool result from {attribution}")
@@ -314,7 +315,7 @@ fn agent_message_presentation<'a>(
         source_id: agent_message_source_id(message),
         attribution,
         footer_label,
-        is_compaction,
+        is_boundary,
         rendered_html: Html::from_html_unchecked(AttrValue::from(rendered_markdown.html)),
         unlinked_media,
         image_only,
@@ -323,9 +324,10 @@ fn agent_message_presentation<'a>(
     }
 }
 
-fn render_compaction_boundary(message: &wire::AgentMessage, attribution: &str) -> Html {
+fn render_agent_boundary(message: &wire::AgentMessage, attribution: &str) -> Html {
     let attribution = attribution.to_owned();
     let display_millis = crate::runtime::agent_message_display_millis(message);
+    let label = watchband::agent_boundary_label(message.activity);
     html! {
         <>
             <span class="mosaic-compaction-rule" aria-hidden="true"></span>
@@ -333,7 +335,7 @@ fn render_compaction_boundary(message: &wire::AgentMessage, attribution: &str) -
                 <Age authored={display_millis} class="mosaic-compaction-age" />
                 <span class="mosaic-compaction-context">
                     <span class="mosaic-compaction-agent" title={attribution.clone()}>{attribution}</span>
-                    <span class="message-key">{"compacted context"}</span>
+                    <span class="message-key">{label}</span>
                 </span>
             </span>
             <span class="mosaic-compaction-rule" aria-hidden="true"></span>
@@ -373,22 +375,6 @@ fn agent_message_correspondent(
             });
             focus_after_render(quote_textarea_id(&focus_lane, &focus_identity));
         }),
-    }
-}
-
-fn agent_card_kind(is_compaction: bool) -> &'static str {
-    if is_compaction {
-        "compaction"
-    } else {
-        "agent-message"
-    }
-}
-
-fn agent_activity_name(activity: wire::AgentActivityKind) -> &'static str {
-    match activity {
-        wire::AgentActivityKind::Prose => "prose",
-        wire::AgentActivityKind::Tool => "tool",
-        wire::AgentActivityKind::Compaction => "compaction",
     }
 }
 

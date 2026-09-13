@@ -901,15 +901,15 @@ fn publish_scan(
         .map_err(|error| store_fault("canvas::message-source-invalid", &error.to_string()))?;
     let mut published = true;
     for record in scan.records {
-        let listen::RecordPayload::Events(events) = record.payload else {
+        let Some(context) = record.context.as_ref() else {
             continue;
         };
-        let Some(context) = events.first().map(|sourced| &sourced.context) else {
+        let listen::RecordPayload::Events(events) = &record.payload else {
             continue;
         };
-        let worktree = events
-            .first()
-            .and_then(|sourced| reader.worktrees.at(lane, source, sourced.event.locus()))
+        let worktree = reader
+            .worktrees
+            .at(lane, source, record.locus)
             .unwrap_or(fallback_worktree);
         let decoded = events
             .iter()
@@ -927,6 +927,7 @@ fn publish_scan(
                 author,
                 source: Some(source),
                 worktree: Some(worktree),
+                locus: record.locus,
                 context,
                 events: &decoded,
                 observed: None,
@@ -988,30 +989,11 @@ fn history_tail(
     listen::scan_before(tape, dialect, before, tail_budget())
 }
 
-#[cfg(test)]
-fn visible_cards(scan: &listen::Scan) -> usize {
-    scan.records
-        .iter()
-        .filter_map(|record| match &record.payload {
-            listen::RecordPayload::Events(events) => Some(events),
-            listen::RecordPayload::Residue(_) => None,
-        })
-        .flatten()
-        .filter(|event| match &event.event {
-            listen::Event::Prose(prose) => prose.role == listen::ProseRole::Assistant,
-            listen::Event::Compaction(_) => true,
-            listen::Event::Tool(tool) => match &tool.moment {
-                listen::ToolMoment::Result(outcome) => !outcome.media.is_empty(),
-                listen::ToolMoment::Call { .. } | listen::ToolMoment::Update { .. } => false,
-            },
-            _ => false,
-        })
-        .count()
-}
-
 fn visible_message(message: &wire::AgentMessage) -> bool {
     matches!(
         message.activity,
-        wire::AgentActivityKind::Prose | wire::AgentActivityKind::Compaction
+        wire::AgentActivityKind::Prose
+            | wire::AgentActivityKind::Turn
+            | wire::AgentActivityKind::Compaction
     ) || !message.media.is_empty()
 }

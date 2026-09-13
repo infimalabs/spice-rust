@@ -426,7 +426,9 @@ fn revise_final_message(
 fn visible_message(message: &AgentMessage) -> bool {
     matches!(
         message.activity,
-        wire::AgentActivityKind::Prose | wire::AgentActivityKind::Compaction
+        wire::AgentActivityKind::Prose
+            | wire::AgentActivityKind::Turn
+            | wire::AgentActivityKind::Compaction
     ) || !message.media.is_empty()
 }
 
