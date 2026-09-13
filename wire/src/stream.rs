@@ -47,7 +47,11 @@ pub struct MessageHistoryCursor {
     /// Independently paged member lane.
     pub lane: CanonicalUuid,
     /// Oldest card already admitted, or `None` for a cold bootstrap.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub before: Option<MessageLocus>,
 }
 
@@ -445,7 +449,11 @@ pub enum StreamRequest {
         lane: CanonicalUuid,
         /// Oldest message this browser has already admitted, or absent when
         /// bootstrapping a lane with no cold-snapshot card.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
         before: Option<MessageLocus>,
     },
     /// Ask the resident to prove it is still reading this socket.
@@ -809,7 +817,11 @@ pub enum StreamFrame {
         lane: CanonicalUuid,
         /// Cursor this page was requested immediately before; absent for a
         /// newest-page bootstrap.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
         before: Option<MessageLocus>,
         /// Whether another older page remains after this one.
         more: bool,
