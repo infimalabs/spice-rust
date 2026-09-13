@@ -38,7 +38,8 @@ pub use replay::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use restore::{
-    BackupVerifyError, RestoreCapture, RestoreMember, capture_restore_bundle, verify_restore_bundle,
+    BackupVerifyError, MAX_BACKUP_BYTES, RestoreCapture, RestoreMember, capture_restore_bundle,
+    verify_restore_bundle,
 };
 
 /// Current crossing types used to prepare journal work without depending on
