@@ -17,12 +17,13 @@ use super::{
 };
 use crate::GateId;
 use crate::input::Contract;
-use crate::jurisdiction::{Admission, Ignore, Jurisdiction, Rule, Shape};
+use crate::jurisdiction::{Admission, Ignore, Jurisdiction, Rule, Shape, WalkBudget};
 use crate::tree::SelectedTree;
 
 /// Declaration metadata that names tracked policy rather than a path pattern.
 const TRACKED_EXCLUSION_SOURCE: &str = "spice-rust.toml:policy.exclude";
 const SOURCE_FILE_LIMIT: usize = 4 * 1024;
+const SOURCE_ENTRY_LIMIT: usize = SOURCE_FILE_LIMIT * 4;
 const SOURCE_PATH_BYTES_LIMIT: usize = 1024 * 1024;
 const SOURCE_BYTES_LIMIT: u64 = 64 * 1024 * 1024;
 const SOURCE_ISSUE_LIMIT: usize = 1;
@@ -100,39 +101,53 @@ impl<'a> HygieneSource<'a> {
         contract: &Contract,
         reached_paths: &[String],
     ) -> Result<Self, HygieneAnalysisError> {
-        Self::capture_inner(
-            tree,
-            contract,
-            Some(reached_paths.iter().cloned().collect()),
-        )
+        Self::capture_inner(tree, contract, Some(reached_paths))
     }
 
     fn capture_inner(
         tree: &'a SelectedTree,
         contract: &Contract,
-        reached_paths: Option<BTreeSet<String>>,
+        reached: Option<&[String]>,
     ) -> Result<Self, HygieneAnalysisError> {
         let (ignore, provenance) = hygiene_ignore(contract)?;
-        let jurisdiction = Jurisdiction::walk(tree.root(), &ignore).map_err(|error| {
-            HygieneAnalysisError::Source(format!("hygiene source jurisdiction: {error}"))
-        })?;
-        let (documents, digest) = capture_documents(&jurisdiction, reached_paths.as_ref())?;
-        let project_markers = jurisdiction
-            .measurable()
-            .filter(|entry| matches!(entry.path(), "pyproject.toml" | "spice-rust.toml"))
-            .map(|entry| entry.path().to_owned())
-            .collect();
-        let mut suppressed = suppressed_candidates(&jurisdiction, &ignore, &provenance)?;
+        let started = Instant::now();
+        let mut budget = WalkBudget::new(
+            SOURCE_ENTRY_LIMIT,
+            SOURCE_PATH_BYTES_LIMIT,
+            started,
+            SOURCE_CAPTURE_DURATION,
+        );
+        let reached_paths = reached
+            .map(|paths| admit_reached_paths(paths, &mut budget))
+            .transpose()?;
+        let jurisdiction = Jurisdiction::walk_bounded(tree.root(), &ignore, &mut budget)
+            .map_err(|error| capture_error("jurisdiction", error))?;
+        let (documents, digest) =
+            capture_documents(&jurisdiction, reached_paths.as_ref(), started)?;
+        let mut project_markers = Vec::new();
+        for entry in jurisdiction.measurable() {
+            check_capture_time(started, entry.path())?;
+            if matches!(entry.path(), "pyproject.toml" | "spice-rust.toml") {
+                project_markers.push(entry.path().to_owned());
+            }
+        }
+        let mut suppressed = suppressed_candidates(&jurisdiction, &ignore, &provenance, started)?;
         if let Some(reached) = &reached_paths {
-            suppressed.retain(|candidate| {
-                reached.iter().any(|path| {
+            let mut retained = Vec::with_capacity(suppressed.len());
+            for candidate in suppressed {
+                check_capture_time(started, &candidate.path)?;
+                if reached.iter().any(|path| {
                     path == &candidate.path
                         || path
                             .strip_prefix(&candidate.path)
                             .is_some_and(|tail| tail.starts_with('/'))
-                })
-            });
+                }) {
+                    retained.push(candidate);
+                }
+            }
+            suppressed = retained;
         }
+        check_capture_time(started, "hygiene source acquisition")?;
         Ok(Self {
             root: tree.root(),
             jurisdiction,
@@ -183,6 +198,20 @@ impl<'a> HygieneSource<'a> {
     fn project_markers(&self) -> &[String] {
         &self.project_markers
     }
+}
+
+fn admit_reached_paths(
+    paths: &[String],
+    budget: &mut WalkBudget,
+) -> Result<BTreeSet<String>, HygieneAnalysisError> {
+    let mut admitted = BTreeSet::new();
+    for path in paths {
+        budget
+            .admit("", path)
+            .map_err(|error| capture_error(path, error))?;
+        admitted.insert(path.clone());
+    }
+    Ok(admitted)
 }
 
 /// Acquire all five hygiene measurements from one captured source.
@@ -268,8 +297,8 @@ pub(crate) fn acquire_hygiene_arm_reached(
 fn capture_documents(
     jurisdiction: &Jurisdiction,
     reached: Option<&BTreeSet<String>>,
+    started: Instant,
 ) -> Result<(Vec<HygieneDocument>, Digest), HygieneAnalysisError> {
-    let started = Instant::now();
     let mut documents = Vec::new();
     let mut path_bytes = 0_usize;
     let mut source_bytes = 0_u64;
@@ -453,9 +482,11 @@ fn suppressed_candidates(
     jurisdiction: &Jurisdiction,
     ignore: &Ignore,
     provenance: &[HygieneProvenance],
+    started: Instant,
 ) -> Result<Vec<SuppressedPath>, HygieneAnalysisError> {
     let mut suppressed = Vec::new();
     for entry in jurisdiction.entries() {
+        check_capture_time(started, entry.path())?;
         let Admission::Ignored(rule) = entry.admission() else {
             continue;
         };
@@ -595,6 +626,19 @@ mod tests {
                 .all(|item| item.layer == "compiled")
         );
         assert!(walk_provenance(0, 0).is_empty());
+
+        let mut budget = WalkBudget::new(2, 3, Instant::now(), SOURCE_CAPTURE_DURATION);
+        assert!(budget.admit("", "a").is_ok());
+        assert!(budget.admit("", "bc").is_ok());
+        let error = budget.admit("", "d").expect_err("one entry over refuses");
+        assert!(error.to_string().contains("entry limit"));
+        let mut budget = WalkBudget::new(3, 3, Instant::now(), SOURCE_CAPTURE_DURATION);
+        assert!(budget.admit("", "a").is_ok());
+        assert!(budget.admit("", "bc").is_ok());
+        let error = budget
+            .admit("", "d")
+            .expect_err("one path byte over refuses");
+        assert!(error.to_string().contains("path bytes"));
 
         #[cfg(unix)]
         {

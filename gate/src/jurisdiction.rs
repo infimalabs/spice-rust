@@ -15,6 +15,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 #[cfg(target_os = "linux")]
 use std::cell::RefCell;
@@ -268,6 +269,67 @@ pub struct Jurisdiction {
     entries: Vec<Entry>,
 }
 
+/// Fixed work admitted while constructing one bounded jurisdiction.
+pub(crate) struct WalkBudget {
+    entry_limit: usize,
+    path_bytes_limit: usize,
+    entries: usize,
+    path_bytes: usize,
+    started: Instant,
+    duration: Duration,
+}
+
+impl WalkBudget {
+    pub(crate) const fn new(
+        entry_limit: usize,
+        path_bytes_limit: usize,
+        started: Instant,
+        duration: Duration,
+    ) -> Self {
+        Self {
+            entry_limit,
+            path_bytes_limit,
+            entries: 0,
+            path_bytes: 0,
+            started,
+            duration,
+        }
+    }
+
+    pub(crate) fn admit(&mut self, relative: &str, name: &str) -> Result<(), WalkError> {
+        self.check_elapsed()?;
+        if self.entries == self.entry_limit {
+            return Err(WalkError::Bounded {
+                detail: format!("jurisdiction entry limit {} was exceeded", self.entry_limit),
+            });
+        }
+        let separator = usize::from(!relative.is_empty());
+        let bytes = relative
+            .len()
+            .saturating_add(separator)
+            .saturating_add(name.len());
+        let total = self.path_bytes.saturating_add(bytes);
+        if total > self.path_bytes_limit {
+            return Err(WalkError::Bounded {
+                detail: format!("jurisdiction path bytes exceeded {}", self.path_bytes_limit),
+            });
+        }
+        self.entries += 1;
+        self.path_bytes = total;
+        Ok(())
+    }
+
+    fn check_elapsed(&self) -> Result<(), WalkError> {
+        if self.started.elapsed() <= self.duration {
+            Ok(())
+        } else {
+            Err(WalkError::Bounded {
+                detail: format!("jurisdiction walk exceeded {:?}", self.duration),
+            })
+        }
+    }
+}
+
 /// One private materialization of the admitted bytes a run measures.
 pub(crate) struct Snapshot {
     root: SnapshotRoot,
@@ -336,11 +398,30 @@ impl Jurisdiction {
     /// Returns the failure that stopped the walk, naming the path it happened
     /// at.
     pub fn walk(root: &Path, ignore: &Ignore) -> Result<Self, WalkError> {
+        Self::walk_with_budget(root, ignore, None)
+    }
+
+    pub(crate) fn walk_bounded(
+        root: &Path,
+        ignore: &Ignore,
+        budget: &mut WalkBudget,
+    ) -> Result<Self, WalkError> {
+        Self::walk_with_budget(root, ignore, Some(budget))
+    }
+
+    fn walk_with_budget(
+        root: &Path,
+        ignore: &Ignore,
+        mut budget: Option<&mut WalkBudget>,
+    ) -> Result<Self, WalkError> {
         let mut entries = Vec::new();
         let mut directories = vec![String::new()];
 
         while let Some(relative) = directories.pop() {
-            for (name, shape) in read_children(root, &relative)? {
+            if let Some(budget) = budget.as_deref() {
+                budget.check_elapsed()?;
+            }
+            for (name, shape) in read_children(root, &relative, budget.as_deref_mut())? {
                 let path = if relative.is_empty() {
                     name
                 } else {
@@ -359,7 +440,13 @@ impl Jurisdiction {
             }
         }
 
+        if let Some(budget) = budget.as_deref() {
+            budget.check_elapsed()?;
+        }
         entries.sort_by(|left, right| left.path.cmp(&right.path));
+        if let Some(budget) = budget.as_deref() {
+            budget.check_elapsed()?;
+        }
         Ok(Self {
             root: root.to_path_buf(),
             entries,
@@ -794,7 +881,7 @@ fn seal_tree(root: &Path) -> Result<Vec<Seal>, WalkError> {
     let mut seals = vec![seal(root, ".", Shape::Directory)?];
     let mut directories = vec![String::new()];
     while let Some(relative) = directories.pop() {
-        for (name, shape) in read_children(root, &relative)? {
+        for (name, shape) in read_children(root, &relative, None)? {
             let path = if relative.is_empty() {
                 name
             } else {
@@ -858,7 +945,11 @@ fn first_changed_path(before: &[Seal], after: &[Seal]) -> String {
 
 /// Read one directory's children, sorted, refusing names an inventory cannot
 /// carry.
-fn read_children(root: &Path, relative: &str) -> Result<Vec<(String, Shape)>, WalkError> {
+fn read_children(
+    root: &Path,
+    relative: &str,
+    mut budget: Option<&mut WalkBudget>,
+) -> Result<Vec<(String, Shape)>, WalkError> {
     let directory = if relative.is_empty() {
         root.to_path_buf()
     } else {
@@ -869,6 +960,9 @@ fn read_children(root: &Path, relative: &str) -> Result<Vec<(String, Shape)>, Wa
 
     let mut children = Vec::new();
     for child in listing {
+        if let Some(budget) = budget.as_deref() {
+            budget.check_elapsed()?;
+        }
         let child =
             child.map_err(|source| WalkError::io("reading a directory", &directory, source))?;
         let name = child
@@ -881,6 +975,9 @@ fn read_children(root: &Path, relative: &str) -> Result<Vec<(String, Shape)>, Wa
             return Err(WalkError::Unnameable {
                 path: directory.join(&name),
             });
+        }
+        if let Some(budget) = budget.as_deref_mut() {
+            budget.admit(relative, &name)?;
         }
 
         let path = child.path();
@@ -897,7 +994,13 @@ fn read_children(root: &Path, relative: &str) -> Result<Vec<(String, Shape)>, Wa
         children.push((name, shape));
     }
 
+    if let Some(budget) = budget.as_deref() {
+        budget.check_elapsed()?;
+    }
     children.sort();
+    if let Some(budget) = budget.as_deref() {
+        budget.check_elapsed()?;
+    }
     Ok(children)
 }
 
@@ -977,6 +1080,11 @@ pub enum WalkError {
         /// The path that cannot be written down.
         path: PathBuf,
     },
+    /// A bounded caller exhausted its declared walk work.
+    Bounded {
+        /// Stable bounded detail suitable for caller diagnostics.
+        detail: String,
+    },
 }
 
 impl WalkError {
@@ -1006,6 +1114,7 @@ impl fmt::Display for WalkError {
                 "{} cannot be written into a canonical inventory",
                 path.display()
             ),
+            Self::Bounded { detail } => formatter.write_str(detail),
         }
     }
 }
@@ -1014,7 +1123,7 @@ impl std::error::Error for WalkError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io { source, .. } => Some(source),
-            Self::Unnameable { .. } => None,
+            Self::Unnameable { .. } | Self::Bounded { .. } => None,
         }
     }
 }
