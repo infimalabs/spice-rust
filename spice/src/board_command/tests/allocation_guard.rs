@@ -435,11 +435,19 @@ fn an_empty_allocator_retains_its_exact_diagnostic() {
     };
     assert_eq!(empty_refusal.reason(), "board::allocator-empty");
 
+    let moved = |observed: &str| {
+        Outcome::Refusal(wire::Refusal::bare(wire::RefusalDiagnostic::new(
+            "board::witness-moved",
+            Some("current durable heads".to_owned()),
+            None,
+            Some(observed.to_owned()),
+        )))
+    };
     let mut attempts = 0;
     let retried = retry_task_next(|| {
         attempts += 1;
         if attempts == 1 {
-            refusal("board::witness-moved", None, "refresh the board")
+            moved("allocator head set changed")
         } else {
             refusal(
                 "board::allocator-empty",
@@ -456,12 +464,22 @@ fn an_empty_allocator_retains_its_exact_diagnostic() {
     attempts = 0;
     let exhausted = retry_task_next(|| {
         attempts += 1;
-        refusal("board::witness-moved", None, "the board remains active")
+        moved("allocator subscription head changed")
     });
     assert_eq!(attempts, TASK_NEXT_ATTEMPTS);
     assert!(
         matches!(exhausted, Outcome::Refusal(ref refusal) if refusal.reason() == "board::witness-moved"),
         "the fixed retry bound preserves the final atomic refusal",
+    );
+    attempts = 0;
+    let terminal = retry_task_next(|| {
+        attempts += 1;
+        moved("allocator winner changed")
+    });
+    assert_eq!(attempts, 1);
+    assert!(
+        matches!(terminal, Outcome::Refusal(ref refusal) if refusal.explanation() == "allocator winner changed"),
+        "semantic winner movement returns its first refusal without replanning",
     );
 
     clean(&root, bus);
