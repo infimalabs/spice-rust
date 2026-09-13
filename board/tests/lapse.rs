@@ -42,18 +42,7 @@ fn projects() -> board::ProjectPolicy {
 }
 
 fn snapshot(journal: &Journal) -> Snapshot {
-    let (cursor, heads) = journal
-        .read(|read| Ok((read.cursor()?, read.task_heads_for(&born())?)))
-        .expect("fixture task generation");
-    let (statement, workflow, claim, lease) = heads.expect("fixture task head").into_bodies();
-    let entry = board::Entry::new(statement, workflow, claim, lease, &projects())
-        .expect("fixture board entry");
-    Snapshot::new(
-        journal::SCHEMA_VERSION,
-        cursor.map_or_else(wire::JournalCursor::empty, wire::JournalCursor::at),
-        vec![entry],
-    )
-    .expect("fixture snapshot")
+    board::bounded_snapshot_fixture!(journal, &projects(), [born()]).expect("fixture board entry")
 }
 fn allocatable(snapshot: &Snapshot) -> bool {
     board::eligible_entry(
