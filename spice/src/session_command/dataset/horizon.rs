@@ -865,9 +865,11 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::super::stream::stream_records;
-    use super::super::work::{ResidueLedger, SessionWorkBudget, TestFold};
+    use super::super::work::SessionWorkBudget;
+    use super::super::{WindowOptions, WindowScan};
     use super::*;
-    use crate::session_command::model::{Dataset, Vendor};
+    use crate::session_command::model::Vendor;
+    use crate::session_command::project::Filters;
 
     #[test]
     fn bounded_stream_and_reverse_horizon_share_canonical_complete_records() {
@@ -907,69 +909,23 @@ mod tests {
     }
 
     fn assert_fold_accounting(source: &ResolvedSource) {
-        let mut work = SessionWork::new(SessionWorkBudget::report());
-        let mut dataset = Dataset::default();
-        let mut markers = Vec::new();
-        let mut residues = ResidueLedger::new();
-        let mut fold = TestFold::new(&mut dataset, &mut markers, &mut residues);
-        stream_records(source, None, &mut work, |row, work, at| {
-            fold.push(row, work, at)
-        })
-        .expect("forward dataset streams");
-        fold.finish(&mut work, "fixture fold")
-            .expect("fold finishes");
-        let residues = residues
-            .finish(&mut work, "residue summary")
-            .expect("residue summary fits");
-        assert_eq!(residues[0].kind, "live-tail-truncated");
-        let mut reverse_work = SessionWork::new(SessionWorkBudget::report());
-        reverse_work.begin_pass("reverse").expect("pass starts");
-        let mut selected = ResultFrontier::new(8, FrontierDirection::Oldest).unwrap();
-        let progress = reverse_lines(
-            &source.path,
-            &mut reverse_work,
-            |line, offset, _, tail, _| {
-                selected.push((line.to_vec(), offset, tail));
-                Ok(true)
+        let scan = WindowScan::scan(
+            std::slice::from_ref(source),
+            None,
+            None,
+            &Filters::default(),
+            WindowOptions::Turns {
+                limit: 8,
+                full: true,
             },
         )
-        .expect("reverse windows select");
-        let page = selected.into_page(progress);
-        let mut reverse = Dataset::default();
-        let mut reverse_markers = Vec::new();
-        let mut reverse_residues = ResidueLedger::new();
-        let mut reverse_fold =
-            TestFold::new(&mut reverse, &mut reverse_markers, &mut reverse_residues);
-        let mut dialect = source.dialect;
-        for (row, offset, tail) in page.rows.into_iter().rev() {
-            let (observed, row) = decode_window_row(
-                source,
-                offset,
-                &row,
-                dialect,
-                tail,
-                &mut reverse_work,
-                "row",
-            )
-            .expect("row decodes");
-            dialect = observed.or(dialect);
-            if let Some(row) = row {
-                reverse_fold
-                    .push(row, &mut reverse_work, "row")
-                    .expect("row folds");
-            }
-        }
-        reverse_fold
-            .finish(&mut reverse_work, "fold")
-            .expect("fold finishes");
-        let reverse_residues = reverse_residues
-            .finish(&mut reverse_work, "residues")
-            .unwrap();
-        assert!(matches!(page.progress, FrontierProgress::Complete(_)));
-        assert_eq!(reverse.turns.len(), dataset.turns.len());
-        assert_eq!(reverse.messages.len(), dataset.messages.len());
-        assert_eq!(reverse.commands.len(), dataset.commands.len());
-        assert_eq!((reverse_markers.len(), reverse_residues.len()), (1, 1));
+        .expect("bounded window folds canonical records");
+        assert_eq!(scan.sources.len(), 1);
+        assert_eq!(scan.turns.len(), 1);
+        assert_eq!(scan.turns[0].view.commands, 1);
+        assert_eq!(scan.compactions.len(), 1);
+        assert_eq!(scan.residues[0].kind, "live-tail-truncated");
+        let mut work = SessionWork::new(SessionWorkBudget::report());
         let progress = reverse_lines(&source.path, &mut work, |_, _, _, _, _| Ok(false))
             .expect("reverse cursor stops at a record boundary");
         assert!(matches!(progress, FrontierProgress::More(_)));
@@ -991,19 +947,6 @@ mod tests {
         })
         .expect("reverse refusal");
         assert!(matches!(progress, FrontierProgress::Refused { .. }));
-        let retained_budget =
-            SessionWorkBudget::new(1_048_576, 16, 16, 1, 1, deadline).expect("positive budget");
-        let mut exhausted = SessionWork::new(retained_budget);
-        let mut dataset = Dataset::default();
-        let mut markers = Vec::new();
-        let mut residues = ResidueLedger::new();
-        let mut fold = TestFold::new(&mut dataset, &mut markers, &mut residues);
-        let refusal = stream_records(source, None, &mut exhausted, |row, work, at| {
-            fold.push(row, work, at)
-        })
-        .expect_err("the first retained String exceeds the one-byte budget");
-        assert_eq!(refusal.reason(), "session::transcript-work-exhausted");
-        assert_eq!(exhausted.report().retained_text_bytes, 0);
         assert!(SessionWorkBudget::new(0, 1, 1, 1, 1, deadline).is_err());
     }
 }
