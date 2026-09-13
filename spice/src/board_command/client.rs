@@ -193,17 +193,27 @@ pub(super) fn retry_task_next(
 ) -> Outcome<CommandAnswer> {
     for index in 0..TASK_NEXT_ATTEMPTS {
         let outcome = attempt();
-        if index + 1 < TASK_NEXT_ATTEMPTS
-            && matches!(
-                &outcome,
-                Outcome::Refusal(refusal) if refusal.reason() == "board::witness-moved"
-            )
-        {
+        if index + 1 < TASK_NEXT_ATTEMPTS && retryable_task_next(&outcome) {
             continue;
         }
         return outcome;
     }
     unreachable!("task-next retry loop always returns")
+}
+
+fn retryable_task_next(outcome: &Outcome<CommandAnswer>) -> bool {
+    matches!(
+        outcome,
+        Outcome::Refusal(refusal)
+            if refusal.reason() == "board::witness-moved"
+                && matches!(
+                    refusal.diagnostic().and_then(wire::RefusalDiagnostic::observed),
+                    Some(
+                        "allocator head set changed"
+                            | "allocator subscription head changed"
+                    )
+                )
+    )
 }
 
 fn client_reclaim(
