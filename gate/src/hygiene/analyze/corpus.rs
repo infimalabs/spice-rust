@@ -422,16 +422,21 @@ impl Corpus {
             }
             HygieneTraversal::PrivateBoundaries => {
                 let couplings = self.private_couplings(work)?;
-                let admitted = couplings
-                    .iter()
-                    .filter(|coupling| configuration.exception_matches(coupling))
-                    .count();
-                let stale = configuration
-                    .private_exceptions
-                    .iter()
-                    .filter(|exception| !focused || self.private_exception_relevant(exception))
-                    .filter(|exception| !couplings.iter().any(|item| exception.matches(item)))
-                    .count();
+                let mut admitted = 0_usize;
+                for coupling in &couplings {
+                    if configuration.exception_matches(coupling, work)? {
+                        admitted += 1;
+                    }
+                }
+                let mut stale = 0_usize;
+                for exception in &configuration.private_exceptions {
+                    if focused && !self.private_exception_relevant(exception, work)? {
+                        continue;
+                    }
+                    if !exception.matches_any(&couplings, work)? {
+                        stale += 1;
+                    }
+                }
                 AnalysisEvidence::PrivateBoundaryResolution {
                     packages: self.production_packages().into_iter().collect(),
                     private_imports: u32::try_from(
@@ -682,10 +687,7 @@ impl Corpus {
         let couplings = self.private_couplings(work)?;
         let mut findings = Vec::new();
         for coupling in &couplings {
-            if !work.steps(configuration.private_exceptions.len()) {
-                return None;
-            }
-            if configuration.exception_matches(coupling) {
+            if configuration.exception_matches(coupling, work)? {
                 continue;
             }
             if !work.admit_finding(saturating_sum([
@@ -707,13 +709,10 @@ impl Corpus {
             });
         }
         for exception in &configuration.private_exceptions {
-            let relevance_steps = self.modules.len().saturating_add(self.tests().count());
-            if !work.steps(relevance_steps.saturating_add(couplings.len())) {
-                return None;
+            if focused && !self.private_exception_relevant(exception, work)? {
+                continue;
             }
-            if (focused && !self.private_exception_relevant(exception))
-                || couplings.iter().any(|item| exception.matches(item))
-            {
+            if exception.matches_any(&couplings, work)? {
                 continue;
             }
             if !work.admit_finding(saturating_sum([
@@ -732,19 +731,36 @@ impl Corpus {
                 },
             });
         }
-        Some(findings)
+        work.check().then_some(findings)
     }
 
-    fn private_exception_relevant(&self, exception: &PrivateCouplingException) -> bool {
-        self.tests()
-            .any(|(_, test)| test.name == exception.test_name)
-            || self.modules.keys().any(|module| {
-                exception.target == *module
-                    || exception
-                        .target
-                        .strip_prefix(module)
-                        .is_some_and(|tail| tail.starts_with('.'))
-            })
+    fn private_exception_relevant(
+        &self,
+        exception: &PrivateCouplingException,
+        work: &mut GraphWork,
+    ) -> Option<bool> {
+        for (_, test) in self.tests() {
+            if !work.step() {
+                return None;
+            }
+            if test.name == exception.test_name {
+                return Some(true);
+            }
+        }
+        for module in self.modules.keys() {
+            if !work.step() {
+                return None;
+            }
+            if exception.target == *module
+                || exception
+                    .target
+                    .strip_prefix(module)
+                    .is_some_and(|tail| tail.starts_with('.'))
+            {
+                return Some(true);
+            }
+        }
+        Some(false)
     }
 
     /// Rank the modules the suite reaches by how much of the suite reaches them.
@@ -883,16 +899,34 @@ fn graph_terminal(
 }
 
 impl HygieneConfiguration {
-    fn exception_matches(&self, coupling: &PrivateCoupling) -> bool {
-        self.private_exceptions
-            .iter()
-            .any(|exception| exception.matches(coupling))
+    fn exception_matches(&self, coupling: &PrivateCoupling, work: &mut GraphWork) -> Option<bool> {
+        for exception in &self.private_exceptions {
+            if !work.step() {
+                return None;
+            }
+            if exception.matches(coupling) {
+                return Some(true);
+            }
+        }
+        Some(false)
     }
 }
 
 impl PrivateCouplingException {
     fn matches(&self, coupling: &PrivateCoupling) -> bool {
         self.test_name == coupling.test_name && self.target == coupling.target
+    }
+
+    fn matches_any(&self, couplings: &[PrivateCoupling], work: &mut GraphWork) -> Option<bool> {
+        for coupling in couplings {
+            if !work.step() {
+                return None;
+            }
+            if self.matches(coupling) {
+                return Some(true);
+            }
+        }
+        Some(false)
     }
 }
 
