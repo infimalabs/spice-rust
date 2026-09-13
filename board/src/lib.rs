@@ -78,49 +78,6 @@ impl Snapshot {
         })
     }
 
-    /// Reconstruct one owned board answer from authoritative journal heads.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn read(
-        journal: &journal::Journal,
-        projects: &ProjectPolicy,
-    ) -> Result<Self, SnapshotReadError> {
-        let (cursor, heads, trust) = journal
-            .read(|read| {
-                let tasks = read.task_head_page(None, journal::FactReadBudget::RETAINED)?;
-                if let Some(continuation) = tasks.continuation {
-                    return Err(journal::GuardError::Invalid(format!(
-                        "board task heads require continuation after {continuation}"
-                    )));
-                }
-                let trust = read.trust_head_page(None, journal::FactReadBudget::RETAINED)?;
-                if let Some(continuation) = trust.continuation {
-                    return Err(journal::GuardError::Invalid(format!(
-                        "board trust heads require continuation after {continuation}"
-                    )));
-                }
-                Ok((read.cursor()?, tasks.rows, trust.rows))
-            })
-            .map_err(SnapshotReadError::Journal)?;
-        let entries = heads
-            .into_iter()
-            .map(|heads| {
-                let (statement, workflow, claim, lease) = heads.into_bodies();
-                let handle = wire::TaskHandle::for_project(&statement.project, &statement.born);
-                Entry::new(statement, workflow, claim, lease, projects)
-                    .map_err(|source| SnapshotReadError::Task { handle, source })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let cursor = cursor.map_or_else(wire::JournalCursor::empty, wire::JournalCursor::at);
-        Ok(Self {
-            schema_version: journal::SCHEMA_VERSION,
-            cursor,
-            entries,
-            environment: wire::Environment::journal_schema(journal::SCHEMA_VERSION)
-                .expect("the journal schema is positive")
-                .with_trust_heads(trust.into_iter().map(journal::JournalHead::into_body)),
-        })
-    }
-
     /// Journal schema that supplied the heads.
     #[must_use]
     pub const fn schema_version(&self) -> u32 {
@@ -143,46 +100,6 @@ impl Snapshot {
     #[must_use]
     pub const fn environment(&self) -> &wire::Environment {
         &self.environment
-    }
-}
-
-/// Why authoritative journal heads could not become one board snapshot.
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug)]
-pub enum SnapshotReadError {
-    /// The journal could not return one complete checked head answer.
-    Journal(journal::GuardError),
-    /// One storage-valid head bundle violated board policy.
-    Task {
-        handle: wire::TaskHandle,
-        source: TaskError,
-    },
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl fmt::Display for SnapshotReadError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Journal(error) => {
-                write!(formatter, "board snapshot journal read failed: {error}")
-            }
-            Self::Task { handle, source } => {
-                write!(
-                    formatter,
-                    "board snapshot task {handle} is invalid: {source}"
-                )
-            }
-        }
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl std::error::Error for SnapshotReadError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Journal(error) => Some(error),
-            Self::Task { source, .. } => Some(source),
-        }
     }
 }
 

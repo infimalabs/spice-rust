@@ -40,6 +40,21 @@ fn projects() -> board::ProjectPolicy {
     )
     .expect("fixture project policy")
 }
+
+fn snapshot(journal: &Journal) -> Snapshot {
+    let (cursor, heads) = journal
+        .read(|read| Ok((read.cursor()?, read.task_heads_for(&born())?)))
+        .expect("fixture task generation");
+    let (statement, workflow, claim, lease) = heads.expect("fixture task head").into_bodies();
+    let entry = board::Entry::new(statement, workflow, claim, lease, &projects())
+        .expect("fixture board entry");
+    Snapshot::new(
+        journal::SCHEMA_VERSION,
+        cursor.map_or_else(wire::JournalCursor::empty, wire::JournalCursor::at),
+        vec![entry],
+    )
+    .expect("fixture snapshot")
+}
 fn allocatable(snapshot: &Snapshot) -> bool {
     board::eligible_entry(
         snapshot.entries(),
@@ -423,7 +438,7 @@ fn claimed() -> Journal {
 #[test]
 fn lapse_preserves_lease_and_makes_the_task_allocatable_again() {
     let mut journal = claimed();
-    let before = Snapshot::read(&journal, &projects()).expect("claimed snapshot");
+    let before = snapshot(&journal);
     let statement = before.entries()[0].statement().clone();
     let workflow = before.entries()[0].workflow().clone();
     let lease = before.entries()[0].lease().expect("lease").clone();
@@ -431,7 +446,7 @@ fn lapse_preserves_lease_and_makes_the_task_allocatable_again() {
     let expired = lapse(&mut journal, lapse_request(32, 20)).expect("lapse claim");
     assert_eq!(expired.task(), &task());
     assert_eq!(expired.first(), expired.last());
-    let after = Snapshot::read(&journal, &projects()).expect("lapsed snapshot");
+    let after = snapshot(&journal);
     assert_eq!(
         after.entries()[0].claim().expect("claim").disposition,
         ClaimDisposition::Lapsed
@@ -559,7 +574,7 @@ fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
     journal.apply(write).expect("seed malformed claim");
 
     let before = journal.fact_snapshot().expect("before malformed refusal");
-    let heads = Snapshot::read(&journal, &projects()).expect("heads before malformed refusal");
+    let heads = snapshot(&journal);
     assert!(matches!(
         lapse(&mut journal, lapse_request(48, 20)),
         Err(LapseError::Refused(Refusal::MissingLease))
@@ -568,10 +583,7 @@ fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
         journal.fact_snapshot().expect("after malformed refusal"),
         before
     );
-    assert_eq!(
-        Snapshot::read(&journal, &projects()).expect("heads after malformed refusal"),
-        heads
-    );
+    assert_eq!(snapshot(&journal), heads);
 }
 
 /// Assert one refusal by variant and payload, and that it wrote nothing.
@@ -580,14 +592,14 @@ fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
 /// cannot see, and whole-`Refusal` equality stops a pass on an adjacent guard.
 fn refuses(journal: &mut Journal, request: Request, expected: &Refusal) {
     let before = journal.fact_snapshot().expect("facts before refusal");
-    let heads = Snapshot::read(journal, &projects()).expect("heads before refusal");
+    let heads = snapshot(journal);
     match lapse(journal, request) {
         Err(LapseError::Refused(observed)) => assert_eq!(&observed, expected),
         other => panic!("expected {expected:?}, found {other:?}"),
     }
     let facts = journal.fact_snapshot().expect("facts after refusal");
     assert_eq!(facts, before);
-    let settled = Snapshot::read(journal, &projects()).expect("heads after refusal");
+    let settled = snapshot(journal);
     assert_eq!(settled, heads);
 }
 
@@ -722,7 +734,7 @@ fn moved_residency_identity_does_not_strand_an_expired_claim() {
             lapse_request(60 + u8::try_from(index).expect("fixture index fits"), 20),
         )
         .expect("stale claim authority lapses after residency identity moves");
-        let snapshot = Snapshot::read(&journal, &projects()).expect("lapsed snapshot");
+        let snapshot = snapshot(&journal);
         assert_eq!(
             snapshot.entries()[0]
                 .claim()
@@ -757,19 +769,16 @@ fn duplicate_receipt_rolls_back_and_independent_connections_share_lapse() {
     let mut second = Journal::open(store.path()).expect("second connection");
 
     let before = first.fact_snapshot().expect("before duplicate");
-    let heads = Snapshot::read(&first, &projects()).expect("heads before duplicate");
+    let heads = snapshot(&first);
     assert!(matches!(
         lapse(&mut first, lapse_request(31, 20)),
         Err(LapseError::Commit(_))
     ));
     assert_eq!(first.fact_snapshot().expect("duplicate rolls back"), before);
-    assert_eq!(
-        Snapshot::read(&first, &projects()).expect("duplicate preserves heads"),
-        heads
-    );
+    assert_eq!(snapshot(&first), heads);
 
     lapse(&mut second, lapse_request(52, 20)).expect("second connection lapses");
-    let shared = Snapshot::read(&first, &projects()).expect("first sees the lapse");
+    let shared = snapshot(&first);
     assert!(
         allocatable(&shared),
         "the connection that did not lapse still sees the task allocatable"
@@ -797,7 +806,7 @@ fn a_superseded_expiry_is_refused_and_the_renewed_one_still_lapses() {
     renew(&mut journal, 52, 25);
 
     let before = journal.fact_snapshot().expect("before the stale timer");
-    let heads = Snapshot::read(&journal, &projects()).expect("heads before the stale timer");
+    let heads = snapshot(&journal);
     match lapse(&mut journal, lapse_request(53, 20)) {
         Err(LapseError::Refused(observed)) => assert_eq!(
             observed,
@@ -814,17 +823,14 @@ fn a_superseded_expiry_is_refused_and_the_renewed_one_still_lapses() {
             .expect("the stale timer writes nothing"),
         before
     );
-    assert_eq!(
-        Snapshot::read(&journal, &projects()).expect("the stale timer preserves heads"),
-        heads
-    );
+    assert_eq!(snapshot(&journal), heads);
 
-    let renewed = Snapshot::read(&journal, &projects()).expect("renewed heads");
+    let renewed = snapshot(&journal);
     board::Active::admit(&renewed.entries()[0], &Actor::Lane(uuid(20)), instant(24))
         .expect("the renewed lease is still active past the expiry the timer named");
 
     lapse(&mut journal, lapse_request(54, 25)).expect("the renewed expiry lapses");
-    let reallocatable = Snapshot::read(&journal, &projects()).expect("heads after the lapse");
+    let reallocatable = snapshot(&journal);
     assert!(
         allocatable(&reallocatable),
         "a lease lapsed at its renewed expiry leaves the task allocatable again"

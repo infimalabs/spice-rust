@@ -46,6 +46,35 @@ fn projects() -> board::ProjectPolicy {
     .expect("fixture project policy")
 }
 
+fn snapshot(journal: &Journal) -> Snapshot {
+    let (cursor, heads) = journal
+        .read(|read| {
+            let heads = [stamp("BOARD-b2"), stamp("BOARD-a1")]
+                .into_iter()
+                .map(|task| {
+                    read.task_heads_for(&task)?
+                        .ok_or_else(|| journal::GuardError::Invalid(format!("missing {task}")))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((read.cursor()?, heads))
+        })
+        .expect("fixture task generation");
+    let entries = heads
+        .into_iter()
+        .map(|heads| {
+            let (statement, workflow, claim, lease) = heads.into_bodies();
+            board::Entry::new(statement, workflow, claim, lease, &projects())
+                .expect("fixture board entry")
+        })
+        .collect();
+    Snapshot::new(
+        journal::SCHEMA_VERSION,
+        cursor.map_or_else(wire::JournalCursor::empty, wire::JournalCursor::at),
+        entries,
+    )
+    .expect("fixture snapshot")
+}
+
 fn workflow() -> WorkflowHead {
     WorkflowHead {
         flow: vec![phase("todo"), phase("review")],
@@ -246,7 +275,7 @@ fn the_one_claim_minter_writes_every_lifecycle_field() {
         "the claim fact carries exactly the fields the minter writes"
     );
 
-    let snapshot = Snapshot::read(&journal, &projects()).expect("claimed board");
+    let snapshot = snapshot(&journal);
     let entry = snapshot
         .entries()
         .iter()
@@ -361,7 +390,7 @@ fn a_caller_supplied_boundary_reaches_the_claim() {
         "the claim fact binds the explicit dirty-handoff transaction",
     );
 
-    let snapshot = Snapshot::read(&journal, &projects()).expect("claimed board");
+    let snapshot = snapshot(&journal);
     let entry = snapshot
         .entries()
         .iter()
