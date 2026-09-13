@@ -613,7 +613,14 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (21, MigrationStep::FactEnvelopeTriggers),
     (22, MigrationStep::Rust(lane_predicates::migrate)),
     (23, MigrationStep::Sql(MIGRATE_23_TO_24_SQL)),
+    (24, MigrationStep::Sql(MIGRATE_24_TO_25_SQL)),
 ];
+
+/// Schema 24 to 25: exact-project current task lookup.
+const MIGRATE_24_TO_25_SQL: &str = r#"
+CREATE INDEX IF NOT EXISTS task_heads_project_stamp
+ON task_heads(json_extract(CAST(body AS TEXT), '$.project'), stamp);
+"#;
 
 /// Schema 23 to 24: indexed task projection barrier reads.
 const MIGRATE_23_TO_24_SQL: &str = r#"
@@ -844,6 +851,8 @@ CREATE TABLE task_heads (
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
     body BLOB NOT NULL
 ) STRICT;
+CREATE INDEX task_heads_project_stamp
+ON task_heads(json_extract(CAST(body AS TEXT), '$.project'), stamp);
 CREATE TABLE workflow_heads (
     stamp TEXT PRIMARY KEY REFERENCES task_heads(stamp),
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
@@ -942,8 +951,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 24, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 25, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 24;
+PRAGMA user_version = 25;
 "#;

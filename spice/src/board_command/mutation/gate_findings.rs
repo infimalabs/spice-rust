@@ -1293,10 +1293,14 @@ fn guard_gate_finding_plan(
     instrument_tasks: std::collections::BTreeSet<wire::TaskStamp>,
 ) {
     write.guard(JournalGuard::new(move |read| {
-        let page = read.task_head_page(None, journal::FactReadBudget::RETAINED)?;
+        let page = read.task_project_head_page(
+            GATE_FINDINGS_PROJECT,
+            None,
+            journal::FactReadBudget::RETAINED,
+        )?;
         if let Some(continuation) = page.continuation {
             return Err(GuardError::refused(format!(
-                "gate finding guard requires task continuation after {continuation}"
+                "gate finding project guard requires continuation after {continuation}"
             )));
         }
         let heads = page.rows;
