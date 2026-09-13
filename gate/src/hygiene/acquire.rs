@@ -640,6 +640,14 @@ mod tests {
             .expect_err("one path byte over refuses");
         assert!(error.to_string().contains("path bytes"));
 
+        let mut ast_work = crate::hygiene::analyze::AstWork::new(Instant::now(), u64::MAX);
+        assert!(!ast_work.retain_text(usize::MAX));
+        assert!(
+            !ast_work.retain_text(1),
+            "AST exhaustion must stay terminal"
+        );
+        assert!(ast_work.diagnostic().contains("retained syntax limit"));
+
         #[cfg(unix)]
         {
             static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

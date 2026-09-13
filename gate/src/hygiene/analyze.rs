@@ -468,6 +468,11 @@ enum Terminal {
         path: String,
         diagnostic: String,
     },
+    WorkExhausted {
+        documents: u32,
+        path: String,
+        diagnostic: String,
+    },
 }
 
 struct AnalyzerRun<'a> {
@@ -638,6 +643,20 @@ impl<'a> AnalyzerRun<'a> {
                     state: EvidenceState::ParseFailed,
                     failed_path: Some(path.clone()),
                     diagnostic: Some(diagnostic.clone()),
+                },
+            ),
+            Terminal::WorkExhausted {
+                documents,
+                path,
+                diagnostic,
+            } => (
+                HygieneOutcome::Failed,
+                "native hygiene AST work bound exhausted",
+                AnalysisEvidence::Measurement {
+                    state: EvidenceState::Failed,
+                    stage: format!(
+                        "ast-traversal path={path:?} parsed_documents={documents} {diagnostic}"
+                    ),
                 },
             ),
             Terminal::Parsed => return None,

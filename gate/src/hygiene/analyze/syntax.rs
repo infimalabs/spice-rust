@@ -1,5 +1,99 @@
 use super::*;
 
+const AST_NODE_LIMIT: usize = 1_000_000;
+const AST_RETAINED_TEXT_LIMIT: usize = 64 * 1024 * 1024;
+const _: () = assert!(AST_NODE_LIMIT > 0 && AST_RETAINED_TEXT_LIMIT > 0);
+
+#[derive(Clone, Copy)]
+pub(super) enum AstFailure {
+    Nodes,
+    RetainedText,
+    Deadline,
+}
+
+pub(in crate::hygiene) struct AstWork {
+    started: Instant,
+    deadline_ms: u64,
+    nodes: usize,
+    retained_text: usize,
+    failure: Option<AstFailure>,
+}
+
+impl AstWork {
+    pub(in crate::hygiene) fn new(started: Instant, deadline_ms: u64) -> Self {
+        Self {
+            started,
+            deadline_ms,
+            nodes: 0,
+            retained_text: 0,
+            failure: None,
+        }
+    }
+
+    fn admit_node(&mut self) -> bool {
+        if !self.check_deadline() {
+            return false;
+        }
+        let next = self.nodes.saturating_add(1);
+        if next > AST_NODE_LIMIT {
+            self.failure = Some(AstFailure::Nodes);
+            return false;
+        }
+        self.nodes = next;
+        true
+    }
+
+    pub(in crate::hygiene) fn retain_text(&mut self, bytes: usize) -> bool {
+        if !self.check_deadline() {
+            return false;
+        }
+        let next = self.retained_text.saturating_add(bytes);
+        if next > AST_RETAINED_TEXT_LIMIT {
+            self.failure = Some(AstFailure::RetainedText);
+            return false;
+        }
+        self.retained_text = next;
+        true
+    }
+
+    pub(super) fn check_deadline(&mut self) -> bool {
+        if self.failure.is_some() {
+            return false;
+        }
+        if u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX) > self.deadline_ms
+        {
+            self.failure = Some(AstFailure::Deadline);
+            false
+        } else {
+            true
+        }
+    }
+
+    pub(super) const fn failure(&self) -> Option<AstFailure> {
+        self.failure
+    }
+
+    pub(super) fn elapsed_ms(&self) -> u64 {
+        u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    pub(in crate::hygiene) fn diagnostic(&self) -> String {
+        match self.failure {
+            Some(AstFailure::Nodes) => format!(
+                "AST traversal exceeded the {AST_NODE_LIMIT}-statement/expression node limit"
+            ),
+            Some(AstFailure::RetainedText) => format!(
+                "AST traversal exceeded the {AST_RETAINED_TEXT_LIMIT}-byte retained syntax limit"
+            ),
+            Some(AstFailure::Deadline) => format!(
+                "AST traversal exceeded the {}ms hygiene deadline",
+                self.deadline_ms
+            ),
+            None => "AST traversal completed".to_owned(),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct Module {
     pub(super) path: String,
@@ -15,7 +109,16 @@ pub(super) struct Module {
 }
 
 impl Module {
-    pub(super) fn new(path: String, name: String, is_test: bool, source: &str) -> Self {
+    pub(super) fn new(
+        path: String,
+        name: String,
+        is_test: bool,
+        source: &str,
+        work: &mut AstWork,
+    ) -> Option<Self> {
+        if !work.retain_text(path.len().saturating_add(name.len())) {
+            return None;
+        }
         let is_package_initializer = is_package_initializer_path(&path);
         let mut line_starts = vec![0];
         line_starts.extend(
@@ -25,7 +128,7 @@ impl Module {
                 .filter(|(_, byte)| *byte == b'\n')
                 .map(|(index, _)| index + 1),
         );
-        Self {
+        Some(Self {
             path,
             name,
             is_package_initializer,
@@ -36,7 +139,7 @@ impl Module {
             references: Vec::new(),
             tests: Vec::new(),
             private_couplings: Vec::new(),
-        }
+        })
     }
 
     fn line(&self, offset: rustpython_ast::text_size::TextSize) -> u32 {
@@ -189,15 +292,21 @@ struct Scope {
 pub(super) struct AstCollector<'a> {
     module: &'a mut Module,
     configuration: &'a HygieneConfiguration,
+    work: &'a mut AstWork,
     scopes: Vec<Scope>,
     assertion_depth: usize,
 }
 
 impl<'a> AstCollector<'a> {
-    pub(super) fn new(module: &'a mut Module, configuration: &'a HygieneConfiguration) -> Self {
+    pub(super) fn new(
+        module: &'a mut Module,
+        configuration: &'a HygieneConfiguration,
+        work: &'a mut AstWork,
+    ) -> Self {
         Self {
             module,
             configuration,
+            work,
             scopes: Vec::new(),
             assertion_depth: 0,
         }
@@ -241,9 +350,16 @@ impl<'a> AstCollector<'a> {
 
     fn private_coupling(&mut self, line: u32, kind: &'static str, target: String) {
         if self.module.is_test && has_private_component(&target) {
+            let test_name = self.current_test_name();
+            if !self
+                .work
+                .retain_text(test_name.len().saturating_add(target.len()))
+            {
+                return;
+            }
             self.module.private_couplings.push(RawPrivateCoupling {
                 line,
-                test_name: self.current_test_name(),
+                test_name,
                 kind,
                 target,
             });
@@ -273,6 +389,9 @@ impl<'a> AstCollector<'a> {
                 ));
         let declaration_name = is_declaration.then(|| self.qualify(&name));
         if let Some(declaration_name) = &declaration_name {
+            if !self.work.retain_text(declaration_name.len()) {
+                return;
+            }
             self.module.declarations.push(Declaration {
                 name: declaration_name.clone(),
                 kind: if self.scopes.is_empty() {
@@ -284,6 +403,13 @@ impl<'a> AstCollector<'a> {
                 top_level: self.scopes.is_empty(),
             });
         }
+        let scope_bytes = name
+            .len()
+            .saturating_add(declaration_name.as_ref().map_or(0, String::len))
+            .saturating_add(test_name.as_ref().map_or(0, String::len));
+        if !self.work.retain_text(scope_bytes) {
+            return;
+        }
         self.scopes.push(Scope {
             name,
             kind: ScopeKind::Function,
@@ -294,6 +420,9 @@ impl<'a> AstCollector<'a> {
         body(self);
         let scope = self.scopes.pop().expect("function scope was pushed");
         if let Some(test_name) = test_name {
+            if !self.work.retain_text(test_name.len()) {
+                return;
+            }
             self.module.tests.push(TestCase {
                 name: test_name,
                 line,
@@ -304,6 +433,18 @@ impl<'a> AstCollector<'a> {
 }
 
 impl Visitor for AstCollector<'_> {
+    fn visit_stmt(&mut self, node: rustpython_ast::Stmt) {
+        if self.work.admit_node() {
+            self.generic_visit_stmt(node);
+        }
+    }
+
+    fn visit_expr(&mut self, node: rustpython_ast::Expr) {
+        if self.work.admit_node() {
+            self.generic_visit_expr(node);
+        }
+    }
+
     fn visit_stmt_function_def(&mut self, node: rustpython_ast::StmtFunctionDef) {
         let name = node.name.to_string();
         let range = node.range;
@@ -325,6 +466,9 @@ impl Visitor for AstCollector<'_> {
         let line = self.module.line(node.range.start());
         let top_level = self.scopes.is_empty();
         if !self.module.is_test && top_level {
+            if !self.work.retain_text(name.len()) {
+                return;
+            }
             self.module.declarations.push(Declaration {
                 name: name.clone(),
                 kind: "class",
@@ -333,8 +477,15 @@ impl Visitor for AstCollector<'_> {
             });
         }
         let is_test = self.module.is_test && top_level && name.starts_with("Test");
+        let declaration_name = (!self.module.is_test && top_level).then(|| name.clone());
+        if !self.work.retain_text(
+            name.len()
+                .saturating_add(declaration_name.as_ref().map_or(0, String::len)),
+        ) {
+            return;
+        }
         self.scopes.push(Scope {
-            declaration_name: (!self.module.is_test && top_level).then(|| name.clone()),
+            declaration_name,
             name,
             kind: ScopeKind::Class { is_test },
             test_name: None,
@@ -352,6 +503,12 @@ impl Visitor for AstCollector<'_> {
                 || imported.split('.').next().unwrap_or("").to_owned(),
                 ToString::to_string,
             );
+            if !self
+                .work
+                .retain_text(imported.len().saturating_add(local.len()))
+            {
+                return;
+            }
             self.module.imports.push(ImportRecord {
                 module: imported.clone(),
                 symbol: None,
@@ -377,6 +534,13 @@ impl Visitor for AstCollector<'_> {
                 .asname
                 .as_ref()
                 .map_or_else(|| symbol.clone(), ToString::to_string);
+            let retained = module
+                .len()
+                .saturating_add(symbol.len())
+                .saturating_add(local.len());
+            if !self.work.retain_text(retained) {
+                return;
+            }
             self.module.imports.push(ImportRecord {
                 module: module.clone(),
                 symbol: Some(symbol.clone()),
@@ -417,6 +581,12 @@ impl Visitor for AstCollector<'_> {
         {
             let path = format!("{base}.{}", node.attr);
             let owner = self.current_declaration_name();
+            if !self.work.retain_text(
+                path.len()
+                    .saturating_add(owner.as_ref().map_or(0, String::len)),
+            ) {
+                return;
+            }
             self.module.references.push(Reference {
                 name: path.clone(),
                 owner,
@@ -432,10 +602,14 @@ impl Visitor for AstCollector<'_> {
     fn visit_expr_name(&mut self, node: rustpython_ast::ExprName) {
         if node.ctx == ExprContext::Load {
             let owner = self.current_declaration_name();
-            self.module.references.push(Reference {
-                name: node.id.to_string(),
-                owner,
-            });
+            let name = node.id.to_string();
+            if !self.work.retain_text(
+                name.len()
+                    .saturating_add(owner.as_ref().map_or(0, String::len)),
+            ) {
+                return;
+            }
+            self.module.references.push(Reference { name, owner });
         }
         self.generic_visit_expr_name(node);
     }
