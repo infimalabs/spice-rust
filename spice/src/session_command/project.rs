@@ -73,6 +73,12 @@ pub(crate) struct SliceOptions {
     selected: BTreeSet<String>,
 }
 
+pub(crate) struct TurnOptions {
+    pub(crate) filters: Filters,
+    pub(crate) limit: usize,
+    pub(crate) full: bool,
+}
+
 impl SliceOptions {
     pub(crate) fn scan(&self) -> (usize, bool) {
         if self.selected.is_empty() {
@@ -456,26 +462,20 @@ pub(crate) fn timeline(
     })
 }
 
-pub(crate) fn turns(
-    dataset: &Dataset,
-    matches: &ArgMatches,
-    filters: &Filters,
-) -> Result<Report, Refusal> {
-    filters.validate_turn_ids(dataset)?;
-    let limit = number(matches, "limit", DEFAULT_TURNS_LIMIT)?;
-    let full = one(matches, "view").is_some_and(|view| view == "full");
-    let mut rows = dataset
-        .turns
-        .iter()
-        .filter(|turn| filters.turn_matches(turn))
-        .map(|turn| turn_view(turn, full, DEFAULT_TIMELINE_TEXT, false))
-        .collect::<Vec<_>>();
-    trim_oldest(&mut rows, limit);
-    Ok(Report::Turns {
-        sources: dataset.sources.clone(),
-        rows,
-        residues: dataset.residues.clone(),
+pub(crate) fn turn_options(matches: &ArgMatches) -> Result<TurnOptions, Refusal> {
+    Ok(TurnOptions {
+        filters: Filters::from_matches(matches)?,
+        limit: number(matches, "limit", DEFAULT_TURNS_LIMIT)?,
+        full: one(matches, "view").is_some_and(|view| view == "full"),
     })
+}
+
+pub(crate) fn turns(dataset: WindowScan) -> Report {
+    Report::Turns {
+        sources: dataset.sources,
+        rows: dataset.turns.into_iter().map(|turn| turn.view).collect(),
+        residues: dataset.residues,
+    }
 }
 
 pub(crate) fn compaction_limit(matches: &ArgMatches) -> Result<usize, Refusal> {

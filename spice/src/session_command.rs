@@ -386,7 +386,6 @@ fn build_resolved(
     let data = dataset::load(&sources)?;
     match action {
         "timeline" => project::timeline(&data, matches, &filters),
-        "turns" => project::turns(&data, matches, &filters),
         _ => Err(refusal(
             "session::query-unregistered",
             Some(path.join(" ")),
@@ -403,6 +402,7 @@ fn validate_options_before_source(matches: &ArgMatches, action: &str) -> Result<
         "commands" => project::command_options(matches).map(|_| ()),
         "commits" => project::commit_limit(matches).map(|_| ()),
         "compactions" => project::compaction_limit(matches).map(|_| ()),
+        "turns" => project::turn_options(matches).map(|_| ()),
         "briefing" | "sweep" => project::validate_window_options(matches, action),
         "slices" => {
             project::validate_window_options(matches, action)?;
@@ -452,6 +452,20 @@ fn build_bounded_event_report(
                 },
             )?;
             Ok(Some(project::slices(data, options)))
+        }
+        "turns" => {
+            let options = project::turn_options(matches)?;
+            let data = dataset::WindowScan::scan(
+                sources,
+                None,
+                None,
+                &options.filters,
+                dataset::WindowOptions::Turns {
+                    limit: options.limit,
+                    full: options.full,
+                },
+            )?;
+            Ok(Some(project::turns(data)))
         }
         _ => Ok(None),
     }
