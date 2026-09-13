@@ -9,6 +9,9 @@ const MOVED: &str = "2222222222222222222222222222222222222222";
 const TEST_WASM: &[u8] = b"lane-built wasm";
 const TEST_HTML: &[u8] = b"lane-built shell";
 const GENERATION: &str = "6666666666666666666666666666666666666666666666666666666666666666";
+const UUID: &str = "11111111-2222-3333-4444-555555555555";
+const OTHER_UUID: &str = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+const STRIPPED_NATIVE: &[u8] = b"stripped native executable";
 
 struct Fixture {
     root: PathBuf,
@@ -54,6 +57,11 @@ impl Fixture {
             mutants: program("cargo-mutants"),
             git: program("git"),
             xtask: program("xtask"),
+            macos: Some(MacPrograms {
+                dsymutil: program("dsymutil"),
+                dwarfdump: program("dwarfdump"),
+                strip: program("strip"),
+            }),
         }
     }
 
@@ -81,6 +89,8 @@ struct FakeExecutor {
     untracked: RefCell<String>,
     moved_after_native: Cell<bool>,
     native_ran: Cell<bool>,
+    executable_uuid: RefCell<Vec<u8>>,
+    dsym_uuid: RefCell<Vec<u8>>,
     records: RefCell<Vec<CommandRecord>>,
 }
 
@@ -96,6 +106,8 @@ impl FakeExecutor {
             untracked: RefCell::new(String::new()),
             moved_after_native: Cell::new(false),
             native_ran: Cell::new(false),
+            executable_uuid: RefCell::new(format!("UUID: {UUID} (arm64) executable\n").into()),
+            dsym_uuid: RefCell::new(format!("UUID: {UUID} (arm64) symbols\n").into()),
             records: RefCell::new(Vec::new()),
         }
     }
@@ -107,7 +119,8 @@ impl FakeExecutor {
 
 impl Executor for FakeExecutor {
     fn execute(&self, command: CommandSpec) -> Result<CommandRecord, TargetBuildError> {
-        if command.label == "native-build" {
+        let refused = self.refusing.get() == Some(command.label);
+        if command.label == "native-build" && !refused {
             let destination = self
                 .root
                 .join("target/release-appliance")
@@ -118,6 +131,14 @@ impl Executor for FakeExecutor {
             fs::copy(env::current_exe().expect("test executable"), &destination)
                 .expect("copy real compiled executable");
             self.native_ran.set(true);
+        }
+        if command.label == "dsym-generate" && !refused {
+            fs::create_dir_all(PathBuf::from(&command.arguments[2]))
+                .expect("create derived dSYM bundle");
+        }
+        if command.label == "native-strip" && !refused {
+            fs::write(PathBuf::from(&command.arguments[1]), STRIPPED_NATIVE)
+                .expect("strip exact linked executable fixture");
         }
         let stdout = match command.label {
             "source-commit" if self.moved_after_native.get() && self.native_ran.get() => {
@@ -131,14 +152,28 @@ impl Executor for FakeExecutor {
             }
             "trunk-version" => format!("{}\n", self.trunk.borrow()).into_bytes(),
             "mutants-version" => format!("{PINNED_MUTANTS}\n").into_bytes(),
-            "app-build" | "embed-build" | "native-build" => {
+            "native-build" => {
+                let executable = self
+                    .root
+                    .join("target/release-appliance")
+                    .join(self.target.as_str())
+                    .join("release/spice");
+                format!(
+                    "{{\"reason\":\"compiler-artifact\",\"target\":{{\"name\":\"spice\",\"kind\":[\"bin\"]}},\"executable\":{}}}\n",
+                    serde_json::to_string(&executable.display().to_string())
+                        .expect("fixture path encodes")
+                )
+                .into_bytes()
+            }
+            "executable-uuid" => self.executable_uuid.borrow().clone(),
+            "dsym-uuid" => self.dsym_uuid.borrow().clone(),
+            "app-build" | "embed-build" | "dsym-generate" | "native-strip" => {
                 format!("{} complete\n", command.label).into_bytes()
             }
             "source-status" if self.tracked_dirty.get() => b" M xtask/src/lib.rs\n".to_vec(),
             "source-status" => self.untracked.borrow().clone().into_bytes(),
             label => panic!("unexpected command label {label}"),
         };
-        let refused = self.refusing.get() == Some(command.label);
         let record = CommandRecord {
             label: command.label,
             program: command.program,
@@ -175,26 +210,7 @@ fn both_targets_use_the_fixed_commands_and_real_artifact_bytes() {
         )
         .expect("target stage succeeds");
 
-        assert_eq!(
-            executor.labels(),
-            [
-                "source-commit",
-                "source-status",
-                "rust-version",
-                "installed-targets",
-                "trunk-version",
-                "mutants-version",
-                "app-build",
-                "embed-build",
-                "native-build",
-                "source-commit",
-                "source-status",
-                "rust-version",
-                "installed-targets",
-                "trunk-version",
-                "mutants-version",
-            ]
-        );
+        assert_eq!(executor.labels(), expected_labels(target));
         let build_records = build
             .commands
             .iter()
@@ -216,9 +232,16 @@ fn both_targets_use_the_fixed_commands_and_real_artifact_bytes() {
         assert_eq!(build_records[1].program, programs.cargo);
         assert_eq!(
             build_records[2].arguments,
-            cargo_arguments(&fixture.root, "spice", target)
+            native_cargo_arguments(target, &fixture.root.join("target/release-appliance"))
         );
         assert_eq!(build_records[2].program, programs.cargo);
+        assert_eq!(
+            build_records[2]
+                .arguments
+                .iter()
+                .any(|argument| argument == "profile.release.debug=\"line-tables-only\""),
+            target == ReleaseTarget::Aarch64AppleDarwin
+        );
         let rust_observations = build
             .commands
             .iter()
@@ -248,17 +271,97 @@ fn both_targets_use_the_fixed_commands_and_real_artifact_bytes() {
             GENERATION.parse().expect("fixture generation is canonical")
         );
         assert_complete_app_inventory(&build.staged.payload);
-        let native = fs::read(env::current_exe().expect("test executable"))
-            .expect("read real compiled executable");
+        let native = if target == ReleaseTarget::Aarch64AppleDarwin {
+            STRIPPED_NATIVE.to_vec()
+        } else {
+            fs::read(env::current_exe().expect("test executable"))
+                .expect("read real compiled executable")
+        };
         assert_eq!(
             build.staged.payload.native,
             Digest::compute(Domain::DistArtifact, &native)
         );
+        assert_symbol_result(&fixture, &programs, &build);
         assert_eq!(
             fs::read(fixture.pointer(target)).expect("target pointer reads"),
             build.staged.payload_bytes
         );
     }
+}
+
+fn expected_labels(target: ReleaseTarget) -> Vec<&'static str> {
+    let mut expected = vec![
+        "source-commit",
+        "source-status",
+        "rust-version",
+        "installed-targets",
+        "trunk-version",
+        "mutants-version",
+        "app-build",
+        "embed-build",
+        "native-build",
+    ];
+    if target == ReleaseTarget::Aarch64AppleDarwin {
+        expected.extend([
+            "dsym-generate",
+            "executable-uuid",
+            "dsym-uuid",
+            "native-strip",
+        ]);
+    }
+    expected.extend([
+        "source-commit",
+        "source-status",
+        "rust-version",
+        "installed-targets",
+        "trunk-version",
+        "mutants-version",
+    ]);
+    expected
+}
+
+fn assert_symbol_result(fixture: &Fixture, programs: &Programs, build: &TargetBuild) {
+    let target = build.target;
+    let Some(symbols) = &build.symbols else {
+        assert_eq!(target, ReleaseTarget::X86_64UnknownLinuxMusl);
+        return;
+    };
+    assert_eq!(target, ReleaseTarget::Aarch64AppleDarwin);
+    assert_eq!(symbols.uuid(), UUID);
+    let executable = fixture
+        .root
+        .join("target/release-appliance")
+        .join(target.as_str())
+        .join("release/spice");
+    let bundle = dsym_path(&executable);
+    assert_eq!(symbols.bundle(), bundle);
+    let macos = programs.macos.as_ref().expect("fixture macOS tools");
+    let record = |label| {
+        build
+            .commands
+            .iter()
+            .find(|record| record.label == label)
+            .unwrap_or_else(|| panic!("missing {label} command"))
+    };
+    assert_eq!(record("dsym-generate").program, macos.dsymutil);
+    assert_eq!(
+        record("dsym-generate").arguments,
+        [executable.as_os_str(), OsStr::new("-o"), bundle.as_os_str()]
+    );
+    assert_eq!(record("executable-uuid").program, macos.dwarfdump);
+    assert_eq!(
+        record("executable-uuid").arguments,
+        [OsStr::new("--uuid"), executable.as_os_str()]
+    );
+    assert_eq!(
+        record("dsym-uuid").arguments,
+        [OsStr::new("--uuid"), bundle.as_os_str()]
+    );
+    assert_eq!(record("native-strip").program, macos.strip);
+    assert_eq!(
+        record("native-strip").arguments,
+        [OsStr::new("-S"), executable.as_os_str()]
+    );
 }
 
 fn assert_complete_app_inventory(payload: &wire::manifest::TargetPayload) {
@@ -648,6 +751,47 @@ fn a_refusing_build_command_publishes_no_pointer_over_the_previous_one() {
         read_lane_app_asset(&fixture.root, "/app_bg.wasm").is_ok(),
         "the artifact the ignored status would have published must still be readable"
     );
+
+    assert_macos_failure("dsym-generate", |executor| {
+        executor.refusing.set(Some("dsym-generate"));
+    });
+    assert_macos_failure("executable-uuid", |executor| {
+        *executor.executable_uuid.borrow_mut() = b"malformed UUID\n".to_vec();
+    });
+    assert_macos_failure("dsym-uuid", |executor| {
+        *executor.dsym_uuid.borrow_mut() =
+            format!("UUID: {OTHER_UUID} (arm64) symbols\n").into_bytes();
+    });
+    assert_macos_failure("native-strip", |executor| {
+        executor.refusing.set(Some("native-strip"));
+    });
+}
+
+fn assert_macos_failure(expected_last: &'static str, configure: impl FnOnce(&FakeExecutor)) {
+    let fixture = Fixture::new();
+    let target = ReleaseTarget::Aarch64AppleDarwin;
+    let programs = fixture.programs();
+    let executor = FakeExecutor::new(&fixture.root, target);
+    configure(&executor);
+    let pointer = fixture.pointer(target);
+    fs::create_dir_all(pointer.parent().expect("pointer parent")).expect("target directory");
+    fs::write(&pointer, b"previous complete target").expect("previous pointer");
+
+    let error = stage_with(
+        &fixture.root,
+        &fixture.root.join("target"),
+        target,
+        &programs,
+        &executor,
+    )
+    .expect_err("macOS symbol derivation failure refuses the stage");
+
+    assert!(matches!(error, TargetBuildError::Stage(_)), "{error:?}");
+    assert_eq!(executor.labels().last(), Some(&expected_last));
+    assert_eq!(
+        fs::read(pointer).expect("previous pointer remains"),
+        b"previous complete target"
+    );
 }
 
 #[test]
@@ -835,8 +979,12 @@ fn program_discovery_resolves_rustc_from_the_workspace_build_hierarchy() {
     );
     let environment = resolving_environment(path, Some(cargo_home));
 
-    let programs = Programs::discover(&workspace, &environment)
-        .expect("the workspace release programs resolve");
+    let programs = Programs::discover(
+        &workspace,
+        &environment,
+        ReleaseTarget::X86_64UnknownLinuxMusl,
+    )
+    .expect("the workspace release programs resolve");
 
     assert_eq!(programs.rustc, configured_rustc);
     assert_ne!(programs.rustc, path_rustc);
@@ -851,7 +999,11 @@ fn program_discovery_resolves_rustc_from_the_workspace_build_hierarchy() {
     fs::write(&workspace_config, "[build]\nrustc = 7\n")
         .expect("malformed workspace config installs");
     assert!(matches!(
-        Programs::discover(&workspace, &environment),
+        Programs::discover(
+            &workspace,
+            &environment,
+            ReleaseTarget::X86_64UnknownLinuxMusl,
+        ),
         Err(TargetBuildError::CargoConfig { ref path, .. }) if path == &workspace_config
     ));
 
@@ -859,7 +1011,11 @@ fn program_discovery_resolves_rustc_from_the_workspace_build_hierarchy() {
     fs::remove_file(tree.root.join("cargo-home/config.toml")).expect("Cargo home config removes");
     fs::remove_file(path_rustc).expect("PATH compiler removes");
     assert!(matches!(
-        Programs::discover(&workspace, &environment),
+        Programs::discover(
+            &workspace,
+            &environment,
+            ReleaseTarget::X86_64UnknownLinuxMusl,
+        ),
         Err(TargetBuildError::MissingProgram("rustc"))
     ));
 }

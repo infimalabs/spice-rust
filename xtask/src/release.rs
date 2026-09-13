@@ -29,6 +29,8 @@ const GRACE: Duration = Duration::from_secs(5);
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
 const PINNED_TRUNK: &str = "trunk 0.21.14";
 const PINNED_MUTANTS: &str = "cargo-mutants 27.1.0";
+const MACHO_UUID_LENGTH: usize = 36;
+const MACHO_UUID_HYPHENS: [usize; 4] = [8, 13, 18, 23];
 
 /// One complete bounded command observation from a target build.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -53,7 +55,27 @@ pub struct TargetBuild {
     pub target: ReleaseTarget,
     pub source: Digest,
     pub staged: StagedTarget,
+    pub symbols: Option<MacSymbols>,
     pub commands: Vec<CommandRecord>,
+}
+
+/// One verified macOS symbol bundle derived from the exact linked executable.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MacSymbols {
+    bundle: PathBuf,
+    uuid: String,
+}
+
+impl MacSymbols {
+    #[must_use]
+    pub fn bundle(&self) -> &Path {
+        &self.bundle
+    }
+
+    #[must_use]
+    pub fn uuid(&self) -> &str {
+        &self.uuid
+    }
 }
 
 /// Ambient process values acquired once by the xtask binary rim.
@@ -226,7 +248,7 @@ pub fn stage_target(
 ) -> Result<TargetBuild, TargetBuildError> {
     let target = parse_target(spelling)?;
     let root = workspace_root()?;
-    let programs = Programs::discover(&root, &environment)?;
+    let programs = Programs::discover(&root, &environment, target)?;
     let executor = SystemExecutor::new(&root, &environment, &programs.rustc)?;
     match stage_with(
         &root,
@@ -267,6 +289,7 @@ fn stage_with<E: Executor>(
         target_dir: &target_dir,
         programs,
         executor,
+        symbols: None,
     };
     let mut publisher = GuardedPublisher {
         inner: FilePublisher::new(root.join("dist/stage")),
@@ -283,10 +306,12 @@ fn stage_with<E: Executor>(
         &mut builder,
         &mut publisher,
     )?;
+    let symbols = builder.symbols.take();
     Ok(TargetBuild {
         target,
         source: source.digest,
         staged,
+        symbols,
         commands: executor.records(),
     })
 }
@@ -393,6 +418,7 @@ struct CommandBuilder<'a, E> {
     target_dir: &'a Path,
     programs: &'a Programs,
     executor: &'a E,
+    symbols: Option<MacSymbols>,
 }
 
 impl<E: Executor> Builder for CommandBuilder<'_, E> {
@@ -437,13 +463,16 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
                 "Canvas generation changed between embedding and native commands",
             ));
         }
-        self.run(CommandSpec::new(
+        let native = self.run(CommandSpec::new(
             "native-build",
             &self.programs.cargo,
-            cargo_build_arguments("spice", target, self.target_dir),
+            native_cargo_arguments(target, self.target_dir),
         ))?;
-        read_regular(&self.target_dir.join(target.as_str()).join("release/spice"))
-            .map_err(build_error)
+        let executable = cargo_executable(&native.stdout)?;
+        if target == ReleaseTarget::Aarch64AppleDarwin {
+            self.symbols = Some(self.derive_macos_symbols(&executable)?);
+        }
+        read_regular(&executable).map_err(build_error)
     }
 }
 
@@ -491,11 +520,140 @@ fn cargo_build_arguments(package: &str, target: ReleaseTarget, target_dir: &Path
     .into()
 }
 
-impl<E: Executor> CommandBuilder<'_, E> {
-    fn run(&self, command: CommandSpec) -> Result<(), BuildError> {
-        let record = self.executor.execute(command).map_err(build_error)?;
-        successful(record).map(|_| ()).map_err(build_error)
+/// Ask Cargo for the exact linked binary, and retain line tables only for the
+/// macOS build whose dSYM consumes them. Keeping the profile override on this
+/// target-specific command leaves the Linux executable bytes unchanged.
+fn native_cargo_arguments(target: ReleaseTarget, target_dir: &Path) -> Vec<OsString> {
+    let mut arguments = cargo_build_arguments("spice", target, target_dir);
+    arguments.extend([OsString::from("--message-format=json-render-diagnostics")]);
+    if target == ReleaseTarget::Aarch64AppleDarwin {
+        arguments.extend([
+            OsString::from("--config"),
+            OsString::from("profile.release.debug=\"line-tables-only\""),
+        ]);
     }
+    arguments
+}
+
+impl<E: Executor> CommandBuilder<'_, E> {
+    fn run(&self, command: CommandSpec) -> Result<CommandRecord, BuildError> {
+        let record = self.executor.execute(command).map_err(build_error)?;
+        successful(record).map_err(build_error)
+    }
+
+    fn derive_macos_symbols(&self, executable: &Path) -> Result<MacSymbols, BuildError> {
+        let tools = self
+            .programs
+            .macos
+            .as_ref()
+            .expect("macOS target discovery admits symbol tools");
+        let bundle = dsym_path(executable);
+        self.run(CommandSpec::new(
+            "dsym-generate",
+            &tools.dsymutil,
+            [
+                executable.as_os_str().to_owned(),
+                OsString::from("-o"),
+                bundle.as_os_str().to_owned(),
+            ],
+        ))?;
+        let metadata = fs::symlink_metadata(&bundle).map_err(|error| {
+            BuildError::new(format!("cannot inspect {}: {error}", bundle.display()))
+        })?;
+        if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+            return Err(BuildError::new(format!(
+                "dsymutil produced no regular bundle at {}",
+                bundle.display()
+            )));
+        }
+        let executable_uuid = self.run(CommandSpec::new(
+            "executable-uuid",
+            &tools.dwarfdump,
+            [OsString::from("--uuid"), executable.as_os_str().to_owned()],
+        ))?;
+        let executable_uuid = parse_macho_uuid(&executable_uuid.stdout, "executable UUID")?;
+        let symbol_uuid = self.run(CommandSpec::new(
+            "dsym-uuid",
+            &tools.dwarfdump,
+            [OsString::from("--uuid"), bundle.as_os_str().to_owned()],
+        ))?;
+        let symbol_uuid = parse_macho_uuid(&symbol_uuid.stdout, "dSYM UUID")?;
+        if executable_uuid != symbol_uuid {
+            return Err(BuildError::new(format!(
+                "executable UUID {executable_uuid} differs from dSYM UUID {symbol_uuid}"
+            )));
+        }
+        self.run(CommandSpec::new(
+            "native-strip",
+            &tools.strip,
+            [OsString::from("-S"), executable.as_os_str().to_owned()],
+        ))?;
+        Ok(MacSymbols {
+            bundle,
+            uuid: executable_uuid,
+        })
+    }
+}
+
+fn cargo_executable(output: &[u8]) -> Result<PathBuf, BuildError> {
+    let output = std::str::from_utf8(output)
+        .map_err(|_| BuildError::new("native Cargo output is not UTF-8 JSON"))?;
+    let mut executables = Vec::new();
+    for line in output.lines().filter(|line| !line.is_empty()) {
+        let value: serde_json::Value = serde_json::from_str(line)
+            .map_err(|error| BuildError::new(format!("native Cargo output is invalid: {error}")))?;
+        if value.get("reason").and_then(serde_json::Value::as_str) != Some("compiler-artifact")
+            || value
+                .pointer("/target/name")
+                .and_then(serde_json::Value::as_str)
+                != Some("spice")
+            || !value
+                .pointer("/target/kind")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|kinds| kinds.iter().any(|kind| kind.as_str() == Some("bin")))
+        {
+            continue;
+        }
+        if let Some(executable) = value.get("executable").and_then(serde_json::Value::as_str) {
+            executables.push(PathBuf::from(executable));
+        }
+    }
+    if executables.len() == 1 {
+        Ok(executables.pop().expect("one Cargo executable exists"))
+    } else {
+        Err(BuildError::new(format!(
+            "native Cargo output named {} Spice executables; expected exactly one",
+            executables.len()
+        )))
+    }
+}
+
+fn dsym_path(executable: &Path) -> PathBuf {
+    let mut path = executable.as_os_str().to_owned();
+    path.push(".dSYM");
+    PathBuf::from(path)
+}
+
+fn parse_macho_uuid(output: &[u8], label: &'static str) -> Result<String, BuildError> {
+    let line = one_line(output, label).map_err(build_error)?;
+    let Some(body) = line.strip_prefix("UUID: ") else {
+        return Err(BuildError::new(format!("{label} is malformed: {line:?}")));
+    };
+    let Some((uuid, suffix)) = body.split_once(' ') else {
+        return Err(BuildError::new(format!("{label} is malformed: {line:?}")));
+    };
+    let valid_uuid = uuid.len() == MACHO_UUID_LENGTH
+        && uuid.bytes().enumerate().all(|(index, byte)| {
+            if MACHO_UUID_HYPHENS.contains(&index) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        });
+    if !valid_uuid || !suffix.starts_with("(arm64) ") || suffix == "(arm64) " {
+        return Err(BuildError::new(format!("{label} is malformed: {line:?}")));
+    }
+    Ok(uuid.to_ascii_uppercase())
 }
 
 fn build_error(error: impl fmt::Display) -> BuildError {
@@ -644,6 +802,14 @@ struct Programs {
     mutants: PathBuf,
     git: PathBuf,
     xtask: PathBuf,
+    macos: Option<MacPrograms>,
+}
+
+#[derive(Clone)]
+struct MacPrograms {
+    dsymutil: PathBuf,
+    dwarfdump: PathBuf,
+    strip: PathBuf,
 }
 
 impl Programs {
@@ -653,7 +819,11 @@ impl Programs {
     /// exception because Cargo has four higher-ranked doors: resolve it through
     /// [`ReleaseEnvironment::rustc`] at the workspace-root cwd and selected
     /// Cargo home, then let [`SystemExecutor`] freeze that answer as `RUSTC`.
-    fn discover(root: &Path, environment: &ReleaseEnvironment) -> Result<Self, TargetBuildError> {
+    fn discover(
+        root: &Path,
+        environment: &ReleaseEnvironment,
+        target: ReleaseTarget,
+    ) -> Result<Self, TargetBuildError> {
         let path = environment
             .path
             .as_deref()
@@ -661,6 +831,15 @@ impl Programs {
         let rustc = environment
             .rustc(root)?
             .ok_or(TargetBuildError::MissingProgram("rustc"))?;
+        let macos = if target == ReleaseTarget::Aarch64AppleDarwin {
+            Some(MacPrograms {
+                dsymutil: find_program(path, "dsymutil")?,
+                dwarfdump: find_program(path, "dwarfdump")?,
+                strip: find_program(path, "strip")?,
+            })
+        } else {
+            None
+        };
         Ok(Self {
             cargo: find_program(path, "cargo")?,
             rustc,
@@ -672,6 +851,7 @@ impl Programs {
                 path: PathBuf::from("current xtask executable"),
                 source,
             })?,
+            macos,
         })
     }
 }
