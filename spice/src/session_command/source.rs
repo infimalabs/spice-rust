@@ -755,6 +755,7 @@ mod tests {
 
     const THREAD: &str = "0123456789abcdef0123456789abcdef";
     const THREAD_DASHED: &str = "01234567-89ab-cdef-0123-456789abcdef";
+    const THREAD_UPPER: &str = "01234567-89AB-CDEF-0123-456789ABCDEF";
     const FIXTURE_DIALECT: vendor::Vendor = vendor::Vendor::named("fixture", &vendor::CODEX);
     const FIXTURE_VENDOR: spice::extension::Vendor =
         spice::extension::Vendor::new(&FIXTURE_DIALECT, fixture_configuration, 2);
@@ -769,15 +770,10 @@ mod tests {
 
     #[test]
     fn dashed_and_compact_thread_inputs_share_one_canonical_presentation() {
-        assert_eq!(canonical_thread(THREAD).as_deref(), Some(THREAD_DASHED));
-        assert_eq!(
-            canonical_thread(THREAD_DASHED).as_deref(),
-            Some(THREAD_DASHED)
-        );
-        assert_eq!(
-            canonical_thread("01234567-89AB-CDEF-0123-456789ABCDEF").as_deref(),
-            Some(THREAD_DASHED),
-        );
+        let expected = Some(THREAD_DASHED);
+        assert_eq!(canonical_thread(THREAD).as_deref(), expected);
+        assert_eq!(canonical_thread(THREAD_DASHED).as_deref(), expected);
+        assert_eq!(canonical_thread(THREAD_UPPER).as_deref(), expected);
     }
 
     fn fixture_configuration(root: &spice::config::Root) -> vendor::LaunchValues<'_> {
@@ -989,29 +985,23 @@ mod tests {
         let scratch = Scratch::new("complete");
         let root = scratch.path().join("sessions");
         fs::create_dir_all(&root).expect("session root exists");
-        assert_eq!(
-            find_named_transcript(&root, THREAD).expect("empty complete walk"),
-            Vec::<PathBuf>::new()
-        );
+        let empty = find_named_transcript(&root, THREAD).expect("empty complete walk");
+        assert!(empty.is_empty());
 
         let older = root.join(format!("a-{THREAD}.jsonl"));
         let newest = root.join(format!("z-{THREAD}.jsonl.gz"));
         fs::write(&older, b"\n").expect("older transcript exists");
         fs::write(&newest, b"\n").expect("newest transcript exists");
-        assert_eq!(
-            find_named_transcript(&root, THREAD).expect("complete matching walk"),
-            vec![older, newest]
-        );
+        let matches = find_named_transcript(&root, THREAD).expect("complete matching walk");
+        assert_eq!(matches, vec![older, newest]);
         for index in 2..=SEARCH_ENTRY_LIMIT {
             fs::write(root.join(format!("unrelated-{index}")), b"")
                 .expect("bounded unrelated entry exists");
         }
-        assert!(
-            find_named_transcript(&root, THREAD)
-                .expect_err("one entry beyond the bound refuses")
-                .to_string()
-                .contains(&format!("{SEARCH_ENTRY_LIMIT}-entry limit"))
-        );
+        let error =
+            find_named_transcript(&root, THREAD).expect_err("one entry beyond the bound refuses");
+        let expected = format!("{SEARCH_ENTRY_LIMIT}-entry limit");
+        assert!(error.to_string().contains(&expected));
     }
 
     #[test]
