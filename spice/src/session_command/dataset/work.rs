@@ -4,6 +4,58 @@ use std::time::{Duration, Instant};
 
 use super::*;
 
+#[cfg(test)]
+pub(super) struct TestFold<'a> {
+    dataset: &'a mut Dataset,
+    markers: &'a mut Vec<Marker>,
+    residues: &'a mut ResidueLedger,
+    state: FoldState,
+}
+
+#[cfg(test)]
+impl<'a> TestFold<'a> {
+    pub(super) fn new(
+        dataset: &'a mut Dataset,
+        markers: &'a mut Vec<Marker>,
+        residues: &'a mut ResidueLedger,
+    ) -> Self {
+        Self {
+            dataset,
+            markers,
+            residues,
+            state: FoldState::default(),
+        }
+    }
+
+    pub(super) fn push(
+        &mut self,
+        row: DecodedRow,
+        work: &mut SessionWork,
+        at: &str,
+    ) -> Result<(), Refusal> {
+        match row {
+            DecodedRow::Typed(record) => reduce_record(
+                &record,
+                &mut FoldStorage {
+                    dataset: self.dataset,
+                    markers: self.markers,
+                    residues: self.residues,
+                    state: &mut self.state,
+                    tokens: None,
+                },
+                work,
+                at,
+            ),
+            DecodedRow::Residue(residue) => self.residues.push(residue, work, at),
+            DecodedRow::Ignored => Ok(()),
+        }
+    }
+
+    pub(super) fn finish(self, work: &mut SessionWork, at: &str) -> Result<(), Refusal> {
+        finish_fold(self.dataset, self.state, work, at)
+    }
+}
+
 const REPORT_SOURCE_BYTES: u64 = 512 * 1_024 * 1_024;
 const REPORT_RECORDS: u64 = 256 * 1_024;
 const REPORT_EVENTS: u64 = 1_024 * 1_024;
