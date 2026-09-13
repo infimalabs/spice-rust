@@ -13,6 +13,9 @@ use wire::manifest::{
 };
 use wire::{Digest, Domain, Outcome, ReplyPosition, SealedManifest};
 
+#[path = "support/git_repository.rs"]
+mod git_repository;
+
 const READY: Duration = Duration::from_secs(10);
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -93,20 +96,8 @@ fn release_seal_refuses_a_missing_receipt_before_manifest_publication() {
 fn release_seal_refuses_a_moved_head_without_publishing_a_manifest_pointer() {
     let fixture = Fixture::new();
     fs::write(fixture.root.join("later.txt"), "later source\n").expect("later source");
-    git(&fixture.root, &["add", "later.txt"]);
-    git(
-        &fixture.root,
-        &[
-            "-c",
-            "user.name=Spice Test",
-            "-c",
-            "user.email=spice@example.invalid",
-            "commit",
-            "--quiet",
-            "-m",
-            "later fixture",
-        ],
-    );
+    git_repository::stage(&fixture.root, &["later.txt"]);
+    git_repository::commit(&fixture.root, "later fixture");
 
     let output = fixture.invoke(&["--json", "release", "seal"]);
 
@@ -159,29 +150,16 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).expect("fixture root");
-        git(&root, &["init", "--quiet"]);
+        git_repository::initialize(&root);
         fs::write(
             root.join(".gitignore"),
             "/dist/stage/objects/\n/dist/stage/targets/\n/dist/stage-app/\n",
         )
         .expect("fixture ignores only generated release output");
         fs::write(root.join("source.txt"), "source\n").expect("fixture source");
-        git(&root, &["add", ".gitignore", "source.txt"]);
-        git(
-            &root,
-            &[
-                "-c",
-                "user.name=Spice Test",
-                "-c",
-                "user.email=spice@example.invalid",
-                "commit",
-                "--quiet",
-                "-m",
-                "fixture",
-            ],
-        );
-        let commit = git_output(&root, &["rev-parse", "HEAD"]);
-        let tree = git_output(&root, &["rev-parse", "HEAD^{tree}"]);
+        git_repository::stage(&root, &[".gitignore", "source.txt"]);
+        let commit = git_repository::commit(&root, "fixture");
+        let tree = git_repository::write_tree(&root);
         let app = stage_app(&root);
         let source = stage_proofs(&root, &commit, &app);
         Self {
@@ -398,28 +376,6 @@ fn stage_proofs(root: &Path, commit: &str, app: &Digest) -> Digest {
         .expect("proof receipt");
     }
     source
-}
-
-fn git(root: &Path, arguments: &[&str]) {
-    let output = Command::new("git")
-        .args(arguments)
-        .current_dir(root)
-        .output()
-        .expect("git launches");
-    assert!(output.status.success(), "git failed: {}", spoken(&output));
-}
-
-fn git_output(root: &Path, arguments: &[&str]) -> String {
-    let output = Command::new("git")
-        .args(arguments)
-        .current_dir(root)
-        .output()
-        .expect("git launches");
-    assert!(output.status.success(), "git failed: {}", spoken(&output));
-    String::from_utf8(output.stdout)
-        .expect("git output is UTF-8")
-        .trim()
-        .to_owned()
 }
 
 fn spoken(output: &Output) -> String {
