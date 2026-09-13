@@ -21,7 +21,7 @@ use super::model::{
 };
 use super::source::ResolvedSource;
 
-mod aggregate;
+pub(crate) mod aggregate;
 mod horizon;
 pub(crate) mod stream;
 mod work;

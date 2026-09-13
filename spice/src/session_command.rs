@@ -355,6 +355,12 @@ fn build_resolved(
         )?));
     }
     let filters = project::Filters::from_matches(matches)?;
+    if action == "timeline" {
+        let (limit, max_text) = project::timeline_options(matches)?;
+        let data =
+            dataset::aggregate::timeline::TimelineScan::scan(&sources, &filters, limit, max_text)?;
+        return Ok(project::timeline(data));
+    }
     if action == "summary" {
         let recent = project::summary_recent(matches)?;
         return Ok(dataset::Aggregate::scan(&sources, recent)?.summary());
@@ -385,7 +391,6 @@ fn build_resolved(
     }
     let data = dataset::load(&sources)?;
     match action {
-        "timeline" => project::timeline(&data, matches, &filters),
         "turns" => project::turns(&data, matches, &filters),
         _ => Err(refusal(
             "session::query-unregistered",
@@ -402,6 +407,7 @@ fn validate_options_before_source(matches: &ArgMatches, action: &str) -> Result<
         "messages" => project::message_options(matches).map(|_| ()),
         "commands" => project::command_options(matches).map(|_| ()),
         "commits" => project::commit_limit(matches).map(|_| ()),
+        "timeline" => project::timeline_options(matches).map(|_| ()),
         "compactions" => project::compaction_limit(matches).map(|_| ()),
         "briefing" | "sweep" => project::validate_window_options(matches, action),
         "slices" => {

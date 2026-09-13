@@ -21,8 +21,8 @@ use super::{
 };
 
 mod commit;
+pub(crate) mod timeline;
 pub(crate) use commit::CommitScan;
-
 const PHASE_GAP_SECONDS: i64 = 45 * 60;
 const PHASE_PATH_LIMIT: usize = 4_096;
 const SOURCE_LIMIT: usize = 64;

@@ -10,7 +10,7 @@ use super::dataset::{
 use super::model::{
     ActivityView, CompactionRecord, CompactionView, Dataset, DialogueLine, MessageRecord,
     MessageView, PhaseExample, PruningView, RecallAuthorities, RecallWindow, Report, SliceView,
-    TimelineView, TurnRecord, TurnView,
+    TurnRecord, TurnView,
 };
 
 // Two report families are split out by `mod` rather than left inline, following
@@ -20,15 +20,19 @@ use super::model::{
 // dispatch table in `session_command.rs` still reads as one column of reports.
 mod command;
 mod phase;
+mod timeline;
 
 pub(crate) use command::{commands, options as command_options};
 pub(crate) use phase::{PhaseOptions, options as phase_options, phase_example, turn_family};
+pub(crate) use timeline::{
+    compaction_view as timeline_compaction_view, options as timeline_options, report as timeline,
+    turn_view as timeline_turn_view,
+};
 
 const DEFAULT_RECALL_MAX_LINES: usize = 120;
 const DEFAULT_RECALL_MAX_BYTES: usize = 20_000;
 const DEFAULT_HORIZON_COMPACTIONS: usize = 3;
 const DEFAULT_SUMMARY_RECENT: usize = 8;
-const DEFAULT_TIMELINE_LIMIT: usize = 50;
 const DEFAULT_TIMELINE_TEXT: usize = 180;
 const DEFAULT_TURNS_LIMIT: usize = 20;
 const DEFAULT_COMPACTIONS_LIMIT: usize = 25;
@@ -89,7 +93,7 @@ impl SliceOptions {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct Filters {
     start: Option<String>,
     end: Option<String>,
@@ -171,6 +175,10 @@ impl Filters {
             .into_iter()
             .any(|text| text.to_lowercase().contains(needle))
         })
+    }
+
+    pub(crate) fn timeline_compaction_matches(&self, row: &CompactionRecord) -> bool {
+        self.turn_ids.is_empty() && self.tools.is_empty() && self.compaction_matches(row)
     }
 
     pub(crate) fn validate_turn_ids(&self, dataset: &Dataset) -> Result<(), Refusal> {
@@ -404,56 +412,6 @@ pub(crate) fn summary_recent(matches: &ArgMatches) -> Result<usize, Refusal> {
 
 pub(crate) fn tokens_by_file(matches: &ArgMatches) -> bool {
     flag(matches, "by-file")
-}
-
-pub(crate) fn timeline(
-    dataset: &Dataset,
-    matches: &ArgMatches,
-    filters: &Filters,
-) -> Result<Report, Refusal> {
-    filters.validate_turn_ids(dataset)?;
-    let limit = number(matches, "limit", DEFAULT_TIMELINE_LIMIT)?;
-    let max_text = number(matches, "max-text", DEFAULT_TIMELINE_TEXT)?;
-    let mut rows = dataset
-        .turns
-        .iter()
-        .filter(|turn| filters.turn_matches(turn))
-        .map(|turn| TimelineView {
-            source: turn.source.clone(),
-            ts: turn.start_ts.clone(),
-            kind: "turn".to_owned(),
-            turn_id: turn.turn_id.clone(),
-            text: clip(&turn_timeline_text(turn), max_text),
-        })
-        .collect::<Vec<_>>();
-    if filters.turn_ids.is_empty() && filters.tools.is_empty() {
-        rows.extend(
-            dataset
-                .compactions
-                .iter()
-                .filter(|row| filters.compaction_matches(row))
-                .map(|row| TimelineView {
-                    source: row.source.clone(),
-                    ts: row.ts.clone(),
-                    kind: "compaction".to_owned(),
-                    turn_id: None,
-                    text: clip(
-                        &format!(
-                            "assistant_before={} summary_after={} intent={} user_after={}",
-                            row.assistant_before, row.summary_after, row.intent, row.user_after
-                        ),
-                        max_text,
-                    ),
-                }),
-        );
-    }
-    rows.sort_by(|left, right| (&left.ts, &left.kind).cmp(&(&right.ts, &right.kind)));
-    trim_oldest(&mut rows, limit);
-    Ok(Report::Timeline {
-        sources: dataset.sources.clone(),
-        rows,
-        residues: dataset.residues.clone(),
-    })
 }
 
 pub(crate) fn turns(
