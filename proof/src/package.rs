@@ -278,43 +278,30 @@ impl PackageMember {
                     .map_err(|error| member_error(&self.path, &error.to_string()))?;
             }
             MemberBody::File { file, identity } => {
-                self.verify_file(file, identity)?;
                 let mut guard = file
                     .lock()
                     .expect("package member file lock is not poisoned");
+                require_file_identity(&guard, &self.path, identity)?;
                 guard
                     .seek(SeekFrom::Start(0))
                     .map_err(|error| member_error(&self.path, &error.to_string()))?;
-                let copied =
-                    std::io::copy(&mut Read::by_ref(&mut *guard).take(self.length), writer)
-                        .map_err(|error| member_error(&self.path, &error.to_string()))?;
-                if copied != self.length {
-                    return Err(member_error(&self.path, "file moved while it was copied"));
+                let (copied, digest) = Digest::copy_reader(
+                    member_domain(&self.path),
+                    &mut *guard,
+                    writer,
+                    self.length,
+                )
+                .map_err(|error| member_error(&self.path, &error.to_string()))?;
+                require_file_identity(&guard, &self.path, identity)?;
+                if copied != self.length || digest != self.digest {
+                    return Err(member_error(
+                        &self.path,
+                        "copied bytes differ from the admitted member",
+                    ));
                 }
-                drop(guard);
-                self.verify_file(file, identity)?;
             }
         }
         Ok(self.length)
-    }
-
-    fn verify_file(
-        &self,
-        file: &Arc<Mutex<File>>,
-        identity: &MemberFileIdentity,
-    ) -> Result<(), PackageError> {
-        let file = file
-            .lock()
-            .expect("package member file lock is not poisoned");
-        require_file_identity(&file, &self.path, identity)?;
-        let (length, digest) = digest_file(&file, &self.path, self.length)?;
-        if length != self.length || digest != self.digest {
-            return Err(member_error(
-                &self.path,
-                "file content moved after admission",
-            ));
-        }
-        require_file_identity(&file, &self.path, identity)
     }
 }
 
@@ -1000,8 +987,7 @@ mod tests {
         assert_eq!(tree.members().len(), 17);
         assert!(
             tree.members()
-                .windows(2)
-                .all(|pair| pair[0].path() < pair[1].path())
+                .is_sorted_by(|left, right| left.path() < right.path())
         );
         let admitted = admit_package_tree(tree.members()).expect("package tree re-admits");
         assert_eq!(admitted, *tree.package());
@@ -1023,8 +1009,8 @@ mod tests {
         );
         assert_eq!(member.read_bounded(8).expect("member reads"), b"streamed");
         let mut copied = Vec::new();
-        assert_eq!(member.copy_to(&mut copied).expect("member streams"), 8);
-        assert_eq!(copied, b"streamed");
+        let length = member.copy_to(&mut copied).expect("member streams");
+        assert_eq!((length, copied.as_slice()), (8, b"streamed".as_slice()));
         assert!(PackageMember::admit_inline("release/notes.md", DATA_MODE, b"x", 0).is_err());
         std::fs::remove_file(path).expect("file member removes");
     }

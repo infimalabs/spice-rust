@@ -375,6 +375,23 @@ impl Digest {
             .map(|(length, digest)| (length, Self(digest.to_hex().as_str().to_owned())))
     }
 
+    /// Copy and hash at most `limit` body bytes through one fixed buffer.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a zero limit, source or destination failure, or the first byte
+    /// beyond the admitted limit. A successful digest covers exactly the bytes
+    /// accepted by `writer`.
+    pub fn copy_reader(
+        domain: Domain,
+        reader: impl io::Read,
+        writer: &mut dyn io::Write,
+        limit: u64,
+    ) -> io::Result<(u64, Self)> {
+        digest::copy_reader(domain, reader, writer, limit)
+            .map(|(length, digest)| (length, Self(digest.to_hex().as_str().to_owned())))
+    }
+
     /// The digest as written.
     #[must_use]
     pub fn as_str(&self) -> &str {
