@@ -44,6 +44,7 @@ const MAX_WINDOW_COUNT: usize = 256;
 const MAX_WINDOW_LINES: usize = 4_096;
 const MAX_WINDOW_BYTES: usize = 1_048_576;
 const MAX_WINDOW_TEXT: usize = 16_384;
+const MAX_SLICE_ORDINAL: usize = 4 * 1_024;
 
 struct WindowPlan<'a> {
     horizon_start: Option<&'a str>,
@@ -61,6 +62,29 @@ pub(crate) struct MessageOptions {
     pub(crate) query: MessageQuery,
     max_text: usize,
     oldest_first: bool,
+}
+
+pub(crate) struct SliceOptions {
+    pub(crate) limit: usize,
+    max_text: usize,
+    full: bool,
+    selected: BTreeSet<String>,
+}
+
+impl SliceOptions {
+    pub(crate) fn scan(&self) -> (usize, bool) {
+        if self.selected.is_empty() {
+            return (self.limit.max(1), false);
+        }
+        let count = self
+            .selected
+            .iter()
+            .filter_map(|id| id.strip_prefix("compaction-")?.parse::<usize>().ok())
+            .max()
+            .unwrap_or(1)
+            .max(1);
+        (count, true)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -235,19 +259,6 @@ pub(crate) fn validate_window_options(matches: &ArgMatches, action: &str) -> Res
             )
         }
         _ => Ok(()),
-    }
-}
-
-pub(crate) fn window_horizon_count(
-    matches: &ArgMatches,
-    action: &str,
-) -> Result<Option<usize>, Refusal> {
-    match action {
-        "briefing" | "sweep" => horizon_count(matches, action).map(Some),
-        "slices" if values(matches, "slice-id").is_empty() => {
-            number_allow_zero(matches, "limit", DEFAULT_SLICES_LIMIT).map(Some)
-        }
-        _ => Ok(None),
     }
 }
 
@@ -477,24 +488,41 @@ pub(crate) fn compactions(dataset: WindowScan) -> Report {
     }
 }
 
-pub(crate) fn slices(dataset: &Dataset, matches: &ArgMatches) -> Result<Report, Refusal> {
-    let limit = number_allow_zero(matches, "limit", DEFAULT_SLICES_LIMIT)?;
-    let max_text = number(matches, "max-text", DEFAULT_SLICE_TEXT)?;
-    let full = one(matches, "view").is_some_and(|view| view == "full");
+pub(crate) fn slice_options(matches: &ArgMatches) -> Result<SliceOptions, Refusal> {
     let selected = values(matches, "slice-id")
         .into_iter()
         .collect::<BTreeSet<_>>();
-    let mut rows = build_slices(dataset, full, max_text);
-    rows.reverse();
-    if !selected.is_empty() {
-        rows.retain(|row| selected.contains(&row.id));
+    if selected
+        .iter()
+        .filter_map(|id| id.strip_prefix("compaction-")?.parse::<usize>().ok())
+        .any(|ordinal| ordinal > MAX_SLICE_ORDINAL)
+    {
+        return Err(refusal(
+            "session::bound-exceeded",
+            Some(format!("slice ordinal maximum={MAX_SLICE_ORDINAL}")),
+            "select a compaction slice within the repository ceiling",
+        ));
     }
-    rows.truncate(limit);
-    Ok(Report::Slices {
-        sources: dataset.sources.clone(),
-        rows,
-        residues: dataset.residues.clone(),
+    Ok(SliceOptions {
+        limit: number_allow_zero(matches, "limit", DEFAULT_SLICES_LIMIT)?,
+        max_text: number(matches, "max-text", DEFAULT_SLICE_TEXT)?,
+        full: one(matches, "view").is_some_and(|view| view == "full"),
+        selected,
     })
+}
+
+pub(crate) fn slices(dataset: WindowScan, options: SliceOptions) -> Report {
+    let mut rows = build_slices(&dataset, options.full, options.max_text);
+    rows.reverse();
+    if !options.selected.is_empty() {
+        rows.retain(|row| options.selected.contains(&row.id));
+    }
+    rows.truncate(options.limit);
+    Report::Slices {
+        sources: dataset.sources,
+        rows,
+        residues: dataset.residues,
+    }
 }
 
 pub(crate) fn message_options(matches: &ArgMatches) -> Result<MessageOptions, Refusal> {
@@ -741,7 +769,7 @@ fn turn_timeline_text(turn: &TurnRecord) -> String {
     )
 }
 
-fn build_slices(dataset: &Dataset, full: bool, max_text: usize) -> Vec<SliceView> {
+fn build_slices(dataset: &WindowScan, full: bool, max_text: usize) -> Vec<SliceView> {
     if dataset.compactions.is_empty() {
         let Some(first) = dataset.turns.first() else {
             return Vec::new();
@@ -750,11 +778,11 @@ fn build_slices(dataset: &Dataset, full: bool, max_text: usize) -> Vec<SliceView
             .turns
             .last()
             .expect("one first turn means one last turn");
-        let start = first.start_ts.clone();
-        let end = turn_end(last);
+        let start = first.view.start.clone();
+        let end = last.end.clone();
         return vec![slice_view(
             format!("{}-{}", compact_timestamp(&start), compact_timestamp(&end)),
-            first.source.clone(),
+            first.view.source.clone(),
             start,
             end,
             "full_history_no_compactions",
@@ -775,8 +803,8 @@ fn build_slices(dataset: &Dataset, full: bool, max_text: usize) -> Vec<SliceView
                 dataset
                     .turns
                     .iter()
-                    .filter(|turn| turn.source == compaction.source)
-                    .map(|turn| turn.start_ts.clone())
+                    .filter(|turn| turn.view.source == compaction.source)
+                    .map(|turn| turn.view.start.clone())
                     .min()
             })
             .unwrap_or_else(|| compaction.ts.clone());
@@ -784,9 +812,9 @@ fn build_slices(dataset: &Dataset, full: bool, max_text: usize) -> Vec<SliceView
             .turns
             .iter()
             .filter(|turn| {
-                turn.source == compaction.source
-                    && turn_end(turn) >= start
-                    && turn.start_ts <= compaction.ts
+                turn.view.source == compaction.source
+                    && turn.end >= start
+                    && turn.view.start <= compaction.ts
             })
             .collect::<Vec<_>>();
         rows.push(slice_view(
@@ -813,7 +841,7 @@ fn slice_view(
     end: String,
     basis: &str,
     anchor: &str,
-    turns: &[&TurnRecord],
+    turns: &[&WindowTurn],
     compaction: Option<&CompactionRecord>,
     full: bool,
     max_text: usize,
@@ -841,7 +869,7 @@ fn slice_view(
         end,
         basis: basis.to_owned(),
         anchor: anchor.to_owned(),
-        status: if turns.iter().any(|turn| !turn.completed) {
+        status: if turns.iter().any(|turn| !turn.view.completed) {
             "open"
         } else {
             "closed"
@@ -850,12 +878,12 @@ fn slice_view(
         compactions: usize::from(compaction.is_some()),
         turns: turns
             .iter()
-            .filter_map(|turn| turn.turn_id.clone())
+            .filter_map(|turn| turn.view.turn_id.clone())
             .collect(),
-        patches: turns.iter().map(|turn| turn.patch_count).sum(),
+        patches: turns.iter().map(|turn| turn.view.patches).sum(),
         crossing_files: turns
             .iter()
-            .flat_map(|turn| turn.touched_files.iter())
+            .flat_map(|turn| turn.view.touched_paths.iter())
             .map(|path| {
                 Path::new(path)
                     .file_name()

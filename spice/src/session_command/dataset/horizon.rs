@@ -40,6 +40,7 @@ pub(super) struct CompactionTracker {
 impl CompactionTracker {
     pub(super) fn new(
         limit: usize,
+        direction: FrontierDirection,
         start: Option<&str>,
         end: Option<&str>,
     ) -> Result<Self, Refusal> {
@@ -47,7 +48,7 @@ impl CompactionTracker {
             last_assistant: None,
             last: None,
             pending: None,
-            rows: ResultFrontier::new(limit, FrontierDirection::Newest)?,
+            rows: ResultFrontier::new(limit, direction)?,
             start: start.map(str::to_owned),
             end: end.map(str::to_owned),
         })

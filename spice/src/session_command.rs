@@ -377,17 +377,10 @@ fn build_resolved(
             project::sweep(&data, &filters)
         };
     }
-    let data = if let Some(count) = project::window_horizon_count(matches, action)? {
-        let horizon = dataset::recent_compaction_horizon(&sources, count, filters.end_bound())?;
-        let start = filters.start_bound().or(horizon.start.as_deref());
-        dataset::load_since(&sources, start)?
-    } else {
-        dataset::load(&sources)?
-    };
+    let data = dataset::load(&sources)?;
     match action {
         "timeline" => project::timeline(&data, matches, &filters),
         "turns" => project::turns(&data, matches, &filters),
-        "slices" => project::slices(&data, matches),
         "commits" => project::commits(&data, matches),
         _ => Err(refusal(
             "session::query-unregistered",
@@ -404,7 +397,11 @@ fn validate_options_before_source(matches: &ArgMatches, action: &str) -> Result<
         "messages" => project::message_options(matches).map(|_| ()),
         "commands" => project::command_options(matches).map(|_| ()),
         "compactions" => project::compaction_limit(matches).map(|_| ()),
-        "briefing" | "sweep" | "slices" => project::validate_window_options(matches, action),
+        "briefing" | "sweep" => project::validate_window_options(matches, action),
+        "slices" => {
+            project::validate_window_options(matches, action)?;
+            project::slice_options(matches).map(|_| ())
+        }
         _ => Ok(()),
     }
 }
@@ -435,6 +432,26 @@ fn build_bounded_event_report(
                 dataset::WindowOptions::Compactions { compactions: limit },
             )?;
             Ok(Some(project::compactions(data)))
+        }
+        "slices" => {
+            let options = project::slice_options(matches)?;
+            let (count, oldest) = options.scan();
+            let horizon = if oldest {
+                None
+            } else {
+                dataset::recent_compaction_horizon(sources, count, None)?.start
+            };
+            let data = dataset::WindowScan::scan(
+                sources,
+                horizon.as_deref(),
+                None,
+                &project::Filters::default(),
+                dataset::WindowOptions::Slices {
+                    compactions: count,
+                    oldest,
+                },
+            )?;
+            Ok(Some(project::slices(data, options)))
         }
         _ => Ok(None),
     }
