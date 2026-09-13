@@ -23,6 +23,7 @@ impl Corpus {
             .collect::<Vec<_>>();
         let selected_files = u32::try_from(documents.len()).unwrap_or(u32::MAX);
         let mut corpus = Self::default();
+        let mut ast_work = AstWork::new(started, configuration.deadline_ms);
         for (index, document) in documents.iter().enumerate() {
             let path = &document.path;
             let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -59,12 +60,19 @@ impl Corpus {
             };
             let name = module_name(path);
             let is_test = path_is_under_roots(path, &configuration.test_roots);
-            let mut module = Module::new(path.clone(), name.clone(), is_test, source);
+            let Some(mut module) =
+                Module::new(path.clone(), name.clone(), is_test, source, &mut ast_work)
+            else {
+                return ast_terminal(selected_files, corpus, index, path, &ast_work);
+            };
             {
-                let mut collector = AstCollector::new(&mut module, configuration);
+                let mut collector = AstCollector::new(&mut module, configuration, &mut ast_work);
                 for statement in suite {
                     collector.visit_stmt(statement);
                 }
+            }
+            if ast_work.failure().is_some() {
+                return ast_terminal(selected_files, corpus, index, path, &ast_work);
             }
             if let Some(existing_path) = corpus.modules.get(&name).map(|item| item.path.clone()) {
                 if existing_path.ends_with(".py") && path.ends_with(".pyi") {
@@ -602,6 +610,27 @@ impl Corpus {
         }
         output.into_iter().collect()
     }
+}
+
+fn ast_terminal(
+    selected_files: u32,
+    corpus: Corpus,
+    index: usize,
+    path: &str,
+    work: &AstWork,
+) -> (u32, Corpus, Terminal) {
+    let terminal = match work.failure() {
+        Some(AstFailure::Deadline) => Terminal::TimedOut {
+            elapsed_ms: work.elapsed_ms(),
+        },
+        Some(AstFailure::Nodes | AstFailure::RetainedText) => Terminal::WorkExhausted {
+            documents: u32::try_from(index).unwrap_or(u32::MAX),
+            path: path.to_owned(),
+            diagnostic: work.diagnostic(),
+        },
+        None => unreachable!("AST terminal requires one exhausted work bound"),
+    };
+    (selected_files, corpus, terminal)
 }
 
 impl HygieneConfiguration {
