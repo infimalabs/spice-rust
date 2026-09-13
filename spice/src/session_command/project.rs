@@ -6,9 +6,9 @@ use wire::Refusal;
 
 use super::dataset::{MessageDataset, MessageQuery, WindowOptions, WindowScan, WindowTurn};
 use super::model::{
-    ActivityView, CommandAudit, CommandRecord, CommandView, CommitView, CompactionRecord,
-    CompactionView, Dataset, DialogueLine, MessageRecord, MessageView, PhaseExample, PruningView,
-    RecallAuthorities, RecallWindow, Report, SliceView, TimelineView, TurnRecord, TurnView,
+    ActivityView, CommitView, CompactionRecord, CompactionView, Dataset, DialogueLine,
+    MessageRecord, MessageView, PhaseExample, PruningView, RecallAuthorities, RecallWindow, Report,
+    SliceView, TimelineView, TurnRecord, TurnView,
 };
 
 // Two report families are split out by `mod` rather than left inline, following
@@ -19,7 +19,7 @@ use super::model::{
 mod command;
 mod phase;
 
-pub(crate) use command::commands;
+pub(crate) use command::{commands, options as command_options};
 pub(crate) use phase::{PhaseOptions, options as phase_options, phase_example, turn_family};
 
 const DEFAULT_RECALL_MAX_LINES: usize = 120;

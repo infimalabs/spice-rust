@@ -332,15 +332,7 @@ fn build(
         return Ok(dataset::Aggregate::scan(&resolved, 0)?.thread(id));
     }
 
-    if action == "summary" {
-        project::summary_recent(matches)?;
-    } else if action == "phases" {
-        project::phase_options(matches)?;
-    } else if action == "messages" {
-        project::message_options(matches)?;
-    } else if matches!(action, "briefing" | "sweep" | "slices") {
-        project::validate_window_options(matches, action)?;
-    }
+    validate_options_before_source(matches, action)?;
     let files = project::values(matches, "FILES");
     let sources = source::resolve_inputs(&files, environment)?;
     build_resolved(matches, path, action, sources, environment)
@@ -353,10 +345,8 @@ fn build_resolved(
     sources: Vec<source::ResolvedSource>,
     environment: &Environment,
 ) -> Result<Report, Refusal> {
-    if action == "messages" {
-        let options = project::message_options(matches)?;
-        let messages = dataset::messages(&sources, &options.query)?;
-        return Ok(project::messages(messages, options));
+    if let Some(report) = build_bounded_event_report(matches, action, &sources)? {
+        return Ok(report);
     }
     let filters = project::Filters::from_matches(matches)?;
     if action == "summary" {
@@ -400,12 +390,41 @@ fn build_resolved(
         "compactions" => project::compactions(&data, matches),
         "slices" => project::slices(&data, matches),
         "commits" => project::commits(&data, matches),
-        "commands" => project::commands(&data, matches),
         _ => Err(refusal(
             "session::query-unregistered",
             Some(path.join(" ")),
             "select one generated session query leaf",
         )),
+    }
+}
+
+fn validate_options_before_source(matches: &ArgMatches, action: &str) -> Result<(), Refusal> {
+    match action {
+        "summary" => project::summary_recent(matches).map(|_| ()),
+        "phases" => project::phase_options(matches).map(|_| ()),
+        "messages" => project::message_options(matches).map(|_| ()),
+        "commands" => project::command_options(matches).map(|_| ()),
+        "briefing" | "sweep" | "slices" => project::validate_window_options(matches, action),
+        _ => Ok(()),
+    }
+}
+
+fn build_bounded_event_report(
+    matches: &ArgMatches,
+    action: &str,
+    sources: &[source::ResolvedSource],
+) -> Result<Option<Report>, Refusal> {
+    match action {
+        "messages" => {
+            let options = project::message_options(matches)?;
+            let messages = dataset::messages(sources, &options.query)?;
+            Ok(Some(project::messages(messages, options)))
+        }
+        "commands" => {
+            let options = project::command_options(matches)?;
+            project::commands(sources, options).map(Some)
+        }
+        _ => Ok(None),
     }
 }
 

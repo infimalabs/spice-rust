@@ -14,14 +14,12 @@ use super::super::project::{
 use super::super::source::ResolvedSource;
 use super::stream::{ForwardCursor, ForwardProgress};
 use super::{
-    DecodedRow, FoldState, FoldStorage, FrontierDirection, Marker, MessageQuery, ResidueLedger,
-    ResultFrontier, SessionWork, SessionWorkBudget, compaction_intent, compaction_text_bytes,
-    finish_fold, message_text_bytes, reduce_record, refusal, source_view_text_bytes,
-    stream_records,
+    DecodedRow, FoldState, FoldStorage, FrontierDirection, Marker, MessageQuery, OPEN_TOOL_LIMIT,
+    OPEN_TURN_LIMIT, ResidueLedger, ResultFrontier, SessionWork, SessionWorkBudget,
+    compaction_intent, compaction_text_bytes, finish_fold, message_text_bytes, reduce_record,
+    refusal, source_view_text_bytes, stream_records,
 };
 
-const OPEN_TURN_LIMIT: usize = 64;
-const OPEN_TOOL_LIMIT: usize = 1_024;
 const PHASE_GAP_SECONDS: i64 = 45 * 60;
 const PHASE_PATH_LIMIT: usize = 4_096;
 const SOURCE_LIMIT: usize = 64;
@@ -1405,7 +1403,7 @@ fn retain_recent(rows: &mut Vec<MessageRecord>, row: MessageRecord, limit: usize
     }
 }
 
-pub(super) fn admit_sources(sources: &[ResolvedSource]) -> Result<(), Refusal> {
+pub(crate) fn admit_sources(sources: &[ResolvedSource]) -> Result<(), Refusal> {
     if sources.len() <= SOURCE_LIMIT {
         return Ok(());
     }

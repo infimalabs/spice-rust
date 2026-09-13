@@ -23,19 +23,21 @@ use super::source::ResolvedSource;
 
 mod aggregate;
 mod horizon;
-mod stream;
+pub(crate) mod stream;
 mod work;
 
-pub(crate) use aggregate::{Aggregate, WindowOptions, WindowScan, WindowTurn};
-pub(crate) use horizon::recent_compaction_horizon;
+pub(crate) use aggregate::{Aggregate, WindowOptions, WindowScan, WindowTurn, admit_sources};
+pub(crate) use horizon::{recent_compaction_horizon, recent_turn_start};
 use stream::stream_records;
-use work::{ResidueLedger, SessionWork, SessionWorkBudget, text_bytes};
+pub(crate) use work::{ResidueLedger, SessionWork, SessionWorkBudget, text_bytes};
 
 const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_FRONTIER_RESULTS: usize = 4 * 1024;
+pub(crate) const OPEN_TURN_LIMIT: usize = 64;
+pub(crate) const OPEN_TOOL_LIMIT: usize = 1_024;
 
 #[derive(Debug)]
-struct TypedRecord {
+pub(crate) struct TypedRecord {
     source: String,
     line: u64,
     vendor: Vendor,
@@ -44,7 +46,7 @@ struct TypedRecord {
 }
 
 #[derive(Debug)]
-struct Marker {
+pub(crate) struct Marker {
     source: String,
     position: u64,
     ts: String,
@@ -181,12 +183,12 @@ pub(crate) fn messages(
 }
 
 #[derive(Debug)]
-struct PendingTool {
-    turn: usize,
-    command: Option<usize>,
+pub(crate) struct PendingTool {
+    pub(crate) turn: usize,
+    pub(crate) command: Option<usize>,
 }
 
-enum DecodedRow {
+pub(crate) enum DecodedRow {
     Typed(TypedRecord),
     Residue(Residue),
     Ignored,
@@ -417,17 +419,17 @@ fn read_residue(path: &Path, line: u64, error: &io::Error) -> Residue {
 }
 
 #[derive(Default)]
-struct FoldState {
-    current: Option<usize>,
-    pending: BTreeMap<String, PendingTool>,
+pub(crate) struct FoldState {
+    pub(crate) current: Option<usize>,
+    pub(crate) pending: BTreeMap<String, PendingTool>,
 }
 
-struct FoldStorage<'a> {
-    dataset: &'a mut Dataset,
-    markers: &'a mut Vec<Marker>,
-    residues: &'a mut ResidueLedger,
-    state: &'a mut FoldState,
-    tokens: Option<&'a mut Vec<TokenRecord>>,
+pub(crate) struct FoldStorage<'a> {
+    pub(crate) dataset: &'a mut Dataset,
+    pub(crate) markers: &'a mut Vec<Marker>,
+    pub(crate) residues: &'a mut ResidueLedger,
+    pub(crate) state: &'a mut FoldState,
+    pub(crate) tokens: Option<&'a mut Vec<TokenRecord>>,
 }
 
 struct WindowFold<'a> {
@@ -478,7 +480,7 @@ impl<'a> WindowFold<'a> {
 }
 
 #[derive(Clone, Copy)]
-enum FrontierDirection {
+pub(crate) enum FrontierDirection {
     Oldest,
     Newest,
 }
@@ -489,7 +491,7 @@ enum FrontierProgress<C> {
     Refused { continuation: C, error: Refusal },
 }
 
-struct ResultFrontier<T> {
+pub(crate) struct ResultFrontier<T> {
     direction: FrontierDirection,
     limit: NonZeroUsize,
     rows: VecDeque<T>,
@@ -501,7 +503,7 @@ struct FrontierPage<T, C> {
 }
 
 impl<T> ResultFrontier<T> {
-    fn new(limit: usize, direction: FrontierDirection) -> Result<Self, Refusal> {
+    pub(crate) fn new(limit: usize, direction: FrontierDirection) -> Result<Self, Refusal> {
         let limit = frontier_limit(limit)?;
         Ok(Self {
             direction,
@@ -510,7 +512,7 @@ impl<T> ResultFrontier<T> {
         })
     }
 
-    fn push(&mut self, row: T) {
+    pub(crate) fn push(&mut self, row: T) {
         if self.rows.len() < self.limit.get() {
             self.rows.push_back(row);
         } else if matches!(self.direction, FrontierDirection::Newest) {
@@ -523,7 +525,7 @@ impl<T> ResultFrontier<T> {
         self.rows.len() == self.limit.get()
     }
 
-    fn into_rows(self) -> Vec<T> {
+    pub(crate) fn into_rows(self) -> Vec<T> {
         self.rows.into()
     }
 
@@ -535,7 +537,7 @@ impl<T> ResultFrontier<T> {
     }
 }
 
-fn frontier_limit(limit: usize) -> Result<NonZeroUsize, Refusal> {
+pub(crate) fn frontier_limit(limit: usize) -> Result<NonZeroUsize, Refusal> {
     NonZeroUsize::new(limit)
         .filter(|limit| limit.get() <= MAX_FRONTIER_RESULTS)
         .ok_or_else(|| {
@@ -547,7 +549,7 @@ fn frontier_limit(limit: usize) -> Result<NonZeroUsize, Refusal> {
         })
 }
 
-fn reduce_record(
+pub(crate) fn reduce_record(
     record: &TypedRecord,
     storage: &mut FoldStorage<'_>,
     work: &mut SessionWork,
@@ -743,7 +745,7 @@ fn reduce_tool(
     }
 }
 
-fn finish_fold(
+pub(crate) fn finish_fold(
     dataset: &mut Dataset,
     state: FoldState,
     work: &mut SessionWork,
@@ -764,7 +766,7 @@ fn record_timestamp(record: &TypedRecord) -> &str {
         .expect("typed session records require normalized timestamps")
 }
 
-fn source_view_text_bytes(source: &SourceView) -> u64 {
+pub(crate) fn source_view_text_bytes(source: &SourceView) -> u64 {
     text_bytes(
         [source.path.as_str(), source.name.as_str()]
             .into_iter()
