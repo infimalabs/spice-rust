@@ -566,13 +566,7 @@ fn assert_recall_and_commands(file: &str, start: &str, end: &str) {
     );
 }
 
-fn assert_commits_compactions_and_messages(file: &str, peer: &str, start: &str, end: &str) {
-    let commits = reply_forms(
-        &strings(&["session", "commits", file, peer, "--limit", "3"]),
-        &[],
-        "commits",
-    );
-    assert_commit_rows(&commits, file, peer);
+fn assert_compactions_and_messages(file: &str, start: &str, end: &str) {
     let compactions = reply_forms(
         &strings(&["session", "compactions", file, "--limit", "1"]),
         &[],
@@ -787,15 +781,12 @@ fn assert_tokens_turns_and_pipelines(file: &str, start: &str, end: &str) {
 fn every_session_query_accepts_current_filters_and_crosses_both_forms() {
     let scratch = Scratch::new("query-family");
     let transcript = scratch.path().join("codex-session.jsonl");
-    let peer = scratch.path().join("claude-session.jsonl");
     write_jsonl(&transcript, &codex_rows());
-    write_jsonl(&peer, &claude_rows());
     let file = transcript.to_string_lossy().into_owned();
-    let peer = peer.to_string_lossy().into_owned();
     let start = "2026-01-01T00:00:00Z";
     let end = "2026-01-01T00:00:18Z";
     assert_recall_and_commands(&file, start, end);
-    assert_commits_compactions_and_messages(&file, &peer, start, end);
+    assert_compactions_and_messages(&file, start, end);
     assert_phases_slices_and_summary(&file, start, end);
     assert_sweep_and_timeline(&file, start, end);
     assert_tokens_turns_and_pipelines(&file, start, end);
@@ -992,10 +983,18 @@ fn provider_turn_identity_and_final_deduplication_cross_query_folds() {
     let claude_path = scratch.path().join("claude.jsonl");
     write_jsonl(&codex_path, &codex_rows());
     write_jsonl(&claude_path, &claude_rows());
+    let codex = codex_path.to_string_lossy();
+    let claude = claude_path.to_string_lossy();
+    let commits = reply_forms(
+        &strings(&["session", "commits", &codex, &claude, "--limit", "3"]),
+        &[],
+        "commits",
+    );
+    assert_commit_rows(&commits, &codex, &claude);
 
-    assert_codex_final_rows(&codex_path.to_string_lossy());
-    assert_codex_turn_and_recall_rows(&codex_path.to_string_lossy());
-    assert_claude_identity_rows(&claude_path.to_string_lossy());
+    assert_codex_final_rows(&codex);
+    assert_codex_turn_and_recall_rows(&codex);
+    assert_claude_identity_rows(&claude);
 
     scratch.remove();
 }
