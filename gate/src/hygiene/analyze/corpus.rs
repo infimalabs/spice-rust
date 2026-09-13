@@ -1,5 +1,7 @@
 use super::*;
 
+mod resolve;
+
 const GRAPH_SYMBOL_LIMIT: usize = 1_000_000;
 const GRAPH_EDGE_LIMIT: usize = 1_000_000;
 const GRAPH_WORKLIST_LIMIT: usize = 1_000_000;
@@ -375,11 +377,8 @@ impl Corpus {
                 reach: self.suite_reach(work)?,
             },
             HygieneTraversal::SymbolGraph | HygieneTraversal::PythonDeclarations => {
-                if !work.steps(self.traversal_steps(traversal)) {
-                    return None;
-                }
-                let resolved = self.resolved_references();
-                let reachable = self.production_symbols(&resolved);
+                let resolved = self.resolved_references(work)?;
+                let reachable = self.production_symbols(&resolved, work)?;
                 AnalysisEvidence::SymbolExtraction {
                     declarations: u32::try_from(self.declarations().count()).unwrap_or(u32::MAX),
                     production_references: u32::try_from(
@@ -422,10 +421,7 @@ impl Corpus {
                 }
             }
             HygieneTraversal::PrivateBoundaries => {
-                if !work.steps(self.traversal_steps(traversal)) {
-                    return None;
-                }
-                let couplings = self.private_couplings();
+                let couplings = self.private_couplings(work)?;
                 let admitted = couplings
                     .iter()
                     .filter(|coupling| configuration.exception_matches(coupling))
@@ -467,15 +463,9 @@ impl Corpus {
         focused: bool,
         work: &mut GraphWork,
     ) -> Option<Vec<HygieneFinding>> {
-        let declarations = self.declarations().count();
-        let references = self.modules.values().fold(0_usize, |total, module| {
-            total.saturating_add(module.references.len())
-        });
         let estimate = match gate {
             GateId::Reachability => self.modules.len().saturating_mul(self.edges.len()),
-            GateId::SymbolReachability | GateId::PythonUnused => declarations
-                .saturating_mul(references.max(1))
-                .saturating_mul(declarations.max(1)),
+            GateId::SymbolReachability | GateId::PythonUnused => 0,
             GateId::AssertionFreeTests => self.tests().count(),
             GateId::PrivateInternals => self
                 .modules
@@ -521,126 +511,166 @@ impl Corpus {
     }
 
     fn reachability_findings(&self, work: &mut GraphWork) -> Option<Vec<HygieneFinding>> {
-        retain_findings(
-            work,
-            self.test_reachable
-                .difference(&self.production_reachable)
-                .filter(|name| !self.test_modules.contains(*name))
-                .filter_map(|name| {
-                    let module = self.modules.get(name)?;
-                    let imported_by = self
-                        .edges
-                        .iter()
-                        .filter(|(from, to)| to == name && self.test_reachable.contains(from))
-                        .filter_map(|(from, _)| {
-                            self.modules.get(from).map(|item| item.path.clone())
-                        })
-                        .collect();
-                    Some(HygieneFinding {
-                        path: module.path.clone(),
-                        line: None,
-                        detail: HygieneFindingDetail::ModuleReachability {
-                            provider: "python".to_owned(),
-                            subject: name.clone(),
-                            imported_by,
-                        },
-                    })
-                }),
-        )
+        let mut findings = Vec::new();
+        for name in self
+            .test_reachable
+            .difference(&self.production_reachable)
+            .filter(|name| !self.test_modules.contains(*name))
+        {
+            let Some(module) = self.modules.get(name) else {
+                continue;
+            };
+            let importers = || {
+                self.edges
+                    .iter()
+                    .filter(|(from, to)| to == name && self.test_reachable.contains(from))
+                    .filter_map(|(from, _)| self.modules.get(from).map(|item| item.path.as_str()))
+            };
+            let imported_bytes = string_bytes(work, importers())?;
+            let bytes = module
+                .path
+                .len()
+                .saturating_add("python".len())
+                .saturating_add(name.len())
+                .saturating_add(imported_bytes);
+            if !work.admit_finding(bytes) {
+                return None;
+            }
+            let imported_by = clone_strings(work, importers())?;
+            findings.push(HygieneFinding {
+                path: module.path.clone(),
+                line: None,
+                detail: HygieneFindingDetail::ModuleReachability {
+                    provider: "python".to_owned(),
+                    subject: name.clone(),
+                    imported_by,
+                },
+            });
+        }
+        Some(findings)
     }
 
     fn symbol_reachability_findings(&self, work: &mut GraphWork) -> Option<Vec<HygieneFinding>> {
-        let references = self.resolved_references();
-        let production = self.production_symbols(&references);
-        retain_findings(
-            work,
-            self.declarations().filter_map(|(module, declaration)| {
-                let production_reachable =
-                    production.contains(&(module.name.clone(), declaration.name.clone()));
-                let mut imported_by: Vec<_> = references
+        let references = self.resolved_references(work)?;
+        let production = self.production_symbols(&references, work)?;
+        let mut findings = Vec::new();
+        for (module, declaration) in self.declarations() {
+            let production_reachable =
+                production.contains(&(module.name.clone(), declaration.name.clone()));
+            let importers = || {
+                references
                     .iter()
                     .filter(|reference| {
                         reference.from_test && reference.matches(&module.name, declaration)
                     })
-                    .map(|reference| reference.path.clone())
-                    .collect();
-                imported_by.sort();
-                imported_by.dedup();
-                if production_reachable || imported_by.is_empty() {
-                    return None;
-                }
-                Some(HygieneFinding {
-                    path: module.path.clone(),
-                    line: Some(declaration.line),
-                    detail: HygieneFindingDetail::SymbolReachability {
-                        provider: "python".to_owned(),
-                        module: module.name.clone(),
-                        symbol: declaration.name.clone(),
-                        symbol_kind: declaration.kind.to_owned(),
-                        imported_by,
-                    },
-                })
-            }),
-        )
+                    .map(|reference| reference.path.as_str())
+            };
+            if production_reachable || importers().next().is_none() {
+                continue;
+            }
+            let imported_bytes = string_bytes(work, importers())?;
+            let bytes = saturating_sum([
+                module.path.len(),
+                "python".len(),
+                module.name.len(),
+                declaration.name.len(),
+                declaration.kind.len(),
+                imported_bytes,
+            ]);
+            if !work.admit_finding(bytes) {
+                return None;
+            }
+            let mut imported_by = clone_strings(work, importers())?;
+            imported_by.sort();
+            imported_by.dedup();
+            findings.push(HygieneFinding {
+                path: module.path.clone(),
+                line: Some(declaration.line),
+                detail: HygieneFindingDetail::SymbolReachability {
+                    provider: "python".to_owned(),
+                    module: module.name.clone(),
+                    symbol: declaration.name.clone(),
+                    symbol_kind: declaration.kind.to_owned(),
+                    imported_by,
+                },
+            });
+        }
+        Some(findings)
     }
 
     fn python_unused_findings(&self, work: &mut GraphWork) -> Option<Vec<HygieneFinding>> {
-        let references = self.resolved_references();
-        let production = self.production_symbols(&references);
-        retain_findings(
-            work,
-            self.declarations()
-                .filter(|(_, declaration)| declaration.top_level)
-                .filter_map(|(module, declaration)| {
-                    if production.contains(&(module.name.clone(), declaration.name.clone())) {
-                        return None;
-                    }
-                    let mut test_references: Vec<_> = references
-                        .iter()
-                        .filter(|reference| {
-                            reference.from_test && reference.matches(&module.name, declaration)
-                        })
-                        .map(|reference| reference.path.clone())
-                        .collect();
-                    test_references.sort();
-                    test_references.dedup();
-                    let (status, reason) = if test_references.is_empty() {
-                        (
-                            PythonUnusedStatus::CandidateUnused,
-                            "no production or test references",
-                        )
-                    } else {
-                        (PythonUnusedStatus::TestOnly, "references only in tests")
-                    };
-                    Some(HygieneFinding {
-                        path: module.path.clone(),
-                        line: Some(declaration.line),
-                        detail: HygieneFindingDetail::PythonUnused {
-                            module: module.name.clone(),
-                            symbol: declaration.name.clone(),
-                            declaration_kind: declaration.kind.to_owned(),
-                            status,
-                            reason: reason.to_owned(),
-                            test_references,
-                        },
+        let references = self.resolved_references(work)?;
+        let production = self.production_symbols(&references, work)?;
+        let mut findings = Vec::new();
+        for (module, declaration) in self.declarations().filter(|(_, row)| row.top_level) {
+            if production.contains(&(module.name.clone(), declaration.name.clone())) {
+                continue;
+            }
+            let test_paths = || {
+                references
+                    .iter()
+                    .filter(|reference| {
+                        reference.from_test && reference.matches(&module.name, declaration)
                     })
-                }),
-        )
+                    .map(|reference| reference.path.as_str())
+            };
+            let test_only = test_paths().next().is_some();
+            let reason = if test_only {
+                "references only in tests"
+            } else {
+                "no production or test references"
+            };
+            let test_bytes = string_bytes(work, test_paths())?;
+            let bytes = saturating_sum([
+                module.path.len(),
+                module.name.len(),
+                declaration.name.len(),
+                declaration.kind.len(),
+                reason.len(),
+                test_bytes,
+            ]);
+            if !work.admit_finding(bytes) {
+                return None;
+            }
+            let mut test_references = clone_strings(work, test_paths())?;
+            test_references.sort();
+            test_references.dedup();
+            let status = if test_only {
+                PythonUnusedStatus::TestOnly
+            } else {
+                PythonUnusedStatus::CandidateUnused
+            };
+            findings.push(HygieneFinding {
+                path: module.path.clone(),
+                line: Some(declaration.line),
+                detail: HygieneFindingDetail::PythonUnused {
+                    module: module.name.clone(),
+                    symbol: declaration.name.clone(),
+                    declaration_kind: declaration.kind.to_owned(),
+                    status,
+                    reason: reason.to_owned(),
+                    test_references,
+                },
+            });
+        }
+        Some(findings)
     }
 
     fn assertion_free_findings(&self, work: &mut GraphWork) -> Option<Vec<HygieneFinding>> {
-        retain_findings(
-            work,
-            self.tests()
-                .filter(|(_, test)| test.assertions == 0)
-                .map(|(module, test)| HygieneFinding {
-                    path: module.path.clone(),
-                    line: Some(test.line),
-                    detail: HygieneFindingDetail::AssertionFree {
-                        test_name: test.name.clone(),
-                    },
-                }),
-        )
+        let mut findings = Vec::new();
+        for (module, test) in self.tests().filter(|(_, test)| test.assertions == 0) {
+            if !work.admit_finding(module.path.len().saturating_add(test.name.len())) {
+                return None;
+            }
+            findings.push(HygieneFinding {
+                path: module.path.clone(),
+                line: Some(test.line),
+                detail: HygieneFindingDetail::AssertionFree {
+                    test_name: test.name.clone(),
+                },
+            });
+        }
+        Some(findings)
     }
 
     fn private_findings(
@@ -649,11 +679,24 @@ impl Corpus {
         focused: bool,
         work: &mut GraphWork,
     ) -> Option<Vec<HygieneFinding>> {
-        let couplings = self.private_couplings();
-        let findings = couplings
-            .iter()
-            .filter(|coupling| !configuration.exception_matches(coupling))
-            .map(|coupling| HygieneFinding {
+        let couplings = self.private_couplings(work)?;
+        let mut findings = Vec::new();
+        for coupling in &couplings {
+            if !work.steps(configuration.private_exceptions.len()) {
+                return None;
+            }
+            if configuration.exception_matches(coupling) {
+                continue;
+            }
+            if !work.admit_finding(saturating_sum([
+                coupling.path.len(),
+                coupling.test_name.len(),
+                coupling.kind.len(),
+                coupling.target.len(),
+            ])) {
+                return None;
+            }
+            findings.push(HygieneFinding {
                 path: coupling.path.clone(),
                 line: Some(coupling.line),
                 detail: HygieneFindingDetail::PrivateCoupling {
@@ -661,23 +704,35 @@ impl Corpus {
                     coupling_kind: coupling.kind.to_owned(),
                     target: coupling.target.clone(),
                 },
-            })
-            .chain(
-                configuration
-                    .private_exceptions
-                    .iter()
-                    .filter(|exception| !focused || self.private_exception_relevant(exception))
-                    .filter(|exception| !couplings.iter().any(|item| exception.matches(item)))
-                    .map(|exception| HygieneFinding {
-                        path: "spice-rust.toml".to_owned(),
-                        line: None,
-                        detail: HygieneFindingDetail::StalePrivateException {
-                            test_name: exception.test_name.clone(),
-                            target: exception.target.clone(),
-                        },
-                    }),
-            );
-        retain_findings(work, findings)
+            });
+        }
+        for exception in &configuration.private_exceptions {
+            let relevance_steps = self.modules.len().saturating_add(self.tests().count());
+            if !work.steps(relevance_steps.saturating_add(couplings.len())) {
+                return None;
+            }
+            if (focused && !self.private_exception_relevant(exception))
+                || couplings.iter().any(|item| exception.matches(item))
+            {
+                continue;
+            }
+            if !work.admit_finding(saturating_sum([
+                "spice-rust.toml".len(),
+                exception.test_name.len(),
+                exception.target.len(),
+            ])) {
+                return None;
+            }
+            findings.push(HygieneFinding {
+                path: "spice-rust.toml".to_owned(),
+                line: None,
+                detail: HygieneFindingDetail::StalePrivateException {
+                    test_name: exception.test_name.clone(),
+                    target: exception.target.clone(),
+                },
+            });
+        }
+        Some(findings)
     }
 
     fn private_exception_relevant(&self, exception: &PrivateCouplingException) -> bool {
@@ -785,119 +840,6 @@ impl Corpus {
             })
             .collect()
     }
-
-    pub(super) fn resolved_references(&self) -> Vec<ResolvedReference> {
-        let known: BTreeSet<_> = self.modules.keys().cloned().collect();
-        let declarations: BTreeSet<_> = self
-            .declarations()
-            .map(|(module, declaration)| (module.name.clone(), declaration.name.clone()))
-            .collect();
-        let mut output = BTreeSet::new();
-        for module in self.modules.values() {
-            let from_test = self.test_reachable.contains(&module.name)
-                && !self.production_reachable.contains(&module.name);
-            if !from_test && !self.production_reachable.contains(&module.name) {
-                continue;
-            }
-            for reference in &module.references {
-                if let Some((target_module, symbol)) =
-                    module.resolve_reference(&reference.name, &known, &declarations)
-                {
-                    output.insert(ResolvedReference {
-                        target_module,
-                        symbol,
-                        source_module: module.name.clone(),
-                        source_symbol: reference.owner.clone(),
-                        path: module.path.clone(),
-                        from_test,
-                    });
-                }
-            }
-        }
-        output.into_iter().collect()
-    }
-
-    fn production_symbols(&self, references: &[ResolvedReference]) -> BTreeSet<(String, String)> {
-        let declarations: BTreeSet<_> = self
-            .declarations()
-            .map(|(module, declaration)| (module.name.clone(), declaration.name.clone()))
-            .collect();
-        let mut reached: BTreeSet<_> = self
-            .declarations()
-            .filter(|(module, declaration)| {
-                declaration.top_level && self.production_roots.contains(&module.name)
-            })
-            .map(|(module, declaration)| (module.name.clone(), declaration.name.clone()))
-            .collect();
-        for reference in references
-            .iter()
-            .filter(|reference| !reference.from_test && reference.source_symbol.is_none())
-        {
-            let target = (reference.target_module.clone(), reference.symbol.clone());
-            if declarations.contains(&target) {
-                reached.insert(target);
-            }
-        }
-
-        loop {
-            let before = reached.len();
-            for reference in references.iter().filter(|reference| !reference.from_test) {
-                let Some(source_symbol) = &reference.source_symbol else {
-                    continue;
-                };
-                let source = (reference.source_module.clone(), source_symbol.clone());
-                if !reached.contains(&source) {
-                    continue;
-                }
-                let target = (reference.target_module.clone(), reference.symbol.clone());
-                if declarations.contains(&target) {
-                    reached.insert(target);
-                }
-            }
-            if reached.len() == before {
-                break;
-            }
-        }
-        reached
-    }
-
-    fn private_couplings(&self) -> Vec<PrivateCoupling> {
-        let packages = self.production_packages();
-        let known: BTreeSet<_> = self.modules.keys().cloned().collect();
-        let declarations = BTreeSet::new();
-        let mut output = BTreeSet::new();
-        for module in self.modules.values().filter(|module| module.is_test) {
-            for coupling in &module.private_couplings {
-                let target = module
-                    .resolve_reference(&coupling.target, &known, &declarations)
-                    .map_or_else(
-                        || coupling.target.clone(),
-                        |(name, symbol)| {
-                            if symbol.is_empty() {
-                                name
-                            } else {
-                                format!("{name}.{symbol}")
-                            }
-                        },
-                    );
-                if target
-                    .split('.')
-                    .next()
-                    .is_some_and(|package| packages.contains(package))
-                    && has_private_component(&target)
-                {
-                    output.insert(PrivateCoupling {
-                        path: module.path.clone(),
-                        line: coupling.line,
-                        test_name: coupling.test_name.clone(),
-                        kind: coupling.kind,
-                        target,
-                    });
-                }
-            }
-        }
-        output.into_iter().collect()
-    }
 }
 
 fn ast_terminal(
@@ -987,16 +929,30 @@ fn reachable_bounded(
     Some(reached)
 }
 
-fn retain_findings(
+fn string_bytes<'a>(
     work: &mut GraphWork,
-    findings: impl IntoIterator<Item = HygieneFinding>,
-) -> Option<Vec<HygieneFinding>> {
-    let mut retained = Vec::new();
-    for finding in findings {
-        if !work.admit_finding(finding_bytes(&finding)) {
+    values: impl IntoIterator<Item = &'a str>,
+) -> Option<usize> {
+    let mut bytes = 0_usize;
+    for value in values {
+        if !work.step() {
             return None;
         }
-        retained.push(finding);
+        bytes = bytes.saturating_add(value.len());
+    }
+    Some(bytes)
+}
+
+fn clone_strings<'a>(
+    work: &mut GraphWork,
+    values: impl IntoIterator<Item = &'a str>,
+) -> Option<Vec<String>> {
+    let mut retained = Vec::new();
+    for value in values {
+        if !work.step() {
+            return None;
+        }
+        retained.push(value.to_owned());
     }
     Some(retained)
 }

@@ -905,66 +905,6 @@ fn native_executable_digest() -> Option<&'static str> {
         .as_deref()
 }
 
-fn finding_bytes(finding: &HygieneFinding) -> usize {
-    let strings = match &finding.detail {
-        HygieneFindingDetail::ModuleReachability {
-            provider,
-            subject,
-            imported_by,
-        } => saturating_sum(
-            [provider.len(), subject.len()]
-                .into_iter()
-                .chain(imported_by.iter().map(String::len)),
-        ),
-        HygieneFindingDetail::SymbolReachability {
-            provider,
-            module,
-            symbol,
-            symbol_kind,
-            imported_by,
-        } => saturating_sum(
-            [
-                provider.len(),
-                module.len(),
-                symbol.len(),
-                symbol_kind.len(),
-            ]
-            .into_iter()
-            .chain(imported_by.iter().map(String::len)),
-        ),
-        HygieneFindingDetail::PythonUnused {
-            module,
-            symbol,
-            declaration_kind,
-            reason,
-            test_references,
-            ..
-        } => saturating_sum(
-            [
-                module.len(),
-                symbol.len(),
-                declaration_kind.len(),
-                reason.len(),
-            ]
-            .into_iter()
-            .chain(test_references.iter().map(String::len)),
-        ),
-        HygieneFindingDetail::AssertionFree { test_name } => test_name.len(),
-        HygieneFindingDetail::PrivateCoupling {
-            test_name,
-            coupling_kind,
-            target,
-        } => test_name
-            .len()
-            .saturating_add(coupling_kind.len())
-            .saturating_add(target.len()),
-        HygieneFindingDetail::StalePrivateException { test_name, target } => {
-            test_name.len().saturating_add(target.len())
-        }
-    };
-    finding.path.len().saturating_add(strings)
-}
-
 fn saturating_sum(lengths: impl IntoIterator<Item = usize>) -> usize {
     lengths
         .into_iter()
