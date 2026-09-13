@@ -67,6 +67,32 @@ fn capture_record_for(
 }
 
 #[test]
+fn zero_event_codex_turn_start_publishes_a_boundary_before_new_prose() {
+    let publisher = Messages::default();
+    let mut state = MessageState::default();
+    let records = [
+        br#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}"#.as_slice(),
+        br#"{"type":"item.completed","item":{"id":"commentary","type":"agent_message","text":"new work"}}"#.as_slice(),
+    ];
+    let mut offset = 0;
+    for bytes in records {
+        let record = capture_record(bytes, offset);
+        offset += bytes.len() as u64;
+        publish_agent_messages(&publisher, &record, &mut state, None)
+            .expect("turn sequence publishes");
+    }
+
+    let messages = publisher.0.lock().expect("message lock");
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0].activity, wire::AgentActivityKind::Turn);
+    assert_eq!(messages[0].text, "New turn");
+    assert_eq!(messages[0].locus.event, TURN_BOUNDARY_EVENT);
+    assert_eq!(messages[1].activity, wire::AgentActivityKind::Prose);
+    assert_eq!(messages[1].text, "new work");
+    assert!(messages[0].chronology_key() < messages[1].chronology_key());
+}
+
+#[test]
 fn completed_codex_tool_publishes_its_operation_before_the_outcome() {
     let publisher = Messages::default();
     let mut state = MessageState::default();

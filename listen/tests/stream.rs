@@ -7,7 +7,7 @@ use listen::{
     Checkpoint, Dialect, EventKind, Position, RecordPayload, Scan, ScanError, Span, TailBudget,
     scan, scan_before, scan_tail,
 };
-use tape::Tape;
+use tape::{Locus, Tape};
 
 const PROSE: &[u8] =
     br#"{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"working"}}"#;
@@ -332,6 +332,29 @@ fn complete_events_and_residue_advance_while_a_partial_record_does_not() {
     assert_eq!(resumed.records.len(), 1);
     assert!(resumed.pending.is_empty());
     assert_eq!(resumed.records[0].next, resumed.checkpoint);
+    scratch.remove();
+}
+
+#[test]
+fn scan_preserves_context_and_locus_for_a_zero_event_turn_start() {
+    let scratch = Scratch::new("turn-start-context");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+    let started = line(
+        br#"{"timestamp":"2026-08-09T01:00:00Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}"#,
+    );
+    tape.tee(&started).expect("turn start is durable");
+
+    let scanned = scan(scratch.path(), Dialect::Codex, None).expect("turn start scans");
+
+    let [record] = scanned.records.as_slice() else {
+        panic!("turn start remains one record")
+    };
+    assert_eq!(record.locus, Locus::new(1, 0, started.len() as u64));
+    let context = record.context.as_ref().expect("typed context survives");
+    assert_eq!(context.timestamp.as_deref(), Some("2026-08-09T01:00:00Z"));
+    assert_eq!(context.turn_id.as_deref(), Some("turn-1"));
+    assert_eq!(context.turn, Some(listen::TurnMoment::Started));
+    assert!(matches!(&record.payload, RecordPayload::Events(events) if events.is_empty()));
     scratch.remove();
 }
 

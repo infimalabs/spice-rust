@@ -20,6 +20,8 @@ pub(super) use projection::publish_agent_messages;
 use projection::{publish_agent_event, publish_agent_messages_in, publish_agent_record};
 
 const SESSION_MESSAGE_MEMBER_NAMESPACE: u64 = 1_u64 << 63;
+/// Reserved wire identity for record context that is not a decoded event.
+const TURN_BOUNDARY_EVENT: u32 = u32::MAX;
 
 #[cfg(test)]
 pub(super) use backlog::restore_agent_messages;
@@ -298,6 +300,7 @@ struct AgentRecord<'a> {
     author: CanonicalUuid,
     source: Option<CanonicalUuid>,
     worktree: Option<&'a Path>,
+    locus: listen::Locus,
     context: &'a listen::RecordContext,
     events: &'a [(u32, &'a listen::Event)],
     observed: Option<wire::Instant>,

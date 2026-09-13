@@ -1,5 +1,15 @@
 use super::*;
 
+fn session_worktree(residency: &wire::ResidencyHead, expectation: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from(
+        &residency.lanes[0]
+            .session
+            .as_ref()
+            .expect(expectation)
+            .worktree,
+    )
+}
+
 #[test]
 fn file_change_summary_keeps_the_session_worktree_when_the_lane_row_moves() {
     let bytes = br#"{"type":"item.completed","item":{"id":"file-change","type":"file_change","changes":[{"path":"/workspace/wire/src/lib.rs","kind":"add"},{"path":"/workspace/spice/src/lib.rs","kind":"update"}],"status":"completed"}}"#;
@@ -38,13 +48,7 @@ fn file_change_summary_keeps_the_session_worktree_when_the_lane_row_moves() {
         subscriptions: Vec::new(),
         renewals: Vec::new(),
     };
-    let live_worktree = std::path::PathBuf::from(
-        &residency.lanes[0]
-            .session
-            .as_ref()
-            .expect("live session owns a worktree")
-            .worktree,
-    );
+    let live_worktree = session_worktree(&residency, "live session owns a worktree");
     let live = Messages::default();
     publish_agent_messages_in(
         &live,
@@ -56,13 +60,7 @@ fn file_change_summary_keeps_the_session_worktree_when_the_lane_row_moves() {
     .expect("live file change publishes");
 
     residency.lanes[0].worktree = "/workspace-imported".to_owned();
-    let replay_worktree = std::path::PathBuf::from(
-        &residency.lanes[0]
-            .session
-            .as_ref()
-            .expect("moved lane retains its session worktree")
-            .worktree,
-    );
+    let replay_worktree = session_worktree(&residency, "moved lane retains its session worktree");
     let context = record.decoded.context().expect("record carries context");
     let events = record
         .decoded
@@ -79,6 +77,7 @@ fn file_change_summary_keeps_the_session_worktree_when_the_lane_row_moves() {
             author: record.occupant,
             source: Some(lane()),
             worktree: Some(&replay_worktree),
+            locus: record.locus,
             context,
             events: &events,
             observed: None,

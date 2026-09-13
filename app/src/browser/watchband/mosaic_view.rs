@@ -142,9 +142,7 @@ impl ActivityCard {
 
     fn base_span(&self, geometry: &crate::mosaic::Geometry) -> usize {
         match self {
-            Self::Agent { message, .. }
-                if message.activity == wire::AgentActivityKind::Compaction =>
-            {
+            Self::Agent { message, .. } if message.activity.is_boundary() => {
                 crate::mosaic::TRACK_COUNT
             }
             Self::Agent { .. } => geometry.base_span,
@@ -157,7 +155,7 @@ impl ActivityCard {
             || matches!(
                 self,
                 Self::Agent { message, .. }
-                    if message.activity == wire::AgentActivityKind::Compaction
+                    if message.activity.is_boundary()
             )
     }
 }

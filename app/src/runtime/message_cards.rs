@@ -23,6 +23,7 @@ impl From<&AgentMessage> for MessageCardKey {
 enum MessageCardKind {
     Prose,
     ToolMedia,
+    Turn,
     Compaction,
 }
 
@@ -46,6 +47,7 @@ fn card_kind(message: &AgentMessage) -> Option<MessageCardKind> {
         AgentActivityKind::Prose => Some(MessageCardKind::Prose),
         AgentActivityKind::Tool if !message.media.is_empty() => Some(MessageCardKind::ToolMedia),
         AgentActivityKind::Tool => None,
+        AgentActivityKind::Turn => Some(MessageCardKind::Turn),
         AgentActivityKind::Compaction => Some(MessageCardKind::Compaction),
     }
 }
@@ -242,7 +244,11 @@ mod tests {
     fn tool_activity_requires_owning_media_to_become_a_card() {
         assert_eq!(card_kind(&message(1, AgentActivityKind::Tool)), None);
         assert_eq!(
-            card_kind(&message(2, AgentActivityKind::Compaction)),
+            card_kind(&message(2, AgentActivityKind::Turn)),
+            Some(MessageCardKind::Turn)
+        );
+        assert_eq!(
+            card_kind(&message(3, AgentActivityKind::Compaction)),
             Some(MessageCardKind::Compaction)
         );
     }

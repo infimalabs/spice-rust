@@ -289,6 +289,25 @@ fn transcript_activity_defaults_only_the_documented_prose_shape() {
 }
 
 #[test]
+fn turn_activity_has_one_explicit_wire_shape() {
+    let turn = AgentMessage {
+        activity: AgentActivityKind::Turn,
+        text: "New turn".to_owned(),
+        ..prose_message()
+    };
+
+    let encoded = wire::encode(&turn).expect("turn activity encodes");
+
+    assert!(String::from_utf8_lossy(&encoded).contains(r#""activity":"turn""#));
+    assert_eq!(
+        wire::decode::<AgentMessage>(&encoded)
+            .expect("explicit turn decodes")
+            .activity,
+        AgentActivityKind::Turn
+    );
+}
+
+#[test]
 fn automatic_speech_is_typed_and_has_one_absence_spelling() {
     let prose = prose_message();
     let mut explicit_null = serde_json::to_value(&prose).expect("prose becomes JSON");

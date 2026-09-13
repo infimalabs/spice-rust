@@ -131,6 +131,10 @@ pub enum RecordPayload {
 /// One complete record and the checkpoint immediately after it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Record {
+    /// Context decoded from the complete record, including zero-event records.
+    pub context: Option<RecordContext>,
+    /// Stable vendor-record locus used by context-only consumers.
+    pub locus: Locus,
     /// Typed or accounted record payload.
     pub payload: RecordPayload,
     /// Next complete-record boundary after this record.
@@ -339,6 +343,8 @@ impl ScanState {
         let locus = synthetic_locus(&self.spans, self.bytes.len());
         let decoded = decode(dialect, &self.bytes, locus).map_err(ScanError::DecodeContract)?;
         self.records.push(Record {
+            context: decoded.context().cloned(),
+            locus,
             payload: source_decoded(decoded, &self.spans),
             next: Checkpoint {
                 source: source.clone(),

@@ -33,6 +33,7 @@ pub(super) fn publish_agent_messages_in(
             author: record.occupant,
             source: None,
             worktree,
+            locus: record.locus,
             context,
             events: &events,
             observed: None,
@@ -49,14 +50,7 @@ pub(super) fn publish_agent_record(
     state: &mut MessageState,
     steering: Option<&PresentationDirectives>,
 ) -> CommandResult<()> {
-    if record.context.turn == Some(listen::TurnMoment::Started)
-        || record
-            .events
-            .iter()
-            .any(|(_, event)| matches!(event, listen::Event::Session(_)))
-    {
-        state.prose.remove(&record.lane);
-    }
+    begin_agent_record(publisher, &record, state)?;
     let successful_terminal = record.context.turn == Some(listen::TurnMoment::Completed)
         && record
             .events
@@ -130,6 +124,63 @@ pub(super) fn publish_agent_record(
         state.prose.remove(&record.lane);
     }
     Ok(())
+}
+
+fn begin_agent_record(
+    publisher: &impl AgentMessagePublisher,
+    record: &AgentRecord<'_>,
+    state: &mut MessageState,
+) -> CommandResult<()> {
+    if record.context.turn == Some(listen::TurnMoment::Started) {
+        state.prose.remove(&record.lane);
+        publish_turn_boundary(publisher, record, &state.observations)?;
+    } else if record
+        .events
+        .iter()
+        .any(|(_, event)| matches!(event, listen::Event::Session(_)))
+    {
+        state.prose.remove(&record.lane);
+    }
+    Ok(())
+}
+
+fn publish_turn_boundary(
+    publisher: &impl AgentMessagePublisher,
+    record: &AgentRecord<'_>,
+    observations: &MessageObservations,
+) -> CommandResult<()> {
+    let (authored, authored_synthetic) =
+        parse_agent_message_authored(record.context.timestamp.as_deref(), record.locus, 0)?;
+    let observed = authored_synthetic
+        .then(|| {
+            record
+                .observed
+                .or_else(|| observations.at(record.lane, record.locus))
+        })
+        .flatten();
+    publish_message(
+        publisher,
+        wire::AgentMessage {
+            lane: record.lane,
+            author: record.author,
+            locus: wire::MessageLocus {
+                member: record.locus.member,
+                offset: record.locus.offset,
+                length: record.locus.length,
+                event: TURN_BOUNDARY_EVENT,
+            },
+            authored,
+            authored_synthetic,
+            observed,
+            activity: AgentActivityKind::Turn,
+            final_answer: false,
+            text: "New turn".to_owned(),
+            badges: wire::AgentMessageBadges::default(),
+            automatic_speech: None,
+            unavailable_tool_terminals: Vec::new(),
+            media: Vec::new(),
+        },
+    )
 }
 
 fn same_prose(left: &wire::AgentMessage, right: &wire::AgentMessage) -> bool {

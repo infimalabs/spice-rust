@@ -20,8 +20,9 @@ use crate::{
 /// Stable source position of one decoded event in a lane transcript tape.
 ///
 /// A tape locus identifies the durable vendor record. `event` distinguishes
-/// multiple visible activities decoded from that one record without
-/// pretending transcript events are journal facts or journal positions.
+/// multiple visible activities from that one record without pretending
+/// transcript events are journal facts or journal positions. `u32::MAX` is
+/// reserved for visible record context that is not itself a decoded event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MessageLocus {
@@ -31,7 +32,7 @@ pub struct MessageLocus {
     pub offset: u64,
     /// Number of bytes in the vendor record.
     pub length: u64,
-    /// Zero-based decoded event index within the vendor record.
+    /// Zero-based decoded event index, or `u32::MAX` for record context.
     pub event: u32,
 }
 
@@ -44,6 +45,8 @@ pub enum AgentActivityKind {
     Prose,
     /// A tool call, update, or result rendered in the lane status strip.
     Tool,
+    /// A new agent turn rendered as a full-width stream divider.
+    Turn,
     /// Context compaction boundary rendered as a full-width stream divider.
     Compaction,
 }
@@ -106,6 +109,12 @@ impl AgentActivityKind {
         matches!(self, Self::Prose)
     }
 
+    /// Whether this activity separates adjacent transcript epochs in the UI.
+    #[must_use]
+    pub const fn is_boundary(self) -> bool {
+        matches!(self, Self::Turn | Self::Compaction)
+    }
+
     /// Oldest visible-card ordinal retained by one bounded lane history.
     ///
     /// Under capacity pressure, a compaction inside the newest `limit` cards
@@ -125,7 +134,7 @@ impl AgentActivityKind {
     }
 }
 
-/// Agent-authored activity projected from one durable transcript event.
+/// Agent activity projected from one durable transcript record.
 ///
 /// This is a Canvas view over tape evidence, not an authoritative fact. Prose
 /// remains the default wire shape for compatibility; tool activity carries its
@@ -149,7 +158,7 @@ pub struct AgentMessage {
     pub lane: CanonicalUuid,
     /// Occupant identity that authored the activity.
     pub author: CanonicalUuid,
-    /// Durable transcript event supplying this activity.
+    /// Durable transcript record activity supplying this view.
     pub locus: MessageLocus,
     /// Vendor record instant that authored this visible activity.
     pub authored: Instant,
@@ -173,7 +182,7 @@ pub struct AgentMessage {
     /// Whether the vendor explicitly marked this prose as the final answer.
     #[serde(default, skip_serializing_if = "is_false")]
     pub final_answer: bool,
-    /// Visible assistant prose or concise tool preview.
+    /// Visible assistant prose, concise tool preview, or boundary label.
     pub text: String,
     /// Typed positive directive classifications earned by this message.
     ///
@@ -296,6 +305,9 @@ mod message_retention_tests {
             20,
         );
         assert_eq!(AgentActivityKind::retention_start(&activities, 0), 300);
+        assert!(AgentActivityKind::Turn.is_boundary());
+        assert!(AgentActivityKind::Compaction.is_boundary());
+        assert!(!AgentActivityKind::Prose.is_boundary());
     }
 
     #[test]

@@ -514,6 +514,36 @@ pub fn agent_message_label<'a>(worktree: &'a str, name: Option<&'a str>) -> &'a 
         .unwrap_or(UNKNOWN_AGENT_LABEL)
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) const fn agent_card_kind(activity: wire::AgentActivityKind) -> &'static str {
+    match activity {
+        wire::AgentActivityKind::Turn => "turn",
+        wire::AgentActivityKind::Compaction => "compaction",
+        wire::AgentActivityKind::Prose | wire::AgentActivityKind::Tool => "agent-message",
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) const fn agent_activity_name(activity: wire::AgentActivityKind) -> &'static str {
+    match activity {
+        wire::AgentActivityKind::Prose => "prose",
+        wire::AgentActivityKind::Tool => "tool",
+        wire::AgentActivityKind::Turn => "turn",
+        wire::AgentActivityKind::Compaction => "compaction",
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) const fn agent_boundary_label(activity: wire::AgentActivityKind) -> &'static str {
+    match activity {
+        wire::AgentActivityKind::Turn => "started a new turn",
+        wire::AgentActivityKind::Compaction => "compacted context",
+        wire::AgentActivityKind::Prose | wire::AgentActivityKind::Tool => {
+            panic!("only boundary activities have boundary labels")
+        }
+    }
+}
+
 /// Widest string [`elapsed_label`] can return, counted in characters.
 ///
 /// This is a layout contract, not a hint. A ticking age sits in a slot sized
@@ -818,8 +848,9 @@ pub fn truncate(text: &str, budget: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_LINEAGE_VISUAL_WEIGHT, agent_message_attribution, agent_message_label,
-        composer_vendor_icon_class, lineage_visual_weight, ticker_accessible_label, ticker_chunks,
+        MAX_LINEAGE_VISUAL_WEIGHT, agent_activity_name, agent_boundary_label, agent_card_kind,
+        agent_message_attribution, agent_message_label, composer_vendor_icon_class,
+        lineage_visual_weight, ticker_accessible_label, ticker_chunks,
     };
 
     #[test]
@@ -885,6 +916,16 @@ mod tests {
             super::UNKNOWN_AGENT_LABEL
         );
         assert_eq!(agent_message_label("", None), super::UNKNOWN_AGENT_LABEL);
+    }
+
+    #[test]
+    fn turn_activity_has_distinct_browser_boundary_metadata() {
+        assert_eq!(agent_card_kind(wire::AgentActivityKind::Turn), "turn");
+        assert_eq!(agent_activity_name(wire::AgentActivityKind::Turn), "turn");
+        assert_eq!(
+            agent_boundary_label(wire::AgentActivityKind::Turn),
+            "started a new turn"
+        );
     }
 
     #[test]
