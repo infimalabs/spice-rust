@@ -130,7 +130,7 @@ impl MessageFeed {
         let before_message = match self.history_boundary(lane, before, &visible)? {
             HistoryBoundary::Unknown => return Ok(None),
             HistoryBoundary::Bootstrap => None,
-            HistoryBoundary::Message(index) => Some(visible[index].clone()),
+            HistoryBoundary::Message(index) => Some((*visible[index]).clone()),
         };
         let history = self
             .history
