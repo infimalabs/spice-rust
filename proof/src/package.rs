@@ -156,10 +156,9 @@ impl PackageMember {
     pub fn admit_inline(
         path: impl Into<String>,
         mode: u32,
-        bytes: impl Into<Vec<u8>>,
+        bytes: &[u8],
         limit: u64,
     ) -> Result<Self, PackageError> {
-        let bytes = bytes.into();
         if limit == 0 || limit > PACKAGE_DOCUMENT_LIMIT || bytes.len() as u64 > limit {
             return Err(member_error(
                 &path.into(),
@@ -1081,6 +1080,16 @@ mod tests {
             std::fs::remove_file(path).expect("file member removes");
         }
         assert!(PackageMember::admit_inline("release/notes.md", DATA_MODE, b"x", 0).is_err());
+        let oversized = vec![0; PACKAGE_DOCUMENT_LIMIT as usize + 1];
+        assert!(
+            PackageMember::admit_inline(
+                "release/notes.md",
+                DATA_MODE,
+                &oversized,
+                PACKAGE_DOCUMENT_LIMIT,
+            )
+            .is_err()
+        );
     }
 
     #[test]
