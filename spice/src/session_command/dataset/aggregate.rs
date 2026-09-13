@@ -795,6 +795,7 @@ struct PendingCompaction {
 
 struct CompactionTracker {
     last_assistant: Option<String>,
+    last: Option<String>,
     pending: Option<PendingCompaction>,
     rows: ResultFrontier<CompactionRecord>,
     end: Option<String>,
@@ -804,6 +805,7 @@ impl CompactionTracker {
     fn new(limit: usize, end: Option<&str>) -> Result<Self, Refusal> {
         Ok(Self {
             last_assistant: None,
+            last: None,
             pending: None,
             rows: ResultFrontier::new(limit, FrontierDirection::Newest)?,
             end: end.map(str::to_owned),
@@ -872,6 +874,7 @@ impl CompactionTracker {
             summary_after: pending.summary,
             user_after: pending.user_after,
         };
+        admit_source_order(&mut self.last, &row.ts)?;
         work.admit_retained_text(compaction_text_bytes(&row), at)?;
         self.rows.push(row);
         Ok(())
@@ -894,6 +897,7 @@ struct PhaseSource<'a> {
     markers: Vec<Marker>,
     fold: FoldState,
     ready: VecDeque<TurnRecord>,
+    last_turn: Option<String>,
     compactions: Option<CompactionTracker>,
     complete: bool,
 }
@@ -907,6 +911,7 @@ impl<'a> PhaseSource<'a> {
             markers: Vec::new(),
             fold: FoldState::default(),
             ready: VecDeque::with_capacity(OPEN_TURN_LIMIT),
+            last_turn: None,
             compactions: None,
             complete: false,
         })
@@ -926,6 +931,7 @@ impl<'a> PhaseSource<'a> {
             markers: Vec::new(),
             fold: FoldState::default(),
             ready: VecDeque::with_capacity(OPEN_TURN_LIMIT),
+            last_turn: None,
             compactions: Some(CompactionTracker::new(compactions, end)?),
             complete: false,
         })
@@ -996,16 +1002,7 @@ impl<'a> PhaseSource<'a> {
                     DecodedRow::Ignored => {}
                 }
                 self.scratch.messages.clear();
-                drain_fold_turns(
-                    &mut self.scratch,
-                    &mut self.fold,
-                    false,
-                    &self.source.path.display().to_string(),
-                    |turn| {
-                        self.ready.push_back(turn);
-                        Ok(())
-                    },
-                )?;
+                self.drain_ready(false)?;
             }
             if matches!(window.progress, ForwardProgress::Eof(_)) {
                 let state = std::mem::take(&mut self.fold);
@@ -1015,20 +1012,25 @@ impl<'a> PhaseSource<'a> {
                     work,
                     &self.source.path.display().to_string(),
                 )?;
-                drain_fold_turns(
-                    &mut self.scratch,
-                    &mut self.fold,
-                    true,
-                    &self.source.path.display().to_string(),
-                    |turn| {
-                        self.ready.push_back(turn);
-                        Ok(())
-                    },
-                )?;
+                self.drain_ready(true)?;
                 self.complete = true;
             }
         }
         Ok(())
+    }
+
+    fn drain_ready(&mut self, finish: bool) -> Result<(), Refusal> {
+        let at = self.source.path.display().to_string();
+        let ordered = self.compactions.is_some();
+        let ready = &mut self.ready;
+        let last_turn = &mut self.last_turn;
+        drain_fold_turns(&mut self.scratch, &mut self.fold, finish, &at, |turn| {
+            if ordered {
+                admit_source_order(last_turn, &turn.start_ts)?;
+            }
+            ready.push_back(turn);
+            Ok(())
+        })
     }
 
     fn source_view(self) -> SourceView {
@@ -1057,6 +1059,21 @@ impl<'a> PhaseSource<'a> {
             .finish(work, &self.source.path.display().to_string())?;
         Ok((self.source_view(), compactions))
     }
+}
+
+fn admit_source_order(previous: &mut Option<String>, timestamp: &str) -> Result<(), Refusal> {
+    if previous
+        .as_deref()
+        .is_some_and(|previous| timestamp < previous)
+    {
+        return Err(refusal(
+            "session::source-order-regressed",
+            Some(format!("previous={previous:?} current={timestamp:?}")),
+            "repair source-local timestamp order before merging transcript windows",
+        ));
+    }
+    *previous = Some(timestamp.to_owned());
+    Ok(())
 }
 
 fn drain_fold_turns(
