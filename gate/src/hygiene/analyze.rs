@@ -651,11 +651,11 @@ impl<'a> AnalyzerRun<'a> {
                 diagnostic,
             } => (
                 HygieneOutcome::Failed,
-                "native hygiene AST work bound exhausted",
+                "native hygiene analysis work bound exhausted",
                 AnalysisEvidence::Measurement {
                     state: EvidenceState::Failed,
                     stage: format!(
-                        "ast-traversal path={path:?} parsed_documents={documents} {diagnostic}"
+                        "analysis-work path={path:?} parsed_documents={documents} {diagnostic}"
                     ),
                 },
             ),
@@ -681,9 +681,18 @@ impl<'a> AnalyzerRun<'a> {
                 findings: Vec::new(),
             };
         }
-        let findings = self
-            .corpus
-            .findings(declaration.id, self.configuration, self.focused);
+        let mut graph_work = GraphWork::new(self.started, self.configuration.deadline_ms);
+        if !graph_work.preflight(&self.corpus, self.configuration) {
+            return self.graph_failure_observation(declaration.id, &graph_work);
+        }
+        let Some(findings) = self.corpus.findings(
+            declaration.id,
+            self.configuration,
+            self.focused,
+            &mut graph_work,
+        ) else {
+            return self.graph_failure_observation(declaration.id, &graph_work);
+        };
         if self.elapsed_ms() > self.configuration.deadline_ms {
             return self.timeout_observation(declaration.id);
         }
@@ -693,7 +702,15 @@ impl<'a> AnalyzerRun<'a> {
         } else {
             HygieneOutcome::Passed
         };
-        let evidence = self.completed_evidence(declaration, analyzer, findings.len(), limit);
+        let Some(evidence) = self.completed_evidence(
+            declaration,
+            analyzer,
+            findings.len(),
+            limit,
+            &mut graph_work,
+        ) else {
+            return self.graph_failure_observation(declaration.id, &graph_work);
+        };
         HygieneObservation {
             gate_id: declaration.id,
             outcome,
@@ -707,13 +724,29 @@ impl<'a> AnalyzerRun<'a> {
         }
     }
 
+    fn graph_failure_observation(&self, gate_id: GateId, work: &GraphWork) -> HygieneObservation {
+        if matches!(work.failure(), Some(GraphFailure::Deadline)) {
+            return self.timeout_observation(gate_id);
+        }
+        self.terminal_observation(
+            gate_id,
+            HygieneOutcome::Failed,
+            "native hygiene graph work bound exhausted",
+            AnalysisEvidence::Measurement {
+                state: EvidenceState::Failed,
+                stage: work.diagnostic(),
+            },
+        )
+    }
+
     fn completed_evidence(
         &self,
         declaration: HygieneDeclaration,
         analyzer: AnalyzerEvidence,
         finding_count: usize,
         limit: u32,
-    ) -> Vec<AnalysisEvidence> {
+        work: &mut GraphWork,
+    ) -> Option<Vec<AnalysisEvidence>> {
         let mut evidence = vec![
             self.language_evidence(true),
             AnalysisEvidence::Analyzer(analyzer),
@@ -744,6 +777,9 @@ impl<'a> AnalyzerRun<'a> {
             });
         }
         for traversal in declaration.traversals {
+            if !work.steps(self.corpus.traversal_steps(*traversal)) {
+                return None;
+            }
             let item = self
                 .corpus
                 .traversal_evidence(*traversal, self.configuration, self.focused);
@@ -754,7 +790,7 @@ impl<'a> AnalyzerRun<'a> {
                 evidence.push(item);
             }
         }
-        evidence
+        Some(evidence)
     }
 
     fn terminal_observation(

@@ -1,5 +1,185 @@
 use super::*;
 
+const GRAPH_SYMBOL_LIMIT: usize = 1_000_000;
+const GRAPH_EDGE_LIMIT: usize = 1_000_000;
+const GRAPH_WORKLIST_LIMIT: usize = 1_000_000;
+const GRAPH_FINDING_LIMIT: usize = 1_000_000;
+const GRAPH_DIAGNOSTIC_BYTES_LIMIT: usize = 64 * 1024 * 1024;
+const GRAPH_STEP_LIMIT: usize = 10_000_000;
+const _: () = assert!(
+    GRAPH_SYMBOL_LIMIT > 0
+        && GRAPH_EDGE_LIMIT > 0
+        && GRAPH_WORKLIST_LIMIT > 0
+        && GRAPH_FINDING_LIMIT > 0
+        && GRAPH_DIAGNOSTIC_BYTES_LIMIT > 0
+        && GRAPH_STEP_LIMIT > 0
+);
+
+#[derive(Clone, Copy)]
+pub(super) enum GraphFailure {
+    Symbols,
+    Edges,
+    Worklist,
+    Findings,
+    Diagnostics,
+    Steps,
+    Deadline,
+}
+
+pub(super) struct GraphWork {
+    started: Instant,
+    deadline_ms: u64,
+    edges: usize,
+    findings: usize,
+    diagnostic_bytes: usize,
+    steps: usize,
+    failure: Option<GraphFailure>,
+}
+
+impl GraphWork {
+    pub(super) fn new(started: Instant, deadline_ms: u64) -> Self {
+        Self {
+            started,
+            deadline_ms,
+            edges: 0,
+            findings: 0,
+            diagnostic_bytes: 0,
+            steps: 0,
+            failure: None,
+        }
+    }
+
+    pub(super) fn preflight(
+        &mut self,
+        corpus: &Corpus,
+        configuration: &HygieneConfiguration,
+    ) -> bool {
+        let symbols = corpus.modules.values().fold(0_usize, |total, module| {
+            total
+                .saturating_add(module.imports.len())
+                .saturating_add(module.declarations.len())
+                .saturating_add(module.references.len())
+                .saturating_add(module.tests.len())
+                .saturating_add(module.private_couplings.len())
+        });
+        if symbols > GRAPH_SYMBOL_LIMIT {
+            self.failure = Some(GraphFailure::Symbols);
+            return false;
+        }
+        let possible_findings = corpus
+            .modules
+            .len()
+            .saturating_add(
+                corpus
+                    .modules
+                    .values()
+                    .fold(0_usize, |total, module| {
+                        total.saturating_add(module.declarations.len())
+                    })
+                    .saturating_mul(2),
+            )
+            .saturating_add(corpus.modules.values().fold(0_usize, |total, module| {
+                total
+                    .saturating_add(module.tests.len())
+                    .saturating_add(module.private_couplings.len())
+            }))
+            .saturating_add(configuration.private_exceptions.len());
+        if possible_findings > GRAPH_FINDING_LIMIT {
+            self.failure = Some(GraphFailure::Findings);
+            return false;
+        }
+        self.check()
+    }
+
+    fn check(&mut self) -> bool {
+        if self.failure.is_some() {
+            return false;
+        }
+        if u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX) > self.deadline_ms
+        {
+            self.failure = Some(GraphFailure::Deadline);
+            false
+        } else {
+            true
+        }
+    }
+
+    fn step(&mut self) -> bool {
+        self.steps(1)
+    }
+
+    pub(super) fn steps(&mut self, count: usize) -> bool {
+        if !self.check() {
+            return false;
+        }
+        let next = self.steps.saturating_add(count);
+        if next > GRAPH_STEP_LIMIT {
+            self.failure.get_or_insert(GraphFailure::Steps);
+            return false;
+        }
+        self.steps = next;
+        true
+    }
+
+    fn admit_edge(&mut self) -> bool {
+        if !self.step() || self.edges == GRAPH_EDGE_LIMIT {
+            self.failure.get_or_insert(GraphFailure::Edges);
+            return false;
+        }
+        self.edges += 1;
+        true
+    }
+
+    fn admit_worklist(&mut self, length: usize) -> bool {
+        if length >= GRAPH_WORKLIST_LIMIT {
+            self.failure = Some(GraphFailure::Worklist);
+            false
+        } else {
+            self.step()
+        }
+    }
+
+    fn admit_finding(&mut self, bytes: usize) -> bool {
+        if !self.step() || self.findings == GRAPH_FINDING_LIMIT {
+            self.failure.get_or_insert(GraphFailure::Findings);
+            return false;
+        }
+        let next = self.diagnostic_bytes.saturating_add(bytes);
+        if next > GRAPH_DIAGNOSTIC_BYTES_LIMIT {
+            self.failure = Some(GraphFailure::Diagnostics);
+            return false;
+        }
+        self.findings += 1;
+        self.diagnostic_bytes = next;
+        true
+    }
+
+    pub(super) const fn failure(&self) -> Option<GraphFailure> {
+        self.failure
+    }
+
+    pub(super) fn elapsed_ms(&self) -> u64 {
+        u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    pub(super) fn diagnostic(&self) -> String {
+        let bound = match self.failure {
+            Some(GraphFailure::Symbols) => "symbol",
+            Some(GraphFailure::Edges) => "edge",
+            Some(GraphFailure::Worklist) => "worklist",
+            Some(GraphFailure::Findings) => "finding",
+            Some(GraphFailure::Diagnostics) => "diagnostic-byte",
+            Some(GraphFailure::Steps) => "graph-step",
+            Some(GraphFailure::Deadline) => "deadline",
+            None => "completed",
+        };
+        format!(
+            "hygiene graph {bound} bound exhausted after {} steps",
+            self.steps
+        )
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Corpus {
     modules: BTreeMap<String, Module>,
@@ -102,7 +282,12 @@ impl Corpus {
                 return (selected_files, corpus, Terminal::TimedOut { elapsed_ms });
             }
         }
-        corpus.construct_graphs(configuration);
+        let mut graph_work = GraphWork::new(started, configuration.deadline_ms);
+        if !graph_work.preflight(&corpus, configuration)
+            || !corpus.construct_graphs(configuration, &mut graph_work)
+        {
+            return graph_terminal(selected_files, corpus, &graph_work);
+        }
         let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let terminal = if elapsed_ms > configuration.deadline_ms {
             Terminal::TimedOut { elapsed_ms }
@@ -112,9 +297,16 @@ impl Corpus {
         (selected_files, corpus, terminal)
     }
 
-    fn construct_graphs(&mut self, configuration: &HygieneConfiguration) {
+    fn construct_graphs(
+        &mut self,
+        configuration: &HygieneConfiguration,
+        work: &mut GraphWork,
+    ) -> bool {
         let known: BTreeSet<_> = self.modules.keys().cloned().collect();
         for (name, module) in &self.modules {
+            if !work.step() {
+                return false;
+            }
             if module.is_test {
                 self.test_modules.insert(name.clone());
             }
@@ -123,13 +315,31 @@ impl Corpus {
                 self.production_roots.insert(name.clone());
             }
             for import in &module.imports {
+                if !work.step() {
+                    return false;
+                }
                 if let Some(target) = import.target_module(&known) {
-                    self.edges.insert((name.clone(), target));
+                    let edge = (name.clone(), target);
+                    if !self.edges.contains(&edge) {
+                        if !work.admit_edge() {
+                            return false;
+                        }
+                        self.edges.insert(edge);
+                    }
                 }
             }
         }
-        self.production_reachable = reachable(&self.production_roots, &self.edges);
-        self.test_reachable = reachable(&self.test_modules, &self.edges);
+        let Some(production_reachable) =
+            reachable_bounded(&self.production_roots, &self.edges, work)
+        else {
+            return false;
+        };
+        let Some(test_reachable) = reachable_bounded(&self.test_modules, &self.edges, work) else {
+            return false;
+        };
+        self.production_reachable = production_reachable;
+        self.test_reachable = test_reachable;
+        true
     }
 
     pub(super) fn applicable(&self, gate: GateId) -> bool {
@@ -242,14 +452,68 @@ impl Corpus {
         gate: GateId,
         configuration: &HygieneConfiguration,
         focused: bool,
-    ) -> Vec<HygieneFinding> {
-        match gate {
+        work: &mut GraphWork,
+    ) -> Option<Vec<HygieneFinding>> {
+        let declarations = self.declarations().count();
+        let references = self.modules.values().fold(0_usize, |total, module| {
+            total.saturating_add(module.references.len())
+        });
+        let estimate = match gate {
+            GateId::Reachability => self.modules.len().saturating_mul(self.edges.len()),
+            GateId::SymbolReachability | GateId::PythonUnused => declarations
+                .saturating_mul(references.max(1))
+                .saturating_mul(declarations.max(1)),
+            GateId::AssertionFreeTests => self.tests().count(),
+            GateId::PrivateInternals => self
+                .modules
+                .values()
+                .map(|module| module.private_couplings.len())
+                .sum::<usize>()
+                .saturating_add(configuration.private_exceptions.len()),
+            _ => 0,
+        };
+        if !work.steps(estimate) {
+            return None;
+        }
+        let findings = match gate {
             GateId::Reachability => self.reachability_findings(),
             GateId::SymbolReachability => self.symbol_reachability_findings(),
             GateId::PythonUnused => self.python_unused_findings(),
             GateId::AssertionFreeTests => self.assertion_free_findings(),
             GateId::PrivateInternals => self.private_findings(configuration, focused),
             _ => Vec::new(),
+        };
+        for finding in &findings {
+            if !work.admit_finding(finding_bytes(finding)) {
+                return None;
+            }
+        }
+        Some(findings)
+    }
+
+    pub(super) fn traversal_steps(&self, traversal: HygieneTraversal) -> usize {
+        let declarations = self.declarations().count();
+        let references = self.modules.values().fold(0_usize, |total, module| {
+            total.saturating_add(module.references.len())
+        });
+        match traversal {
+            HygieneTraversal::ImportGraph => self
+                .test_modules
+                .len()
+                .max(2)
+                .saturating_mul(self.modules.len().saturating_add(self.edges.len())),
+            HygieneTraversal::SymbolGraph | HygieneTraversal::PythonDeclarations => declarations
+                .saturating_mul(references.max(1))
+                .saturating_mul(declarations.max(1)),
+            HygieneTraversal::TestAssertions => self.tests().count(),
+            HygieneTraversal::PrivateBoundaries => self.modules.len().saturating_mul(
+                self.modules
+                    .values()
+                    .fold(0_usize, |total, module| {
+                        total.saturating_add(module.private_couplings.len())
+                    })
+                    .max(1),
+            ),
         }
     }
 
@@ -633,6 +897,25 @@ fn ast_terminal(
     (selected_files, corpus, terminal)
 }
 
+fn graph_terminal(
+    selected_files: u32,
+    corpus: Corpus,
+    work: &GraphWork,
+) -> (u32, Corpus, Terminal) {
+    let terminal = match work.failure() {
+        Some(GraphFailure::Deadline) => Terminal::TimedOut {
+            elapsed_ms: work.elapsed_ms(),
+        },
+        Some(_) => Terminal::WorkExhausted {
+            documents: selected_files,
+            path: "<graph>".to_owned(),
+            diagnostic: work.diagnostic(),
+        },
+        None => unreachable!("graph terminal requires one exhausted work bound"),
+    };
+    (selected_files, corpus, terminal)
+}
+
 impl HygieneConfiguration {
     fn exception_matches(&self, coupling: &PrivateCoupling) -> bool {
         self.private_exceptions
@@ -645,6 +928,39 @@ impl PrivateCouplingException {
     fn matches(&self, coupling: &PrivateCoupling) -> bool {
         self.test_name == coupling.test_name && self.target == coupling.target
     }
+}
+
+fn reachable_bounded(
+    roots: &BTreeSet<String>,
+    edges: &BTreeSet<(String, String)>,
+    work: &mut GraphWork,
+) -> Option<BTreeSet<String>> {
+    if roots.len() > GRAPH_WORKLIST_LIMIT {
+        work.failure = Some(GraphFailure::Worklist);
+        return None;
+    }
+    let mut reached = BTreeSet::new();
+    let mut pending: Vec<_> = roots.iter().cloned().collect();
+    while let Some(next) = pending.pop() {
+        if !work.step() {
+            return None;
+        }
+        if !reached.insert(next.clone()) {
+            continue;
+        }
+        for (from, to) in edges {
+            if !work.step() {
+                return None;
+            }
+            if from == &next {
+                if !work.admit_worklist(pending.len()) {
+                    return None;
+                }
+                pending.push(to.clone());
+            }
+        }
+    }
+    Some(reached)
 }
 
 fn reachable(roots: &BTreeSet<String>, edges: &BTreeSet<(String, String)>) -> BTreeSet<String> {
@@ -662,4 +978,55 @@ fn reachable(roots: &BTreeSet<String>, edges: &BTreeSet<(String, String)>) -> BT
         );
     }
     reached
+}
+
+fn finding_bytes(finding: &HygieneFinding) -> usize {
+    let strings = match &finding.detail {
+        HygieneFindingDetail::ModuleReachability {
+            provider,
+            subject,
+            imported_by,
+        } => provider
+            .len()
+            .saturating_add(subject.len())
+            .saturating_add(imported_by.iter().map(String::len).sum()),
+        HygieneFindingDetail::SymbolReachability {
+            provider,
+            module,
+            symbol,
+            symbol_kind,
+            imported_by,
+        } => provider
+            .len()
+            .saturating_add(module.len())
+            .saturating_add(symbol.len())
+            .saturating_add(symbol_kind.len())
+            .saturating_add(imported_by.iter().map(String::len).sum()),
+        HygieneFindingDetail::PythonUnused {
+            module,
+            symbol,
+            declaration_kind,
+            reason,
+            test_references,
+            ..
+        } => module
+            .len()
+            .saturating_add(symbol.len())
+            .saturating_add(declaration_kind.len())
+            .saturating_add(reason.len())
+            .saturating_add(test_references.iter().map(String::len).sum()),
+        HygieneFindingDetail::AssertionFree { test_name } => test_name.len(),
+        HygieneFindingDetail::PrivateCoupling {
+            test_name,
+            coupling_kind,
+            target,
+        } => test_name
+            .len()
+            .saturating_add(coupling_kind.len())
+            .saturating_add(target.len()),
+        HygieneFindingDetail::StalePrivateException { test_name, target } => {
+            test_name.len().saturating_add(target.len())
+        }
+    };
+    finding.path.len().saturating_add(strings)
 }
