@@ -53,7 +53,7 @@ struct PreparedRestore {
     capture: journal::RestoreCapture,
     previous: Option<Digest>,
     previous_bytes: Option<Vec<u8>>,
-    artifacts: artifact::BackupImage,
+    artifacts: artifact::BackupGeneration,
     previous_artifacts: artifact::BackupGeneration,
     plan: Digest,
 }
@@ -88,7 +88,7 @@ fn prepare_restore(bundle: &Path) -> Result<PreparedRestore, Failure> {
     let state = repository.admit_state().map_err(state_failure)?;
     let destination = state.journal().to_path_buf();
     let capture = journal::capture_restore_bundle(bundle).map_err(bundle_failure)?;
-    let artifacts = artifact_image(&capture)?;
+    let artifacts = artifact_generation(&capture)?;
     let artifact_store =
         artifact::Store::new(state.artifacts(), state.locks().join("task-artifacts.lock"));
     let previous_artifacts = artifact_store.capture().map_err(artifact_failure)?;
@@ -415,10 +415,12 @@ struct RestorePlanIdentity {
     previous_artifacts: Digest,
 }
 
-fn artifact_image(capture: &journal::RestoreCapture) -> Result<artifact::BackupImage, Failure> {
+fn artifact_generation(
+    capture: &journal::RestoreCapture,
+) -> Result<artifact::BackupGeneration, Failure> {
     const PREFIX: &str = "artifacts/tasks/";
 
-    let mut files = Vec::new();
+    let mut members = Vec::new();
     for member in capture.members() {
         if member.path() == capture.authority_path() {
             continue;
@@ -431,28 +433,13 @@ fn artifact_image(capture: &journal::RestoreCapture) -> Result<artifact::BackupI
                 "verify the bundle with the Spice release that owns its member inventory",
             ));
         };
-        let length = usize::try_from(member.bytes()).map_err(|error| {
-            fault(
-                FaultClass::Protocol,
-                "restore::artifact-size-invalid",
-                error.to_string(),
-            )
-        })?;
-        let mut bytes = Vec::with_capacity(length);
-        member.copy_to(&mut bytes).map_err(|error| {
-            fault(
-                FaultClass::Environment,
-                "restore::capture-unreadable",
-                format!("{}: {error}", member.path()),
-            )
-        })?;
-        files.push(artifact::BackupFile {
-            path: path.to_owned(),
-            mode: member.mode(),
-            bytes,
-        });
+        members.push(RestoreArtifactMember { member, path });
     }
-    let image = artifact::BackupImage::admit(files).map_err(artifact_failure)?;
+    let sources = members
+        .iter()
+        .map(|member| member as &dyn artifact::BackupSource)
+        .collect::<Vec<_>>();
+    let image = artifact::BackupGeneration::from_sources(&sources).map_err(artifact_failure)?;
     let unknown = capture
         .missing_tasks(image.tasks())
         .map_err(bundle_failure)?
@@ -468,6 +455,29 @@ fn artifact_image(capture: &journal::RestoreCapture) -> Result<artifact::BackupI
         ));
     }
     Ok(image)
+}
+
+struct RestoreArtifactMember<'a> {
+    member: &'a journal::RestoreMember,
+    path: &'a str,
+}
+
+impl artifact::BackupSource for RestoreArtifactMember<'_> {
+    fn path(&self) -> &str {
+        self.path
+    }
+
+    fn mode(&self) -> u32 {
+        self.member.mode()
+    }
+
+    fn bytes(&self) -> u64 {
+        self.member.bytes()
+    }
+
+    fn copy_to(&self, target: &mut dyn Write) -> io::Result<u64> {
+        self.member.copy_to(target)
+    }
 }
 
 fn current_identity(path: &Path) -> Result<Option<Digest>, Failure> {

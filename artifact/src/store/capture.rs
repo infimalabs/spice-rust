@@ -20,6 +20,21 @@ pub(super) const MAX_BACKUP_BYTES: u64 = 512 * 1024 * 1024;
 const COPY_BUFFER_BYTES: usize = 64 * 1024;
 const _: () = assert!(MAX_BACKUP_MEMBERS > 0 && MAX_BACKUP_BYTES > 0);
 
+/// One already-authenticated backup member that can stream its captured bytes.
+pub trait BackupSource {
+    fn path(&self) -> &str;
+    fn mode(&self) -> u32;
+    fn bytes(&self) -> u64;
+    fn copy_to(&self, target: &mut dyn Write) -> io::Result<u64>;
+}
+
+struct SourcePlan<'a> {
+    source: &'a dyn BackupSource,
+    path: String,
+    mode: u32,
+    bytes: u64,
+}
+
 /// One immutable regular file in a captured artifact-store generation.
 #[derive(Debug)]
 pub struct BackupMember {
@@ -56,7 +71,7 @@ impl BackupMember {
     }
 
     /// Stream the immutable captured member through one fixed-size buffer.
-    pub fn copy_to(&self, target: &mut impl Write) -> io::Result<u64> {
+    pub fn copy_to(&self, target: &mut dyn Write) -> io::Result<u64> {
         let mut source = open_regular_file(&self.captured)?;
         let mut copied = 0_u64;
         let mut buffer = [0_u8; COPY_BUFFER_BYTES];
@@ -68,6 +83,24 @@ impl BackupMember {
             target.write_all(&buffer[..read])?;
             copied += read as u64;
         }
+    }
+}
+
+impl BackupSource for BackupMember {
+    fn path(&self) -> &str {
+        self.path()
+    }
+
+    fn mode(&self) -> u32 {
+        self.mode()
+    }
+
+    fn bytes(&self) -> u64 {
+        self.bytes()
+    }
+
+    fn copy_to(&self, target: &mut dyn Write) -> io::Result<u64> {
+        self.copy_to(target)
     }
 }
 
@@ -108,6 +141,159 @@ impl BackupGeneration {
     #[must_use]
     pub const fn identity(&self) -> &Digest {
         &self.identity
+    }
+
+    /// Capture and validate caller-authenticated streaming members.
+    pub fn from_sources(sources: &[&dyn BackupSource]) -> Result<Self, Error> {
+        if sources.len() > MAX_BACKUP_MEMBERS {
+            return Err(Error::corrupt(
+                "artifact backup inventory",
+                format!("capture exceeds {MAX_BACKUP_MEMBERS} members"),
+            ));
+        }
+        let mut aggregate = 0_u64;
+        let mut paths = BTreeSet::new();
+        let mut plans = Vec::with_capacity(sources.len());
+        for source in sources {
+            let path = source.path().to_owned();
+            let mode = source.mode();
+            let bytes = source.bytes();
+            admitted_relative(&path)?;
+            if mode & !0o7777 != 0 || !paths.insert(path.clone()) {
+                return Err(Error::corrupt(
+                    path,
+                    "backup member has an invalid mode or repeats a path",
+                ));
+            }
+            aggregate = aggregate
+                .checked_add(bytes)
+                .filter(|total| *total <= MAX_BACKUP_BYTES)
+                .ok_or_else(|| {
+                    Error::corrupt(
+                        "artifact backup inventory",
+                        format!("capture exceeds {MAX_BACKUP_BYTES} aggregate bytes"),
+                    )
+                })?;
+            plans.push(SourcePlan {
+                source: *source,
+                path,
+                mode,
+                bytes,
+            });
+        }
+        let generation = CapturedGeneration::create(&std::env::temp_dir())?;
+        let mut members = Vec::with_capacity(plans.len());
+        let mut observed = 0_u64;
+        for (index, plan) in plans.iter().enumerate() {
+            members.push(capture_source(plan, &generation, index, &mut observed)?);
+        }
+        if observed != aggregate {
+            return Err(Error::corrupt(
+                "artifact backup generation",
+                format!("preflight declared {aggregate} bytes, captured {observed}"),
+            ));
+        }
+        members.sort_by(|left, right| left.path.cmp(&right.path));
+        generation.seal()?;
+        let tasks = validate_captured_generation(&members)?;
+        let identity = generation_identity(&members)?;
+        Ok(Self {
+            _generation: generation,
+            members,
+            tasks,
+            identity,
+        })
+    }
+}
+
+fn capture_source(
+    plan: &SourcePlan<'_>,
+    generation: &CapturedGeneration,
+    index: usize,
+    aggregate: &mut u64,
+) -> Result<BackupMember, Error> {
+    let (captured, mut target) = generation.create_member(index)?;
+    let copied = {
+        let mut exact = ExactWriter {
+            target: &mut target,
+            remaining: plan.bytes,
+        };
+        let copied = plan.source.copy_to(&mut exact).map_err(|error| {
+            if error.kind() == io::ErrorKind::InvalidData {
+                Error::corrupt(&plan.path, error.to_string())
+            } else {
+                Error::io("capture streamed artifact member", &captured, error)
+            }
+        })?;
+        if exact.remaining != 0 || copied != plan.bytes {
+            return Err(Error::corrupt(
+                &plan.path,
+                "streamed artifact member length changed during capture",
+            ));
+        }
+        copied
+    };
+    *aggregate = aggregate
+        .checked_add(copied)
+        .filter(|total| *total <= MAX_BACKUP_BYTES)
+        .ok_or_else(|| {
+            Error::corrupt(
+                "artifact backup generation",
+                format!("capture crossed {MAX_BACKUP_BYTES} aggregate bytes"),
+            )
+        })?;
+    target
+        .sync_all()
+        .map_err(|error| Error::io("synchronize streamed artifact member", &captured, error))?;
+    let (bytes, digest) = Digest::compute_reader(
+        Domain::TaskArtifactPayload,
+        open_regular_file(&captured)
+            .map_err(|error| Error::io("open streamed artifact member", &captured, error))?,
+        copied,
+    )
+    .map_err(|error| Error::io("digest streamed artifact member", &captured, error))?;
+    if bytes != copied {
+        return Err(Error::corrupt(
+            &plan.path,
+            "streamed artifact member changed while hashing",
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        target
+            .set_permissions(fs::Permissions::from_mode(0o400))
+            .map_err(|error| Error::io("seal streamed artifact member", &captured, error))?;
+    }
+    Ok(BackupMember {
+        path: plan.path.clone(),
+        mode: plan.mode,
+        bytes,
+        digest,
+        captured,
+    })
+}
+
+struct ExactWriter<'a> {
+    target: &'a mut File,
+    remaining: u64,
+}
+
+impl Write for ExactWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if bytes.len() as u64 > self.remaining {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "stream exceeded its declared artifact member length",
+            ));
+        }
+        let written = self.target.write(bytes)?;
+        self.remaining -= written as u64;
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.target.flush()
     }
 }
 

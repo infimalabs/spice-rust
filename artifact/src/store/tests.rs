@@ -9,8 +9,8 @@ use wire::{Instant, TaskHandle, TaskStamp};
 
 use super::capture::{MAX_BACKUP_BYTES, MAX_BACKUP_MEMBERS, preflight_capture_member};
 use super::{
-    AddBytesRequest, AddRequest, BackupFile, BackupImage, Error, ErrorClass, MediaType, Retention,
-    Store, object_dir, payload_path,
+    AddBytesRequest, AddRequest, Error, ErrorClass, MediaType, Retention, Store, object_dir,
+    payload_path,
 };
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -79,25 +79,6 @@ fn add(
             created_at: at,
         })
         .expect("add artifact")
-}
-
-fn backup_image(store: &Store) -> BackupImage {
-    let generation = store.capture().expect("capture generation");
-    let files = generation
-        .members()
-        .iter()
-        .map(|member| {
-            let mut bytes = Vec::new();
-            let copied = member.copy_to(&mut bytes).expect("copy captured member");
-            assert_eq!(copied, member.bytes());
-            BackupFile {
-                path: member.path().to_owned(),
-                mode: member.mode(),
-                bytes,
-            }
-        })
-        .collect();
-    BackupImage::admit(files).expect("admit captured generation as legacy image fixture")
 }
 
 #[test]
@@ -476,12 +457,39 @@ fn rendered_handle_directories_are_refused_as_release_one_not_read_as_a_fallback
 
 #[test]
 fn backup_admission_and_capture_bounds_reject_incomplete_generations() {
-    let invalid = BackupImage::admit(vec![BackupFile {
-        path: "not-a-task/manifest.json".to_owned(),
-        mode: 0o600,
-        bytes: b"{}".to_vec(),
-    }])
-    .expect_err("invalid task directory refused");
+    struct BoundSource {
+        bytes: u64,
+    }
+
+    impl super::BackupSource for BoundSource {
+        fn path(&self) -> &str {
+            "member"
+        }
+
+        fn mode(&self) -> u32 {
+            0o600
+        }
+
+        fn bytes(&self) -> u64 {
+            self.bytes
+        }
+
+        fn copy_to(&self, target: &mut dyn std::io::Write) -> std::io::Result<u64> {
+            assert_eq!(self.bytes, 0, "oversized source copied before refusal");
+            target.write_all(b"x")?;
+            Ok(1)
+        }
+    }
+
+    let invalid = Fixture::new();
+    fs::create_dir_all(invalid.store.root().join("not-a-task"))
+        .expect("create invalid task directory");
+    fs::write(invalid.store.root().join("not-a-task/manifest.json"), b"{}")
+        .expect("write invalid manifest");
+    let invalid = invalid
+        .store
+        .capture()
+        .expect_err("invalid task directory refused");
     assert_eq!(invalid.class(), ErrorClass::Corrupt);
 
     let fixture = Fixture::new();
@@ -494,10 +502,15 @@ fn backup_admission_and_capture_bounds_reject_incomplete_generations() {
         Retention::Permanent,
         instant("2030-01-01T00:00:00.000Z"),
     );
-    let mut image = backup_image(&fixture.store);
-    let suffix = format!("objects/{}/payload", artifact.digest);
-    image.files.retain(|file| !file.path.ends_with(&suffix));
-    let missing = BackupImage::admit(image.files).expect_err("missing payload refused");
+    fs::remove_file(payload_path(
+        &fixture.store.task_dir(&task),
+        &artifact.digest,
+    ))
+    .expect("remove cited payload");
+    let missing = fixture
+        .store
+        .capture()
+        .expect_err("missing payload refused");
     assert_eq!(missing.class(), ErrorClass::Corrupt);
 
     let bounded = fixture.store.root().join("bounded-member");
@@ -525,6 +538,18 @@ fn backup_admission_and_capture_bounds_reject_incomplete_generations() {
             .to_string()
             .contains("536870912 aggregate bytes")
     );
+
+    let oversized_source = BoundSource {
+        bytes: MAX_BACKUP_BYTES + 1,
+    };
+    let oversized_failure = super::BackupGeneration::from_sources(&[&oversized_source])
+        .expect_err("declared aggregate beyond the bound refused before copy");
+    assert_eq!(oversized_failure.class(), ErrorClass::Corrupt);
+
+    let overrun = BoundSource { bytes: 0 };
+    let overrun_failure = super::BackupGeneration::from_sources(&[&overrun])
+        .expect_err("member crossing its declared bound refused during copy");
+    assert_eq!(overrun_failure.class(), ErrorClass::Corrupt);
 }
 
 #[test]
@@ -549,8 +574,14 @@ fn replacement_commits_or_rolls_back_complete_provenance_generations() {
         instant("2030-01-02T00:00:00.000Z"),
     );
     let old = first.store.capture().expect("old generation");
-    let old_image = backup_image(&first.store);
-    let new = backup_image(&second.store);
+    let old_image = first.store.capture().expect("old image generation");
+    let captured_new = second.store.capture().expect("new generation");
+    let sources = captured_new
+        .members()
+        .iter()
+        .map(|member| member as &dyn super::BackupSource)
+        .collect::<Vec<_>>();
+    let new = super::BackupGeneration::from_sources(&sources).expect("streamed new generation");
 
     first
         .store
@@ -603,7 +634,7 @@ fn failed_commit_cleanup_never_removes_the_published_generation() {
         instant("2030-01-02T00:00:00.000Z"),
     );
     let old = first.store.capture().expect("old generation");
-    let new = backup_image(&second.store);
+    let new = second.store.capture().expect("new generation");
     let replacement = first
         .store
         .begin_replace(&new, &old)

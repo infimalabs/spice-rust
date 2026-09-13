@@ -6,10 +6,10 @@ mod model;
 mod store;
 
 pub use model::{
-    Artifact, ArtifactAnswer, ArtifactContent, BackupFile, BackupImage, MediaType, PruneOperation,
-    PrunePlan, PruneSkip, Retention, VocabularyError,
+    Artifact, ArtifactAnswer, ArtifactContent, MediaType, PruneOperation, PrunePlan, PruneSkip,
+    Retention, VocabularyError,
 };
 pub use store::{
-    AddBytesRequest, AddRequest, BackupGeneration, BackupMember, Error, ErrorClass, Replacement,
-    Store,
+    AddBytesRequest, AddRequest, BackupGeneration, BackupMember, BackupSource, Error, ErrorClass,
+    Replacement, Store,
 };
