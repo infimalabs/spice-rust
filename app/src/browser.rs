@@ -39,6 +39,7 @@ mod connection;
 mod view;
 mod watchband;
 
+use crate::PendingKind;
 use crate::action_mailbox::{self, ActionLease, ActionQueue};
 use connection::{request_external_speech, run_surface};
 use view::{CanvasRender, render_canvas};
@@ -74,7 +75,6 @@ struct EstablishedConnection {
     writer: SocketWriter,
     reader: SocketReader,
     principal: Principal,
-    pending: BTreeMap<CanonicalUuid, PendingKind>,
     hydrating: bool,
 }
 
@@ -359,83 +359,6 @@ impl Connection {
 }
 
 type SurfaceData = CanvasSurface;
-
-#[derive(Clone)]
-enum PendingKind {
-    Board,
-    Lanes {
-        /// Wake submissions this read was issued after and may therefore bind.
-        wakes: Vec<CanonicalUuid>,
-    },
-    Inbox {
-        /// Accepted keys a successful answer can reconstruct as settled.
-        covered: BTreeMap<CanonicalUuid, String>,
-    },
-    Settings,
-    LaneSeat,
-    /// One member arrangement whose stale refusal must refresh the roster.
-    LaneArrange,
-    /// One typed agent-succession request or pre-handoff cancellation.
-    LaneRenewal {
-        lineage: CanonicalUuid,
-        lane: CanonicalUuid,
-        requested: bool,
-    },
-    WakeSubmission {
-        lane: CanonicalUuid,
-        submission: CanonicalUuid,
-    },
-    LineageConfigure {
-        lineage: CanonicalUuid,
-        life: Option<LineageLife>,
-    },
-    /// An organization arrangement in flight.
-    ///
-    /// No lineage travels with it: an arrangement names every organization, so there is
-    /// no one organization a refusal belongs to. A successful answer replaces the
-    /// whole lane table; a refusal re-reads it so a losing client redraws the
-    /// winning topology and revision.
-    LineageArrange,
-    /// Direction in flight, carrying the lane it was aimed at.
-    ///
-    /// The receipt names that lane, and the only moment it is known for certain
-    /// is the send: by the time the answer lands the selection may have moved,
-    /// so reading it back off the surface would attribute the receipt to
-    /// whichever lane the operator is looking at now.
-    Steer,
-    SteerSubmission {
-        lane: CanonicalUuid,
-    },
-    Note,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum CurrentRead {
-    Board,
-    Lanes,
-    Inbox,
-    Settings,
-}
-
-impl PendingKind {
-    const fn current_read(&self) -> Option<CurrentRead> {
-        match self {
-            Self::Board => Some(CurrentRead::Board),
-            Self::Lanes { .. } => Some(CurrentRead::Lanes),
-            Self::Inbox { .. } => Some(CurrentRead::Inbox),
-            Self::Settings => Some(CurrentRead::Settings),
-            Self::LaneSeat
-            | Self::LaneArrange
-            | Self::LaneRenewal { .. }
-            | Self::WakeSubmission { .. }
-            | Self::LineageConfigure { .. }
-            | Self::LineageArrange
-            | Self::Steer
-            | Self::SteerSubmission { .. }
-            | Self::Note => None,
-        }
-    }
-}
 
 #[derive(Deserialize)]
 struct ResponseIdentity {

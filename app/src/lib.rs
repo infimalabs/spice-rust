@@ -66,6 +66,41 @@ pub mod watchband;
 
 #[cfg(target_arch = "wasm32")]
 mod browser;
+
+#[derive(Clone)]
+#[cfg(any(target_arch = "wasm32", test))]
+#[cfg_attr(test, allow(dead_code))]
+pub(crate) enum PendingKind {
+    Board,
+    Lanes {
+        wakes: Vec<wire::CanonicalUuid>,
+    },
+    Inbox {
+        covered: std::collections::BTreeMap<wire::CanonicalUuid, String>,
+    },
+    Settings,
+    LaneSeat,
+    LaneArrange,
+    LaneRenewal {
+        lineage: wire::CanonicalUuid,
+        lane: wire::CanonicalUuid,
+        requested: bool,
+    },
+    WakeSubmission {
+        lane: wire::CanonicalUuid,
+        submission: wire::CanonicalUuid,
+    },
+    LineageConfigure {
+        lineage: wire::CanonicalUuid,
+        life: Option<wire::intent::LineageLife>,
+    },
+    LineageArrange,
+    Steer,
+    SteerSubmission {
+        lane: wire::CanonicalUuid,
+    },
+    Note,
+}
 #[cfg(target_arch = "wasm32")]
 mod speech;
 

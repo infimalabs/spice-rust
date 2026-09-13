@@ -5,15 +5,15 @@ use super::*;
 pub(super) async fn send_after_frame(
     principal: &Principal,
     writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    actions: &ActionQueue,
     submissions: &SubmissionHandle,
     full: bool,
     stale: crate::Stale,
 ) -> Result<(), String> {
     if full {
-        send_refresh(principal, writer, pending, submissions).await?;
+        send_refresh(principal, writer, actions, submissions).await?;
     } else {
-        send_stale(principal, writer, pending, submissions, stale).await?;
+        send_stale(principal, writer, actions, submissions, stale).await?;
     }
 
     // A lane read already in flight can coalesce the refresh caused by a wake
@@ -21,7 +21,7 @@ pub(super) async fn send_after_frame(
     // response clears it, keep the causal read live until one nominated after
     // the wake is actually in flight.
     if !submissions.queue.borrow().awaiting_residency().is_empty() {
-        send_lanes(principal, writer, pending, submissions).await?;
+        send_lanes(principal, writer, actions, submissions).await?;
     }
     Ok(())
 }
@@ -29,13 +29,13 @@ pub(super) async fn send_after_frame(
 pub(super) async fn send_refresh(
     principal: &Principal,
     writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    actions: &ActionQueue,
     submissions: &SubmissionHandle,
 ) -> Result<(), String> {
-    send_board(principal, writer, pending).await?;
-    send_lanes(principal, writer, pending, submissions).await?;
-    send_inbox(principal, writer, pending, submissions).await?;
-    send_settings(principal, writer, pending).await
+    send_board(principal, writer, actions).await?;
+    send_lanes(principal, writer, actions, submissions).await?;
+    send_inbox(principal, writer, actions, submissions).await?;
+    send_settings(principal, writer, actions).await
 }
 
 /// Refresh only the current reads invalidated by one streamed fact batch.
@@ -43,18 +43,18 @@ pub(super) async fn send_refresh(
 pub(super) async fn send_stale(
     principal: &Principal,
     writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    actions: &ActionQueue,
     submissions: &SubmissionHandle,
     stale: crate::Stale,
 ) -> Result<(), String> {
     if stale.board() {
-        send_board(principal, writer, pending).await?;
+        send_board(principal, writer, actions).await?;
     }
     if stale.lanes() {
-        send_lanes(principal, writer, pending, submissions).await?;
+        send_lanes(principal, writer, actions, submissions).await?;
     }
     if stale.inbox() {
-        send_inbox(principal, writer, pending, submissions).await?;
+        send_inbox(principal, writer, actions, submissions).await?;
     }
     Ok(())
 }
@@ -62,12 +62,12 @@ pub(super) async fn send_stale(
 async fn send_board(
     principal: &Principal,
     writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    actions: &ActionQueue,
 ) -> Result<(), String> {
     send_if_offered(
         principal,
         writer,
-        pending,
+        actions,
         PendingKind::Board,
         CommandKind::BoardRead,
         BoardRead { family: None },
@@ -78,14 +78,14 @@ async fn send_board(
 async fn send_lanes(
     principal: &Principal,
     writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    actions: &ActionQueue,
     submissions: &SubmissionHandle,
 ) -> Result<(), String> {
     let wakes = submissions.queue.borrow().awaiting_residency();
     send_if_offered(
         principal,
         writer,
-        pending,
+        actions,
         PendingKind::Lanes { wakes },
         CommandKind::LaneRead,
         LaneRead {},
@@ -96,14 +96,14 @@ async fn send_lanes(
 async fn send_inbox(
     principal: &Principal,
     writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    actions: &ActionQueue,
     submissions: &SubmissionHandle,
 ) -> Result<(), String> {
     let covered = submissions.queue.borrow().accepted();
     send_if_offered(
         principal,
         writer,
-        pending,
+        actions,
         PendingKind::Inbox { covered },
         CommandKind::SteerInbox,
         SteerInbox { lane: None },
@@ -114,12 +114,12 @@ async fn send_inbox(
 async fn send_settings(
     principal: &Principal,
     writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    actions: &ActionQueue,
 ) -> Result<(), String> {
     send_if_offered(
         principal,
         writer,
-        pending,
+        actions,
         PendingKind::Settings,
         CommandKind::GlobalSettingsRead,
         GlobalSettingsRead {},
@@ -130,7 +130,7 @@ async fn send_settings(
 async fn send_if_offered<B: Serialize>(
     principal: &Principal,
     writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    actions: &ActionQueue,
     pending_kind: PendingKind,
     kind: CommandKind,
     body: B,
@@ -139,11 +139,11 @@ async fn send_if_offered<B: Serialize>(
         return Ok(());
     }
     if let Some(read) = pending_kind.current_read()
-        && pending
-            .values()
-            .any(|pending| pending.current_read() == Some(read))
+        && actions.has_current_read(read)
     {
         return Ok(());
     }
-    send_typed(principal, writer, pending, pending_kind, kind, vec![], body).await
+    send_typed(principal, writer, actions, pending_kind, kind, vec![], body)
+        .await
+        .map(|_| ())
 }

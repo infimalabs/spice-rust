@@ -1,13 +1,13 @@
 //! Bounded browser-owned admission for actions awaiting socket service.
 
 use std::cell::RefCell;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::rc::Rc;
 
 use futures_channel::mpsc;
 use wire::{CanonicalUuid, SeqRange};
 
-use crate::client_action::ClientAction;
+use crate::{PendingKind, client_action::ClientAction};
 
 const ACTION_RECORD_LIMIT: usize = 64;
 const HISTORY_RECORD_LIMIT: usize = 32;
@@ -69,6 +69,45 @@ impl ActionQueue {
         self.mailbox.borrow_mut().reconnect();
     }
 
+    pub(super) fn pending_contains(&self, id: CanonicalUuid) -> bool {
+        self.mailbox.borrow().pending.contains_key(&id)
+    }
+
+    pub(super) fn reserve_pending(
+        &self,
+        id: CanonicalUuid,
+        kind: PendingKind,
+        payload_bytes: usize,
+    ) -> Result<(), ActionAdmissionError> {
+        self.mailbox
+            .borrow_mut()
+            .reserve_pending(id, kind, payload_bytes)
+    }
+
+    pub(super) fn cancel_pending(&self, id: CanonicalUuid) {
+        self.mailbox.borrow_mut().settle_pending(id);
+    }
+
+    pub(super) fn settle_pending(&self, id: CanonicalUuid) -> Option<PendingKind> {
+        self.mailbox.borrow_mut().settle_pending(id)
+    }
+
+    pub(super) fn current_reads_settled(&self) -> bool {
+        self.mailbox
+            .borrow()
+            .pending
+            .values()
+            .all(|entry| entry.kind.current_read().is_none())
+    }
+
+    pub(super) fn has_current_read(&self, read: CurrentRead) -> bool {
+        self.mailbox
+            .borrow()
+            .pending
+            .values()
+            .any(|entry| entry.kind.current_read() == Some(read))
+    }
+
     pub(super) fn admit_topology(&self, id: CanonicalUuid, range: SeqRange) -> Result<(), String> {
         self.mailbox.borrow_mut().admit_topology(id, range)
     }
@@ -112,6 +151,34 @@ pub(super) enum ActionAdmissionError {
     History,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CurrentRead {
+    Board,
+    Lanes,
+    Inbox,
+    Settings,
+}
+
+impl PendingKind {
+    pub(crate) const fn current_read(&self) -> Option<CurrentRead> {
+        match self {
+            Self::Board => Some(CurrentRead::Board),
+            Self::Lanes { .. } => Some(CurrentRead::Lanes),
+            Self::Inbox { .. } => Some(CurrentRead::Inbox),
+            Self::Settings => Some(CurrentRead::Settings),
+            Self::LaneSeat
+            | Self::LaneArrange
+            | Self::LaneRenewal { .. }
+            | Self::WakeSubmission { .. }
+            | Self::LineageConfigure { .. }
+            | Self::LineageArrange
+            | Self::Steer
+            | Self::SteerSubmission { .. }
+            | Self::Note => None,
+        }
+    }
+}
+
 impl std::fmt::Display for ActionAdmissionError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -138,6 +205,7 @@ struct ActionMailbox {
     records: VecDeque<QueuedAction>,
     leased: Option<LeasedAction>,
     in_flight: Option<InFlightAction>,
+    pending: BTreeMap<CanonicalUuid, PendingAction>,
     topology_ids: HashSet<CanonicalUuid>,
     history: HashSet<(wire::CanonicalUuid, wire::MessageLocus)>,
     payload_bytes: usize,
@@ -161,12 +229,20 @@ struct LeasedAction {
     history: Option<(wire::CanonicalUuid, wire::MessageLocus)>,
     class: ActionClass,
     topology: Option<TopologyAction>,
+    pending_transfer: bool,
 }
 
 struct InFlightAction {
     queued: QueuedAction,
     index: usize,
     admitted: Option<SeqRange>,
+}
+
+struct PendingAction {
+    kind: PendingKind,
+    retained: Option<(QueuedAction, usize)>,
+    payload_bytes: usize,
+    credited: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -233,6 +309,24 @@ impl ActionLease {
         let action = self.action.take().expect("an unsettled lease commits");
         self.queue.mailbox.borrow_mut().commit();
         action
+    }
+
+    pub(super) fn commit_pending(mut self, id: CanonicalUuid) {
+        let action = self
+            .action
+            .take()
+            .expect("an unsettled lease commits pending");
+        self.queue.mailbox.borrow_mut().commit_pending(action, id);
+    }
+
+    pub(super) fn prepare_pending_transfer(&mut self) {
+        self.queue
+            .mailbox
+            .borrow_mut()
+            .leased
+            .as_mut()
+            .expect("one action is leased")
+            .pending_transfer = true;
     }
 
     pub(super) fn restore(mut self) {
@@ -403,6 +497,7 @@ impl ActionMailbox {
         if self.records.len()
             + usize::from(self.leased.is_some())
             + usize::from(self.in_flight.is_some())
+            + self.pending.len()
             >= ACTION_RECORD_LIMIT
         {
             return Err(ActionAdmissionError::Records);
@@ -465,6 +560,7 @@ impl ActionMailbox {
             history: queued.history,
             class: queued.class,
             topology: queued.topology,
+            pending_transfer: false,
         });
         Some(queued.action)
     }
@@ -520,6 +616,97 @@ impl ActionMailbox {
         self.mutation_turn = !self.mutation_turn;
     }
 
+    fn commit_pending(&mut self, action: ClientAction, id: CanonicalUuid) {
+        let leased = self
+            .leased
+            .take()
+            .expect("one leased action commits pending");
+        assert!(
+            leased.topology.is_none(),
+            "topology settles through its own slot"
+        );
+        let pending = self
+            .pending
+            .remove(&id)
+            .expect("sent action reserved its pending identity");
+        assert!(
+            pending.retained.is_none(),
+            "pending identity was preflighted"
+        );
+        if !pending.credited {
+            self.payload_bytes = self.payload_bytes.saturating_sub(pending.payload_bytes);
+        }
+        self.pending.insert(
+            id,
+            PendingAction {
+                kind: pending.kind,
+                payload_bytes: leased.payload_bytes,
+                retained: Some((
+                    QueuedAction {
+                        action,
+                        payload_bytes: leased.payload_bytes,
+                        history: leased.history,
+                        class: leased.class,
+                        topology: None,
+                    },
+                    leased.index,
+                )),
+                credited: false,
+            },
+        );
+        self.mutation_turn = !self.mutation_turn;
+    }
+
+    fn reserve_pending(
+        &mut self,
+        id: CanonicalUuid,
+        kind: PendingKind,
+        payload_bytes: usize,
+    ) -> Result<(), ActionAdmissionError> {
+        if self.pending.contains_key(&id) {
+            return Err(ActionAdmissionError::Identity);
+        }
+        let credited = self
+            .leased
+            .as_ref()
+            .is_some_and(|leased| leased.pending_transfer);
+        if !credited
+            && self.records.len()
+                + usize::from(self.leased.is_some())
+                + usize::from(self.in_flight.is_some())
+                + self.pending.len()
+                >= ACTION_RECORD_LIMIT
+        {
+            return Err(ActionAdmissionError::Records);
+        }
+        if !credited && payload_bytes > ACTION_PAYLOAD_LIMIT.saturating_sub(self.payload_bytes) {
+            return Err(ActionAdmissionError::Payload);
+        }
+        if !credited {
+            self.payload_bytes = self.payload_bytes.saturating_add(payload_bytes);
+        }
+        self.pending.insert(
+            id,
+            PendingAction {
+                kind,
+                retained: None,
+                payload_bytes,
+                credited,
+            },
+        );
+        Ok(())
+    }
+
+    fn settle_pending(&mut self, id: CanonicalUuid) -> Option<PendingKind> {
+        let pending = self.pending.remove(&id)?;
+        if let Some((queued, _)) = &pending.retained {
+            self.release_queued_accounting(queued);
+        } else if !pending.credited {
+            self.payload_bytes = self.payload_bytes.saturating_sub(pending.payload_bytes);
+        }
+        Some(pending.kind)
+    }
+
     fn restore(&mut self, action: ClientAction) {
         let leased = self.leased.take().expect("one leased action restores");
         assert!(
@@ -552,6 +739,18 @@ impl ActionMailbox {
         if let Some(in_flight) = self.in_flight.take() {
             let index = in_flight.index.min(self.records.len());
             self.records.insert(index, in_flight.queued);
+        }
+        let mut retained = Vec::new();
+        for pending in std::mem::take(&mut self.pending).into_values() {
+            if let Some(action) = pending.retained {
+                retained.push(action);
+            } else if !pending.credited {
+                self.payload_bytes = self.payload_bytes.saturating_sub(pending.payload_bytes);
+            }
+        }
+        retained.sort_by_key(|(_, index)| *index);
+        for (queued, index) in retained {
+            self.records.insert(index.min(self.records.len()), queued);
         }
     }
 
@@ -775,5 +974,38 @@ mod tests {
             queue.lease().is_none(),
             "an exact duplicate renewal coalesces"
         );
+
+        let pending = id(40);
+        queue
+            .reserve_pending(pending, PendingKind::Settings, 1)
+            .unwrap();
+        assert!(queue.pending_contains(pending));
+        assert!(queue.has_current_read(CurrentRead::Settings));
+        assert!(!queue.current_reads_settled());
+        assert!(matches!(
+            queue.settle_pending(pending),
+            Some(PendingKind::Settings)
+        ));
+
+        queue.admit(ClientAction::FastMode(false), None).unwrap();
+        let mut lease = queue.lease().expect("ordinary pending action leases");
+        lease.prepare_pending_transfer();
+        queue
+            .reserve_pending(pending, PendingKind::Settings, 1)
+            .unwrap();
+        lease.commit_pending(pending);
+        queue.reconnect();
+        drop(
+            queue
+                .lease()
+                .expect("reconnect replays pending action")
+                .commit(),
+        );
+
+        queue
+            .reserve_pending(pending, PendingKind::Settings, 1)
+            .unwrap();
+        queue.cancel_pending(pending);
+        assert!(!queue.pending_contains(pending));
     }
 }

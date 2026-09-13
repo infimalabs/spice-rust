@@ -37,7 +37,6 @@ pub(super) fn handle_incoming(
     session: &Session,
     handles: &SurfaceHandles,
     data: &SurfaceData,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     actions: &ActionQueue,
     bytes: &[u8],
     publish: bool,
@@ -47,7 +46,7 @@ pub(super) fn handle_incoming(
         return handle_stream_frame(session, &handles.surface, data, bytes, publish);
     }
     let identity: ResponseIdentity = wire::decode(bytes).map_err(|error| error.to_string())?;
-    let ordinary_kind = pending.remove(&identity.id);
+    let ordinary_kind = actions.settle_pending(identity.id);
     let topology_kind = actions
         .map_in_flight_topology(identity.id, topology_pending_kind)
         .ok();
