@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::fs::{self, File};
+use std::fs::{self, File, Metadata, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -423,17 +423,19 @@ fn capture_manifest(
 ) -> Result<(proof::PackageMember, std::sync::Arc<[u8]>), PackageFailure> {
     const PATH: &str = "release/manifest.json";
     let source = stage.join(PATH);
-    let metadata = fs::symlink_metadata(&source).map_err(|error| {
-        let detail = format!("cannot read staged release manifest: {error}");
-        if error.kind() == io::ErrorKind::NotFound {
-            PackageFailure::Moved(detail)
-        } else {
-            PackageFailure::Environment(detail)
-        }
-    })?;
-    if !metadata.file_type().is_file() {
+    let file = open_manifest(&source)?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| manifest_io_failure(error, "inspect"))?;
+    let identity = ManifestIdentity::from_metadata(&metadata);
+    let named =
+        fs::symlink_metadata(&source).map_err(|error| manifest_io_failure(error, "inspect"))?;
+    if !metadata.is_file()
+        || !named.file_type().is_file()
+        || ManifestIdentity::from_metadata(&named) != identity
+    {
         return Err(PackageFailure::Moved(format!(
-            "staged release manifest {} is not a regular file",
+            "staged release manifest {} is not one stable regular file",
             source.display()
         )));
     }
@@ -445,14 +447,9 @@ fn capture_manifest(
             proof::PACKAGE_DOCUMENT_LIMIT
         )));
     }
-    let file = File::open(&source).map_err(|error| {
-        let detail = format!("cannot read staged release manifest: {error}");
-        if error.kind() == io::ErrorKind::NotFound {
-            PackageFailure::Moved(detail)
-        } else {
-            PackageFailure::Environment(detail)
-        }
-    })?;
+    let held = file
+        .try_clone()
+        .map_err(|error| manifest_io_failure(error, "retain"))?;
     let (member, bytes) =
         proof::PackageMember::admit_document_file(PATH, 0o644, file, proof::PACKAGE_DOCUMENT_LIMIT)
             .map_err(|error| match error {
@@ -461,7 +458,11 @@ fn capture_manifest(
                 }
                 _ => PackageFailure::Moved(error.to_string()),
             })?;
-    if member.length() != metadata.len() {
+    let reopened = open_manifest(&source)?;
+    if member.length() != identity.length
+        || ManifestIdentity::capture(&held)? != identity
+        || ManifestIdentity::capture(&reopened)? != identity
+    {
         return Err(PackageFailure::Moved(
             "staged release manifest changed while it was captured".to_owned(),
         ));
@@ -472,6 +473,61 @@ fn capture_manifest(
         ));
     }
     Ok((member, bytes))
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ManifestIdentity {
+    length: u64,
+    modified: Option<std::time::SystemTime>,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+}
+
+impl ManifestIdentity {
+    fn capture(file: &File) -> Result<Self, PackageFailure> {
+        file.metadata()
+            .map(|metadata| Self::from_metadata(&metadata))
+            .map_err(|error| manifest_io_failure(error, "inspect"))
+    }
+
+    fn from_metadata(metadata: &Metadata) -> Self {
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt;
+
+        Self {
+            length: metadata.len(),
+            modified: metadata.modified().ok(),
+            #[cfg(unix)]
+            device: metadata.dev(),
+            #[cfg(unix)]
+            inode: metadata.ino(),
+        }
+    }
+}
+
+fn open_manifest(path: &Path) -> Result<File, PackageFailure> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        options.custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    options
+        .open(path)
+        .map_err(|error| manifest_io_failure(error, "read"))
+}
+
+fn manifest_io_failure(error: io::Error, operation: &str) -> PackageFailure {
+    let detail = format!("cannot {operation} staged release manifest: {error}");
+    if error.kind() == io::ErrorKind::NotFound || error.raw_os_error() == Some(libc::ELOOP) {
+        PackageFailure::Moved(detail)
+    } else {
+        PackageFailure::Environment(detail)
+    }
 }
 
 fn add_targets(
