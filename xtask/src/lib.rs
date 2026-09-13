@@ -35,7 +35,9 @@ pub use verify_error::{GateArmError, VerifyError};
 #[cfg(not(target_arch = "wasm32"))]
 pub use develop::refresh_install;
 pub use proof_image::{ProofImageError, build_proof_image, load_proof_image};
-pub use release::{CommandRecord, ReleaseEnvironment, TargetBuild, TargetBuildError, stage_target};
+pub use release::{
+    CommandRecord, MacSymbols, ReleaseEnvironment, TargetBuild, TargetBuildError, stage_target,
+};
 pub use test_classification::{
     ClassificationError, list as list_slow_tests, run_fast as run_fast_tests,
     run_slow as run_slow_tests,
