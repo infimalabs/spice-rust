@@ -583,39 +583,20 @@ fn guard_claim(
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,
     possession: Possession,
-    task: &TaskHandle,
-    projects: &ProjectPolicy,
+    _task: &TaskHandle,
+    _projects: &ProjectPolicy,
 ) {
     let expected = command.expected().to_vec();
-    let heads = allocation_heads(&snapshot.answer);
     if possession.named() {
-        guard_capture(
-            write,
-            expected,
-            heads,
-            command.actor().clone(),
-            task.clone(),
-            projects.clone(),
-            possession,
-        );
+        guard_capture(write, expected, snapshot.cursor, command.actor().clone());
     } else {
         guard_allocation(
             write,
             expected,
             AllocationObservation {
-                heads,
-                entries: snapshot.entries.clone(),
-                winner: task.clone(),
+                cursor: snapshot.cursor,
                 actor: command.actor().clone(),
-                subscription: allocation_subscription(
-                    &snapshot.answer.residency.body,
-                    command.actor(),
-                )
-                .expect("claim selection admitted one durable lineage subscription")
-                .clone(),
                 residency_position: snapshot.answer.residency.position,
-                band: snapshot.answer.allocation_band,
-                recent_cell: snapshot.answer.recent_cell.clone(),
             },
         );
     }

@@ -194,14 +194,16 @@ fn collect(
     prior_handle: Option<&str>,
 ) -> Result<BoardObservation, journal::GuardError> {
     let residency = read.residency_head()?;
-    let tasks = read.task_head_page(None, journal::FactReadBudget::RETAINED)?;
-    if let Some(continuation) = tasks.continuation {
-        return Err(journal::GuardError::Invalid(format!(
-            "session claim observation requires continuation after {continuation}"
-        )));
-    }
-    let tasks = tasks.rows;
-    let prior_active = prior_handle.and_then(|handle| active_authority(&tasks, handle));
+    let prior_active = match prior_handle
+        .and_then(|handle| handle.parse::<TaskHandle>().ok().map(|task| (handle, task)))
+        .and_then(|(handle, task)| task.born().ok().map(|born| (handle, born)))
+    {
+        Some((handle, born)) => read
+            .task_heads_for(&born)?
+            .as_ref()
+            .and_then(|heads| active_authority(heads, handle)),
+        None => None,
+    };
     let Some(residency) = residency.filter(|head| head.body().state == ResidentState::Seated)
     else {
         return Ok(BoardObservation {
@@ -344,17 +346,15 @@ fn current_owner(
     })
 }
 
-fn active_authority(tasks: &[journal::TaskHeads], handle: &str) -> Option<AuthorityKey> {
-    tasks.iter().find_map(|heads| {
-        let candidate = TaskHandle::for_project(
-            &heads.statement().body().project,
-            &heads.statement().body().born,
-        );
-        let claim = heads.claim()?;
-        let _lease = heads.lease()?;
-        (candidate.to_string() == handle && claim.body().disposition == ClaimDisposition::Active)
-            .then(|| authority(heads, claim))
-    })
+fn active_authority(heads: &journal::TaskHeads, handle: &str) -> Option<AuthorityKey> {
+    let candidate = TaskHandle::for_project(
+        &heads.statement().body().project,
+        &heads.statement().body().born,
+    );
+    let claim = heads.claim()?;
+    let _lease = heads.lease()?;
+    (candidate.to_string() == handle && claim.body().disposition == ClaimDisposition::Active)
+        .then(|| authority(heads, claim))
 }
 
 fn authority(

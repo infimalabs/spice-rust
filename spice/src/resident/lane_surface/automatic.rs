@@ -420,20 +420,7 @@ fn guard_automatic_claim(write: &mut JournalWrite, authority: &AutomaticClaimAut
             ));
         }
         if let Some((requirements, expected)) = trust_blocked.as_ref() {
-            let mut environment = wire::Environment::journal_schema(journal::SCHEMA_VERSION)
-                .expect("the compiled journal schema is positive");
-            if let Some(digest) = requirements.as_slice().iter().find_map(|requirement| {
-                let wire::EnvironmentRequirement::TrustGrant { value } = requirement else {
-                    return None;
-                };
-                Some(value)
-            }) {
-                environment = environment.with_trust_heads(
-                    read.trust_head(digest)?
-                        .into_iter()
-                        .map(journal::JournalHead::into_body),
-                );
-            }
+            let environment = read.environment(requirements)?;
             if requirements.has_unsatisfied_trust_grant(&environment) != *expected {
                 return Err(journal::GuardError::refused(
                     "lifecycle::held-claim-trust-moved",

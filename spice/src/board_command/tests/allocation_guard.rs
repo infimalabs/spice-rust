@@ -2,63 +2,6 @@ use super::*;
 
 mod trust;
 
-// The allocator's re-read guard refuses three separate ways, and one scenario
-// that moves everything at once cannot tell them apart. Each test in this file
-// moves only what a single comparison reads, so severing that comparison alone
-// reds only the tests that read it. Measured by severing each in turn, over all
-// seven tests here:
-//
-// Sites here are named rather than numbered: a line number retargets silently
-// whenever anything above it moves, while a name that goes stale stops
-// resolving instead of resolving to something else. In order,
-// `guard_allocation` runs `witnesses_hold`, then refuses with
-// `allocator subscription head changed`, `allocator head set changed`, and
-// `allocator winner changed`. Each of those three strings is asserted below, so
-// renaming one reds a test here rather than quietly orphaning a citation.
-//
-// | Severed in `guard_allocation` | Reds | Stays green |
-// | --- | --- | --- |
-// | `witnesses_hold` | `a_moved_witness_...` | other 6 |
-// | residency | `..._residency_head_moved_...`, `a_reseat_between_...` | other 5 |
-// | head set | `..._task_added_after_...`, `a_task_added_between_...` | other 5 |
-// | winner | `..._winner_that_was_never_...` | other 6 |
-//
-// The last row is why no `..._between_the_claim_plan_...` test claims the
-// winner comparison. `AllocationHeads` is a tuple of journal positions, so an
-// unmoved head set means identical entries and -- `board::select` reading no
-// clock -- an identical winner, and the head-set comparison refuses ahead of it
-// either way. Only a hand-built observation reaches the winner comparison.
-//
-// One more severing separates the two kinds of test here. Making `commit_claim`
-// re-read the board instead of consuming the snapshot its plan decided against
-// reds both `..._between_the_claim_plan_...` tests and leaves all four
-// hand-built ones green: an observation this file builds itself cannot notice
-// that production stopped carrying its own. That is the coverage the end-to-end
-// drives own, and it is also the argument the seam exists for.
-//
-// The seam is also the ceiling. Both `..._between_the_claim_plan_...` tests call
-// `claim_plan` and `commit_claim` themselves, so `claim_win` -- which is those
-// two calls and nothing else -- is the one composition nothing here drives.
-// Measured at `afea4d03`: assigning `plan.snapshot` from a second
-// `validated_snapshot` taken between the two calls hands the guard an
-// observation the decision was never made against, defeating it outright, and
-// all 227 tests in the spice bin stay green. The identical defect one level
-// down, `commit_claim` re-reading, reds the two tests above and nothing else --
-// re-read with the plan's own allocator config, since substituting the default
-// reds a third test for a reason that has nothing to do with the second read.
-//
-// The gap is not reach. Refusing inside `claim_win` outright reds 20 of those
-// 227 -- 18 in `board_command::tests`, one in `subscription`, one in
-// `resident::timers::tests` -- and none of the seven here, so the composition is
-// well driven and this file is precisely the part of the bin that steps over it.
-// What no drive can do is see the second read. Two snapshots with no write
-// between them are equal, so the defect surfaces only if the board moves between
-// the two calls, and a claim runs to completion inside one synchronous call: a
-// sequential test has nowhere to put that write, and a concurrent writer cannot
-// be made to land in the window. The hook that would let one land is the
-// test-only entry point EFFORT-1kKp0Mv6 forbids, so this is recorded rather than
-// covered. Making that window enterable is what the seam is for, and entering it
-// is what the two tests above do.
 pub(super) fn guard_projects() -> ProjectPolicy {
     ProjectPolicy::new(
         ["board".to_owned(), "rim".to_owned()],
@@ -94,20 +37,13 @@ pub(super) fn guard_winner(answer: &BoardAnswer, actor: &Actor) -> TaskHandle {
 fn guard_observation(
     answer: &BoardAnswer,
     actor: &Actor,
-    winner: TaskHandle,
+    _winner: TaskHandle,
     _projects: &ProjectPolicy,
 ) -> AllocationObservation {
     AllocationObservation {
-        heads: allocation_heads(answer),
-        entries: actor_entries(answer).expect("allocation guard entries validate"),
-        winner,
+        cursor: answer.cursor,
         actor: actor.clone(),
-        subscription: allocation_subscription(&answer.residency.body, actor)
-            .expect("allocation guard fixture lane carries a subscription")
-            .clone(),
         residency_position: answer.residency.position,
-        band: answer.allocation_band,
-        recent_cell: answer.recent_cell.clone(),
     }
 }
 
@@ -237,11 +173,7 @@ fn a_task_added_after_the_observation_refuses_the_allocator_write() {
     add(&bus, epoch, actor.clone(), "GUARD-3", "arrived late", None);
 
     let moved = board(&bus, epoch, actor.clone());
-    assert_ne!(
-        allocation_heads(&moved),
-        observed.heads,
-        "the added task moved the head set the guard re-reads"
-    );
+    assert_ne!(moved.cursor, observed.cursor);
     assert_eq!(
         guard_winner(&moved, &actor),
         winner,
@@ -251,7 +183,7 @@ fn a_task_added_after_the_observation_refuses_the_allocator_write() {
 
     assert_eq!(
         refusal_reason(commit_guarded(&bus, epoch, observed)),
-        "board::witness-moved: allocator head set changed"
+        "board::witness-moved: allocator projection changed"
     );
 }
 
@@ -280,51 +212,8 @@ fn a_residency_head_moved_after_the_observation_refuses_the_allocator_write() {
         "re-seating moved the residency head the guard re-reads"
     );
     assert_eq!(
-        allocation_heads(&moved),
-        observed.heads,
-        "re-seating must leave every task head still, or the head-set \
-         comparison would refuse before the residency comparison is reached"
-    );
-
-    assert_eq!(
         refusal_reason(commit_guarded(&bus, epoch, observed)),
         "board::witness-moved: allocator subscription head changed"
-    );
-}
-
-/// Pins the winner comparison in `read_guard.rs` on its own.
-///
-/// Nothing moves here, because nothing that moves can reach this comparison.
-/// `AllocationHeads` is a tuple of journal positions, so an unmoved head set
-/// means identical facts, identical entries, and -- `board::select` reading no
-/// clock -- an identical winner. The comparison can therefore only refuse an
-/// observation whose winner was never the selection, which the allocator does
-/// not produce. It is a backstop, and this pins it as one. Keeping it was
-/// decided rather than inherited; `guard_allocation` carries the reason and the
-/// one change that would make it reachable, and this test is the only proof it
-/// works, so it stays as long as the comparison does.
-#[test]
-fn a_winner_that_was_never_the_selection_refuses_the_allocator_write() {
-    let (_root, bus, epoch, seats) = fixture("allocation-guard-winner", 1);
-    let actor = Actor::Lane(seats[0].lane);
-    authorize_lane_creation(&bus, epoch, &seats[0]);
-    add(&bus, epoch, actor.clone(), "GUARD-1", "first", None);
-    add(&bus, epoch, actor.clone(), "GUARD-2", "second", None);
-
-    let projects = guard_projects();
-    let answer = board(&bus, epoch, actor.clone());
-    let selected = guard_winner(&answer, &actor);
-    let other = answer
-        .tasks
-        .iter()
-        .map(|task| task.statement.body.handle.clone())
-        .find(|handle| *handle != selected)
-        .expect("the fixture holds a task the allocator did not select");
-    let observed = guard_observation(&answer, &actor, other, &projects);
-
-    assert_eq!(
-        refusal_reason(commit_guarded(&bus, epoch, observed)),
-        "board::witness-moved: allocator winner changed"
     );
 }
 
@@ -447,7 +336,7 @@ fn an_empty_allocator_retains_its_exact_diagnostic() {
     let retried = retry_task_next(|| {
         attempts += 1;
         if attempts == 1 {
-            moved("board::witness-moved: allocator head set changed")
+            moved("board::witness-moved: allocator projection changed")
         } else {
             refusal(
                 "board::allocator-empty",
@@ -785,11 +674,7 @@ fn a_task_added_between_the_claim_plan_and_its_commit_refuses_the_claim() {
     add(&bus, epoch, actor.clone(), "GUARD-3", "arrived late", None);
 
     let moved = board(&bus, epoch, actor.clone());
-    assert_ne!(
-        allocation_heads(&moved),
-        allocation_heads(&answer),
-        "the added task moved the head set the guard re-reads"
-    );
+    assert_ne!(moved.cursor, answer.cursor);
     assert_eq!(
         moved.residency.position, answer.residency.position,
         "the added task must leave the residency head still, or the residency \
@@ -798,7 +683,7 @@ fn a_task_added_between_the_claim_plan_and_its_commit_refuses_the_claim() {
 
     assert_eq!(
         commit_planned_claim(&bus, &command, plan),
-        "board::witness-moved: allocator head set changed"
+        "board::witness-moved: allocator projection changed"
     );
     assert!(
         at(&board(&bus, epoch, actor), &winner).claim.is_none(),
@@ -833,13 +718,6 @@ fn a_reseat_between_the_claim_plan_and_its_commit_refuses_the_claim() {
         moved.residency.position, answer.residency.position,
         "re-seating moved the residency head the guard re-reads"
     );
-    assert_eq!(
-        allocation_heads(&moved),
-        allocation_heads(&answer),
-        "re-seating must leave every task head still, or the head-set \
-         comparison could not be the one this scenario passes through"
-    );
-
     assert_eq!(
         commit_planned_claim(&bus, &command, plan),
         "board::witness-moved: allocator subscription head changed"

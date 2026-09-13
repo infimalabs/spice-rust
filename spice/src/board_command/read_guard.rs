@@ -2,9 +2,7 @@ use super::*;
 
 mod guard;
 pub(super) use guard::guard_allocation;
-use guard::{
-    current_task_heads, current_trust_heads, refuse_active_claim_conflict, witnesses_hold,
-};
+use guard::{refuse_active_claim_conflict, witnesses_hold};
 mod capture;
 pub(super) use capture::guard_capture;
 
@@ -1079,17 +1077,10 @@ pub(super) fn guard(write: &mut JournalWrite, expected: Vec<Witness>) {
     }));
 }
 
-type AllocationHeads = Vec<(TaskHandle, Seq, Seq, Option<Seq>, Option<Seq>)>;
-
 pub(super) struct AllocationObservation {
-    pub(super) heads: AllocationHeads,
-    pub(super) entries: Vec<Entry>,
-    pub(super) winner: TaskHandle,
+    pub(super) cursor: Seq,
     pub(super) actor: Actor,
-    pub(super) subscription: wire::LineageSubscription,
     pub(super) residency_position: Seq,
-    pub(super) band: u64,
-    pub(super) recent_cell: Option<wire::ClaimCell>,
 }
 
 pub(super) fn allocation_subscription<'a>(
@@ -1139,22 +1130,6 @@ pub(super) fn allocation_subscription<'a>(
         ));
     }
     Ok(subscription)
-}
-
-pub(super) fn allocation_heads(board: &BoardAnswer) -> AllocationHeads {
-    board
-        .tasks
-        .iter()
-        .map(|task| {
-            (
-                task.statement.body.handle.clone(),
-                task.statement.position,
-                task.workflow.position,
-                task.claim.as_ref().map(|head| head.position),
-                task.lease.as_ref().map(|head| head.position),
-            )
-        })
-        .collect()
 }
 
 pub(super) fn committed(
