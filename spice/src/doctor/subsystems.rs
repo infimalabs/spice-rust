@@ -79,6 +79,13 @@ impl<'a> Context<'a> {
                 return unavailable(format!("board head admission failed: {error}"));
             }
         }
+        if let Some(continuation) = &snapshot.task_continuation {
+            return DoctorObservation::InputRequired {
+                reason: format!(
+                    "board head inspection is bounded after {continuation}; inspect the complete live board through the resident"
+                ),
+            };
+        }
         ready()
     }
 }
@@ -129,16 +136,12 @@ impl Authority {
             let tasks = read
                 .task_head_page(None, journal::FactReadBudget::RETAINED)
                 .map_err(|error| format!("journal task heads are invalid: {error}"))?;
-            if let Some(continuation) = tasks.continuation {
-                return Err(format!(
-                    "journal task heads require continuation after {continuation}"
-                ));
-            }
             Ok(AuthoritySnapshot {
                 facts: read
                     .fact_snapshot()
                     .map_err(|error| format!("journal facts are invalid: {error}"))?,
                 task_heads: tasks.rows,
+                task_continuation: tasks.continuation,
                 residency: read
                     .residency_head()
                     .map_err(|error| format!("journal residency head is invalid: {error}"))?
@@ -174,6 +177,7 @@ impl Authority {
 struct AuthoritySnapshot {
     facts: journal::FactSnapshot,
     task_heads: Vec<journal::TaskHeads>,
+    task_continuation: Option<wire::TaskStamp>,
     residency: Option<ResidencyHead>,
 }
 

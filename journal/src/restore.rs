@@ -44,7 +44,6 @@ pub struct RestoreCapture {
     _generation: CapturedGeneration,
     authority: usize,
     members: Vec<RestoreMember>,
-    tasks: Vec<TaskStamp>,
 }
 
 /// One authenticated regular file captured from a restore bundle.
@@ -114,10 +113,21 @@ impl RestoreCapture {
         &self.members
     }
 
-    /// Every task in the captured journal head set, ordered by birth.
-    #[must_use]
-    pub fn tasks(&self) -> &[TaskStamp] {
-        &self.tasks
+    /// Task identities absent from the captured authority.
+    pub fn missing_tasks(&self, tasks: &[TaskStamp]) -> Result<Vec<TaskStamp>, BackupVerifyError> {
+        let reader = JournalReader::open(&self.authority().captured)
+            .map_err(BackupVerifyError::Authority)?;
+        reader
+            .read(|read| {
+                let mut missing = Vec::new();
+                for task in tasks {
+                    if read.task_heads_for(task)?.is_none() {
+                        missing.push(task.clone());
+                    }
+                }
+                Ok(missing)
+            })
+            .map_err(BackupVerifyError::AuthorityView)
     }
 
     /// Consumes the capture and returns its public verification receipt.
@@ -259,8 +269,7 @@ where
     )?;
     generation.seal()?;
     after_capture(&root.join(&authority));
-    let (verified, tasks) =
-        verify_authority(&members[authority_index].captured, manifest.journal_schema)?;
+    let verified = verify_authority(&members[authority_index].captured, manifest.journal_schema)?;
 
     Ok(RestoreCapture {
         verification: RestoreVerification {
@@ -277,7 +286,6 @@ where
         _generation: generation,
         authority: authority_index,
         members,
-        tasks,
     })
 }
 
@@ -702,7 +710,7 @@ fn require_unchanged_source(
 fn verify_authority(
     authority: &Path,
     manifest_schema: u32,
-) -> Result<(crate::Verification, Vec<TaskStamp>), BackupVerifyError> {
+) -> Result<crate::Verification, BackupVerifyError> {
     let reader = JournalReader::open(authority).map_err(BackupVerifyError::Authority)?;
     let schema = reader
         .schema_version()
@@ -714,21 +722,7 @@ fn verify_authority(
         });
     }
     let verified = reader.verify().map_err(BackupVerifyError::Replay)?;
-    let tasks = reader
-        .read(|read| {
-            let page = read.task_head_page(None, crate::FactReadBudget::RETAINED)?;
-            if let Some(continuation) = page.continuation {
-                return Err(crate::GuardError::Invalid(format!(
-                    "backup authority task heads require continuation after {continuation}"
-                )));
-            }
-            Ok(page.rows)
-        })
-        .map_err(BackupVerifyError::AuthorityView)?
-        .into_iter()
-        .map(|heads| heads.statement().body().born.clone())
-        .collect();
-    Ok((verified, tasks))
+    Ok(verified)
 }
 
 fn count(value: usize, subject: &str) -> Result<u64, BackupVerifyError> {
