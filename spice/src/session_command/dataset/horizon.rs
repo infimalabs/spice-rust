@@ -909,8 +909,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::super::stream::stream_records;
-    use super::super::work::{ResidueLedger, SessionWorkBudget};
-    use super::super::{FoldState, FoldStorage, finish_fold, reduce_record};
+    use super::super::work::{ResidueLedger, SessionWorkBudget, TestFold};
     use super::*;
     use crate::session_command::model::{Dataset, Vendor};
 
@@ -956,20 +955,13 @@ mod tests {
         let mut dataset = Dataset::default();
         let mut markers = Vec::new();
         let mut residues = ResidueLedger::new();
-        let mut fold = FoldState::default();
+        let mut fold = TestFold::new(&mut dataset, &mut markers, &mut residues);
         stream_records(source, None, &mut work, |row, work, at| {
-            fold_row(
-                row,
-                &mut dataset,
-                &mut markers,
-                &mut residues,
-                &mut fold,
-                work,
-                at,
-            )
+            fold.push(row, work, at)
         })
         .expect("forward dataset streams");
-        finish_fold(&mut dataset, fold, &mut work, "fixture fold").expect("fold finishes");
+        fold.finish(&mut work, "fixture fold")
+            .expect("fold finishes");
         let residues = residues
             .finish(&mut work, "residue summary")
             .expect("residue summary fits");
@@ -990,7 +982,8 @@ mod tests {
         let mut reverse = Dataset::default();
         let mut reverse_markers = Vec::new();
         let mut reverse_residues = ResidueLedger::new();
-        let mut reverse_fold = FoldState::default();
+        let mut reverse_fold =
+            TestFold::new(&mut reverse, &mut reverse_markers, &mut reverse_residues);
         let mut dialect = source.dialect;
         for (row, offset, tail) in page.rows.into_iter().rev() {
             let (observed, row) = decode_window_row(
@@ -1005,19 +998,14 @@ mod tests {
             .expect("row decodes");
             dialect = observed.or(dialect);
             if let Some(row) = row {
-                fold_row(
-                    row,
-                    &mut reverse,
-                    &mut reverse_markers,
-                    &mut reverse_residues,
-                    &mut reverse_fold,
-                    &mut reverse_work,
-                    "row",
-                )
-                .expect("row folds");
+                reverse_fold
+                    .push(row, &mut reverse_work, "row")
+                    .expect("row folds");
             }
         }
-        finish_fold(&mut reverse, reverse_fold, &mut reverse_work, "fold").expect("fold finishes");
+        reverse_fold
+            .finish(&mut reverse_work, "fold")
+            .expect("fold finishes");
         let reverse_residues = reverse_residues
             .finish(&mut reverse_work, "residues")
             .unwrap();
@@ -1053,49 +1041,13 @@ mod tests {
         let mut dataset = Dataset::default();
         let mut markers = Vec::new();
         let mut residues = ResidueLedger::new();
-        let mut fold = FoldState::default();
+        let mut fold = TestFold::new(&mut dataset, &mut markers, &mut residues);
         let refusal = stream_records(source, None, &mut exhausted, |row, work, at| {
-            fold_row(
-                row,
-                &mut dataset,
-                &mut markers,
-                &mut residues,
-                &mut fold,
-                work,
-                at,
-            )
+            fold.push(row, work, at)
         })
         .expect_err("the first retained String exceeds the one-byte budget");
         assert_eq!(refusal.reason(), "session::transcript-work-exhausted");
         assert_eq!(exhausted.report().retained_text_bytes, 0);
         assert!(SessionWorkBudget::new(0, 1, 1, 1, 1, deadline).is_err());
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn fold_row(
-        row: DecodedRow,
-        dataset: &mut Dataset,
-        markers: &mut Vec<Marker>,
-        residues: &mut ResidueLedger,
-        state: &mut FoldState,
-        work: &mut SessionWork,
-        at: &str,
-    ) -> Result<(), Refusal> {
-        match row {
-            DecodedRow::Typed(record) => reduce_record(
-                &record,
-                &mut FoldStorage {
-                    dataset,
-                    markers,
-                    residues,
-                    state,
-                    tokens: None,
-                },
-                work,
-                at,
-            ),
-            DecodedRow::Residue(residue) => residues.push(residue, work, at),
-            DecodedRow::Ignored => Ok(()),
-        }
     }
 }

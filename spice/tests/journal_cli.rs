@@ -492,7 +492,7 @@ fn resident_reads_require_authentication_without_mutating_authority() {
         else {
             panic!("unauthenticated read did not fault: {arguments:?}")
         };
-        assert_eq!(fault.reason, "canvas::discovery-unavailable");
+        assert_eq!(fault.reason, "canvas::publisher-gone");
     }
     assert_eq!(
         fs::read(&fixture.authority).expect("authority after unauthenticated reads"),
