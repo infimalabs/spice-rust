@@ -7,6 +7,7 @@ use std::thread;
 
 use wire::{Instant, TaskHandle, TaskStamp};
 
+use super::capture::{MAX_BACKUP_BYTES, MAX_BACKUP_MEMBERS, preflight_capture_member};
 use super::{
     AddBytesRequest, AddRequest, BackupFile, BackupImage, Error, ErrorClass, MediaType, Retention,
     Store, object_dir, payload_path,
@@ -80,6 +81,25 @@ fn add(
         .expect("add artifact")
 }
 
+fn backup_image(store: &Store) -> BackupImage {
+    let generation = store.capture().expect("capture generation");
+    let files = generation
+        .members()
+        .iter()
+        .map(|member| {
+            let mut bytes = Vec::new();
+            let copied = member.copy_to(&mut bytes).expect("copy captured member");
+            assert_eq!(copied, member.bytes());
+            BackupFile {
+                path: member.path().to_owned(),
+                mode: member.mode(),
+                bytes,
+            }
+        })
+        .collect();
+    BackupImage::admit(files).expect("admit captured generation as legacy image fixture")
+}
+
 #[test]
 fn text_and_binary_artifacts_round_trip_with_stable_metadata() {
     let fixture = Fixture::new();
@@ -118,9 +138,34 @@ fn text_and_binary_artifacts_round_trip_with_stable_metadata() {
         fixture.store.show(&task, "A2").expect("show binary").1,
         b"\x89PNG\r\n\x1a\n"
     );
+    let capture = fixture.store.capture().expect("capture task set");
+    assert_eq!(capture.tasks(), std::slice::from_ref(&task));
+    let repeated = fixture.store.capture().expect("repeat stable capture");
+    assert_eq!(capture.identity(), repeated.identity());
+
+    let payload_suffix = format!("objects/{}/payload", first.digest);
+    let captured_text = capture
+        .members()
+        .iter()
+        .find(|member| member.path().ends_with(&payload_suffix))
+        .expect("captured text payload");
+    fs::write(
+        payload_path(&fixture.store.root().join(task.as_str()), &first.digest),
+        b"changed",
+    )
+    .expect("mutate source generation after capture");
+    let mut bytes = Vec::new();
+    captured_text
+        .copy_to(&mut bytes)
+        .expect("copy immutable captured payload");
+    assert_eq!(bytes, b"proof\n");
     assert_eq!(
-        fixture.store.capture().expect("capture task set").tasks(),
-        std::slice::from_ref(&task)
+        fixture
+            .store
+            .capture()
+            .expect_err("new capture validates the changed source")
+            .class(),
+        ErrorClass::Corrupt
     );
 }
 
@@ -430,7 +475,7 @@ fn rendered_handle_directories_are_refused_as_release_one_not_read_as_a_fallback
 }
 
 #[test]
-fn backup_image_rejects_invalid_task_identity_and_missing_provenance() {
+fn backup_admission_and_capture_bounds_reject_incomplete_generations() {
     let invalid = BackupImage::admit(vec![BackupFile {
         path: "not-a-task/manifest.json".to_owned(),
         mode: 0o600,
@@ -449,11 +494,37 @@ fn backup_image_rejects_invalid_task_identity_and_missing_provenance() {
         Retention::Permanent,
         instant("2030-01-01T00:00:00.000Z"),
     );
-    let mut image = fixture.store.capture().expect("capture image");
+    let mut image = backup_image(&fixture.store);
     let suffix = format!("objects/{}/payload", artifact.digest);
     image.files.retain(|file| !file.path.ends_with(&suffix));
     let missing = BackupImage::admit(image.files).expect_err("missing payload refused");
     assert_eq!(missing.class(), ErrorClass::Corrupt);
+
+    let bounded = fixture.store.root().join("bounded-member");
+    fs::write(&bounded, b"").expect("write empty bound fixture");
+    let mut plans = Vec::new();
+    let mut aggregate = 0;
+    for _ in 0..MAX_BACKUP_MEMBERS {
+        preflight_capture_member(fixture.store.root(), &bounded, &mut plans, &mut aggregate)
+            .expect("admit member through exact count bound");
+    }
+    let too_many =
+        preflight_capture_member(fixture.store.root(), &bounded, &mut plans, &mut aggregate)
+            .expect_err("member beyond exact count bound refused");
+    assert!(too_many.to_string().contains("4096 members"));
+
+    let oversized = fixture.store.root().join("oversized-member");
+    let file = fs::File::create(&oversized).expect("create sparse aggregate fixture");
+    file.set_len(MAX_BACKUP_BYTES + 1)
+        .expect("extend sparse aggregate fixture");
+    let aggregate_failure =
+        preflight_capture_member(fixture.store.root(), &oversized, &mut Vec::new(), &mut 0)
+            .expect_err("aggregate beyond fixed byte bound refused");
+    assert!(
+        aggregate_failure
+            .to_string()
+            .contains("536870912 aggregate bytes")
+    );
 }
 
 #[test]
@@ -477,8 +548,9 @@ fn replacement_commits_or_rolls_back_complete_provenance_generations() {
         Retention::Permanent,
         instant("2030-01-02T00:00:00.000Z"),
     );
-    let old = first.store.capture().expect("old image");
-    let new = second.store.capture().expect("new image");
+    let old = first.store.capture().expect("old generation");
+    let old_image = backup_image(&first.store);
+    let new = backup_image(&second.store);
 
     first
         .store
@@ -504,7 +576,7 @@ fn replacement_commits_or_rolls_back_complete_provenance_generations() {
 
     let stale = first
         .store
-        .begin_replace(&old, &old)
+        .begin_replace(&old_image, &old)
         .expect_err("stale expected generation refused");
     assert_eq!(stale.class(), ErrorClass::Refusal);
 }
@@ -530,8 +602,8 @@ fn failed_commit_cleanup_never_removes_the_published_generation() {
         Retention::Permanent,
         instant("2030-01-02T00:00:00.000Z"),
     );
-    let old = first.store.capture().expect("old image");
-    let new = second.store.capture().expect("new image");
+    let old = first.store.capture().expect("old generation");
+    let new = backup_image(&second.store);
     let replacement = first
         .store
         .begin_replace(&new, &old)

@@ -159,21 +159,21 @@ fn stage_artifact_members(
     temporary: &Path,
 ) -> Result<Vec<JournalBackupMember>, Failure> {
     let store = artifact::Store::new(state.artifacts(), state.locks().join("task-artifacts.lock"));
-    let image = store.capture().map_err(artifact_failure)?;
-    let mut members = Vec::with_capacity(image.files().len());
-    for artifact in image.files() {
-        let relative = Path::new(ARTIFACT_MEMBERS).join(&artifact.path);
+    let generation = store.capture().map_err(artifact_failure)?;
+    let mut members = Vec::with_capacity(generation.members().len());
+    for artifact in generation.members() {
+        let relative = Path::new(ARTIFACT_MEMBERS).join(artifact.path());
         let destination = temporary.join(&relative);
         let directory = destination
             .parent()
             .expect("artifact backup member has a parent");
         create_private_directories(directory)?;
-        write_backup_member(&destination, &artifact.bytes, artifact.mode)?;
+        let (bytes, digest) = write_backup_member(&destination, artifact)?;
         members.push(JournalBackupMember {
             path: relative_spelling(&relative)?,
             mode: mode(&destination)?,
-            bytes: count(artifact.bytes.len(), "artifact member bytes")?,
-            digest: Digest::compute(Domain::JournalBackupMember, &artifact.bytes),
+            bytes,
+            digest,
         });
     }
     Ok(members)
@@ -645,13 +645,50 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), Failure> {
     })
 }
 
-fn write_backup_member(path: &Path, bytes: &[u8], requested_mode: u32) -> Result<(), Failure> {
-    write_private_file(path, bytes)?;
+fn write_backup_member(
+    path: &Path,
+    member: &artifact::BackupMember,
+) -> Result<(u64, Digest), Failure> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(PRIVATE_FILE);
+    }
+    let mut target = options.open(path).map_err(|error| {
+        Failure::environment(
+            "backup::write-failed",
+            format!("{}: {error}", path.display()),
+        )
+    })?;
+    let copied = member.copy_to(&mut target).map_err(|error| {
+        Failure::environment(
+            "backup::write-failed",
+            format!("{}: {error}", path.display()),
+        )
+    })?;
+    if copied != member.bytes() {
+        return Err(Failure::protocol(
+            "backup::artifact-capture-invalid",
+            format!(
+                "{} declares {} bytes but copied {copied}",
+                member.path(),
+                member.bytes()
+            ),
+        ));
+    }
+    target.sync_all().map_err(|error| {
+        Failure::environment(
+            "backup::sync-failed",
+            format!("{}: {error}", path.display()),
+        )
+    })?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
 
-        fs::set_permissions(path, fs::Permissions::from_mode(requested_mode)).map_err(|error| {
+        fs::set_permissions(path, fs::Permissions::from_mode(member.mode())).map_err(|error| {
             Failure::environment(
                 "backup::mode-failed",
                 format!("{}: {error}", path.display()),
@@ -667,8 +704,33 @@ fn write_backup_member(path: &Path, bytes: &[u8], requested_mode: u32) -> Result
             })?;
     }
     #[cfg(not(unix))]
-    let _ = requested_mode;
-    Ok(())
+    let _ = member.mode();
+    let file = File::open(path).map_err(|error| {
+        Failure::environment(
+            "backup::digest-failed",
+            format!("{}: {error}", path.display()),
+        )
+    })?;
+    let (digested, digest) =
+        Digest::compute_reader(Domain::JournalBackupMember, file, member.bytes().max(1)).map_err(
+            |error| {
+                Failure::environment(
+                    "backup::digest-failed",
+                    format!("{}: {error}", path.display()),
+                )
+            },
+        )?;
+    if digested != member.bytes() {
+        return Err(Failure::protocol(
+            "backup::artifact-capture-invalid",
+            format!(
+                "{} declares {} bytes but staged digest read {digested}",
+                member.path(),
+                member.bytes()
+            ),
+        ));
+    }
+    Ok((digested, digest))
 }
 
 fn relative_spelling(path: &Path) -> Result<String, Failure> {

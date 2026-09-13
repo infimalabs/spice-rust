@@ -28,6 +28,9 @@ const CREATE_ATTEMPTS: usize = 128;
 
 static NEXT_REPLACEMENT: AtomicU64 = AtomicU64::new(0);
 
+mod capture;
+pub use capture::{BackupGeneration, BackupMember};
+
 /// Inputs for one task artifact publication.
 pub struct AddRequest<'a> {
     pub task: &'a TaskStamp,
@@ -338,42 +341,20 @@ impl Store {
     }
 
     /// Capture only manifest-referenced files after proving complete provenance.
-    pub fn capture(&self) -> Result<BackupImage, Error> {
+    pub fn capture(&self) -> Result<BackupGeneration, Error> {
         let _possession = self.acquire()?;
         self.capture_locked()
     }
 
-    fn capture_locked(&self) -> Result<BackupImage, Error> {
-        if !admitted_directory(&self.root, true)? {
-            return BackupImage::admit(Vec::new());
-        }
-        let mut files = Vec::new();
-        for task in task_directories(&self.root)? {
-            let task_dir = self.task_dir(&task);
-            let manifest = read_manifest(&task_dir, &task)?;
-            validate_manifest(&task_dir, &task, &manifest, true)?;
-            if !manifest_path(&task_dir).is_file() {
-                continue;
-            }
-            capture_file(&self.root, &manifest_path(&task_dir), &mut files)?;
-            let mut digests = BTreeSet::new();
-            for artifact in &manifest.artifacts {
-                if digests.insert(artifact.digest.clone()) {
-                    let object = object_dir(&task_dir, &artifact.digest);
-                    capture_file(&self.root, &object.join(METADATA), &mut files)?;
-                    capture_file(&self.root, &object.join(PAYLOAD), &mut files)?;
-                }
-            }
-        }
-        files.sort_by(|left, right| left.path.cmp(&right.path));
-        BackupImage::admit(files)
+    fn capture_locked(&self) -> Result<BackupGeneration, Error> {
+        capture::capture(&self.root)
     }
 
     /// Publish a validated backup image while retaining an explicit rollback.
     pub fn begin_replace(
         &self,
         image: &BackupImage,
-        expected: &BackupImage,
+        expected: &BackupGeneration,
     ) -> Result<Replacement, Error> {
         let admitted = BackupImage::admit(image.files.clone())?;
         let possession = self.acquire()?;
@@ -634,15 +615,7 @@ fn read_source(path: &Path) -> Result<Vec<u8>, Error> {
 }
 
 fn read_regular(path: &Path, subject: &str) -> Result<Vec<u8>, Error> {
-    #[cfg(unix)]
-    use std::os::unix::fs::OpenOptionsExt;
-
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    options.custom_flags(libc_flags());
-    let file = options
-        .open(path)
+    let file = open_regular_file(path)
         .map_err(|source| Error::io(format!("open {subject}"), path, source))?;
     let metadata = file
         .metadata()
@@ -658,6 +631,17 @@ fn read_regular(path: &Path, subject: &str) -> Result<Vec<u8>, Error> {
         .read_to_end(&mut bytes)
         .map_err(|source| Error::io(format!("read {subject}"), path, source))?;
     Ok(bytes)
+}
+
+fn open_regular_file(path: &Path) -> io::Result<File> {
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc_flags());
+    options.open(path)
 }
 
 #[cfg(unix)]
@@ -982,6 +966,10 @@ fn next_id(artifacts: &[Artifact]) -> Result<String, Error> {
 }
 
 fn task_directories(root: &Path) -> Result<Vec<TaskStamp>, Error> {
+    task_directories_with_limit(root, None)
+}
+
+fn task_directories_with_limit(root: &Path, limit: Option<usize>) -> Result<Vec<TaskStamp>, Error> {
     let mut tasks = Vec::new();
     let entries =
         fs::read_dir(root).map_err(|source| Error::io("read artifact root", root, source))?;
@@ -1006,7 +994,17 @@ fn task_directories(root: &Path) -> Result<Vec<TaskStamp>, Error> {
         let task = parse_task_key(&text, &path.display().to_string())?;
         let manifest = manifest_path(&path);
         match fs::symlink_metadata(&manifest) {
-            Ok(metadata) if metadata.file_type().is_file() => tasks.push(task),
+            Ok(metadata) if metadata.file_type().is_file() => {
+                if let Some(maximum) = limit
+                    && tasks.len() >= maximum
+                {
+                    return Err(Error::corrupt(
+                        "artifact backup inventory",
+                        format!("capture exceeds {maximum} members"),
+                    ));
+                }
+                tasks.push(task);
+            }
             Ok(_) => {
                 return Err(Error::corrupt(
                     manifest.display().to_string(),
@@ -1049,20 +1047,6 @@ fn parse_task_key(text: &str, subject: &str) -> Result<TaskStamp, Error> {
             }
         }
     }
-}
-
-fn capture_file(root: &Path, path: &Path, files: &mut Vec<BackupFile>) -> Result<(), Error> {
-    let relative = path
-        .strip_prefix(root)
-        .expect("captured artifact is below root");
-    let spelling = relative_spelling(relative)?;
-    let bytes = read_regular(path, "artifact backup member")?;
-    files.push(BackupFile {
-        path: spelling,
-        mode: file_mode(path)?,
-        bytes,
-    });
-    Ok(())
 }
 
 fn admitted_relative(text: &str) -> Result<PathBuf, Error> {
@@ -1226,21 +1210,6 @@ fn sync_directory(path: &Path) -> Result<(), Error> {
     File::open(path)
         .and_then(|directory| directory.sync_all())
         .map_err(|source| Error::io("synchronize artifact directory", path, source))
-}
-
-fn file_mode(path: &Path) -> Result<u32, Error> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::metadata(path)
-            .map(|metadata| metadata.permissions().mode() & 0o7777)
-            .map_err(|source| Error::io("read artifact member mode", path, source))
-    }
-    #[cfg(not(unix))]
-    Err(Error::environment(
-        "read artifact member mode",
-        path.display().to_string(),
-    ))
 }
 
 fn count(value: usize, subject: &str) -> Result<u64, Error> {
