@@ -209,8 +209,8 @@ fn retryable_task_next(outcome: &Outcome<CommandAnswer>) -> bool {
                 && matches!(
                     refusal.diagnostic().and_then(wire::RefusalDiagnostic::observed),
                     Some(
-                        "allocator head set changed"
-                            | "allocator subscription head changed"
+                        "board::witness-moved: allocator head set changed"
+                            | "board::witness-moved: allocator subscription head changed"
                     )
                 )
     )
