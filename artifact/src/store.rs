@@ -10,8 +10,8 @@ use sill::{LockFile, LockName, Possession};
 use wire::{Digest, Domain, Instant, TaskHandle, TaskStamp};
 
 use crate::model::{
-    Artifact, BackupFile, BackupImage, Manifest, MediaType, ObjectMetadata, PruneChange,
-    PruneOperation, PrunePlan, PruneSkip, Retention, STORE_VERSION,
+    Artifact, Manifest, MediaType, ObjectMetadata, PruneChange, PruneOperation, PrunePlan,
+    PruneSkip, Retention, STORE_VERSION,
 };
 
 const MANIFEST: &str = "manifest.json";
@@ -29,7 +29,7 @@ const CREATE_ATTEMPTS: usize = 128;
 static NEXT_REPLACEMENT: AtomicU64 = AtomicU64::new(0);
 
 mod capture;
-pub use capture::{BackupGeneration, BackupMember};
+pub use capture::{BackupGeneration, BackupMember, BackupSource};
 
 /// Inputs for one task artifact publication.
 pub struct AddRequest<'a> {
@@ -350,13 +350,12 @@ impl Store {
         capture::capture(&self.root)
     }
 
-    /// Publish a validated backup image while retaining an explicit rollback.
+    /// Publish a validated captured generation while retaining an explicit rollback.
     pub fn begin_replace(
         &self,
-        image: &BackupImage,
+        image: &BackupGeneration,
         expected: &BackupGeneration,
     ) -> Result<Replacement, Error> {
-        let admitted = BackupImage::admit(image.files.clone())?;
         let possession = self.acquire()?;
         let current = self.capture_locked()?;
         if &current != expected {
@@ -372,13 +371,19 @@ impl Store {
         create_private_directories(parent)?;
         let staging = create_replacement_directory(parent, "stage")?;
         let mut cleanup = DirectoryCleanup(Some(staging.clone()));
-        for member in admitted.files() {
-            let destination = staging.join(&member.path);
+        for member in image.members() {
+            let destination = staging.join(member.path());
             let directory = destination.parent().expect("backup path has a parent");
             create_private_directories(directory)?;
-            write_new_file(&destination, &member.bytes, member.mode)?;
+            write_backup_member(&destination, member)?;
         }
-        validate_root(&staging)?;
+        let staged = capture::capture(&staging)?;
+        if &staged != image {
+            return Err(Error::corrupt(
+                "artifact replacement",
+                "staged generation differs from admitted input",
+            ));
+        }
         sync_tree_directories(&staging)?;
 
         let previous = if admitted_directory(&self.root, true)? {
@@ -440,82 +445,6 @@ impl Store {
 
     fn task_dir(&self, task: &TaskStamp) -> PathBuf {
         self.root.join(task.as_str())
-    }
-}
-
-impl BackupImage {
-    /// Admit one complete in-memory store generation from backup members.
-    pub fn admit(mut files: Vec<BackupFile>) -> Result<Self, Error> {
-        files.sort_by(|left, right| left.path.cmp(&right.path));
-        let mut map = BTreeMap::new();
-        for file in &files {
-            admitted_relative(&file.path)?;
-            if file.mode & !0o7777 != 0 {
-                return Err(Error::corrupt(
-                    &file.path,
-                    format!("mode {:#o} is outside the POSIX permission mask", file.mode),
-                ));
-            }
-            if map.insert(file.path.as_str(), file).is_some() {
-                return Err(Error::corrupt(
-                    &file.path,
-                    "backup repeats an artifact member",
-                ));
-            }
-        }
-        let manifest_paths = map
-            .keys()
-            .copied()
-            .filter(|path| path.ends_with("/manifest.json"))
-            .collect::<Vec<_>>();
-        let mut expected = BTreeSet::new();
-        let mut tasks = Vec::new();
-        for path in manifest_paths {
-            let task_text = path.strip_suffix("/manifest.json").expect("matched suffix");
-            if task_text.contains('/') {
-                return Err(Error::corrupt(
-                    path,
-                    "task manifest is not one level below the root",
-                ));
-            }
-            let task = parse_task_key(task_text, path)?;
-            let manifest = decode_canonical::<Manifest>(&map[path].bytes, path)?;
-            validate_manifest_shape(&task, &manifest, path)?;
-            tasks.push(task.clone());
-            expected.insert(path.to_owned());
-            let mut digests = BTreeSet::new();
-            for artifact in &manifest.artifacts {
-                if !digests.insert(artifact.digest.clone()) {
-                    continue;
-                }
-                let base = format!("{task_text}/objects/{}", artifact.digest);
-                let metadata_path = format!("{base}/{METADATA}");
-                let payload_path = format!("{base}/{PAYLOAD}");
-                let metadata_file = map.get(metadata_path.as_str()).ok_or_else(|| {
-                    Error::corrupt(&metadata_path, "referenced object metadata is missing")
-                })?;
-                let payload_file = map.get(payload_path.as_str()).ok_or_else(|| {
-                    Error::corrupt(&payload_path, "referenced artifact payload is missing")
-                })?;
-                let metadata =
-                    decode_canonical::<ObjectMetadata>(&metadata_file.bytes, &metadata_path)?;
-                validate_object(&metadata_path, &metadata, artifact)?;
-                validate_payload(&payload_path, &payload_file.bytes, artifact)?;
-                expected.insert(metadata_path);
-                expected.insert(payload_path);
-            }
-        }
-        let observed = map
-            .keys()
-            .map(|path| (*path).to_owned())
-            .collect::<BTreeSet<_>>();
-        if observed != expected {
-            return Err(Error::corrupt(
-                "artifact backup inventory",
-                format!("members {observed:?} do not equal cited inventory {expected:?}"),
-            ));
-        }
-        Ok(Self { files, tasks })
     }
 }
 
@@ -1075,16 +1004,6 @@ fn relative_spelling(path: &Path) -> Result<String, Error> {
         .ok_or_else(|| Error::corrupt(path.display().to_string(), "artifact path is not UTF-8"))
 }
 
-fn validate_root(root: &Path) -> Result<(), Error> {
-    let store = Store::new(root, root.join(".validation-lock"));
-    for task in task_directories(root)? {
-        let task_dir = store.task_dir(&task);
-        let manifest = read_manifest(&task_dir, &task)?;
-        validate_manifest(&task_dir, &task, &manifest, true)?;
-    }
-    Ok(())
-}
-
 fn sync_tree_directories(root: &Path) -> Result<(), Error> {
     let mut directories = vec![root.to_path_buf()];
     let mut index = 0;
@@ -1141,21 +1060,35 @@ fn create_private_directories(path: &Path) -> Result<(), Error> {
     admitted_directory(path, false).map(|_| ())
 }
 
-fn write_new_file(path: &Path, bytes: &[u8], mode: u32) -> Result<(), Error> {
+fn write_backup_member(path: &Path, member: &BackupMember) -> Result<(), Error> {
     #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt;
 
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
-    options.mode(mode);
+    options.mode(member.mode());
     #[cfg(not(unix))]
-    let _ = mode;
+    let _ = member.mode();
     let mut file = options
         .open(path)
         .map_err(|source| Error::io("create restored artifact member", path, source))?;
-    file.write_all(bytes)
-        .and_then(|()| file.sync_all())
+    let copied = member
+        .copy_to(&mut file)
+        .map_err(|source| Error::io("stream restored artifact member", path, source))?;
+    if copied != member.bytes() {
+        return Err(Error::corrupt(
+            member.path(),
+            "captured artifact member changed length while staging",
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(member.mode()))
+            .map_err(|source| Error::io("set restored artifact member mode", path, source))?;
+    }
+    file.sync_all()
         .map_err(|source| Error::io("write restored artifact member", path, source))
 }
 

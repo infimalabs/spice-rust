@@ -231,34 +231,6 @@ pub(crate) struct ObjectMetadata {
     pub bytes: u64,
 }
 
-/// One canonical artifact-store member carried by backup and restore.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BackupFile {
-    pub path: String,
-    pub mode: u32,
-    pub bytes: Vec<u8>,
-}
-
-/// A complete, provenance-validated artifact-store generation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BackupImage {
-    pub(crate) files: Vec<BackupFile>,
-    pub(crate) tasks: Vec<TaskStamp>,
-}
-
-impl BackupImage {
-    #[must_use]
-    pub fn files(&self) -> &[BackupFile] {
-        &self.files
-    }
-
-    /// Artifact-bearing tasks named by this admitted generation.
-    #[must_use]
-    pub fn tasks(&self) -> &[TaskStamp] {
-        &self.tasks
-    }
-}
-
 /// A caller-supplied artifact vocabulary value was not admitted.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum VocabularyError {

@@ -82,7 +82,7 @@ impl RestoreMember {
     }
 
     /// Stream the captured member through a fixed-size copy buffer.
-    pub fn copy_to(&self, target: &mut impl Write) -> io::Result<u64> {
+    pub fn copy_to(&self, target: &mut dyn Write) -> io::Result<u64> {
         let mut source = File::open(&self.captured)?;
         io::copy(&mut source, target)
     }
