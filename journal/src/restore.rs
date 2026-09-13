@@ -1,9 +1,10 @@
 use std::error::Error;
 use std::ffi::OsStr;
 use std::fmt;
-use std::fs::{File, Metadata};
-use std::io::{self, Read};
+use std::fs::{self, File, Metadata, OpenOptions};
+use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(unix)]
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags};
@@ -14,6 +15,12 @@ use wire::{Digest, Domain, RestoreVerification, TaskStamp, WireVersion};
 use crate::{JournalReader, OpenError, VerifyError};
 
 const MANIFEST: &str = "manifest.json";
+const MAX_MANIFEST_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_BACKUP_MEMBERS: usize = 4096;
+const MAX_BACKUP_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_INVENTORY_ENTRIES: usize = MAX_BACKUP_MEMBERS * 2 + 1;
+const COPY_BUFFER_BYTES: usize = 64 * 1024;
+static NEXT_CAPTURE: AtomicU64 = AtomicU64::new(0);
 
 mod manifest;
 use manifest::admit_manifest_generation;
@@ -30,22 +37,24 @@ pub fn verify_restore_bundle(
     capture_restore_bundle(root).map(RestoreCapture::into_verification)
 }
 
-/// One fully authenticated restore bundle captured into process-owned bytes.
+/// One fully authenticated restore bundle captured into private files.
 #[derive(Debug)]
 pub struct RestoreCapture {
     verification: RestoreVerification,
-    authority: Vec<u8>,
-    authority_path: String,
+    _generation: CapturedGeneration,
+    authority: usize,
     members: Vec<RestoreMember>,
     tasks: Vec<TaskStamp>,
 }
 
 /// One authenticated regular file captured from a restore bundle.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct RestoreMember {
     path: String,
     mode: u32,
-    bytes: Vec<u8>,
+    bytes: u64,
+    digest: Digest,
+    captured: PathBuf,
 }
 
 impl RestoreMember {
@@ -61,10 +70,22 @@ impl RestoreMember {
         self.mode
     }
 
-    /// Exact authenticated member bytes.
+    /// Exact authenticated member length.
     #[must_use]
-    pub fn bytes(&self) -> &[u8] {
-        &self.bytes
+    pub const fn bytes(&self) -> u64 {
+        self.bytes
+    }
+
+    /// Exact authenticated member digest.
+    #[must_use]
+    pub const fn digest(&self) -> &Digest {
+        &self.digest
+    }
+
+    /// Stream the captured member through a fixed-size copy buffer.
+    pub fn copy_to(&self, target: &mut impl Write) -> io::Result<u64> {
+        let mut source = File::open(&self.captured)?;
+        io::copy(&mut source, target)
     }
 }
 
@@ -75,16 +96,16 @@ impl RestoreCapture {
         &self.verification
     }
 
-    /// Exact authenticated SQLite bytes named by the bundle manifest.
+    /// Exact authenticated SQLite member named by the bundle manifest.
     #[must_use]
-    pub fn authority_bytes(&self) -> &[u8] {
-        &self.authority
+    pub fn authority(&self) -> &RestoreMember {
+        &self.members[self.authority]
     }
 
     /// Canonical member path carrying the SQLite authority.
     #[must_use]
     pub fn authority_path(&self) -> &str {
-        &self.authority_path
+        self.authority().path()
     }
 
     /// Every authenticated bundle member in canonical manifest order.
@@ -103,6 +124,84 @@ impl RestoreCapture {
     #[must_use]
     pub fn into_verification(self) -> RestoreVerification {
         self.verification
+    }
+}
+
+#[derive(Debug)]
+struct CapturedGeneration {
+    root: PathBuf,
+}
+
+impl CapturedGeneration {
+    fn create() -> Result<Self, BackupVerifyError> {
+        for _ in 0..128 {
+            let root = std::env::temp_dir().join(format!(
+                ".spice-restore-{}-{}",
+                std::process::id(),
+                NEXT_CAPTURE.fetch_add(1, Ordering::Relaxed)
+            ));
+            let mut builder = fs::DirBuilder::new();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                builder.mode(0o700);
+            }
+            match builder.create(&root) {
+                Ok(()) => return Ok(Self { root }),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(source) => return Err(BackupVerifyError::Io { path: root, source }),
+            }
+        }
+        Err(BackupVerifyError::Io {
+            path: std::env::temp_dir(),
+            source: io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "private restore capture names exhausted",
+            ),
+        })
+    }
+
+    fn create_member(&self, index: usize) -> Result<(PathBuf, File), BackupVerifyError> {
+        let path = self.root.join(index.to_string());
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options
+            .open(&path)
+            .map_err(|source| BackupVerifyError::Io {
+                path: path.clone(),
+                source,
+            })?;
+        Ok((path, file))
+    }
+
+    fn seal(&self) -> Result<(), BackupVerifyError> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&self.root, fs::Permissions::from_mode(0o500)).map_err(
+                |source| BackupVerifyError::Io {
+                    path: self.root.clone(),
+                    source,
+                },
+            )?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for CapturedGeneration {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&self.root, fs::Permissions::from_mode(0o700));
+        }
+        let _ = fs::remove_dir_all(&self.root);
     }
 }
 
@@ -147,26 +246,36 @@ where
     let bundle = BundleAuthority::open(root)?;
     let (manifest, manifest_bytes) = read_manifest(&bundle)?;
     let manifest = admit_manifest_generation(manifest)?;
+    admit_bundle_bounds(&manifest, count(manifest_bytes.len(), "manifest bytes")?)?;
     let authority = admitted_member_path(&manifest.authority)?;
-    let (authority_capture, members) =
-        authenticate_members(&bundle, &manifest, &authority, after_inventory)?;
+    let generation = CapturedGeneration::create()?;
+    let (authority_index, members) = authenticate_members(
+        &bundle,
+        &manifest,
+        &authority,
+        &generation,
+        u64::try_from(manifest_bytes.len()).expect("bounded manifest length crosses"),
+        after_inventory,
+    )?;
+    generation.seal()?;
     after_capture(&root.join(&authority));
-    let (verified, tasks) = verify_authority(&authority_capture.bytes, manifest.journal_schema)?;
+    let (verified, tasks) =
+        verify_authority(&members[authority_index].captured, manifest.journal_schema)?;
 
     Ok(RestoreCapture {
         verification: RestoreVerification {
             bundle: Digest::compute(Domain::JournalBackupManifest, &manifest_bytes),
             wire: manifest.wire,
             journal_schema: manifest.journal_schema,
-            authority: authority_capture.digest,
+            authority: members[authority_index].digest.clone(),
             members: count(manifest.members.len(), "members")?,
             facts: count(verified.facts, "facts")?,
             receipts: count(verified.receipts, "receipts")?,
             heads: count(verified.heads, "heads")?,
             threads: count(verified.threads, "threads")?,
         },
-        authority: authority_capture.bytes,
-        authority_path: manifest.authority,
+        _generation: generation,
+        authority: authority_index,
         members,
         tasks,
     })
@@ -254,7 +363,7 @@ fn read_manifest(
     bundle: &BundleAuthority,
 ) -> Result<(JournalBackupManifest, Vec<u8>), BackupVerifyError> {
     let path = bundle.root.join(MANIFEST);
-    let bytes = capture_regular_file(bundle, Path::new(MANIFEST))?.bytes;
+    let bytes = capture_regular_file(bundle, Path::new(MANIFEST), MAX_MANIFEST_BYTES)?.bytes;
     let manifest = wire::decode::<JournalBackupManifest>(&bytes).map_err(|error| {
         BackupVerifyError::Invalid {
             subject: path.clone(),
@@ -279,35 +388,37 @@ fn authenticate_members<F>(
     bundle: &BundleAuthority,
     manifest: &JournalBackupManifest,
     authority: &Path,
+    generation: &CapturedGeneration,
+    manifest_bytes: u64,
     after_inventory: F,
-) -> Result<(CapturedMember, Vec<RestoreMember>), BackupVerifyError>
+) -> Result<(usize, Vec<RestoreMember>), BackupVerifyError>
 where
     F: FnOnce(&Path),
 {
     admit_inventory(bundle, manifest)?;
     after_inventory(&bundle.root);
     let mut previous: Option<&str> = None;
-    let mut authority_capture = None;
+    let mut authority_index = None;
     let mut captures = Vec::with_capacity(manifest.members.len());
-    for member in &manifest.members {
+    let mut observed_total = manifest_bytes;
+    for (index, member) in manifest.members.iter().enumerate() {
         let relative = admitted_member_path(&member.path)?;
         admit_member_order(&bundle.root, previous, &member.path)?;
         previous = Some(&member.path);
-        let observed =
-            authenticate_member(bundle, &relative, member.mode, member.bytes, &member.digest)?;
+        let observed = authenticate_member(
+            bundle,
+            &relative,
+            member,
+            generation,
+            index,
+            &mut observed_total,
+        )?;
         if relative == authority {
-            authority_capture = Some(CapturedMember {
-                digest: observed.digest.clone(),
-                bytes: observed.bytes.clone(),
-            });
+            authority_index = Some(index);
         }
-        captures.push(RestoreMember {
-            path: member.path.clone(),
-            mode: member.mode,
-            bytes: observed.bytes,
-        });
+        captures.push(observed);
     }
-    authority_capture
+    authority_index
         .map(|authority| (authority, captures))
         .ok_or_else(|| BackupVerifyError::Incomplete {
             detail: format!(
@@ -315,6 +426,41 @@ where
                 manifest.authority
             ),
         })
+}
+
+fn admit_bundle_bounds(
+    manifest: &JournalBackupManifest,
+    manifest_bytes: u64,
+) -> Result<(), BackupVerifyError> {
+    if manifest.members.len() > MAX_BACKUP_MEMBERS {
+        return Err(BackupVerifyError::Invalid {
+            subject: PathBuf::from(MANIFEST),
+            detail: format!(
+                "backup declares {} members; maximum is {MAX_BACKUP_MEMBERS}",
+                manifest.members.len()
+            ),
+        });
+    }
+    let total = manifest
+        .members
+        .iter()
+        .try_fold(manifest_bytes, |total, member| {
+            total
+                .checked_add(member.bytes)
+                .ok_or_else(|| BackupVerifyError::Invalid {
+                    subject: PathBuf::from(MANIFEST),
+                    detail: "backup aggregate bytes overflow u64".to_owned(),
+                })
+        })?;
+    if total > MAX_BACKUP_BYTES {
+        return Err(BackupVerifyError::Invalid {
+            subject: PathBuf::from(MANIFEST),
+            detail: format!(
+                "backup declares {total} aggregate bytes; maximum is {MAX_BACKUP_BYTES}"
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn admit_inventory(
@@ -356,57 +502,208 @@ fn admit_member_order(
 fn authenticate_member(
     bundle: &BundleAuthority,
     relative: &Path,
-    declared_mode: u32,
-    declared_len: u64,
-    declared_digest: &Digest,
-) -> Result<CapturedMember, BackupVerifyError> {
+    member: &wire::manifest::JournalBackupMember,
+    generation: &CapturedGeneration,
+    index: usize,
+    observed_total: &mut u64,
+) -> Result<RestoreMember, BackupVerifyError> {
     let path = bundle.root.join(relative);
-    if declared_mode & !0o7777 != 0 {
+    if member.mode & !0o7777 != 0 {
         return Err(BackupVerifyError::Invalid {
             subject: bundle.root.join(MANIFEST),
-            detail: format!("member mode {declared_mode:#o} is outside the POSIX 0o7777 mask"),
-        });
-    }
-    let captured = capture_regular_file(bundle, relative)?;
-    if declared_mode != captured.mode {
-        return Err(BackupVerifyError::Invalid {
-            subject: path,
             detail: format!(
-                "member mode declares {declared_mode:#o}, observed {:#o}",
-                captured.mode
+                "member mode {:#o} is outside the POSIX 0o7777 mask",
+                member.mode
             ),
         });
     }
-    let observed_len =
-        u64::try_from(captured.bytes.len()).map_err(|error| BackupVerifyError::Invalid {
-            subject: path.clone(),
-            detail: format!("member length cannot cross as u64: {error}"),
-        })?;
-    if declared_len != observed_len {
+    let (mut source, expected) = admit_member_source(bundle, relative, &path, member)?;
+    let (captured, observed_len) =
+        copy_member(&mut source, &path, generation, index, observed_total)?;
+    require_unchanged_source(bundle, relative, &path, &source, &expected, observed_len)?;
+    let (digested_len, observed) = Digest::compute_reader(
+        Domain::JournalBackupMember,
+        File::open(&captured).map_err(|source| BackupVerifyError::Io {
+            path: captured.clone(),
+            source,
+        })?,
+        observed_len,
+    )
+    .map_err(|source| BackupVerifyError::Io {
+        path: captured.clone(),
+        source,
+    })?;
+    if digested_len != observed_len {
         return Err(BackupVerifyError::Invalid {
             subject: path,
-            detail: format!("member length declares {declared_len}, observed {observed_len}"),
+            detail: format!(
+                "member bytes declare {observed_len}, captured {digested_len} while hashing"
+            ),
         });
     }
-    let observed = Digest::compute(Domain::JournalBackupMember, &captured.bytes);
-    if *declared_digest == observed {
-        Ok(CapturedMember {
-            digest: observed,
-            bytes: captured.bytes,
-        })
-    } else {
-        Err(BackupVerifyError::Invalid {
+    if member.digest != observed {
+        return Err(BackupVerifyError::Invalid {
             subject: path,
-            detail: format!("member digest declares {declared_digest}, observed {observed}"),
-        })
+            detail: format!(
+                "member digest declares {}, observed {observed}",
+                member.digest
+            ),
+        });
+    }
+    Ok(RestoreMember {
+        path: member.path.clone(),
+        mode: member.mode,
+        bytes: observed_len,
+        digest: observed,
+        captured,
+    })
+}
+
+fn admit_member_source(
+    bundle: &BundleAuthority,
+    relative: &Path,
+    path: &Path,
+    member: &wire::manifest::JournalBackupMember,
+) -> Result<(File, FileIdentity), BackupVerifyError> {
+    let before_file = bundle.open_regular(relative)?;
+    let before = before_file
+        .metadata()
+        .map_err(|source| BackupVerifyError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    require_regular(path, &before)?;
+    let expected = FileIdentity::from_metadata(&before);
+    let observed_mode = posix_mode(path, &before)?;
+    if member.mode != observed_mode || member.bytes != expected.len {
+        return Err(BackupVerifyError::Invalid {
+            subject: path.to_path_buf(),
+            detail: if member.mode != observed_mode {
+                format!(
+                    "member mode declares {:#o}, observed {observed_mode:#o}",
+                    member.mode
+                )
+            } else {
+                format!(
+                    "member length declares {}, observed {}",
+                    member.bytes, expected.len
+                )
+            },
+        });
+    }
+    drop(before_file);
+    let source = bundle.open_regular(relative)?;
+    let opened = source.metadata().map_err(|source| BackupVerifyError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    require_regular(path, &opened)?;
+    if FileIdentity::from_metadata(&opened) != expected {
+        return changed_during_source_admission(path);
+    }
+    Ok((source, expected))
+}
+
+fn copy_member(
+    source: &mut File,
+    source_path: &Path,
+    generation: &CapturedGeneration,
+    index: usize,
+    observed_total: &mut u64,
+) -> Result<(PathBuf, u64), BackupVerifyError> {
+    let (captured, mut target) = generation.create_member(index)?;
+    let mut observed_len = 0_u64;
+    let mut buffer = [0_u8; COPY_BUFFER_BYTES];
+    loop {
+        let read = source
+            .read(&mut buffer)
+            .map_err(|source| BackupVerifyError::Io {
+                path: source_path.to_path_buf(),
+                source,
+            })?;
+        if read == 0 {
+            break;
+        }
+        observed_len =
+            observed_len
+                .checked_add(read as u64)
+                .ok_or_else(|| BackupVerifyError::Invalid {
+                    subject: source_path.to_path_buf(),
+                    detail: "member length overflowed u64 while capturing".to_owned(),
+                })?;
+        *observed_total =
+            observed_total
+                .checked_add(read as u64)
+                .ok_or_else(|| BackupVerifyError::Invalid {
+                    subject: source_path.to_path_buf(),
+                    detail: "backup aggregate bytes overflowed u64 while capturing".to_owned(),
+                })?;
+        if *observed_total > MAX_BACKUP_BYTES {
+            return Err(BackupVerifyError::Invalid {
+                subject: source_path.to_path_buf(),
+                detail: format!(
+                    "backup crossed {MAX_BACKUP_BYTES} aggregate bytes while capturing"
+                ),
+            });
+        }
+        target
+            .write_all(&buffer[..read])
+            .map_err(|source| BackupVerifyError::Io {
+                path: captured.clone(),
+                source,
+            })?;
+    }
+    target.sync_all().map_err(|source| BackupVerifyError::Io {
+        path: captured.clone(),
+        source,
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        target
+            .set_permissions(fs::Permissions::from_mode(0o400))
+            .map_err(|source| BackupVerifyError::Io {
+                path: captured.clone(),
+                source,
+            })?;
+    }
+    Ok((captured, observed_len))
+}
+
+fn require_unchanged_source(
+    bundle: &BundleAuthority,
+    relative: &Path,
+    path: &Path,
+    source: &File,
+    expected: &FileIdentity,
+    observed_len: u64,
+) -> Result<(), BackupVerifyError> {
+    let after_handle = source.metadata().map_err(|source| BackupVerifyError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let after_path = bundle
+        .open_regular(relative)?
+        .metadata()
+        .map_err(|source| BackupVerifyError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    if FileIdentity::from_metadata(&after_handle) == *expected
+        && FileIdentity::from_metadata(&after_path) == *expected
+        && observed_len == expected.len
+    {
+        Ok(())
+    } else {
+        changed_during_source_admission(path)
     }
 }
 
 fn verify_authority(
-    authority: &[u8],
+    authority: &Path,
     manifest_schema: u32,
 ) -> Result<(crate::Verification, Vec<TaskStamp>), BackupVerifyError> {
-    let reader = JournalReader::from_serialized(authority).map_err(BackupVerifyError::Authority)?;
+    let reader = JournalReader::open(authority).map_err(BackupVerifyError::Authority)?;
     let schema = reader
         .schema_version()
         .map_err(BackupVerifyError::Authority)?;
@@ -443,13 +740,6 @@ fn count(value: usize, subject: &str) -> Result<u64, BackupVerifyError> {
 
 #[derive(Debug)]
 struct CapturedFile {
-    mode: u32,
-    bytes: Vec<u8>,
-}
-
-#[derive(Debug)]
-struct CapturedMember {
-    digest: Digest,
     bytes: Vec<u8>,
 }
 
@@ -500,6 +790,7 @@ impl FileIdentity {
 fn capture_regular_file(
     bundle: &BundleAuthority,
     relative: &Path,
+    limit: u64,
 ) -> Result<CapturedFile, BackupVerifyError> {
     let path = bundle.root.join(relative);
     let before_file = bundle.open_regular(relative)?;
@@ -511,6 +802,15 @@ fn capture_regular_file(
         })?;
     require_regular(&path, &before)?;
     let expected = FileIdentity::from_metadata(&before);
+    if expected.len > limit {
+        return Err(BackupVerifyError::Invalid {
+            subject: path,
+            detail: format!(
+                "backup manifest is {} bytes; maximum is {limit}",
+                expected.len
+            ),
+        });
+    }
     drop(before_file);
     let mut file = bundle.open_regular(relative)?;
     let opened = file.metadata().map_err(|source| BackupVerifyError::Io {
@@ -522,8 +822,14 @@ fn capture_regular_file(
         return changed_during_capture(&path);
     }
 
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
+    let capacity = usize::try_from(expected.len).map_err(|error| BackupVerifyError::Invalid {
+        subject: path.clone(),
+        detail: format!("backup manifest length cannot cross as usize: {error}"),
+    })?;
+    let mut bytes = Vec::with_capacity(capacity);
+    (&mut file)
+        .take(limit + 1)
+        .read_to_end(&mut bytes)
         .map_err(|source| BackupVerifyError::Io {
             path: path.clone(),
             source,
@@ -549,10 +855,7 @@ fn capture_regular_file(
         return changed_during_capture(&path);
     }
 
-    Ok(CapturedFile {
-        mode: posix_mode(&path, &after_handle)?,
-        bytes,
-    })
+    Ok(CapturedFile { bytes })
 }
 
 #[cfg(unix)]
@@ -626,6 +929,13 @@ fn changed_during_capture(path: &Path) -> Result<CapturedFile, BackupVerifyError
     })
 }
 
+fn changed_during_source_admission<T>(path: &Path) -> Result<T, BackupVerifyError> {
+    Err(BackupVerifyError::Invalid {
+        subject: path.to_path_buf(),
+        detail: "backup member changed identity while its generation was captured".to_owned(),
+    })
+}
+
 fn posix_mode(path: &Path, metadata: &Metadata) -> Result<u32, BackupVerifyError> {
     #[cfg(unix)]
     {
@@ -671,11 +981,13 @@ fn bundle_inventory(bundle: &BundleAuthority) -> Result<Vec<String>, BackupVerif
     #[cfg(unix)]
     {
         let mut inventory = Vec::new();
+        let mut entries_seen = 0;
         walk(
             bundle,
             bundle.root_directory()?,
             Path::new(""),
             &mut inventory,
+            &mut entries_seen,
         )?;
         inventory.sort();
         Ok(inventory)
@@ -695,6 +1007,7 @@ fn walk(
     directory: File,
     relative: &Path,
     inventory: &mut Vec<String>,
+    entries_seen: &mut usize,
 ) -> Result<(), BackupVerifyError> {
     let display = bundle.root.join(relative);
     let mut entries = Dir::read_from(&directory).map_err(|source| BackupVerifyError::Io {
@@ -710,6 +1023,13 @@ fn walk(
         let bytes = entry.file_name().to_bytes();
         if bytes == b"." || bytes == b".." {
             continue;
+        }
+        *entries_seen += 1;
+        if *entries_seen > MAX_INVENTORY_ENTRIES {
+            return Err(BackupVerifyError::Invalid {
+                subject: bundle.root.clone(),
+                detail: format!("backup inventory exceeds {MAX_INVENTORY_ENTRIES} entries"),
+            });
         }
         let name = std::str::from_utf8(bytes).map_err(|_| BackupVerifyError::Invalid {
             subject: display.clone(),
@@ -727,7 +1047,7 @@ fn walk(
             FileType::Directory => {
                 let child_directory = open_directory_at(&directory, OsStr::new(&name))
                     .map_err(|source| confined_error(&path, source))?;
-                walk(bundle, child_directory, &child, inventory)?;
+                walk(bundle, child_directory, &child, inventory, entries_seen)?;
             }
             FileType::RegularFile => {
                 let spelling = child
@@ -868,8 +1188,8 @@ mod tests {
     use wire::{Digest, Domain, WireVersion};
 
     use super::{
-        BackupVerifyError, verify_restore_bundle_after_capture,
-        verify_restore_bundle_after_inventory,
+        BackupVerifyError, MAX_BACKUP_BYTES, MAX_BACKUP_MEMBERS, admit_bundle_bounds,
+        verify_restore_bundle_after_capture, verify_restore_bundle_after_inventory,
     };
 
     static NEXT_BUNDLE: AtomicU64 = AtomicU64::new(0);
@@ -889,6 +1209,42 @@ mod tests {
 
         fn path(&self) -> &Path {
             &self.0
+        }
+
+        fn manifest(&self, paths: &[&str]) -> JournalBackupManifest {
+            let mut members = paths
+                .iter()
+                .map(|relative| {
+                    let path = self.path().join(relative);
+                    let bytes = fs::read(&path).expect("manifest member reads");
+                    JournalBackupMember {
+                        path: (*relative).to_owned(),
+                        mode: fs::metadata(path)
+                            .expect("manifest member metadata reads")
+                            .permissions()
+                            .mode()
+                            & 0o7777,
+                        bytes: bytes.len() as u64,
+                        digest: Digest::compute(Domain::JournalBackupMember, &bytes),
+                    }
+                })
+                .collect::<Vec<_>>();
+            members.sort_by(|left, right| left.path.cmp(&right.path));
+            JournalBackupManifest {
+                version: JOURNAL_BACKUP_VERSION,
+                wire: WireVersion::CURRENT,
+                journal_schema: crate::SCHEMA_VERSION,
+                authority: "spicejournal.sqlite3".to_owned(),
+                members,
+            }
+        }
+
+        fn write_manifest(&self, manifest: &JournalBackupManifest) {
+            fs::write(
+                self.path().join("manifest.json"),
+                wire::encode(manifest).expect("manifest encodes"),
+            )
+            .expect("manifest writes");
         }
     }
 
@@ -911,36 +1267,7 @@ mod tests {
         fs::write(bundle.path().join("tape/lane-a"), member_bytes).expect("bundle member writes");
         fs::write(outside.path().join("lane-a"), member_bytes).expect("external member writes");
 
-        let mut members = ["spicejournal.sqlite3", "tape/lane-a"]
-            .into_iter()
-            .map(|relative| {
-                let path = bundle.path().join(relative);
-                let bytes = fs::read(&path).expect("manifest member reads");
-                JournalBackupMember {
-                    path: relative.to_owned(),
-                    mode: fs::metadata(path)
-                        .expect("manifest member metadata reads")
-                        .permissions()
-                        .mode()
-                        & 0o7777,
-                    bytes: u64::try_from(bytes.len()).expect("member length crosses"),
-                    digest: Digest::compute(Domain::JournalBackupMember, &bytes),
-                }
-            })
-            .collect::<Vec<_>>();
-        members.sort_by(|left, right| left.path.cmp(&right.path));
-        let manifest = JournalBackupManifest {
-            version: JOURNAL_BACKUP_VERSION,
-            wire: WireVersion::CURRENT,
-            journal_schema: crate::SCHEMA_VERSION,
-            authority: "spicejournal.sqlite3".to_owned(),
-            members,
-        };
-        fs::write(
-            bundle.path().join("manifest.json"),
-            wire::encode(&manifest).expect("manifest encodes"),
-        )
-        .expect("manifest writes");
+        bundle.write_manifest(&bundle.manifest(&["spicejournal.sqlite3", "tape/lane-a"]));
 
         let held = bundle.path().join("captured-tape");
         let result = verify_restore_bundle_after_inventory(bundle.path(), |root| {
@@ -965,29 +1292,24 @@ mod tests {
         let authority = bundle.path().join("spicejournal.sqlite3");
         drop(crate::Journal::open(&authority).expect("authority initializes"));
         let authority_bytes = fs::read(&authority).expect("authority reads");
-        let authority_digest = Digest::compute(Domain::JournalBackupMember, &authority_bytes);
-        let mode = fs::metadata(&authority)
-            .expect("authority metadata reads")
-            .permissions()
-            .mode()
-            & 0o7777;
-        let manifest = JournalBackupManifest {
-            version: JOURNAL_BACKUP_VERSION,
-            wire: WireVersion::CURRENT,
-            journal_schema: crate::SCHEMA_VERSION,
-            authority: "spicejournal.sqlite3".to_owned(),
-            members: vec![JournalBackupMember {
-                path: "spicejournal.sqlite3".to_owned(),
-                mode,
-                bytes: u64::try_from(authority_bytes.len()).expect("authority length crosses"),
-                digest: authority_digest.clone(),
-            }],
-        };
-        fs::write(
-            bundle.path().join("manifest.json"),
-            wire::encode(&manifest).expect("manifest encodes"),
-        )
-        .expect("manifest writes");
+        let manifest = bundle.manifest(&["spicejournal.sqlite3"]);
+        let authority_digest = manifest.members[0].digest.clone();
+        bundle.write_manifest(&manifest);
+
+        let mut bounded = manifest.clone();
+        let manifest_bytes = wire::encode(&bounded).expect("manifest encodes").len() as u64;
+        bounded.members[0].bytes = MAX_BACKUP_BYTES - manifest_bytes;
+        assert!(admit_bundle_bounds(&bounded, manifest_bytes).is_ok());
+        bounded.members[0].bytes += 1;
+        assert!(admit_bundle_bounds(&bounded, manifest_bytes).is_err());
+        bounded.members = vec![manifest.members[0].clone(); MAX_BACKUP_MEMBERS];
+        bounded
+            .members
+            .iter_mut()
+            .for_each(|member| member.bytes = 0);
+        assert!(admit_bundle_bounds(&bounded, manifest_bytes).is_ok());
+        bounded.members.push(manifest.members[0].clone());
+        assert!(admit_bundle_bounds(&bounded, manifest_bytes).is_err());
 
         let displaced = bundle.path().join("captured.sqlite3");
         let result = verify_restore_bundle_after_capture(bundle.path(), |path| {
@@ -998,8 +1320,6 @@ mod tests {
         .expect("captured authority verifies despite replacement");
 
         assert_eq!(result.authority, authority_digest);
-        assert_eq!(result.wire, WireVersion::CURRENT);
-        assert_eq!(result.journal_schema, crate::SCHEMA_VERSION);
         assert_eq!(result.members, 1);
         assert_eq!(
             fs::read(authority).expect("replacement reads"),
