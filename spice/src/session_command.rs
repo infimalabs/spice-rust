@@ -436,10 +436,16 @@ fn build_bounded_event_report(
         "slices" => {
             let options = project::slice_options(matches)?;
             let (count, oldest) = options.scan();
-            let horizon = if oldest {
-                None
+            let (horizon, total) = if oldest {
+                (None, 0)
             } else {
-                dataset::recent_compaction_horizon(sources, count, None)?.start
+                let horizon = dataset::slice_compaction_horizon(sources, count)?;
+                (
+                    horizon.start,
+                    horizon
+                        .total
+                        .expect("slice compaction horizon counts every marker"),
+                )
             };
             let data = dataset::WindowScan::scan(
                 sources,
@@ -451,7 +457,8 @@ fn build_bounded_event_report(
                     oldest,
                 },
             )?;
-            Ok(Some(project::slices(data, options)))
+            let ordinal_base = total.saturating_sub(data.compactions.len());
+            Ok(Some(project::slices(data, options, ordinal_base)))
         }
         "turns" => {
             let options = project::turn_options(matches)?;

@@ -790,6 +790,20 @@ fn every_session_query_accepts_current_filters_and_crosses_both_forms() {
     assert_phases_slices_and_summary(&file, start, end);
     assert_sweep_and_timeline(&file, start, end);
     assert_tokens_turns_and_pipelines(&file, start, end);
+    append_jsonl(
+        &transcript,
+        &[
+            codex_event("2026-01-02T00:00:00Z", "compacted", json!({})),
+            codex_event("2026-01-02T00:00:01Z", "compacted", json!({})),
+        ],
+    );
+    let latest = reply_forms(
+        &strings(&["session", "slices", &file, "--limit", "1"]),
+        &[],
+        "slices",
+    );
+    assert_eq!(latest["rows"][0]["id"], "compaction-3");
+    assert_eq!(latest["rows"][0]["start"], "2026-01-02T00:00:00.000Z");
     let tail = (0..=4_096)
         .flat_map(|index| {
             let timestamp = format!("2026-01-03T00:00:00.{index:06}Z");
