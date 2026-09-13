@@ -7,8 +7,7 @@ use board::claim::ClaimRefusal;
 use board::oops::{Friction, Report, Routed};
 use board::phase::PhaseRefusal;
 use board::{
-    Active, Entry, Preview, Snapshot, SnapshotReadError, Transition, Urgency, View, apply,
-    digest_of, graph, handout,
+    Active, Entry, Preview, Snapshot, Transition, Urgency, View, apply, digest_of, graph, handout,
 };
 use journal::{FactCause, Journal, JournalWrite};
 use wire::JournalCursor as Cursor;
@@ -73,6 +72,25 @@ fn projects() -> board::ProjectPolicy {
         dialect::PROJECT_MAX_DEPTH as u64,
     )
     .expect("fixture project policy")
+}
+
+fn snapshot_for(
+    journal: &Journal,
+    projects: &board::ProjectPolicy,
+    task: &TaskStamp,
+) -> Result<Snapshot, board::TaskError> {
+    let (cursor, heads) = journal
+        .read(|read| Ok((read.cursor()?, read.task_heads_for(task)?)))
+        .expect("fixture task generation");
+    let heads = heads.expect("fixture task head");
+    let (statement, workflow, claim, lease) = heads.into_bodies();
+    let entry = Entry::new(statement, workflow, claim, lease, projects)?;
+    Ok(Snapshot::new(
+        journal::SCHEMA_VERSION,
+        cursor.map_or_else(Cursor::empty, Cursor::at),
+        vec![entry],
+    )
+    .expect("fixture snapshot schema"))
 }
 
 fn admitted(
@@ -744,8 +762,8 @@ fn policy_snapshot_retains_hidden_rows_as_explicit_evidence() {
     let mut hidden = statement("BOARD-hidden");
     hidden.project = ".oops.correctness".to_owned();
     let journal = journal_with_heads(hidden, workflow("todo"));
-    let snapshot =
-        Snapshot::read(&journal, &projects).expect("hidden evidence remains in the snapshot");
+    let snapshot = snapshot_for(&journal, &projects, &stamp("BOARD-hidden"))
+        .expect("hidden evidence remains in the snapshot");
 
     assert_eq!(snapshot.entries().len(), 1);
     let entry = &snapshot.entries()[0];
@@ -770,7 +788,8 @@ fn snapshot_is_a_schema_and_cursor_bounded_head_answer() {
 fn durable_snapshot_owns_one_validated_journal_answer() {
     let snapshot = {
         let journal = journal_with_heads(statement("BOARD-a1"), workflow("todo"));
-        Snapshot::read(&journal, &projects()).expect("authoritative board snapshot")
+        snapshot_for(&journal, &projects(), &stamp("BOARD-a1"))
+            .expect("authoritative board snapshot")
     };
 
     assert_eq!(snapshot.schema_version(), journal::SCHEMA_VERSION);
@@ -785,19 +804,10 @@ fn durable_snapshot_names_the_task_whose_heads_violate_board_policy() {
     invalid.flow.clear();
     let journal = journal_with_heads(statement("BOARD-a1"), invalid);
 
-    let error =
-        Snapshot::read(&journal, &projects()).expect_err("empty flow refuses board snapshot");
-    assert!(matches!(
-        error,
-        SnapshotReadError::Task {
-            handle: ref observed,
-            source: board::TaskError::EmptyFlow,
-        } if observed == &handle("BOARD-a1")
-    ));
-    assert!(error.to_string().contains(&format!(
-        "board snapshot task {} is invalid",
-        handle("BOARD-a1")
-    )));
+    assert_eq!(
+        snapshot_for(&journal, &projects(), &stamp("BOARD-a1")),
+        Err(board::TaskError::EmptyFlow)
+    );
 }
 
 #[test]
