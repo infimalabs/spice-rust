@@ -387,7 +387,6 @@ fn build_resolved(
     match action {
         "timeline" => project::timeline(&data, matches, &filters),
         "turns" => project::turns(&data, matches, &filters),
-        "compactions" => project::compactions(&data, matches),
         "slices" => project::slices(&data, matches),
         "commits" => project::commits(&data, matches),
         _ => Err(refusal(
@@ -404,6 +403,7 @@ fn validate_options_before_source(matches: &ArgMatches, action: &str) -> Result<
         "phases" => project::phase_options(matches).map(|_| ()),
         "messages" => project::message_options(matches).map(|_| ()),
         "commands" => project::command_options(matches).map(|_| ()),
+        "compactions" => project::compaction_limit(matches).map(|_| ()),
         "briefing" | "sweep" | "slices" => project::validate_window_options(matches, action),
         _ => Ok(()),
     }
@@ -423,6 +423,18 @@ fn build_bounded_event_report(
         "commands" => {
             let options = project::command_options(matches)?;
             project::commands(sources, options).map(Some)
+        }
+        "compactions" => {
+            let limit = project::compaction_limit(matches)?;
+            let horizon = dataset::recent_compaction_horizon(sources, limit, None)?;
+            let data = dataset::WindowScan::scan(
+                sources,
+                horizon.start.as_deref(),
+                None,
+                &project::Filters::default(),
+                dataset::WindowOptions::Compactions { compactions: limit },
+            )?;
+            Ok(Some(project::compactions(data)))
         }
         _ => Ok(None),
     }

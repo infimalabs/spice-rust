@@ -14,10 +14,10 @@ use super::super::project::{
 use super::super::source::ResolvedSource;
 use super::stream::{ForwardCursor, ForwardProgress};
 use super::{
-    DecodedRow, FoldState, FoldStorage, FrontierDirection, Marker, MessageQuery, OPEN_TOOL_LIMIT,
-    OPEN_TURN_LIMIT, ResidueLedger, ResultFrontier, SessionWork, SessionWorkBudget,
-    compaction_intent, compaction_text_bytes, finish_fold, message_text_bytes, reduce_record,
-    refusal, source_view_text_bytes, stream_records,
+    CompactionTracker, DecodedRow, FoldState, FoldStorage, FrontierDirection, Marker, MessageQuery,
+    OPEN_TOOL_LIMIT, OPEN_TURN_LIMIT, ResidueLedger, ResultFrontier, SessionWork,
+    SessionWorkBudget, admit_source_order, finish_fold, message_text_bytes, reduce_record, refusal,
+    source_view_text_bytes, stream_records,
 };
 
 const PHASE_GAP_SECONDS: i64 = 45 * 60;
@@ -64,12 +64,17 @@ pub(crate) enum WindowOptions {
     Sweep {
         compactions: usize,
     },
+    Compactions {
+        compactions: usize,
+    },
 }
 
 impl WindowOptions {
     pub(crate) const fn compactions(self) -> usize {
         match self {
-            Self::Briefing { compactions, .. } | Self::Sweep { compactions } => compactions,
+            Self::Briefing { compactions, .. }
+            | Self::Sweep { compactions }
+            | Self::Compactions { compactions } => compactions,
         }
     }
 
@@ -81,8 +86,12 @@ impl WindowOptions {
                 explain,
                 ..
             } => Some((max_lines, max_bytes, explain)),
-            Self::Sweep { .. } => None,
+            Self::Sweep { .. } | Self::Compactions { .. } => None,
         }
+    }
+
+    const fn retains_turns(self) -> bool {
+        !matches!(self, Self::Compactions { .. })
     }
 }
 
@@ -147,7 +156,16 @@ impl WindowScan {
         let mut residues = ResidueLedger::new();
         let mut streams = sources
             .iter()
-            .map(|source| PhaseSource::window(source, start, end, options.compactions(), &mut work))
+            .map(|source| {
+                PhaseSource::window(
+                    source,
+                    options.retains_turns().then_some(start).flatten(),
+                    start,
+                    end,
+                    options.compactions(),
+                    &mut work,
+                )
+            })
             .collect::<Result<Vec<_>, _>>()?;
         for stream in &mut streams {
             stream.advance(&mut residues, &mut work)?;
@@ -234,6 +252,9 @@ impl WindowTurnFrontier {
     }
 
     fn push(&mut self, turn: WindowTurn) -> Result<(), Refusal> {
+        if !self.options.retains_turns() {
+            return Ok(());
+        }
         if matches!(self.options, WindowOptions::Sweep { .. })
             && self.rows.len() == WINDOW_TURN_LIMIT
         {
@@ -782,112 +803,6 @@ impl Aggregate {
     }
 }
 
-struct PendingCompaction {
-    marker: Marker,
-    assistant_before: String,
-    summary: String,
-    summary_seen: bool,
-    user_after: String,
-    user_seen: bool,
-}
-
-struct CompactionTracker {
-    last_assistant: Option<String>,
-    last: Option<String>,
-    pending: Option<PendingCompaction>,
-    rows: ResultFrontier<CompactionRecord>,
-    end: Option<String>,
-}
-
-impl CompactionTracker {
-    fn new(limit: usize, end: Option<&str>) -> Result<Self, Refusal> {
-        Ok(Self {
-            last_assistant: None,
-            last: None,
-            pending: None,
-            rows: ResultFrontier::new(limit, FrontierDirection::Newest)?,
-            end: end.map(str::to_owned),
-        })
-    }
-
-    fn observe(
-        &mut self,
-        markers: impl IntoIterator<Item = Marker>,
-        messages: &[MessageRecord],
-        work: &mut SessionWork,
-        at: &str,
-    ) -> Result<(), Refusal> {
-        for marker in markers {
-            self.finish_pending(work, at)?;
-            if self.end.as_ref().is_none_or(|end| marker.ts <= *end) {
-                let summary_seen = !marker.summary.is_empty();
-                self.pending = Some(PendingCompaction {
-                    summary: marker.summary.clone(),
-                    marker,
-                    assistant_before: self.last_assistant.clone().unwrap_or_default(),
-                    summary_seen,
-                    user_after: String::new(),
-                    user_seen: false,
-                });
-            }
-        }
-        for message in messages {
-            if let Some(pending) = &mut self.pending
-                && message.position > pending.marker.position
-            {
-                if !pending.summary_seen
-                    && message.shape == crate::message_shape::MessageShape::CompactionRehydration
-                {
-                    pending.summary = message.text.clone();
-                    pending.summary_seen = true;
-                }
-                if !pending.user_seen && message.side == "user" && message.shape.is_authored() {
-                    pending.user_after = message.authored.clone().unwrap_or_default();
-                    pending.user_seen = true;
-                }
-            }
-            if message.side == "assistant" {
-                self.last_assistant = Some(message.text.clone());
-            }
-        }
-        if self
-            .pending
-            .as_ref()
-            .is_some_and(|pending| pending.summary_seen && pending.user_seen)
-        {
-            self.finish_pending(work, at)?;
-        }
-        Ok(())
-    }
-
-    fn finish_pending(&mut self, work: &mut SessionWork, at: &str) -> Result<(), Refusal> {
-        let Some(pending) = self.pending.take() else {
-            return Ok(());
-        };
-        let row = CompactionRecord {
-            source: pending.marker.source,
-            ts: pending.marker.ts,
-            assistant_before: pending.assistant_before,
-            intent: compaction_intent(&pending.summary),
-            summary_after: pending.summary,
-            user_after: pending.user_after,
-        };
-        admit_source_order(&mut self.last, &row.ts)?;
-        work.admit_retained_text(compaction_text_bytes(&row), at)?;
-        self.rows.push(row);
-        Ok(())
-    }
-
-    fn finish(
-        mut self,
-        work: &mut SessionWork,
-        at: &str,
-    ) -> Result<Vec<CompactionRecord>, Refusal> {
-        self.finish_pending(work, at)?;
-        Ok(self.rows.into_rows())
-    }
-}
-
 struct PhaseSource<'a> {
     source: &'a ResolvedSource,
     cursor: ForwardCursor<'a>,
@@ -917,20 +832,21 @@ impl<'a> PhaseSource<'a> {
 
     fn window(
         source: &'a ResolvedSource,
-        start: Option<&str>,
+        cursor_start: Option<&str>,
+        marker_start: Option<&str>,
         end: Option<&str>,
         compactions: usize,
         work: &mut SessionWork,
     ) -> Result<Self, Refusal> {
         Ok(Self {
             source,
-            cursor: ForwardCursor::new(source, start, work)?,
+            cursor: ForwardCursor::new(source, cursor_start, work)?,
             scratch: super::super::model::Dataset::default(),
             markers: Vec::new(),
             fold: FoldState::default(),
             ready: VecDeque::with_capacity(OPEN_TURN_LIMIT),
             last_turn: None,
-            compactions: Some(CompactionTracker::new(compactions, end)?),
+            compactions: Some(CompactionTracker::new(compactions, marker_start, end)?),
             complete: false,
         })
     }
@@ -1057,21 +973,6 @@ impl<'a> PhaseSource<'a> {
             .finish(work, &self.source.path.display().to_string())?;
         Ok((self.source_view(), compactions))
     }
-}
-
-fn admit_source_order(previous: &mut Option<String>, timestamp: &str) -> Result<(), Refusal> {
-    if previous
-        .as_deref()
-        .is_some_and(|previous| timestamp < previous)
-    {
-        return Err(refusal(
-            "session::source-order-regressed",
-            Some(format!("previous={previous:?} current={timestamp:?}")),
-            "repair source-local timestamp order before merging transcript windows",
-        ));
-    }
-    *previous = Some(timestamp.to_owned());
-    Ok(())
 }
 
 fn drain_fold_turns(

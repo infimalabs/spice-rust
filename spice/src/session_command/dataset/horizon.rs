@@ -10,13 +10,146 @@ use super::stream::{
 };
 use super::work::SessionWork;
 use super::{
-    CompactionHorizon, DecodedRow, FrontierDirection, FrontierPage, FrontierProgress,
-    MAX_LINE_BYTES, Marker, ResolvedSource, ResultFrontier, TypedRecord, frontier_limit,
-    record_timestamp, refusal,
+    CompactionHorizon, CompactionRecord, DecodedRow, FrontierDirection, FrontierPage,
+    FrontierProgress, MAX_LINE_BYTES, Marker, MessageRecord, ResolvedSource, ResultFrontier,
+    TypedRecord, compaction_intent, compaction_text_bytes, frontier_limit, record_timestamp,
+    refusal,
 };
 
 const BACKWARD_CHUNK_BYTES: u64 = 64 * 1024;
 const HORIZON_CONTEXT_LINES: usize = 20;
+
+struct PendingCompaction {
+    marker: Marker,
+    assistant_before: String,
+    summary: String,
+    summary_seen: bool,
+    user_after: String,
+    user_seen: bool,
+}
+
+pub(super) struct CompactionTracker {
+    last_assistant: Option<String>,
+    last: Option<String>,
+    pending: Option<PendingCompaction>,
+    rows: ResultFrontier<CompactionRecord>,
+    start: Option<String>,
+    end: Option<String>,
+}
+
+impl CompactionTracker {
+    pub(super) fn new(
+        limit: usize,
+        start: Option<&str>,
+        end: Option<&str>,
+    ) -> Result<Self, Refusal> {
+        Ok(Self {
+            last_assistant: None,
+            last: None,
+            pending: None,
+            rows: ResultFrontier::new(limit, FrontierDirection::Newest)?,
+            start: start.map(str::to_owned),
+            end: end.map(str::to_owned),
+        })
+    }
+
+    pub(super) fn observe(
+        &mut self,
+        markers: impl IntoIterator<Item = Marker>,
+        messages: &[MessageRecord],
+        work: &mut SessionWork,
+        at: &str,
+    ) -> Result<(), Refusal> {
+        for marker in markers {
+            self.finish_pending(work, at)?;
+            if self.start.as_ref().is_none_or(|start| marker.ts >= *start)
+                && self.end.as_ref().is_none_or(|end| marker.ts <= *end)
+            {
+                let summary_seen = !marker.summary.is_empty();
+                self.pending = Some(PendingCompaction {
+                    summary: marker.summary.clone(),
+                    marker,
+                    assistant_before: self.last_assistant.clone().unwrap_or_default(),
+                    summary_seen,
+                    user_after: String::new(),
+                    user_seen: false,
+                });
+            }
+        }
+        for message in messages {
+            if let Some(pending) = &mut self.pending
+                && message.position > pending.marker.position
+            {
+                if !pending.summary_seen
+                    && message.shape == crate::message_shape::MessageShape::CompactionRehydration
+                {
+                    pending.summary = message.text.clone();
+                    pending.summary_seen = true;
+                }
+                if !pending.user_seen && message.side == "user" && message.shape.is_authored() {
+                    pending.user_after = message.authored.clone().unwrap_or_default();
+                    pending.user_seen = true;
+                }
+            }
+            if message.side == "assistant" {
+                self.last_assistant = Some(message.text.clone());
+            }
+        }
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.summary_seen && pending.user_seen)
+        {
+            self.finish_pending(work, at)?;
+        }
+        Ok(())
+    }
+
+    fn finish_pending(&mut self, work: &mut SessionWork, at: &str) -> Result<(), Refusal> {
+        let Some(pending) = self.pending.take() else {
+            return Ok(());
+        };
+        let row = CompactionRecord {
+            source: pending.marker.source,
+            ts: pending.marker.ts,
+            assistant_before: pending.assistant_before,
+            intent: compaction_intent(&pending.summary),
+            summary_after: pending.summary,
+            user_after: pending.user_after,
+        };
+        admit_source_order(&mut self.last, &row.ts)?;
+        work.admit_retained_text(compaction_text_bytes(&row), at)?;
+        self.rows.push(row);
+        Ok(())
+    }
+
+    pub(super) fn finish(
+        mut self,
+        work: &mut SessionWork,
+        at: &str,
+    ) -> Result<Vec<CompactionRecord>, Refusal> {
+        self.finish_pending(work, at)?;
+        Ok(self.rows.into_rows())
+    }
+}
+
+pub(super) fn admit_source_order(
+    previous: &mut Option<String>,
+    timestamp: &str,
+) -> Result<(), Refusal> {
+    if previous
+        .as_deref()
+        .is_some_and(|previous| timestamp < previous)
+    {
+        return Err(refusal(
+            "session::source-order-regressed",
+            Some(format!("previous={previous:?} current={timestamp:?}")),
+            "repair source-local timestamp order before merging transcript windows",
+        ));
+    }
+    *previous = Some(timestamp.to_owned());
+    Ok(())
+}
 
 pub(crate) fn recent_compaction_horizon(
     sources: &[ResolvedSource],
