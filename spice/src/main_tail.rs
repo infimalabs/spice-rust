@@ -123,6 +123,7 @@ mod tests {
 
     #[test]
     fn typed_outcomes_map_to_the_public_exit_contract() {
+        crate::journal_command::assert_late_backup_destination_is_preserved();
         assert_eq!(exit_status(&reply()), REPLY_EXIT);
         assert_eq!(exit_status(&refusal()), REFUSAL_EXIT);
         assert_eq!(exit_status(&fault()), FAULT_EXIT);
