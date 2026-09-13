@@ -20,6 +20,9 @@ use super::{
     refusal, source_view_text_bytes, stream_records,
 };
 
+mod commit;
+pub(crate) use commit::CommitScan;
+
 const PHASE_GAP_SECONDS: i64 = 45 * 60;
 const PHASE_PATH_LIMIT: usize = 4_096;
 const SOURCE_LIMIT: usize = 64;
@@ -1019,13 +1022,10 @@ impl<'a> PhaseSource<'a> {
 
     fn drain_ready(&mut self, finish: bool) -> Result<(), Refusal> {
         let at = self.source.path.display().to_string();
-        let ordered = self.compactions.is_some();
         let ready = &mut self.ready;
         let last_turn = &mut self.last_turn;
         drain_fold_turns(&mut self.scratch, &mut self.fold, finish, &at, |turn| {
-            if ordered {
-                admit_source_order(last_turn, &turn.start_ts)?;
-            }
+            admit_source_order(last_turn, &turn.start_ts)?;
             ready.push_back(turn);
             Ok(())
         })
