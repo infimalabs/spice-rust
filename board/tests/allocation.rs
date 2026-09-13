@@ -1,3 +1,5 @@
+mod support;
+
 use std::collections::BTreeSet;
 
 use board::Snapshot;
@@ -47,8 +49,12 @@ fn projects() -> board::ProjectPolicy {
 }
 
 fn snapshot(journal: &Journal) -> Snapshot {
-    board::bounded_snapshot_fixture!(journal, &projects(), [stamp("BOARD-b2"), stamp("BOARD-a1")])
-        .expect("fixture board entries")
+    support::bounded_snapshot(
+        journal,
+        &projects(),
+        &[stamp("BOARD-b2"), stamp("BOARD-a1")],
+    )
+    .expect("fixture board entries")
 }
 
 fn workflow() -> WorkflowHead {

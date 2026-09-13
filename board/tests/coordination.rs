@@ -1,3 +1,5 @@
+mod support;
+
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
@@ -79,7 +81,7 @@ fn snapshot_for(
     projects: &board::ProjectPolicy,
     task: &TaskStamp,
 ) -> Result<Snapshot, board::TaskError> {
-    board::bounded_snapshot_fixture!(journal, projects, [task.clone()])
+    support::bounded_snapshot(journal, projects, std::slice::from_ref(task))
 }
 
 fn admitted(
