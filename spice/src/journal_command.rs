@@ -111,13 +111,7 @@ fn backup_inner(output: &Path) -> Result<(SeqRange, JournalBackup), Failure> {
     write_private_file(&temporary.join(MANIFEST), &manifest_bytes)?;
     sync_tree_directories(&temporary)?;
     let verification = journal::verify_restore_bundle(&temporary).map_err(bundle_failure)?;
-    require_absent(&destination)?;
-    fs::rename(&temporary, &destination).map_err(|error| {
-        Failure::environment(
-            "backup::publish-failed",
-            format!("{}: {error}", destination.display()),
-        )
-    })?;
+    publish_backup(&temporary, &destination)?;
     cleanup.disarm();
     sync_directory(&parent)?;
     let body = JournalBackup {
@@ -558,6 +552,25 @@ fn require_absent(path: &Path) -> Result<(), Failure> {
             path.display().to_string(),
             "choose a new bundle destination; backups never overwrite",
         )),
+    }
+}
+
+fn publish_backup(source: &Path, destination: &Path) -> Result<(), Failure> {
+    match rustix::fs::renameat_with(
+        rustix::fs::CWD,
+        source,
+        rustix::fs::CWD,
+        destination,
+        rustix::fs::RenameFlags::NOREPLACE,
+    ) {
+        Ok(()) => Ok(()),
+        Err(error) => match require_absent(destination) {
+            Err(failure) => Err(failure),
+            Ok(()) => Err(Failure::environment(
+                "backup::publish-failed",
+                format!("{}: {error}", destination.display()),
+            )),
+        },
     }
 }
 
