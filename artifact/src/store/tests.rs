@@ -559,6 +559,7 @@ fn replacement_commits_or_rolls_back_complete_provenance_generations() {
     let task = task("ARTIFACT-i9");
     let old_source = first.source("old.txt", b"old");
     let new_source = second.source("new.txt", b"new");
+    let empty_source = second.source("empty.txt", b"");
     add(
         &first.store,
         &task,
@@ -572,6 +573,13 @@ fn replacement_commits_or_rolls_back_complete_provenance_generations() {
         &new_source,
         Retention::Permanent,
         instant("2030-01-02T00:00:00.000Z"),
+    );
+    add(
+        &second.store,
+        &task,
+        &empty_source,
+        Retention::Permanent,
+        instant("2030-01-03T00:00:00.000Z"),
     );
     let old = first.store.capture().expect("old generation");
     let old_image = first.store.capture().expect("old image generation");
@@ -603,6 +611,10 @@ fn replacement_commits_or_rolls_back_complete_provenance_generations() {
     assert_eq!(
         first.store.show(&task, "A1").expect("new restored").1,
         b"new"
+    );
+    assert_eq!(
+        first.store.show(&task, "A2").expect("empty restored").1,
+        b""
     );
 
     let stale = first
