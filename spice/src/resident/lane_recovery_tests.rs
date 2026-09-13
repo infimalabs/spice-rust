@@ -1215,3 +1215,82 @@ fn import_moves_seat_lineage_session_and_claim_into_the_successor_worktree() {
     assert_imported(&fixture);
     finish(fixture);
 }
+
+// Restart adoption: a durably occupied lane whose supervisor left no trace at
+// all (the runtime directory a reboot, cleanup, or a deliberate shutdown can
+// empty) must not be resurrected on the lane's last known vendor. It degrades
+// to vacant instead, carrying forward whatever claim its occupant held, so an
+// operator decides whether and how to bring it back.
+
+#[test]
+fn restart_without_a_supervisor_trace_degrades_instead_of_relaunching() {
+    let fixture = fixture();
+    seed(&fixture);
+    reseat(&fixture);
+    let paths = runtime_paths(&fixture, fixture.root.clone());
+    assert!(
+        !paths.runtime.exists(),
+        "fixture runtime directory must start absent to model a missing trace"
+    );
+    let mut seats = Seats::new();
+
+    crate::resident::lane_surface::restore_seats(
+        &fixture.bus,
+        &paths,
+        fixture.new_epoch,
+        &mut seats,
+    )
+    .expect("restart reconciliation commits");
+
+    assert!(
+        seats.is_empty(),
+        "a missing trace must not seat a freshly launched occupant"
+    );
+    let snapshot = fixture
+        .bus
+        .task_snapshot()
+        .expect("post-restart heads read");
+    let residency = snapshot.residency().expect("residency remains present");
+    let row = &residency.body().lanes[0];
+    assert_eq!(row.occupant, None);
+    assert_eq!(row.disposition, "degraded");
+    let claim = snapshot
+        .tasks()
+        .first()
+        .expect("fixture task remains")
+        .claim()
+        .expect("claim remains active");
+    assert_eq!(
+        claim.body().occupant,
+        fixture.ancestor,
+        "no successor occupant exists to reassign the claim to"
+    );
+    assert_eq!(
+        claim.body().epoch,
+        fixture.new_epoch,
+        "the claim still moves to the new resident epoch"
+    );
+    let kinds = fixture
+        .bus
+        .fact_snapshot()
+        .expect("post-restart facts read")
+        .facts()
+        .iter()
+        .map(|fact| fact.fact.kind())
+        .collect::<Vec<_>>();
+    assert!(
+        kinds.contains(&wire::FactKind::LaneDegraded),
+        "a missing trace must be recorded as a degradation"
+    );
+    assert!(
+        kinds.contains(&wire::FactKind::ClaimCarried),
+        "the occupant's active claim must still carry to the new epoch"
+    );
+    assert!(
+        !kinds.contains(&wire::FactKind::LaneStarted)
+            && !kinds.contains(&wire::FactKind::LaneRenewed),
+        "a missing trace must never launch a fresh occupant"
+    );
+    fixture.bus.verify().expect("degraded restart verifies");
+    finish(fixture);
+}

@@ -187,7 +187,7 @@ pub(super) async fn run_surface(
     } = started;
     let channels = capture::channels();
     let supervisor_reports = capture::SupervisorReports::bind(paths)?;
-    lane_surface::restore_seats(bus, paths, epoch, seats, &channels.reporter)?;
+    lane_surface::restore_seats(bus, paths, epoch, seats)?;
     ingest_transcripts(bus, paths, None, progress)?;
     let mut message_startup = launch_message_startup(bus, paths, epoch, &message_publisher)?;
     let reads = read_materializations::CurrentReads::start(bus, paths, &config.consent)

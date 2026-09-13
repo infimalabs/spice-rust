@@ -41,9 +41,7 @@ pub(super) use launch::{OccupantLaunchRequest, occupant_launch};
 pub(super) use lineage::{arrange as arrange_lineages, configure};
 #[cfg(test)]
 pub(in crate::resident) use propose::tests::seed_task_claim;
-use propose::{
-    commit_adopted, commit_restored, propose_drain, propose_remove, propose_seat, propose_wake,
-};
+use propose::{commit_adopted, propose_drain, propose_remove, propose_seat, propose_wake};
 pub(super) use renewal::{reconcile as reconcile_renewal, set as renew};
 use reply::{
     answer, authority_refusal, command_result, committed_lane_reply, fact_lane, lane_refusal,
@@ -207,7 +205,6 @@ pub(super) fn restore_seats(
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &mut Seats,
-    capture: &Arc<dyn CaptureReporter>,
 ) -> CommandResult<()> {
     let durable = current_residency(bus, epoch)?.body().lanes.clone();
     for row in durable {
@@ -264,36 +261,23 @@ pub(super) fn restore_seats(
             }
             continue;
         }
-        let resume = resume_session(paths, &row)?;
-        let fast_mode = super::settings_surface::fast_mode(bus)?;
-        let occupant = new_uuid();
-        let launch = super::supervisor::launch(
-            paths,
-            OccupantLaunchRequest {
-                worktree: &row.worktree,
-                vendor: &row.vendor,
-                epoch,
-                lane: row.lane,
-                occupant,
-                resume,
-                fast_mode,
-            },
-            Arc::clone(capture),
+        // No supervisor trace survived this restart: the runtime directory that
+        // would hold it is scratch space, cleared by routine cleanup, a reboot,
+        // or an operator on purpose. Relaunching here cannot distinguish "this
+        // agent legitimately needed to keep running" from "someone shut it down
+        // and wants it left alone" — it always guessed the former, silently
+        // resurrecting a possibly-unwanted occupant on the lane's last known
+        // vendor. Treat the missing trace the same as an observed failure: carry
+        // forward any claim this occupant held, then degrade to vacant so an
+        // operator makes the call explicitly via `lane wake`.
+        commit_adopted(bus, epoch, &row)?;
+        supervisor_failed(
+            bus,
+            epoch,
+            row.lane,
+            durable_occupant,
+            "no supervisor trace survived this restart",
         )?;
-        let proven = ProvenOccupant {
-            occupant: launch.occupant,
-            group: launch.group,
-            session: launch.session,
-            git: launch.git,
-        };
-        let _group = seats
-            .seat_detached(row.lane, occupant, launch.process)
-            .map_err(|error| store_fault("lane::restart-launch-failed", &error.to_string()))?
-            .group();
-        if let Err(outcome) = commit_restored(bus, epoch, &row, &proven) {
-            stop_lane(seats, row.lane);
-            return Err(outcome);
-        }
     }
     Ok(())
 }

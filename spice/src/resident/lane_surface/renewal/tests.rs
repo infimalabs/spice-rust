@@ -339,56 +339,6 @@ fn launch_refusal_is_durable_and_an_explicit_retry_starts_one_successor() {
 }
 
 #[test]
-fn resident_restart_preserves_the_original_predecessor_across_a_resumed_process() {
-    let fixture = AdvisoryRtkFixture::new();
-    let bus = seeded(&fixture, Some(requested(&fixture, false)));
-    let restored = fixture_uuid(40);
-    let session = wire::LaneSession {
-        lane: fixture.lane,
-        occupant: restored,
-        worktree: fixture.root.display().to_string(),
-        vendor: fixture.vendor.clone(),
-        launch: None,
-        epoch: fixture.epoch,
-        stream: "stdout".to_owned(),
-        identity: SESSION.to_owned(),
-        locus: wire::TapeLocus {
-            member: 1,
-            offset: 4,
-            length: 8,
-        },
-    };
-    let proven = ProvenOccupant {
-        occupant: restored,
-        group: 88,
-        session,
-        git: "restart launch advanced".to_owned(),
-    };
-    let durable = current_residency(&bus, fixture.epoch)
-        .expect("durable predecessor reads")
-        .body()
-        .lanes[0]
-        .clone();
-
-    super::super::propose::commit_restored(&bus, fixture.epoch, &durable, &proven)
-        .expect("restart replacement commits");
-    let current = current_residency(&bus, fixture.epoch).expect("restored renewal reads");
-    assert_eq!(current.body().lanes[0].occupant, Some(restored));
-    assert!(matches!(
-        &current.body().renewals[0].state,
-        wire::LaneRenewalState::Requested {
-            predecessor,
-            org_slot: 0,
-        } if predecessor.occupant == fixture.occupant
-            && predecessor.session == SESSION
-    ));
-    assert!(requested_exit(current.body(), fixture.lane, restored,));
-
-    bus.verify().expect("restart renewal authority verifies");
-    bus.shutdown().expect("restart renewal bus stops");
-}
-
-#[test]
 fn predecessor_supervisor_failure_advances_requested_renewal_to_handoff() {
     let fixture = AdvisoryRtkFixture::new();
     let bus = seeded(&fixture, Some(requested(&fixture, false)));
