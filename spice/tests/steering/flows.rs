@@ -16,27 +16,30 @@ fn rendering_failure_path(
         &["steer", &lane, "remain authoritative without a rendering"],
         false,
     ));
+    assert_eq!(
+        sent.delivery.as_ref(),
+        &wire::intent::DeliveryStanding::Unknown
+    );
+    let inbox = text_inbox(&invoke(fixture, &["inbox", &lane], false));
     let wire::intent::DeliveryStanding::Parked {
         source,
         keys,
         failure,
         repair,
-    } = sent.delivery.as_ref()
+    } = &inbox.lanes[0].delivery
     else {
-        panic!("failed publication did not return parked delivery: {sent:?}");
+        panic!("post-response reconciliation did not park delivery: {inbox:?}");
     };
     assert!(source.get() > 0);
     assert_eq!(keys, std::slice::from_ref(&sent.key));
     assert!(failure.contains("steer::inbox-unwritable"));
     assert_eq!(repair, &format!("spice steer repair {lane}"));
-    let inbox = text_inbox(&invoke(fixture, &["inbox", &lane], false));
     assert!(
         inbox.lanes[0]
             .pending
             .iter()
             .any(|pending| pending.directive == sent.directive)
     );
-    assert_eq!(&inbox.lanes[0].delivery, sent.delivery.as_ref());
 
     stop(fixture, resident);
     let mut restarted = RunningResident::spawn(fixture);
@@ -296,7 +299,18 @@ fn resend_before_the_first_horizon_redelivers_one_unchanged_stable_directive() {
         &["steer", "resend", &sent.directive.to_string()],
         false,
     ));
-    assert_eq!(resent, sent);
+    assert_eq!(resent.directive, sent.directive);
+    assert_eq!(resent.key, sent.key);
+    assert_eq!(resent.authored, sent.authored);
+    assert_eq!(resent.disposition, sent.disposition);
+    assert_eq!(
+        sent.delivery.as_ref(),
+        &wire::intent::DeliveryStanding::Unknown
+    );
+    assert!(matches!(
+        resent.delivery.as_ref(),
+        wire::intent::DeliveryStanding::Published { .. }
+    ));
 
     let inbox = text_inbox(&invoke(&fixture, &["inbox", &lane], false));
     let pending = inbox.lanes[0]
