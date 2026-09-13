@@ -120,6 +120,7 @@ fn resolve_ambient(environment: &Environment) -> Result<Vec<ResolvedSource>, Ref
         }
     }
 
+    let started = std::time::Instant::now();
     let current = std::env::current_dir().map_err(|error| {
         refusal(
             "session::cwd-unavailable",
@@ -127,19 +128,15 @@ fn resolve_ambient(environment: &Environment) -> Result<Vec<ResolvedSource>, Ref
             "restore the working directory or pass an absolute transcript path",
         )
     })?;
-    let mut paths = fs::read_dir(&current)
+    let paths = TranscriptSearch::ambient(&current, started)
+        .run()
         .map_err(|error| {
             refusal(
                 "session::cwd-unreadable",
                 Some(error.to_string()),
-                "restore read access or pass an explicit transcript path",
+                "restore a complete bounded directory view or pass an explicit transcript path",
             )
-        })?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| transcript_extension(path))
-        .collect::<Vec<_>>();
-    paths.sort();
+        })?;
     if paths.is_empty() {
         return Err(refusal(
             "session::transcript-unspecified",
@@ -147,10 +144,27 @@ fn resolve_ambient(environment: &Environment) -> Result<Vec<ResolvedSource>, Ref
             "pass a .jsonl or .jsonl.gz path, or run inside a live Codex or Claude agent",
         ));
     }
-    paths
-        .into_iter()
-        .map(|path| admit(path, None, None))
-        .collect()
+    let mut resolved = Vec::with_capacity(paths.len());
+    for path in paths {
+        require_ambient_time(started)?;
+        resolved.push(admit(path, None, None)?);
+        require_ambient_time(started)?;
+    }
+    Ok(resolved)
+}
+
+fn require_ambient_time(started: std::time::Instant) -> Result<(), Refusal> {
+    if started.elapsed() <= SEARCH_ELAPSED_LIMIT {
+        Ok(())
+    } else {
+        Err(refusal(
+            "session::cwd-unreadable",
+            Some(format!(
+                "ambient transcript discovery exceeded the {SEARCH_ELAPSED_LIMIT:?} elapsed-work limit"
+            )),
+            "restore a complete bounded directory view or pass an explicit transcript path",
+        ))
+    }
 }
 
 fn resolve_input(value: &str, environment: &Environment) -> Result<Vec<ResolvedSource>, Refusal> {
@@ -479,7 +493,7 @@ fn find_named_transcript(root: &Path, thread: &str) -> Result<Vec<PathBuf>, Tran
 }
 
 struct TranscriptSearch<'a> {
-    thread: &'a str,
+    thread: Option<&'a str>,
     started: std::time::Instant,
     pending: BTreeSet<(usize, PathBuf)>,
     matches: Vec<PathBuf>,
@@ -493,9 +507,17 @@ struct TranscriptSearch<'a> {
 
 impl<'a> TranscriptSearch<'a> {
     fn new(root: &Path, thread: &'a str) -> Self {
+        Self::with_thread(root, Some(thread), std::time::Instant::now())
+    }
+
+    fn ambient(root: &Path, started: std::time::Instant) -> Self {
+        Self::with_thread(root, None, started)
+    }
+
+    fn with_thread(root: &Path, thread: Option<&'a str>, started: std::time::Instant) -> Self {
         Self {
             thread,
-            started: std::time::Instant::now(),
+            started,
             pending: BTreeSet::from([(0, root.to_path_buf())]),
             matches: Vec::new(),
             issues: Vec::new(),
@@ -607,14 +629,27 @@ impl<'a> TranscriptSearch<'a> {
                 });
             }
         };
+        if self.thread.is_none() {
+            if transcript_extension(&path) {
+                self.retain_match(path)?;
+            }
+            return Ok(());
+        }
         if kind.is_symlink() {
             return Ok(());
         }
         if kind.is_dir() {
-            return self.visit_subdirectory(path, depth);
+            return if self.thread.is_some() {
+                self.visit_subdirectory(path, depth)
+            } else {
+                Ok(())
+            };
         }
         let name = entry.file_name().to_string_lossy().replace('-', "");
-        if kind.is_file() && transcript_extension(&path) && name.contains(self.thread) {
+        if kind.is_file()
+            && transcript_extension(&path)
+            && name.contains(self.thread.expect("thread search retains its identity"))
+        {
             self.retain_match(path)?;
         }
         Ok(())
