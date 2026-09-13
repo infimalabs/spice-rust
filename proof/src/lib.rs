@@ -11,6 +11,8 @@
 #[cfg(test)]
 pub(crate) mod test_support {
     use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+    use wire::manifest::{InventoryEntry, MacSymbolMetadata, ReleaseTarget};
+    use wire::{Digest, Domain};
 
     static EXECUTABLE_FIXTURE_BARRIER: RwLock<()> = RwLock::new(());
 
@@ -24,6 +26,30 @@ pub(crate) mod test_support {
         EXECUTABLE_FIXTURE_BARRIER
             .write()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub(crate) fn symbols(
+        target: ReleaseTarget,
+        native: &Digest,
+        inventory: &mut Vec<InventoryEntry>,
+    ) -> Option<MacSymbolMetadata> {
+        (target == ReleaseTarget::Aarch64AppleDarwin).then(|| {
+            let metadata = MacSymbolMetadata {
+                path: "symbols/spice.dSYM.json".to_owned(),
+                mode: 0o644,
+                bytes: 14,
+                digest: Digest::compute(Domain::DistArtifact, b"symbol fixture"),
+                uuid: "11111111-2222-3333-4444-555555555555".to_owned(),
+                executable: native.clone(),
+            };
+            inventory.push(InventoryEntry {
+                path: metadata.path.clone(),
+                mode: metadata.mode,
+                bytes: metadata.bytes,
+                digest: metadata.digest.clone(),
+            });
+            metadata
+        })
     }
 }
 

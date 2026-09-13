@@ -543,6 +543,7 @@ mod tests {
             bytes: 6,
             digest: native.clone(),
         });
+        let symbols = crate::test_support::symbols(target, &native, &mut inventory);
         inventory.sort_by(|left, right| left.path.cmp(&right.path));
         TargetPayload {
             version: wire::manifest::TARGET_PAYLOAD_VERSION,
@@ -550,6 +551,7 @@ mod tests {
             source: Digest::compute(Domain::DistArtifact, b"source"),
             app,
             native,
+            symbols,
             pins_digest: Digest::compute(
                 Domain::DistPins,
                 &wire::encode(&pins).expect("pins encode"),

@@ -8,8 +8,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use wire::manifest::{
-    BuildPins, InventoryEntry, PROOF_RECEIPT_VERSION, ProofEnvironment, ProofReceipt,
-    ProofStanding, ReleaseTarget, TARGET_PAYLOAD_VERSION, TargetPayload,
+    BuildPins, InventoryEntry, MacSymbolMetadata, PROOF_RECEIPT_VERSION, ProofEnvironment,
+    ProofReceipt, ProofStanding, ReleaseTarget, TARGET_PAYLOAD_VERSION, TargetPayload,
 };
 use wire::{Digest, Domain, Outcome, ReplyPosition, SealedManifest};
 
@@ -323,6 +323,23 @@ fn stage_proofs(root: &Path, commit: &str, app: &Digest) -> Digest {
             bytes: target.as_str().len() as u64,
             digest: native.clone(),
         });
+        let symbols = (target == ReleaseTarget::Aarch64AppleDarwin).then(|| {
+            let metadata = MacSymbolMetadata {
+                path: "symbols/spice.dSYM.json".to_owned(),
+                mode: 0o644,
+                bytes: 14,
+                digest: Digest::compute(Domain::DistArtifact, b"symbol fixture"),
+                uuid: "11111111-2222-3333-4444-555555555555".to_owned(),
+                executable: native.clone(),
+            };
+            inventory.push(InventoryEntry {
+                path: metadata.path.clone(),
+                mode: metadata.mode,
+                bytes: metadata.bytes,
+                digest: metadata.digest.clone(),
+            });
+            metadata
+        });
         inventory.sort_by(|left, right| left.path.cmp(&right.path));
         let payload = TargetPayload {
             version: TARGET_PAYLOAD_VERSION,
@@ -330,6 +347,7 @@ fn stage_proofs(root: &Path, commit: &str, app: &Digest) -> Digest {
             source: source.clone(),
             app: app.clone(),
             native,
+            symbols,
             pins_digest: Digest::compute(
                 Domain::DistPins,
                 &wire::encode(&pins).expect("pins encode"),

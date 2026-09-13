@@ -356,6 +356,7 @@ fn assert_symbol_result(fixture: &Fixture, programs: &Programs, build: &TargetBu
     let target = build.target;
     let Some(symbols) = &build.symbols else {
         assert_eq!(target, ReleaseTarget::X86_64UnknownLinuxMusl);
+        assert!(build.staged.payload.symbols.is_none());
         return;
     };
     assert_eq!(target, ReleaseTarget::Aarch64AppleDarwin);
@@ -367,6 +368,28 @@ fn assert_symbol_result(fixture: &Fixture, programs: &Programs, build: &TargetBu
         .iter()
         .find(|entry| entry.path == "symbols/spice.dSYM.json")
         .expect("Darwin inventory binds symbols");
+    let metadata = build
+        .staged
+        .payload
+        .symbols
+        .as_ref()
+        .expect("Darwin payload carries typed symbols");
+    assert_eq!(
+        (
+            &metadata.path,
+            metadata.mode,
+            metadata.bytes,
+            &metadata.digest
+        ),
+        (
+            &inventory.path,
+            inventory.mode,
+            inventory.bytes,
+            &inventory.digest
+        )
+    );
+    assert_eq!(metadata.uuid, UUID);
+    assert_eq!(metadata.executable, build.staged.payload.native);
     let bytes = fs::read(fixture.root.join(format!(
         "dist/stage/objects/{}-{:04o}",
         inventory.digest, inventory.mode

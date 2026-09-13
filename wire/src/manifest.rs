@@ -47,9 +47,11 @@ pub struct JournalBackupManifest {
 /// The sole current detached proof receipt schema.
 pub const PROOF_RECEIPT_VERSION: u16 = 3;
 /// The sole current target payload schema.
-pub const TARGET_PAYLOAD_VERSION: u16 = 2;
+pub const TARGET_PAYLOAD_VERSION: u16 = 3;
 /// The sole current deterministic macOS symbol artifact schema.
 pub const MAC_SYMBOL_ARTIFACT_VERSION: u16 = 1;
+const MACHO_UUID_LENGTH: usize = 36;
+const MACHO_UUID_HYPHENS: [usize; 4] = [8, 13, 18, 23];
 
 /// Complete browser-app file inventory carried by every current appliance target.
 pub const CANVAS_APP_FILES: [&str; 8] = [
@@ -79,7 +81,7 @@ pub const CANVAS_RESPONSIVE_STYLE: &str = "responsive.css";
 /// Browser application WebAssembly module.
 pub const CANVAS_WASM: &str = "app_bg.wasm";
 /// The sole current multi-target release manifest schema.
-pub const RELEASE_MANIFEST_VERSION: u16 = 2;
+pub const RELEASE_MANIFEST_VERSION: u16 = 3;
 /// The sole current deterministic release-note document schema.
 pub const RELEASE_NOTES_VERSION: u16 = 1;
 /// The sole current externally installable release-package schema.
@@ -415,6 +417,33 @@ pub struct MacSymbolArtifact {
     pub dwarf: Vec<u8>,
 }
 
+/// Authenticated identity of one platform-conditional macOS symbol artifact.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MacSymbolMetadata {
+    pub path: String,
+    pub mode: u32,
+    pub bytes: u64,
+    pub digest: Digest,
+    pub uuid: String,
+    pub executable: Digest,
+}
+
+impl MacSymbolMetadata {
+    /// Whether the UUID has the canonical uppercase Mach-O spelling.
+    #[must_use]
+    pub fn uuid_is_canonical(&self) -> bool {
+        self.uuid.len() == MACHO_UUID_LENGTH
+            && self.uuid.bytes().enumerate().all(|(index, byte)| {
+                if MACHO_UUID_HYPHENS.contains(&index) {
+                    byte == b'-'
+                } else {
+                    byte.is_ascii_digit() || (b'A'..=b'F').contains(&byte)
+                }
+            })
+    }
+}
+
 /// The receipt-free object submitted to proof for one release target.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -426,6 +455,7 @@ pub struct TargetPayload {
     /// Identity of the complete immutable Canvas generation.
     pub app: Digest,
     pub native: Digest,
+    pub symbols: Option<MacSymbolMetadata>,
     pub pins: BuildPins,
     pub pins_digest: Digest,
     pub inventory: Vec<InventoryEntry>,
@@ -474,6 +504,8 @@ pub struct ReleaseManifestTarget {
     pub payload_bytes: u64,
     /// Complete canonical artifact inventory authenticated by the payload.
     pub inventory: Vec<InventoryEntry>,
+    /// Platform-conditional macOS symbol identity authenticated by the payload.
+    pub symbols: Option<MacSymbolMetadata>,
     /// Canonical detached proof-receipt identity.
     pub receipt: Digest,
     /// Exact encoded length of the detached proof-receipt object.

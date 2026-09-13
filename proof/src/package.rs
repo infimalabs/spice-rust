@@ -1334,6 +1334,7 @@ mod tests {
                 bytes: executable.len() as u64,
                 digest: native.clone(),
             });
+            let symbols = crate::test_support::symbols(target, &native, &mut inventory);
             inventory.sort_by(|left, right| left.path.cmp(&right.path));
             let payload = TargetPayload {
                 version: TARGET_PAYLOAD_VERSION,
@@ -1341,6 +1342,7 @@ mod tests {
                 source: source.clone(),
                 app: app_identity.clone(),
                 native: native.clone(),
+                symbols,
                 pins_digest: Digest::compute(Domain::DistPins, &wire::encode(&pins).expect("pins")),
                 inventory_digest: Digest::compute(
                     Domain::DistInventory,
@@ -1368,6 +1370,7 @@ mod tests {
                 payload: payload_identity,
                 payload_bytes: payload_bytes.len() as u64,
                 inventory: payload.inventory.clone(),
+                symbols: payload.symbols.clone(),
                 receipt: proof_identity,
                 receipt_bytes: proof_bytes.len() as u64,
                 battery: battery.clone(),

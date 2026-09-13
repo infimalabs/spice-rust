@@ -264,6 +264,11 @@ fn admit_target_payload(
         index,
         "payload inventory",
     )?;
+    require_binding(
+        value.symbols == entry.symbols,
+        index,
+        "payload symbol metadata",
+    )?;
     require_binding(value.target == entry.target, index, "payload target")?;
     require_binding(value.source == manifest.source, index, "payload source")?;
     require_binding(value.app == *app, index, "Canvas generation identity")?;
@@ -524,6 +529,7 @@ where
             payload: payload_digest.clone(),
             payload_bytes: input.payload.len() as u64,
             inventory: admitted.value().inventory.clone(),
+            symbols: admitted.value().symbols.clone(),
             receipt: receipt_digest.clone(),
             receipt_bytes: input.receipt.len() as u64,
             battery: verified.battery_digest().clone(),

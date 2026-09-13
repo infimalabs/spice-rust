@@ -6,8 +6,8 @@ use std::path::{Component, Path, PathBuf};
 
 use atomic::Destination;
 use wire::manifest::{
-    BuildPins, CANVAS_APP_FILES, InventoryEntry, ReleaseTarget, TARGET_PAYLOAD_VERSION,
-    TargetPayload,
+    BuildPins, CANVAS_APP_FILES, InventoryEntry, MAC_SYMBOL_ARTIFACT_VERSION, MacSymbolArtifact,
+    MacSymbolMetadata, ReleaseTarget, TARGET_PAYLOAD_VERSION, TargetPayload,
 };
 use wire::{Digest, Domain};
 
@@ -15,6 +15,7 @@ use crate::pins::{PinError, RequiredPins};
 
 const DATA_MODE: u32 = 0o644;
 const EXECUTABLE_MODE: u32 = 0o755;
+const SYMBOL_PATH: &str = "symbols/spice.dSYM.json";
 
 /// Build work occurs in this fixed order.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -179,7 +180,14 @@ impl Pipeline {
     ) -> Result<StagedTarget, StageError> {
         self.pins.verify(observed)?;
         let built = build_artifacts(target, builder)?;
-        let payload = make_payload(target, source, built.app, self.pins.get(), &built.artifacts)?;
+        let payload = make_payload(
+            target,
+            source,
+            built.app,
+            built.symbols,
+            self.pins.get(),
+            &built.artifacts,
+        )?;
         let payload_bytes = wire::encode(&payload)?;
         let payload_digest = Digest::compute(Domain::DistTargetPayload, &payload_bytes);
         publish_artifacts(publisher, &built.artifacts)?;
@@ -234,6 +242,7 @@ struct Artifact {
 
 struct BuiltArtifacts {
     app: Digest,
+    symbols: Option<MacSymbolMetadata>,
     artifacts: Vec<Artifact>,
 }
 
@@ -284,14 +293,65 @@ fn build_artifacts<B: Builder>(
         .into_iter()
         .map(|file| artifact(format!("app/{}", file.path), DATA_MODE, file.bytes))
         .collect::<Vec<_>>();
-    artifacts.push(artifact("bin/spice", EXECUTABLE_MODE, native));
-    if let Some(symbols) = symbols {
-        artifacts.push(artifact("symbols/spice.dSYM.json", DATA_MODE, symbols));
-    }
+    let native = artifact("bin/spice", EXECUTABLE_MODE, native);
+    let symbols = match (target, symbols) {
+        (ReleaseTarget::Aarch64AppleDarwin, Some(bytes)) => {
+            let (artifact, metadata) = symbol_artifact(bytes, &native.digest)?;
+            artifacts.push(artifact);
+            Some(metadata)
+        }
+        (ReleaseTarget::Aarch64AppleDarwin, None) => {
+            return Err(native_build_error(
+                "macOS build produced no symbol artifact",
+            ));
+        }
+        (ReleaseTarget::X86_64UnknownLinuxMusl, None) => None,
+        (ReleaseTarget::X86_64UnknownLinuxMusl, Some(_)) => {
+            return Err(native_build_error("Linux build produced a symbol artifact"));
+        }
+    };
+    artifacts.push(native);
     Ok(BuiltArtifacts {
         app: embedded.generation,
+        symbols,
         artifacts,
     })
+}
+
+fn symbol_artifact(
+    bytes: Vec<u8>,
+    native: &Digest,
+) -> Result<(Artifact, MacSymbolMetadata), StageError> {
+    let document: MacSymbolArtifact = wire::decode(&bytes)
+        .map_err(|error| native_build_error(format!("symbol artifact does not decode: {error}")))?;
+    if document.version != MAC_SYMBOL_ARTIFACT_VERSION
+        || document.executable != *native
+        || wire::encode(&document).ok().as_deref() != Some(bytes.as_slice())
+    {
+        return Err(native_build_error(
+            "symbol artifact is noncanonical or has stale executable binding",
+        ));
+    }
+    let artifact = artifact(SYMBOL_PATH, DATA_MODE, bytes);
+    let metadata = MacSymbolMetadata {
+        path: artifact.path.clone(),
+        mode: artifact.mode,
+        bytes: artifact.bytes.len() as u64,
+        digest: artifact.digest.clone(),
+        uuid: document.uuid,
+        executable: document.executable,
+    };
+    if !metadata.uuid_is_canonical() {
+        return Err(native_build_error("symbol artifact UUID is not canonical"));
+    }
+    Ok((artifact, metadata))
+}
+
+fn native_build_error(message: impl Into<String>) -> StageError {
+    StageError::Build {
+        step: BuildStep::Native,
+        source: BuildError::new(message),
+    }
 }
 
 fn artifact(path: impl Into<String>, mode: u32, bytes: Vec<u8>) -> Artifact {
@@ -308,6 +368,7 @@ fn make_payload(
     target: ReleaseTarget,
     source: Digest,
     app: Digest,
+    symbols: Option<MacSymbolMetadata>,
     pins: &BuildPins,
     artifacts: &[Artifact],
 ) -> Result<TargetPayload, serde_json::Error> {
@@ -326,6 +387,7 @@ fn make_payload(
             .expect("the built inventory carries the native executable")
             .digest
             .clone(),
+        symbols,
         pins: pins.clone(),
         pins_digest,
         inventory,

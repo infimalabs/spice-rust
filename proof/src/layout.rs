@@ -478,6 +478,7 @@ mod tests {
             source: digest.clone(),
             app: digest.clone(),
             native: digest.clone(),
+            symbols: None,
             pins: BuildPins {
                 rust: marker.to_owned(),
                 wasm_target: marker.to_owned(),

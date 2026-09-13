@@ -68,12 +68,43 @@ pub fn admit(bytes: &[u8]) -> Result<AdmittedPayload, PayloadError> {
         return Err(PayloadError::InventoryDigest);
     }
 
+    verify_symbol_metadata(&payload)?;
     verify_inventory(&payload)?;
 
     Ok(AdmittedPayload {
         value: payload,
         digest: Digest::compute(Domain::DistTargetPayload, &canonical),
     })
+}
+
+fn verify_symbol_metadata(payload: &TargetPayload) -> Result<(), PayloadError> {
+    let symbols = match (payload.target, payload.symbols.as_ref()) {
+        (wire::manifest::ReleaseTarget::Aarch64AppleDarwin, Some(symbols)) => symbols,
+        (wire::manifest::ReleaseTarget::Aarch64AppleDarwin, None) => {
+            return Err(PayloadError::SymbolMetadata("missing for Darwin"));
+        }
+        (wire::manifest::ReleaseTarget::X86_64UnknownLinuxMusl, None) => return Ok(()),
+        (wire::manifest::ReleaseTarget::X86_64UnknownLinuxMusl, Some(_)) => {
+            return Err(PayloadError::SymbolMetadata("present for Linux"));
+        }
+    };
+    let entry = payload
+        .inventory
+        .iter()
+        .find(|entry| entry.path == symbols.path)
+        .ok_or(PayloadError::SymbolMetadata("absent from inventory"))?;
+    if symbols.path != "symbols/spice.dSYM.json"
+        || symbols.mode != 0o644
+        || !symbols.uuid_is_canonical()
+        || symbols.executable != payload.native
+        || (entry.mode, entry.bytes, &entry.digest)
+            != (symbols.mode, symbols.bytes, &symbols.digest)
+    {
+        return Err(PayloadError::SymbolMetadata(
+            "disagrees with executable or inventory",
+        ));
+    }
+    Ok(())
 }
 
 fn verify_inventory(payload: &TargetPayload) -> Result<(), PayloadError> {
@@ -146,16 +177,11 @@ fn expected_artifacts(payload: &TargetPayload) -> Vec<Artifact> {
         mode: 0o755,
         digest: Some(DigestField::Native),
     });
-    if payload.target == wire::manifest::ReleaseTarget::Aarch64AppleDarwin
-        && payload
-            .inventory
-            .iter()
-            .any(|entry| entry.path == "symbols/spice.dSYM.json")
-    {
+    if payload.target == wire::manifest::ReleaseTarget::Aarch64AppleDarwin {
         artifacts.push(Artifact {
             path: "symbols/spice.dSYM.json".to_owned(),
             mode: 0o644,
-            digest: None,
+            digest: Some(DigestField::Symbols),
         });
     }
     artifacts.sort_by(|left, right| left.path.cmp(&right.path));
@@ -171,12 +197,20 @@ struct Artifact {
 #[derive(Clone, Copy)]
 enum DigestField {
     Native,
+    Symbols,
 }
 
 impl DigestField {
     const fn from(self, payload: &TargetPayload) -> &Digest {
         match self {
             Self::Native => &payload.native,
+            Self::Symbols => {
+                &payload
+                    .symbols
+                    .as_ref()
+                    .expect("Darwin expected inventory requires symbol metadata")
+                    .digest
+            }
         }
     }
 }
@@ -198,6 +232,8 @@ pub enum PayloadError {
     PinsDigest,
     /// The declared inventory digest disagrees with the inventory document.
     InventoryDigest,
+    /// Platform-conditional symbol metadata is absent or inconsistent.
+    SymbolMetadata(&'static str),
     /// One canonical artifact is absent.
     MissingArtifact(String),
     /// An artifact outside the canonical inventory is present.
@@ -244,6 +280,9 @@ impl fmt::Display for PayloadError {
             }
             Self::InventoryDigest => {
                 formatter.write_str("target payload inventory digest disagrees with its inventory")
+            }
+            Self::SymbolMetadata(detail) => {
+                write!(formatter, "target payload symbol metadata is {detail}")
             }
             Self::MissingArtifact(path) => {
                 write!(formatter, "target payload inventory is missing {path}")
@@ -414,6 +453,25 @@ mod tests {
             &encode(&wrong_native),
             PayloadError::ArtifactDigest("bin/spice".to_owned()),
         );
+
+        let mut darwin = payload();
+        darwin.target = ReleaseTarget::Aarch64AppleDarwin;
+        assert_refuses_before_proof(
+            &encode(&darwin),
+            PayloadError::SymbolMetadata("missing for Darwin"),
+        );
+        darwin.symbols =
+            crate::test_support::symbols(darwin.target, &darwin.native, &mut darwin.inventory);
+        darwin
+            .inventory
+            .sort_by(|left, right| left.path.cmp(&right.path));
+        refresh_inventory(&mut darwin);
+        admit(&encode(&darwin)).expect("Darwin symbol metadata admits");
+        darwin.symbols.as_mut().expect("Darwin symbols").bytes += 1;
+        assert_refuses_before_proof(
+            &encode(&darwin),
+            PayloadError::SymbolMetadata("disagrees with executable or inventory"),
+        );
     }
 
     fn payload() -> TargetPayload {
@@ -448,6 +506,7 @@ mod tests {
             source: Digest::compute(Domain::DistArtifact, b"source"),
             app,
             native,
+            symbols: None,
             pins_digest: Digest::compute(
                 Domain::DistPins,
                 &wire::encode(&pins).expect("pins encode"),

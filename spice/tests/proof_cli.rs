@@ -14,7 +14,9 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use spice::placeholder::PlaceholderReason;
-use wire::manifest::{BuildPins, InventoryEntry, ProofReceipt, ReleaseTarget, TargetPayload};
+use wire::manifest::{
+    BuildPins, InventoryEntry, MacSymbolMetadata, ProofReceipt, ReleaseTarget, TargetPayload,
+};
 use wire::{Digest, Domain, Fault, Outcome, ProofEvidence, Refusal, ReplyPosition};
 
 const REFUSAL_EXIT: i32 = 2;
@@ -630,6 +632,23 @@ fn payload(target: ReleaseTarget) -> TargetPayload {
         bytes: 6,
         digest: native.clone(),
     });
+    let symbols = (target == ReleaseTarget::Aarch64AppleDarwin).then(|| {
+        let metadata = MacSymbolMetadata {
+            path: "symbols/spice.dSYM.json".to_owned(),
+            mode: 0o644,
+            bytes: 14,
+            digest: Digest::compute(Domain::DistArtifact, b"symbol fixture"),
+            uuid: "11111111-2222-3333-4444-555555555555".to_owned(),
+            executable: native.clone(),
+        };
+        inventory.push(InventoryEntry {
+            path: metadata.path.clone(),
+            mode: metadata.mode,
+            bytes: metadata.bytes,
+            digest: metadata.digest.clone(),
+        });
+        metadata
+    });
     inventory.sort_by(|left, right| left.path.cmp(&right.path));
     TargetPayload {
         version: wire::manifest::TARGET_PAYLOAD_VERSION,
@@ -637,6 +656,7 @@ fn payload(target: ReleaseTarget) -> TargetPayload {
         source: Digest::compute(Domain::DistArtifact, b"source"),
         app,
         native,
+        symbols,
         pins_digest: Digest::compute(Domain::DistPins, &wire::encode(&pins).expect("pins encode")),
         inventory_digest: Digest::compute(
             Domain::DistInventory,

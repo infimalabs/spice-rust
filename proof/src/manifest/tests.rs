@@ -74,6 +74,7 @@ fn both_verified_targets_form_one_stable_manifest_and_pointer_last() {
             wire::decode(&prepared.payload).expect("fixture payload decodes");
         assert_eq!(target.payload_bytes, prepared.payload.len() as u64);
         assert_eq!(target.inventory, payload.inventory);
+        assert_eq!(target.symbols, payload.symbols);
         assert_eq!(target.receipt_bytes, prepared.receipt.len() as u64);
     }
     assert_eq!(
@@ -502,6 +503,7 @@ fn prepared(target: ReleaseTarget, source: Digest, clean: bool) -> Prepared {
         bytes: target.as_str().len() as u64,
         digest: native.clone(),
     });
+    let symbols = crate::test_support::symbols(target, &native, &mut inventory);
     inventory.sort_by(|left, right| left.path.cmp(&right.path));
     let payload = TargetPayload {
         version: wire::manifest::TARGET_PAYLOAD_VERSION,
@@ -509,6 +511,7 @@ fn prepared(target: ReleaseTarget, source: Digest, clean: bool) -> Prepared {
         source,
         app,
         native,
+        symbols,
         pins_digest: digest(Domain::DistPins, &wire::encode(&pins).expect("pins encode")),
         inventory_digest: digest(
             Domain::DistInventory,
