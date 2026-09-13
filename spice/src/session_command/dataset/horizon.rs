@@ -227,13 +227,31 @@ pub(crate) fn recent_compaction_horizon(
     count: usize,
     end: Option<&str>,
 ) -> Result<CompactionHorizon, Refusal> {
+    compaction_horizon(sources, count, end, false)
+}
+
+pub(crate) fn slice_compaction_horizon(
+    sources: &[ResolvedSource],
+    count: usize,
+) -> Result<CompactionHorizon, Refusal> {
+    compaction_horizon(sources, count, None, true)
+}
+
+fn compaction_horizon(
+    sources: &[ResolvedSource],
+    count: usize,
+    end: Option<&str>,
+    exhaustive: bool,
+) -> Result<CompactionHorizon, Refusal> {
     if count == 0 {
         return Ok(CompactionHorizon {
             start: None,
+            total: exhaustive.then_some(0),
             sources: sources
                 .iter()
                 .map(|source| CompactionSourceHorizon {
                     has_compaction: false,
+                    total: 0,
                     start_offset: None,
                     assistant_before: String::new(),
                     vendor: source.vendor,
@@ -246,7 +264,8 @@ pub(crate) fn recent_compaction_horizon(
     let mut source_horizons = Vec::with_capacity(sources.len());
     let mut work = SessionWork::new(super::work::SessionWorkBudget::report());
     for source in sources {
-        let (page, source_horizon) = read_recent_compaction_markers(source, count, end, &mut work)?;
+        let (page, source_horizon) =
+            read_recent_compaction_markers(source, count, end, exhaustive, &mut work)?;
         match page.progress {
             FrontierProgress::More(continuation) | FrontierProgress::Complete(continuation) => {
                 let _ = continuation.position();
@@ -264,8 +283,15 @@ pub(crate) fn recent_compaction_horizon(
     }
     markers.sort_by(|left, right| (&left.ts, &left.source).cmp(&(&right.ts, &right.source)));
     let first = markers.len().saturating_sub(count);
+    let total = exhaustive.then(|| {
+        source_horizons
+            .iter()
+            .map(|source| source.total)
+            .fold(0_usize, usize::saturating_add)
+    });
     Ok(CompactionHorizon {
         start: markers.into_iter().nth(first).map(|marker| marker.ts),
+        total,
         sources: source_horizons,
     })
 }
@@ -322,6 +348,7 @@ fn read_recent_compaction_markers(
     source: &ResolvedSource,
     count: usize,
     end: Option<&str>,
+    exhaustive: bool,
     work: &mut SessionWork,
 ) -> Result<
     (
@@ -339,6 +366,7 @@ fn read_recent_compaction_markers(
     let mut assistant_before = String::new();
     let mut vendor = source.vendor;
     let mut locating_assistant = false;
+    let mut total = 0_usize;
     work.begin_pass(&source_name)?;
     let progress = reverse_lines(&source.path, work, |line, offset, _, terminal, work| {
         let live_tail = source.thread.is_some() && terminal;
@@ -351,24 +379,34 @@ fn read_recent_compaction_markers(
             }
             Some(DecodedRow::Residue(_)) | Some(DecodedRow::Ignored) | None => None,
         };
+        let marker = typed.as_ref().and_then(marker_from_record);
         if locating_assistant {
+            if marker
+                .as_ref()
+                .is_some_and(|marker| end.is_none_or(|end| marker.ts.as_str() <= end))
+            {
+                total = total.saturating_add(1);
+            }
             if let Some(assistant) = typed.as_ref().and_then(last_assistant_from_record) {
                 work.admit_retained_text(text_bytes([assistant.as_str()]), &at)?;
                 assistant_before = assistant;
-                return Ok(false);
+                locating_assistant = false;
+                return Ok(exhaustive);
             }
             return Ok(true);
         }
-        let marker = typed.as_ref().and_then(marker_from_record);
         if let Some(marker) = marker
             && end.is_none_or(|end| marker.ts.as_str() <= end)
         {
-            work.admit_retained_text(super::marker_text_bytes(&marker), &at)?;
-            frontier.push(marker);
-            start_offset = Some(offset);
-            assistant_before.clear();
-            if frontier.is_full() {
-                locating_assistant = true;
+            total = total.saturating_add(1);
+            if total <= count {
+                work.admit_retained_text(super::marker_text_bytes(&marker), &at)?;
+                frontier.push(marker);
+                start_offset = Some(offset);
+                assistant_before.clear();
+                if frontier.is_full() {
+                    locating_assistant = true;
+                }
             }
             return Ok(true);
         }
@@ -387,6 +425,7 @@ fn read_recent_compaction_markers(
         page,
         CompactionSourceHorizon {
             has_compaction,
+            total,
             start_offset,
             assistant_before,
             vendor,
@@ -407,6 +446,7 @@ fn read_recent_compaction_markers_forward(
     Refusal,
 > {
     let mut frontier = ResultFrontier::new(count, FrontierDirection::Newest)?;
+    let mut total = 0_usize;
     let mut cursor = ForwardCursor::new(source, None, work)?;
     let progress = loop {
         let window = match cursor.advance(work) {
@@ -422,6 +462,7 @@ fn read_recent_compaction_markers_forward(
             && let Some(marker) = marker_from_record(&row)
             && end.is_none_or(|end| marker.ts.as_str() <= end)
         {
+            total = total.saturating_add(1);
             work.admit_retained_text(
                 super::marker_text_bytes(&marker),
                 &format!(
@@ -452,6 +493,7 @@ fn read_recent_compaction_markers_forward(
         page,
         CompactionSourceHorizon {
             has_compaction,
+            total,
             start_offset: None,
             assistant_before: String::new(),
             vendor,

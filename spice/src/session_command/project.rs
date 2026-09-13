@@ -82,7 +82,7 @@ pub(crate) struct TurnOptions {
 impl SliceOptions {
     pub(crate) fn scan(&self) -> (usize, bool) {
         if self.selected.is_empty() {
-            return (self.limit.max(1), false);
+            return (self.limit.saturating_add(1).max(1), false);
         }
         let count = self
             .selected
@@ -513,8 +513,8 @@ pub(crate) fn slice_options(matches: &ArgMatches) -> Result<SliceOptions, Refusa
     })
 }
 
-pub(crate) fn slices(dataset: WindowScan, options: SliceOptions) -> Report {
-    let mut rows = build_slices(&dataset, options.full, options.max_text);
+pub(crate) fn slices(dataset: WindowScan, options: SliceOptions, ordinal_base: usize) -> Report {
+    let mut rows = build_slices(&dataset, options.full, options.max_text, ordinal_base);
     rows.reverse();
     if !options.selected.is_empty() {
         rows.retain(|row| options.selected.contains(&row.id));
@@ -728,7 +728,12 @@ fn turn_timeline_text(turn: &TurnRecord) -> String {
     )
 }
 
-fn build_slices(dataset: &WindowScan, full: bool, max_text: usize) -> Vec<SliceView> {
+fn build_slices(
+    dataset: &WindowScan,
+    full: bool,
+    max_text: usize,
+    ordinal_base: usize,
+) -> Vec<SliceView> {
     if dataset.compactions.is_empty() {
         let Some(first) = dataset.turns.first() else {
             return Vec::new();
@@ -777,7 +782,7 @@ fn build_slices(dataset: &WindowScan, full: bool, max_text: usize) -> Vec<SliceV
             })
             .collect::<Vec<_>>();
         rows.push(slice_view(
-            format!("compaction-{}", index + 1),
+            format!("compaction-{}", ordinal_base + index + 1),
             compaction.source.clone(),
             start,
             compaction.ts.clone(),

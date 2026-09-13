@@ -29,7 +29,7 @@ pub(crate) use aggregate::{
     Aggregate, CommitScan, WindowOptions, WindowScan, WindowTurn, admit_sources,
 };
 use horizon::{CompactionTracker, admit_source_order};
-pub(crate) use horizon::{recent_compaction_horizon, recent_turn_start};
+pub(crate) use horizon::{recent_compaction_horizon, recent_turn_start, slice_compaction_horizon};
 pub(crate) use stream::CompactionScan;
 use stream::stream_records;
 pub(crate) use work::{ResidueLedger, SessionWork, SessionWorkBudget, text_bytes};
@@ -59,12 +59,14 @@ pub(crate) struct Marker {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CompactionHorizon {
     pub(crate) start: Option<String>,
+    pub(crate) total: Option<usize>,
     sources: Vec<CompactionSourceHorizon>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CompactionSourceHorizon {
     has_compaction: bool,
+    total: usize,
     start_offset: Option<u64>,
     assistant_before: String,
     vendor: Vendor,
