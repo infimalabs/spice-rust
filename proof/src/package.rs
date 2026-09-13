@@ -311,6 +311,10 @@ impl PackageMember {
         }
         Ok(self.length)
     }
+
+    fn revalidate(&self) -> Result<(), PackageError> {
+        self.copy_to(&mut std::io::sink()).map(|_| ())
+    }
 }
 
 impl PartialEq for PackageMember {
@@ -527,6 +531,7 @@ fn assemble_package(input: PackageInput<'_>) -> Result<PackageTree, PackageError
 fn assemble_package_index(input: &PackageInput<'_>) -> Result<AdmittedPackage, PackageError> {
     require_member(&input.manifest, MANIFEST_PATH, DATA_MODE)?;
     require_member(&input.notes, NOTES_PATH, DATA_MODE)?;
+    input.notes.revalidate()?;
     let manifest_bytes = input.manifest.read_bounded(PACKAGE_DOCUMENT_LIMIT)?;
     let manifest: ReleaseManifest = canonical(&manifest_bytes, "release manifest")?;
     let manifest_identity = input.manifest.digest.clone();
@@ -612,6 +617,7 @@ fn admit_target(
         &executable_path(input.target),
         EXECUTABLE_MODE,
     )?;
+    input.executable.revalidate()?;
     require_member(&input.payload, &payload_path(input.target), DATA_MODE)?;
     require_member(&input.proof, &proof_path(input.target), DATA_MODE)?;
     let payload_bytes = input.payload.read_bounded(PACKAGE_DOCUMENT_LIMIT)?;
@@ -693,6 +699,7 @@ fn admit_app(
     for asset in app {
         let path = format!("app/{}", asset.file);
         require_member(&asset.member, &path, DATA_MODE)?;
+        asset.member.revalidate()?;
         let Some(entry) = payload.inventory.iter().find(|entry| entry.path == path) else {
             return Err(PackageError::Binding {
                 index,
@@ -1018,9 +1025,9 @@ mod tests {
 
     #[test]
     fn canonical_package_tree_round_trips_as_one_closed_identity() {
-        let fixture = fixture();
-        let index = build_package_index(fixture.input()).expect("fixture index builds");
-        let tree = build_package(fixture.input()).expect("fixture package builds");
+        let inline_fixture = fixture();
+        let index = build_package_index(inline_fixture.input()).expect("fixture index builds");
+        let tree = build_package(inline_fixture.input()).expect("fixture package builds");
         assert_eq!(index, *tree.package());
         assert_eq!(tree.members().len(), 17);
         assert!(
@@ -1031,26 +1038,49 @@ mod tests {
         assert_eq!(admitted, *tree.package());
         assert_eq!(admitted.document().product_version.as_str(), "1.2.3");
         assert_eq!(admitted.document().targets.len(), 2);
-        let path =
-            std::env::temp_dir().join(format!("proof-package-member-{}", std::process::id()));
-        std::fs::write(&path, b"streamed").expect("file member writes");
-        let member = PackageMember::admit_file(
-            "app/index.html",
-            DATA_MODE,
-            File::open(&path).expect("file member opens"),
-            8,
-        )
-        .expect("file member admits");
-        assert_eq!(
-            (member.length(), member.digest()),
-            (8, &Digest::compute(Domain::DistArtifact, b"streamed"))
-        );
-        assert_eq!(member.read_bounded(8).expect("member reads"), b"streamed");
-        let mut copied = Vec::new();
-        let length = member.copy_to(&mut copied).expect("member streams");
-        assert_eq!((length, copied.as_slice()), (8, b"streamed".as_slice()));
+        for executable in [true, false] {
+            let fixture = fixture();
+            let (member_path, mode, body) = if executable {
+                (
+                    executable_path(TARGETS[0]),
+                    EXECUTABLE_MODE,
+                    fixture.executables[0].clone(),
+                )
+            } else {
+                (
+                    app_path(&fixture.app[0].0),
+                    DATA_MODE,
+                    fixture.app[0].1.clone(),
+                )
+            };
+            let path = std::env::temp_dir().join(format!(
+                "proof-package-member-{}-{executable}",
+                std::process::id()
+            ));
+            std::fs::write(&path, &body).expect("file member writes");
+            let member = PackageMember::admit_file(
+                member_path,
+                mode,
+                File::open(&path).expect("file member opens"),
+                body.len() as u64,
+            )
+            .expect("file member admits");
+            let mut input = fixture.input();
+            if executable {
+                input.targets[0].executable = member;
+            } else {
+                input.app[0].member = member;
+            }
+            let tree = build_package(input.clone()).expect("file-backed package builds");
+            let mut moved = body;
+            moved[0] ^= 1;
+            std::fs::write(&path, moved).expect("file member moves");
+            assert!(build_package_index(input.clone()).is_err());
+            assert!(build_package(input).is_err());
+            assert!(admit_package_tree(tree.members()).is_err());
+            std::fs::remove_file(path).expect("file member removes");
+        }
         assert!(PackageMember::admit_inline("release/notes.md", DATA_MODE, b"x", 0).is_err());
-        std::fs::remove_file(path).expect("file member removes");
     }
 
     #[test]
