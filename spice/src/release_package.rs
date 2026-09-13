@@ -15,12 +15,19 @@ use wire::manifest::{
 };
 use wire::{Digest, Domain};
 
+const MAX_RELEASE_MEMBERS: usize = 32;
+const MAX_RELEASE_MEMBER_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_RELEASE_BYTES: u64 = 1024 * 1024 * 1024;
+const _: () =
+    assert!(MAX_RELEASE_MEMBERS > 0 && MAX_RELEASE_MEMBER_BYTES > 0 && MAX_RELEASE_BYTES > 0);
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Preview {
     pub(super) identity: Digest,
     pub(super) git_tree: String,
 }
 
+#[derive(Debug)]
 pub(super) enum PackageFailure {
     Moved(String),
     Environment(String),
@@ -43,6 +50,7 @@ struct LoadedTarget {
 }
 
 struct Loaded {
+    notes: proof::PackageMember,
     manifest: proof::PackageMember,
     app: Vec<LoadedApp>,
     targets: Vec<LoadedTarget>,
@@ -53,52 +61,80 @@ struct LoadedApp {
     member: proof::PackageMember,
 }
 
-pub(super) fn preview(
-    root: &Path,
-    version: &ProductVersion,
-    notes_identity: Digest,
-    notes: &[u8],
-    manifest: &[u8],
-) -> Result<Preview, PackageFailure> {
-    validate_notes(&notes_identity, notes).map_err(PackageFailure::Moved)?;
-    let loaded = load(root, manifest)?;
-    let tree = proof::build_package(package_input(&loaded, version, notes_identity, notes)?)
-        .map_err(|error| PackageFailure::Moved(error.to_string()))?;
-    Ok(Preview {
-        identity: tree.package().identity().clone(),
-        git_tree: tree_identity(tree.members()).map_err(PackageFailure::Moved)?,
-    })
+#[derive(Debug)]
+pub(super) struct ReleaseIndex {
+    preview: Preview,
+    tree: proof::PackageTree,
 }
 
-pub(super) fn materialize(
-    root: &Path,
-    version: &ProductVersion,
-    notes_identity: Digest,
-    notes: &[u8],
-    manifest: &[u8],
-) -> Result<Preview, PackageFailure> {
-    validate_notes(&notes_identity, notes).map_err(PackageFailure::Moved)?;
-    let loaded = load(root, manifest)?;
-    let tree = proof::build_package(package_input(&loaded, version, notes_identity, notes)?)
-        .map_err(|error| PackageFailure::Moved(error.to_string()))?;
-    let git_tree = write_tree(root, tree.members()).map_err(PackageFailure::Environment)?;
-    Ok(Preview {
-        identity: tree.package().identity().clone(),
-        git_tree,
-    })
-}
+impl ReleaseIndex {
+    pub(super) fn admit(
+        root: &Path,
+        version: &ProductVersion,
+        notes_identity: Digest,
+        notes: &[u8],
+        manifest: &[u8],
+    ) -> Result<Self, PackageFailure> {
+        validate_notes(&notes_identity, notes).map_err(PackageFailure::Moved)?;
+        let mut budget = CaptureBudget::default();
+        let notes = inline_member(
+            "release/notes.md",
+            0o644,
+            notes,
+            proof::PACKAGE_DOCUMENT_LIMIT,
+            &mut budget,
+        )?;
+        let manifest_member = inline_member(
+            "release/manifest.json",
+            0o644,
+            manifest,
+            proof::PACKAGE_DOCUMENT_LIMIT,
+            &mut budget,
+        )?;
+        let loaded = load(root, manifest, notes, manifest_member, &mut budget)?;
+        let tree = proof::build_package(package_input(&loaded, version, notes_identity))
+            .map_err(|error| PackageFailure::Moved(error.to_string()))?;
+        budget.admit(
+            "release/package.json",
+            tree.package().bytes().len() as u64,
+            proof::PACKAGE_DOCUMENT_LIMIT,
+        )?;
+        let preview = Preview {
+            identity: tree.package().identity().clone(),
+            git_tree: tree_identity(tree.members()).map_err(PackageFailure::Moved)?,
+        };
+        Ok(Self { preview, tree })
+    }
 
-pub(super) fn target_executable(
-    root: &Path,
-    target: ReleaseTarget,
-    manifest: &[u8],
-) -> Result<proof::PackageMember, PackageFailure> {
-    load(root, manifest)?
-        .targets
-        .into_iter()
-        .find(|candidate| candidate.target == target)
-        .map(|candidate| candidate.executable)
-        .ok_or_else(|| PackageFailure::Moved(format!("release manifest has no {target} target")))
+    pub(super) const fn preview(&self) -> &Preview {
+        &self.preview
+    }
+
+    pub(super) fn materialize(&self, root: &Path) -> Result<Preview, PackageFailure> {
+        let git_tree =
+            write_tree(root, self.tree.members()).map_err(PackageFailure::Environment)?;
+        if git_tree != self.preview.git_tree {
+            return Err(PackageFailure::Moved(
+                "materialized Git tree changed from its admitted preview".to_owned(),
+            ));
+        }
+        Ok(self.preview.clone())
+    }
+
+    pub(super) fn target_executable(
+        &self,
+        target: ReleaseTarget,
+    ) -> Result<proof::PackageMember, PackageFailure> {
+        let path = format!("targets/{target}/bin/spice");
+        self.tree
+            .members()
+            .iter()
+            .find(|member| member.path() == path)
+            .cloned()
+            .ok_or_else(|| {
+                PackageFailure::Moved(format!("release manifest has no {target} target"))
+            })
+    }
 }
 
 fn validate_notes(identity: &Digest, notes: &[u8]) -> Result<(), String> {
@@ -113,8 +149,7 @@ fn package_input<'a>(
     loaded: &'a Loaded,
     version: &'a ProductVersion,
     notes_identity: Digest,
-    notes: &'a [u8],
-) -> Result<proof::PackageInput<'a>, PackageFailure> {
+) -> proof::PackageInput<'a> {
     let app = loaded
         .app
         .iter()
@@ -132,23 +167,23 @@ fn package_input<'a>(
             )
         })
         .collect();
-    Ok(proof::PackageInput::new(
+    proof::PackageInput::new(
         version,
         notes_identity,
-        proof::PackageMember::admit_inline(
-            "release/notes.md",
-            0o644,
-            notes,
-            proof::PACKAGE_DOCUMENT_LIMIT,
-        )
-        .map_err(|error| PackageFailure::Moved(error.to_string()))?,
+        loaded.notes.clone(),
         loaded.manifest.clone(),
         app,
         targets,
-    ))
+    )
 }
 
-fn load(root: &Path, manifest: &[u8]) -> Result<Loaded, PackageFailure> {
+fn load(
+    root: &Path,
+    manifest: &[u8],
+    notes: proof::PackageMember,
+    manifest_member: proof::PackageMember,
+    budget: &mut CaptureBudget,
+) -> Result<Loaded, PackageFailure> {
     let document: ReleaseManifest =
         wire::decode(manifest).map_err(|error| PackageFailure::Moved(error.to_string()))?;
     let canonical =
@@ -168,6 +203,7 @@ fn load(root: &Path, manifest: &[u8]) -> Result<Loaded, PackageFailure> {
             0o644,
             proof::PACKAGE_DOCUMENT_LIMIT,
             &format!("staged {} payload", target.target),
+            budget,
         )?;
         let payload_bytes = payload
             .read_bounded(proof::PACKAGE_DOCUMENT_LIMIT)
@@ -186,6 +222,7 @@ fn load(root: &Path, manifest: &[u8]) -> Result<Loaded, PackageFailure> {
             "bin/spice",
             &format!("targets/{}/bin/spice", target.target),
             &format!("staged {} executable", target.target),
+            budget,
         )?;
         let proof_path = stage.join(format!("objects/receipt-{}.json", target.receipt));
         let proof = file_member(
@@ -194,6 +231,7 @@ fn load(root: &Path, manifest: &[u8]) -> Result<Loaded, PackageFailure> {
             0o644,
             proof::PACKAGE_DOCUMENT_LIMIT,
             &format!("staged {} proof", target.target),
+            budget,
         )?;
         targets.push(LoadedTarget {
             target: target.target,
@@ -221,18 +259,14 @@ fn load(root: &Path, manifest: &[u8]) -> Result<Loaded, PackageFailure> {
                     &path,
                     &path,
                     &format!("staged Canvas asset {file}"),
+                    budget,
                 )?,
             })
         })
         .collect::<Result<Vec<_>, PackageFailure>>()?;
     Ok(Loaded {
-        manifest: proof::PackageMember::admit_inline(
-            "release/manifest.json",
-            0o644,
-            manifest,
-            proof::PACKAGE_DOCUMENT_LIMIT,
-        )
-        .map_err(|error| PackageFailure::Moved(error.to_string()))?,
+        notes,
+        manifest: manifest_member,
         app,
         targets,
     })
@@ -244,13 +278,27 @@ fn read_artifact(
     path: &str,
     member_path: &str,
     label: &str,
+    budget: &mut CaptureBudget,
 ) -> Result<proof::PackageMember, PackageFailure> {
     let entry = inventory
         .iter()
         .find(|entry| entry.path == path)
         .ok_or_else(|| PackageFailure::Moved(format!("staged target payload has no {path}")))?;
+    if entry.bytes > MAX_RELEASE_MEMBER_BYTES {
+        return Err(PackageFailure::Moved(format!(
+            "staged target payload member {path:?} declares {} bytes; maximum is {MAX_RELEASE_MEMBER_BYTES}",
+            entry.bytes
+        )));
+    }
     let object = stage.join(format!("objects/{}-{:04o}", entry.digest, entry.mode));
-    let member = file_member(&object, member_path, entry.mode, entry.bytes.max(1), label)?;
+    let member = file_member(
+        &object,
+        member_path,
+        entry.mode,
+        MAX_RELEASE_MEMBER_BYTES,
+        label,
+        budget,
+    )?;
     if member.length() != entry.bytes || member.digest() != &entry.digest {
         return Err(PackageFailure::Moved(format!(
             "{label} object disagrees with its payload inventory"
@@ -265,6 +313,7 @@ fn file_member(
     mode: u32,
     limit: u64,
     label: &str,
+    budget: &mut CaptureBudget,
 ) -> Result<proof::PackageMember, PackageFailure> {
     let file = File::open(path).map_err(|error| {
         let detail = format!("cannot read {label}: {error}");
@@ -274,8 +323,63 @@ fn file_member(
             PackageFailure::Environment(detail)
         }
     })?;
+    let length = file
+        .metadata()
+        .map_err(|error| PackageFailure::Environment(format!("cannot inspect {label}: {error}")))?
+        .len();
+    budget.admit(member_path, length, limit)?;
     proof::PackageMember::admit_file(member_path, mode, file, limit)
         .map_err(|error| PackageFailure::Moved(error.to_string()))
+}
+
+fn inline_member(
+    path: &str,
+    mode: u32,
+    bytes: &[u8],
+    limit: u64,
+    budget: &mut CaptureBudget,
+) -> Result<proof::PackageMember, PackageFailure> {
+    budget.admit(path, bytes.len() as u64, limit)?;
+    proof::PackageMember::admit_inline(path, mode, bytes, limit)
+        .map_err(|error| PackageFailure::Moved(error.to_string()))
+}
+
+#[derive(Default)]
+struct CaptureBudget {
+    members: usize,
+    bytes: u64,
+}
+
+impl CaptureBudget {
+    fn admit(&mut self, path: &str, bytes: u64, role_limit: u64) -> Result<(), PackageFailure> {
+        if role_limit == 0 || role_limit > MAX_RELEASE_MEMBER_BYTES {
+            return Err(PackageFailure::Moved(format!(
+                "release member {path:?} has invalid {role_limit}-byte role ceiling"
+            )));
+        }
+        if self.members >= MAX_RELEASE_MEMBERS {
+            return Err(PackageFailure::Moved(format!(
+                "release index exceeds {MAX_RELEASE_MEMBERS} members"
+            )));
+        }
+        if bytes > role_limit || bytes > MAX_RELEASE_MEMBER_BYTES {
+            return Err(PackageFailure::Moved(format!(
+                "release member {path:?} is {bytes} bytes; maximum is {}",
+                role_limit.min(MAX_RELEASE_MEMBER_BYTES)
+            )));
+        }
+        self.bytes = self
+            .bytes
+            .checked_add(bytes)
+            .filter(|total| *total <= MAX_RELEASE_BYTES)
+            .ok_or_else(|| {
+                PackageFailure::Moved(format!(
+                    "release index exceeds {MAX_RELEASE_BYTES} aggregate bytes"
+                ))
+            })?;
+        self.members += 1;
+        Ok(())
+    }
 }
 
 enum Node<'a> {

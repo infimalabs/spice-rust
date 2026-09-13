@@ -13,24 +13,29 @@ static NEXT: AtomicU64 = AtomicU64::new(0);
 #[test]
 fn package_preview_reads_only_content_addressed_executables() {
     let fixture = Fixture::new();
-    let preview = preview(
+    let index = ReleaseIndex::admit(
         &fixture.root,
         &fixture.version,
         fixture.notes_identity.clone(),
         &fixture.notes,
         &fixture.manifest,
     )
-    .unwrap_or_else(|error| panic!("content-addressed package preview failed: {error}"));
-    let materialized = materialize(
-        &fixture.root,
-        &fixture.version,
-        fixture.notes_identity.clone(),
-        &fixture.notes,
-        &fixture.manifest,
-    )
-    .unwrap_or_else(|error| panic!("content-addressed package materialization failed: {error}"));
+    .unwrap_or_else(|error| panic!("content-addressed package admission failed: {error}"));
+    let preview = index.preview().clone();
+    let expected_executables = fixture
+        .executables
+        .iter()
+        .map(|path| fs::read(path).expect("read admitted executable fixture"))
+        .collect::<Vec<_>>();
+    let replaced = fixture.root.join("replaced-executable");
+    fs::rename(&fixture.executables[0], &replaced).expect("replace admitted executable path");
+    fs::write(&fixture.executables[0], b"later generation")
+        .expect("publish later executable generation");
+    let materialized = index.materialize(&fixture.root).unwrap_or_else(|error| {
+        panic!("content-addressed package materialization failed: {error}")
+    });
     assert_eq!(materialized, preview);
-    for (index, target) in [
+    for (target_index, target) in [
         ReleaseTarget::Aarch64AppleDarwin,
         ReleaseTarget::X86_64UnknownLinuxMusl,
     ]
@@ -38,11 +43,12 @@ fn package_preview_reads_only_content_addressed_executables() {
     .enumerate()
     {
         assert_eq!(
-            target_executable(&fixture.root, target, &fixture.manifest)
+            index
+                .target_executable(target)
                 .unwrap_or_else(|error| panic!("sealed executable load failed: {error}"))
                 .read_bounded(proof::PACKAGE_DOCUMENT_LIMIT)
                 .expect("fixture executable reads"),
-            fs::read(&fixture.executables[index]).expect("read fixture executable object")
+            expected_executables[target_index]
         );
         assert!(
             !fixture
@@ -59,7 +65,7 @@ fn package_preview_reads_only_content_addressed_executables() {
 fn package_preview_refuses_missing_and_mismatched_executable_objects() {
     let fixture = Fixture::new();
     fs::write(&fixture.executables[0], b"changed").expect("replace executable object");
-    let mismatch = preview(
+    let mismatch = ReleaseIndex::admit(
         &fixture.root,
         &fixture.version,
         fixture.notes_identity.clone(),
@@ -75,7 +81,7 @@ fn package_preview_refuses_missing_and_mismatched_executable_objects() {
 
     let fixture = Fixture::new();
     fs::remove_file(&fixture.executables[0]).expect("remove executable object");
-    let missing = preview(
+    let missing = ReleaseIndex::admit(
         &fixture.root,
         &fixture.version,
         fixture.notes_identity.clone(),
@@ -84,6 +90,35 @@ fn package_preview_refuses_missing_and_mismatched_executable_objects() {
     )
     .expect_err("missing executable object must refuse");
     assert!(missing.to_string().contains("cannot read staged"));
+
+    let mut count = CaptureBudget::default();
+    for index in 0..MAX_RELEASE_MEMBERS {
+        count
+            .admit(&format!("member-{index}"), 0, MAX_RELEASE_MEMBER_BYTES)
+            .expect("member through exact count bound");
+    }
+    assert!(
+        count
+            .admit("one-too-many", 0, MAX_RELEASE_MEMBER_BYTES)
+            .expect_err("member count beyond fixed ceiling refuses")
+            .to_string()
+            .contains("32 members")
+    );
+
+    let mut aggregate = CaptureBudget::default();
+    aggregate
+        .admit("first", MAX_RELEASE_MEMBER_BYTES, MAX_RELEASE_MEMBER_BYTES)
+        .expect("first maximum member fits aggregate");
+    aggregate
+        .admit("second", MAX_RELEASE_MEMBER_BYTES, MAX_RELEASE_MEMBER_BYTES)
+        .expect("second maximum member fits aggregate");
+    assert!(
+        aggregate
+            .admit("aggregate-overflow", 1, MAX_RELEASE_MEMBER_BYTES)
+            .expect_err("aggregate beyond fixed ceiling refuses")
+            .to_string()
+            .contains("1073741824 aggregate bytes")
+    );
 }
 
 struct Fixture {

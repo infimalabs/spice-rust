@@ -1,4 +1,6 @@
 use super::*;
+use std::fs::File;
+use std::io::Read as _;
 
 pub(super) fn ref_state(object: Option<&str>) -> dist::RefState<'_> {
     object.map_or(dist::RefState::Absent, dist::RefState::Present)
@@ -54,38 +56,50 @@ pub(super) fn manifest_bytes(
     plan: &dist::ReleasePlan,
 ) -> Result<Vec<u8>, dist::EffectError> {
     let path = root.join("dist/stage/release/manifest.json");
-    let bytes = fs::read(&path).map_err(|error| {
+    let metadata = fs::symlink_metadata(&path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             dist::EffectError::Moved(format!("release manifest {} disappeared", path.display()))
         } else {
             dist::EffectError::Environment(error.to_string())
         }
     })?;
+    if !metadata.file_type().is_file() {
+        return Err(dist::EffectError::Moved(format!(
+            "release manifest {} is not a regular file",
+            path.display()
+        )));
+    }
+    if metadata.len() > proof::PACKAGE_DOCUMENT_LIMIT {
+        return Err(dist::EffectError::Moved(format!(
+            "release manifest {} is {} bytes; maximum is {}",
+            path.display(),
+            metadata.len(),
+            proof::PACKAGE_DOCUMENT_LIMIT
+        )));
+    }
+    let mut file = File::open(&path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            dist::EffectError::Moved(format!("release manifest {} disappeared", path.display()))
+        } else {
+            dist::EffectError::Environment(error.to_string())
+        }
+    })?;
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    std::io::Read::by_ref(&mut file)
+        .take(proof::PACKAGE_DOCUMENT_LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
+    if bytes.len() as u64 != metadata.len() {
+        return Err(dist::EffectError::Moved(
+            "release manifest changed while it was read".to_owned(),
+        ));
+    }
     if Digest::compute(wire::Domain::DistReleaseManifest, &bytes) != plan.manifest {
         return Err(dist::EffectError::Moved(
             "release manifest identity changed".to_owned(),
         ));
     }
     Ok(bytes)
-}
-
-pub(super) fn package_preview(
-    root: &Path,
-    plan: &dist::ReleasePlan,
-) -> Result<crate::release_package::Preview, dist::EffectError> {
-    crate::release_package::preview(
-        root,
-        &plan.requested_version,
-        plan.notes_identity.clone(),
-        &plan.notes,
-        &manifest_bytes(root, plan)?,
-    )
-    .map_err(|error| match error {
-        crate::release_package::PackageFailure::Moved(detail) => dist::EffectError::Moved(detail),
-        crate::release_package::PackageFailure::Environment(detail) => {
-            dist::EffectError::Environment(detail)
-        }
-    })
 }
 
 pub(super) fn object_exists(root: &Path, object: &str) -> Result<bool, dist::EffectError> {
