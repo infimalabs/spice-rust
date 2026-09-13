@@ -405,9 +405,9 @@ impl std::error::Error for Error {}
 mod tests {
     use super::*;
     use wire::manifest::{
-        BuildPins, CANVAS_APP_FILES, InventoryEntry, PROOF_RECEIPT_VERSION, ProductVersion,
-        ProofEnvironment, ProofReceipt, ProofStanding, RELEASE_MANIFEST_VERSION, ReleaseManifest,
-        ReleaseManifestTarget, TARGET_PAYLOAD_VERSION, TargetPayload,
+        BuildPins, CANVAS_APP_FILES, InventoryEntry, MacSymbolMetadata, PROOF_RECEIPT_VERSION,
+        ProductVersion, ProofEnvironment, ProofReceipt, ProofStanding, RELEASE_MANIFEST_VERSION,
+        ReleaseManifest, ReleaseManifestTarget, TARGET_PAYLOAD_VERSION, TargetPayload,
     };
     use wire::{Digest, Domain};
 
@@ -678,6 +678,23 @@ mod tests {
             bytes: executable.len() as u64,
             digest: native.clone(),
         });
+        let symbols = (target == ReleaseTarget::Aarch64AppleDarwin).then(|| {
+            let metadata = MacSymbolMetadata {
+                path: "symbols/spice.dSYM.json".to_owned(),
+                mode: 0o644,
+                bytes: 14,
+                digest: Digest::compute(Domain::DistArtifact, b"symbol fixture"),
+                uuid: "11111111-2222-3333-4444-555555555555".to_owned(),
+                executable: native.clone(),
+            };
+            inventory.push(InventoryEntry {
+                path: metadata.path.clone(),
+                mode: metadata.mode,
+                bytes: metadata.bytes,
+                digest: metadata.digest.clone(),
+            });
+            metadata
+        });
         inventory.sort_by(|left, right| left.path.cmp(&right.path));
         let manifest_inventory = inventory.clone();
         let payload = TargetPayload {
@@ -686,6 +703,7 @@ mod tests {
             source: source.clone(),
             app: app_identity.clone(),
             native,
+            symbols: symbols.clone(),
             pins_digest: Digest::compute(
                 Domain::DistPins,
                 &wire::encode(&pins).expect("pins encode"),
@@ -715,6 +733,7 @@ mod tests {
             payload: payload_identity,
             payload_bytes: payload.len() as u64,
             inventory: manifest_inventory,
+            symbols,
             receipt: Digest::compute(Domain::ProofReceiptV3, &proof),
             receipt_bytes: proof.len() as u64,
             battery: battery.clone(),

@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use wire::manifest::{
-    BuildPins, ProofEnvironment, ProofReceipt, ProofStanding, RELEASE_MANIFEST_VERSION,
-    ReleaseManifestTarget, TargetPayload,
+    BuildPins, MacSymbolMetadata, ProofEnvironment, ProofReceipt, ProofStanding,
+    RELEASE_MANIFEST_VERSION, ReleaseManifestTarget, TargetPayload,
 };
 
 use super::*;
@@ -271,14 +271,34 @@ fn stage_target(
     battery: &Digest,
 ) -> StagedFixtureTarget {
     let executable = format!("native:{target}").into_bytes();
-    let inventory = stage_inventory(stage, app_members, &executable);
+    let mut inventory = stage_inventory(stage, app_members, &executable);
+    let native = Digest::compute(Domain::DistArtifact, &executable);
+    let symbols = (target == ReleaseTarget::Aarch64AppleDarwin).then(|| {
+        let metadata = MacSymbolMetadata {
+            path: "symbols/spice.dSYM.json".to_owned(),
+            mode: 0o644,
+            bytes: 14,
+            digest: Digest::compute(Domain::DistArtifact, b"symbol fixture"),
+            uuid: "11111111-2222-3333-4444-555555555555".to_owned(),
+            executable: native.clone(),
+        };
+        inventory.push(InventoryEntry {
+            path: metadata.path.clone(),
+            mode: metadata.mode,
+            bytes: metadata.bytes,
+            digest: metadata.digest.clone(),
+        });
+        inventory.sort_by(|left, right| left.path.cmp(&right.path));
+        metadata
+    });
     let manifest_inventory = inventory.clone();
     let payload = TargetPayload {
         version: wire::manifest::TARGET_PAYLOAD_VERSION,
         target,
         source: source.clone(),
         app: app.clone(),
-        native: Digest::compute(Domain::DistArtifact, &executable),
+        native,
+        symbols: symbols.clone(),
         pins: pins.clone(),
         pins_digest: Digest::compute(Domain::DistPins, &wire::encode(pins).expect("pins encode")),
         inventory_digest: Digest::compute(
@@ -327,6 +347,7 @@ fn stage_target(
             payload: payload_identity,
             payload_bytes: payload.len() as u64,
             inventory: manifest_inventory,
+            symbols,
             receipt: proof_identity,
             receipt_bytes: proof.len() as u64,
             battery: battery.clone(),

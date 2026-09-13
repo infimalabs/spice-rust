@@ -8,7 +8,10 @@ use dist::{
     AppBundle, AppFile, BuildError, Builder, FilePublisher, PinError, PinName, Pipeline,
     PublishError, Publisher, RequiredPins, StageError,
 };
-use wire::manifest::{BuildPins, CANVAS_APP_FILES, ReleaseTarget, TargetPayload};
+use wire::manifest::{
+    BuildPins, CANVAS_APP_FILES, MAC_SYMBOL_ARTIFACT_VERSION, MacSymbolArtifact, ReleaseTarget,
+    TargetPayload,
+};
 use wire::{Digest, Domain};
 
 const OLD_PAYLOAD: &[u8] = b"old-payload";
@@ -30,6 +33,7 @@ fn source_digest() -> Digest {
 #[derive(Default)]
 struct RecordingBuilder {
     calls: Vec<String>,
+    symbols: Option<Vec<u8>>,
 }
 
 impl Builder for RecordingBuilder {
@@ -51,7 +55,23 @@ impl Builder for RecordingBuilder {
         self.calls.push(format!("native:{target}"));
         let mut native = format!("native:{target}:").into_bytes();
         native.extend_from_slice(app.generation().as_str().as_bytes());
+        if target == ReleaseTarget::Aarch64AppleDarwin {
+            self.symbols = Some(
+                wire::encode(&MacSymbolArtifact {
+                    version: MAC_SYMBOL_ARTIFACT_VERSION,
+                    uuid: "11111111-2222-3333-4444-555555555555".to_owned(),
+                    executable: Digest::compute(Domain::DistArtifact, &native),
+                    info: b"fixture plist".to_vec(),
+                    dwarf: b"fixture dwarf".to_vec(),
+                })
+                .expect("symbol fixture encodes"),
+            );
+        }
         Ok(native)
+    }
+
+    fn take_symbol_artifact(&mut self) -> Option<Vec<u8>> {
+        self.symbols.take()
     }
 }
 
@@ -154,7 +174,16 @@ fn build_order_payload_bytes_and_restaging_are_deterministic() {
             "app/responsive.css",
             "app/style.css",
             "bin/spice",
+            "symbols/spice.dSYM.json",
         ]
+    );
+    assert_eq!(
+        decoded
+            .symbols
+            .as_ref()
+            .expect("Darwin payload carries symbols")
+            .executable,
+        decoded.native
     );
 }
 

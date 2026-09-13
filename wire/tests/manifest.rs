@@ -78,6 +78,7 @@ fn payload(target: ReleaseTarget, marker: &str) -> TargetPayload {
         source: digest("source"),
         app: artifact.clone(),
         native: digest("native"),
+        symbols: None,
         pins: BuildPins {
             rust: "rustc 1.97.1".to_owned(),
             wasm_target: "wasm32-unknown-unknown".to_owned(),
@@ -257,6 +258,7 @@ fn release_manifests_round_trip_and_refuse_unknown_fields_at_every_level() {
                         bytes: 1,
                         digest: digest("release manifest executable"),
                     }],
+                    symbols: None,
                     receipt: receipt_digest,
                     receipt_bytes: 1,
                     battery: receipt.battery,

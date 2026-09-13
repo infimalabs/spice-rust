@@ -1122,6 +1122,7 @@ mod tests {
             source: digest(),
             app: digest(),
             native: digest(),
+            symbols: None,
             pins: BuildPins {
                 rust: String::new(),
                 wasm_target: String::new(),
