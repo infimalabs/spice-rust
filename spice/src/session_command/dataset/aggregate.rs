@@ -12,7 +12,7 @@ use super::super::project::{
     Filters, PhaseOptions, authored_message_view, phase_example, turn_end, turn_family, turn_view,
 };
 use super::super::source::ResolvedSource;
-use super::stream::{ForwardCursor, ForwardProgress};
+use super::stream::{ForwardCursor, ForwardProgress, compressed};
 use super::{
     CompactionTracker, DecodedRow, FoldState, FoldStorage, FrontierDirection, Marker, MessageQuery,
     OPEN_TOOL_LIMIT, OPEN_TURN_LIMIT, ResidueLedger, ResultFrontier, SessionWork,
@@ -67,9 +67,6 @@ pub(crate) enum WindowOptions {
     Sweep {
         compactions: usize,
     },
-    Compactions {
-        compactions: usize,
-    },
     Slices {
         compactions: usize,
         oldest: bool,
@@ -81,7 +78,6 @@ impl WindowOptions {
         match self {
             Self::Briefing { compactions, .. }
             | Self::Sweep { compactions }
-            | Self::Compactions { compactions }
             | Self::Slices { compactions, .. } => compactions,
         }
     }
@@ -94,19 +90,12 @@ impl WindowOptions {
                 explain,
                 ..
             } => Some((max_lines, max_bytes, explain)),
-            Self::Sweep { .. } | Self::Compactions { .. } | Self::Slices { .. } => None,
+            Self::Sweep { .. } | Self::Slices { .. } => None,
         }
     }
 
-    const fn retains_turns(self) -> bool {
-        !matches!(self, Self::Compactions { .. })
-    }
-
     const fn scans_full_source(self) -> bool {
-        matches!(
-            self,
-            Self::Compactions { .. } | Self::Slices { oldest: true, .. }
-        )
+        matches!(self, Self::Slices { oldest: true, .. })
     }
 
     const fn compaction_direction(self) -> FrontierDirection {
@@ -225,30 +214,15 @@ impl WindowScan {
             sources.push(source);
             compaction_sources.push(VecDeque::from(compactions));
         }
-        let mut compactions =
-            ResultFrontier::new(options.compactions(), options.compaction_direction())?;
-        while let Some(index) = compaction_sources
-            .iter()
-            .enumerate()
-            .filter(|(_, rows)| !rows.is_empty())
-            .min_by_key(|(_, rows)| {
-                let row = rows
-                    .front()
-                    .expect("filtered compaction source is nonempty");
-                (&row.ts, &row.source)
-            })
-            .map(|(index, _)| index)
-        {
-            compactions.push(
-                compaction_sources[index]
-                    .pop_front()
-                    .expect("selected compaction source is nonempty"),
-            );
-        }
+        let compactions = merge_compactions(
+            compaction_sources,
+            options.compactions(),
+            options.compaction_direction(),
+        )?;
         Ok(Self {
             sources,
             turns: turns.rows.into(),
-            compactions: compactions.into_rows(),
+            compactions,
             residues: residues.finish(&mut work, "window residue summary")?,
             turns_before: turns.before,
             options,
@@ -276,9 +250,6 @@ impl WindowTurnFrontier {
     }
 
     fn push(&mut self, turn: WindowTurn) -> Result<(), Refusal> {
-        if !self.options.retains_turns() {
-            return Ok(());
-        }
         if matches!(
             self.options,
             WindowOptions::Sweep { .. } | WindowOptions::Slices { .. }
@@ -305,6 +276,47 @@ impl WindowTurnFrontier {
             }
         }
         Ok(())
+    }
+}
+
+pub(super) fn merge_compactions(
+    mut sources: Vec<VecDeque<CompactionRecord>>,
+    limit: usize,
+    direction: FrontierDirection,
+) -> Result<Vec<CompactionRecord>, Refusal> {
+    let mut rows = ResultFrontier::new(limit, direction)?;
+    while let Some(index) = sources
+        .iter()
+        .enumerate()
+        .filter(|(_, source)| !source.is_empty())
+        .min_by_key(|(_, source)| {
+            let row = source
+                .front()
+                .expect("filtered compaction source is nonempty");
+            (&row.ts, &row.source)
+        })
+        .map(|(index, _)| index)
+    {
+        rows.push(
+            sources[index]
+                .pop_front()
+                .expect("selected compaction source is nonempty"),
+        );
+    }
+    Ok(rows.into_rows())
+}
+
+pub(super) fn source_view(source: &ResolvedSource, vendor: Vendor) -> SourceView {
+    let path = source.path.display().to_string();
+    SourceView {
+        name: source
+            .path
+            .file_name()
+            .map_or_else(|| path.clone(), |name| name.to_string_lossy().into_owned()),
+        path,
+        vendor,
+        thread: source.thread.clone(),
+        compressed: compressed(&source.path),
     }
 }
 
@@ -997,18 +1009,7 @@ impl<'a> PhaseSource<'a> {
     }
 
     fn source_view(self) -> SourceView {
-        let path = self.source.path.display().to_string();
-        SourceView {
-            name: self
-                .source
-                .path
-                .file_name()
-                .map_or_else(|| path.clone(), |name| name.to_string_lossy().into_owned()),
-            path,
-            vendor: self.cursor.vendor(),
-            thread: self.source.thread.clone(),
-            compressed: self.source.path.to_string_lossy().ends_with(".gz"),
-        }
+        source_view(self.source, self.cursor.vendor())
     }
 
     fn into_window(

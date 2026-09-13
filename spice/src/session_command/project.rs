@@ -482,7 +482,7 @@ pub(crate) fn compaction_limit(matches: &ArgMatches) -> Result<usize, Refusal> {
     number(matches, "limit", DEFAULT_COMPACTIONS_LIMIT)
 }
 
-pub(crate) fn compactions(dataset: WindowScan) -> Report {
+pub(crate) fn compactions(dataset: super::dataset::CompactionScan) -> Report {
     Report::Compactions {
         sources: dataset.sources,
         rows: dataset.compactions.iter().map(compaction_view).collect(),
