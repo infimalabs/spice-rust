@@ -42,7 +42,7 @@ fn complete_message_history(
     initial: &[wire::AgentMessage],
 ) -> Vec<wire::AgentMessage> {
     let mut window = initial.to_vec();
-    let mut before = window[0].locus;
+    let mut before = Some(window[0].locus);
     let mut more = true;
     let mut page = 0_u8;
     while more {
@@ -67,7 +67,7 @@ fn complete_message_history(
             panic!("expected message history page")
         };
         assert!(messages.len() <= canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT);
-        before = messages[0].locus;
+        before = Some(messages[0].locus);
         more = page_more;
         window.splice(0..0, messages);
         page += 1;
@@ -80,6 +80,13 @@ fn complete_message_history(
         wire::AgentActivityKind::retention_start(&activities, canvas::stream::MESSAGE_CAPACITY);
     window.drain(..floor);
     window
+}
+
+fn assert_bootstrap(more: &[wire::MessageHistoryCursor], lane: wire::CanonicalUuid) {
+    assert_eq!(
+        more.iter().find(|cursor| cursor.lane == lane).copied(),
+        Some(wire::MessageHistoryCursor { lane, before: None }),
+    );
 }
 
 #[test]
@@ -145,7 +152,10 @@ fn each_resident_generation_restores_durable_prose_before_canvas_subscription() 
             .begin(&accepted, &request)
             .expect("Canvas subscription begins");
         let wire::StreamFrame::Messages {
-            limit, messages, ..
+            limit,
+            messages,
+            more,
+            ..
         } = &frames[0]
         else {
             panic!("expected message snapshot")
@@ -171,6 +181,7 @@ fn each_resident_generation_restores_durable_prose_before_canvas_subscription() 
         assert_eq!(messages[1].text, "Context compacted");
         assert!(messages[1].authored_synthetic);
         assert_eq!(messages[1].observed.as_ref(), Some(&observed));
+        assert_bootstrap(more, empty_lane);
         drop(source);
     }
 
@@ -263,7 +274,7 @@ fn each_resident_generation_restores_a_bounded_tail_then_the_same_complete_compa
             18,
             "startup reads exactly one fixed tail window"
         );
-        assert_eq!(more, &[lane]);
+        assert_bootstrap(more, empty_lane);
         let window = complete_message_history(&source, &accepted, epoch, lane, messages);
         assert_eq!(window.len(), 220);
         assert_eq!(window[0].activity, wire::AgentActivityKind::Compaction);
@@ -413,7 +424,7 @@ fn history_refuses_a_cursor_after_the_durable_tape_source_is_replaced() {
     let wire::StreamFrame::Messages { messages, .. } = &frames[0] else {
         panic!("expected message snapshot")
     };
-    let before = messages[0].locus;
+    let before = Some(messages[0].locus);
 
     fs::remove_dir_all(&tape_path).expect("old tape source is removed");
     let error = source

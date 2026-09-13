@@ -56,10 +56,16 @@ async fn authenticated_socket_pages_member_history_before_the_initial_window() {
     let wire::StreamFrame::Messages { messages, more, .. } = initial else {
         panic!("expected bounded message snapshot")
     };
-    assert_eq!(more, [identity(0xe5)]);
+    assert_eq!(
+        more,
+        [wire::MessageHistoryCursor {
+            lane: identity(0xe5),
+            before: Some(messages[0].locus),
+        }]
+    );
     assert_eq!(message_offsets(&messages), (55..80).collect::<Vec<_>>());
 
-    let mut before = messages[0].locus;
+    let mut before = Some(messages[0].locus);
     let mut recovered = messages;
     for (request, expected, has_more) in
         [(identity(0xd1), 5..55, true), (identity(0xd2), 0..5, false)]
@@ -92,7 +98,7 @@ async fn authenticated_socket_pages_member_history_before_the_initial_window() {
         assert_eq!(answered_before, before);
         assert_eq!(more, has_more);
         assert_eq!(message_offsets(&messages), expected.collect::<Vec<_>>());
-        before = messages[0].locus;
+        before = Some(messages[0].locus);
         recovered.splice(0..0, messages);
     }
     assert_eq!(

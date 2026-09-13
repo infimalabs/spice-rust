@@ -11,7 +11,7 @@ pub(crate) enum ClientAction {
     /// Fetch the next retained page behind one member's oldest visible card.
     MessageHistory {
         lane: CanonicalUuid,
-        before: wire::MessageLocus,
+        before: Option<wire::MessageLocus>,
     },
     Seat {
         topology_revision: u64,

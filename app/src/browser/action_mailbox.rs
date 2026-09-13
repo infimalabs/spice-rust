@@ -207,7 +207,7 @@ struct ActionMailbox {
     in_flight: Option<InFlightAction>,
     pending: BTreeMap<CanonicalUuid, PendingAction>,
     topology_ids: HashSet<CanonicalUuid>,
-    history: HashSet<(wire::CanonicalUuid, wire::MessageLocus)>,
+    history: HashSet<(wire::CanonicalUuid, Option<wire::MessageLocus>)>,
     payload_bytes: usize,
     mutation_turn: bool,
     awaiting_topology_authority: bool,
@@ -218,7 +218,7 @@ struct ActionMailbox {
 struct QueuedAction {
     action: ClientAction,
     payload_bytes: usize,
-    history: Option<(wire::CanonicalUuid, wire::MessageLocus)>,
+    history: Option<(wire::CanonicalUuid, Option<wire::MessageLocus>)>,
     class: ActionClass,
     topology: Option<TopologyAction>,
 }
@@ -226,7 +226,7 @@ struct QueuedAction {
 struct LeasedAction {
     index: usize,
     payload_bytes: usize,
-    history: Option<(wire::CanonicalUuid, wire::MessageLocus)>,
+    history: Option<(wire::CanonicalUuid, Option<wire::MessageLocus>)>,
     class: ActionClass,
     topology: Option<TopologyAction>,
     pending_transfer: bool,

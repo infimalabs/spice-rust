@@ -751,7 +751,7 @@ async fn send_message_history(
     principal: &Principal,
     writer: &mut SocketWriter,
     lane: CanonicalUuid,
-    before: wire::MessageLocus,
+    before: Option<wire::MessageLocus>,
 ) -> Result<(), String> {
     send_stream_request(
         writer,

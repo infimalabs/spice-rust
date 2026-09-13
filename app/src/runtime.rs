@@ -461,8 +461,8 @@ pub struct CanvasRuntime {
     settings_position: Option<Seq>,
     message_cards: message_cards::MessageCards,
     operator_messages: Vec<OperatorMessage>,
-    /// Exact oldest admitted card each independently paged member can extend.
-    message_history: BTreeMap<CanonicalUuid, MessageLocus>,
+    /// Exact lane-local frontier each independently paged member can extend.
+    message_history: BTreeMap<CanonicalUuid, wire::MessageHistoryCursor>,
     /// Admitted response completions that re-arm each member-local frontier.
     message_history_completions: BTreeMap<CanonicalUuid, u64>,
     /// A same-scope subscription snapshot merges into retained hydrated cards.
@@ -565,7 +565,10 @@ impl CanvasRuntime {
 
     /// Exact member-local cursor for the next retained history page.
     #[must_use]
-    pub fn message_history_target(&self, lane: CanonicalUuid) -> Option<MessageLocus> {
+    pub fn message_history_target(
+        &self,
+        lane: CanonicalUuid,
+    ) -> Option<wire::MessageHistoryCursor> {
         self.message_history.get(&lane).copied()
     }
 

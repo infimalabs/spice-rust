@@ -90,12 +90,8 @@ pub(super) fn render_lineage(
         standing.pending = submissions.status.pending(standing.lane, backend);
     }
     let can_send = runtime.offers(CommandKind::SteerSend);
-    // Wake-and-send needs both halves: lifecycle authority and the fresh lane
-    // read that establishes the new residency witness before steering.
     let can_wake = runtime.offers(CommandKind::LaneState) && runtime.offers(CommandKind::LaneRead);
     let can_configure = runtime.offers(CommandKind::LineageConfigure);
-    // Two drags, two laws: a card moves one lane, a grip restates the whole
-    // topology. Each gesture is offered only when its own command is.
     let can_arrange_lanes = runtime.offers(CommandKind::LaneArrange);
     let can_arrange_lineages = runtime.offers(CommandKind::LineageArrange);
     let topology = watchband::topology(&lanes.lanes);
@@ -151,7 +147,7 @@ pub(super) fn use_lineage_fleet_right_edge(host: NodeRef, lineage_count: usize) 
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "one lineage renderer needs the admitted surface and its interactive control handles"
+    reason = "one lineage render owns its controls"
 )]
 fn render_compose(
     runtime: &CanvasRuntime,
@@ -197,14 +193,7 @@ fn render_compose(
     let history_targets = lineage
         .members
         .iter()
-        .filter_map(|member| {
-            runtime.message_history_target(member.lane).map(|before| {
-                (
-                    member.lane,
-                    (before, runtime.message_history_completion(member.lane)),
-                )
-            })
-        })
+        .filter_map(|member| history_target(runtime, member.lane))
         .collect();
     html! {
         <div class="organization-compose" onclick={dismiss_agent_menus}>
@@ -272,6 +261,18 @@ fn render_compose(
     }
 }
 
+fn history_target(
+    runtime: &CanvasRuntime,
+    lane: CanonicalUuid,
+) -> Option<(CanonicalUuid, (Option<wire::MessageLocus>, u64))> {
+    runtime.message_history_target(lane).map(|cursor| {
+        (
+            lane,
+            (cursor.before, runtime.message_history_completion(lane)),
+        )
+    })
+}
+
 fn broadcast_targets(
     members: &[crate::runtime::LaneMember],
     epoch: CanonicalUuid,
@@ -293,7 +294,6 @@ fn broadcast_targets(
 }
 
 /// Every stable assistant-authored record the lineage can render in total chronology.
-///
 /// Observation time is the primary display order. The admitted lane and source
 /// locus break equal-time ties without parsing a rendered DOM identity. The
 /// persistent plane uses this complete order to distinguish edge additions
@@ -381,7 +381,7 @@ fn render_activity(
 
 struct HistoryPaging<'a> {
     sender: &'a SenderHandle,
-    targets: BTreeMap<CanonicalUuid, (wire::MessageLocus, u64)>,
+    targets: BTreeMap<CanonicalUuid, (Option<wire::MessageLocus>, u64)>,
     revision: u64,
 }
 
