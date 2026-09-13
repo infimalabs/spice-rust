@@ -86,13 +86,11 @@ fn timeline_source<'a>(
     limit: usize,
     work: &mut SessionWork,
 ) -> Result<PhaseSource<'a>, Refusal> {
-    let mut stream = PhaseSource::window(
+    let mut stream = PhaseSource::timeline_window(
         source,
-        filters.start_bound(),
         filters.start_bound(),
         filters.end_bound(),
         limit,
-        FrontierDirection::Newest,
         work,
     )?;
     stream

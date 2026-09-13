@@ -514,7 +514,7 @@ fn read_recent_compaction_markers_forward(
     ))
 }
 
-fn last_assistant_from_record(record: &TypedRecord) -> Option<String> {
+pub(super) fn last_assistant_from_record(record: &TypedRecord) -> Option<String> {
     record.events.iter().rev().find_map(|sourced| {
         if let Event::Prose(prose) = &sourced.event
             && prose.role == listen::ProseRole::Assistant
@@ -562,31 +562,75 @@ pub(super) fn start_offset_after_prior_timestamp(
     start: &str,
     work: &mut SessionWork,
 ) -> Result<u64, Refusal> {
+    start_boundary(source, start, false, work).map(|(offset, _)| offset)
+}
+
+pub(super) fn start_offset_after_prior_assistant(
+    source: &ResolvedSource,
+    start: &str,
+    work: &mut SessionWork,
+) -> Result<(u64, Option<String>), Refusal> {
+    start_boundary(source, start, true, work)
+}
+
+fn start_boundary(
+    source: &ResolvedSource,
+    start: &str,
+    require_assistant: bool,
+    work: &mut SessionWork,
+) -> Result<(u64, Option<String>), Refusal> {
     let mut offset = 0_u64;
-    let mut context = None;
+    let mut context: Option<usize> = None;
+    let mut assistant = None;
     let progress = reverse_lines(&source.path, work, |line, current, _, _, work| {
         if let Some(remaining) = context.as_mut() {
-            offset = current;
-            *remaining -= 1;
-            return Ok(*remaining > 0);
+            if *remaining > 0 {
+                offset = current;
+                *remaining -= 1;
+            }
+            if !require_assistant {
+                return Ok(*remaining > 0);
+            }
+            let at = format!("{}:byte {current}", source.path.display());
+            let typed =
+                decode_reverse_row(source, line, current, false, work, &at)?.and_then(|row| {
+                    match row {
+                        DecodedRow::Typed(row) => Some(row),
+                        DecodedRow::Residue(_) | DecodedRow::Ignored => None,
+                    }
+                });
+            if assistant.is_none()
+                && let Some(record) = typed.as_ref()
+                && record_timestamp(record) < start
+            {
+                assistant = last_assistant_from_record(record);
+            }
+            return Ok(*remaining > 0 || assistant.is_none());
         }
         let at = format!("{}:byte {current}", source.path.display());
-        let timestamp = decode_reverse_row(source, line, current, false, work, &at)?.and_then(
-            |row| match row {
-                DecodedRow::Typed(row) => Some(record_timestamp(&row).to_owned()),
-                DecodedRow::Residue(_) | DecodedRow::Ignored => None,
-            },
-        );
-        if timestamp.is_some_and(|ts| ts.as_str() < start) {
+        let typed =
+            decode_reverse_row(source, line, current, false, work, &at)?.and_then(
+                |row| match row {
+                    DecodedRow::Typed(row) => Some(row),
+                    DecodedRow::Residue(_) | DecodedRow::Ignored => None,
+                },
+            );
+        if typed
+            .as_ref()
+            .is_some_and(|record| record_timestamp(record) < start)
+        {
             offset = current;
             context = Some(HORIZON_CONTEXT_LINES);
+            if require_assistant {
+                assistant = typed.as_ref().and_then(last_assistant_from_record);
+            }
         }
         Ok(true)
     })?;
     if let FrontierProgress::Refused { error, .. } = progress {
         return Err(error);
     }
-    Ok(offset)
+    Ok((offset, assistant))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -864,9 +908,9 @@ mod tests {
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use super::super::WindowFold;
     use super::super::stream::stream_records;
     use super::super::work::{ResidueLedger, SessionWorkBudget};
+    use super::super::{FoldState, FoldStorage, finish_fold, reduce_record};
     use super::*;
     use crate::session_command::model::{Dataset, Vendor};
 
@@ -912,13 +956,20 @@ mod tests {
         let mut dataset = Dataset::default();
         let mut markers = Vec::new();
         let mut residues = ResidueLedger::new();
-        let mut fold = WindowFold::new(&mut dataset, &mut markers, &mut residues);
+        let mut fold = FoldState::default();
         stream_records(source, None, &mut work, |row, work, at| {
-            fold.push(row, work, at)
+            fold_row(
+                row,
+                &mut dataset,
+                &mut markers,
+                &mut residues,
+                &mut fold,
+                work,
+                at,
+            )
         })
         .expect("forward dataset streams");
-        fold.finish(&mut work, "fixture fold")
-            .expect("fold finishes");
+        finish_fold(&mut dataset, fold, &mut work, "fixture fold").expect("fold finishes");
         let residues = residues
             .finish(&mut work, "residue summary")
             .expect("residue summary fits");
@@ -939,8 +990,7 @@ mod tests {
         let mut reverse = Dataset::default();
         let mut reverse_markers = Vec::new();
         let mut reverse_residues = ResidueLedger::new();
-        let mut reverse_fold =
-            WindowFold::new(&mut reverse, &mut reverse_markers, &mut reverse_residues);
+        let mut reverse_fold = FoldState::default();
         let mut dialect = source.dialect;
         for (row, offset, tail) in page.rows.into_iter().rev() {
             let (observed, row) = decode_window_row(
@@ -955,14 +1005,19 @@ mod tests {
             .expect("row decodes");
             dialect = observed.or(dialect);
             if let Some(row) = row {
-                reverse_fold
-                    .push(row, &mut reverse_work, "row")
-                    .expect("row folds");
+                fold_row(
+                    row,
+                    &mut reverse,
+                    &mut reverse_markers,
+                    &mut reverse_residues,
+                    &mut reverse_fold,
+                    &mut reverse_work,
+                    "row",
+                )
+                .expect("row folds");
             }
         }
-        reverse_fold
-            .finish(&mut reverse_work, "fold")
-            .expect("fold finishes");
+        finish_fold(&mut reverse, reverse_fold, &mut reverse_work, "fold").expect("fold finishes");
         let reverse_residues = reverse_residues
             .finish(&mut reverse_work, "residues")
             .unwrap();
@@ -998,13 +1053,49 @@ mod tests {
         let mut dataset = Dataset::default();
         let mut markers = Vec::new();
         let mut residues = ResidueLedger::new();
-        let mut fold = WindowFold::new(&mut dataset, &mut markers, &mut residues);
+        let mut fold = FoldState::default();
         let refusal = stream_records(source, None, &mut exhausted, |row, work, at| {
-            fold.push(row, work, at)
+            fold_row(
+                row,
+                &mut dataset,
+                &mut markers,
+                &mut residues,
+                &mut fold,
+                work,
+                at,
+            )
         })
         .expect_err("the first retained String exceeds the one-byte budget");
         assert_eq!(refusal.reason(), "session::transcript-work-exhausted");
         assert_eq!(exhausted.report().retained_text_bytes, 0);
         assert!(SessionWorkBudget::new(0, 1, 1, 1, 1, deadline).is_err());
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn fold_row(
+        row: DecodedRow,
+        dataset: &mut Dataset,
+        markers: &mut Vec<Marker>,
+        residues: &mut ResidueLedger,
+        state: &mut FoldState,
+        work: &mut SessionWork,
+        at: &str,
+    ) -> Result<(), Refusal> {
+        match row {
+            DecodedRow::Typed(record) => reduce_record(
+                &record,
+                &mut FoldStorage {
+                    dataset,
+                    markers,
+                    residues,
+                    state,
+                    tokens: None,
+                },
+                work,
+                at,
+            ),
+            DecodedRow::Residue(residue) => residues.push(residue, work, at),
+            DecodedRow::Ignored => Ok(()),
+        }
     }
 }

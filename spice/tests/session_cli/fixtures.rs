@@ -35,16 +35,24 @@ pub(super) fn assert_filtered_timeline(codex: &str, claude: &str) {
             "timeline",
             codex,
             claude,
+            "--start",
+            "2026-01-01T00:00:09.500Z",
             "--contains",
             "after verification",
             "--limit",
             "1",
+            "--max-text",
+            "500",
         ]),
         &[],
         "timeline",
     );
     assert_eq!(timeline["rows"].as_array().map(Vec::len), Some(1));
     assert_eq!(timeline["rows"][0]["kind"], "compaction");
+    assert_eq!(
+        timeline["rows"][0]["text"],
+        "assistant_before=Committed abcdef1 after verification. summary_after=This session is being continued from a previous conversation 1. Primary Request and Intent - preserve session forensics 2. Work Completed - first turn intent=- preserve session forensics user_after=Finish the second window without losing identity."
+    );
     assert!(
         timeline["rows"][0]["source"]
             .as_str()

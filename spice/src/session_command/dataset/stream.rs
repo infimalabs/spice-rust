@@ -10,7 +10,10 @@ use listen::{Decoded, RecordDecodeError, ResidueKind};
 use wire::Refusal;
 
 use super::aggregate::{admit_sources, merge_compactions, source_view};
-use super::horizon::start_offset_after_prior_timestamp;
+use super::horizon::{
+    last_assistant_from_record, start_offset_after_prior_assistant,
+    start_offset_after_prior_timestamp,
+};
 use super::work::{ResidueLedger, SessionWork, SessionWorkBudget, decoded_row_events};
 use super::{
     CompactionHorizon, CompactionTracker, DecodedRow, FrontierDirection, MAX_LINE_BYTES, Residue,
@@ -133,6 +136,9 @@ pub(crate) struct ForwardCursor<'a> {
     dialect: Option<listen::Dialect>,
     line: u64,
     within_horizon: bool,
+    retain_preceding_assistant: bool,
+    preceding_assistant: Option<String>,
+    preceding_assistant_ready: bool,
     live_tail: bool,
     buffer: Vec<u8>,
 }
@@ -167,7 +173,25 @@ impl<'a> ForwardCursor<'a> {
         start: Option<&str>,
         work: &mut SessionWork,
     ) -> Result<Self, Refusal> {
-        let reader = transcript_reader(source, start, work)?;
+        Self::from_start(source, start, false, work)
+    }
+
+    pub(crate) fn with_preceding_assistant(
+        source: &'a ResolvedSource,
+        start: Option<&str>,
+        work: &mut SessionWork,
+    ) -> Result<Self, Refusal> {
+        Self::from_start(source, start, true, work)
+    }
+
+    fn from_start(
+        source: &'a ResolvedSource,
+        start: Option<&str>,
+        retain_preceding_assistant: bool,
+        work: &mut SessionWork,
+    ) -> Result<Self, Refusal> {
+        let (reader, preceding_assistant) =
+            transcript_reader(source, start, retain_preceding_assistant, work)?;
         work.begin_pass(&source.path.display().to_string())?;
         Ok(Self {
             source,
@@ -176,6 +200,9 @@ impl<'a> ForwardCursor<'a> {
             dialect: source.dialect,
             line: 0,
             within_horizon: start.is_none(),
+            retain_preceding_assistant,
+            preceding_assistant,
+            preceding_assistant_ready: false,
             live_tail: false,
             buffer: Vec::new(),
         })
@@ -202,6 +229,9 @@ impl<'a> ForwardCursor<'a> {
             dialect: source.dialect,
             line: 0,
             within_horizon: true,
+            retain_preceding_assistant: false,
+            preceding_assistant: None,
+            preceding_assistant_ready: false,
             live_tail: false,
             buffer: Vec::new(),
         })
@@ -238,13 +268,24 @@ impl<'a> ForwardCursor<'a> {
         let row = match row {
             None => None,
             Some(DecodedRow::Typed(record)) => {
-                if !self.within_horizon
-                    && self
+                if !self.within_horizon {
+                    if self
                         .start
                         .as_deref()
                         .is_some_and(|start| record_timestamp(&record) >= start)
-                {
-                    self.within_horizon = true;
+                    {
+                        self.within_horizon = true;
+                        if self.retain_preceding_assistant {
+                            if let Some(assistant) = self.preceding_assistant.as_deref() {
+                                work.admit_retained_text(super::text_bytes([assistant]), &at)?;
+                            }
+                            self.preceding_assistant_ready = true;
+                        }
+                    } else if self.retain_preceding_assistant
+                        && let Some(assistant) = last_assistant_from_record(&record)
+                    {
+                        self.preceding_assistant = Some(assistant);
+                    }
                 }
                 self.within_horizon.then_some(DecodedRow::Typed(record))
             }
@@ -275,6 +316,14 @@ impl<'a> ForwardCursor<'a> {
             dialect: self.dialect,
             live_tail: self.live_tail,
         }
+    }
+
+    pub(crate) fn take_preceding_assistant(&mut self) -> Option<String> {
+        if !self.preceding_assistant_ready {
+            return None;
+        }
+        self.preceding_assistant_ready = false;
+        self.preceding_assistant.take()
     }
 
     fn next_record_locus(&self) -> String {
@@ -419,16 +468,24 @@ pub(super) fn live_tail_truncated_residue(
 fn transcript_reader(
     source: &ResolvedSource,
     start: Option<&str>,
+    retain_preceding_assistant: bool,
     work: &mut SessionWork,
-) -> Result<Box<dyn BufRead>, Refusal> {
+) -> Result<(Box<dyn BufRead>, Option<String>), Refusal> {
     let file = open_transcript(source)?;
     if compressed(&source.path) {
-        Ok(Box::new(BufReader::new(GzDecoder::new(file))))
+        Ok((Box::new(BufReader::new(GzDecoder::new(file))), None))
     } else {
         let mut file = file;
+        let mut preceding_assistant = None;
         if let Some(start) = start {
             work.begin_pass(&source.path.display().to_string())?;
-            let offset = start_offset_after_prior_timestamp(source, start, work)?;
+            let offset = if retain_preceding_assistant {
+                let (offset, assistant) = start_offset_after_prior_assistant(source, start, work)?;
+                preceding_assistant = assistant;
+                offset
+            } else {
+                start_offset_after_prior_timestamp(source, start, work)?
+            };
             file.seek(SeekFrom::Start(offset)).map_err(|error| {
                 refusal(
                     "session::transcript-unreadable",
@@ -437,7 +494,7 @@ fn transcript_reader(
                 )
             })?;
         }
-        Ok(Box::new(BufReader::new(file)))
+        Ok((Box::new(BufReader::new(file)), preceding_assistant))
     }
 }
 

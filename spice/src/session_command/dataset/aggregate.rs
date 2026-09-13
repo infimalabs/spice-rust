@@ -897,9 +897,39 @@ impl<'a> PhaseSource<'a> {
         direction: FrontierDirection,
         work: &mut SessionWork,
     ) -> Result<Self, Refusal> {
+        let cursor = ForwardCursor::new(source, cursor_start, work)?;
+        Self::window_from_cursor(source, cursor, marker_start, end, compactions, direction)
+    }
+
+    pub(super) fn timeline_window(
+        source: &'a ResolvedSource,
+        start: Option<&str>,
+        end: Option<&str>,
+        compactions: usize,
+        work: &mut SessionWork,
+    ) -> Result<Self, Refusal> {
+        let cursor = ForwardCursor::with_preceding_assistant(source, start, work)?;
+        Self::window_from_cursor(
+            source,
+            cursor,
+            start,
+            end,
+            compactions,
+            FrontierDirection::Newest,
+        )
+    }
+
+    fn window_from_cursor(
+        source: &'a ResolvedSource,
+        cursor: ForwardCursor<'a>,
+        marker_start: Option<&str>,
+        end: Option<&str>,
+        compactions: usize,
+        direction: FrontierDirection,
+    ) -> Result<Self, Refusal> {
         Ok(Self {
             source,
-            cursor: ForwardCursor::new(source, cursor_start, work)?,
+            cursor,
             scratch: super::super::model::Dataset::default(),
             markers: Vec::new(),
             fold: FoldState::default(),
@@ -923,6 +953,11 @@ impl<'a> PhaseSource<'a> {
     ) -> Result<(), Refusal> {
         while self.ready.is_empty() && !self.complete {
             let window = self.cursor.advance(work)?;
+            if let Some(assistant) = self.cursor.take_preceding_assistant()
+                && let Some(compactions) = &mut self.compactions
+            {
+                compactions.seed_assistant(assistant);
+            }
             if let Some(row) = window.row {
                 let mut stop = false;
                 match row {
