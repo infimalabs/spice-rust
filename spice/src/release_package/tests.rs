@@ -18,7 +18,7 @@ fn package_preview_reads_only_content_addressed_executables() {
         &fixture.version,
         fixture.notes_identity.clone(),
         &fixture.notes,
-        &fixture.manifest,
+        &fixture.manifest_identity,
     )
     .unwrap_or_else(|error| panic!("content-addressed package admission failed: {error}"));
     let preview = index.preview().clone();
@@ -73,7 +73,7 @@ fn package_preview_refuses_missing_and_mismatched_executable_objects() {
         &fixture.version,
         fixture.notes_identity.clone(),
         &fixture.notes,
-        &fixture.manifest,
+        &fixture.manifest_identity,
     )
     .expect_err("mismatched executable object must refuse");
     assert!(mismatch.to_string().contains("manifest declares"));
@@ -85,7 +85,7 @@ fn package_preview_refuses_missing_and_mismatched_executable_objects() {
         &fixture.version,
         fixture.notes_identity.clone(),
         &fixture.notes,
-        &fixture.manifest,
+        &fixture.manifest_identity,
     )
     .expect_err("missing executable object must refuse");
     assert!(missing.to_string().contains("cannot read staged"));
@@ -100,7 +100,7 @@ fn package_preview_refuses_missing_and_mismatched_executable_objects() {
         &fixture.version,
         fixture.notes_identity.clone(),
         &fixture.notes,
-        &fixture.manifest,
+        &fixture.manifest_identity,
     )
     .expect_err("staged manifest mismatch must refuse");
     assert!(
@@ -161,6 +161,7 @@ fn package_preview_refuses_missing_and_mismatched_executable_objects() {
             .expect("extend sparse executable");
     }
     fixture.manifest = wire::encode(&manifest).expect("oversized manifest encodes");
+    fixture.manifest_identity = Digest::compute(Domain::DistReleaseManifest, &fixture.manifest);
     fs::write(&fixture.manifest_path, &fixture.manifest)
         .expect("publish oversized manifest fixture");
     let overflow = ReleaseIndex::admit(
@@ -168,7 +169,7 @@ fn package_preview_refuses_missing_and_mismatched_executable_objects() {
         &fixture.version,
         fixture.notes_identity.clone(),
         &fixture.notes,
-        &fixture.manifest,
+        &fixture.manifest_identity,
     )
     .expect_err("late aggregate overflow refuses before an earlier body is read");
     assert!(
@@ -183,6 +184,7 @@ struct Fixture {
     notes: Vec<u8>,
     notes_identity: Digest,
     manifest: Vec<u8>,
+    manifest_identity: Digest,
     manifest_path: PathBuf,
     executables: Vec<PathBuf>,
     payloads: Vec<PathBuf>,
@@ -234,6 +236,7 @@ impl Fixture {
             targets,
         })
         .expect("manifest encodes");
+        let manifest_identity = Digest::compute(Domain::DistReleaseManifest, &manifest);
         let manifest_path = stage.join("release/manifest.json");
         fs::write(&manifest_path, &manifest).expect("write staged manifest");
         let notes = b"release notes\n".to_vec();
@@ -244,6 +247,7 @@ impl Fixture {
             notes,
             notes_identity,
             manifest,
+            manifest_identity,
             manifest_path,
             executables,
             payloads,

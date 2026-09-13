@@ -676,7 +676,7 @@ fn bind_external_plan(
         &external.requested_version,
         release.notes.clone(),
         notes.as_bytes(),
-        &release.published.bytes,
+        &release.published.digest,
     )
     .map_err(|error| error.to_string())?;
     let package = package.preview();

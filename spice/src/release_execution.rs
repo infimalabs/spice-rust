@@ -269,13 +269,12 @@ impl SystemEffects {
             ));
         }
         if self.package.is_none() {
-            let manifest = manifest_bytes(&self.root, plan)?;
             let index = crate::release_package::ReleaseIndex::admit(
                 &self.root,
                 &plan.requested_version,
                 plan.notes_identity.clone(),
                 &plan.notes,
-                &manifest,
+                &plan.manifest,
             )
             .map_err(package_failure)?;
             self.package = Some((plan.key.clone(), index));
@@ -765,8 +764,8 @@ mod tail;
 #[cfg(test)]
 use tail::effect_outcome;
 use tail::{
-    admitted_local_progress, make_executable, manifest_bytes, object_exists, package_state,
-    ref_state, run, stable_ref_observation,
+    admitted_local_progress, make_executable, object_exists, package_state, ref_state, run,
+    stable_ref_observation,
 };
 pub(crate) use tail::{execute, verify_completed};
 
