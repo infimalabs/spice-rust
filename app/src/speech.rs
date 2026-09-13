@@ -106,7 +106,6 @@ impl Controller {
         let failed = Closure::wrap(Box::new(move |_event: Event| on_error()) as Box<dyn FnMut(_)>);
         utterance.set_onend(Some(ended.as_ref().unchecked_ref()));
         utterance.set_onerror(Some(failed.as_ref().unchecked_ref()));
-        synthesis.cancel();
         synthesis.speak(&utterance);
         self.synthesis = Some(synthesis);
         self.utterance = Some(utterance);
