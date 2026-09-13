@@ -604,7 +604,7 @@ fn guard_claim(
             expected,
             AllocationObservation {
                 heads,
-                creator_lineages: allocation_creator_lineages(&snapshot.answer),
+                entries: snapshot.entries.clone(),
                 winner: task.clone(),
                 actor: command.actor().clone(),
                 subscription: allocation_subscription(
@@ -614,7 +614,6 @@ fn guard_claim(
                 .expect("claim selection admitted one durable lineage subscription")
                 .clone(),
                 residency_position: snapshot.answer.residency.position,
-                projects: projects.clone(),
                 band: snapshot.answer.allocation_band,
                 recent_cell: snapshot.answer.recent_cell.clone(),
             },

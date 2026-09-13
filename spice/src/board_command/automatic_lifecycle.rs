@@ -94,12 +94,11 @@ fn prepare_claim(
         Vec::new(),
         AllocationObservation {
             heads: allocation_heads(&snapshot.answer),
-            creator_lineages: allocation_creator_lineages(&snapshot.answer),
+            entries: snapshot.entries.clone(),
             winner: task.clone(),
             actor: actor.clone(),
             subscription: subscription.clone(),
             residency_position: snapshot.answer.residency.position,
-            projects: projects.clone(),
             band: snapshot.answer.allocation_band,
             recent_cell: snapshot.answer.recent_cell.clone(),
         },
