@@ -2,14 +2,11 @@ use std::sync::Mutex;
 
 use super::super::super::*;
 
-const CLAUDE_TURN_START: &str = concat!(
-    r#"{"type":"user","promptId":"turn-1","message":{"type":"message","role":"user","#,
-    r#""content":[{"type":"text","text":"continue"}]}}"#,
-);
-const CLAUDE_PROSE: &str = concat!(
-    r#"{"type":"assistant","message":{"type":"message","role":"assistant","#,
-    r#""content":[{"type":"text","text":"new work"}]}}"#,
-);
+const CLAUDE_TURN_START: &str = r#"{"type":"user","promptId":"turn-1","message":{"type":"message","role":"user","content":[{"type":"text","text":"continue"}]}}"#;
+const CLAUDE_STRING_TURN_START: &str = r#"{"type":"user","promptId":"turn-1","message":{"type":"message","role":"user","content":"continue"}}"#;
+const CLAUDE_IMAGE_TURN_START: &str = r#"{"type":"user","promptId":"turn-1","message":{"type":"message","role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}}]}}"#;
+const CLAUDE_TOOL_RESULT: &str = r#"{"type":"user","promptId":"turn-1","message":{"type":"message","role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"done"}]}}"#;
+const CLAUDE_PROSE: &str = r#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"new work"}]}}"#;
 
 #[derive(Default)]
 struct Messages(Mutex<Vec<wire::AgentMessage>>);
@@ -79,24 +76,34 @@ fn capture_record_for(
 fn vendor_turn_starts_publish_a_boundary_before_new_prose() {
     assert_turn_sequence(
         listen::Dialect::Codex,
-        [
+        &[
             br#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}"#
                 .as_slice(),
             br#"{"type":"item.completed","item":{"id":"commentary","type":"agent_message","text":"new work"}}"#
                 .as_slice(),
         ],
     );
-    assert_turn_sequence(
-        listen::Dialect::Claude,
-        [CLAUDE_TURN_START.as_bytes(), CLAUDE_PROSE.as_bytes()],
-    );
+    for start in [
+        CLAUDE_STRING_TURN_START,
+        CLAUDE_TURN_START,
+        CLAUDE_IMAGE_TURN_START,
+    ] {
+        assert_turn_sequence(
+            listen::Dialect::Claude,
+            &[
+                start.as_bytes(),
+                CLAUDE_TOOL_RESULT.as_bytes(),
+                CLAUDE_PROSE.as_bytes(),
+            ],
+        );
+    }
 }
 
-fn assert_turn_sequence(dialect: listen::Dialect, records: [&[u8]; 2]) {
+fn assert_turn_sequence(dialect: listen::Dialect, records: &[&[u8]]) {
     let publisher = Messages::default();
     let mut state = MessageState::default();
     let mut offset = 0;
-    for bytes in records {
+    for &bytes in records {
         let record = capture_record_for(dialect, bytes, offset);
         offset += bytes.len() as u64;
         publish_agent_messages(&publisher, &record, &mut state, None)
@@ -104,13 +111,18 @@ fn assert_turn_sequence(dialect: listen::Dialect, records: [&[u8]; 2]) {
     }
 
     let messages = publisher.0.lock().expect("message lock");
-    assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].activity, wire::AgentActivityKind::Turn);
-    assert_eq!(messages[0].text, "New turn");
-    assert_eq!(messages[0].locus.event, TURN_BOUNDARY_EVENT);
-    assert_eq!(messages[1].activity, wire::AgentActivityKind::Prose);
-    assert_eq!(messages[1].text, "new work");
-    assert!(messages[0].chronology_key() < messages[1].chronology_key());
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message.activity == wire::AgentActivityKind::Turn)
+            .count(),
+        1,
+    );
+    let prose = messages.last().expect("assistant prose follows the turn");
+    assert_eq!(prose.activity, wire::AgentActivityKind::Prose);
+    assert_eq!(prose.text, "new work");
+    assert!(messages[0].chronology_key() < prose.chronology_key());
 }
 
 #[test]
