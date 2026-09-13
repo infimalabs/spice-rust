@@ -40,20 +40,40 @@ impl JournalRead<'_> {
         after: Option<&wire::TaskStamp>,
         budget: FactReadBudget,
     ) -> Result<TaskHeadPage, GuardError> {
-        let query_limit = budget
-            .rows()
-            .checked_add(1)
-            .expect("bounded task page probe");
-        let query_limit = i64::try_from(query_limit)
-            .map_err(|_| GuardError::Invalid("task head page limit exceeds SQLite".to_owned()))?;
+        self.task_head_page_with(
+            TASK_PAGE_SQL,
+            params![after.map(wire::TaskStamp::as_str), query_limit(budget)?],
+            budget,
+        )
+    }
+
+    /// Read one joined page of current task heads for an exact project.
+    pub fn task_project_head_page(
+        &self,
+        project: &str,
+        after: Option<&wire::TaskStamp>,
+        budget: FactReadBudget,
+    ) -> Result<TaskHeadPage, GuardError> {
+        self.task_head_page_with(
+            TASK_PROJECT_PAGE_SQL,
+            params![
+                project,
+                after.map(wire::TaskStamp::as_str),
+                query_limit(budget)?
+            ],
+            budget,
+        )
+    }
+
+    fn task_head_page_with<P: rusqlite::Params>(
+        &self,
+        sql: &str,
+        parameters: P,
+        budget: FactReadBudget,
+    ) -> Result<TaskHeadPage, GuardError> {
         read_metrics::observe_query();
-        let mut statement = self
-            .connection
-            .prepare(TASK_PAGE_SQL)
-            .map_err(GuardError::Store)?;
-        let mut rows = statement
-            .query(params![after.map(wire::TaskStamp::as_str), query_limit])
-            .map_err(GuardError::Store)?;
+        let mut statement = self.connection.prepare(sql).map_err(GuardError::Store)?;
+        let mut rows = statement.query(parameters).map_err(GuardError::Store)?;
         let mut tasks = Vec::with_capacity(budget.rows());
         let mut decoded = 0usize;
         let mut continuation = None;
@@ -170,6 +190,15 @@ impl JournalRead<'_> {
     }
 }
 
+fn query_limit(budget: FactReadBudget) -> Result<i64, GuardError> {
+    let limit = budget
+        .rows()
+        .checked_add(1)
+        .expect("bounded task page probe");
+    i64::try_from(limit)
+        .map_err(|_| GuardError::Invalid("task head page limit exceeds SQLite".to_owned()))
+}
+
 const TASK_PAGE_SQL: &str = "WITH task_keys(stamp) AS (\
     SELECT stamp FROM (SELECT stamp FROM task_heads \
         WHERE stamp > COALESCE(?1, '') ORDER BY stamp LIMIT ?2) \
@@ -189,6 +218,21 @@ const TASK_PAGE_SQL: &str = "WITH task_keys(stamp) AS (\
   LEFT JOIN claim_heads AS claim ON claim.stamp = keys.stamp \
   LEFT JOIN lease_heads AS lease ON lease.stamp = keys.stamp \
  ORDER BY keys.stamp LIMIT ?2";
+
+const TASK_PROJECT_PAGE_SQL: &str = "WITH task_keys(stamp) AS (\
+    SELECT stamp FROM task_heads \
+     WHERE json_extract(CAST(body AS TEXT), '$.project') = ?1 \
+       AND stamp > COALESCE(?2, '') ORDER BY stamp LIMIT ?3\
+) SELECT keys.stamp, statement.head_seq, length(statement.body), statement.body, \
+         workflow.head_seq, length(workflow.body), workflow.body, \
+         claim.head_seq, length(claim.body), claim.body, \
+         lease.head_seq, length(lease.body), lease.body \
+  FROM task_keys AS keys \
+  LEFT JOIN task_heads AS statement ON statement.stamp = keys.stamp \
+  LEFT JOIN workflow_heads AS workflow ON workflow.stamp = keys.stamp \
+  LEFT JOIN claim_heads AS claim ON claim.stamp = keys.stamp \
+  LEFT JOIN lease_heads AS lease ON lease.stamp = keys.stamp \
+ ORDER BY keys.stamp LIMIT ?3";
 
 #[cfg(test)]
 pub(crate) fn verify_task_page_plan(connection: &rusqlite::Connection) -> Result<(), String> {
@@ -211,9 +255,27 @@ pub(crate) fn verify_task_page_plan(connection: &rusqlite::Connection) -> Result
             .iter()
             .any(|table| step.contains(&format!("SCAN {table} ")))
     });
-    (seeks == 4 && !full_scan)
+    let mut project_statement = connection
+        .prepare(&format!("EXPLAIN QUERY PLAN {TASK_PROJECT_PAGE_SQL}"))
+        .map_err(|error| error.to_string())?;
+    let project_plan = project_statement
+        .query_map(
+            params!["journal.fixture", Option::<String>::None, 3_i64],
+            |row| row.get::<_, String>(3),
+        )
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    let project_seek = project_plan
+        .iter()
+        .any(|step| step.contains("task_heads_project_stamp"));
+    (seeks == 4 && !full_scan && project_seek)
         .then_some(())
-        .ok_or_else(|| format!("expected four bounded task-head range seeks, found {plan:?}"))
+        .ok_or_else(|| {
+            format!(
+                "expected global and exact-project bounded task seeks, found global={plan:?} project={project_plan:?}"
+            )
+        })
 }
 
 fn task_row_bytes(row: &Row<'_>, indexed: &str) -> Result<usize, GuardError> {

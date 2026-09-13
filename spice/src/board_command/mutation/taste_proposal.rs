@@ -326,16 +326,19 @@ fn proposal_observation(snapshot: &ValidatedSnapshot, project: &str) -> Proposal
 
 fn guard_proposal_observation(write: &mut JournalWrite, observed: ProposalObservation) {
     write.guard(JournalGuard::new(move |read| {
-        let page = read.task_head_page(None, journal::FactReadBudget::RETAINED)?;
+        let page = read.task_project_head_page(
+            &observed.project,
+            None,
+            journal::FactReadBudget::RETAINED,
+        )?;
         if let Some(continuation) = page.continuation {
             return Err(GuardError::refused(format!(
-                "taste proposal guard requires task continuation after {continuation}"
+                "taste proposal project guard requires continuation after {continuation}"
             )));
         }
         let current = page
             .rows
             .into_iter()
-            .filter(|proposal_heads| proposal_heads.statement().body().project == observed.project)
             .map(|proposal_heads| {
                 (
                     proposal_heads.statement().body().born.clone(),
