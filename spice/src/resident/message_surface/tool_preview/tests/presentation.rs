@@ -2,6 +2,15 @@ use std::sync::Mutex;
 
 use super::super::super::*;
 
+const CLAUDE_TURN_START: &str = concat!(
+    r#"{"type":"user","promptId":"turn-1","message":{"type":"message","role":"user","#,
+    r#""content":[{"type":"text","text":"continue"}]}}"#,
+);
+const CLAUDE_PROSE: &str = concat!(
+    r#"{"type":"assistant","message":{"type":"message","role":"assistant","#,
+    r#""content":[{"type":"text","text":"new work"}]}}"#,
+);
+
 #[derive(Default)]
 struct Messages(Mutex<Vec<wire::AgentMessage>>);
 
@@ -67,16 +76,28 @@ fn capture_record_for(
 }
 
 #[test]
-fn zero_event_codex_turn_start_publishes_a_boundary_before_new_prose() {
+fn vendor_turn_starts_publish_a_boundary_before_new_prose() {
+    assert_turn_sequence(
+        listen::Dialect::Codex,
+        [
+            br#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}"#
+                .as_slice(),
+            br#"{"type":"item.completed","item":{"id":"commentary","type":"agent_message","text":"new work"}}"#
+                .as_slice(),
+        ],
+    );
+    assert_turn_sequence(
+        listen::Dialect::Claude,
+        [CLAUDE_TURN_START.as_bytes(), CLAUDE_PROSE.as_bytes()],
+    );
+}
+
+fn assert_turn_sequence(dialect: listen::Dialect, records: [&[u8]; 2]) {
     let publisher = Messages::default();
     let mut state = MessageState::default();
-    let records = [
-        br#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}"#.as_slice(),
-        br#"{"type":"item.completed","item":{"id":"commentary","type":"agent_message","text":"new work"}}"#.as_slice(),
-    ];
     let mut offset = 0;
     for bytes in records {
-        let record = capture_record(bytes, offset);
+        let record = capture_record_for(dialect, bytes, offset);
         offset += bytes.len() as u64;
         publish_agent_messages(&publisher, &record, &mut state, None)
             .expect("turn sequence publishes");

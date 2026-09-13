@@ -558,9 +558,24 @@ fn persisted_records_publish_vendor_neutral_context_and_facts() {
         &detected.decoded,
         Decoded::Events { context, events }
             if context.turn_id.as_deref() == Some("prompt-1")
-                && context.turn == Some(TurnMoment::Observed)
+                && context.turn == Some(TurnMoment::Started)
                 && matches!(events.as_slice(), [Event::Prose(prose)]
                     if prose.role == ProseRole::Operator && prose.text == "inspect")
+    ));
+
+    let claude_tool_result = concat!(
+        r#"{"timestamp":"2026-08-09T02:00:00Z","type":"user","promptId":"prompt-1","#,
+        r#""message":{"type":"message","role":"user","content":[{"type":"tool_result","#,
+        r#""tool_use_id":"tool-1","content":"done"}]}}"#,
+    )
+    .as_bytes();
+    let detected = decode_record(None, claude_tool_result, locus(claude_tool_result))
+        .expect("the Claude tool result remains inside its prompt turn");
+    assert!(matches!(
+        &detected.decoded,
+        Decoded::Events { context, .. }
+            if context.turn_id.as_deref() == Some("prompt-1")
+                && context.turn == Some(TurnMoment::Observed)
     ));
 
     let claude_final = br#"{"timestamp":"2026-08-09T02:00:01Z","type":"assistant","message":{"type":"message","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"done"}],"usage":{"input_tokens":5,"cache_read_input_tokens":2,"output_tokens":3}}}"#;
