@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
 use flate2::read::GzDecoder;
@@ -139,6 +139,9 @@ pub(crate) struct ForwardCursor<'a> {
     retain_preceding_assistant: bool,
     preceding_assistant: Option<String>,
     preceding_assistant_ready: bool,
+    exact_generation: bool,
+    expected_bytes: Option<u64>,
+    observed_bytes: u64,
     live_tail: bool,
     buffer: Vec<u8>,
 }
@@ -190,22 +193,45 @@ impl<'a> ForwardCursor<'a> {
         retain_preceding_assistant: bool,
         work: &mut SessionWork,
     ) -> Result<Self, Refusal> {
-        let (reader, preceding_assistant) =
-            transcript_reader(source, start, retain_preceding_assistant, work)?;
+        let file = open_transcript(source)?;
+        Self::from_file(source, file, start, retain_preceding_assistant, work)
+    }
+
+    fn from_file(
+        source: &'a ResolvedSource,
+        file: File,
+        start: Option<&str>,
+        retain_preceding_assistant: bool,
+        work: &mut SessionWork,
+    ) -> Result<Self, Refusal> {
+        let captured = transcript_reader(source, file, start, retain_preceding_assistant, work)?;
         work.begin_pass(&source.path.display().to_string())?;
         Ok(Self {
             source,
-            reader,
+            reader: captured.reader,
             start: start.map(str::to_owned),
             dialect: source.dialect,
             line: 0,
             within_horizon: start.is_none(),
             retain_preceding_assistant,
-            preceding_assistant,
+            preceding_assistant: captured.preceding_assistant,
             preceding_assistant_ready: false,
+            exact_generation: captured.exact_generation,
+            expected_bytes: captured.expected_bytes,
+            observed_bytes: 0,
             live_tail: false,
             buffer: Vec::new(),
         })
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_preceding_assistant_from_file(
+        source: &'a ResolvedSource,
+        file: File,
+        start: &str,
+        work: &mut SessionWork,
+    ) -> Result<Self, Refusal> {
+        Self::from_file(source, file, Some(start), true, work)
     }
 
     pub(crate) fn at_offset(
@@ -232,6 +258,9 @@ impl<'a> ForwardCursor<'a> {
             retain_preceding_assistant: false,
             preceding_assistant: None,
             preceding_assistant_ready: false,
+            exact_generation: false,
+            expected_bytes: None,
+            observed_bytes: 0,
             live_tail: false,
             buffer: Vec::new(),
         })
@@ -242,8 +271,14 @@ impl<'a> ForwardCursor<'a> {
         let at = self.next_record_locus();
         let (read, terminated) =
             match read_record(self.reader.as_mut(), &mut self.buffer, work, &at)? {
-                RecordRead::Eof => return Ok(self.window(None, false)),
+                RecordRead::Eof => {
+                    self.require_complete_generation()?;
+                    return Ok(self.window(None, false));
+                }
                 RecordRead::Interrupted(error) => {
+                    if self.exact_generation {
+                        return Err(generation_changed(self.source, &error.to_string()));
+                    }
                     self.line = self.line.saturating_add(1);
                     let row =
                         DecodedRow::Residue(read_residue(&self.source.path, self.line, &error));
@@ -252,6 +287,7 @@ impl<'a> ForwardCursor<'a> {
                 }
                 RecordRead::Read { bytes, terminated } => (bytes, terminated),
             };
+        self.observed_bytes = self.observed_bytes.saturating_add(read as u64);
         self.line = self.line.saturating_add(1);
         self.live_tail = !terminated && self.source.thread.is_some();
         debug_assert!(read > 0 && read <= MAX_LINE_BYTES.saturating_add(2));
@@ -324,6 +360,20 @@ impl<'a> ForwardCursor<'a> {
         }
         self.preceding_assistant_ready = false;
         self.preceding_assistant.take()
+    }
+
+    fn require_complete_generation(&self) -> Result<(), Refusal> {
+        if self
+            .expected_bytes
+            .is_some_and(|expected| self.observed_bytes != expected)
+        {
+            Err(generation_changed(
+                self.source,
+                "captured transcript generation ended before its admitted length",
+            ))
+        } else {
+            Ok(())
+        }
     }
 
     fn next_record_locus(&self) -> String {
@@ -465,26 +515,57 @@ pub(super) fn live_tail_truncated_residue(
     }))
 }
 
+struct TranscriptReader {
+    reader: Box<dyn BufRead>,
+    preceding_assistant: Option<String>,
+    exact_generation: bool,
+    expected_bytes: Option<u64>,
+}
+
 fn transcript_reader(
     source: &ResolvedSource,
+    mut file: File,
     start: Option<&str>,
     retain_preceding_assistant: bool,
     work: &mut SessionWork,
-) -> Result<(Box<dyn BufRead>, Option<String>), Refusal> {
-    let file = open_transcript(source)?;
+) -> Result<TranscriptReader, Refusal> {
+    let exact_generation = retain_preceding_assistant && start.is_some();
+    let transcript_length = file
+        .metadata()
+        .map_err(|error| source_unreadable(source, &error))?
+        .len();
     if compressed(&source.path) {
-        Ok((Box::new(BufReader::new(GzDecoder::new(file))), None))
+        let reader: Box<dyn BufRead> = if exact_generation {
+            Box::new(BufReader::new(GzDecoder::new(file.take(transcript_length))))
+        } else {
+            Box::new(BufReader::new(GzDecoder::new(file)))
+        };
+        Ok(TranscriptReader {
+            reader,
+            preceding_assistant: None,
+            exact_generation,
+            expected_bytes: None,
+        })
     } else {
-        let mut file = file;
         let mut preceding_assistant = None;
+        let mut offset = 0;
         if let Some(start) = start {
             work.begin_pass(&source.path.display().to_string())?;
-            let offset = if retain_preceding_assistant {
-                let (offset, assistant) = start_offset_after_prior_assistant(source, start, work)?;
+            let locator = file
+                .try_clone()
+                .map_err(|error| source_unreadable(source, &error))?;
+            offset = if retain_preceding_assistant {
+                let (offset, assistant) = start_offset_after_prior_assistant(
+                    source,
+                    locator,
+                    transcript_length,
+                    start,
+                    work,
+                )?;
                 preceding_assistant = assistant;
                 offset
             } else {
-                start_offset_after_prior_timestamp(source, start, work)?
+                start_offset_after_prior_timestamp(source, locator, transcript_length, start, work)?
             };
             file.seek(SeekFrom::Start(offset)).map_err(|error| {
                 refusal(
@@ -494,18 +575,39 @@ fn transcript_reader(
                 )
             })?;
         }
-        Ok((Box::new(BufReader::new(file)), preceding_assistant))
+        let expected_bytes = exact_generation.then_some(transcript_length.saturating_sub(offset));
+        let reader: Box<dyn BufRead> = if let Some(expected) = expected_bytes {
+            Box::new(BufReader::new(file.take(expected)))
+        } else {
+            Box::new(BufReader::new(file))
+        };
+        Ok(TranscriptReader {
+            reader,
+            preceding_assistant,
+            exact_generation,
+            expected_bytes,
+        })
     }
 }
 
 fn open_transcript(source: &ResolvedSource) -> Result<File, Refusal> {
-    File::open(&source.path).map_err(|error| {
-        refusal(
-            "session::transcript-unreadable",
-            Some(format!("{}: {error}", source.path.display())),
-            "restore read access to the transcript and retry",
-        )
-    })
+    File::open(&source.path).map_err(|error| source_unreadable(source, &error))
+}
+
+fn source_unreadable(source: &ResolvedSource, error: &std::io::Error) -> Refusal {
+    refusal(
+        "session::transcript-unreadable",
+        Some(format!("{}: {error}", source.path.display())),
+        "restore read access to the transcript and retry",
+    )
+}
+
+fn generation_changed(source: &ResolvedSource, detail: &str) -> Refusal {
+    refusal(
+        "session::transcript-generation-changed",
+        Some(format!("{}: {detail}", source.path.display())),
+        "retry against one stable transcript generation",
+    )
 }
 
 pub(crate) fn compressed(path: &Path) -> bool {
