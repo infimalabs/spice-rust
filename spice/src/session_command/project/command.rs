@@ -11,7 +11,7 @@ use clap::ArgMatches;
 use wire::Refusal;
 
 use super::super::model::{
-    CommandAudit, CommandRecord, CommandView, Dataset, Report, Residue, SourceView, Vendor,
+    CommandAudit, CommandRecord, CommandView, FoldBuffer, Report, Residue, SourceView, Vendor,
 };
 use super::{
     DEFAULT_COMMAND_TEXT, DEFAULT_COMMANDS_LIMIT, MAX_WINDOW_TEXT, clip, flag, number, refusal,
@@ -360,7 +360,7 @@ struct CommandSourceScan {
 
 struct CommandSourceFold {
     frontier: ResultFrontier<CommandRecord>,
-    scratch: Dataset,
+    scratch: FoldBuffer,
     markers: Vec<Marker>,
     residues: ResidueLedger,
     state: FoldState,
@@ -370,7 +370,7 @@ impl CommandSourceFold {
     fn new(limit: usize) -> Result<Self, Refusal> {
         Ok(Self {
             frontier: ResultFrontier::new(limit, FrontierDirection::Newest)?,
-            scratch: Dataset::default(),
+            scratch: FoldBuffer::default(),
             markers: Vec::new(),
             residues: ResidueLedger::new(),
             state: FoldState::default(),
@@ -471,7 +471,7 @@ fn scan_command_source(
     fold.finish(source, cursor.vendor(), audit.is_some(), work)
 }
 
-fn drain_command_records(scratch: &mut Dataset, fold: &mut FoldState) -> Vec<CommandRecord> {
+fn drain_command_records(scratch: &mut FoldBuffer, fold: &mut FoldState) -> Vec<CommandRecord> {
     let pending = fold
         .pending
         .values()
@@ -501,7 +501,7 @@ fn drain_command_records(scratch: &mut Dataset, fold: &mut FoldState) -> Vec<Com
 }
 
 fn drain_command_turns(
-    scratch: &mut Dataset,
+    scratch: &mut FoldBuffer,
     fold: &mut FoldState,
     at: &str,
 ) -> Result<(), Refusal> {
