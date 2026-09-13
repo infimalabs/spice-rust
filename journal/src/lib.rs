@@ -57,7 +57,11 @@ pub mod crossing {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-use std::path::Path;
+use std::fs::{self, File, OpenOptions};
+#[cfg(not(target_arch = "wasm32"))]
+use std::io::{self, Seek, Write};
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::{Path, PathBuf};
 
 #[cfg(not(target_arch = "wasm32"))]
 use rusqlite::{Connection, OpenFlags};
@@ -80,6 +84,128 @@ pub struct Journal {
 #[derive(Debug)]
 pub struct JournalReader {
     connection: Connection,
+}
+
+/// One consistent SQLite generation held in a private regular file.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug)]
+pub struct JournalSnapshot {
+    path: PathBuf,
+    file: File,
+    bytes: u64,
+    digest: wire::Digest,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct SnapshotCleanup(Option<PathBuf>);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for SnapshotCleanup {
+    fn drop(&mut self) {
+        if let Some(path) = self.0.take() {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+/// Why a file-backed SQLite snapshot could not be captured.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug)]
+pub enum SnapshotFileError {
+    Io { path: PathBuf, source: io::Error },
+    Sqlite(rusqlite::Error),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl std::fmt::Display for SnapshotFileError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io { path, source } => {
+                write!(
+                    formatter,
+                    "journal snapshot failed at {}: {source}",
+                    path.display()
+                )
+            }
+            Self::Sqlite(error) => write!(formatter, "journal snapshot failed: {error}"),
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl std::error::Error for SnapshotFileError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io { source, .. } => Some(source),
+            Self::Sqlite(error) => Some(error),
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl JournalSnapshot {
+    #[must_use]
+    pub const fn bytes(&self) -> u64 {
+        self.bytes
+    }
+
+    #[must_use]
+    pub const fn digest(&self) -> &wire::Digest {
+        &self.digest
+    }
+
+    pub fn copy_to(&mut self, target: &mut impl Write) -> io::Result<u64> {
+        self.file.rewind()?;
+        io::copy(&mut self.file, target)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for JournalSnapshot {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn create_snapshot(path: &Path) -> Result<File, SnapshotFileError> {
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path).map_err(|source| SnapshotFileError::Io {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn finish_snapshot(
+    mut file: File,
+    path: &Path,
+) -> Result<(File, u64, wire::Digest), SnapshotFileError> {
+    file.sync_all().map_err(|source| SnapshotFileError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let limit = file
+        .metadata()
+        .map_err(|source| SnapshotFileError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?
+        .len();
+    let (bytes, digest) =
+        wire::Digest::compute_reader(wire::Domain::JournalBackupMember, &mut file, limit).map_err(
+            |source| SnapshotFileError::Io {
+                path: path.to_path_buf(),
+                source,
+            },
+        )?;
+    Ok((file, bytes, digest))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -192,20 +318,6 @@ impl JournalReader {
         Self::from_connection(connection)
     }
 
-    /// Admits one exact captured SQLite generation without reopening its path.
-    pub(crate) fn from_serialized(bytes: &[u8]) -> Result<Self, OpenError> {
-        let mut connection = Connection::open_in_memory().map_err(OpenError::Sqlite)?;
-        connection
-            .deserialize_read_exact(
-                rusqlite::MAIN_DB,
-                std::io::Cursor::new(bytes),
-                bytes.len(),
-                true,
-            )
-            .map_err(OpenError::Sqlite)?;
-        Self::from_connection(connection)
-    }
-
     fn from_connection(connection: Connection) -> Result<Self, OpenError> {
         connection
             .pragma_update(None, "query_only", true)
@@ -251,12 +363,26 @@ impl JournalReader {
         }
     }
 
-    /// Captures one consistent SQLite generation, including committed pager state.
-    pub fn snapshot_bytes(&self) -> Result<Vec<u8>, OpenError> {
+    /// Captures one consistent SQLite generation into a new private file.
+    pub fn snapshot_file(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<JournalSnapshot, SnapshotFileError> {
+        let path = path.as_ref();
+        let mut cleanup = SnapshotCleanup(None);
+        let file = create_snapshot(path)?;
+        cleanup.0 = Some(path.to_path_buf());
         self.connection
-            .serialize(rusqlite::MAIN_DB)
-            .map(|bytes| bytes.to_vec())
-            .map_err(OpenError::Sqlite)
+            .backup(rusqlite::MAIN_DB, path, None)
+            .map_err(SnapshotFileError::Sqlite)?;
+        let (file, bytes, digest) = finish_snapshot(file, path)?;
+        cleanup.0.take();
+        Ok(JournalSnapshot {
+            path: path.to_path_buf(),
+            file,
+            bytes,
+            digest,
+        })
     }
 }
 

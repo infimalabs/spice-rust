@@ -67,7 +67,6 @@ fn backup_inner(output: &Path) -> Result<(SeqRange, JournalBackup), Failure> {
     let _lock = acquire_lock(&state)?;
     let reader = open_reader(&state)?;
     reader.verify().map_err(verify_failure)?;
-    let authority = reader.snapshot_bytes().map_err(open_failure)?;
     let output_name = output.file_name().ok_or_else(|| {
         Failure::refusal(
             "backup::output-refused",
@@ -88,12 +87,14 @@ fn backup_inner(output: &Path) -> Result<(SeqRange, JournalBackup), Failure> {
 
     let (temporary, mut cleanup) = create_staging_directory(&parent)?;
     let authority_path = temporary.join(AUTHORITY_MEMBER);
-    write_private_file(&authority_path, &authority)?;
+    let authority = reader
+        .snapshot_file(&authority_path)
+        .map_err(snapshot_file_failure)?;
     let authority_member = JournalBackupMember {
         path: AUTHORITY_MEMBER.to_owned(),
         mode: mode(&authority_path)?,
-        bytes: count(authority.len(), "authority bytes")?,
-        digest: Digest::compute(Domain::JournalBackupMember, &authority),
+        bytes: authority.bytes(),
+        digest: authority.digest().clone(),
     };
     let mut members = vec![authority_member];
     members.extend(stage_artifact_members(&state, &temporary)?);
@@ -456,6 +457,10 @@ fn snapshot_failure(error: journal::SnapshotError) -> Failure {
             Failure::store("journal::read-failed", error.to_string())
         }
     }
+}
+
+fn snapshot_file_failure(error: journal::SnapshotFileError) -> Failure {
+    Failure::environment("backup::snapshot-failed", error.to_string())
 }
 
 fn verify_failure(error: journal::VerifyError) -> Failure {

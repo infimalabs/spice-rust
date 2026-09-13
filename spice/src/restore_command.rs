@@ -137,7 +137,7 @@ fn apply_restore(
         .begin_replace(&prepared.artifacts, &prepared.previous_artifacts)
         .map_err(artifact_failure)?;
     if let Err(failure) =
-        publish_authority(&prepared.destination, prepared.capture.authority_bytes())
+        publish_captured_authority(&prepared.destination, prepared.capture.authority())
     {
         replacement.rollback().map_err(|rollback| {
             fault(
@@ -216,6 +216,13 @@ fn admit_apply(prepared: &PreparedRestore, requested: &str) -> Result<JournalLoc
         ));
     }
     Ok(lock)
+}
+
+fn publish_captured_authority(
+    destination: &Path,
+    authority: &journal::RestoreMember,
+) -> Result<(), Failure> {
+    publish_authority_with(destination, |staged| authority.copy_to(staged).map(|_| ()))
 }
 
 fn publish_authority(destination: &Path, bytes: &[u8]) -> Result<(), Failure> {
@@ -433,10 +440,25 @@ fn artifact_image(capture: &journal::RestoreCapture) -> Result<artifact::BackupI
                 "verify the bundle with the Spice release that owns its member inventory",
             ));
         };
+        let length = usize::try_from(member.bytes()).map_err(|error| {
+            fault(
+                FaultClass::Protocol,
+                "restore::artifact-size-invalid",
+                error.to_string(),
+            )
+        })?;
+        let mut bytes = Vec::with_capacity(length);
+        member.copy_to(&mut bytes).map_err(|error| {
+            fault(
+                FaultClass::Environment,
+                "restore::capture-unreadable",
+                format!("{}: {error}", member.path()),
+            )
+        })?;
         files.push(artifact::BackupFile {
             path: path.to_owned(),
             mode: member.mode(),
-            bytes: member.bytes().to_vec(),
+            bytes,
         });
     }
     let image = artifact::BackupImage::admit(files).map_err(artifact_failure)?;
