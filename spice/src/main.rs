@@ -237,8 +237,10 @@ fn main() {
 
     #[cfg(not(target_arch = "wasm32"))]
     {
-        dispatch_native_queries(contract, leaf, form, configuration);
-        dispatch_native_controls(contract, leaf, form, configuration);
+        let invocation = NativeInvocation(leaf, form, configuration);
+        invocation.dispatch_gate(contract);
+        invocation.dispatch_policy(contract);
+        invocation.dispatch_controls(contract);
     }
     #[cfg(target_arch = "wasm32")]
     deliver_target_refusal(contract.path, form);
@@ -309,209 +311,180 @@ use main_native_runtime::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
-fn dispatch_native_queries(
-    contract: &cli::Contract,
-    leaf: &clap::ArgMatches,
-    form: Form,
-    configuration: Option<&spice::config::RepositoryCapture>,
-) {
-    dispatch_native_gate_queries(contract, leaf, form, configuration);
-    dispatch_native_policy_queries(contract, leaf, form, configuration);
-    dispatch_native_repository_queries(contract, leaf, form, configuration);
-}
+struct NativeInvocation<'a>(
+    &'a clap::ArgMatches,
+    Form,
+    Option<&'a spice::config::RepositoryCapture>,
+);
 
 #[cfg(not(target_arch = "wasm32"))]
-fn dispatch_native_gate_queries(
-    contract: &cli::Contract,
-    leaf: &clap::ArgMatches,
-    form: Form,
-    _configuration: Option<&spice::config::RepositoryCapture>,
-) {
-    match contract.path {
-        ["doctor"] => deliver(&doctor_outcome(_configuration), form),
-        ["demo"] => deliver(&demo_command::run(leaf), form),
-        ["gate"] => deliver(&gate_command::run(leaf, _configuration), form),
-        ["gate", "findings"] => deliver(&gate_command::findings(leaf, contract), form),
-        ["gate", "prove"] => deliver(&gate_command::prove(leaf), form),
-        ["gate", "camp"] => deliver(&gate_command::camp(), form),
-        ["gate", "commit-msg"] => {
-            deliver_commit_message(gate_command::commit_message(leaf, _configuration), form)
-        }
-        ["gate", "kill"] => deliver(&gate_command::kill(), form),
-        ["gate", "pre-commit"] => {
-            deliver_commit_gate(&gate_command::pre_commit(leaf, _configuration), form)
-        }
-        ["gate", "selection"] => deliver_commit_gate(&gate_command::selection(), form),
-        ["install"] => match install_command::run(leaf) {
-            install_command::Answer::Plan(outcome) => deliver(&outcome, form),
-            install_command::Answer::Receipt(outcome) => deliver(&outcome, form),
-            install_command::Answer::Child(status) => terminate_child(status),
-        },
-        ["config"] => deliver_config(&config_command::run(leaf), form),
-        ["config", "migrate-tasks"] => {
-            deliver_task_migration(&task_migration_command::run(leaf), form)
-        }
-        _ => {}
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn dispatch_native_policy_queries(
-    contract: &cli::Contract,
-    leaf: &clap::ArgMatches,
-    form: Form,
-    _configuration: Option<&spice::config::RepositoryCapture>,
-) {
-    match contract.path {
-        ["dev", "cargo"] => match cargo_command::run(leaf) {
-            cargo_command::RunResult::Child(status) => terminate_child(status),
-            cargo_command::RunResult::Rejected { outcome, code } => {
-                deliver_with_code(&outcome, form, code)
+impl NativeInvocation<'_> {
+    fn dispatch_gate(&self, contract: &cli::Contract) {
+        let &Self(leaf, form, configuration) = self;
+        match contract.path {
+            ["doctor"] => deliver(&doctor_outcome(configuration), form),
+            ["demo"] => deliver(&demo_command::run(leaf), form),
+            ["gate"] => deliver(&gate_command::run(leaf, configuration), form),
+            ["gate", "findings"] => deliver(&gate_command::findings(leaf, contract), form),
+            ["gate", "prove"] => deliver(&gate_command::prove(leaf), form),
+            ["gate", "camp"] => deliver(&gate_command::camp(), form),
+            ["gate", "commit-msg"] => {
+                deliver_commit_message(gate_command::commit_message(leaf, configuration), form)
             }
-        },
-        ["dev", "xtask"] => match cargo_command::xtask(leaf) {
-            cargo_command::RunResult::Child(status) => terminate_child(status),
-            cargo_command::RunResult::Rejected { outcome, code } => {
-                deliver_with_code(&outcome, form, code)
+            ["gate", "kill"] => deliver(&gate_command::kill(), form),
+            ["gate", "pre-commit"] => {
+                deliver_commit_gate(&gate_command::pre_commit(leaf, configuration), form)
             }
-        },
-        ["dev", "cargo-store"] => deliver(&cargo_command::store(leaf), form),
-        ["rtk", "gain"] => deliver(&rtk_command::gain(leaf, _configuration), form),
-        ["consent"] => deliver(&consent_command::read(contract), form),
-        ["consent", "allow"] => deliver(
-            &consent_command::decide(leaf, contract, wire::Answer::Granted),
-            form,
-        ),
-        ["consent", "deny"] => deliver(
-            &consent_command::decide(leaf, contract, wire::Answer::Denied),
-            form,
-        ),
-        ["consent", "policy"] => deliver(&consent_command::policy(contract), form),
-        ["lock"] => deliver(&lock_command::report(_configuration), form),
-        ["lock", "run"] => match lock_command::run(leaf, _configuration) {
-            lock_command::RunResult::Child(status) => terminate_child(status),
-            lock_command::RunResult::Rejected { outcome, code } => {
-                deliver_with_code(&outcome, form, code)
+            ["gate", "selection"] => deliver_commit_gate(&gate_command::selection(), form),
+            ["install"] => match install_command::run(leaf) {
+                install_command::Answer::Plan(outcome) => deliver(&outcome, form),
+                install_command::Answer::Receipt(outcome) => deliver(&outcome, form),
+                install_command::Answer::Child(status) => terminate_child(status),
+            },
+            ["config"] => deliver_config(&config_command::run(leaf), form),
+            ["config", "migrate-tasks"] => {
+                deliver_task_migration(&task_migration_command::run(leaf), form)
             }
-        },
-        ["task", "artifact", "add"]
-        | ["task", "artifact", "list"]
-        | ["task", "artifact", "show"]
-        | ["task", "artifact", "prune"] => deliver(
-            &task_artifact_command::run(leaf, contract, _configuration),
-            form,
-        ),
-        ["backup"] => deliver(&journal_command::backup(leaf), form),
-        ["restore"] => deliver(&restore_command::restore(leaf), form),
-        _ => {}
+            _ => {}
+        }
     }
-}
 
-#[cfg(not(target_arch = "wasm32"))]
-fn dispatch_native_repository_queries(
-    contract: &cli::Contract,
-    leaf: &clap::ArgMatches,
-    form: Form,
-    _configuration: Option<&spice::config::RepositoryCapture>,
-) {
-    match contract.path {
-        ["journal"] => deliver(&journal_command::report(contract), form),
-        ["journal", "reindex"] => deliver(&journal_command::reindex(), form),
-        ["journal", "verify"] => deliver(&journal_command::verify(contract), form),
-        ["thread"] => deliver(&journal_command::thread(leaf, contract), form),
-        ["version"] => deliver(&version_outcome(), form),
-        ["release", "notes"] => deliver_release_notes(&release_command::notes(leaf), form),
-        _ => {}
+    fn dispatch_policy(&self, contract: &cli::Contract) {
+        let &Self(leaf, form, configuration) = self;
+        match contract.path {
+            ["dev", "cargo"] => match cargo_command::run(leaf) {
+                cargo_command::RunResult::Child(status) => terminate_child(status),
+                cargo_command::RunResult::Rejected { outcome, code } => {
+                    deliver_with_code(&outcome, form, code)
+                }
+            },
+            ["dev", "xtask"] => match cargo_command::xtask(leaf) {
+                cargo_command::RunResult::Child(status) => terminate_child(status),
+                cargo_command::RunResult::Rejected { outcome, code } => {
+                    deliver_with_code(&outcome, form, code)
+                }
+            },
+            ["dev", "cargo-store"] => deliver(&cargo_command::store(leaf), form),
+            ["rtk", "gain"] => deliver(&rtk_command::gain(leaf, configuration), form),
+            ["consent"] => deliver(&consent_command::read(contract), form),
+            ["consent", "allow"] => deliver(
+                &consent_command::decide(leaf, contract, wire::Answer::Granted),
+                form,
+            ),
+            ["consent", "deny"] => deliver(
+                &consent_command::decide(leaf, contract, wire::Answer::Denied),
+                form,
+            ),
+            ["consent", "policy"] => deliver(&consent_command::policy(contract), form),
+            ["lock"] => deliver(&lock_command::report(configuration), form),
+            ["lock", "run"] => match lock_command::run(leaf, configuration) {
+                lock_command::RunResult::Child(status) => terminate_child(status),
+                lock_command::RunResult::Rejected { outcome, code } => {
+                    deliver_with_code(&outcome, form, code)
+                }
+            },
+            ["task", "artifact", "add"]
+            | ["task", "artifact", "list"]
+            | ["task", "artifact", "show"]
+            | ["task", "artifact", "prune"] => deliver(
+                &task_artifact_command::run(leaf, contract, configuration),
+                form,
+            ),
+            ["backup"] => deliver(&journal_command::backup(leaf), form),
+            ["restore"] => deliver(&restore_command::restore(leaf), form),
+            ["journal"] => deliver(&journal_command::report(contract), form),
+            ["journal", "reindex"] => deliver(&journal_command::reindex(), form),
+            ["journal", "verify"] => deliver(&journal_command::verify(contract), form),
+            ["thread"] => deliver(&journal_command::thread(leaf, contract), form),
+            ["version"] => deliver(&version_outcome(), form),
+            ["release", "notes"] => deliver_release_notes(&release_command::notes(leaf), form),
+            _ => {}
+        }
     }
-}
 
-#[cfg(not(target_arch = "wasm32"))]
-fn dispatch_native_controls(
-    contract: &cli::Contract,
-    leaf: &clap::ArgMatches,
-    form: Form,
-    _configuration: Option<&spice::config::RepositoryCapture>,
-) {
-    match contract.path {
-        ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
-        ["session"]
-        | ["session", "briefing"]
-        | ["session", "commands"]
-        | ["session", "context"]
-        | ["session", "commits"]
-        | ["session", "compactions"]
-        | ["session", "messages"]
-        | ["session", "phases"]
-        | ["session", "slices"]
-        | ["session", "summary"]
-        | ["session", "sweep"]
-        | ["session", "thread"]
-        | ["session", "timeline"]
-        | ["session", "tokens"]
-        | ["session", "turns"] => deliver(
-            &session_command::run(leaf, contract.path, &session_environment(), _configuration),
-            form,
-        ),
-        ["lane"]
-        | ["lane", "add"]
-        | ["lane", "drain"]
-        | ["lane", "wake"]
-        | ["lane", "remove"]
-        | ["lane", "import"]
-        | ["recall"] => deliver(&lane_command::run(leaf, contract, _configuration), form),
-        ["release", "publish"] => match release_command::run(leaf, contract) {
-            release_command::RunResult::Plan(outcome) => deliver(&outcome, form),
-            release_command::RunResult::Published(outcome) => deliver(&outcome, form),
-        },
-        ["release", "seal"] => deliver(&release_seal::run(contract), form),
-        ["board"]
-        | ["board", "graph"]
-        | ["board", "handout"]
-        | ["task", "list"]
-        | ["task", "status"]
-        | ["task", "show"]
-        | ["task", "recover"]
-        | ["task", "reclaim"]
-        | ["task", "add"]
-        | ["task", "capture"]
-        | ["task", "done"]
-        | ["task", "review"]
-        | ["task", "note"]
-        | ["task", "defer"]
-        | ["task", "wake"]
-        | ["task", "free"]
-        | ["task", "oops"]
-        | ["task", "depends"]
-        | ["task", "modify"]
-        | ["task", "require"]
-        | ["task", "delete"]
-        | ["doc"]
-        | ["doc", "ledger"] => deliver(&board_command::run(leaf, contract), form),
-        ["task", "next"] => task_next_delivery::deliver(
-            &board_command::run(leaf, contract),
-            form,
-            bootstrap_environment(steer::hook::INBOX).is_some(),
-        ),
-        ["steer"]
-        | ["steer", "cancel"]
-        | ["steer", "resend"]
-        | ["steer", "recover"]
-        | ["steer", "repair"]
-        | ["ack"]
-        | ["inbox"] => deliver(
-            &steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE)),
-            form,
-        ),
-        ["hook"] => dispatch_hook(leaf, contract, form),
-        ["trust"] => deliver(&trust_command::report(contract, _configuration), form),
-        ["trust", "pend"] => deliver(&trust_command::pend(contract, _configuration), form),
-        ["trust", "grant"] => deliver(&trust_command::rule(leaf, contract, true), form),
-        ["trust", "revoke"] => deliver(&trust_command::rule(leaf, contract, false), form),
-        ["taste"] => deliver(&taste_command::report(contract, _configuration), form),
-        ["taste", "add"] => deliver(&taste_command::add(leaf, contract, _configuration), form),
-        ["taste", "drop"] => deliver(&taste_command::drop(leaf, contract, _configuration), form),
-        ["taste", "mine"] => deliver(&taste_command::mine(contract, _configuration), form),
-        _ => {}
+    fn dispatch_controls(&self, contract: &cli::Contract) {
+        let &Self(leaf, form, configuration) = self;
+        match contract.path {
+            ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
+            ["session"]
+            | ["session", "briefing"]
+            | ["session", "commands"]
+            | ["session", "context"]
+            | ["session", "commits"]
+            | ["session", "compactions"]
+            | ["session", "messages"]
+            | ["session", "phases"]
+            | ["session", "slices"]
+            | ["session", "summary"]
+            | ["session", "sweep"]
+            | ["session", "thread"]
+            | ["session", "timeline"]
+            | ["session", "tokens"]
+            | ["session", "turns"] => deliver(
+                &session_command::run(leaf, contract.path, &session_environment(), configuration),
+                form,
+            ),
+            ["lane"]
+            | ["lane", "add"]
+            | ["lane", "drain"]
+            | ["lane", "wake"]
+            | ["lane", "remove"]
+            | ["lane", "import"]
+            | ["recall"] => deliver(&lane_command::run(leaf, contract, configuration), form),
+            ["release", "publish"] => match release_command::run(leaf, contract) {
+                release_command::RunResult::Plan(outcome) => deliver(&outcome, form),
+                release_command::RunResult::Published(outcome) => deliver(&outcome, form),
+            },
+            ["release", "seal"] => deliver(&release_seal::run(contract), form),
+            ["board"]
+            | ["board", "graph"]
+            | ["board", "handout"]
+            | ["task", "list"]
+            | ["task", "status"]
+            | ["task", "show"]
+            | ["task", "recover"]
+            | ["task", "reclaim"]
+            | ["task", "add"]
+            | ["task", "capture"]
+            | ["task", "done"]
+            | ["task", "review"]
+            | ["task", "note"]
+            | ["task", "defer"]
+            | ["task", "wake"]
+            | ["task", "free"]
+            | ["task", "oops"]
+            | ["task", "depends"]
+            | ["task", "modify"]
+            | ["task", "require"]
+            | ["task", "delete"]
+            | ["doc"]
+            | ["doc", "ledger"] => deliver(&board_command::run(leaf, contract), form),
+            ["task", "next"] => task_next_delivery::deliver(
+                &board_command::run(leaf, contract),
+                form,
+                bootstrap_environment(steer::hook::INBOX).is_some(),
+            ),
+            ["steer"]
+            | ["steer", "cancel"]
+            | ["steer", "resend"]
+            | ["steer", "recover"]
+            | ["steer", "repair"]
+            | ["ack"]
+            | ["inbox"] => deliver(
+                &steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE)),
+                form,
+            ),
+            ["hook"] => dispatch_hook(leaf, contract, form),
+            ["trust"] => deliver(&trust_command::report(contract, configuration), form),
+            ["trust", "pend"] => deliver(&trust_command::pend(contract, configuration), form),
+            ["trust", "grant"] => deliver(&trust_command::rule(leaf, contract, true), form),
+            ["trust", "revoke"] => deliver(&trust_command::rule(leaf, contract, false), form),
+            ["taste"] => deliver(&taste_command::report(contract, configuration), form),
+            ["taste", "add"] => deliver(&taste_command::add(leaf, contract, configuration), form),
+            ["taste", "drop"] => deliver(&taste_command::drop(leaf, contract, configuration), form),
+            ["taste", "mine"] => deliver(&taste_command::mine(contract, configuration), form),
+            _ => {}
+        }
     }
 }
 

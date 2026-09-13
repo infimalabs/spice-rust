@@ -45,6 +45,14 @@ pub struct MountRegistry {
     configuration: Option<crate::config::RepositoryCapture>,
 }
 
+impl PartialEq for MountRegistry {
+    fn eq(&self, other: &Self) -> bool {
+        self.mounts == other.mounts
+    }
+}
+
+impl Eq for MountRegistry {}
+
 impl MountRegistry {
     /// Load the sole typed repository configuration and validate its CLI paths.
     ///
