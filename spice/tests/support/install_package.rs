@@ -13,6 +13,7 @@ const TARGETS: [ReleaseTarget; 2] = [
     ReleaseTarget::Aarch64AppleDarwin,
     ReleaseTarget::X86_64UnknownLinuxMusl,
 ];
+const MAX_FIXTURE_MEMBER_BYTES: u64 = 512 * 1024 * 1024;
 
 pub(crate) struct PackageFixture {
     root: PathBuf,
@@ -22,7 +23,8 @@ pub(crate) struct PackageFixture {
 impl PackageFixture {
     pub(crate) fn create(root: PathBuf, executable: &Path) -> Self {
         fs::create_dir(&root).expect("create package fixture root");
-        let executable = fs::read(executable).expect("read package fixture executable");
+        let executable_path = executable;
+        let executable = fs::read(executable_path).expect("read package fixture executable");
         let source = Digest::compute(Domain::DistSourceCommit, b"package fixture source");
         let app_identity = Digest::compute(Domain::DistArtifact, b"package fixture Canvas");
         let mut app = CANVAS_APP_FILES
@@ -83,10 +85,12 @@ impl PackageFixture {
         let tree = proof::build_package(proof::PackageInput::new(
             &version,
             Digest::compute(Domain::DistReleaseNotes, b"package fixture notes"),
-            notes,
-            &manifest,
+            inline("release/notes.md", 0o644, notes),
+            inline("release/manifest.json", 0o644, &manifest),
             app.iter()
-                .map(|(file, bytes)| proof::PackageAppInput::new(file, bytes))
+                .map(|(file, bytes)| {
+                    proof::PackageAppInput::new(file, inline(&format!("app/{file}"), 0o644, bytes))
+                })
                 .collect(),
             TARGETS
                 .into_iter()
@@ -94,9 +98,21 @@ impl PackageFixture {
                 .map(|(index, target)| {
                     proof::PackageTargetInput::new(
                         target,
-                        &executable,
-                        &payloads[index],
-                        &proofs[index],
+                        file_member(
+                            executable_path,
+                            &format!("targets/{target}/bin/spice"),
+                            0o755,
+                        ),
+                        inline(
+                            &format!("targets/{target}/payload.json"),
+                            0o644,
+                            &payloads[index],
+                        ),
+                        inline(
+                            &format!("targets/{target}/proof.json"),
+                            0o644,
+                            &proofs[index],
+                        ),
                     )
                 })
                 .collect(),
@@ -106,7 +122,10 @@ impl PackageFixture {
             let path = root.join(member.path());
             fs::create_dir_all(path.parent().expect("package member has a parent"))
                 .expect("create package fixture parent");
-            fs::write(&path, member.bytes()).expect("write package fixture member");
+            let mut file = fs::File::create(&path).expect("create package fixture member");
+            member
+                .copy_to(&mut file)
+                .expect("write package fixture member");
             fs::set_permissions(&path, fs::Permissions::from_mode(member.mode()))
                 .expect("mode package fixture member");
         }
@@ -123,6 +142,26 @@ impl PackageFixture {
             .find_map(|(candidate, bytes)| (candidate == file).then_some(bytes.as_slice()))
             .expect("package fixture carries every Canvas file")
     }
+}
+
+fn inline(path: &str, mode: u32, bytes: impl AsRef<[u8]>) -> proof::PackageMember {
+    proof::PackageMember::admit_inline(
+        path,
+        mode,
+        bytes.as_ref().to_vec(),
+        proof::PACKAGE_DOCUMENT_LIMIT,
+    )
+    .expect("fixture member admits")
+}
+
+fn file_member(source: &Path, path: &str, mode: u32) -> proof::PackageMember {
+    proof::PackageMember::admit_file(
+        path,
+        mode,
+        fs::File::open(source).expect("fixture member opens"),
+        MAX_FIXTURE_MEMBER_BYTES,
+    )
+    .expect("fixture member admits")
 }
 
 #[allow(clippy::too_many_arguments)]

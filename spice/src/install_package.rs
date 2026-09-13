@@ -2,7 +2,6 @@
 
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read as _, Write as _};
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
@@ -248,24 +247,17 @@ fn collect(
         let relative = relative.to_str().ok_or_else(|| {
             Error::input(format!("package member path is not UTF-8: {relative:?}"))
         })?;
-        let mut file = File::open(&path)
+        let file = File::open(&path)
             .map_err(|source| Error::environment("open package member", &path, source))?;
-        let mut content = Vec::with_capacity(
-            usize::try_from(metadata.len()).expect("bounded member length fits usize"),
+        members.push(
+            proof::PackageMember::admit_file(
+                relative.replace(std::path::MAIN_SEPARATOR, "/"),
+                metadata.permissions().mode() & 0o7777,
+                file,
+                MAX_MEMBER_BYTES,
+            )
+            .map_err(|error| Error::input(error.to_string()))?,
         );
-        file.read_to_end(&mut content)
-            .map_err(|source| Error::environment("read package member", &path, source))?;
-        if content.len() as u64 != metadata.len() {
-            return Err(Error::input(format!(
-                "package member changed while read: {}",
-                path.display()
-            )));
-        }
-        members.push(proof::PackageMember::new(
-            relative.replace(std::path::MAIN_SEPARATOR, "/"),
-            metadata.permissions().mode() & 0o7777,
-            content,
-        ));
     }
     Ok(())
 }
@@ -350,8 +342,9 @@ impl StagedPackage {
             .mode(member.mode())
             .open(&path)
             .map_err(|source| Error::environment("create staged package member", &path, source))?;
-        file.write_all(member.bytes())
-            .map_err(|source| Error::environment("write staged package member", &path, source))?;
+        member
+            .copy_to(&mut file)
+            .map_err(|error| Error::input(error.to_string()))?;
         file.set_permissions(fs::Permissions::from_mode(member.mode()))
             .map_err(|source| Error::environment("mode staged package member", &path, source))?;
         file.sync_all()
@@ -466,7 +459,11 @@ mod tests {
         for file in CANVAS_APP_FILES {
             assert_eq!(
                 fs::read(staged_root.join("app").join(file)).unwrap(),
-                acquired.member(&format!("app/{file}")).unwrap().bytes(),
+                acquired
+                    .member(&format!("app/{file}"))
+                    .unwrap()
+                    .read_bounded(proof::PACKAGE_DOCUMENT_LIMIT)
+                    .unwrap(),
             );
         }
         drop(staged);
@@ -537,7 +534,8 @@ mod tests {
             let path = root.join(member.path());
             fs::create_dir_all(path.parent().expect("package member has a parent"))
                 .expect("package parent creates");
-            fs::write(&path, member.bytes()).expect("package member writes");
+            let mut file = File::create(&path).expect("package member creates");
+            member.copy_to(&mut file).expect("package member writes");
             fs::set_permissions(&path, fs::Permissions::from_mode(member.mode()))
                 .expect("package member mode writes");
         }
@@ -597,10 +595,12 @@ mod tests {
         proof::build_package(proof::PackageInput::new(
             &version,
             notes_identity,
-            notes,
-            &manifest,
+            inline("release/notes.md", 0o644, notes),
+            inline("release/manifest.json", 0o644, &manifest),
             app.iter()
-                .map(|(file, bytes)| proof::PackageAppInput::new(file, bytes))
+                .map(|(file, bytes)| {
+                    proof::PackageAppInput::new(file, inline(&format!("app/{file}"), 0o644, bytes))
+                })
                 .collect(),
             TARGETS
                 .into_iter()
@@ -608,14 +608,36 @@ mod tests {
                 .map(|(index, target)| {
                     proof::PackageTargetInput::new(
                         target,
-                        &executables[index],
-                        &payloads[index],
-                        &proofs[index],
+                        inline(
+                            &format!("targets/{target}/bin/spice"),
+                            0o755,
+                            &executables[index],
+                        ),
+                        inline(
+                            &format!("targets/{target}/payload.json"),
+                            0o644,
+                            &payloads[index],
+                        ),
+                        inline(
+                            &format!("targets/{target}/proof.json"),
+                            0o644,
+                            &proofs[index],
+                        ),
                     )
                 })
                 .collect(),
         ))
         .expect("complete package builds")
+    }
+
+    fn inline(path: &str, mode: u32, bytes: impl AsRef<[u8]>) -> proof::PackageMember {
+        proof::PackageMember::admit_inline(
+            path,
+            mode,
+            bytes.as_ref().to_vec(),
+            proof::PACKAGE_DOCUMENT_LIMIT,
+        )
+        .expect("fixture member admits")
     }
 
     #[allow(clippy::too_many_arguments)]
