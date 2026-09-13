@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use wire::Refusal;
 
 use super::super::model::{
-    ActivityView, CompactionRecord, Dataset, MessageRecord, PhaseExample, PhaseView, Report,
+    ActivityView, CompactionRecord, FoldBuffer, MessageRecord, PhaseExample, PhaseView, Report,
     Residue, SourceView, ThreadView, TokenRecord, TokenView, TurnRecord, TurnView, Vendor,
 };
 use super::super::project::{
@@ -427,7 +427,7 @@ pub(super) fn scan_message_source(
 ) -> Result<MessageSourceScan, Refusal> {
     let mut frontier = ResultFrontier::new(query.limit.get(), direction)?;
     let mut cursor = ForwardCursor::new(source, start, work)?;
-    let mut scratch = Dataset::default();
+    let mut scratch = FoldBuffer::default();
     let mut markers = Vec::new();
     let mut residues = ResidueLedger::new();
     let mut state = FoldState::default();
@@ -666,7 +666,7 @@ impl Aggregate {
         work: &mut SessionWork,
     ) -> Result<(), Refusal> {
         let source_name = source.path.display().to_string();
-        let mut scratch = super::super::model::Dataset::default();
+        let mut scratch = super::super::model::FoldBuffer::default();
         let mut tokens = Vec::new();
         let mut markers = Vec::<Marker>::new();
         let mut fold = FoldState::default();
@@ -731,7 +731,7 @@ impl Aggregate {
 
     fn drain_scratch(
         &mut self,
-        scratch: &mut super::super::model::Dataset,
+        scratch: &mut super::super::model::FoldBuffer,
         tokens: &mut Vec<TokenRecord>,
         fold: &mut FoldState,
         recent: usize,
@@ -862,7 +862,7 @@ impl Aggregate {
 struct PhaseSource<'a> {
     source: &'a ResolvedSource,
     cursor: ForwardCursor<'a>,
-    scratch: super::super::model::Dataset,
+    scratch: super::super::model::FoldBuffer,
     markers: Vec<Marker>,
     fold: FoldState,
     ready: VecDeque<TurnRecord>,
@@ -877,7 +877,7 @@ impl<'a> PhaseSource<'a> {
         Ok(Self {
             source,
             cursor: ForwardCursor::new(source, None, work)?,
-            scratch: super::super::model::Dataset::default(),
+            scratch: super::super::model::FoldBuffer::default(),
             markers: Vec::new(),
             fold: FoldState::default(),
             ready: VecDeque::with_capacity(OPEN_TURN_LIMIT),
@@ -930,7 +930,7 @@ impl<'a> PhaseSource<'a> {
         Ok(Self {
             source,
             cursor,
-            scratch: super::super::model::Dataset::default(),
+            scratch: super::super::model::FoldBuffer::default(),
             markers: Vec::new(),
             fold: FoldState::default(),
             ready: VecDeque::with_capacity(OPEN_TURN_LIMIT),
@@ -1079,7 +1079,7 @@ impl<'a> PhaseSource<'a> {
 }
 
 fn drain_fold_turns(
-    scratch: &mut super::super::model::Dataset,
+    scratch: &mut super::super::model::FoldBuffer,
     fold: &mut FoldState,
     finish: bool,
     at: &str,

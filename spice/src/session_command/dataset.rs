@@ -14,7 +14,7 @@ use wire::Refusal;
 use crate::message_shape::{UNRECOVERABLE_REHYDRATION_INTENT, classify, rehydration_intent};
 
 use super::model::{
-    CommandRecord, CompactionRecord, Dataset, MessageRecord, Residue, SourceView, TokenRecord,
+    CommandRecord, CompactionRecord, FoldBuffer, MessageRecord, Residue, SourceView, TokenRecord,
     TurnRecord, Vendor,
 };
 use super::source::ResolvedSource;
@@ -398,7 +398,7 @@ pub(crate) struct FoldState {
 }
 
 pub(crate) struct FoldStorage<'a> {
-    pub(crate) dataset: &'a mut Dataset,
+    pub(crate) dataset: &'a mut FoldBuffer,
     pub(crate) markers: &'a mut Vec<Marker>,
     pub(crate) residues: &'a mut ResidueLedger,
     pub(crate) state: &'a mut FoldState,
@@ -671,14 +671,11 @@ fn reduce_tool(
 }
 
 pub(crate) fn finish_fold(
-    dataset: &mut Dataset,
+    dataset: &mut FoldBuffer,
     state: FoldState,
     work: &mut SessionWork,
     at: &str,
 ) -> Result<(), Refusal> {
-    debug_assert!(
-        dataset.sources.is_empty() && dataset.compactions.is_empty() && dataset.residues.is_empty()
-    );
     if let Some(index) = state.current {
         let end = dataset.turns[index].last_activity_ts.clone();
         finish_turn(dataset, index, &end, false, work, at)?;
@@ -771,7 +768,7 @@ fn compaction_text_bytes(compaction: &CompactionRecord) -> u64 {
 }
 
 fn observe_turn(
-    dataset: &mut Dataset,
+    dataset: &mut FoldBuffer,
     record: &TypedRecord,
     current: Option<usize>,
     work: &mut SessionWork,
@@ -799,7 +796,7 @@ fn observe_turn(
 }
 
 fn start_turn(
-    dataset: &mut Dataset,
+    dataset: &mut FoldBuffer,
     record: &TypedRecord,
     turn_id: Option<&str>,
     work: &mut SessionWork,
@@ -830,7 +827,7 @@ fn start_turn(
 }
 
 fn ensure_turn(
-    dataset: &mut Dataset,
+    dataset: &mut FoldBuffer,
     record: &TypedRecord,
     current: &mut Option<usize>,
     work: &mut SessionWork,
@@ -855,7 +852,7 @@ fn ensure_turn(
 }
 
 fn finish_turn(
-    dataset: &mut Dataset,
+    dataset: &mut FoldBuffer,
     index: usize,
     ts: &str,
     completed: bool,
@@ -871,7 +868,7 @@ fn finish_turn(
 }
 
 fn touch_turn(
-    dataset: &mut Dataset,
+    dataset: &mut FoldBuffer,
     index: usize,
     ts: &str,
     work: &mut SessionWork,
@@ -882,7 +879,7 @@ fn touch_turn(
     Ok(())
 }
 
-fn last_final_matches(dataset: &Dataset, index: usize, text: &str) -> bool {
+fn last_final_matches(dataset: &FoldBuffer, index: usize, text: &str) -> bool {
     dataset.turns[index]
         .messages
         .iter()
@@ -892,7 +889,7 @@ fn last_final_matches(dataset: &Dataset, index: usize, text: &str) -> bool {
 }
 
 fn push_message(
-    dataset: &mut Dataset,
+    dataset: &mut FoldBuffer,
     index: usize,
     record: &TypedRecord,
     message: (&str, &str, &str),
@@ -1056,7 +1053,7 @@ fn dedupe(values: Vec<String>) -> Vec<String> {
 }
 
 fn register_tool_call(
-    dataset: &mut Dataset,
+    dataset: &mut FoldBuffer,
     index: usize,
     record: &TypedRecord,
     tool: &listen::Tool,
@@ -1190,7 +1187,7 @@ fn tool_paths(arguments: &str) -> Vec<String> {
 }
 
 fn complete_tool_call(
-    dataset: &mut Dataset,
+    dataset: &mut FoldBuffer,
     record: &TypedRecord,
     tool: &listen::Tool,
     pending: &mut BTreeMap<String, PendingTool>,

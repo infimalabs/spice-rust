@@ -507,11 +507,8 @@ pub(crate) enum Report {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct Dataset {
-    pub(crate) sources: Vec<SourceView>,
+pub(crate) struct FoldBuffer {
     pub(crate) turns: Vec<TurnRecord>,
-    pub(crate) compactions: Vec<CompactionRecord>,
     pub(crate) messages: Vec<MessageRecord>,
     pub(crate) commands: Vec<CommandRecord>,
-    pub(crate) residues: Vec<Residue>,
 }
