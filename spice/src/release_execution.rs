@@ -16,6 +16,15 @@ enum CorrectnessGateStanding {
     Refused(String),
 }
 
+fn package_failure(error: crate::release_package::PackageFailure) -> dist::EffectError {
+    match error {
+        crate::release_package::PackageFailure::Moved(detail) => dist::EffectError::Moved(detail),
+        crate::release_package::PackageFailure::Environment(detail) => {
+            dist::EffectError::Environment(detail)
+        }
+    }
+}
+
 fn run_release_gate(root: &Path, source_commit: &str) -> Result<(), dist::EffectError> {
     run_release_gate_with(root, source_commit, |root, selector| {
         let report = spice::gate::run_strict_at(root, selector).map_err(|error| {
@@ -229,6 +238,7 @@ pub(super) struct SystemEffects {
     root: PathBuf,
     probe_root: PathBuf,
     authority: dist::ReleaseAuthority,
+    package: Option<(Digest, crate::release_package::ReleaseIndex)>,
 }
 
 impl SystemEffects {
@@ -243,7 +253,34 @@ impl SystemEffects {
             root: root.to_path_buf(),
             probe_root,
             authority,
+            package: None,
         })
+    }
+
+    fn package_index(
+        &mut self,
+        plan: &dist::ReleasePlan,
+    ) -> Result<&crate::release_package::ReleaseIndex, dist::EffectError> {
+        if let Some((key, _)) = &self.package
+            && key != &plan.key
+        {
+            return Err(dist::EffectError::Moved(
+                "release effect adapter was reused for another plan".to_owned(),
+            ));
+        }
+        if self.package.is_none() {
+            let manifest = manifest_bytes(&self.root, plan)?;
+            let index = crate::release_package::ReleaseIndex::admit(
+                &self.root,
+                &plan.requested_version,
+                plan.notes_identity.clone(),
+                &plan.notes,
+                &manifest,
+            )
+            .map_err(package_failure)?;
+            self.package = Some((plan.key.clone(), index));
+        }
+        Ok(&self.package.as_ref().expect("package index admitted").1)
     }
 
     fn remote_ref(&self, reference: &str) -> Result<Option<String>, dist::EffectError> {
@@ -360,24 +397,15 @@ impl SystemEffects {
     }
 
     fn install_and_probe(
-        &self,
+        &mut self,
         plan: &dist::ReleasePlan,
     ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
         let target = proof::compiled_target()
             .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
-        let executable = crate::release_package::target_executable(
-            &self.root,
-            target,
-            &manifest_bytes(&self.root, plan)?,
-        )
-        .map_err(|error| match error {
-            crate::release_package::PackageFailure::Moved(detail) => {
-                dist::EffectError::Moved(detail)
-            }
-            crate::release_package::PackageFailure::Environment(detail) => {
-                dist::EffectError::Environment(detail)
-            }
-        })?;
+        let executable = self
+            .package_index(plan)?
+            .target_executable(target)
+            .map_err(package_failure)?;
         let identity = executable.digest().clone();
         if identity != plan.installed_artifact {
             return Err(dist::EffectError::Moved(
@@ -473,7 +501,7 @@ impl dist::EffectPort for SystemEffects {
             };
             observed.registry = evidence;
         }
-        let package = package_preview(&self.root, plan)?;
+        let package = self.package_index(plan)?.preview().clone();
         if package.identity != plan.package || package.git_tree != plan.package_object {
             return Err(dist::EffectError::Moved(
                 "staged package identity or Git tree changed".to_owned(),
@@ -499,7 +527,7 @@ impl dist::EffectPort for SystemEffects {
             }
             Op::RunCorrectnessGate => self.gate_state(plan),
             Op::RehearseUpload => {
-                let package = package_preview(&self.root, plan)?;
+                let package = self.package_index(plan)?.preview().clone();
                 Ok(dist::OperationState::Package {
                     identity: Some(package.identity),
                     object: object_exists(&self.root, &package.git_tree)?
@@ -631,21 +659,11 @@ impl SystemEffects {
         &mut self,
         plan: &dist::ReleasePlan,
     ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
-        let package = crate::release_package::materialize(
-            &self.root,
-            &plan.requested_version,
-            plan.notes_identity.clone(),
-            &plan.notes,
-            &manifest_bytes(&self.root, plan)?,
-        )
-        .map_err(|error| match error {
-            crate::release_package::PackageFailure::Moved(detail) => {
-                dist::EffectError::Moved(detail)
-            }
-            crate::release_package::PackageFailure::Environment(detail) => {
-                dist::EffectError::Environment(detail)
-            }
-        })?;
+        let root = self.root.clone();
+        let package = self
+            .package_index(plan)?
+            .materialize(&root)
+            .map_err(package_failure)?;
         if package.identity != plan.package || package.git_tree != plan.package_object {
             return Err(dist::EffectError::Moved(
                 "materialized package identity or Git tree changed".to_owned(),
@@ -747,8 +765,8 @@ mod tail;
 #[cfg(test)]
 use tail::effect_outcome;
 use tail::{
-    admitted_local_progress, make_executable, manifest_bytes, object_exists, package_preview,
-    package_state, ref_state, run, stable_ref_observation,
+    admitted_local_progress, make_executable, manifest_bytes, object_exists, package_state,
+    ref_state, run, stable_ref_observation,
 };
 pub(crate) use tail::{execute, verify_completed};
 

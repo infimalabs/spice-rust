@@ -426,16 +426,14 @@ impl PackageTree {
     }
 }
 
-/// Build and re-admit one exact external package tree.
+/// Build and admit one exact external package tree.
 ///
 /// # Errors
 ///
 /// Refuses noncanonical or stale evidence, target order or binding drift, a
 /// non-clean proof, or executable bytes that differ from the sealed payload.
 pub fn build_package(input: PackageInput<'_>) -> Result<PackageTree, PackageError> {
-    let tree = assemble_package(input)?;
-    admit_package_tree(tree.members())?;
-    Ok(tree)
+    assemble_package(input)
 }
 
 /// Build and admit only the canonical external package index.

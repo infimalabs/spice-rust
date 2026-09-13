@@ -671,7 +671,7 @@ fn bind_external_plan(
     external: ExternalPreconditions,
 ) -> Result<AdmittedRelease, String> {
     admit_manifest_source(&release.published.manifest.source, &external.release_commit)?;
-    let package = crate::release_package::preview(
+    let package = crate::release_package::ReleaseIndex::admit(
         root,
         &external.requested_version,
         release.notes.clone(),
@@ -679,6 +679,7 @@ fn bind_external_plan(
         &release.published.bytes,
     )
     .map_err(|error| error.to_string())?;
+    let package = package.preview();
     let package_ref = normalize_converged_ref(external.package_ref.clone(), &package.git_tree);
     let registry = if external.action == dist::ReleaseAction::TagAndAnnounce {
         let visible = external.package_ref.ok_or_else(|| {
@@ -721,8 +722,8 @@ fn bind_external_plan(
         release_commit: external.release_commit,
         notes: notes.as_bytes().to_vec(),
         manifest: release.published.digest.clone(),
-        package: package.identity,
-        package_object: package.git_tree,
+        package: package.identity.clone(),
+        package_object: package.git_tree.clone(),
         installed_artifact: release.native.clone(),
         targets: release
             .targets
