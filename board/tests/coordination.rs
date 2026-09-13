@@ -79,18 +79,7 @@ fn snapshot_for(
     projects: &board::ProjectPolicy,
     task: &TaskStamp,
 ) -> Result<Snapshot, board::TaskError> {
-    let (cursor, heads) = journal
-        .read(|read| Ok((read.cursor()?, read.task_heads_for(task)?)))
-        .expect("fixture task generation");
-    let heads = heads.expect("fixture task head");
-    let (statement, workflow, claim, lease) = heads.into_bodies();
-    let entry = Entry::new(statement, workflow, claim, lease, projects)?;
-    Ok(Snapshot::new(
-        journal::SCHEMA_VERSION,
-        cursor.map_or_else(Cursor::empty, Cursor::at),
-        vec![entry],
-    )
-    .expect("fixture snapshot schema"))
+    board::bounded_snapshot_fixture!(journal, projects, [task.clone()])
 }
 
 fn admitted(
