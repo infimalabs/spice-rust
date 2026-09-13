@@ -88,6 +88,7 @@ struct FakeExecutor {
     tracked_dirty: Cell<bool>,
     untracked: RefCell<String>,
     moved_after_native: Cell<bool>,
+    linked_symbols_after_uuid: Cell<bool>,
     native_ran: Cell<bool>,
     executable_uuid: RefCell<Vec<u8>>,
     dsym_uuid: RefCell<Vec<u8>>,
@@ -105,6 +106,7 @@ impl FakeExecutor {
             tracked_dirty: Cell::new(false),
             untracked: RefCell::new(String::new()),
             moved_after_native: Cell::new(false),
+            linked_symbols_after_uuid: Cell::new(false),
             native_ran: Cell::new(false),
             executable_uuid: RefCell::new(format!("UUID: {UUID} (arm64) executable\n").into()),
             dsym_uuid: RefCell::new(format!("UUID: {UUID} (arm64) symbols\n").into()),
@@ -146,6 +148,15 @@ impl Executor for FakeExecutor {
         if command.label == "native-strip" && !refused {
             fs::write(PathBuf::from(&command.arguments[1]), STRIPPED_NATIVE)
                 .expect("strip exact linked executable fixture");
+            if self.linked_symbols_after_uuid.get() {
+                use std::os::unix::fs::symlink;
+
+                let dwarf = dsym_path(Path::new(&command.arguments[1]))
+                    .join("Contents/Resources/DWARF/spice");
+                fs::remove_file(&dwarf).expect("remove verified DWARF fixture");
+                symlink(Path::new(&command.arguments[1]), dwarf)
+                    .expect("substitute linked DWARF fixture");
+            }
         }
         let stdout = match command.label {
             "source-commit" if self.moved_after_native.get() && self.native_ran.get() => {
@@ -294,6 +305,21 @@ fn both_targets_use_the_fixed_commands_and_real_artifact_bytes() {
             build.staged.payload_bytes
         );
     }
+
+    let fixture = Fixture::new();
+    let target = ReleaseTarget::Aarch64AppleDarwin;
+    let executor = FakeExecutor::new(&fixture.root, target);
+    executor.linked_symbols_after_uuid.set(true);
+    let error = stage_with(
+        &fixture.root,
+        &fixture.root.join("target"),
+        target,
+        &fixture.programs(),
+        &executor,
+    )
+    .expect_err("a linked dSYM member refuses before target publication");
+    assert!(matches!(error, TargetBuildError::Stage(_)), "{error:?}");
+    assert!(!fixture.pointer(target).exists());
 }
 
 fn expected_labels(target: ReleaseTarget) -> Vec<&'static str> {
@@ -335,12 +361,6 @@ fn assert_symbol_result(fixture: &Fixture, programs: &Programs, build: &TargetBu
     };
     assert_eq!(target, ReleaseTarget::Aarch64AppleDarwin);
     assert_eq!(symbols.uuid(), UUID);
-    let artifact: wire::manifest::MacSymbolArtifact =
-        wire::decode(&symbols.artifact).expect("symbol artifact decodes");
-    assert_eq!(artifact.uuid, UUID);
-    assert_eq!(artifact.executable, build.staged.payload.native);
-    assert_eq!(artifact.info, b"fixture plist");
-    assert_eq!(artifact.dwarf, b"fixture DWARF");
     let inventory = build
         .staged
         .payload
@@ -348,10 +368,21 @@ fn assert_symbol_result(fixture: &Fixture, programs: &Programs, build: &TargetBu
         .iter()
         .find(|entry| entry.path == "symbols/spice.dSYM.json")
         .expect("Darwin inventory binds symbols");
-    assert_eq!(inventory.bytes, symbols.artifact.len() as u64);
+    let bytes = fs::read(fixture.root.join(format!(
+        "dist/stage/objects/{}-{:04o}",
+        inventory.digest, inventory.mode
+    )))
+    .expect("staged symbol artifact reads");
+    let artifact: wire::manifest::MacSymbolArtifact =
+        wire::decode(&bytes).expect("symbol artifact decodes");
+    assert_eq!(artifact.uuid, UUID);
+    assert_eq!(artifact.executable, build.staged.payload.native);
+    assert_eq!(artifact.info, b"fixture plist");
+    assert_eq!(artifact.dwarf, b"fixture DWARF");
+    assert_eq!(inventory.bytes, bytes.len() as u64);
     assert_eq!(
         inventory.digest,
-        Digest::compute(Domain::DistArtifact, &symbols.artifact)
+        Digest::compute(Domain::DistArtifact, &bytes)
     );
     let executable = fixture
         .root
