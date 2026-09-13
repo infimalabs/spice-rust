@@ -26,7 +26,9 @@ mod horizon;
 pub(crate) mod stream;
 mod work;
 
-pub(crate) use aggregate::{Aggregate, WindowOptions, WindowScan, WindowTurn, admit_sources};
+pub(crate) use aggregate::{
+    Aggregate, CompactionScan, WindowOptions, WindowScan, WindowTurn, admit_sources,
+};
 use horizon::{CompactionTracker, admit_source_order};
 pub(crate) use horizon::{recent_compaction_horizon, recent_turn_start};
 use stream::stream_records;
@@ -57,6 +59,15 @@ pub(crate) struct Marker {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CompactionHorizon {
     pub(crate) start: Option<String>,
+    sources: Vec<CompactionSourceHorizon>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CompactionSourceHorizon {
+    has_compaction: bool,
+    start_offset: Option<u64>,
+    assistant_before: String,
+    vendor: Vendor,
 }
 
 pub(crate) struct MessageQuery {

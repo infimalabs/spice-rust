@@ -93,6 +93,32 @@ impl<'a> ForwardCursor<'a> {
         })
     }
 
+    pub(crate) fn at_offset(
+        source: &'a ResolvedSource,
+        offset: u64,
+        work: &mut SessionWork,
+    ) -> Result<Self, Refusal> {
+        let mut file = open_transcript(source)?;
+        file.seek(SeekFrom::Start(offset)).map_err(|error| {
+            refusal(
+                "session::transcript-unreadable",
+                Some(format!("{}: {error}", source.path.display())),
+                "restore read access to the transcript and retry",
+            )
+        })?;
+        work.begin_pass(&source.path.display().to_string())?;
+        Ok(Self {
+            source,
+            reader: Box::new(BufReader::new(file)),
+            start: None,
+            dialect: source.dialect,
+            line: 0,
+            within_horizon: true,
+            live_tail: false,
+            buffer: Vec::new(),
+        })
+    }
+
     pub(crate) fn advance(&mut self, work: &mut SessionWork) -> Result<ForwardWindow, Refusal> {
         self.buffer.clear();
         let at = self.next_record_locus();

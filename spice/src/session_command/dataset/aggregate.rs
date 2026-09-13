@@ -12,12 +12,12 @@ use super::super::project::{
     Filters, PhaseOptions, authored_message_view, phase_example, turn_end, turn_family, turn_view,
 };
 use super::super::source::ResolvedSource;
-use super::stream::{ForwardCursor, ForwardProgress};
+use super::stream::{ForwardCursor, ForwardProgress, compressed};
 use super::{
-    CompactionTracker, DecodedRow, FoldState, FoldStorage, FrontierDirection, Marker, MessageQuery,
-    OPEN_TOOL_LIMIT, OPEN_TURN_LIMIT, ResidueLedger, ResultFrontier, SessionWork,
-    SessionWorkBudget, admit_source_order, finish_fold, message_text_bytes, reduce_record, refusal,
-    source_view_text_bytes, stream_records,
+    CompactionHorizon, CompactionTracker, DecodedRow, FoldState, FoldStorage, FrontierDirection,
+    Marker, MessageQuery, OPEN_TOOL_LIMIT, OPEN_TURN_LIMIT, ResidueLedger, ResultFrontier,
+    SessionWork, SessionWorkBudget, admit_source_order, finish_fold, message_text_bytes,
+    reduce_record, refusal, source_view_text_bytes, stream_records,
 };
 
 const PHASE_GAP_SECONDS: i64 = 45 * 60;
@@ -64,17 +64,12 @@ pub(crate) enum WindowOptions {
     Sweep {
         compactions: usize,
     },
-    Compactions {
-        compactions: usize,
-    },
 }
 
 impl WindowOptions {
     pub(crate) const fn compactions(self) -> usize {
         match self {
-            Self::Briefing { compactions, .. }
-            | Self::Sweep { compactions }
-            | Self::Compactions { compactions } => compactions,
+            Self::Briefing { compactions, .. } | Self::Sweep { compactions } => compactions,
         }
     }
 
@@ -86,12 +81,8 @@ impl WindowOptions {
                 explain,
                 ..
             } => Some((max_lines, max_bytes, explain)),
-            Self::Sweep { .. } | Self::Compactions { .. } => None,
+            Self::Sweep { .. } => None,
         }
-    }
-
-    const fn retains_turns(self) -> bool {
-        !matches!(self, Self::Compactions { .. })
     }
 }
 
@@ -143,6 +134,80 @@ pub(crate) struct WindowScan {
     pub(crate) options: WindowOptions,
 }
 
+pub(crate) struct CompactionScan {
+    pub(crate) sources: Vec<SourceView>,
+    pub(crate) compactions: Vec<CompactionRecord>,
+    pub(crate) residues: Vec<Residue>,
+}
+
+impl CompactionScan {
+    pub(crate) fn scan(
+        sources: &[ResolvedSource],
+        horizon: CompactionHorizon,
+        limit: usize,
+    ) -> Result<Self, Refusal> {
+        admit_sources(sources)?;
+        debug_assert_eq!(sources.len(), horizon.sources.len());
+        let mut work = SessionWork::new(SessionWorkBudget::report());
+        let mut residues = ResidueLedger::new();
+        let mut source_views = Vec::with_capacity(sources.len());
+        let mut source_rows = Vec::with_capacity(sources.len());
+        for (source, boundary) in sources.iter().zip(horizon.sources) {
+            let mut vendor = boundary.vendor;
+            let rows = if boundary.has_compaction {
+                let mut cursor = if compressed(&source.path) {
+                    ForwardCursor::new(source, None, &mut work)?
+                } else {
+                    ForwardCursor::at_offset(
+                        source,
+                        boundary
+                            .start_offset
+                            .expect("uncompressed compaction horizon has an exact offset"),
+                        &mut work,
+                    )?
+                };
+                let mut tracker = CompactionTracker::new(limit, horizon.start.as_deref(), None)?;
+                tracker.seed_assistant(boundary.assistant_before);
+                loop {
+                    let window = cursor.advance(&mut work)?;
+                    if let Some(row) = window.row {
+                        let at = format!(
+                            "{}:record {}",
+                            source.path.display(),
+                            cursor.continuation().line
+                        );
+                        match row {
+                            DecodedRow::Typed(record) => {
+                                tracker.observe_record(&record, &mut work, &at)?;
+                            }
+                            DecodedRow::Residue(residue) => {
+                                residues.push(residue, &mut work, &at)?;
+                            }
+                            DecodedRow::Ignored => {}
+                        }
+                    }
+                    if matches!(window.progress, ForwardProgress::Eof(_)) {
+                        break;
+                    }
+                }
+                vendor = cursor.vendor();
+                tracker.finish(&mut work, &source.path.display().to_string())?
+            } else {
+                Vec::new()
+            };
+            let view = source_view(source, vendor);
+            work.admit_retained_text(source_view_text_bytes(&view), &view.path)?;
+            source_views.push(view);
+            source_rows.push(VecDeque::from(rows));
+        }
+        Ok(Self {
+            sources: source_views,
+            compactions: merge_compactions(source_rows, limit)?,
+            residues: residues.finish(&mut work, "compaction residue summary")?,
+        })
+    }
+}
+
 impl WindowScan {
     pub(crate) fn scan(
         sources: &[ResolvedSource],
@@ -156,16 +221,7 @@ impl WindowScan {
         let mut residues = ResidueLedger::new();
         let mut streams = sources
             .iter()
-            .map(|source| {
-                PhaseSource::window(
-                    source,
-                    options.retains_turns().then_some(start).flatten(),
-                    start,
-                    end,
-                    options.compactions(),
-                    &mut work,
-                )
-            })
+            .map(|source| PhaseSource::window(source, start, end, options.compactions(), &mut work))
             .collect::<Result<Vec<_>, _>>()?;
         for stream in &mut streams {
             stream.advance(&mut residues, &mut work)?;
@@ -201,30 +257,11 @@ impl WindowScan {
             sources.push(source);
             compaction_sources.push(VecDeque::from(compactions));
         }
-        let mut compactions =
-            ResultFrontier::new(options.compactions(), FrontierDirection::Newest)?;
-        while let Some(index) = compaction_sources
-            .iter()
-            .enumerate()
-            .filter(|(_, rows)| !rows.is_empty())
-            .min_by_key(|(_, rows)| {
-                let row = rows
-                    .front()
-                    .expect("filtered compaction source is nonempty");
-                (&row.ts, &row.source)
-            })
-            .map(|(index, _)| index)
-        {
-            compactions.push(
-                compaction_sources[index]
-                    .pop_front()
-                    .expect("selected compaction source is nonempty"),
-            );
-        }
+        let compactions = merge_compactions(compaction_sources, options.compactions())?;
         Ok(Self {
             sources,
             turns: turns.rows.into(),
-            compactions: compactions.into_rows(),
+            compactions,
             residues: residues.finish(&mut work, "window residue summary")?,
             turns_before: turns.before,
             options,
@@ -252,9 +289,6 @@ impl WindowTurnFrontier {
     }
 
     fn push(&mut self, turn: WindowTurn) -> Result<(), Refusal> {
-        if !self.options.retains_turns() {
-            return Ok(());
-        }
         if matches!(self.options, WindowOptions::Sweep { .. })
             && self.rows.len() == WINDOW_TURN_LIMIT
         {
@@ -279,6 +313,46 @@ impl WindowTurnFrontier {
             }
         }
         Ok(())
+    }
+}
+
+fn merge_compactions(
+    mut sources: Vec<VecDeque<CompactionRecord>>,
+    limit: usize,
+) -> Result<Vec<CompactionRecord>, Refusal> {
+    let mut rows = ResultFrontier::new(limit, FrontierDirection::Newest)?;
+    while let Some(index) = sources
+        .iter()
+        .enumerate()
+        .filter(|(_, source)| !source.is_empty())
+        .min_by_key(|(_, source)| {
+            let row = source
+                .front()
+                .expect("filtered compaction source is nonempty");
+            (&row.ts, &row.source)
+        })
+        .map(|(index, _)| index)
+    {
+        rows.push(
+            sources[index]
+                .pop_front()
+                .expect("selected compaction source is nonempty"),
+        );
+    }
+    Ok(rows.into_rows())
+}
+
+fn source_view(source: &ResolvedSource, vendor: Vendor) -> SourceView {
+    let path = source.path.display().to_string();
+    SourceView {
+        name: source
+            .path
+            .file_name()
+            .map_or_else(|| path.clone(), |name| name.to_string_lossy().into_owned()),
+        path,
+        vendor,
+        thread: source.thread.clone(),
+        compressed: compressed(&source.path),
     }
 }
 
@@ -832,21 +906,20 @@ impl<'a> PhaseSource<'a> {
 
     fn window(
         source: &'a ResolvedSource,
-        cursor_start: Option<&str>,
-        marker_start: Option<&str>,
+        start: Option<&str>,
         end: Option<&str>,
         compactions: usize,
         work: &mut SessionWork,
     ) -> Result<Self, Refusal> {
         Ok(Self {
             source,
-            cursor: ForwardCursor::new(source, cursor_start, work)?,
+            cursor: ForwardCursor::new(source, start, work)?,
             scratch: super::super::model::Dataset::default(),
             markers: Vec::new(),
             fold: FoldState::default(),
             ready: VecDeque::with_capacity(OPEN_TURN_LIMIT),
             last_turn: None,
-            compactions: Some(CompactionTracker::new(compactions, marker_start, end)?),
+            compactions: Some(CompactionTracker::new(compactions, start, end)?),
             complete: false,
         })
     }
@@ -948,18 +1021,7 @@ impl<'a> PhaseSource<'a> {
     }
 
     fn source_view(self) -> SourceView {
-        let path = self.source.path.display().to_string();
-        SourceView {
-            name: self
-                .source
-                .path
-                .file_name()
-                .map_or_else(|| path.clone(), |name| name.to_string_lossy().into_owned()),
-            path,
-            vendor: self.cursor.vendor(),
-            thread: self.source.thread.clone(),
-            compressed: self.source.path.to_string_lossy().ends_with(".gz"),
-        }
+        source_view(self.source, self.cursor.vendor())
     }
 
     fn into_window(

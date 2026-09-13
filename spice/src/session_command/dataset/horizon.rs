@@ -10,10 +10,10 @@ use super::stream::{
 };
 use super::work::SessionWork;
 use super::{
-    CompactionHorizon, CompactionRecord, DecodedRow, FrontierDirection, FrontierPage,
-    FrontierProgress, MAX_LINE_BYTES, Marker, MessageRecord, ResolvedSource, ResultFrontier,
-    TypedRecord, compaction_intent, compaction_text_bytes, frontier_limit, record_timestamp,
-    refusal,
+    CompactionHorizon, CompactionRecord, CompactionSourceHorizon, DecodedRow, FrontierDirection,
+    FrontierPage, FrontierProgress, MAX_LINE_BYTES, Marker, MessageRecord, ResolvedSource,
+    ResultFrontier, TypedRecord, compaction_intent, compaction_text_bytes, frontier_limit,
+    record_timestamp, refusal, text_bytes,
 };
 
 const BACKWARD_CHUNK_BYTES: u64 = 64 * 1024;
@@ -105,6 +105,67 @@ impl CompactionTracker {
         Ok(())
     }
 
+    pub(super) fn seed_assistant(&mut self, assistant: String) {
+        self.last_assistant = (!assistant.is_empty()).then_some(assistant);
+    }
+
+    pub(super) fn observe_record(
+        &mut self,
+        record: &TypedRecord,
+        work: &mut SessionWork,
+        at: &str,
+    ) -> Result<(), Refusal> {
+        for sourced in &record.events {
+            match &sourced.event {
+                Event::Compaction(compaction) => {
+                    let marker = Marker {
+                        source: record.source.clone(),
+                        position: record.line,
+                        ts: record_timestamp(record).to_owned(),
+                        summary: compaction.summary.clone().unwrap_or_default(),
+                    };
+                    work.admit_retained_text(super::marker_text_bytes(&marker), at)?;
+                    self.observe(std::iter::once(marker), &[], work, at)?;
+                }
+                Event::Prose(prose) if !prose.text.trim().is_empty() => {
+                    let side = match prose.role {
+                        listen::ProseRole::Operator => "user",
+                        listen::ProseRole::Assistant => "assistant",
+                    };
+                    let classified = crate::message_shape::classify(&prose.text);
+                    if let Some(pending) = &mut self.pending
+                        && record.line > pending.marker.position
+                    {
+                        if !pending.summary_seen
+                            && classified.shape
+                                == crate::message_shape::MessageShape::CompactionRehydration
+                        {
+                            pending.summary.clone_from(&prose.text);
+                            pending.summary_seen = true;
+                        }
+                        if !pending.user_seen && side == "user" && classified.shape.is_authored() {
+                            pending.user_after = classified.authored.unwrap_or_default();
+                            pending.user_seen = true;
+                        }
+                    }
+                    if side == "assistant" {
+                        work.admit_retained_text(text_bytes([prose.text.as_str()]), at)?;
+                        self.last_assistant = Some(prose.text.clone());
+                    }
+                    if self
+                        .pending
+                        .as_ref()
+                        .is_some_and(|pending| pending.summary_seen && pending.user_seen)
+                    {
+                        self.finish_pending(work, at)?;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     fn finish_pending(&mut self, work: &mut SessionWork, at: &str) -> Result<(), Refusal> {
         let Some(pending) = self.pending.take() else {
             return Ok(());
@@ -157,13 +218,25 @@ pub(crate) fn recent_compaction_horizon(
     end: Option<&str>,
 ) -> Result<CompactionHorizon, Refusal> {
     if count == 0 {
-        return Ok(CompactionHorizon { start: None });
+        return Ok(CompactionHorizon {
+            start: None,
+            sources: sources
+                .iter()
+                .map(|source| CompactionSourceHorizon {
+                    has_compaction: false,
+                    start_offset: None,
+                    assistant_before: String::new(),
+                    vendor: source.vendor,
+                })
+                .collect(),
+        });
     }
     frontier_limit(count)?;
     let mut markers = Vec::new();
+    let mut source_horizons = Vec::with_capacity(sources.len());
     let mut work = SessionWork::new(super::work::SessionWorkBudget::report());
     for source in sources {
-        let page = read_recent_compaction_markers(source, count, end, &mut work)?;
+        let (page, source_horizon) = read_recent_compaction_markers(source, count, end, &mut work)?;
         match page.progress {
             FrontierProgress::More(continuation) | FrontierProgress::Complete(continuation) => {
                 let _ = continuation.position();
@@ -177,11 +250,13 @@ pub(crate) fn recent_compaction_horizon(
                 return Err(error);
             }
         }
+        source_horizons.push(source_horizon);
     }
     markers.sort_by(|left, right| (&left.ts, &left.source).cmp(&(&right.ts, &right.source)));
     let first = markers.len().saturating_sub(count);
     Ok(CompactionHorizon {
         start: markers.into_iter().nth(first).map(|marker| marker.ts),
+        sources: source_horizons,
     })
 }
 
@@ -238,33 +313,75 @@ fn read_recent_compaction_markers(
     count: usize,
     end: Option<&str>,
     work: &mut SessionWork,
-) -> Result<FrontierPage<Marker, HorizonContinuation>, Refusal> {
+) -> Result<
+    (
+        FrontierPage<Marker, HorizonContinuation>,
+        CompactionSourceHorizon,
+    ),
+    Refusal,
+> {
     if compressed(&source.path) {
         return read_recent_compaction_markers_forward(source, count, end, work);
     }
     let source_name = source.path.display().to_string();
     let mut frontier = ResultFrontier::new(count, FrontierDirection::Oldest)?;
+    let mut start_offset = None;
+    let mut assistant_before = String::new();
+    let mut vendor = source.vendor;
+    let mut locating_assistant = false;
     work.begin_pass(&source_name)?;
     let progress = reverse_lines(&source.path, work, |line, offset, _, terminal, work| {
         let live_tail = source.thread.is_some() && terminal;
         let at = format!("{source_name}:byte {offset}");
-        let marker = decode_reverse_row(source, line, offset, live_tail, work, &at)?.and_then(
-            |row| match row {
-                DecodedRow::Typed(row) => marker_from_record(&row),
-                DecodedRow::Residue(_) | DecodedRow::Ignored => None,
-            },
-        );
+        let row = decode_reverse_row(source, line, offset, live_tail, work, &at)?;
+        let typed = match row {
+            Some(DecodedRow::Typed(row)) => {
+                vendor = row.vendor;
+                Some(row)
+            }
+            Some(DecodedRow::Residue(_)) | Some(DecodedRow::Ignored) | None => None,
+        };
+        if locating_assistant {
+            if let Some(assistant) = typed.as_ref().and_then(last_assistant_from_record) {
+                work.admit_retained_text(text_bytes([assistant.as_str()]), &at)?;
+                assistant_before = assistant;
+                return Ok(false);
+            }
+            return Ok(true);
+        }
+        let marker = typed.as_ref().and_then(marker_from_record);
         if let Some(marker) = marker
             && end.is_none_or(|end| marker.ts.as_str() <= end)
         {
             work.admit_retained_text(super::marker_text_bytes(&marker), &at)?;
             frontier.push(marker);
+            start_offset = Some(offset);
+            assistant_before.clear();
+            if frontier.is_full() {
+                locating_assistant = true;
+            }
+            return Ok(true);
         }
-        Ok(frontier.rows.len() < count)
+        if assistant_before.is_empty()
+            && let Some(assistant) = typed.as_ref().and_then(last_assistant_from_record)
+        {
+            work.admit_retained_text(text_bytes([assistant.as_str()]), &at)?;
+            assistant_before = assistant;
+        }
+        Ok(true)
     })?;
+    let has_compaction = start_offset.is_some();
     let mut page = frontier.into_page(progress.map(HorizonContinuation::Reverse));
     page.rows.reverse();
-    Ok(page)
+    Ok((
+        page,
+        CompactionSourceHorizon {
+            has_compaction,
+            start_offset,
+            assistant_before,
+            vendor,
+        },
+    ))
 }
 
 fn read_recent_compaction_markers_forward(
@@ -272,7 +389,13 @@ fn read_recent_compaction_markers_forward(
     count: usize,
     end: Option<&str>,
     work: &mut SessionWork,
-) -> Result<FrontierPage<Marker, HorizonContinuation>, Refusal> {
+) -> Result<
+    (
+        FrontierPage<Marker, HorizonContinuation>,
+        CompactionSourceHorizon,
+    ),
+    Refusal,
+> {
     let mut frontier = ResultFrontier::new(count, FrontierDirection::Newest)?;
     let mut cursor = ForwardCursor::new(source, None, work)?;
     let progress = loop {
@@ -312,7 +435,31 @@ fn read_recent_compaction_markers_forward(
             ForwardProgress::Eof(end) => break FrontierProgress::Complete(end),
         }
     };
-    Ok(frontier.into_page(progress.map(HorizonContinuation::Forward)))
+    let vendor = cursor.vendor();
+    let page = frontier.into_page(progress.map(HorizonContinuation::Forward));
+    let has_compaction = !page.rows.is_empty();
+    Ok((
+        page,
+        CompactionSourceHorizon {
+            has_compaction,
+            start_offset: None,
+            assistant_before: String::new(),
+            vendor,
+        },
+    ))
+}
+
+fn last_assistant_from_record(record: &TypedRecord) -> Option<String> {
+    record.events.iter().rev().find_map(|sourced| {
+        if let Event::Prose(prose) = &sourced.event
+            && prose.role == listen::ProseRole::Assistant
+            && !prose.text.trim().is_empty()
+        {
+            Some(prose.text.clone())
+        } else {
+            None
+        }
+    })
 }
 
 enum HorizonContinuation {
