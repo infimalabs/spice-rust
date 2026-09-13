@@ -14,7 +14,10 @@ use journal::FactCause;
 use lane::hold::{Death, Holds};
 use lane::occupant::Seats;
 use spice::repository::Repository;
-use wire::{Actor, CanonicalUuid, ClaimDisposition, Instant, Outcome, Producer, Seq, TaskStamp};
+use wire::{
+    Actor, CanonicalUuid, ClaimDisposition, Instant, Outcome, Producer, ReplyPosition, Seq,
+    TaskStamp,
+};
 
 use super::lane_surface;
 use super::shutdown::{current_residency, guard_residency};
@@ -177,6 +180,75 @@ pub(super) struct Runtime {
     backoff: Backoff,
     holds: Holds,
     projection: Projection,
+}
+
+/// Exact admitted command generation that released automatic lifecycle work.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct ReconciliationWitness {
+    command: CanonicalUuid,
+    epoch: CanonicalUuid,
+    position: Option<ReplyPosition>,
+}
+
+impl ReconciliationWitness {
+    pub(super) const fn new(
+        command: CanonicalUuid,
+        epoch: CanonicalUuid,
+        position: Option<ReplyPosition>,
+    ) -> Self {
+        Self {
+            command,
+            epoch,
+            position,
+        }
+    }
+
+    const fn awaits_commit(self) -> bool {
+        matches!(self.position, Some(ReplyPosition::Committed(_)))
+    }
+
+    const fn reached_by(self, last: u64) -> bool {
+        match self.position {
+            Some(ReplyPosition::Committed(range)) => last >= range.last.get(),
+            Some(ReplyPosition::Snapshot(cursor)) => last > cursor.get(),
+            Some(ReplyPosition::Direct {}) | None => true,
+        }
+    }
+}
+
+/// One constant-size lifecycle demand waiting for an admitted resident event.
+#[derive(Default)]
+pub(super) struct Reconciliation {
+    pending: Option<ReconciliationWitness>,
+}
+
+impl Reconciliation {
+    pub(super) fn request(&mut self, witness: ReconciliationWitness) {
+        if self.pending != Some(witness) {
+            self.pending = Some(witness);
+        }
+    }
+
+    pub(super) fn control_enabled(&self) -> bool {
+        self.pending.is_none_or(|witness| !witness.awaits_commit())
+    }
+
+    pub(super) fn control_settles(&self) -> bool {
+        self.pending.is_some_and(|witness| !witness.awaits_commit())
+    }
+
+    pub(super) fn settle(&mut self) {
+        self.pending = None;
+    }
+
+    pub(super) fn settle_commit(&mut self, commit: bus::JournalCommit) {
+        let reached = self
+            .pending
+            .is_some_and(|witness| witness.reached_by(commit.last()));
+        if reached {
+            self.settle();
+        }
+    }
 }
 
 /// The one future event the timer runtime must arm after reconciliation.
@@ -933,6 +1005,29 @@ mod tests {
             resolve(&[row], &Backoff::default(), instant(12)),
             Resolution::Attempt { .. }
         ));
+
+        let snapshot = ReconciliationWitness::new(
+            lane(2),
+            lane(3),
+            Some(ReplyPosition::Snapshot(Seq::new(4).expect("snapshot"))),
+        );
+        assert!(!snapshot.reached_by(4) && snapshot.reached_by(5));
+        let mut reconciliation = Reconciliation::default();
+        reconciliation.request(snapshot);
+        assert!(reconciliation.control_enabled() && reconciliation.control_settles());
+        let committed = ReconciliationWitness::new(
+            lane(2),
+            lane(3),
+            Some(ReplyPosition::Committed(wire::SeqRange {
+                first: Seq::new(5).expect("commit start"),
+                last: Seq::new(6).expect("commit end"),
+            })),
+        );
+        assert!(!committed.reached_by(5) && committed.reached_by(6));
+        reconciliation.request(committed);
+        assert!(!reconciliation.control_enabled() && !reconciliation.control_settles());
+        reconciliation.settle();
+        assert!(reconciliation.control_enabled() && !reconciliation.control_settles());
     }
 
     #[test]
