@@ -1,7 +1,11 @@
 //! Acquisition of one complete hygiene-family analysis.
 
 use std::collections::BTreeSet;
+use std::fmt::{self, Write as _};
+use std::fs::{self, File, Metadata};
+use std::io::Read as _;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use wire::Digest;
 
@@ -18,6 +22,45 @@ use crate::tree::SelectedTree;
 
 /// Declaration metadata that names tracked policy rather than a path pattern.
 const TRACKED_EXCLUSION_SOURCE: &str = "spice-rust.toml:policy.exclude";
+const SOURCE_FILE_LIMIT: usize = 4 * 1024;
+const SOURCE_PATH_BYTES_LIMIT: usize = 1024 * 1024;
+const SOURCE_BYTES_LIMIT: u64 = 64 * 1024 * 1024;
+const SOURCE_ISSUE_LIMIT: usize = 1;
+const SOURCE_DIAGNOSTIC_BYTES_LIMIT: usize = 4 * 1024;
+const SOURCE_CAPTURE_DURATION: Duration = Duration::from_secs(30);
+const _: () = assert!(SOURCE_ISSUE_LIMIT == 1 && SOURCE_DIAGNOSTIC_BYTES_LIMIT > 0);
+/// Maximum bytes admitted from one selected Python source.
+pub const HYGIENE_SOURCE_FILE_BYTE_LIMIT: u64 = 2 * 1024 * 1024;
+
+#[derive(Debug)]
+pub(crate) struct HygieneDocument {
+    pub(crate) path: String,
+    pub(crate) bytes: Vec<u8>,
+}
+
+#[derive(Eq, PartialEq)]
+struct SourceIdentity {
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+}
+
+struct Diagnostic(String);
+
+impl fmt::Write for Diagnostic {
+    fn write_str(&mut self, value: &str) -> fmt::Result {
+        let remaining = SOURCE_DIAGNOSTIC_BYTES_LIMIT.saturating_sub(self.0.len());
+        let mut end = remaining.min(value.len());
+        while !value.is_char_boundary(end) {
+            end -= 1;
+        }
+        self.0.push_str(&value[..end]);
+        Ok(())
+    }
+}
 
 /// One immutable selected tree and the complete hygiene jurisdiction captured
 /// from it.
@@ -30,6 +73,8 @@ pub struct HygieneSource<'a> {
     root: &'a Path,
     jurisdiction: Jurisdiction,
     digest: Digest,
+    documents: Vec<HygieneDocument>,
+    project_markers: Vec<String>,
     suppressed: Vec<SuppressedPath>,
     reached_paths: Option<BTreeSet<String>>,
 }
@@ -71,9 +116,12 @@ impl<'a> HygieneSource<'a> {
         let jurisdiction = Jurisdiction::walk(tree.root(), &ignore).map_err(|error| {
             HygieneAnalysisError::Source(format!("hygiene source jurisdiction: {error}"))
         })?;
-        let digest = jurisdiction.tree_digest().map_err(|error| {
-            HygieneAnalysisError::Source(format!("hygiene source tree identity: {error}"))
-        })?;
+        let (documents, digest) = capture_documents(&jurisdiction, reached_paths.as_ref())?;
+        let project_markers = jurisdiction
+            .measurable()
+            .filter(|entry| matches!(entry.path(), "pyproject.toml" | "spice-rust.toml"))
+            .map(|entry| entry.path().to_owned())
+            .collect();
         let mut suppressed = suppressed_candidates(&jurisdiction, &ignore, &provenance)?;
         if let Some(reached) = &reached_paths {
             suppressed.retain(|candidate| {
@@ -89,6 +137,8 @@ impl<'a> HygieneSource<'a> {
             root: tree.root(),
             jurisdiction,
             digest,
+            documents,
+            project_markers,
             suppressed,
             reached_paths,
         })
@@ -125,6 +175,14 @@ impl<'a> HygieneSource<'a> {
     fn reached_paths(&self) -> Option<&BTreeSet<String>> {
         self.reached_paths.as_ref()
     }
+
+    fn documents(&self) -> &[HygieneDocument] {
+        &self.documents
+    }
+
+    fn project_markers(&self) -> &[String] {
+        &self.project_markers
+    }
 }
 
 /// Acquire all five hygiene measurements from one captured source.
@@ -144,7 +202,7 @@ pub fn acquire_hygiene(
     let configuration = configuration
         .clone()
         .with_suppressions(source.suppressed().to_vec())?;
-    analyze_hygiene(source.jurisdiction(), &configuration)
+    analyze_hygiene(source.documents(), source.project_markers(), &configuration)
 }
 
 /// Acquire exactly one hygiene measurement from the shared captured source.
@@ -157,7 +215,8 @@ pub(crate) fn acquire_hygiene_arm(
         .clone()
         .with_suppressions(source.suppressed().to_vec())?;
     analyze_hygiene_arm(
-        source.jurisdiction(),
+        source.documents(),
+        source.project_markers(),
         &configuration,
         gate_id,
         source.reached_paths(),
@@ -176,7 +235,6 @@ pub(crate) fn acquire_hygiene_arm_reached(
     gate_id: GateId,
     reached: &[String],
 ) -> Result<HygieneMeasurement, HygieneAnalysisError> {
-    let jurisdiction = source.jurisdiction.select_paths(reached);
     let suppressions: Vec<_> = source
         .suppressed()
         .iter()
@@ -192,7 +250,192 @@ pub(crate) fn acquire_hygiene_arm_reached(
         .collect();
     let configuration = configuration.clone().with_suppressions(suppressions)?;
     let reached_paths = reached.iter().cloned().collect();
-    analyze_hygiene_arm(&jurisdiction, &configuration, gate_id, Some(&reached_paths))
+    let project_markers = source
+        .project_markers()
+        .iter()
+        .filter(|path| reached.contains(path))
+        .cloned()
+        .collect::<Vec<_>>();
+    analyze_hygiene_arm(
+        source.documents(),
+        &project_markers,
+        &configuration,
+        gate_id,
+        Some(&reached_paths),
+    )
+}
+
+fn capture_documents(
+    jurisdiction: &Jurisdiction,
+    reached: Option<&BTreeSet<String>>,
+) -> Result<(Vec<HygieneDocument>, Digest), HygieneAnalysisError> {
+    let started = Instant::now();
+    let mut documents = Vec::new();
+    let mut path_bytes = 0_usize;
+    let mut source_bytes = 0_u64;
+    for entry in jurisdiction
+        .measurable()
+        .filter(|entry| is_python_path(entry.path()))
+        .filter(|entry| reached.is_none_or(|paths| paths.contains(entry.path())))
+    {
+        check_capture_time(started, entry.path())?;
+        if documents.len() == SOURCE_FILE_LIMIT {
+            return Err(capture_error(
+                entry.path(),
+                format_args!("selected Python file limit {SOURCE_FILE_LIMIT} was exceeded"),
+            ));
+        }
+        path_bytes = path_bytes.saturating_add(entry.path().len());
+        if path_bytes > SOURCE_PATH_BYTES_LIMIT {
+            return Err(capture_error(
+                entry.path(),
+                format_args!("selected path bytes exceeded {SOURCE_PATH_BYTES_LIMIT}"),
+            ));
+        }
+        let absolute = jurisdiction.root().join(entry.path());
+        let bytes = read_source(&absolute, entry.path(), &mut source_bytes, started)?;
+        std::str::from_utf8(&bytes).map_err(|error| {
+            capture_error(entry.path(), format_args!("source is not UTF-8: {error}"))
+        })?;
+        check_capture_time(started, entry.path())?;
+        documents.push(HygieneDocument {
+            path: entry.path().to_owned(),
+            bytes,
+        });
+    }
+    check_capture_time(started, "selected Python sources")?;
+    let digest = document_digest(&documents);
+    check_capture_time(started, "selected Python source identity")?;
+    Ok((documents, digest))
+}
+
+fn read_source(
+    path: &Path,
+    relative: &str,
+    source_bytes: &mut u64,
+    started: Instant,
+) -> Result<Vec<u8>, HygieneAnalysisError> {
+    read_source_with(path, relative, source_bytes, started, || {})
+}
+
+fn read_source_with(
+    path: &Path,
+    relative: &str,
+    source_bytes: &mut u64,
+    started: Instant,
+    after_open: impl FnOnce(),
+) -> Result<Vec<u8>, HygieneAnalysisError> {
+    let named = fs::symlink_metadata(path).map_err(|error| capture_error(relative, error))?;
+    check_capture_time(started, relative)?;
+    if !named.file_type().is_file() {
+        return Err(capture_error(
+            relative,
+            "selected source is not a regular file",
+        ));
+    }
+    let identity = SourceIdentity::new(&named);
+    if identity.len > HYGIENE_SOURCE_FILE_BYTE_LIMIT {
+        return Err(capture_error(
+            relative,
+            format_args!(
+                "source bytes {} exceed {HYGIENE_SOURCE_FILE_BYTE_LIMIT}",
+                identity.len
+            ),
+        ));
+    }
+    let total = source_bytes
+        .checked_add(identity.len)
+        .ok_or_else(|| capture_error(relative, "aggregate selected source bytes overflowed u64"))?;
+    if total > SOURCE_BYTES_LIMIT {
+        return Err(capture_error(
+            relative,
+            format_args!("aggregate selected source bytes exceed {SOURCE_BYTES_LIMIT}"),
+        ));
+    }
+    let mut file = File::open(path).map_err(|error| capture_error(relative, error))?;
+    check_capture_time(started, relative)?;
+    if SourceIdentity::new(
+        &file
+            .metadata()
+            .map_err(|error| capture_error(relative, error))?,
+    ) != identity
+    {
+        return Err(capture_error(
+            relative,
+            "selected source moved before capture",
+        ));
+    }
+    after_open();
+    let mut bytes = Vec::with_capacity(
+        usize::try_from(identity.len).expect("admitted hygiene source length fits usize"),
+    );
+    file.by_ref()
+        .take(identity.len.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| capture_error(relative, error))?;
+    check_capture_time(started, relative)?;
+    let finished = file
+        .metadata()
+        .map_err(|error| capture_error(relative, error))?;
+    let renamed = fs::symlink_metadata(path).map_err(|error| capture_error(relative, error))?;
+    check_capture_time(started, relative)?;
+    if SourceIdentity::new(&finished) != identity
+        || SourceIdentity::new(&renamed) != identity
+        || u64::try_from(bytes.len()).ok() != Some(identity.len)
+    {
+        return Err(capture_error(
+            relative,
+            "selected source moved during capture",
+        ));
+    }
+    *source_bytes = total;
+    Ok(bytes)
+}
+
+fn check_capture_time(started: Instant, path: &str) -> Result<(), HygieneAnalysisError> {
+    if started.elapsed() > SOURCE_CAPTURE_DURATION {
+        Err(capture_error(
+            path,
+            format_args!("source capture exceeded {SOURCE_CAPTURE_DURATION:?}"),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn capture_error(path: &str, detail: impl fmt::Display) -> HygieneAnalysisError {
+    let mut diagnostic = Diagnostic(String::with_capacity(SOURCE_DIAGNOSTIC_BYTES_LIMIT));
+    let _ = write!(diagnostic, "hygiene source capture at {path}: {detail}");
+    HygieneAnalysisError::Source(diagnostic.0)
+}
+
+fn document_digest(documents: &[HygieneDocument]) -> Digest {
+    let mut listing = String::new();
+    for document in documents {
+        let _ = writeln!(
+            listing,
+            "{} {}",
+            Digest::compute(wire::Domain::GateFile, &document.bytes),
+            document.path
+        );
+    }
+    Digest::compute(wire::Domain::GateTree, listing.as_bytes())
+}
+
+impl SourceIdentity {
+    fn new(metadata: &Metadata) -> Self {
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt as _;
+
+        Self {
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+            #[cfg(unix)]
+            device: metadata.dev(),
+            #[cfg(unix)]
+            inode: metadata.ino(),
+        }
+    }
 }
 
 /// Everything the walk withheld from measurement, paired with the rule that
@@ -352,5 +595,27 @@ mod tests {
                 .all(|item| item.layer == "compiled")
         );
         assert!(walk_provenance(0, 0).is_empty());
+
+        #[cfg(unix)]
+        {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "gate-hygiene-source-movement-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&root).expect("create movement fixture");
+            let source = root.join("source.py");
+            let displaced = root.join("captured.py");
+            std::fs::write(&source, b"original = 1\n").expect("write original source");
+            let mut total = 0;
+            let error = read_source_with(&source, "source.py", &mut total, Instant::now(), || {
+                std::fs::rename(&source, &displaced).expect("displace opened source");
+                std::fs::write(&source, b"replacement = 2\n").expect("write replacement source");
+            })
+            .expect_err("source substitution refuses");
+            assert!(error.to_string().contains("moved during capture"));
+            std::fs::remove_dir_all(root).expect("remove movement fixture");
+        }
     }
 }

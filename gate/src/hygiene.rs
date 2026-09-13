@@ -23,9 +23,9 @@ mod measure;
 mod predecessor;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use acquire::{HygieneSource, acquire_hygiene};
+pub use acquire::{HYGIENE_SOURCE_FILE_BYTE_LIMIT, HygieneSource, acquire_hygiene};
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use acquire::{acquire_hygiene_arm, acquire_hygiene_arm_reached};
+pub(crate) use acquire::{HygieneDocument, acquire_hygiene_arm, acquire_hygiene_arm_reached};
 #[cfg(not(target_arch = "wasm32"))]
 pub use analyze::{
     HygieneAnalysisError, HygieneConfiguration, HygieneExclusion, PrivateCouplingException,
