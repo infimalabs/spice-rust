@@ -1,5 +1,6 @@
 //! Bounded forward decoding into one canonical session fold.
 
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::Path;
@@ -8,12 +9,14 @@ use flate2::read::GzDecoder;
 use listen::{Decoded, RecordDecodeError, ResidueKind};
 use wire::Refusal;
 
+use super::aggregate::{admit_sources, merge_compactions, source_view};
 use super::horizon::start_offset_after_prior_timestamp;
-use super::work::{SessionWork, decoded_row_events};
+use super::work::{ResidueLedger, SessionWork, SessionWorkBudget, decoded_row_events};
 use super::{
-    DecodedRow, MAX_LINE_BYTES, Residue, ResolvedSource, Vendor, decode_row, read_residue,
-    record_refusal, record_timestamp, refusal,
+    CompactionHorizon, CompactionTracker, DecodedRow, FrontierDirection, MAX_LINE_BYTES, Residue,
+    ResolvedSource, Vendor, decode_row, read_residue, record_refusal, record_timestamp, refusal,
 };
+use crate::session_command::model::{CompactionRecord, SourceView};
 
 enum RecordRead {
     Eof,
@@ -36,6 +39,91 @@ pub(crate) enum ForwardProgress {
 pub(crate) struct ForwardWindow {
     pub(crate) row: Option<DecodedRow>,
     pub(crate) progress: ForwardProgress,
+}
+
+pub(crate) struct CompactionScan {
+    pub(crate) sources: Vec<SourceView>,
+    pub(crate) compactions: Vec<CompactionRecord>,
+    pub(crate) residues: Vec<Residue>,
+}
+
+impl CompactionScan {
+    pub(crate) fn scan(
+        sources: &[ResolvedSource],
+        horizon: CompactionHorizon,
+        limit: usize,
+    ) -> Result<Self, Refusal> {
+        admit_sources(sources)?;
+        debug_assert_eq!(sources.len(), horizon.sources.len());
+        let mut work = SessionWork::new(SessionWorkBudget::report());
+        let mut residues = ResidueLedger::new();
+        let mut source_views = Vec::with_capacity(sources.len());
+        let mut source_rows = Vec::with_capacity(sources.len());
+        for (source, boundary) in sources.iter().zip(horizon.sources) {
+            let mut vendor = boundary.vendor;
+            let rows = if boundary.has_compaction {
+                let mut cursor = if compressed(&source.path) {
+                    ForwardCursor::new(source, None, &mut work)?
+                } else {
+                    ForwardCursor::at_offset(
+                        source,
+                        boundary
+                            .start_offset
+                            .expect("uncompressed compaction horizon has an exact offset"),
+                        &mut work,
+                    )?
+                };
+                let mut tracker = CompactionTracker::new(
+                    limit,
+                    FrontierDirection::Newest,
+                    horizon.start.as_deref(),
+                    None,
+                )?;
+                tracker.seed_assistant(boundary.assistant_before);
+                scan_compaction_rows(source, &mut cursor, &mut tracker, &mut residues, &mut work)?;
+                vendor = cursor.vendor();
+                tracker.finish(&mut work, &source.path.display().to_string())?
+            } else {
+                Vec::new()
+            };
+            let view = source_view(source, vendor);
+            work.admit_retained_text(super::source_view_text_bytes(&view), &view.path)?;
+            source_views.push(view);
+            source_rows.push(VecDeque::from(rows));
+        }
+        Ok(Self {
+            sources: source_views,
+            compactions: merge_compactions(source_rows, limit, FrontierDirection::Newest)?,
+            residues: residues.finish(&mut work, "compaction residue summary")?,
+        })
+    }
+}
+
+fn scan_compaction_rows(
+    source: &ResolvedSource,
+    cursor: &mut ForwardCursor<'_>,
+    tracker: &mut CompactionTracker,
+    residues: &mut ResidueLedger,
+    work: &mut SessionWork,
+) -> Result<(), Refusal> {
+    loop {
+        let window = cursor.advance(work)?;
+        if let Some(row) = window.row {
+            let at = format!(
+                "{}:record {}",
+                source.path.display(),
+                cursor.continuation().line
+            );
+            match row {
+                DecodedRow::Typed(record) => tracker.observe_record(&record, work, &at)?,
+                DecodedRow::Residue(residue) => residues.push(residue, work, &at)?,
+                DecodedRow::Ignored => {}
+            }
+        }
+        if matches!(window.progress, ForwardProgress::Eof(_)) {
+            return Ok(());
+        }
+    }
 }
 
 pub(crate) struct ForwardCursor<'a> {
@@ -88,6 +176,32 @@ impl<'a> ForwardCursor<'a> {
             dialect: source.dialect,
             line: 0,
             within_horizon: start.is_none(),
+            live_tail: false,
+            buffer: Vec::new(),
+        })
+    }
+
+    pub(crate) fn at_offset(
+        source: &'a ResolvedSource,
+        offset: u64,
+        work: &mut SessionWork,
+    ) -> Result<Self, Refusal> {
+        let mut file = open_transcript(source)?;
+        file.seek(SeekFrom::Start(offset)).map_err(|error| {
+            refusal(
+                "session::transcript-unreadable",
+                Some(format!("{}: {error}", source.path.display())),
+                "restore read access to the transcript and retry",
+            )
+        })?;
+        work.begin_pass(&source.path.display().to_string())?;
+        Ok(Self {
+            source,
+            reader: Box::new(BufReader::new(file)),
+            start: None,
+            dialect: source.dialect,
+            line: 0,
+            within_horizon: true,
             live_tail: false,
             buffer: Vec::new(),
         })

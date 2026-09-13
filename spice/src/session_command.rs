@@ -424,13 +424,7 @@ fn build_bounded_event_report(
         "compactions" => {
             let limit = project::compaction_limit(matches)?;
             let horizon = dataset::recent_compaction_horizon(sources, limit, None)?;
-            let data = dataset::WindowScan::scan(
-                sources,
-                horizon.start.as_deref(),
-                None,
-                &project::Filters::default(),
-                dataset::WindowOptions::Compactions { compactions: limit },
-            )?;
+            let data = dataset::CompactionScan::scan(sources, horizon, limit)?;
             Ok(Some(project::compactions(data)))
         }
         "slices" => {

@@ -11,6 +11,7 @@ struct BoundaryCase {
     marker: Value,
     after: Vec<Value>,
     marker_ts: &'static str,
+    assistant_before: &'static str,
     summary_after: &'static str,
     intent: &'static str,
     user_after: &'static str,
@@ -75,9 +76,14 @@ fn assert_one_boundary(transcript: &Path, case: &BoundaryCase) {
     );
     assert_eq!(compactions["rows"].as_array().map(Vec::len), Some(1));
     assert_eq!(compactions["rows"][0]["ts"], case.marker_ts);
+    assert_eq!(
+        compactions["rows"][0]["assistant_before"],
+        case.assistant_before
+    );
     assert_summary(&compactions["rows"][0]["summary_after"], case.summary_after);
     assert_eq!(compactions["rows"][0]["intent"], case.intent);
     assert_eq!(compactions["rows"][0]["user_after"], case.user_after);
+    assert_eq!(compactions["residues"], json!([]));
 
     let briefing = reply_forms(
         &strings(&["session", "briefing", &file, "--deadline-seconds", "5"]),
@@ -206,6 +212,7 @@ fn codex_current_case() -> BoundaryCase {
             ),
         ],
         marker_ts: "2026-02-01T00:00:10.000Z",
+        assistant_before: "This compaction-like prose and rehydration summary are ordinary text.",
         summary_after: "",
         intent: "[unparseable compaction-summary intent]",
         user_after: "Continue after the advertised boundary.",
@@ -227,6 +234,7 @@ fn codex_legacy_case() -> BoundaryCase {
         ),
         after: codex_after_rows(),
         marker_ts: "2026-02-01T00:00:10.000Z",
+        assistant_before: "This compaction-like prose and rehydration summary are ordinary text.",
         summary_after: "",
         intent: "[unparseable compaction-summary intent]",
         user_after: "Continue after the advertised boundary.",
@@ -236,6 +244,7 @@ fn codex_legacy_case() -> BoundaryCase {
 
 fn codex_before_rows() -> Vec<Value> {
     vec![
+        json!({"timestamp":"2026-02-01T00:00:00Z","type":"future_record"}),
         codex_event(
             "2026-02-01T00:00:01Z",
             "event_msg",
@@ -347,6 +356,7 @@ fn claude_current_case() -> BoundaryCase {
             claude_final(),
         ],
         marker_ts: "2026-02-02T00:00:10.004Z",
+        assistant_before: "Summary-shaped compaction prose is still prose.",
         summary_after: CLAUDE_REHYDRATION,
         intent: "Preserve the continuation context.",
         user_after: "Continue after the advertised boundary.",
@@ -381,6 +391,7 @@ fn claude_legacy_case() -> BoundaryCase {
             claude_final(),
         ],
         marker_ts: "2026-02-02T00:00:10.000Z",
+        assistant_before: "Summary-shaped compaction prose is still prose.",
         summary_after: SUMMARY,
         intent: "Preserve the legacy continuation.",
         user_after: "Continue after the advertised boundary.",
