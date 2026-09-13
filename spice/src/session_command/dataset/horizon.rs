@@ -1054,6 +1054,25 @@ mod tests {
             panic!("truncation must refuse")
         };
         assert_eq!(refusal.reason(), "session::transcript-generation-changed");
+
+        let compressed = ResolvedSource {
+            path: source.path.with_extension("jsonl.gz"),
+            ..source.clone()
+        };
+        fs::write(&compressed.path, b"stationary malformed gzip")
+            .expect("write malformed compressed source");
+        let mut work = SessionWork::new(SessionWorkBudget::report());
+        let mut cursor = ForwardCursor::with_preceding_assistant(
+            &compressed,
+            Some("2026-01-01T00:00:03.500Z"),
+            &mut work,
+        )
+        .expect("capture malformed compressed generation");
+        let window = cursor
+            .advance(&mut work)
+            .expect("stationary gzip corruption is not generation movement");
+        assert!(matches!(window.row, Some(DecodedRow::Residue(_))));
+        fs::remove_file(compressed.path).expect("remove malformed compressed source");
         fs::remove_file(&source.path).expect("remove replacement generation");
         fs::rename(displaced, &source.path).expect("restore original source path");
     }

@@ -139,7 +139,7 @@ pub(crate) struct ForwardCursor<'a> {
     retain_preceding_assistant: bool,
     preceding_assistant: Option<String>,
     preceding_assistant_ready: bool,
-    exact_generation: bool,
+    generation: Option<TranscriptGeneration>,
     expected_bytes: Option<u64>,
     observed_bytes: u64,
     live_tail: bool,
@@ -216,7 +216,7 @@ impl<'a> ForwardCursor<'a> {
             retain_preceding_assistant,
             preceding_assistant: captured.preceding_assistant,
             preceding_assistant_ready: false,
-            exact_generation: captured.exact_generation,
+            generation: captured.generation,
             expected_bytes: captured.expected_bytes,
             observed_bytes: 0,
             live_tail: false,
@@ -258,7 +258,7 @@ impl<'a> ForwardCursor<'a> {
             retain_preceding_assistant: false,
             preceding_assistant: None,
             preceding_assistant_ready: false,
-            exact_generation: false,
+            generation: None,
             expected_bytes: None,
             observed_bytes: 0,
             live_tail: false,
@@ -276,7 +276,7 @@ impl<'a> ForwardCursor<'a> {
                     return Ok(self.window(None, false));
                 }
                 RecordRead::Interrupted(error) => {
-                    if self.exact_generation {
+                    if self.generation_changed()? {
                         return Err(generation_changed(self.source, &error.to_string()));
                     }
                     self.line = self.line.saturating_add(1);
@@ -374,6 +374,17 @@ impl<'a> ForwardCursor<'a> {
         } else {
             Ok(())
         }
+    }
+
+    fn generation_changed(&self) -> Result<bool, Refusal> {
+        let Some(generation) = &self.generation else {
+            return Ok(false);
+        };
+        generation
+            .file
+            .metadata()
+            .map(|metadata| metadata.len() != generation.bytes)
+            .map_err(|error| source_unreadable(self.source, &error))
     }
 
     fn next_record_locus(&self) -> String {
@@ -518,8 +529,13 @@ pub(super) fn live_tail_truncated_residue(
 struct TranscriptReader {
     reader: Box<dyn BufRead>,
     preceding_assistant: Option<String>,
-    exact_generation: bool,
+    generation: Option<TranscriptGeneration>,
     expected_bytes: Option<u64>,
+}
+
+struct TranscriptGeneration {
+    file: File,
+    bytes: u64,
 }
 
 fn transcript_reader(
@@ -534,6 +550,16 @@ fn transcript_reader(
         .metadata()
         .map_err(|error| source_unreadable(source, &error))?
         .len();
+    let generation = exact_generation
+        .then(|| {
+            file.try_clone()
+                .map(|file| TranscriptGeneration {
+                    file,
+                    bytes: transcript_length,
+                })
+                .map_err(|error| source_unreadable(source, &error))
+        })
+        .transpose()?;
     if compressed(&source.path) {
         let reader: Box<dyn BufRead> = if exact_generation {
             Box::new(BufReader::new(GzDecoder::new(file.take(transcript_length))))
@@ -543,7 +569,7 @@ fn transcript_reader(
         Ok(TranscriptReader {
             reader,
             preceding_assistant: None,
-            exact_generation,
+            generation,
             expected_bytes: None,
         })
     } else {
@@ -584,7 +610,7 @@ fn transcript_reader(
         Ok(TranscriptReader {
             reader,
             preceding_assistant,
-            exact_generation,
+            generation,
             expected_bytes,
         })
     }
