@@ -145,13 +145,8 @@ impl PackageFixture {
 }
 
 fn inline(path: &str, mode: u32, bytes: impl AsRef<[u8]>) -> proof::PackageMember {
-    proof::PackageMember::admit_inline(
-        path,
-        mode,
-        bytes.as_ref().to_vec(),
-        proof::PACKAGE_DOCUMENT_LIMIT,
-    )
-    .expect("fixture member admits")
+    proof::PackageMember::admit_inline(path, mode, bytes.as_ref(), proof::PACKAGE_DOCUMENT_LIMIT)
+        .expect("fixture member admits")
 }
 
 fn file_member(source: &Path, path: &str, mode: u32) -> proof::PackageMember {

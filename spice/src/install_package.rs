@@ -634,7 +634,7 @@ mod tests {
         proof::PackageMember::admit_inline(
             path,
             mode,
-            bytes.as_ref().to_vec(),
+            bytes.as_ref(),
             proof::PACKAGE_DOCUMENT_LIMIT,
         )
         .expect("fixture member admits")
