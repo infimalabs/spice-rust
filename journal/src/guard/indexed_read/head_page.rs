@@ -126,10 +126,7 @@ impl JournalRead<'_> {
         read_metrics::observe_query();
         let mut statement = self
             .connection
-            .prepare(
-                "SELECT digest, head_seq, length(body), body FROM trust_heads \
-                 WHERE (?1 IS NULL OR digest > ?1) ORDER BY digest LIMIT ?2",
-            )
+            .prepare(TRUST_PAGE_SQL)
             .map_err(GuardError::Store)?;
         let mut rows = statement
             .query(params![after.map(wire::Digest::as_str), query_limit])
@@ -199,6 +196,9 @@ fn query_limit(budget: FactReadBudget) -> Result<i64, GuardError> {
         .map_err(|_| GuardError::Invalid("task head page limit exceeds SQLite".to_owned()))
 }
 
+const TRUST_PAGE_SQL: &str = "SELECT digest, head_seq, length(body), body FROM trust_heads \
+    WHERE digest > COALESCE(?1, '') ORDER BY digest LIMIT ?2";
+
 const TASK_PAGE_SQL: &str = "WITH task_keys(stamp) AS (\
     SELECT stamp FROM (SELECT stamp FROM task_heads \
         WHERE stamp > COALESCE(?1, '') ORDER BY stamp LIMIT ?2) \
@@ -236,6 +236,22 @@ const TASK_PROJECT_PAGE_SQL: &str = "WITH task_keys(stamp) AS (\
 
 #[cfg(test)]
 pub(crate) fn verify_task_page_plan(connection: &rusqlite::Connection) -> Result<(), String> {
+    let mut trust_plans = Vec::new();
+    for after in [None, Some("spice.test.digest")] {
+        let mut statement = connection
+            .prepare(&format!("EXPLAIN QUERY PLAN {TRUST_PAGE_SQL}"))
+            .map_err(|error| error.to_string())?;
+        let plan = statement
+            .query_map(params![after, 3_i64], |row| row.get::<_, String>(3))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        trust_plans.push(plan);
+    }
+    let trust_seeks = trust_plans.iter().all(|plan| {
+        plan.iter().any(|step| step.contains("(digest>?)"))
+            && !plan.iter().any(|step| step.contains("SCAN trust_heads "))
+    });
     let mut statement = connection
         .prepare(&format!("EXPLAIN QUERY PLAN {TASK_PAGE_SQL}"))
         .map_err(|error| error.to_string())?;
@@ -269,11 +285,11 @@ pub(crate) fn verify_task_page_plan(connection: &rusqlite::Connection) -> Result
     let project_seek = project_plan
         .iter()
         .any(|step| step.contains("task_heads_project_stamp"));
-    (seeks == 4 && !full_scan && project_seek)
+    (trust_seeks && seeks == 4 && !full_scan && project_seek)
         .then_some(())
         .ok_or_else(|| {
             format!(
-                "expected global and exact-project bounded task seeks, found global={plan:?} project={project_plan:?}"
+                "expected bounded trust, global-task, and exact-project seeks, found trust={trust_plans:?} global={plan:?} project={project_plan:?}"
             )
         })
 }
