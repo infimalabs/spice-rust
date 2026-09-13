@@ -42,14 +42,13 @@ fn package_preview_reads_only_content_addressed_executables() {
     .into_iter()
     .enumerate()
     {
-        assert_eq!(
-            index
-                .target_executable(target)
-                .unwrap_or_else(|error| panic!("sealed executable load failed: {error}"))
-                .read_bounded(proof::PACKAGE_DOCUMENT_LIMIT)
-                .expect("fixture executable reads"),
-            expected_executables[target_index]
-        );
+        let mut executable = Vec::new();
+        index
+            .target_executable(target)
+            .unwrap_or_else(|error| panic!("sealed executable load failed: {error}"))
+            .copy_to(&mut executable)
+            .expect("fixture executable copies through its admitted budget");
+        assert_eq!(executable, expected_executables[target_index]);
         assert!(
             !fixture
                 .root
@@ -73,11 +72,7 @@ fn package_preview_refuses_missing_and_mismatched_executable_objects() {
         &fixture.manifest,
     )
     .expect_err("mismatched executable object must refuse");
-    assert!(
-        mismatch
-            .to_string()
-            .contains("object disagrees with its payload inventory")
-    );
+    assert!(mismatch.to_string().contains("manifest declares"));
 
     let fixture = Fixture::new();
     fs::remove_file(&fixture.executables[0]).expect("remove executable object");
@@ -119,6 +114,42 @@ fn package_preview_refuses_missing_and_mismatched_executable_objects() {
             .to_string()
             .contains("1073741824 aggregate bytes")
     );
+
+    let mut fixture = Fixture::new();
+    let mut first_payload = fs::read(&fixture.payloads[0]).expect("read first payload fixture");
+    first_payload[0] = b'[';
+    fs::write(&fixture.payloads[0], first_payload)
+        .expect("corrupt earlier payload without changing its length");
+    let mut manifest: ReleaseManifest =
+        wire::decode(&fixture.manifest).expect("fixture manifest decodes");
+    for (target, executable) in manifest.targets.iter_mut().zip(&fixture.executables) {
+        inventory_entry(&target.inventory, "bin/spice").expect("fixture executable exists");
+        target
+            .inventory
+            .iter_mut()
+            .find(|entry| entry.path == "bin/spice")
+            .expect("fixture executable is mutable")
+            .bytes = MAX_RELEASE_MEMBER_BYTES;
+        fs::OpenOptions::new()
+            .write(true)
+            .open(executable)
+            .expect("open sparse executable")
+            .set_len(MAX_RELEASE_MEMBER_BYTES)
+            .expect("extend sparse executable");
+    }
+    fixture.manifest = wire::encode(&manifest).expect("oversized manifest encodes");
+    let overflow = ReleaseIndex::admit(
+        &fixture.root,
+        &fixture.version,
+        fixture.notes_identity.clone(),
+        &fixture.notes,
+        &fixture.manifest,
+    )
+    .expect_err("late aggregate overflow refuses before an earlier body is read");
+    assert!(
+        overflow.to_string().contains("1073741824 aggregate bytes"),
+        "preflight must outrank the unread corrupt payload: {overflow}",
+    );
 }
 
 struct Fixture {
@@ -128,6 +159,7 @@ struct Fixture {
     notes_identity: Digest,
     manifest: Vec<u8>,
     executables: Vec<PathBuf>,
+    payloads: Vec<PathBuf>,
 }
 
 impl Fixture {
@@ -164,7 +196,11 @@ impl Fixture {
             .iter()
             .map(|target| target.manifest.clone())
             .collect();
-        let executables = staged.into_iter().map(|target| target.executable).collect();
+        let executables = staged
+            .iter()
+            .map(|target| target.executable.clone())
+            .collect();
+        let payloads = staged.into_iter().map(|target| target.payload).collect();
         let manifest = wire::encode(&ReleaseManifest {
             version: RELEASE_MANIFEST_VERSION,
             source,
@@ -180,6 +216,7 @@ impl Fixture {
             notes_identity,
             manifest,
             executables,
+            payloads,
         }
     }
 }
@@ -187,6 +224,7 @@ impl Fixture {
 struct StagedFixtureTarget {
     manifest: ReleaseManifestTarget,
     executable: PathBuf,
+    payload: PathBuf,
 }
 
 fn stage_target(
@@ -217,11 +255,8 @@ fn stage_target(
     };
     let payload = wire::encode(&payload).expect("payload encodes");
     let payload_identity = Digest::compute(Domain::DistTargetPayload, &payload);
-    fs::write(
-        stage.join(format!("objects/payload-{payload_identity}.json")),
-        &payload,
-    )
-    .expect("write payload object");
+    let payload_path = stage.join(format!("objects/payload-{payload_identity}.json"));
+    fs::write(&payload_path, &payload).expect("write payload object");
     let replay = Digest::compute(Domain::ProofReplayV3, target.as_str().as_bytes());
     let environment = match target {
         ReleaseTarget::Aarch64AppleDarwin => {
@@ -252,6 +287,7 @@ fn stage_target(
             "objects/{}-0755",
             Digest::compute(Domain::DistArtifact, &executable)
         )),
+        payload: payload_path,
         manifest: ReleaseManifestTarget {
             target,
             payload: payload_identity,
