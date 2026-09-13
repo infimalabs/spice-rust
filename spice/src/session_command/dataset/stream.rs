@@ -22,23 +22,23 @@ enum RecordRead {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct ForwardContinuation {
-    pub(super) line: u64,
+pub(crate) struct ForwardContinuation {
+    pub(crate) line: u64,
     pub(super) dialect: Option<listen::Dialect>,
     pub(super) live_tail: bool,
 }
 
-pub(super) enum ForwardProgress {
+pub(crate) enum ForwardProgress {
     More(ForwardContinuation),
     Eof(ForwardContinuation),
 }
 
-pub(super) struct ForwardWindow {
-    pub(super) row: Option<DecodedRow>,
-    pub(super) progress: ForwardProgress,
+pub(crate) struct ForwardWindow {
+    pub(crate) row: Option<DecodedRow>,
+    pub(crate) progress: ForwardProgress,
 }
 
-pub(super) struct ForwardCursor<'a> {
+pub(crate) struct ForwardCursor<'a> {
     source: &'a ResolvedSource,
     reader: Box<dyn BufRead>,
     start: Option<String>,
@@ -74,7 +74,7 @@ pub(super) fn stream_records(
 }
 
 impl<'a> ForwardCursor<'a> {
-    pub(super) fn new(
+    pub(crate) fn new(
         source: &'a ResolvedSource,
         start: Option<&str>,
         work: &mut SessionWork,
@@ -93,7 +93,7 @@ impl<'a> ForwardCursor<'a> {
         })
     }
 
-    pub(super) fn advance(&mut self, work: &mut SessionWork) -> Result<ForwardWindow, Refusal> {
+    pub(crate) fn advance(&mut self, work: &mut SessionWork) -> Result<ForwardWindow, Refusal> {
         self.buffer.clear();
         let at = self.next_record_locus();
         let (read, terminated) =
@@ -155,7 +155,7 @@ impl<'a> ForwardCursor<'a> {
             && self.live_tail == continuation.live_tail
     }
 
-    pub(super) fn continuation(&self) -> ForwardContinuation {
+    pub(crate) fn continuation(&self) -> ForwardContinuation {
         ForwardContinuation {
             line: self.line,
             dialect: self.dialect,
@@ -175,7 +175,7 @@ impl<'a> ForwardCursor<'a> {
         format!("{}:record {}", self.source.path.display(), self.line)
     }
 
-    pub(super) fn vendor(&self) -> Vendor {
+    pub(crate) fn vendor(&self) -> Vendor {
         if self.source.vendor.is_unknown() {
             self.dialect.map_or(self.source.vendor, Vendor::inferred)
         } else {
@@ -337,6 +337,6 @@ fn open_transcript(source: &ResolvedSource) -> Result<File, Refusal> {
     })
 }
 
-pub(super) fn compressed(path: &Path) -> bool {
+pub(crate) fn compressed(path: &Path) -> bool {
     path.to_string_lossy().ends_with(".gz")
 }

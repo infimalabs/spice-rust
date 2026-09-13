@@ -52,7 +52,7 @@ pub(crate) fn recent_compaction_horizon(
     })
 }
 
-pub(super) fn recent_turn_start(
+pub(crate) fn recent_turn_start(
     source: &ResolvedSource,
     count: usize,
     work: &mut SessionWork,

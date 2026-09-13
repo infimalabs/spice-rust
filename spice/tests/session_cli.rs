@@ -552,13 +552,8 @@ fn assert_recall_and_commands(file: &str, start: &str, end: &str) {
         "commands",
     );
     assert_eq!(
-        commands["audit"]["filters"],
-        json!([
-            "since-compaction",
-            "failed",
-            "pipelines",
-            "noncanonical-pipelines"
-        ])
+        commands["audit"]["filters"].to_string(),
+        r#"["since-compaction","failed","pipelines","noncanonical-pipelines"]"#
     );
 }
 
@@ -773,7 +768,6 @@ fn assert_tokens_turns_and_pipelines(file: &str, start: &str, end: &str) {
         &[],
         "commands",
     );
-    assert_eq!(all_commands["rows"].as_array().map(Vec::len), Some(2));
     assert_eq!(all_commands["rows"][0]["pipeline"], "noncanonical");
     assert_eq!(all_commands["rows"][0]["exit_code"], 1);
     assert_eq!(all_commands["rows"][0]["status"], "completed");

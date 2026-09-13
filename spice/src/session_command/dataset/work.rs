@@ -21,7 +21,7 @@ pub(super) fn decoded_row_events(row: &DecodedRow) -> usize {
     }
 }
 
-pub(super) fn text_bytes<'a>(values: impl IntoIterator<Item = &'a str>) -> u64 {
+pub(crate) fn text_bytes<'a>(values: impl IntoIterator<Item = &'a str>) -> u64 {
     values
         .into_iter()
         .map(|value| u64::try_from(value.len()).unwrap_or(u64::MAX))
@@ -29,7 +29,7 @@ pub(super) fn text_bytes<'a>(values: impl IntoIterator<Item = &'a str>) -> u64 {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct SessionWorkBudget {
+pub(crate) struct SessionWorkBudget {
     source_bytes: u64,
     records: u64,
     events: u64,
@@ -39,7 +39,7 @@ pub(super) struct SessionWorkBudget {
 }
 
 impl SessionWorkBudget {
-    pub(super) fn report() -> Self {
+    pub(crate) fn report() -> Self {
         Self::new(
             REPORT_SOURCE_BYTES,
             REPORT_RECORDS,
@@ -96,14 +96,14 @@ pub(super) struct SessionWorkReport {
     pub(super) elapsed: Duration,
 }
 
-pub(super) struct SessionWork {
+pub(crate) struct SessionWork {
     budget: SessionWorkBudget,
     report: SessionWorkReport,
     started: Instant,
 }
 
 impl SessionWork {
-    pub(super) fn new(budget: SessionWorkBudget) -> Self {
+    pub(crate) fn new(budget: SessionWorkBudget) -> Self {
         Self {
             budget,
             report: SessionWorkReport::default(),
@@ -158,7 +158,7 @@ impl SessionWork {
     }
 
     /// Charge one allocation before its `String` enters retained fold state.
-    pub(super) fn admit_retained_text(&mut self, bytes: u64, at: &str) -> Result<(), Refusal> {
+    pub(crate) fn admit_retained_text(&mut self, bytes: u64, at: &str) -> Result<(), Refusal> {
         self.check_deadline(at)?;
         let next_text = self.report.retained_text_bytes.checked_add(bytes);
         if next_text.is_none_or(|next| next > self.budget.retained_text_bytes) {
@@ -200,7 +200,7 @@ impl SessionWork {
     }
 }
 
-pub(super) struct ResidueLedger {
+pub(crate) struct ResidueLedger {
     rows: Vec<Residue>,
     bytes: u64,
     omitted: u64,
@@ -208,7 +208,7 @@ pub(super) struct ResidueLedger {
 }
 
 impl ResidueLedger {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             rows: Vec::new(),
             bytes: 0,
@@ -217,7 +217,7 @@ impl ResidueLedger {
         }
     }
 
-    pub(super) fn push(
+    pub(crate) fn push(
         &mut self,
         residue: Residue,
         work: &mut SessionWork,
@@ -241,7 +241,7 @@ impl ResidueLedger {
         Ok(())
     }
 
-    pub(super) fn finish(
+    pub(crate) fn finish(
         mut self,
         work: &mut SessionWork,
         at: &str,
