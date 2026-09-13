@@ -103,7 +103,7 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).expect("create package fixture root");
-        git(&root, &["init", "--quiet"]);
+        crate::test_repository::initialize(&root);
         let stage = root.join("dist/stage");
         fs::create_dir_all(stage.join("objects")).expect("create object stage");
         let source = Digest::compute(Domain::DistSourceCommit, b"source");
@@ -276,13 +276,4 @@ fn write_object_file(stage: &Path, entry: &InventoryEntry, bytes: &[u8]) {
         bytes,
     )
     .expect("write staged object");
-}
-
-fn git(root: &Path, arguments: &[&str]) {
-    let status = Command::new("git")
-        .args(arguments)
-        .current_dir(root)
-        .status()
-        .expect("git launches");
-    assert!(status.success(), "git {arguments:?} failed");
 }
