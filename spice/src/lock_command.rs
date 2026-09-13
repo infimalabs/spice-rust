@@ -61,8 +61,10 @@ impl Drop for SignalRelay {
 }
 
 /// Report the effective configured topology without opening or creating it.
-pub(crate) fn report() -> Outcome<LockReport> {
-    let invocation = match Invocation::acquire() {
+pub(crate) fn report(
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Outcome<LockReport> {
+    let invocation = match Invocation::acquire(configuration) {
         Ok(invocation) => invocation,
         Err(failure) => return failure.outcome(),
     };
@@ -76,8 +78,11 @@ pub(crate) fn report() -> Outcome<LockReport> {
 }
 
 /// Acquire one configured shard and hold it for the exact child lifetime.
-pub(crate) fn run(matches: &clap::ArgMatches) -> RunResult {
-    match run_inner(matches) {
+pub(crate) fn run(
+    matches: &clap::ArgMatches,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> RunResult {
+    match run_inner(matches, configuration) {
         Ok(status) => RunResult::Child(status),
         Err(rejection) => {
             let Rejection { outcome, code } = *rejection;
@@ -86,7 +91,10 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> RunResult {
     }
 }
 
-fn run_inner(matches: &clap::ArgMatches) -> Result<ExitStatus, Box<Rejection>> {
+fn run_inner(
+    matches: &clap::ArgMatches,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Result<ExitStatus, Box<Rejection>> {
     let name = matches
         .get_one::<String>("NAME")
         .expect("the generated parser requires a lock name");
@@ -109,7 +117,7 @@ fn run_inner(matches: &clap::ArgMatches) -> Result<ExitStatus, Box<Rejection>> {
         .expect("the generated parser requires a trailing command")
         .cloned()
         .collect::<Vec<_>>();
-    let invocation = Invocation::acquire().map_err(Failure::standard_rejection)?;
+    let invocation = Invocation::acquire(configuration).map_err(Failure::standard_rejection)?;
     let attempt = invocation
         .topology
         .try_acquire(name, requested)
@@ -244,7 +252,7 @@ struct Invocation {
 }
 
 impl Invocation {
-    fn acquire() -> Result<Self, Failure> {
+    fn acquire(configuration: Option<&spice::config::RepositoryCapture>) -> Result<Self, Failure> {
         let working = std::env::current_dir().map_err(|error| {
             Failure::fault(
                 FaultClass::Environment,
@@ -259,15 +267,16 @@ impl Invocation {
                 error.to_string(),
             )
         })?;
-        let resolved =
-            spice::config::load_repository(&repository, &[]).map_err(Failure::configuration)?;
+        let loaded = spice::config::capture_repository_scoped(&repository, &[], configuration)
+            .map_err(Failure::configuration)?;
         repository
             .admit_state()
             .map_err(|error| match crate::state_failure(&error) {
                 crate::StateFailure::Refusal(refusal) => Failure::Refusal(refusal),
                 crate::StateFailure::Fault(fault) => Failure::Fault(fault),
             })?;
-        let topology = LockTopology::new(repository.worktree_root(), resolved.root().lock());
+        let topology =
+            LockTopology::new(repository.worktree_root(), loaded.resolved().root().lock());
         Ok(Self { working, topology })
     }
 }

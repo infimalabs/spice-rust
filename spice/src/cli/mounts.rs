@@ -39,9 +39,10 @@ impl Mount {
 }
 
 /// Deterministically admitted mounts for one invocation.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct MountRegistry {
     mounts: Vec<Mount>,
+    configuration: Option<crate::config::RepositoryCapture>,
 }
 
 impl MountRegistry {
@@ -62,10 +63,15 @@ impl MountRegistry {
             }
             Err(error) => return Err(MountLoadError::Repository(error)),
         };
-        let resolved = crate::config::load_repository(&repository, &[])
+        let loaded = crate::config::capture_repository(&repository, &[])
             .map_err(MountLoadError::Configuration)?;
-        Self::discover(repository.worktree_root(), resolved.root().commands())
-            .map_err(MountLoadError::Registry)
+        let mut registry = Self::discover(
+            repository.worktree_root(),
+            loaded.resolved().root().commands(),
+        )
+        .map_err(MountLoadError::Registry)?;
+        registry.configuration = Some(crate::config::RepositoryCapture::new(repository, loaded));
+        Ok(registry)
     }
 
     /// Validate an already admitted typed mount table against generated paths.
@@ -93,10 +99,19 @@ impl MountRegistry {
             }
         }
         if collisions.is_empty() {
-            Ok(Self { mounts })
+            Ok(Self {
+                mounts,
+                configuration: None,
+            })
         } else {
             Err(MountRegistryError { collisions })
         }
+    }
+
+    /// Configuration generation already parsed to admit this invocation's mounts.
+    #[must_use]
+    pub fn configuration(&self) -> Option<&crate::config::RepositoryCapture> {
+        self.configuration.as_ref()
     }
 
     /// Build the parser by merging mounts into the one compiled contract tree.

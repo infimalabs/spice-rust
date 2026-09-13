@@ -70,12 +70,22 @@ pub(super) struct StartupSurface {
     pub(super) trust: crate::trust_command::Surface,
 }
 
+#[cfg(test)]
 pub(super) fn load_startup_surface(
     repository: &Repository,
 ) -> Result<StartupSurface, spice::config::LoadError> {
     load_startup_surface_with(repository, || {})
 }
 
+fn load_startup_surface_scoped(
+    repository: &Repository,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Result<StartupSurface, spice::config::LoadError> {
+    let loaded = spice::config::capture_repository_scoped(repository, &[], configuration)?;
+    Ok(startup_surface_from_loaded(&loaded))
+}
+
+#[cfg(test)]
 pub(super) fn load_startup_surface_with<F>(
     repository: &Repository,
     after_capture: F,
@@ -85,7 +95,11 @@ where
 {
     let loaded = spice::config::capture_repository(repository, &[])?;
     after_capture();
-    Ok(StartupSurface {
+    Ok(startup_surface_from_loaded(&loaded))
+}
+
+fn startup_surface_from_loaded(loaded: &spice::config::Loaded) -> StartupSurface {
+    StartupSurface {
         config: SurfaceConfig {
             canvas: *loaded.resolved().root().canvas(),
             steering: loaded.resolved().root().steer().clone(),
@@ -97,8 +111,8 @@ where
             projects: loaded.resolved().root().tasks().project_policy(),
             lane: loaded.resolved().root().lane().clone(),
         },
-        trust: crate::trust_command::Surface::from_loaded(&loaded),
-    })
+        trust: crate::trust_command::Surface::from_loaded(loaded),
+    }
 }
 
 pub(super) fn require_current_surface(
@@ -330,6 +344,7 @@ pub(crate) fn up(
     test_canvas_stage: bool,
     progress: &mut dyn io::Write,
     endpoint: &mut dyn io::Write,
+    configuration: Option<&spice::config::RepositoryCapture>,
 ) -> Outcome<()> {
     let listen = match requested_listen(leaf) {
         Ok(listen) => listen,
@@ -362,7 +377,7 @@ pub(crate) fn up(
         leaf.get_flag("open"),
         progress,
         endpoint,
-        child.map(|child| child.status),
+        (child.map(|child| child.status), configuration),
     )
 }
 
@@ -483,7 +498,7 @@ pub(crate) fn up_from(current: &Path, binding: CanvasBinding) -> Outcome<()> {
         false,
         &mut io::sink(),
         &mut io::sink(),
-        None,
+        (None, None),
     )
 }
 
@@ -494,8 +509,12 @@ fn up_from_with(
     open: bool,
     progress: &mut dyn io::Write,
     endpoint: &mut dyn io::Write,
-    daemon: Option<ChildStatus>,
+    invocation: (
+        Option<ChildStatus>,
+        Option<&spice::config::RepositoryCapture>,
+    ),
 ) -> Outcome<()> {
+    let (daemon, configuration) = invocation;
     let repository = match Repository::discover(current) {
         Ok(repository) => repository,
         Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
@@ -511,7 +530,7 @@ fn up_from_with(
     if let Err(error) = fs::create_dir_all(&paths.runtime) {
         return environment_fault("resident::runtime-unavailable", &error.to_string());
     }
-    let startup_surface = match load_startup_surface(&repository) {
+    let startup_surface = match load_startup_surface_scoped(&repository, configuration) {
         Ok(surface) => surface,
         Err(error) => return configuration_refusal(&error),
     };

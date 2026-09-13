@@ -206,6 +206,10 @@ fn main() {
     #[cfg(target_arch = "wasm32")]
     let matches = cli::command().get_matches();
     #[cfg(not(target_arch = "wasm32"))]
+    let configuration = mounts.configuration();
+    #[cfg(target_arch = "wasm32")]
+    let configuration = None::<&spice::config::RepositoryCapture>;
+    #[cfg(not(target_arch = "wasm32"))]
     {
         if let Some(selection) = mounts.selected(&matches) {
             run_mounted(selection);
@@ -226,21 +230,21 @@ fn main() {
     match contract.path {
         ["watch"] => run_watch(leaf, form),
         ["retro"] => run_retro(leaf, form),
-        ["proof"] => deliver(&proof_command::seal(), form),
-        ["proof", "replay"] => deliver(&proof_command::replay(), form),
+        ["proof"] => deliver(&proof_command::seal(configuration), form),
+        ["proof", "replay"] => deliver(&proof_command::replay(configuration), form),
         _ => {}
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     {
-        dispatch_native_queries(contract, leaf, form);
-        dispatch_native_controls(contract, leaf, form);
+        dispatch_native_queries(contract, leaf, form, configuration);
+        dispatch_native_controls(contract, leaf, form, configuration);
     }
     #[cfg(target_arch = "wasm32")]
     deliver_target_refusal(contract.path, form);
     #[cfg(not(target_arch = "wasm32"))]
     if contract.path == ["up"] {
-        resident_up(leaf, form, test_canvas_stage);
+        resident_up(leaf, form, test_canvas_stage, configuration);
     } else if test_canvas_stage {
         deliver_fault(
             Fault {
@@ -305,24 +309,38 @@ use main_native_runtime::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
-fn dispatch_native_queries(contract: &cli::Contract, leaf: &clap::ArgMatches, form: Form) {
-    dispatch_native_gate_queries(contract, leaf, form);
-    dispatch_native_policy_queries(contract, leaf, form);
-    dispatch_native_repository_queries(contract, leaf, form);
+fn dispatch_native_queries(
+    contract: &cli::Contract,
+    leaf: &clap::ArgMatches,
+    form: Form,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) {
+    dispatch_native_gate_queries(contract, leaf, form, configuration);
+    dispatch_native_policy_queries(contract, leaf, form, configuration);
+    dispatch_native_repository_queries(contract, leaf, form, configuration);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn dispatch_native_gate_queries(contract: &cli::Contract, leaf: &clap::ArgMatches, form: Form) {
+fn dispatch_native_gate_queries(
+    contract: &cli::Contract,
+    leaf: &clap::ArgMatches,
+    form: Form,
+    _configuration: Option<&spice::config::RepositoryCapture>,
+) {
     match contract.path {
-        ["doctor"] => deliver(&doctor_outcome(), form),
+        ["doctor"] => deliver(&doctor_outcome(_configuration), form),
         ["demo"] => deliver(&demo_command::run(leaf), form),
-        ["gate"] => deliver(&gate_command::run(leaf), form),
+        ["gate"] => deliver(&gate_command::run(leaf, _configuration), form),
         ["gate", "findings"] => deliver(&gate_command::findings(leaf, contract), form),
         ["gate", "prove"] => deliver(&gate_command::prove(leaf), form),
         ["gate", "camp"] => deliver(&gate_command::camp(), form),
-        ["gate", "commit-msg"] => deliver_commit_message(gate_command::commit_message(leaf), form),
+        ["gate", "commit-msg"] => {
+            deliver_commit_message(gate_command::commit_message(leaf, _configuration), form)
+        }
         ["gate", "kill"] => deliver(&gate_command::kill(), form),
-        ["gate", "pre-commit"] => deliver_commit_gate(&gate_command::pre_commit(leaf), form),
+        ["gate", "pre-commit"] => {
+            deliver_commit_gate(&gate_command::pre_commit(leaf, _configuration), form)
+        }
         ["gate", "selection"] => deliver_commit_gate(&gate_command::selection(), form),
         ["install"] => match install_command::run(leaf) {
             install_command::Answer::Plan(outcome) => deliver(&outcome, form),
@@ -338,7 +356,12 @@ fn dispatch_native_gate_queries(contract: &cli::Contract, leaf: &clap::ArgMatche
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn dispatch_native_policy_queries(contract: &cli::Contract, leaf: &clap::ArgMatches, form: Form) {
+fn dispatch_native_policy_queries(
+    contract: &cli::Contract,
+    leaf: &clap::ArgMatches,
+    form: Form,
+    _configuration: Option<&spice::config::RepositoryCapture>,
+) {
     match contract.path {
         ["dev", "cargo"] => match cargo_command::run(leaf) {
             cargo_command::RunResult::Child(status) => terminate_child(status),
@@ -353,7 +376,7 @@ fn dispatch_native_policy_queries(contract: &cli::Contract, leaf: &clap::ArgMatc
             }
         },
         ["dev", "cargo-store"] => deliver(&cargo_command::store(leaf), form),
-        ["rtk", "gain"] => deliver(&rtk_command::gain(leaf), form),
+        ["rtk", "gain"] => deliver(&rtk_command::gain(leaf, _configuration), form),
         ["consent"] => deliver(&consent_command::read(contract), form),
         ["consent", "allow"] => deliver(
             &consent_command::decide(leaf, contract, wire::Answer::Granted),
@@ -364,8 +387,8 @@ fn dispatch_native_policy_queries(contract: &cli::Contract, leaf: &clap::ArgMatc
             form,
         ),
         ["consent", "policy"] => deliver(&consent_command::policy(contract), form),
-        ["lock"] => deliver(&lock_command::report(), form),
-        ["lock", "run"] => match lock_command::run(leaf) {
+        ["lock"] => deliver(&lock_command::report(_configuration), form),
+        ["lock", "run"] => match lock_command::run(leaf, _configuration) {
             lock_command::RunResult::Child(status) => terminate_child(status),
             lock_command::RunResult::Rejected { outcome, code } => {
                 deliver_with_code(&outcome, form, code)
@@ -374,9 +397,10 @@ fn dispatch_native_policy_queries(contract: &cli::Contract, leaf: &clap::ArgMatc
         ["task", "artifact", "add"]
         | ["task", "artifact", "list"]
         | ["task", "artifact", "show"]
-        | ["task", "artifact", "prune"] => {
-            deliver(&task_artifact_command::run(leaf, contract), form)
-        }
+        | ["task", "artifact", "prune"] => deliver(
+            &task_artifact_command::run(leaf, contract, _configuration),
+            form,
+        ),
         ["backup"] => deliver(&journal_command::backup(leaf), form),
         ["restore"] => deliver(&restore_command::restore(leaf), form),
         _ => {}
@@ -388,6 +412,7 @@ fn dispatch_native_repository_queries(
     contract: &cli::Contract,
     leaf: &clap::ArgMatches,
     form: Form,
+    _configuration: Option<&spice::config::RepositoryCapture>,
 ) {
     match contract.path {
         ["journal"] => deliver(&journal_command::report(contract), form),
@@ -401,7 +426,12 @@ fn dispatch_native_repository_queries(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, form: Form) {
+fn dispatch_native_controls(
+    contract: &cli::Contract,
+    leaf: &clap::ArgMatches,
+    form: Form,
+    _configuration: Option<&spice::config::RepositoryCapture>,
+) {
     match contract.path {
         ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
         ["session"]
@@ -419,7 +449,7 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
         | ["session", "timeline"]
         | ["session", "tokens"]
         | ["session", "turns"] => deliver(
-            &session_command::run(leaf, contract.path, &session_environment()),
+            &session_command::run(leaf, contract.path, &session_environment(), _configuration),
             form,
         ),
         ["lane"]
@@ -428,7 +458,7 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
         | ["lane", "wake"]
         | ["lane", "remove"]
         | ["lane", "import"]
-        | ["recall"] => deliver(&lane_command::run(leaf, contract), form),
+        | ["recall"] => deliver(&lane_command::run(leaf, contract, _configuration), form),
         ["release", "publish"] => match release_command::run(leaf, contract) {
             release_command::RunResult::Plan(outcome) => deliver(&outcome, form),
             release_command::RunResult::Published(outcome) => deliver(&outcome, form),
@@ -472,51 +502,51 @@ fn dispatch_native_controls(contract: &cli::Contract, leaf: &clap::ArgMatches, f
             &steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE)),
             form,
         ),
-        ["hook"] => {
-            let harness = leaf
-                .get_one::<String>("HARNESS")
-                .expect("clap requires a hook harness");
-            let invocation =
-                match steering_command::read_hook_invocation(&mut io::stdin().lock(), harness) {
-                    Ok(invocation) => invocation,
-                    Err(error) => deliver_fault(render_fault(error), Form::Text),
-                };
-            match invocation {
-                steering_command::HookInvocation::Steering => {
-                    let outcome = steering_command::run(
-                        leaf,
-                        contract,
-                        bootstrap_environment(steer::hook::LANE),
-                    );
-                    deliver_inbox_hook(&outcome, harness, form)
-                }
-                steering_command::HookInvocation::Rewrite(request) => {
-                    let executable = bootstrap_environment(spice::rtk::EXECUTABLE_VARIABLE);
-                    match request.answer(executable.as_deref()) {
-                        Ok(reply) => {
-                            if let Some(diagnostic) = reply.diagnostic() {
-                                let _ = writeln!(io::stderr().lock(), "{diagnostic}");
-                            }
-                            let mut stdout = io::stdout().lock();
-                            let _ = stdout.write_all(reply.document());
-                            let _ = stdout.flush();
-                            terminate_code(REPLY_EXIT)
-                        }
-                        Err(error) => deliver_fault(render_fault(error), Form::Text),
-                    }
-                }
-                steering_command::HookInvocation::Ignore => terminate_code(REPLY_EXIT),
-            }
-        }
-        ["trust"] => deliver(&trust_command::report(contract), form),
-        ["trust", "pend"] => deliver(&trust_command::pend(contract), form),
+        ["hook"] => dispatch_hook(leaf, contract, form),
+        ["trust"] => deliver(&trust_command::report(contract, _configuration), form),
+        ["trust", "pend"] => deliver(&trust_command::pend(contract, _configuration), form),
         ["trust", "grant"] => deliver(&trust_command::rule(leaf, contract, true), form),
         ["trust", "revoke"] => deliver(&trust_command::rule(leaf, contract, false), form),
-        ["taste"] => deliver(&taste_command::report(contract), form),
-        ["taste", "add"] => deliver(&taste_command::add(leaf, contract), form),
-        ["taste", "drop"] => deliver(&taste_command::drop(leaf, contract), form),
-        ["taste", "mine"] => deliver(&taste_command::mine(contract), form),
+        ["taste"] => deliver(&taste_command::report(contract, _configuration), form),
+        ["taste", "add"] => deliver(&taste_command::add(leaf, contract, _configuration), form),
+        ["taste", "drop"] => deliver(&taste_command::drop(leaf, contract, _configuration), form),
+        ["taste", "mine"] => deliver(&taste_command::mine(contract, _configuration), form),
         _ => {}
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn dispatch_hook(leaf: &clap::ArgMatches, contract: &cli::Contract, form: Form) {
+    let harness = leaf
+        .get_one::<String>("HARNESS")
+        .expect("clap requires a hook harness");
+    let invocation = match steering_command::read_hook_invocation(&mut io::stdin().lock(), harness)
+    {
+        Ok(invocation) => invocation,
+        Err(error) => deliver_fault(render_fault(error), Form::Text),
+    };
+    match invocation {
+        steering_command::HookInvocation::Steering => {
+            let outcome =
+                steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE));
+            deliver_inbox_hook(&outcome, harness, form)
+        }
+        steering_command::HookInvocation::Rewrite(request) => {
+            let executable = bootstrap_environment(spice::rtk::EXECUTABLE_VARIABLE);
+            match request.answer(executable.as_deref()) {
+                Ok(reply) => {
+                    if let Some(diagnostic) = reply.diagnostic() {
+                        let _ = writeln!(io::stderr().lock(), "{diagnostic}");
+                    }
+                    let mut stdout = io::stdout().lock();
+                    let _ = stdout.write_all(reply.document());
+                    let _ = stdout.flush();
+                    terminate_code(REPLY_EXIT)
+                }
+                Err(error) => deliver_fault(render_fault(error), Form::Text),
+            }
+        }
+        steering_command::HookInvocation::Ignore => terminate_code(REPLY_EXIT),
     }
 }
 
@@ -615,7 +645,9 @@ fn not_landed_from(path: &[&str], landing: cli::Landing) -> Outcome<()> {
 /// Acquire Doctor's ambient inputs at the binary rim, retaining presence but
 /// never the values of Spice-owned variables.
 #[cfg(not(target_arch = "wasm32"))]
-fn doctor_outcome() -> Outcome<wire::DoctorReport<spice::config::Root>> {
+fn doctor_outcome(
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Outcome<wire::DoctorReport<spice::config::Root>> {
     let working = match std::env::current_dir() {
         Ok(path) => path,
         Err(error) => {
@@ -637,7 +669,12 @@ fn doctor_outcome() -> Outcome<wire::DoctorReport<spice::config::Root>> {
         .collect();
     let search_path = bootstrap_environment("PATH");
 
-    doctor::inspect(&working, &environment, search_path.as_deref())
+    doctor::inspect(
+        &working,
+        &environment,
+        search_path.as_deref(),
+        configuration,
+    )
 }
 
 fn run_retro(matches: &clap::ArgMatches, form: Form) -> ! {

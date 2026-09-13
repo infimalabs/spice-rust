@@ -14,7 +14,10 @@ use wire::{
 use spice::repository::Repository;
 
 /// Resolve one agent database and run the configured RTK gain query against it.
-pub(crate) fn gain(matches: &ArgMatches) -> Outcome<RtkGainReport> {
+pub(crate) fn gain(
+    matches: &ArgMatches,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Outcome<RtkGainReport> {
     let requested = matches
         .get_one::<String>("AGENT_UUID")
         .expect("clap requires the registered agent UUID operand");
@@ -30,30 +33,12 @@ pub(crate) fn gain(matches: &ArgMatches) -> Outcome<RtkGainReport> {
             .outcome();
         }
     };
-    let current = match std::env::current_dir() {
-        Ok(current) => current,
-        Err(error) => {
-            return Failure::fault(
-                FaultClass::Environment,
-                "rtk::working-directory-unavailable",
-                error.to_string(),
-            )
-            .outcome();
-        }
-    };
-    let repository = match Repository::discover(&current) {
+    let repository = match current_repository() {
         Ok(repository) => repository,
-        Err(error) => {
-            return Failure::fault(
-                FaultClass::Environment,
-                "rtk::repository-unresolved",
-                error.to_string(),
-            )
-            .outcome();
-        }
+        Err(failure) => return failure.outcome(),
     };
-    let resolved = match spice::config::load_repository(&repository, &[]) {
-        Ok(resolved) => resolved,
+    let loaded = match spice::config::capture_repository_scoped(&repository, &[], configuration) {
+        Ok(loaded) => loaded,
         Err(error) => {
             return Failure::refusal(
                 "rtk::configuration-refused",
@@ -77,7 +62,7 @@ pub(crate) fn gain(matches: &ArgMatches) -> Outcome<RtkGainReport> {
             .outcome();
         }
     };
-    let executable = resolved.root().rtk().executable();
+    let executable = loaded.resolved().root().rtk().executable();
     let output = match Command::new(executable)
         .arg("gain")
         .current_dir(repository.worktree_root())
@@ -128,6 +113,23 @@ pub(crate) fn gain(matches: &ArgMatches) -> Outcome<RtkGainReport> {
             database: database_text,
             output,
         },
+    })
+}
+
+fn current_repository() -> Result<Repository, Failure> {
+    let current = std::env::current_dir().map_err(|error| {
+        Failure::fault(
+            FaultClass::Environment,
+            "rtk::working-directory-unavailable",
+            error.to_string(),
+        )
+    })?;
+    Repository::discover(&current).map_err(|error| {
+        Failure::fault(
+            FaultClass::Environment,
+            "rtk::repository-unresolved",
+            error.to_string(),
+        )
     })
 }
 

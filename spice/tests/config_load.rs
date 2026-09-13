@@ -1,10 +1,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use spice::config::{
     AcquisitionKind, FlagOverride, FlagValue, PathSegment, Resolved, capture_repository,
-    descriptor, descriptors, load, load_repository, pre_commit_declarations,
+    capture_repository_scoped, descriptor, descriptors, load, load_repository,
+    pre_commit_declarations,
 };
 use wire::{ConfigSource, Name};
 
@@ -150,9 +152,17 @@ fn captured_pre_commit_declarations_expose_exact_ordered_capability_material() {
     );
     let repository = spice::repository::Repository::discover(&root).expect("fixture repository");
     let before = snapshot(scratch.path());
-    let loaded = capture_repository(&repository, &[]).expect("ordered commands capture");
+    let mounts = spice::cli::MountRegistry::load(&root).expect("invocation mounts capture");
+    let invocation = mounts
+        .configuration()
+        .expect("repository invocation retains configuration");
+    let loaded = capture_repository_scoped(&repository, &[], Some(invocation))
+        .expect("operation reuses invocation configuration");
+    let repeated = capture_repository_scoped(&repository, &[], Some(invocation))
+        .expect("same operation reuses the same generation");
+    assert!(Arc::ptr_eq(&loaded, &repeated));
     let declarations =
-        pre_commit_declarations(&loaded).expect("captured commands expose their authority");
+        pre_commit_declarations(loaded.as_ref()).expect("captured commands expose their authority");
 
     assert_eq!(declarations.source(), ConfigSource::Tracked);
     assert_eq!(declarations.configuration(), loaded.locations().tracked());

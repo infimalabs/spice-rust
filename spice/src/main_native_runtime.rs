@@ -107,7 +107,12 @@ pub(super) fn run_mounted(selection: cli::MountSelection<'_>) -> ! {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) fn resident_up(leaf: &clap::ArgMatches, form: Form, test_canvas_stage: bool) -> ! {
+pub(super) fn resident_up(
+    leaf: &clap::ArgMatches,
+    form: Form,
+    test_canvas_stage: bool,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> ! {
     if !leaf.get_flag("foreground") {
         deliver(&resident::launch(leaf), form);
     }
@@ -128,6 +133,7 @@ pub(super) fn resident_up(leaf: &clap::ArgMatches, form: Form, test_canvas_stage
             test_canvas_stage,
             &mut io::stderr().lock(),
             &mut io::stdout().lock(),
+            configuration,
         ),
         // A detached child is itself a JSON process so any terminal outcome in
         // the common log stays typed. Its progress still belongs in that log,
@@ -138,6 +144,7 @@ pub(super) fn resident_up(leaf: &clap::ArgMatches, form: Form, test_canvas_stage
             test_canvas_stage,
             &mut io::stderr().lock(),
             &mut io::sink(),
+            configuration,
         ),
         (Form::Json, None) => resident::up(
             leaf,
@@ -145,6 +152,7 @@ pub(super) fn resident_up(leaf: &clap::ArgMatches, form: Form, test_canvas_stage
             test_canvas_stage,
             &mut io::sink(),
             &mut io::sink(),
+            configuration,
         ),
     };
     if let Some(status) = status {

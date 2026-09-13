@@ -300,10 +300,20 @@ fn wrapper_refusal(error: spice::agent_wrapper::ResolveError) -> ConfiguredFailu
 }
 
 impl DispatchPolicy {
+    #[cfg(test)]
     fn load(repository: &Repository) -> Result<Self, ConfiguredFailure> {
-        let loaded = spice::config::capture_repository(repository, &[]).map_err(|error| {
-            ConfiguredFailure::refusal("gate::pre-commit-policy-refused", error.to_string())
-        })?;
+        Self::load_scoped(repository, None)
+    }
+
+    fn load_scoped(
+        repository: &Repository,
+        configuration: Option<&spice::config::RepositoryCapture>,
+    ) -> Result<Self, ConfiguredFailure> {
+        let loaded = spice::config::capture_repository_scoped(repository, &[], configuration)
+            .map_err(|error| {
+                ConfiguredFailure::refusal("gate::pre-commit-policy-refused", error.to_string())
+            })?;
+        let loaded = loaded.as_ref();
         let policy = loaded.resolved().root().policy();
         let builtins = policy.pre_commit_builtins();
         let commands = policy.pre_commit().to_vec();
@@ -323,7 +333,7 @@ impl DispatchPolicy {
         } else {
             None
         };
-        let (configuration, source) = pre_commit_declarations(&loaded).map_or_else(
+        let (configuration, source) = pre_commit_declarations(loaded).map_or_else(
             || {
                 (
                     loaded.locations().tracked().to_path_buf(),
@@ -339,7 +349,7 @@ impl DispatchPolicy {
         );
         Ok(Self {
             builtins,
-            surface: Surface::from_loaded(&loaded),
+            surface: Surface::from_loaded(loaded),
             spice,
             worktree: repository.worktree_root().to_path_buf(),
             configuration,
@@ -563,6 +573,14 @@ impl Dispatch {
         repository: Repository,
         claim: gate::ClaimCapture,
     ) -> Result<Self, ConfiguredFailure> {
+        Self::capture_at_with_claim_and_configuration(repository, claim, None)
+    }
+
+    pub(super) fn capture_at_with_claim_and_configuration(
+        repository: Repository,
+        claim: gate::ClaimCapture,
+        configuration: Option<&spice::config::RepositoryCapture>,
+    ) -> Result<Self, ConfiguredFailure> {
         let state = repository.admit_state().map_err(|error| {
             ConfiguredFailure::fault("gate::pre-commit-state-unavailable", error.to_string())
         })?;
@@ -578,7 +596,7 @@ impl Dispatch {
         .map_err(|error| {
             ConfiguredFailure::refusal("gate::pre-commit-staged-source-refused", error.to_string())
         })?;
-        let policy = DispatchPolicy::load(&repository)?;
+        let policy = DispatchPolicy::load_scoped(&repository, configuration)?;
         policy.verify_selected(anchor.root())?;
         let authority = DispatchAuthority::capture(&anchor)?;
         let mut dispatch = Self {

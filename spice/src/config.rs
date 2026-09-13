@@ -24,7 +24,8 @@ pub const GENERATION_BYTE_LIMIT: u64 = 2 * 1024 * 1024;
 
 pub use load::{
     AcquisitionIssue, AcquisitionKind, CaptureGeneration, LoadError, Loaded, Locations,
-    capture_repository, load, load_repository, locations,
+    RepositoryCapture, capture_repository, capture_repository_scoped, load, load_repository,
+    locations,
 };
 pub use mounts::CommandMounts;
 pub use pre_commit::{

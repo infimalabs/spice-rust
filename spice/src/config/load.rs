@@ -6,6 +6,7 @@ use std::fmt;
 use std::fs::{File, Metadata};
 use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use wire::ConfigSource;
 
@@ -50,6 +51,13 @@ pub struct Loaded {
     worktree: Option<String>,
     local: Option<String>,
     generation: CaptureGeneration,
+}
+
+/// One invocation-scoped configuration capture bound to its repository.
+#[derive(Clone)]
+pub struct RepositoryCapture {
+    repository: Repository,
+    loaded: Arc<Loaded>,
 }
 
 /// Filesystem generation of the three documents in one configuration capture.
@@ -179,6 +187,32 @@ impl Loaded {
     #[must_use]
     pub fn into_resolved(self) -> Resolved {
         self.resolved
+    }
+}
+
+impl RepositoryCapture {
+    /// Capture one repository configuration for reuse within the caller's operation.
+    pub(crate) fn new(repository: Repository, loaded: Loaded) -> Self {
+        Self {
+            repository,
+            loaded: Arc::new(loaded),
+        }
+    }
+
+    /// Reuse the capture only for the exact repository that produced it.
+    #[must_use]
+    fn loaded_for(&self, repository: &Repository) -> Option<Arc<Loaded>> {
+        (&self.repository == repository).then(|| Arc::clone(&self.loaded))
+    }
+}
+
+impl fmt::Debug for RepositoryCapture {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RepositoryCapture")
+            .field("repository", &self.repository)
+            .field("configuration", &"captured")
+            .finish()
     }
 }
 
@@ -563,6 +597,23 @@ pub fn capture_repository(
         }
         (_, result) => Err(LoadError::configuration(acquisition, result.err())),
     }
+}
+
+/// Reuse an invocation capture for its exact repository, or capture afresh.
+///
+/// Nonempty flag overrides always require a fresh resolution because the mount
+/// registry is captured without command-local overrides.
+pub fn capture_repository_scoped(
+    repository: &Repository,
+    flags: &[FlagOverride],
+    invocation: Option<&RepositoryCapture>,
+) -> Result<Arc<Loaded>, LoadError> {
+    if flags.is_empty()
+        && let Some(loaded) = invocation.and_then(|capture| capture.loaded_for(repository))
+    {
+        return Ok(loaded);
+    }
+    capture_repository(repository, flags).map(Arc::new)
 }
 
 fn acquire(

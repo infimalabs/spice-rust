@@ -23,7 +23,10 @@ impl Run {
     }
 }
 
-pub(super) fn run(matches: &clap::ArgMatches) -> Run {
+pub(super) fn run(
+    matches: &clap::ArgMatches,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Run {
     let Some(message_file) = matches.get_one::<OsString>("MESSAGE_FILE") else {
         return failure(Failure::protocol(
             "gate::commit-message-path-missing",
@@ -48,13 +51,13 @@ pub(super) fn run(matches: &clap::ArgMatches) -> Run {
             ));
         }
     };
-    let resolved = match spice::config::load_repository(&repository, &[]) {
-        Ok(resolved) => resolved,
+    let loaded = match spice::config::capture_repository_scoped(&repository, &[], configuration) {
+        Ok(loaded) => loaded,
         Err(error) => return failure(Failure::configuration(error)),
     };
     match spice::commit_message::apply(
         Path::new(message_file),
-        resolved.root().policy().commit_message(),
+        loaded.resolved().root().policy().commit_message(),
     ) {
         Ok(folded) => Run {
             outcome: Outcome::Reply(Reply {

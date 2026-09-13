@@ -12,7 +12,11 @@ use crate::cli::Contract;
 use crate::command_client::{self, SelectedCommand};
 
 /// Execute one landed lane-family leaf.
-pub(crate) fn run(matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
+pub(crate) fn run(
+    matches: &ArgMatches,
+    contract: &Contract,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Outcome<CommandAnswer> {
     let current = match std::env::current_dir() {
         Ok(current) => current,
         Err(error) => return environment_fault("lane::cwd-unavailable", &error.to_string()),
@@ -29,7 +33,14 @@ pub(crate) fn run(matches: &ArgMatches, contract: &Contract) -> Outcome<CommandA
 
     match contract.path {
         ["lane"] => command_client::execute(canvas, contract, SelectedCommand::LaneRead),
-        ["lane", "add"] => add(&repository, canvas, &current, matches, contract),
+        ["lane", "add"] => add(
+            &repository,
+            canvas,
+            &current,
+            matches,
+            contract,
+            configuration,
+        ),
         ["lane", "drain"] => state(canvas, matches, contract, LaneAction::Drain),
         ["lane", "wake"] => state(canvas, matches, contract, LaneAction::Wake),
         ["lane", "remove"] => state(canvas, matches, contract, LaneAction::Remove),
@@ -48,6 +59,7 @@ fn add(
     current: &Path,
     matches: &ArgMatches,
     contract: &Contract,
+    configuration: Option<&spice::config::RepositoryCapture>,
 ) -> Outcome<CommandAnswer> {
     let requested = matches
         .get_one::<String>("WORKTREE")
@@ -81,10 +93,11 @@ fn add(
             "name the root of one existing worktree, not a path nested beneath it",
         );
     }
-    let resolved = match spice::config::load_repository(&worktree, &[]) {
-        Ok(resolved) => resolved,
+    let loaded = match spice::config::capture_repository_scoped(&worktree, &[], configuration) {
+        Ok(loaded) => loaded,
         Err(error) => return configuration_refusal(&error),
     };
+    let resolved = loaded.resolved();
     let life = matches.get_one::<String>("life").map_or_else(
         || resolved.root().lane().life().as_str().to_owned(),
         |life| life.to_ascii_lowercase(),

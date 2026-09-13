@@ -26,13 +26,16 @@ mod verify_claim;
 pub(crate) use prove::prove;
 
 /// Run the ordinary gate against the captured index or one selected commit.
-pub(crate) fn run(matches: &clap::ArgMatches) -> Outcome<BatteryReport> {
+pub(crate) fn run(
+    matches: &clap::ArgMatches,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Outcome<BatteryReport> {
     let selector = matches
         .get_one::<String>("at")
         .map_or_else(Selector::staged, |revision| {
             Selector::revision(revision.clone())
         });
-    let admission = verify_claim::admit_current_worktree();
+    let admission = verify_claim::admit_current_worktree(configuration);
     match verify_claim::launch_after_admission(admission, || spice::gate::run(selector)) {
         Ok(Ok(report)) => direct(report),
         Ok(Err(error)) => battery_failure(error),
@@ -119,11 +122,15 @@ fn run_report(result: Result<GateReport, gate::RunError>) -> Outcome<GateReport>
 }
 
 /// Run the release-scoped native staged-change gate without command recursion.
-pub(crate) fn pre_commit(matches: &clap::ArgMatches) -> Outcome<pre_commit::Report> {
+pub(crate) fn pre_commit(
+    matches: &clap::ArgMatches,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Outcome<pre_commit::Report> {
     pre_commit::run(
         matches
             .get_one::<String>("profile-output")
             .map(std::path::PathBuf::from),
+        configuration,
     )
 }
 
@@ -278,8 +285,11 @@ mod selection_progress_tests {
 pub(crate) use commit_message::Run as CommitMessageRun;
 
 /// Apply the current repository commit-message policy to Git's message file.
-pub(crate) fn commit_message(matches: &clap::ArgMatches) -> CommitMessageRun {
-    commit_message::run(matches)
+pub(crate) fn commit_message(
+    matches: &clap::ArgMatches,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> CommitMessageRun {
+    commit_message::run(matches, configuration)
 }
 
 pub(crate) fn pre_commit_worker_entry(
