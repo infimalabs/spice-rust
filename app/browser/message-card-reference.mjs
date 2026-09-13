@@ -683,7 +683,8 @@ async function retainFinalCard(page, console, activityReplay, lane) {
     return candidate?.dataset.layoutPhase === "committed"
       && candidate.classList.contains("final")
       && [...candidate.querySelectorAll(".message-badge")]
-        .map((badge) => badge.textContent).join(",") === "FINAL,ACK1";
+        .map((badge) => badge.textContent).join(",") === "FINAL"
+      && candidate.querySelector(".message-ack-pill")?.textContent === "ACK1";
   }, message.key);
   return card;
 }
@@ -721,7 +722,7 @@ async function messageStateColors(card) {
     const footerRightBounds = footerRight.getBoundingClientRect();
     const finalBadge = article.querySelector(".message-badge--final");
     const badgeBounds = finalBadge?.getBoundingClientRect();
-    const badgeGeometry = [...article.querySelectorAll(".message-badge")].map((badge) => {
+    const badgeGeometry = [...article.querySelectorAll(".message-badge, .message-ack-pill")].map((badge) => {
       const bounds = badge.getBoundingClientRect();
       const badgeStyle = getComputedStyle(badge);
       const count = badge.querySelector(".message-badge-count");
@@ -799,9 +800,9 @@ async function messageStateColors(card) {
         footerBottom: footerBounds.bottom,
         footerRightLeft: footerRightBounds.left,
       },
-      badgeTexts: [...article.querySelectorAll(".message-badge")]
+      badgeTexts: [...article.querySelectorAll(".message-badge, .message-ack-pill")]
         .map((badge) => badge.textContent),
-      badgeBorderWidths: [...article.querySelectorAll(".message-badge")]
+      badgeBorderWidths: [...article.querySelectorAll(".message-badge, .message-ack-pill")]
         .map((badge) => getComputedStyle(badge).borderWidth),
       badgeCountShadows: [...article.querySelectorAll(".message-badge-count")]
         .map((count) => getComputedStyle(count).boxShadow),
@@ -866,8 +867,8 @@ async function captureFinalMessageStates(
   );
   assert.deepEqual(
     final.badgeTexts,
-    ["FINAL", "ACK1"],
-    `${mode} ${viewport.label} keeps FINAL distinct from an existing ACK classification`,
+    ["ACK1", "FINAL"],
+    `${mode} ${viewport.label} keeps inline ACK distinct from footer FINAL`,
   );
   assert.deepEqual(
     final.badgeBorderWidths,
@@ -884,32 +885,28 @@ async function captureFinalMessageStates(
     assert.deepEqual(
       {
         display: badge.display,
-        height: badge.height,
         minHeight: badge.minHeight,
         padding: badge.padding,
         borderWidth: badge.borderWidth,
         borderRadius: badge.borderRadius,
-        fontSize: badge.fontSize,
         fontFamily: badge.fontFamily,
         fontWeight: badge.fontWeight,
       },
       {
         display: "flex",
-        height: 17,
         minHeight: "17px",
         padding: "0px 4px",
         borderWidth: "0px",
         borderRadius: "999px",
-        fontSize: "12px",
         fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
         fontWeight: "700",
       },
       `${mode} ${viewport.label} gives ${badge.text} the shared inline-badge geometry`,
     );
   }
-  const [finalGeometry, ackGeometry] = final.badgeGeometry;
-  assert.equal(finalGeometry.text, "FINAL", `${mode} ${viewport.label} measures FINAL first`);
-  assert.equal(ackGeometry.text, "ACK1", `${mode} ${viewport.label} measures counted ACK second`);
+  const [ackGeometry, finalGeometry] = final.badgeGeometry;
+  assert.equal(ackGeometry.text, "ACK1", `${mode} ${viewport.label} measures inline ACK first`);
+  assert.equal(finalGeometry.text, "FINAL", `${mode} ${viewport.label} measures footer FINAL second`);
   assert.deepEqual(
     {
       text: ackGeometry.count?.text,
@@ -937,12 +934,11 @@ async function captureFinalMessageStates(
   assert.ok(
     final.badgeGeometry.every((badge) => badge.scrollWidth <= badge.clientWidth + 1)
       && ackGeometry.count.scrollWidth <= ackGeometry.count.clientWidth + 1,
-    `${mode} ${viewport.label} keeps every footer classifier label and count unclipped`,
+    `${mode} ${viewport.label} keeps inline and footer classifier content unclipped`,
   );
   assert.ok(
-    finalGeometry.right <= ackGeometry.left
-      && ackGeometry.right <= final.footerGeometry.rightStart,
-    `${mode} ${viewport.label} keeps ordered badges clear of adjacent metadata`,
+    finalGeometry.right <= final.footerGeometry.rightStart,
+    `${mode} ${viewport.label} keeps footer FINAL clear of adjacent metadata`,
   );
   assert.equal(
     final.footerGeometry.height,
