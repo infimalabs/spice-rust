@@ -514,7 +514,7 @@ fn read_recent_compaction_markers_forward(
     ))
 }
 
-fn last_assistant_from_record(record: &TypedRecord) -> Option<String> {
+pub(super) fn last_assistant_from_record(record: &TypedRecord) -> Option<String> {
     record.events.iter().rev().find_map(|sourced| {
         if let Event::Prose(prose) = &sourced.event
             && prose.role == listen::ProseRole::Assistant
@@ -562,31 +562,75 @@ pub(super) fn start_offset_after_prior_timestamp(
     start: &str,
     work: &mut SessionWork,
 ) -> Result<u64, Refusal> {
+    start_boundary(source, start, false, work).map(|(offset, _)| offset)
+}
+
+pub(super) fn start_offset_after_prior_assistant(
+    source: &ResolvedSource,
+    start: &str,
+    work: &mut SessionWork,
+) -> Result<(u64, Option<String>), Refusal> {
+    start_boundary(source, start, true, work)
+}
+
+fn start_boundary(
+    source: &ResolvedSource,
+    start: &str,
+    require_assistant: bool,
+    work: &mut SessionWork,
+) -> Result<(u64, Option<String>), Refusal> {
     let mut offset = 0_u64;
-    let mut context = None;
+    let mut context: Option<usize> = None;
+    let mut assistant = None;
     let progress = reverse_lines(&source.path, work, |line, current, _, _, work| {
         if let Some(remaining) = context.as_mut() {
-            offset = current;
-            *remaining -= 1;
-            return Ok(*remaining > 0);
+            if *remaining > 0 {
+                offset = current;
+                *remaining -= 1;
+            }
+            if !require_assistant {
+                return Ok(*remaining > 0);
+            }
+            let at = format!("{}:byte {current}", source.path.display());
+            let typed =
+                decode_reverse_row(source, line, current, false, work, &at)?.and_then(|row| {
+                    match row {
+                        DecodedRow::Typed(row) => Some(row),
+                        DecodedRow::Residue(_) | DecodedRow::Ignored => None,
+                    }
+                });
+            if assistant.is_none()
+                && let Some(record) = typed.as_ref()
+                && record_timestamp(record) < start
+            {
+                assistant = last_assistant_from_record(record);
+            }
+            return Ok(*remaining > 0 || assistant.is_none());
         }
         let at = format!("{}:byte {current}", source.path.display());
-        let timestamp = decode_reverse_row(source, line, current, false, work, &at)?.and_then(
-            |row| match row {
-                DecodedRow::Typed(row) => Some(record_timestamp(&row).to_owned()),
-                DecodedRow::Residue(_) | DecodedRow::Ignored => None,
-            },
-        );
-        if timestamp.is_some_and(|ts| ts.as_str() < start) {
+        let typed =
+            decode_reverse_row(source, line, current, false, work, &at)?.and_then(
+                |row| match row {
+                    DecodedRow::Typed(row) => Some(row),
+                    DecodedRow::Residue(_) | DecodedRow::Ignored => None,
+                },
+            );
+        if typed
+            .as_ref()
+            .is_some_and(|record| record_timestamp(record) < start)
+        {
             offset = current;
             context = Some(HORIZON_CONTEXT_LINES);
+            if require_assistant {
+                assistant = typed.as_ref().and_then(last_assistant_from_record);
+            }
         }
         Ok(true)
     })?;
     if let FrontierProgress::Refused { error, .. } = progress {
         return Err(error);
     }
-    Ok(offset)
+    Ok((offset, assistant))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
