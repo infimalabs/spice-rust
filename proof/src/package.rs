@@ -204,6 +204,76 @@ impl PackageMember {
         })
     }
 
+    /// Capture one bounded document from an already-open regular file.
+    ///
+    /// The source is read and domain-hashed exactly once. The returned bytes
+    /// share the member's retained inline body, so callers can decode the
+    /// document without reopening or rehashing its staged source.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a zero or non-document ceiling, non-regular input, overflow,
+    /// read failure, or movement during the single capture pass.
+    pub fn admit_document_file(
+        path: impl Into<String>,
+        mode: u32,
+        mut file: File,
+        limit: u64,
+    ) -> Result<(Self, Arc<[u8]>), PackageError> {
+        let path = path.into();
+        let metadata = file
+            .metadata()
+            .map_err(|error| document_source_error(&path, error))?;
+        if !metadata.is_file() {
+            return Err(member_error(&path, "source is not a regular file"));
+        }
+        let identity = MemberFileIdentity::from_metadata(&metadata);
+        if limit == 0 || limit > PACKAGE_DOCUMENT_LIMIT || identity.length > limit {
+            return Err(member_error(
+                &path,
+                &format!(
+                    "length={} requested={limit} maximum={PACKAGE_DOCUMENT_LIMIT}",
+                    identity.length
+                ),
+            ));
+        }
+        file.seek(SeekFrom::Start(0))
+            .map_err(|error| document_source_error(&path, error))?;
+        let mut bytes = Vec::with_capacity(
+            usize::try_from(identity.length).expect("bounded package document fits usize"),
+        );
+        let (length, digest) =
+            Digest::copy_reader(member_domain(&path), &mut file, &mut bytes, limit).map_err(
+                |error| {
+                    if error.kind() == std::io::ErrorKind::InvalidData {
+                        member_error(&path, "file moved beyond its admitted document ceiling")
+                    } else {
+                        document_source_error(&path, error)
+                    }
+                },
+            )?;
+        let observed = file
+            .metadata()
+            .map_err(|error| document_source_error(&path, error))?;
+        if length != identity.length || MemberFileIdentity::from_metadata(&observed) != identity {
+            return Err(member_error(
+                &path,
+                "file moved while its document was captured",
+            ));
+        }
+        let bytes: Arc<[u8]> = bytes.into();
+        Ok((
+            Self {
+                path,
+                mode,
+                length,
+                digest,
+                body: MemberBody::Inline(bytes.clone()),
+            },
+            bytes,
+        ))
+    }
+
     #[must_use]
     pub fn path(&self) -> &str {
         &self.path
@@ -379,6 +449,13 @@ fn member_error(path: &str, detail: &str) -> PackageError {
     PackageError::Member {
         path: path.to_owned(),
         detail: detail.to_owned(),
+    }
+}
+
+fn document_source_error(path: &str, error: std::io::Error) -> PackageError {
+    PackageError::Source {
+        path: path.to_owned(),
+        detail: error.to_string(),
     }
 }
 
@@ -842,6 +919,10 @@ pub enum PackageError {
         path: String,
         detail: String,
     },
+    Source {
+        path: String,
+        detail: String,
+    },
     Decode {
         label: &'static str,
         detail: String,
@@ -885,6 +966,12 @@ impl fmt::Display for PackageError {
         match self {
             Self::Member { path, detail } => {
                 write!(formatter, "release package member {path} refuses: {detail}")
+            }
+            Self::Source { path, detail } => {
+                write!(
+                    formatter,
+                    "cannot read release package member {path}: {detail}"
+                )
             }
             Self::Decode { label, detail } => {
                 write!(formatter, "{label} does not decode: {detail}")

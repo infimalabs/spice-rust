@@ -2,9 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-#[cfg(test)]
-use std::fs;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -85,6 +83,7 @@ struct ReleaseBudget {
 #[derive(Debug)]
 struct ReleasePreflight {
     manifest: ReleaseManifest,
+    manifest_member: proof::PackageMember,
     package_bytes: Vec<u8>,
     pending: BTreeMap<String, PendingFile>,
     budget: ReleaseBudget,
@@ -123,20 +122,25 @@ impl ReleaseIndex {
         version: &ProductVersion,
         notes_identity: Digest,
         notes: &[u8],
-        manifest: &[u8],
+        manifest_identity: &Digest,
     ) -> Result<Self, PackageFailure> {
         validate_notes(&notes_identity, notes).map_err(PackageFailure::Moved)?;
-        let preflight =
-            ReleasePreflight::capture(root, version, notes_identity.clone(), notes, manifest)?;
+        let preflight = ReleasePreflight::capture(
+            root,
+            version,
+            notes_identity.clone(),
+            notes,
+            manifest_identity,
+        )?;
         let ReleasePreflight {
             manifest: document,
+            manifest_member,
             package_bytes,
             pending,
             budget,
         } = preflight;
         let notes = inline_member("release/notes.md", 0o644, notes)?;
-        let mut admitted = admit_pending(pending)?;
-        let manifest_member = take_member(&mut admitted, "release/manifest.json")?;
+        let admitted = admit_pending(pending)?;
         let loaded = load(document, notes, manifest_member, admitted)?;
         let tree = proof::build_package(package_input(&loaded, version, notes_identity))
             .map_err(|error| PackageFailure::Moved(error.to_string()))?;
@@ -342,19 +346,26 @@ impl ReleasePreflight {
         version: &ProductVersion,
         notes_identity: Digest,
         notes: &[u8],
-        manifest: &[u8],
+        manifest_identity: &Digest,
     ) -> Result<Self, PackageFailure> {
+        let stage = root.join("dist/stage");
+        let (manifest_member, manifest) = capture_manifest(&stage, manifest_identity)?;
         let document: ReleaseManifest =
-            wire::decode(manifest).map_err(|error| PackageFailure::Moved(error.to_string()))?;
+            wire::decode(&manifest).map_err(|error| PackageFailure::Moved(error.to_string()))?;
         let canonical =
             wire::encode(&document).map_err(|error| PackageFailure::Moved(error.to_string()))?;
-        if canonical != manifest {
+        if canonical.as_slice() != manifest.as_ref() {
             return Err(PackageFailure::Moved(
                 "release manifest is not canonical".to_owned(),
             ));
         }
-        let package_bytes = package_bytes(version, notes_identity, notes, manifest, &document)?;
-        let stage = root.join("dist/stage");
+        let package_bytes = package_bytes(
+            version,
+            notes_identity,
+            notes,
+            manifest_member.digest(),
+            &document,
+        )?;
         let mut pending = BTreeMap::new();
         let mut shapes = BTreeMap::new();
         let mut total = CaptureBudget::default();
@@ -366,19 +377,11 @@ impl ReleasePreflight {
             notes,
             Domain::DistReleaseNotesContent,
         )?;
-        add_pending(
-            &mut pending,
+        add_member(
             &mut shapes,
             &mut total,
-            PendingSpec {
-                source: stage.join("release/manifest.json"),
-                path: "release/manifest.json".to_owned(),
-                label: "staged release manifest".to_owned(),
-                mode: 0o644,
-                length: manifest.len() as u64,
-                digest: Digest::compute(Domain::DistReleaseManifest, manifest),
-                limit: proof::PACKAGE_DOCUMENT_LIMIT,
-            },
+            &manifest_member,
+            proof::PACKAGE_DOCUMENT_LIMIT,
         )?;
         add_targets(
             &stage,
@@ -403,6 +406,7 @@ impl ReleasePreflight {
         )?;
         Ok(Self {
             manifest: document,
+            manifest_member,
             package_bytes,
             pending,
             budget: ReleaseBudget {
@@ -411,6 +415,63 @@ impl ReleasePreflight {
             },
         })
     }
+}
+
+fn capture_manifest(
+    stage: &Path,
+    expected: &Digest,
+) -> Result<(proof::PackageMember, std::sync::Arc<[u8]>), PackageFailure> {
+    const PATH: &str = "release/manifest.json";
+    let source = stage.join(PATH);
+    let metadata = fs::symlink_metadata(&source).map_err(|error| {
+        let detail = format!("cannot read staged release manifest: {error}");
+        if error.kind() == io::ErrorKind::NotFound {
+            PackageFailure::Moved(detail)
+        } else {
+            PackageFailure::Environment(detail)
+        }
+    })?;
+    if !metadata.file_type().is_file() {
+        return Err(PackageFailure::Moved(format!(
+            "staged release manifest {} is not a regular file",
+            source.display()
+        )));
+    }
+    if metadata.len() > proof::PACKAGE_DOCUMENT_LIMIT {
+        return Err(PackageFailure::Moved(format!(
+            "staged release manifest {} is {} bytes; maximum is {}",
+            source.display(),
+            metadata.len(),
+            proof::PACKAGE_DOCUMENT_LIMIT
+        )));
+    }
+    let file = File::open(&source).map_err(|error| {
+        let detail = format!("cannot read staged release manifest: {error}");
+        if error.kind() == io::ErrorKind::NotFound {
+            PackageFailure::Moved(detail)
+        } else {
+            PackageFailure::Environment(detail)
+        }
+    })?;
+    let (member, bytes) =
+        proof::PackageMember::admit_document_file(PATH, 0o644, file, proof::PACKAGE_DOCUMENT_LIMIT)
+            .map_err(|error| match error {
+                proof::PackageError::Source { .. } => {
+                    PackageFailure::Environment(error.to_string())
+                }
+                _ => PackageFailure::Moved(error.to_string()),
+            })?;
+    if member.length() != metadata.len() {
+        return Err(PackageFailure::Moved(
+            "staged release manifest changed while it was captured".to_owned(),
+        ));
+    }
+    if member.digest() != expected {
+        return Err(PackageFailure::Moved(
+            "staged release manifest object disagrees with its payload inventory".to_owned(),
+        ));
+    }
+    Ok((member, bytes))
 }
 
 fn add_targets(
@@ -601,6 +662,25 @@ fn add_inline(
     )
 }
 
+fn add_member(
+    shapes: &mut BTreeMap<String, MemberShape>,
+    total: &mut CaptureBudget,
+    member: &proof::PackageMember,
+    limit: u64,
+) -> Result<(), PackageFailure> {
+    total.admit(member.path(), member.length(), limit)?;
+    insert_shape(
+        shapes,
+        member.path(),
+        MemberShape {
+            mode: member.mode(),
+            length: member.length(),
+            digest: member.digest().clone(),
+            limit,
+        },
+    )
+}
+
 fn insert_shape(
     shapes: &mut BTreeMap<String, MemberShape>,
     path: &str,
@@ -635,7 +715,7 @@ fn package_bytes(
     version: &ProductVersion,
     notes_identity: Digest,
     notes: &[u8],
-    manifest_bytes: &[u8],
+    manifest_identity: &Digest,
     manifest: &ReleaseManifest,
 ) -> Result<Vec<u8>, PackageFailure> {
     const TARGETS: [ReleaseTarget; 2] = [
@@ -694,7 +774,7 @@ fn package_bytes(
         package: "spice".to_owned(),
         product_version: version.clone(),
         source: manifest.source.clone(),
-        manifest: Digest::compute(Domain::DistReleaseManifest, manifest_bytes),
+        manifest: manifest_identity.clone(),
         notes: notes_identity,
         notes_content: Digest::compute(Domain::DistReleaseNotesContent, notes),
         targets,
