@@ -441,49 +441,6 @@ fn selectors(field: &str, values: &[String]) -> Result<Vec<String>, ChangeSelect
     Ok(selectors)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn declared_compiler_inputs_select_rust_consumers_without_suffix_inference() {
-        let tracked = [
-            "Cargo.toml".to_owned(),
-            "dist/VERSION".to_owned(),
-            "OTHER".to_owned(),
-        ];
-        let declared = ["dist/VERSION".to_owned()];
-        let suffixes = [".rs".to_owned()];
-        let policy = ChangeSelectionPolicy::new(ChangeSelectionPolicyInputs {
-            tracked_sources: &tracked,
-            policy_authorities: &[],
-            configured: true,
-            repository_documents: Some(&[]),
-            file_shape_suffixes: Some(&suffixes),
-            complexity_suffixes: Some(&suffixes),
-            magic_suffixes: Some(&suffixes),
-            package_roots: &[],
-            declared_rust_sources: &declared,
-            generated_paths: &[],
-            test_paths: &[],
-        })
-        .expect("selection policy");
-
-        let selected = policy
-            .gates_for_path("dist/VERSION")
-            .expect("declared compiler input");
-        assert_eq!(selected.len(), 3);
-        for expected in [
-            GateId::RustTypecheck,
-            GateId::CanvasWebTypecheck,
-            GateId::LocalPaths,
-        ] {
-            assert!(selected.contains(&expected));
-        }
-        assert!(policy.gates_for_path("OTHER").is_err());
-    }
-}
-
 fn required_suffixes(
     configured: bool,
     field: &str,
@@ -548,4 +505,47 @@ fn contains_exact(values: &[String], expected: &str) -> bool {
     values
         .binary_search_by(|candidate| candidate.as_str().cmp(expected))
         .is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn declared_compiler_inputs_select_rust_consumers_without_suffix_inference() {
+        let tracked = [
+            "Cargo.toml".to_owned(),
+            "dist/VERSION".to_owned(),
+            "OTHER".to_owned(),
+        ];
+        let declared = ["dist/VERSION".to_owned()];
+        let suffixes = [".rs".to_owned()];
+        let policy = ChangeSelectionPolicy::new(ChangeSelectionPolicyInputs {
+            tracked_sources: &tracked,
+            policy_authorities: &[],
+            configured: true,
+            repository_documents: Some(&[]),
+            file_shape_suffixes: Some(&suffixes),
+            complexity_suffixes: Some(&suffixes),
+            magic_suffixes: Some(&suffixes),
+            package_roots: &[],
+            declared_rust_sources: &declared,
+            generated_paths: &[],
+            test_paths: &[],
+        })
+        .expect("selection policy");
+
+        let selected = policy
+            .gates_for_path("dist/VERSION")
+            .expect("declared compiler input");
+        assert_eq!(selected.len(), 3);
+        for expected in [
+            GateId::RustTypecheck,
+            GateId::CanvasWebTypecheck,
+            GateId::LocalPaths,
+        ] {
+            assert!(selected.contains(&expected));
+        }
+        assert!(policy.gates_for_path("OTHER").is_err());
+    }
 }
