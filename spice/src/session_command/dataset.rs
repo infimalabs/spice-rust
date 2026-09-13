@@ -25,8 +25,9 @@ mod aggregate;
 mod horizon;
 pub(crate) mod stream;
 mod work;
-
-pub(crate) use aggregate::{Aggregate, WindowOptions, WindowScan, WindowTurn, admit_sources};
+pub(crate) use aggregate::{
+    Aggregate, CommitScan, WindowOptions, WindowScan, WindowTurn, admit_sources,
+};
 use horizon::{CompactionTracker, admit_source_order};
 pub(crate) use horizon::{recent_compaction_horizon, recent_turn_start};
 use stream::stream_records;
@@ -581,7 +582,6 @@ pub(crate) fn reduce_record(
         }
         Some(TurnMoment::Completed) | None => {}
     }
-
     for sourced in &record.events {
         reduce_event(record, &sourced.event, storage, work, at)?;
     }

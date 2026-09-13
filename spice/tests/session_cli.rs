@@ -21,7 +21,8 @@ mod recovery;
 mod window_planner;
 
 use fixtures::{
-    codex_event, codex_message, codex_message_content, token_payload, transcript_event,
+    assert_commit_rows, codex_event, codex_message, codex_message_content, token_payload,
+    transcript_event,
 };
 
 const REFUSAL_EXIT: i32 = 2;
@@ -354,10 +355,7 @@ fn codex_second_turn_rows() -> Vec<Value> {
             json!({
                 "type": "task_complete",
                 "turn_id": "turn-two",
-                "last_agent_message": concat!(
-                    "Commit 1234abc remains visible in a distinct ",
-                    "task-complete final.",
-                ),
+                "last_agent_message": "Commit 1234abc after abcdef1, not 1234567.",
             }),
         ),
     ]
@@ -482,7 +480,7 @@ fn claude_rows() -> Vec<Value> {
             "2026-01-02T00:00:07Z",
             "assistant",
             json!({"message": {"type": "message", "role": "assistant",
-                "content": [{"type": "text", "text": "Claude reconstruction is done."}],
+                "content": [{"type": "text", "text": "Committed fedcba9 after abcdef1."}],
                 "stop_reason": "end_turn",
                 "usage": {
                     "input_tokens": 30,
@@ -557,14 +555,13 @@ fn assert_recall_and_commands(file: &str, start: &str, end: &str) {
     );
 }
 
-fn assert_commits_compactions_and_messages(file: &str, start: &str, end: &str) {
+fn assert_commits_compactions_and_messages(file: &str, peer: &str, start: &str, end: &str) {
     let commits = reply_forms(
-        &strings(&["session", "commits", file, "--limit", "2"]),
+        &strings(&["session", "commits", file, peer, "--limit", "3"]),
         &[],
         "commits",
     );
-    assert_eq!(commits["rows"].as_array().map(Vec::len), Some(2));
-
+    assert_commit_rows(&commits, file, peer);
     let compactions = reply_forms(
         &strings(&["session", "compactions", file, "--limit", "1"]),
         &[],
@@ -779,12 +776,15 @@ fn assert_tokens_turns_and_pipelines(file: &str, start: &str, end: &str) {
 fn every_session_query_accepts_current_filters_and_crosses_both_forms() {
     let scratch = Scratch::new("query-family");
     let transcript = scratch.path().join("codex-session.jsonl");
+    let peer = scratch.path().join("claude-session.jsonl");
     write_jsonl(&transcript, &codex_rows());
+    write_jsonl(&peer, &claude_rows());
     let file = transcript.to_string_lossy().into_owned();
+    let peer = peer.to_string_lossy().into_owned();
     let start = "2026-01-01T00:00:00Z";
     let end = "2026-01-01T00:00:18Z";
     assert_recall_and_commands(&file, start, end);
-    assert_commits_compactions_and_messages(&file, start, end);
+    assert_commits_compactions_and_messages(&file, &peer, start, end);
     assert_phases_slices_and_summary(&file, start, end);
     assert_sweep_and_timeline(&file, start, end);
     assert_tokens_turns_and_pipelines(&file, start, end);
@@ -817,7 +817,7 @@ fn assert_codex_final_rows(codex: &str) {
     );
     assert_eq!(
         oldest["rows"][2]["text"],
-        "Commit 1234abc remains visible in a distinct task-complete final."
+        "Commit 1234abc after abcdef1, not 1234567."
     );
     assert_eq!(
         reply_forms(
@@ -860,7 +860,7 @@ fn assert_codex_turn_and_recall_rows(codex: &str) {
         second_assistant,
         [
             "Commit 1234abc completes the port.",
-            "Commit 1234abc remains visible in a distinct task-complete final.",
+            "Commit 1234abc after abcdef1, not 1234567.",
         ]
     );
     assert_eq!(codex_turns[2]["turn_id"], "turn-three");

@@ -1,4 +1,32 @@
+use std::fs;
+
 use serde_json::{Value, json};
+
+pub(super) fn assert_commit_rows(commits: &Value, file: &str, peer: &str) {
+    let source = fs::canonicalize(file).expect("commit fixture path is canonical");
+    let source = source.to_string_lossy();
+    let peer_source = fs::canonicalize(peer).expect("peer commit fixture path is canonical");
+    let peer_source = peer_source.to_string_lossy();
+    assert_eq!(commits["rows"][0]["sha"], "abcdef1");
+    assert_eq!(commits["rows"][0]["turn_id"], "turn-one");
+    assert_eq!(
+        commits["rows"][0]["user"],
+        "Please implement parity; it must preserve evidence."
+    );
+    assert_eq!(commits["rows"][0]["source"], source.as_ref());
+    assert_eq!(commits["rows"][1]["sha"], "1234abc");
+    assert_eq!(commits["rows"][1]["turn_id"], "turn-two");
+    assert_eq!(
+        commits["rows"][1]["user"],
+        "Finish the second window without losing identity."
+    );
+    assert_eq!(commits["rows"][1]["source"], source.as_ref());
+    assert_eq!(commits["rows"][2]["sha"], "fedcba9");
+    assert_eq!(commits["rows"][2]["turn_id"], "prompt-two");
+    assert_eq!(commits["rows"][2]["user"], "Finish Claude reconstruction.");
+    assert_eq!(commits["rows"][2]["source"], peer_source.as_ref());
+    assert_eq!(commits["rows"].as_array().map(Vec::len), Some(3));
+}
 
 pub(super) fn transcript_event(timestamp: &str, kind: &str, fields: Value) -> Value {
     let Value::Object(mut fields) = fields else {

@@ -4,11 +4,13 @@ use std::path::Path;
 use clap::ArgMatches;
 use wire::Refusal;
 
-use super::dataset::{MessageDataset, MessageQuery, WindowOptions, WindowScan, WindowTurn};
+use super::dataset::{
+    CommitScan, MessageDataset, MessageQuery, WindowOptions, WindowScan, WindowTurn, frontier_limit,
+};
 use super::model::{
-    ActivityView, CommitView, CompactionRecord, CompactionView, Dataset, DialogueLine,
-    MessageRecord, MessageView, PhaseExample, PruningView, RecallAuthorities, RecallWindow, Report,
-    SliceView, TimelineView, TurnRecord, TurnView,
+    ActivityView, CompactionRecord, CompactionView, Dataset, DialogueLine, MessageRecord,
+    MessageView, PhaseExample, PruningView, RecallAuthorities, RecallWindow, Report, SliceView,
+    TimelineView, TurnRecord, TurnView,
 };
 
 // Two report families are split out by `mod` rather than left inline, following
@@ -582,60 +584,17 @@ pub(crate) fn messages(dataset: MessageDataset, options: MessageOptions) -> Repo
     }
 }
 
-pub(crate) fn commits(dataset: &Dataset, matches: &ArgMatches) -> Result<Report, Refusal> {
+pub(crate) fn commit_limit(matches: &ArgMatches) -> Result<usize, Refusal> {
     let limit = number(matches, "limit", DEFAULT_COMMITS_LIMIT)?;
-    let mut rows = Vec::new();
-    let mut seen = BTreeSet::new();
-    for turn in &dataset.turns {
-        let user = turn
-            .messages
-            .iter()
-            .find(|message| message.side == "user" && message.authored.is_some())
-            .and_then(|message| message.authored.as_deref())
-            .map(|message| clip(message, 120))
-            .unwrap_or_default();
-        let mut messages = turn
-            .messages
-            .iter()
-            .rfind(|message| message.side == "assistant" && message.phase == "final_answer")
-            .into_iter()
-            .collect::<Vec<_>>();
-        messages.extend(
-            turn.messages
-                .iter()
-                .rev()
-                .filter(|message| message.side == "assistant" && message.phase != "final_answer"),
-        );
-        for message in messages {
-            let Some(authored) = message.authored.as_deref() else {
-                continue;
-            };
-            for line in authored.lines() {
-                if !commit_line(line) {
-                    continue;
-                }
-                for sha in commit_tokens(line) {
-                    if sha.bytes().all(|byte| byte.is_ascii_digit()) || !seen.insert(sha.clone()) {
-                        continue;
-                    }
-                    rows.push(CommitView {
-                        source: turn.source.clone(),
-                        ts: turn.start_ts.clone(),
-                        turn_id: turn.turn_id.clone(),
-                        sha,
-                        line: clip(line, 160),
-                        user: user.clone(),
-                    });
-                }
-            }
-        }
+    frontier_limit(limit).map(std::num::NonZeroUsize::get)
+}
+
+pub(crate) fn commits(dataset: CommitScan) -> Report {
+    Report::Commits {
+        sources: dataset.sources,
+        rows: dataset.rows,
+        residues: dataset.residues,
     }
-    trim_oldest(&mut rows, limit);
-    Ok(Report::Commits {
-        sources: dataset.sources.clone(),
-        rows,
-        residues: dataset.residues.clone(),
-    })
 }
 
 fn recall_window(
@@ -909,26 +868,6 @@ fn compact_timestamp(value: &str) -> String {
     compact
 }
 
-fn commit_tokens(line: &str) -> Vec<String> {
-    line.split_whitespace()
-        .map(|word| word.trim_matches(|character: char| !character.is_ascii_hexdigit()))
-        .filter(|word| {
-            (7..=40).contains(&word.len()) && word.bytes().all(|byte| byte.is_ascii_hexdigit())
-        })
-        .map(str::to_ascii_lowercase)
-        .collect()
-}
-
-fn commit_line(line: &str) -> bool {
-    line.split(|character: char| !character.is_alphanumeric())
-        .any(|word| {
-            matches!(
-                word.to_ascii_lowercase().as_str(),
-                "commit" | "committed" | "sha"
-            )
-        })
-}
-
 pub(crate) fn turn_end(turn: &TurnRecord) -> String {
     turn.end_ts
         .clone()
@@ -1021,7 +960,7 @@ fn trim_oldest<T>(rows: &mut Vec<T>, limit: usize) {
     }
 }
 
-fn clip(value: &str, max_chars: usize) -> String {
+pub(crate) fn clip(value: &str, max_chars: usize) -> String {
     let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
     if normalized.chars().count() <= max_chars {
         return normalized;

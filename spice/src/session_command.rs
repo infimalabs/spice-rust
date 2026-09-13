@@ -348,6 +348,12 @@ fn build_resolved(
     if let Some(report) = build_bounded_event_report(matches, action, &sources)? {
         return Ok(report);
     }
+    if action == "commits" {
+        let limit = project::commit_limit(matches)?;
+        return Ok(project::commits(dataset::CommitScan::scan(
+            &sources, limit,
+        )?));
+    }
     let filters = project::Filters::from_matches(matches)?;
     if action == "summary" {
         let recent = project::summary_recent(matches)?;
@@ -381,7 +387,6 @@ fn build_resolved(
     match action {
         "timeline" => project::timeline(&data, matches, &filters),
         "turns" => project::turns(&data, matches, &filters),
-        "commits" => project::commits(&data, matches),
         _ => Err(refusal(
             "session::query-unregistered",
             Some(path.join(" ")),
@@ -396,6 +401,7 @@ fn validate_options_before_source(matches: &ArgMatches, action: &str) -> Result<
         "phases" => project::phase_options(matches).map(|_| ()),
         "messages" => project::message_options(matches).map(|_| ()),
         "commands" => project::command_options(matches).map(|_| ()),
+        "commits" => project::commit_limit(matches).map(|_| ()),
         "compactions" => project::compaction_limit(matches).map(|_| ()),
         "briefing" | "sweep" => project::validate_window_options(matches, action),
         "slices" => {
