@@ -32,6 +32,7 @@ pub struct PackageTargetInput {
     executable: PackageMember,
     payload: PackageMember,
     proof: PackageMember,
+    symbols: Option<PackageMember>,
 }
 
 /// Exact bytes supplied for one member of the shared Canvas generation.
@@ -64,7 +65,14 @@ impl PackageTargetInput {
             executable,
             payload,
             proof,
+            symbols: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_symbols(mut self, symbols: Option<PackageMember>) -> Self {
+        self.symbols = symbols;
+        self
     }
 }
 
@@ -547,12 +555,18 @@ pub fn admit_package_tree(members: &[PackageMember]) -> Result<AdmittedPackage, 
     let notes = exact_member(members, NOTES_PATH, DATA_MODE)?;
     let mut targets = Vec::with_capacity(TARGETS.len());
     for target in TARGETS {
-        targets.push(PackageTargetInput::new(
-            target,
-            exact_member(members, &executable_path(target), EXECUTABLE_MODE)?.clone(),
-            exact_member(members, &payload_path(target), DATA_MODE)?.clone(),
-            exact_member(members, &proof_path(target), DATA_MODE)?.clone(),
-        ));
+        let symbols = (target == ReleaseTarget::Aarch64AppleDarwin)
+            .then(|| exact_member(members, &symbol_path(target), DATA_MODE).cloned())
+            .transpose()?;
+        targets.push(
+            PackageTargetInput::new(
+                target,
+                exact_member(members, &executable_path(target), EXECUTABLE_MODE)?.clone(),
+                exact_member(members, &payload_path(target), DATA_MODE)?.clone(),
+                exact_member(members, &proof_path(target), DATA_MODE)?.clone(),
+            )
+            .with_symbols(symbols),
+        );
     }
     let mut app = CANVAS_APP_FILES
         .iter()
@@ -594,6 +608,9 @@ fn assemble_package(input: PackageInput<'_>) -> Result<PackageTree, PackageError
             target.payload.clone(),
             target.proof.clone(),
         ]);
+        if let Some(symbols) = &target.symbols {
+            members.push(symbols.clone());
+        }
     }
     for asset in &input.app {
         members.push(asset.member.clone());
@@ -704,6 +721,15 @@ fn admit_target(
     let payload_identity = admitted_payload.digest().clone();
     let proof_identity = admitted_proof.digest().clone();
     let executable = input.executable.digest.clone();
+    let symbol_binding = match (&payload.symbols, &input.symbols) {
+        (Some(metadata), Some(member)) => {
+            require_member(member, &symbol_path(input.target), DATA_MODE)?;
+            member.revalidate()?;
+            metadata.bytes == member.length && metadata.digest == member.digest
+        }
+        (None, None) => true,
+        (Some(_), None) | (None, Some(_)) => false,
+    };
     admit_app(app, payload, index)?;
     let executable_inventory = payload
         .inventory
@@ -731,6 +757,8 @@ fn admit_target(
             "manifest payload length",
         ),
         (sealed.inventory == payload.inventory, "manifest inventory"),
+        (sealed.symbols == payload.symbols, "manifest symbols"),
+        (symbol_binding, "package symbols"),
         (sealed.receipt == proof_identity, "manifest proof"),
         (
             sealed.receipt_bytes == input.proof.length,
@@ -906,6 +934,10 @@ fn payload_path(target: ReleaseTarget) -> String {
 
 fn proof_path(target: ReleaseTarget) -> String {
     format!("targets/{target}/proof.json")
+}
+
+fn symbol_path(target: ReleaseTarget) -> String {
+    format!("targets/{target}/symbols/spice.dSYM.json")
 }
 
 fn app_path(file: &str) -> String {
@@ -1110,6 +1142,16 @@ mod tests {
                                 Domain::ProofReceiptV3,
                             ),
                         )
+                        .with_symbols(
+                            (target == ReleaseTarget::Aarch64AppleDarwin).then(|| {
+                                member(
+                                    &symbol_path(target),
+                                    DATA_MODE,
+                                    b"symbol fixture",
+                                    Domain::DistArtifact,
+                                )
+                            }),
+                        )
                     })
                     .collect(),
             )
@@ -1122,7 +1164,7 @@ mod tests {
         let index = build_package_index(inline_fixture.input()).expect("fixture index builds");
         let tree = build_package(inline_fixture.input()).expect("fixture package builds");
         assert_eq!(index, *tree.package());
-        assert_eq!(tree.members().len(), 17);
+        assert_eq!(tree.members().len(), 18);
         assert!(
             tree.members()
                 .is_sorted_by(|left, right| left.path() < right.path())
@@ -1249,6 +1291,34 @@ mod tests {
         let mut extra = tree.members.clone();
         extra.push(member("extra", DATA_MODE, b"extra", Domain::DistArtifact));
         assert_eq!(admit_package_tree(&extra), Err(PackageError::Closure));
+
+        let mut missing_symbols = tree.members.clone();
+        missing_symbols.retain(|member| member.path() != symbol_path(TARGETS[0]));
+        assert_eq!(
+            admit_package_tree(&missing_symbols),
+            Err(PackageError::Missing(symbol_path(TARGETS[0])))
+        );
+
+        for (index, body) in [
+            (0, b"moved symbols".as_slice()),
+            (1, b"symbol fixture".as_slice()),
+        ] {
+            let fixture = fixture();
+            let mut input = fixture.input();
+            input.targets[index].symbols = Some(member(
+                &symbol_path(TARGETS[index]),
+                DATA_MODE,
+                body,
+                Domain::DistArtifact,
+            ));
+            assert!(matches!(
+                build_package(input),
+                Err(PackageError::Binding {
+                    field: "package symbols",
+                    ..
+                })
+            ));
+        }
 
         let mut reordered = tree.members.clone();
         reordered.swap(0, 1);
