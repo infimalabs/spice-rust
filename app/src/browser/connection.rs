@@ -130,12 +130,11 @@ async fn pump_session(
         mut writer,
         mut reader,
         principal,
-        mut pending,
         mut hydrating,
     } = established;
     send_subscription(&principal, data, &mut writer).await?;
-    send_refresh(&principal, &mut writer, &mut pending, &handles.submissions).await?;
-    drain_submissions(&principal, &mut writer, &mut pending, &handles.submissions).await?;
+    send_refresh(&principal, &mut writer, actions, &handles.submissions).await?;
+    drain_submissions(&principal, &mut writer, actions, &handles.submissions).await?;
     actions.rearm().map_err(|error| error.to_string())?;
     let mut silence = TimeoutFuture::new(LIVENESS_PROBE_MILLIS).fuse();
     let mut probed = false;
@@ -151,10 +150,10 @@ async fn pump_session(
                 rearm = true;
                 probed = false;
                 apply_incoming_frame(
-                    frame, &session, handles, data, &principal, &mut writer, &mut pending, actions,
+                    frame, &session, handles, data, &principal, &mut writer, actions,
                     !hydrating,
                 ).await?;
-                if hydrating && pending.values().all(|entry| entry.current_read().is_none()) {
+                if hydrating && actions.current_reads_settled() {
                     finish_hydration(handles, data, &principal)?;
                     hydrating = false;
                     actions.rearm().map_err(|error| error.to_string())?;
@@ -169,7 +168,6 @@ async fn pump_session(
                     &principal,
                     data,
                     &mut writer,
-                    &mut pending,
                     &handles.submissions,
                     actions,
                 ).await?;
@@ -215,14 +213,13 @@ async fn service_action_wake(
     principal: &Principal,
     data: &SurfaceData,
     writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     submissions: &SubmissionHandle,
     actions: &ActionQueue,
 ) -> Result<(), String> {
     let Some(lease) = actions.lease() else {
         return Ok(());
     };
-    dispatch_client_action(principal, data, writer, pending, submissions, lease).await?;
+    dispatch_client_action(principal, data, writer, actions, submissions, lease).await?;
     actions.rearm().map_err(|error| error.to_string())
 }
 
@@ -234,7 +231,6 @@ async fn apply_incoming_frame(
     data: &SurfaceData,
     principal: &Principal,
     writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
     actions: &ActionQueue,
     publish: bool,
 ) -> Result<(), String> {
@@ -243,18 +239,18 @@ async fn apply_incoming_frame(
         .map_err(websocket_error)?;
     let bytes = binary_message(frame)?;
     let (directives, refresh, stale) =
-        handle_incoming(session, handles, data, pending, actions, &bytes, publish)?;
+        handle_incoming(session, handles, data, actions, &bytes, publish)?;
     relay_directives(principal, writer, directives).await?;
     send_after_frame(
         principal,
         writer,
-        pending,
+        actions,
         &handles.submissions,
         refresh,
         stale,
     )
     .await?;
-    drain_submissions(principal, writer, pending, &handles.submissions).await?;
+    drain_submissions(principal, writer, actions, &handles.submissions).await?;
     actions.rearm().map_err(|error| error.to_string())
 }
 
@@ -263,7 +259,7 @@ async fn dispatch_client_action(
     principal: &Principal,
     data: &SurfaceData,
     writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    actions: &ActionQueue,
     submissions: &SubmissionHandle,
     mut lease: ActionLease,
 ) -> Result<(), String> {
@@ -275,7 +271,7 @@ async fn dispatch_client_action(
             .map(|lanes| lanes.topology_revision)
             .ok_or_else(|| "topology action has no authoritative lane table".to_owned())?;
         let id = lease.prepare_topology(topology_revision)?;
-        if pending.contains_key(&id) {
+        if actions.pending_contains(id) {
             return Err(format!("topology command identity {id} is already pending"));
         }
         send_topology_as(principal, writer, id, lease.action()).await?;
@@ -283,10 +279,20 @@ async fn dispatch_client_action(
         Ok(())
     } else if matches!(lease.action(), ClientAction::DrainSubmissions) {
         drop(lease.commit());
-        drain_submissions(principal, writer, pending, submissions).await
+        drain_submissions(principal, writer, actions, submissions).await
     } else {
-        match dispatch_action(principal, writer, pending, submissions, lease.action()).await {
-            Ok(()) => {
+        if matches!(
+            lease.action(),
+            ClientAction::FastMode(_) | ClientAction::Note { .. } | ClientAction::Steer { .. }
+        ) {
+            lease.prepare_pending_transfer();
+        }
+        match dispatch_action(principal, writer, actions, submissions, lease.action()).await {
+            Ok(Some(id)) => {
+                lease.commit_pending(id);
+                Ok(())
+            }
+            Ok(None) => {
                 drop(lease.commit());
                 Ok(())
             }
@@ -464,13 +470,11 @@ async fn establish_connection(
         open_socket(speech, identity, canvas_update, signal).await?;
     let (principal, hydrating) =
         admit_runtime(&session, &mut reader, connection, surface, data).await?;
-    let pending = BTreeMap::new();
     Ok(EstablishedConnection {
         session,
         writer,
         reader,
         principal,
-        pending,
         hydrating,
     })
 }
@@ -652,20 +656,26 @@ async fn relay_directives(
 async fn dispatch_action(
     principal: &Principal,
     writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    actions: &ActionQueue,
     submissions: &SubmissionHandle,
     action: &ClientAction,
-) -> Result<(), String> {
+) -> Result<Option<CanonicalUuid>, String> {
     match action {
         ClientAction::DrainSubmissions => {
-            drain_submissions(principal, writer, pending, submissions).await
+            drain_submissions(principal, writer, actions, submissions)
+                .await
+                .map(|_| None)
         }
-        ClientAction::Refresh => send_refresh(principal, writer, pending, submissions).await,
-        ClientAction::FastMode(fast_mode) => {
-            send_fast_mode(principal, writer, pending, *fast_mode).await
-        }
+        ClientAction::Refresh => send_refresh(principal, writer, actions, submissions)
+            .await
+            .map(|_| None),
+        ClientAction::FastMode(fast_mode) => send_fast_mode(principal, writer, actions, *fast_mode)
+            .await
+            .map(Some),
         ClientAction::MessageHistory { lane, before } => {
-            send_message_history(principal, writer, *lane, *before).await
+            send_message_history(principal, writer, *lane, *before)
+                .await
+                .map(|_| None)
         }
         ClientAction::Seat { .. }
         | ClientAction::ArrangeLane { .. }
@@ -675,7 +685,9 @@ async fn dispatch_action(
             unreachable!("topology mutation dispatch is partitioned")
         }
         action @ (ClientAction::Note { .. } | ClientAction::Steer { .. }) => {
-            dispatch_authored_action(principal, writer, pending, action).await
+            dispatch_authored_action(principal, writer, actions, action)
+                .await
+                .map(Some)
         }
     }
 }
@@ -683,12 +695,12 @@ async fn dispatch_action(
 async fn dispatch_authored_action(
     principal: &Principal,
     writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    actions: &ActionQueue,
     action: &ClientAction,
-) -> Result<(), String> {
+) -> Result<CanonicalUuid, String> {
     match action {
         ClientAction::Note { id, task, note } => {
-            send_task_note(principal, writer, pending, *id, task, note).await
+            send_task_note(principal, writer, actions, *id, task, note).await
         }
         ClientAction::Steer {
             id,
@@ -702,7 +714,7 @@ async fn dispatch_authored_action(
             send_steer(
                 principal,
                 writer,
-                pending,
+                actions,
                 *id,
                 *fanout,
                 *lane,
@@ -720,13 +732,13 @@ async fn dispatch_authored_action(
 async fn send_fast_mode(
     principal: &Principal,
     writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    actions: &ActionQueue,
     fast_mode: bool,
-) -> Result<(), String> {
+) -> Result<CanonicalUuid, String> {
     send_typed(
         principal,
         writer,
-        pending,
+        actions,
         PendingKind::Settings,
         CommandKind::GlobalSettingsSet,
         vec![],
@@ -758,7 +770,7 @@ async fn send_message_history(
 async fn send_steer(
     principal: &Principal,
     writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    actions: &ActionQueue,
     id: CanonicalUuid,
     fanout: CanonicalUuid,
     lane: CanonicalUuid,
@@ -766,7 +778,7 @@ async fn send_steer(
     epoch: CanonicalUuid,
     message: &str,
     attachments: &[DirectiveAttachment],
-) -> Result<(), String> {
+) -> Result<CanonicalUuid, String> {
     let body = BorrowedSteerSend {
         fanout,
         lane,
@@ -781,7 +793,7 @@ async fn send_steer(
     send_typed_as(
         principal,
         writer,
-        pending,
+        actions,
         id,
         PendingKind::Steer,
         CommandKind::SteerSend,
@@ -794,7 +806,7 @@ async fn send_steer(
 async fn drain_submissions(
     principal: &Principal,
     writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    actions: &ActionQueue,
     submissions: &SubmissionHandle,
 ) -> Result<(), String> {
     let ready_wakes = submissions.queue.borrow().ready_wakes();
@@ -802,7 +814,7 @@ async fn drain_submissions(
         send_typed(
             principal,
             writer,
-            pending,
+            actions,
             PendingKind::WakeSubmission {
                 lane: submission.lane,
                 submission: submission.id,
@@ -841,7 +853,7 @@ async fn drain_submissions(
         send_typed_as(
             principal,
             writer,
-            pending,
+            actions,
             submission.id,
             PendingKind::SteerSubmission {
                 lane: submission.lane,
@@ -860,11 +872,11 @@ async fn drain_submissions(
 async fn send_task_note(
     principal: &Principal,
     writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    actions: &ActionQueue,
     id: CanonicalUuid,
     task: &TaskHandle,
     note: &str,
-) -> Result<(), String> {
+) -> Result<CanonicalUuid, String> {
     let born = task
         .born()
         .map_err(|error| format!("task handle {task} has no canonical birth stamp: {error}"))?;
@@ -873,7 +885,7 @@ async fn send_task_note(
     send_typed_as(
         principal,
         writer,
-        pending,
+        actions,
         id,
         PendingKind::Note,
         CommandKind::TaskNote,
@@ -991,17 +1003,17 @@ fn bounded_speech_error(error: &str) -> String {
 async fn send_typed<B: Serialize>(
     principal: &Principal,
     writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    actions: &ActionQueue,
     pending_kind: PendingKind,
     kind: CommandKind,
     expected: Vec<Witness>,
     body: B,
-) -> Result<(), String> {
+) -> Result<CanonicalUuid, String> {
     let id = random_uuid()?;
     send_typed_as(
         principal,
         writer,
-        pending,
+        actions,
         id,
         pending_kind,
         kind,
@@ -1036,25 +1048,28 @@ async fn send_untracked_as<B: Serialize>(
 async fn send_typed_as<B: Serialize>(
     principal: &Principal,
     writer: &mut SocketWriter,
-    pending: &mut BTreeMap<CanonicalUuid, PendingKind>,
+    actions: &ActionQueue,
     id: CanonicalUuid,
     pending_kind: PendingKind,
     kind: CommandKind,
     expected: Vec<Witness>,
     body: B,
-) -> Result<(), String> {
-    if pending.contains_key(&id) {
+) -> Result<CanonicalUuid, String> {
+    if actions.pending_contains(id) {
         return Err(format!("command identity {id} is already pending"));
     }
     let command = SteerPane::over(principal)
         .command(id, kind, expected, body)
         .map_err(|error| error.to_string())?;
     let bytes = wire::encode(&command).map_err(|error| error.to_string())?;
-    pending.insert(id, pending_kind);
-    writer
-        .send(Message::Bytes(bytes))
-        .await
-        .map_err(websocket_error)
+    actions
+        .reserve_pending(id, pending_kind, bytes.len())
+        .map_err(|error| error.to_string())?;
+    if let Err(error) = writer.send(Message::Bytes(bytes)).await {
+        actions.cancel_pending(id);
+        return Err(websocket_error(error));
+    }
+    Ok(id)
 }
 
 async fn send_subscription(
