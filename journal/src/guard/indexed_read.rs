@@ -147,6 +147,24 @@ impl CausalPage {
 }
 
 impl JournalRead<'_> {
+    /// Observe only the current trust heads named by one canonical requirement set.
+    pub fn environment(
+        &self,
+        requirements: &wire::EnvironmentRequirements,
+    ) -> Result<wire::Environment, GuardError> {
+        let mut heads = Vec::new();
+        for requirement in requirements.as_slice() {
+            if let wire::EnvironmentRequirement::TrustGrant { value } = requirement
+                && let Some(head) = self.trust_head(value)?
+            {
+                heads.push(head.into_body());
+            }
+        }
+        Ok(wire::Environment::journal_schema(crate::SCHEMA_VERSION)
+            .expect("the compiled journal schema is positive")
+            .with_trust_heads(heads))
+    }
+
     /// Last durable fact position visible to this transaction.
     pub fn cursor(&self) -> Result<Option<wire::Seq>, GuardError> {
         Ok(self.cursor)

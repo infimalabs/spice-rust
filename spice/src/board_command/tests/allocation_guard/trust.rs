@@ -2,12 +2,12 @@ use super::*;
 
 #[test]
 fn a_revoked_grant_between_task_next_plan_and_commit_refuses_the_claim() {
-    environment_movement_refuses_planned_claim("next", "allocator winner changed");
+    environment_movement_refuses_planned_claim("next", "allocator projection changed");
 }
 
 #[test]
 fn a_revoked_grant_between_capture_plan_and_commit_refuses_the_claim() {
-    environment_movement_refuses_planned_claim("capture", "capture environment changed");
+    environment_movement_refuses_planned_claim("capture", "capture projection changed");
 }
 
 fn environment_movement_refuses_planned_claim(rule: &str, expected: &str) {

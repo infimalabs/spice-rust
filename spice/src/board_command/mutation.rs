@@ -7,8 +7,10 @@ mod requirements;
 mod taste_proposal;
 
 #[cfg(test)]
+pub(super) use claim::Possession;
+pub(super) use claim::claim_win;
+#[cfg(test)]
 pub(super) use claim::{ClaimPlan, claim_git_boundary, claim_grant, claim_plan, commit_claim};
-pub(super) use claim::{Possession, claim_win};
 pub(super) use edit::task_edit;
 pub(super) use gate_findings::gate_findings;
 #[cfg(test)]

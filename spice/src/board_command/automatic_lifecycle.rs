@@ -93,14 +93,9 @@ fn prepare_claim(
         &mut write,
         Vec::new(),
         AllocationObservation {
-            heads: allocation_heads(&snapshot.answer),
-            entries: snapshot.entries.clone(),
-            winner: task.clone(),
+            cursor: snapshot.cursor,
             actor: actor.clone(),
-            subscription: subscription.clone(),
             residency_position: snapshot.answer.residency.position,
-            band: snapshot.answer.allocation_band,
-            recent_cell: snapshot.answer.recent_cell.clone(),
         },
     );
     mint_claim(
