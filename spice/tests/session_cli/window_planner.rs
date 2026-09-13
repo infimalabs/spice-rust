@@ -211,6 +211,52 @@ fn sweep_does_not_copy_exact_boundary_starts_backward() {
     assert_eq!(window_turn_ids(&windows[0]), ["before"]);
     assert_eq!(window_turn_ids(&windows[1]), ["boundary-start"]);
 
+    write_jsonl(
+        &transcript,
+        &[
+            codex_event(
+                "2026-02-01T00:30:00Z",
+                "event_msg",
+                json!({"type": "task_started", "turn_id": "later-first"}),
+            ),
+            codex_event(
+                "2026-02-01T00:31:00Z",
+                "event_msg",
+                json!({"type": "task_complete", "turn_id": "later-first"}),
+            ),
+            codex_event(
+                "2026-02-01T00:20:00Z",
+                "event_msg",
+                json!({"type": "task_started", "turn_id": "earlier-second"}),
+            ),
+            codex_event(
+                "2026-02-01T00:21:00Z",
+                "event_msg",
+                json!({"type": "task_complete", "turn_id": "earlier-second"}),
+            ),
+        ],
+    );
+    for action in ["briefing", "sweep"] {
+        refusal(
+            &strings(&["session", action, &input]),
+            &[],
+            "session::source-order-regressed",
+        );
+    }
+
+    write_jsonl(
+        &transcript,
+        &[
+            codex_event("2026-02-01T00:30:00Z", "compacted", json!({})),
+            codex_event("2026-02-01T00:20:00Z", "compacted", json!({})),
+        ],
+    );
+    refusal(
+        &strings(&["session", "sweep", &input, "--count", "2"]),
+        &[],
+        "session::source-order-regressed",
+    );
+
     scratch.remove();
 }
 
