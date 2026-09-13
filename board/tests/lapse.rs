@@ -1,3 +1,5 @@
+mod support;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -42,7 +44,7 @@ fn projects() -> board::ProjectPolicy {
 }
 
 fn snapshot(journal: &Journal) -> Snapshot {
-    board::bounded_snapshot_fixture!(journal, &projects(), [born()]).expect("fixture board entry")
+    support::bounded_snapshot(journal, &projects(), &[born()]).expect("fixture board entry")
 }
 fn allocatable(snapshot: &Snapshot) -> bool {
     board::eligible_entry(
