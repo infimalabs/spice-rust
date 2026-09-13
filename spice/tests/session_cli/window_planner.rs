@@ -236,7 +236,7 @@ fn sweep_does_not_copy_exact_boundary_starts_backward() {
             ),
         ],
     );
-    for action in ["briefing", "sweep"] {
+    for action in ["briefing", "sweep", "commits"] {
         refusal(
             &strings(&["session", action, &input]),
             &[],
