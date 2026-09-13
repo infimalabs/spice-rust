@@ -250,10 +250,20 @@ fn admit_target_payload(
         &object_path("payload", &entry.payload),
         "target payload object",
     )?;
+    require_binding(
+        bytes.len() as u64 == entry.payload_bytes,
+        index,
+        "payload length",
+    )?;
     let payload =
         admit(&bytes).map_err(|source| ManifestAdmissionError::Payload { index, source })?;
     let value = payload.value();
     require_binding(payload.digest() == &entry.payload, index, "payload digest")?;
+    require_binding(
+        value.inventory == entry.inventory,
+        index,
+        "payload inventory",
+    )?;
     require_binding(value.target == entry.target, index, "payload target")?;
     require_binding(value.source == manifest.source, index, "payload source")?;
     require_binding(value.app == *app, index, "Canvas generation identity")?;
@@ -278,6 +288,11 @@ fn admit_target_receipt(
         root,
         &object_path("receipt", &entry.receipt),
         "detached proof receipt object",
+    )?;
+    require_binding(
+        bytes.len() as u64 == entry.receipt_bytes,
+        index,
+        "receipt length",
     )?;
     let admitted = admit_receipt(&bytes)
         .map_err(|source| ManifestAdmissionError::Receipt { index, source })?;
@@ -507,7 +522,10 @@ where
         targets.push(ReleaseManifestTarget {
             target: verified.target(),
             payload: payload_digest.clone(),
+            payload_bytes: input.payload.len() as u64,
+            inventory: admitted.value().inventory.clone(),
             receipt: receipt_digest.clone(),
+            receipt_bytes: input.receipt.len() as u64,
             battery: verified.battery_digest().clone(),
             replay: verified.replay_digest().clone(),
             environment: verified.environment().clone(),

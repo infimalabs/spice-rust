@@ -679,6 +679,7 @@ mod tests {
             digest: native.clone(),
         });
         inventory.sort_by(|left, right| left.path.cmp(&right.path));
+        let manifest_inventory = inventory.clone();
         let payload = TargetPayload {
             version: TARGET_PAYLOAD_VERSION,
             target,
@@ -712,7 +713,10 @@ mod tests {
         let sealed = ReleaseManifestTarget {
             target,
             payload: payload_identity,
+            payload_bytes: payload.len() as u64,
+            inventory: manifest_inventory,
             receipt: Digest::compute(Domain::ProofReceiptV3, &proof),
+            receipt_bytes: proof.len() as u64,
             battery: battery.clone(),
             replay,
             environment: environment.clone(),

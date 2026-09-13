@@ -649,7 +649,16 @@ fn admit_target(
             "inventory executable",
         ),
         (sealed.payload == payload_identity, "manifest payload"),
+        (
+            sealed.payload_bytes == input.payload.length,
+            "manifest payload length",
+        ),
+        (sealed.inventory == payload.inventory, "manifest inventory"),
         (sealed.receipt == proof_identity, "manifest proof"),
+        (
+            sealed.receipt_bytes == input.proof.length,
+            "manifest proof length",
+        ),
         (proof.target == input.target, "proof target"),
         (proof.payload == payload_identity, "proof payload"),
         (proof.battery == sealed.battery, "proof battery"),
@@ -1270,7 +1279,10 @@ mod tests {
             manifest_targets.push(ReleaseManifestTarget {
                 target,
                 payload: payload_identity,
+                payload_bytes: payload_bytes.len() as u64,
+                inventory: payload.inventory.clone(),
                 receipt: proof_identity,
+                receipt_bytes: proof_bytes.len() as u64,
                 battery: battery.clone(),
                 replay,
                 environment: environment.clone(),
