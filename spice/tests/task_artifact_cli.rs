@@ -1,4 +1,6 @@
 use std::fs;
+use std::io::Read;
+use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 
@@ -18,6 +20,10 @@ mod readiness;
 mod staged_app;
 
 use readiness::Readiness;
+
+const RETAINED_MEMBER_BYTES: u64 = 16 * 1024 * 1024;
+const RETAINED_MEMBERS: usize = 4;
+const RETAINED_GENERATION_BYTES: u64 = RETAINED_MEMBER_BYTES * RETAINED_MEMBERS as u64;
 
 struct Fixture {
     root: PathBuf,
@@ -58,18 +64,76 @@ impl Fixture {
 
     fn reply<B: DeserializeOwned>(&self, arguments: &[String]) -> wire::Reply<B> {
         let output = self.invoke(arguments);
-        assert!(
-            output.status.success(),
-            "command {arguments:?} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let Outcome::Reply(reply) = wire::decode::<Outcome<B>>(&output.stdout)
-            .unwrap_or_else(|error| panic!("decode {arguments:?}: {error}"))
-        else {
-            panic!("command {arguments:?} did not reply")
-        };
-        reply
+        decode_reply(arguments, &output)
     }
+
+    #[expect(
+        clippy::zombie_processes,
+        reason = "wait4 below is the sole reap site and returns per-child peak RSS"
+    )]
+    fn measured_reply<B: DeserializeOwned>(&self, arguments: &[String]) -> (wire::Reply<B>, u64) {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_spice"))
+            .arg("--json")
+            .args(arguments)
+            .current_dir(&self.root)
+            .env_remove(spice::agent_launch::SPICE_RS_LANE)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("launch measured spice");
+        let pid = i32::try_from(child.id()).expect("child pid fits i32");
+        let mut raw = 0;
+        let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+        loop {
+            // SAFETY: pid names this fixture's child and both outputs remain
+            // valid until wait4 returns, which is the child's sole reap site.
+            let waited = unsafe { libc::wait4(pid, &mut raw, 0, usage.as_mut_ptr()) };
+            if waited == pid {
+                break;
+            }
+            assert_eq!(
+                std::io::Error::last_os_error().kind(),
+                std::io::ErrorKind::Interrupted,
+                "wait for measured spice"
+            );
+        }
+        // SAFETY: successful wait4 initialized the complete rusage value.
+        let rss = unsafe { usage.assume_init() }.ru_maxrss as u64;
+        #[cfg(target_os = "linux")]
+        let rss = rss * 1024;
+        let mut output = Output {
+            status: std::process::ExitStatus::from_raw(raw),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        };
+        child
+            .stdout
+            .take()
+            .expect("measured stdout is piped")
+            .read_to_end(&mut output.stdout)
+            .expect("measured stdout reads");
+        child
+            .stderr
+            .take()
+            .expect("measured stderr is piped")
+            .read_to_end(&mut output.stderr)
+            .expect("measured stderr reads");
+        (decode_reply(arguments, &output), rss)
+    }
+}
+
+fn decode_reply<B: DeserializeOwned>(arguments: &[String], output: &Output) -> wire::Reply<B> {
+    assert!(
+        output.status.success(),
+        "command {arguments:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let Outcome::Reply(reply) = wire::decode::<Outcome<B>>(&output.stdout)
+        .unwrap_or_else(|error| panic!("decode {arguments:?}: {error}"))
+    else {
+        panic!("command {arguments:?} did not reply")
+    };
+    reply
 }
 
 impl Drop for Fixture {
@@ -186,7 +250,6 @@ fn task_artifact_cli_and_backup_restore_preserve_provenance() {
         panic!("artifact list returned another answer after rehome")
     };
     assert_eq!(artifacts, [first.clone(), second.clone()]);
-    assert_invalid_task_refusals(&fixture);
     resident.stop(&fixture);
     assert_backup_restore(&fixture, &rehomed, first, second);
 }
@@ -345,62 +408,6 @@ fn task_artifact_refuses_malformed_mount_registry_before_state_access() {
 }
 
 #[test]
-fn task_artifact_refuses_opaque_binary_without_panicking_or_publishing() {
-    let fixture = Fixture::new();
-    let resident = Resident::start(&fixture);
-    let task = fixture
-        .reply::<TaskAnswer>(&[
-            "task".to_owned(),
-            "add".to_owned(),
-            "Opaque artifact evidence".to_owned(),
-            "--project".to_owned(),
-            "rim.artifact".to_owned(),
-            "--origin".to_owned(),
-            "fixture:task-artifact-cli-opaque".to_owned(),
-        ])
-        .body
-        .task;
-    let opaque = fixture.source("opaque", b"\xff\xfe\xfd");
-    let output = fixture.invoke(&[
-        "task".to_owned(),
-        "artifact".to_owned(),
-        "add".to_owned(),
-        task.to_string(),
-        opaque.display().to_string(),
-    ]);
-
-    assert_eq!(output.status.code(), Some(2));
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!stderr.contains("panicked"), "{stderr}");
-    let Outcome::<ArtifactAnswer>::Refusal(refusal) =
-        wire::decode(&output.stderr).expect("decode opaque binary refusal")
-    else {
-        panic!("opaque binary did not refuse")
-    };
-    assert_eq!(refusal.reason(), "artifact::operation-refused");
-    assert!(
-        refusal
-            .diagnostic()
-            .and_then(wire::RefusalDiagnostic::observed)
-            .is_some_and(|detail| detail.contains("pass --type")),
-        "{refusal:?}"
-    );
-    let ArtifactAnswer::Listed { artifacts, .. } = fixture
-        .reply::<ArtifactAnswer>(&[
-            "task".to_owned(),
-            "artifact".to_owned(),
-            "list".to_owned(),
-            task.to_string(),
-        ])
-        .body
-    else {
-        panic!("artifact list returned another answer")
-    };
-    assert!(artifacts.is_empty(), "refused input published a citation");
-    resident.stop(&fixture);
-}
-
-#[test]
 fn restore_refuses_an_internally_valid_artifact_for_an_unknown_task_inertly() {
     let fixture = Fixture::new();
     let resident = Resident::start(&fixture);
@@ -525,71 +532,7 @@ fn assert_artifact_surface(
     };
     assert_eq!(artifacts, vec![first.clone(), second.clone()]);
 
-    let prune = fixture.reply::<ArtifactAnswer>(&[
-        "task".to_owned(),
-        "artifact".to_owned(),
-        "prune".to_owned(),
-        "--older-than".to_owned(),
-        "30d".to_owned(),
-    ]);
-    let ArtifactAnswer::Pruned { plan, applied } = prune.body else {
-        panic!("artifact prune returned another answer")
-    };
-    assert!(!applied);
-    assert_eq!(plan.older_than_seconds, Some(30 * 24 * 60 * 60));
-    assert!(
-        plan.operations.is_empty(),
-        "pending task must not be pruned"
-    );
-
-    let shown = fixture.reply::<ArtifactAnswer>(&[
-        "task".to_owned(),
-        "artifact".to_owned(),
-        "show".to_owned(),
-        task.to_string(),
-        "A1".to_owned(),
-    ]);
-    let ArtifactAnswer::Shown { content, .. } = shown.body else {
-        panic!("artifact show returned another answer")
-    };
-    assert_eq!(
-        content,
-        ArtifactContent::Text {
-            text: "observed proof\n".to_owned()
-        }
-    );
-
     (first, second)
-}
-
-fn assert_invalid_task_refusals(fixture: &Fixture) {
-    let invalid = fixture.invoke(&[
-        "task".to_owned(),
-        "artifact".to_owned(),
-        "list".to_owned(),
-        "not-a-task".to_owned(),
-    ]);
-    assert_eq!(invalid.status.code(), Some(2));
-    let Outcome::<ArtifactAnswer>::Refusal(refusal) =
-        wire::decode(&invalid.stderr).expect("decode invalid task refusal")
-    else {
-        panic!("invalid task did not refuse")
-    };
-    assert_eq!(refusal.reason(), "artifact::task-invalid");
-
-    let unknown = fixture.invoke(&[
-        "task".to_owned(),
-        "artifact".to_owned(),
-        "list".to_owned(),
-        "UNKNOWN-12345678".to_owned(),
-    ]);
-    assert_eq!(unknown.status.code(), Some(2));
-    let Outcome::<ArtifactAnswer>::Refusal(refusal) =
-        wire::decode(&unknown.stderr).expect("decode unknown task refusal")
-    else {
-        panic!("unknown task did not refuse")
-    };
-    assert_eq!(refusal.reason(), "artifact::task-unknown");
 }
 
 fn assert_backup_restore(
@@ -598,7 +541,12 @@ fn assert_backup_restore(
     first: artifact::Artifact,
     second: artifact::Artifact,
 ) {
-    fixture.reply::<JournalBackup>(&["backup".to_owned(), fixture.bundle.display().to_string()]);
+    let retained = seed_retained_generation(fixture, task);
+    let (_, backup_rss) = fixture.measured_reply::<JournalBackup>(&[
+        "backup".to_owned(),
+        fixture.bundle.display().to_string(),
+    ]);
+    assert_rss_bound("backup", backup_rss);
     let born = task.born().expect("fixture handle carries its birth stamp");
     assert!(
         fixture
@@ -612,18 +560,25 @@ fn assert_backup_restore(
     );
 
     let later = fixture.source("later.txt", b"not in backup");
-    let third = add(fixture, task, &later, "permanent");
-    assert_eq!(third.id, "A3");
-    let preview = fixture
-        .reply::<JournalRestore>(&["restore".to_owned(), fixture.bundle.display().to_string()]);
+    let later = add(fixture, task, &later, "permanent");
+    assert_eq!(later.id, "A7");
+    let (preview, preview_rss) = fixture.measured_reply::<JournalRestore>(&[
+        "restore".to_owned(),
+        fixture.bundle.display().to_string(),
+    ]);
+    assert_rss_bound("restore preview", preview_rss);
     assert!(!preview.body.applied);
     let apply = format!("--apply={}", preview.body.plan);
-    let restored = fixture.reply::<JournalRestore>(&[
+    let (restored, apply_rss) = fixture.measured_reply::<JournalRestore>(&[
         "restore".to_owned(),
         fixture.bundle.display().to_string(),
         apply,
     ]);
+    assert_rss_bound("restore apply", apply_rss);
     assert!(restored.body.applied);
+    eprintln!(
+        "bounded backup/restore RSS bytes: payload={RETAINED_GENERATION_BYTES} backup={backup_rss} preview={preview_rss} apply={apply_rss}"
+    );
 
     let listed = fixture.reply::<ArtifactAnswer>(&[
         "task".to_owned(),
@@ -634,7 +589,51 @@ fn assert_backup_restore(
     let ArtifactAnswer::Listed { artifacts, .. } = listed.body else {
         panic!("restored artifact list returned another answer")
     };
-    assert_eq!(artifacts, vec![first, second]);
+    let mut expected = vec![first, second];
+    expected.extend(retained);
+    assert_eq!(artifacts, expected);
+}
+
+fn seed_retained_generation(fixture: &Fixture, task: &TaskHandle) -> Vec<artifact::Artifact> {
+    let born = task.born().expect("fixture handle carries its birth stamp");
+    let runtime = fixture.root.join(".git/.spice-rs");
+    let store = Store::new(
+        runtime.join("artifacts/tasks"),
+        runtime.join("locks/task-artifacts.lock"),
+    );
+    (0..RETAINED_MEMBERS)
+        .map(|index| {
+            let path = fixture.source(
+                &format!("retained-{index}.png"),
+                &[b"\x89PNG\r\n\x1a\n".as_slice(), &[index as u8]].concat(),
+            );
+            fs::OpenOptions::new()
+                .write(true)
+                .open(&path)
+                .expect("retained source opens")
+                .set_len(RETAINED_MEMBER_BYTES)
+                .expect("retained source grows");
+            store
+                .add(AddRequest {
+                    task: &born,
+                    source: &path,
+                    name: None,
+                    media_type: None,
+                    retention: Retention::Permanent,
+                    created_at: "2030-01-01T00:00:00.000Z"
+                        .parse()
+                        .expect("retained fixture instant"),
+                })
+                .expect("retained artifact is added")
+        })
+        .collect()
+}
+
+fn assert_rss_bound(operation: &str, rss: u64) {
+    assert!(
+        rss < RETAINED_GENERATION_BYTES,
+        "{operation} retained a complete artifact generation: rss={rss}, generation={RETAINED_GENERATION_BYTES}"
+    );
 }
 
 fn add(

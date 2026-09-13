@@ -2,7 +2,6 @@ use std::ffi::OsString;
 use std::fs::{self, File, Metadata, OpenOptions};
 use std::io::{self, Seek, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::journal_lock::JournalLock;
 use serde::Serialize;
@@ -11,9 +10,6 @@ use wire::{
     Actor, Digest, Domain, Fault, FaultClass, JournalRestore, Outcome, Producer, Refusal, Reply,
     ReplyPosition, RestoreVerification, SeqRange,
 };
-
-const CAPTURE_ATTEMPTS: usize = 128;
-static NEXT_CAPTURE: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn restore(matches: &clap::ArgMatches) -> Outcome<JournalRestore> {
     let bundle = matches
@@ -73,21 +69,29 @@ struct AuthorityIdentity {
 }
 
 struct CapturedAuthority {
-    root: PathBuf,
-    file: Option<File>,
+    file: File,
+    _temporary: TemporaryAuthority,
     bytes: u64,
     digest: Digest,
 }
 
+struct TemporaryAuthority(PathBuf);
+
+impl Drop for TemporaryAuthority {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
 impl CapturedAuthority {
     fn copy_to(&mut self, target: &mut dyn Write) -> io::Result<u64> {
-        let file = self
-            .file
-            .as_mut()
-            .expect("captured authority retains its file until drop");
-        file.rewind()?;
-        let (bytes, digest) =
-            Digest::copy_reader(Domain::JournalBackupMember, file, target, self.bytes.max(1))?;
+        self.file.rewind()?;
+        let (bytes, digest) = Digest::copy_reader(
+            Domain::JournalBackupMember,
+            &mut self.file,
+            target,
+            self.bytes.max(1),
+        )?;
         if bytes != self.bytes || digest != self.digest {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -95,14 +99,6 @@ impl CapturedAuthority {
             ));
         }
         Ok(bytes)
-    }
-}
-
-impl Drop for CapturedAuthority {
-    fn drop(&mut self) {
-        drop(self.file.take());
-        make_capture_root_writable(&self.root);
-        let _ = fs::remove_dir_all(&self.root);
     }
 }
 
@@ -544,10 +540,7 @@ fn capture_current_authority(path: &Path) -> Result<Option<CapturedAuthority>, F
     let Some((mut source, expected)) = current_authority(path)? else {
         return Ok(None);
     };
-    let root = create_capture_root()?;
-    let captured_path = root.join("authority");
-    let mut cleanup = CaptureCleanup(Some(root.clone()));
-    let mut target = create_captured_authority(&captured_path)?;
+    let (temporary, mut target) = create_temporary_authority()?;
     let (bytes, digest) = Digest::copy_reader(
         Domain::JournalBackupMember,
         &mut source,
@@ -560,14 +553,23 @@ fn capture_current_authority(path: &Path) -> Result<Option<CapturedAuthority>, F
         fault(
             FaultClass::Environment,
             "restore::authority-capture-failed",
-            format!("{}: {error}", captured_path.display()),
+            error.to_string(),
         )
     })?;
-    let file = seal_captured_authority(target, &captured_path, &root)?;
-    cleanup.0.take();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        target
+            .set_permissions(fs::Permissions::from_mode(0o400))
+            .map_err(|error| authority_capture_failure(&temporary.0, error))?;
+    }
+    drop(target);
+    let file =
+        File::open(&temporary.0).map_err(|error| authority_capture_failure(&temporary.0, error))?;
     Ok(Some(CapturedAuthority {
-        root,
-        file: Some(file),
+        file,
+        _temporary: temporary,
         bytes,
         digest,
     }))
@@ -696,86 +698,21 @@ impl AuthorityIdentity {
     }
 }
 
-struct CaptureCleanup(Option<PathBuf>);
-
-impl Drop for CaptureCleanup {
-    fn drop(&mut self) {
-        if let Some(root) = self.0.take() {
-            make_capture_root_writable(&root);
-            let _ = fs::remove_dir_all(root);
-        }
-    }
-}
-
-fn create_capture_root() -> Result<PathBuf, Failure> {
-    for _ in 0..CAPTURE_ATTEMPTS {
-        let root = std::env::temp_dir().join(format!(
-            ".spice-restore-previous-{}-{}",
-            std::process::id(),
-            NEXT_CAPTURE.fetch_add(1, Ordering::Relaxed)
-        ));
-        match create_private_capture_directory(&root) {
-            Ok(()) => return Ok(root),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(error) => {
-                return Err(fault(
-                    FaultClass::Environment,
-                    "restore::authority-capture-failed",
-                    format!("{}: {error}", root.display()),
-                ));
-            }
-        }
-    }
-    Err(fault(
-        FaultClass::Environment,
-        "restore::authority-capture-exhausted",
-        format!("no private capture root was available in {CAPTURE_ATTEMPTS} attempts"),
-    ))
-}
-
-#[cfg(unix)]
-fn create_private_capture_directory(path: &Path) -> io::Result<()> {
-    use std::os::unix::fs::DirBuilderExt;
-
-    let mut builder = fs::DirBuilder::new();
-    builder.mode(0o700).create(path)
-}
-
-#[cfg(not(unix))]
-fn create_private_capture_directory(path: &Path) -> io::Result<()> {
-    fs::create_dir(path)
-}
-
-fn create_captured_authority(path: &Path) -> Result<File, Failure> {
-    #[cfg(unix)]
-    use std::os::unix::fs::OpenOptionsExt;
-
+fn create_temporary_authority() -> Result<(TemporaryAuthority, File), Failure> {
+    let path =
+        std::env::temp_dir().join(format!(".spice-restore-previous-{}", uuid::Uuid::new_v4()));
     let mut options = OpenOptions::new();
     options.read(true).write(true).create_new(true);
     #[cfg(unix)]
-    options.mode(0o600);
-    options.open(path).map_err(|error| {
-        fault(
-            FaultClass::Environment,
-            "restore::authority-capture-failed",
-            format!("{}: {error}", path.display()),
-        )
-    })
-}
-
-fn seal_captured_authority(target: File, path: &Path, root: &Path) -> Result<File, Failure> {
-    #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::OpenOptionsExt;
 
-        target
-            .set_permissions(fs::Permissions::from_mode(0o400))
-            .map_err(|error| authority_capture_failure(path, error))?;
-        fs::set_permissions(root, fs::Permissions::from_mode(0o500))
-            .map_err(|error| authority_capture_failure(root, error))?;
+        options.mode(0o600);
     }
-    drop(target);
-    File::open(path).map_err(|error| authority_capture_failure(path, error))
+    let file = options
+        .open(&path)
+        .map_err(|error| authority_capture_failure(&path, error))?;
+    Ok((TemporaryAuthority(path), file))
 }
 
 fn authority_capture_failure(path: &Path, error: io::Error) -> Failure {
@@ -784,17 +721,6 @@ fn authority_capture_failure(path: &Path, error: io::Error) -> Failure {
         "restore::authority-capture-failed",
         format!("{}: {error}", path.display()),
     )
-}
-
-fn make_capture_root_writable(root: &Path) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        let _ = fs::set_permissions(root, fs::Permissions::from_mode(0o700));
-    }
-    #[cfg(not(unix))]
-    let _ = root;
 }
 
 fn refuse_sidecars(destination: &Path) -> Result<(), Failure> {
@@ -981,59 +907,23 @@ impl Failure {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
-    /// How many names one fixture tries before giving up on an exclusive root.
-    const SCRATCH_ATTEMPTS: usize = 100;
-
-    /// A scratch directory this fixture is the only holder of.
     struct Scratch(PathBuf);
-
-    impl Scratch {
-        /// One scratch root on a name nothing else already holds.
-        ///
-        /// `create_dir` refuses a directory that exists rather than opening it,
-        /// so retrying under a fresh name is what makes the root exclusive: this
-        /// run only ever owns a name its own `create_dir` succeeded on. The name
-        /// carries the clock rather than the process id because ids are reused
-        /// across the lanes sharing this temporary directory and the clock is
-        /// not, so a peer's live fixture is never named the same as this one.
-        fn new() -> Self {
-            static NEXT: AtomicU64 = AtomicU64::new(0);
-            for _ in 0..SCRATCH_ATTEMPTS {
-                let stamp = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .expect("the clock reads after the epoch")
-                    .as_nanos();
-                let root = std::env::temp_dir().join(format!(
-                    "spice-restore-publication-{stamp}-{}",
-                    NEXT.fetch_add(1, Ordering::Relaxed)
-                ));
-                match fs::create_dir(&root) {
-                    Ok(()) => return Self(root),
-                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-                    Err(error) => panic!("exclusive scratch root is created: {error}"),
-                }
-            }
-            panic!("no exclusive scratch root was available in {SCRATCH_ATTEMPTS} attempts");
-        }
-    }
 
     impl Drop for Scratch {
         fn drop(&mut self) {
-            // A root that outlives its test is a name the next run can collide
-            // with, so remove it even where a panic is unwinding through here.
-            // Removal is allowed to fail rather than replace the failure the
-            // test is already carrying with one about its own cleanup.
             let _ = fs::remove_dir_all(&self.0);
         }
     }
 
     #[test]
     fn interrupted_staging_preserves_the_predecessor_authority() {
-        let scratch = Scratch::new();
+        let scratch = Scratch(std::env::temp_dir().join(format!(
+            "spice-restore-publication-{}",
+            uuid::Uuid::new_v4()
+        )));
         let root = &scratch.0;
+        fs::create_dir(root).expect("exclusive scratch root is created");
         let destination = root.join("spicejournal.sqlite3");
         let predecessor = b"predecessor authority";
         fs::write(&destination, predecessor).expect("write predecessor authority");
