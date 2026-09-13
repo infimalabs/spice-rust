@@ -574,6 +574,42 @@ fn publish_backup(source: &Path, destination: &Path) -> Result<(), Failure> {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn assert_late_backup_destination_is_preserved() {
+    let root = std::env::temp_dir().join(format!(
+        "spice-backup-publication-{}-{}",
+        std::process::id(),
+        NEXT_BACKUP.fetch_add(1, Ordering::Relaxed),
+    ));
+    fs::create_dir(&root).expect("backup publication fixture");
+    let source = root.join("staged");
+    let destination = root.join("published");
+    fs::create_dir(&source).expect("staged backup exists");
+    fs::write(source.join("member"), b"staged").expect("staged member exists");
+    assert!(require_absent(&destination).is_ok());
+    fs::create_dir(&destination).expect("competitor reaches publication boundary");
+
+    let Failure::Refusal(refusal) = (match publish_backup(&source, &destination) {
+        Err(failure) => failure,
+        Ok(()) => panic!("no-replace publication replaced the competitor"),
+    }) else {
+        panic!("late destination must be a typed refusal")
+    };
+    assert_eq!(refusal.reason(), "backup::output-exists");
+    assert!(
+        destination
+            .read_dir()
+            .expect("competitor remains")
+            .next()
+            .is_none()
+    );
+    assert_eq!(
+        fs::read(source.join("member")).expect("staging remains"),
+        b"staged"
+    );
+    fs::remove_dir_all(root).expect("backup publication fixture cleans up");
+}
+
 fn create_staging_directory(parent: &Path) -> Result<(PathBuf, DirectoryCleanup), Failure> {
     for _ in 0..128 {
         let path = parent.join(format!(
