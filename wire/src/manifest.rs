@@ -455,6 +455,11 @@ pub struct TargetPayload {
     /// Identity of the complete immutable Canvas generation.
     pub app: Digest,
     pub native: Digest,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub symbols: Option<MacSymbolMetadata>,
     pub pins: BuildPins,
     pub pins_digest: Digest,
@@ -505,6 +510,11 @@ pub struct ReleaseManifestTarget {
     /// Complete canonical artifact inventory authenticated by the payload.
     pub inventory: Vec<InventoryEntry>,
     /// Platform-conditional macOS symbol identity authenticated by the payload.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub symbols: Option<MacSymbolMetadata>,
     /// Canonical detached proof-receipt identity.
     pub receipt: Digest,
