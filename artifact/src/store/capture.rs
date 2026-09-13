@@ -249,7 +249,7 @@ fn capture_source(
         Domain::TaskArtifactPayload,
         open_regular_file(&captured)
             .map_err(|error| Error::io("open streamed artifact member", &captured, error))?,
-        copied,
+        copied.max(1),
     )
     .map_err(|error| Error::io("digest streamed artifact member", &captured, error))?;
     if bytes != copied {
