@@ -91,7 +91,7 @@ impl GraphWork {
         self.check()
     }
 
-    fn check(&mut self) -> bool {
+    pub(super) fn check(&mut self) -> bool {
         if self.failure.is_some() {
             return false;
         }
@@ -364,16 +364,20 @@ impl Corpus {
         traversal: HygieneTraversal,
         configuration: &HygieneConfiguration,
         focused: bool,
-    ) -> AnalysisEvidence {
-        match traversal {
+        work: &mut GraphWork,
+    ) -> Option<AnalysisEvidence> {
+        let evidence = match traversal {
             HygieneTraversal::ImportGraph => AnalysisEvidence::GraphConstruction {
                 production_roots: self.root_paths(&self.production_roots),
                 test_roots: self.root_paths(&self.test_modules),
                 nodes: u32::try_from(self.modules.len()).unwrap_or(u32::MAX),
                 edges: u32::try_from(self.edges.len()).unwrap_or(u32::MAX),
-                reach: self.suite_reach(),
+                reach: self.suite_reach(work)?,
             },
             HygieneTraversal::SymbolGraph | HygieneTraversal::PythonDeclarations => {
+                if !work.steps(self.traversal_steps(traversal)) {
+                    return None;
+                }
                 let resolved = self.resolved_references();
                 let reachable = self.production_symbols(&resolved);
                 AnalysisEvidence::SymbolExtraction {
@@ -397,22 +401,30 @@ impl Corpus {
                     .unwrap_or(u32::MAX),
                 }
             }
-            HygieneTraversal::TestAssertions => AnalysisEvidence::TestClassification {
-                files: u32::try_from(
-                    self.modules
-                        .values()
-                        .filter(|module| module.is_test)
-                        .count(),
-                )
-                .unwrap_or(u32::MAX),
-                tests: u32::try_from(self.tests().count()).unwrap_or(u32::MAX),
-                assertions: u32::try_from(
-                    self.tests().filter(|(_, test)| test.assertions > 0).count(),
-                )
-                .unwrap_or(u32::MAX),
-                helpers: configuration.assertion_helpers.clone(),
-            },
+            HygieneTraversal::TestAssertions => {
+                if !work.steps(self.traversal_steps(traversal)) {
+                    return None;
+                }
+                AnalysisEvidence::TestClassification {
+                    files: u32::try_from(
+                        self.modules
+                            .values()
+                            .filter(|module| module.is_test)
+                            .count(),
+                    )
+                    .unwrap_or(u32::MAX),
+                    tests: u32::try_from(self.tests().count()).unwrap_or(u32::MAX),
+                    assertions: u32::try_from(
+                        self.tests().filter(|(_, test)| test.assertions > 0).count(),
+                    )
+                    .unwrap_or(u32::MAX),
+                    helpers: configuration.assertion_helpers.clone(),
+                }
+            }
             HygieneTraversal::PrivateBoundaries => {
+                if !work.steps(self.traversal_steps(traversal)) {
+                    return None;
+                }
                 let couplings = self.private_couplings();
                 let admitted = couplings
                     .iter()
@@ -444,7 +456,8 @@ impl Corpus {
                     stale_exceptions: u32::try_from(stale).unwrap_or(u32::MAX),
                 }
             }
-        }
+        };
+        work.check().then_some(evidence)
     }
 
     pub(super) fn findings(
@@ -475,20 +488,14 @@ impl Corpus {
         if !work.steps(estimate) {
             return None;
         }
-        let findings = match gate {
-            GateId::Reachability => self.reachability_findings(),
-            GateId::SymbolReachability => self.symbol_reachability_findings(),
-            GateId::PythonUnused => self.python_unused_findings(),
-            GateId::AssertionFreeTests => self.assertion_free_findings(),
-            GateId::PrivateInternals => self.private_findings(configuration, focused),
-            _ => Vec::new(),
-        };
-        for finding in &findings {
-            if !work.admit_finding(finding_bytes(finding)) {
-                return None;
-            }
+        match gate {
+            GateId::Reachability => self.reachability_findings(work),
+            GateId::SymbolReachability => self.symbol_reachability_findings(work),
+            GateId::PythonUnused => self.python_unused_findings(work),
+            GateId::AssertionFreeTests => self.assertion_free_findings(work),
+            GateId::PrivateInternals => self.private_findings(configuration, focused, work),
+            _ => Some(Vec::new()),
         }
-        Some(findings)
     }
 
     pub(super) fn traversal_steps(&self, traversal: HygieneTraversal) -> usize {
@@ -497,11 +504,7 @@ impl Corpus {
             total.saturating_add(module.references.len())
         });
         match traversal {
-            HygieneTraversal::ImportGraph => self
-                .test_modules
-                .len()
-                .max(2)
-                .saturating_mul(self.modules.len().saturating_add(self.edges.len())),
+            HygieneTraversal::ImportGraph => 0,
             HygieneTraversal::SymbolGraph | HygieneTraversal::PythonDeclarations => declarations
                 .saturating_mul(references.max(1))
                 .saturating_mul(declarations.max(1)),
@@ -517,36 +520,41 @@ impl Corpus {
         }
     }
 
-    fn reachability_findings(&self) -> Vec<HygieneFinding> {
-        self.test_reachable
-            .difference(&self.production_reachable)
-            .filter(|name| !self.test_modules.contains(*name))
-            .filter_map(|name| {
-                let module = self.modules.get(name)?;
-                let imported_by = self
-                    .edges
-                    .iter()
-                    .filter(|(from, to)| to == name && self.test_reachable.contains(from))
-                    .filter_map(|(from, _)| self.modules.get(from).map(|item| item.path.clone()))
-                    .collect();
-                Some(HygieneFinding {
-                    path: module.path.clone(),
-                    line: None,
-                    detail: HygieneFindingDetail::ModuleReachability {
-                        provider: "python".to_owned(),
-                        subject: name.clone(),
-                        imported_by,
-                    },
-                })
-            })
-            .collect()
+    fn reachability_findings(&self, work: &mut GraphWork) -> Option<Vec<HygieneFinding>> {
+        retain_findings(
+            work,
+            self.test_reachable
+                .difference(&self.production_reachable)
+                .filter(|name| !self.test_modules.contains(*name))
+                .filter_map(|name| {
+                    let module = self.modules.get(name)?;
+                    let imported_by = self
+                        .edges
+                        .iter()
+                        .filter(|(from, to)| to == name && self.test_reachable.contains(from))
+                        .filter_map(|(from, _)| {
+                            self.modules.get(from).map(|item| item.path.clone())
+                        })
+                        .collect();
+                    Some(HygieneFinding {
+                        path: module.path.clone(),
+                        line: None,
+                        detail: HygieneFindingDetail::ModuleReachability {
+                            provider: "python".to_owned(),
+                            subject: name.clone(),
+                            imported_by,
+                        },
+                    })
+                }),
+        )
     }
 
-    fn symbol_reachability_findings(&self) -> Vec<HygieneFinding> {
+    fn symbol_reachability_findings(&self, work: &mut GraphWork) -> Option<Vec<HygieneFinding>> {
         let references = self.resolved_references();
         let production = self.production_symbols(&references);
-        self.declarations()
-            .filter_map(|(module, declaration)| {
+        retain_findings(
+            work,
+            self.declarations().filter_map(|(module, declaration)| {
                 let production_reachable =
                     production.contains(&(module.name.clone(), declaration.name.clone()));
                 let mut imported_by: Vec<_> = references
@@ -572,72 +580,77 @@ impl Corpus {
                         imported_by,
                     },
                 })
-            })
-            .collect()
+            }),
+        )
     }
 
-    fn python_unused_findings(&self) -> Vec<HygieneFinding> {
+    fn python_unused_findings(&self, work: &mut GraphWork) -> Option<Vec<HygieneFinding>> {
         let references = self.resolved_references();
         let production = self.production_symbols(&references);
-        self.declarations()
-            .filter(|(_, declaration)| declaration.top_level)
-            .filter_map(|(module, declaration)| {
-                if production.contains(&(module.name.clone(), declaration.name.clone())) {
-                    return None;
-                }
-                let mut test_references: Vec<_> = references
-                    .iter()
-                    .filter(|reference| {
-                        reference.from_test && reference.matches(&module.name, declaration)
+        retain_findings(
+            work,
+            self.declarations()
+                .filter(|(_, declaration)| declaration.top_level)
+                .filter_map(|(module, declaration)| {
+                    if production.contains(&(module.name.clone(), declaration.name.clone())) {
+                        return None;
+                    }
+                    let mut test_references: Vec<_> = references
+                        .iter()
+                        .filter(|reference| {
+                            reference.from_test && reference.matches(&module.name, declaration)
+                        })
+                        .map(|reference| reference.path.clone())
+                        .collect();
+                    test_references.sort();
+                    test_references.dedup();
+                    let (status, reason) = if test_references.is_empty() {
+                        (
+                            PythonUnusedStatus::CandidateUnused,
+                            "no production or test references",
+                        )
+                    } else {
+                        (PythonUnusedStatus::TestOnly, "references only in tests")
+                    };
+                    Some(HygieneFinding {
+                        path: module.path.clone(),
+                        line: Some(declaration.line),
+                        detail: HygieneFindingDetail::PythonUnused {
+                            module: module.name.clone(),
+                            symbol: declaration.name.clone(),
+                            declaration_kind: declaration.kind.to_owned(),
+                            status,
+                            reason: reason.to_owned(),
+                            test_references,
+                        },
                     })
-                    .map(|reference| reference.path.clone())
-                    .collect();
-                test_references.sort();
-                test_references.dedup();
-                let (status, reason) = if test_references.is_empty() {
-                    (
-                        PythonUnusedStatus::CandidateUnused,
-                        "no production or test references",
-                    )
-                } else {
-                    (PythonUnusedStatus::TestOnly, "references only in tests")
-                };
-                Some(HygieneFinding {
-                    path: module.path.clone(),
-                    line: Some(declaration.line),
-                    detail: HygieneFindingDetail::PythonUnused {
-                        module: module.name.clone(),
-                        symbol: declaration.name.clone(),
-                        declaration_kind: declaration.kind.to_owned(),
-                        status,
-                        reason: reason.to_owned(),
-                        test_references,
-                    },
-                })
-            })
-            .collect()
+                }),
+        )
     }
 
-    fn assertion_free_findings(&self) -> Vec<HygieneFinding> {
-        self.tests()
-            .filter(|(_, test)| test.assertions == 0)
-            .map(|(module, test)| HygieneFinding {
-                path: module.path.clone(),
-                line: Some(test.line),
-                detail: HygieneFindingDetail::AssertionFree {
-                    test_name: test.name.clone(),
-                },
-            })
-            .collect()
+    fn assertion_free_findings(&self, work: &mut GraphWork) -> Option<Vec<HygieneFinding>> {
+        retain_findings(
+            work,
+            self.tests()
+                .filter(|(_, test)| test.assertions == 0)
+                .map(|(module, test)| HygieneFinding {
+                    path: module.path.clone(),
+                    line: Some(test.line),
+                    detail: HygieneFindingDetail::AssertionFree {
+                        test_name: test.name.clone(),
+                    },
+                }),
+        )
     }
 
     fn private_findings(
         &self,
         configuration: &HygieneConfiguration,
         focused: bool,
-    ) -> Vec<HygieneFinding> {
+        work: &mut GraphWork,
+    ) -> Option<Vec<HygieneFinding>> {
         let couplings = self.private_couplings();
-        let mut findings: Vec<_> = couplings
+        let findings = couplings
             .iter()
             .filter(|coupling| !configuration.exception_matches(coupling))
             .map(|coupling| HygieneFinding {
@@ -649,23 +662,22 @@ impl Corpus {
                     target: coupling.target.clone(),
                 },
             })
-            .collect();
-        findings.extend(
-            configuration
-                .private_exceptions
-                .iter()
-                .filter(|exception| !focused || self.private_exception_relevant(exception))
-                .filter(|exception| !couplings.iter().any(|item| exception.matches(item)))
-                .map(|exception| HygieneFinding {
-                    path: "spice-rust.toml".to_owned(),
-                    line: None,
-                    detail: HygieneFindingDetail::StalePrivateException {
-                        test_name: exception.test_name.clone(),
-                        target: exception.target.clone(),
-                    },
-                }),
-        );
-        findings
+            .chain(
+                configuration
+                    .private_exceptions
+                    .iter()
+                    .filter(|exception| !focused || self.private_exception_relevant(exception))
+                    .filter(|exception| !couplings.iter().any(|item| exception.matches(item)))
+                    .map(|exception| HygieneFinding {
+                        path: "spice-rust.toml".to_owned(),
+                        line: None,
+                        detail: HygieneFindingDetail::StalePrivateException {
+                            test_name: exception.test_name.clone(),
+                            target: exception.target.clone(),
+                        },
+                    }),
+            );
+        retain_findings(work, findings)
     }
 
     fn private_exception_relevant(&self, exception: &PrivateCouplingException) -> bool {
@@ -688,23 +700,35 @@ impl Corpus {
     /// separates a module a lane can verify from one whose change leaves the
     /// rest of the suite unrun. Modules nothing reaches are absent rather than
     /// ranked at zero, because a module no test reaches never widens a run.
-    fn suite_reach(&self) -> Vec<ModuleReach> {
+    fn suite_reach(&self, work: &mut GraphWork) -> Option<Vec<ModuleReach>> {
         let mut reached: BTreeMap<String, u32> = BTreeMap::new();
         let mut imported: BTreeMap<String, u32> = BTreeMap::new();
         for test in &self.test_modules {
-            let direct: BTreeSet<String> = self
-                .edges
-                .iter()
-                .filter(|(from, _)| from == test)
-                .map(|(_, to)| to.clone())
-                .collect();
+            if !work.step() {
+                return None;
+            }
+            let mut direct = BTreeSet::new();
+            for (from, to) in &self.edges {
+                if !work.step() {
+                    return None;
+                }
+                if from == test {
+                    direct.insert(to.clone());
+                }
+            }
             for module in &direct {
+                if !work.step() {
+                    return None;
+                }
                 *imported.entry(module.clone()).or_default() += 1;
             }
             // Seeded with the direct imports rather than the test itself, so a
             // test module never counts as reaching itself, and seeded as a set
             // so one test importing a module twice still counts once.
-            for module in reachable(&direct, &self.edges) {
+            for module in reachable_bounded(&direct, &self.edges, work)? {
+                if !work.step() {
+                    return None;
+                }
                 *reached.entry(module).or_default() += 1;
             }
         }
@@ -726,7 +750,7 @@ impl Corpus {
                 .cmp(&left.reached_by)
                 .then_with(|| left.path.cmp(&right.path))
         });
-        ranked
+        work.check().then_some(ranked)
     }
 
     fn root_paths(&self, roots: &BTreeSet<String>) -> Vec<String> {
@@ -963,70 +987,16 @@ fn reachable_bounded(
     Some(reached)
 }
 
-fn reachable(roots: &BTreeSet<String>, edges: &BTreeSet<(String, String)>) -> BTreeSet<String> {
-    let mut reached = BTreeSet::new();
-    let mut pending: Vec<_> = roots.iter().cloned().collect();
-    while let Some(next) = pending.pop() {
-        if !reached.insert(next.clone()) {
-            continue;
+fn retain_findings(
+    work: &mut GraphWork,
+    findings: impl IntoIterator<Item = HygieneFinding>,
+) -> Option<Vec<HygieneFinding>> {
+    let mut retained = Vec::new();
+    for finding in findings {
+        if !work.admit_finding(finding_bytes(&finding)) {
+            return None;
         }
-        pending.extend(
-            edges
-                .iter()
-                .filter(|(from, _)| from == &next)
-                .map(|(_, to)| to.clone()),
-        );
+        retained.push(finding);
     }
-    reached
-}
-
-fn finding_bytes(finding: &HygieneFinding) -> usize {
-    let strings = match &finding.detail {
-        HygieneFindingDetail::ModuleReachability {
-            provider,
-            subject,
-            imported_by,
-        } => provider
-            .len()
-            .saturating_add(subject.len())
-            .saturating_add(imported_by.iter().map(String::len).sum()),
-        HygieneFindingDetail::SymbolReachability {
-            provider,
-            module,
-            symbol,
-            symbol_kind,
-            imported_by,
-        } => provider
-            .len()
-            .saturating_add(module.len())
-            .saturating_add(symbol.len())
-            .saturating_add(symbol_kind.len())
-            .saturating_add(imported_by.iter().map(String::len).sum()),
-        HygieneFindingDetail::PythonUnused {
-            module,
-            symbol,
-            declaration_kind,
-            reason,
-            test_references,
-            ..
-        } => module
-            .len()
-            .saturating_add(symbol.len())
-            .saturating_add(declaration_kind.len())
-            .saturating_add(reason.len())
-            .saturating_add(test_references.iter().map(String::len).sum()),
-        HygieneFindingDetail::AssertionFree { test_name } => test_name.len(),
-        HygieneFindingDetail::PrivateCoupling {
-            test_name,
-            coupling_kind,
-            target,
-        } => test_name
-            .len()
-            .saturating_add(coupling_kind.len())
-            .saturating_add(target.len()),
-        HygieneFindingDetail::StalePrivateException { test_name, target } => {
-            test_name.len().saturating_add(target.len())
-        }
-    };
-    finding.path.len().saturating_add(strings)
+    Some(retained)
 }

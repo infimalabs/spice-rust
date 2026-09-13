@@ -777,12 +777,12 @@ impl<'a> AnalyzerRun<'a> {
             });
         }
         for traversal in declaration.traversals {
-            if !work.steps(self.corpus.traversal_steps(*traversal)) {
-                return None;
-            }
-            let item = self
-                .corpus
-                .traversal_evidence(*traversal, self.configuration, self.focused);
+            let item = self.corpus.traversal_evidence(
+                *traversal,
+                self.configuration,
+                self.focused,
+                work,
+            )?;
             if !evidence
                 .iter()
                 .any(|existing| evidence_rank(existing) == evidence_rank(&item))
@@ -790,7 +790,7 @@ impl<'a> AnalyzerRun<'a> {
                 evidence.push(item);
             }
         }
-        Some(evidence)
+        work.check().then_some(evidence)
     }
 
     fn terminal_observation(
@@ -903,6 +903,72 @@ fn native_executable_digest() -> Option<&'static str> {
             Some(Digest::compute(Domain::GateTool, &bytes).to_string())
         })
         .as_deref()
+}
+
+fn finding_bytes(finding: &HygieneFinding) -> usize {
+    let strings = match &finding.detail {
+        HygieneFindingDetail::ModuleReachability {
+            provider,
+            subject,
+            imported_by,
+        } => saturating_sum(
+            [provider.len(), subject.len()]
+                .into_iter()
+                .chain(imported_by.iter().map(String::len)),
+        ),
+        HygieneFindingDetail::SymbolReachability {
+            provider,
+            module,
+            symbol,
+            symbol_kind,
+            imported_by,
+        } => saturating_sum(
+            [
+                provider.len(),
+                module.len(),
+                symbol.len(),
+                symbol_kind.len(),
+            ]
+            .into_iter()
+            .chain(imported_by.iter().map(String::len)),
+        ),
+        HygieneFindingDetail::PythonUnused {
+            module,
+            symbol,
+            declaration_kind,
+            reason,
+            test_references,
+            ..
+        } => saturating_sum(
+            [
+                module.len(),
+                symbol.len(),
+                declaration_kind.len(),
+                reason.len(),
+            ]
+            .into_iter()
+            .chain(test_references.iter().map(String::len)),
+        ),
+        HygieneFindingDetail::AssertionFree { test_name } => test_name.len(),
+        HygieneFindingDetail::PrivateCoupling {
+            test_name,
+            coupling_kind,
+            target,
+        } => test_name
+            .len()
+            .saturating_add(coupling_kind.len())
+            .saturating_add(target.len()),
+        HygieneFindingDetail::StalePrivateException { test_name, target } => {
+            test_name.len().saturating_add(target.len())
+        }
+    };
+    finding.path.len().saturating_add(strings)
+}
+
+fn saturating_sum(lengths: impl IntoIterator<Item = usize>) -> usize {
+    lengths
+        .into_iter()
+        .fold(0, |total, length| total.saturating_add(length))
 }
 
 mod syntax;
