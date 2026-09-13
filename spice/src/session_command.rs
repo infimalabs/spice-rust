@@ -108,14 +108,15 @@ pub(crate) fn run(
     matches: &ArgMatches,
     path: &[&str],
     environment: &Environment,
+    configuration: Option<&spice::config::RepositoryCapture>,
 ) -> Outcome<Report> {
     let action = path.get(1).copied().unwrap_or("briefing");
     let result = if action == "context" {
         context::build(matches)
     } else if matches!(action, "briefing" | "sweep") {
-        deadline_build(matches, path, action, environment)
+        deadline_build(matches, path, action, environment, configuration)
     } else {
-        build(matches, path, action, environment)
+        build(matches, path, action, environment, configuration)
     };
     outcome(result)
 }
@@ -146,6 +147,7 @@ fn deadline_build(
     path: &[&str],
     action: &str,
     environment: &Environment,
+    configuration: Option<&spice::config::RepositoryCapture>,
 ) -> Result<Report, Refusal> {
     let context = DeadlineContext {
         action: action.to_owned(),
@@ -160,12 +162,14 @@ fn deadline_build(
         .collect::<Vec<_>>();
     let owned_action = action.to_owned();
     let owned_environment = environment.clone();
+    let owned_configuration = configuration.cloned();
     run_deadline(&context, started, move |sender| {
         deadline_worker(
             owned_matches,
             owned_path,
             owned_action,
             owned_environment,
+            owned_configuration,
             sender,
         );
     })
@@ -199,6 +203,7 @@ fn deadline_worker(
     path: Vec<String>,
     action: String,
     environment: Environment,
+    configuration: Option<spice::config::RepositoryCapture>,
     sender: std::sync::mpsc::Sender<DeadlineEvent<Report>>,
 ) {
     let files = project::values(&matches, "FILES");
@@ -220,7 +225,14 @@ fn deadline_worker(
         return;
     }
     let path = path.iter().map(String::as_str).collect::<Vec<_>>();
-    let result = build_resolved(&matches, &path, &action, sources, &environment);
+    let result = build_resolved(
+        &matches,
+        &path,
+        &action,
+        sources,
+        &environment,
+        configuration.as_ref(),
+    );
     let _ = sender.send(DeadlineEvent::Complete(result, std::time::Instant::now()));
 }
 
@@ -316,6 +328,7 @@ fn build(
     path: &[&str],
     action: &str,
     environment: &Environment,
+    configuration: Option<&spice::config::RepositoryCapture>,
 ) -> Result<Report, Refusal> {
     if action == "thread" {
         let raw = matches
@@ -335,7 +348,7 @@ fn build(
     validate_options_before_source(matches, action)?;
     let files = project::values(matches, "FILES");
     let sources = source::resolve_inputs(&files, environment)?;
-    build_resolved(matches, path, action, sources, environment)
+    build_resolved(matches, path, action, sources, environment, configuration)
 }
 
 fn build_resolved(
@@ -344,6 +357,7 @@ fn build_resolved(
     action: &str,
     sources: Vec<source::ResolvedSource>,
     environment: &Environment,
+    configuration: Option<&spice::config::RepositoryCapture>,
 ) -> Result<Report, Refusal> {
     if let Some(report) = build_bounded_event_report(matches, action, &sources)? {
         return Ok(report);
@@ -383,7 +397,7 @@ fn build_resolved(
         let data =
             dataset::WindowScan::scan(&sources, start, filters.end_bound(), &filters, options)?;
         return if action == "briefing" {
-            let authorities = authority::observe(&sources, environment);
+            let authorities = authority::observe(&sources, environment, configuration);
             project::recall(&data, &filters, authorities)
         } else {
             project::sweep(&data, &filters)

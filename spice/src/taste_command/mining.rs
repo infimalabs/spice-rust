@@ -95,13 +95,16 @@ struct MiningSnapshot {
 }
 
 /// Mine recurring corrections and file only hidden, operator-reviewed work.
-pub(crate) fn mine(contract: &Contract) -> Outcome<TasteMiningReport> {
+pub(crate) fn mine(
+    contract: &Contract,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Outcome<TasteMiningReport> {
     let MiningSnapshot {
         repository,
         threshold,
         facts,
         cursor,
-    } = match mining_snapshot(contract) {
+    } = match mining_snapshot(contract, configuration) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -130,9 +133,12 @@ pub(crate) fn mine(contract: &Contract) -> Outcome<TasteMiningReport> {
     )
 }
 
-fn mining_snapshot(contract: &Contract) -> Result<MiningSnapshot, Outcome<TasteMiningReport>> {
+fn mining_snapshot(
+    contract: &Contract,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Result<MiningSnapshot, Outcome<TasteMiningReport>> {
     let repository = current_repository()?;
-    let surface = match Surface::load(&repository) {
+    let surface = match Surface::scoped(&repository, configuration) {
         Ok(surface) => surface,
         Err(error) => return Err(load_failure(&error)),
     };

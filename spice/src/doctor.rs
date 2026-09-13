@@ -27,6 +27,7 @@ pub(crate) fn inspect(
     working: &Path,
     environment: &[(SpiceVariable, bool)],
     search_path: Option<&OsStr>,
+    configuration: Option<&config::RepositoryCapture>,
 ) -> Outcome<DoctorReport<Root>> {
     #[cfg(debug_assertions)]
     spice::install::configure_test_maintenance_now(crate::bootstrap_environment(
@@ -42,10 +43,11 @@ pub(crate) fn inspect(
             });
         }
     };
-    let resolved = match config::load_repository(&repository, &[]) {
-        Ok(resolved) => resolved,
+    let loaded = match config::capture_repository_scoped(&repository, &[], configuration) {
+        Ok(loaded) => loaded,
         Err(error) => return Outcome::Refusal(configuration_refusal(&error)),
     };
+    let resolved = loaded.resolved().clone();
     let probe = FilesystemProbe::new(working, search_path);
 
     Outcome::Reply(Reply {

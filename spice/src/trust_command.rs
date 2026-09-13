@@ -37,6 +37,14 @@ impl Surface {
         Ok(Self::from_loaded(&loaded))
     }
 
+    fn scoped(
+        repository: &Repository,
+        configuration: Option<&spice::config::RepositoryCapture>,
+    ) -> Result<Self, LoadError> {
+        let loaded = spice::config::capture_repository_scoped(repository, &[], configuration)?;
+        Ok(Self::from_loaded(&loaded))
+    }
+
     /// Bind trust identity to one already admitted configuration capture.
     pub(crate) fn from_loaded(loaded: &Loaded) -> Self {
         let tracked = Document {
@@ -133,7 +141,10 @@ struct TrustRuling {
 }
 
 /// Authenticate through the current resident and render its durable trust heads.
-pub(crate) fn report(contract: &Contract) -> Outcome<TrustReport> {
+pub(crate) fn report(
+    contract: &Contract,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Outcome<TrustReport> {
     let repository = match current_repository() {
         Ok(repository) => repository,
         Err(outcome) => return outcome,
@@ -146,7 +157,7 @@ pub(crate) fn report(contract: &Contract) -> Outcome<TrustReport> {
         Ok(epoch) => epoch,
         Err(outcome) => return retag(outcome),
     };
-    let surface = match Surface::load(&repository) {
+    let surface = match Surface::scoped(&repository, configuration) {
         Ok(surface) => surface,
         Err(error) => return load_failure(&error),
     };
@@ -212,12 +223,15 @@ pub(crate) fn report(contract: &Contract) -> Outcome<TrustReport> {
 }
 
 /// Pend the exact executable surface currently present in this worktree.
-pub(crate) fn pend(contract: &Contract) -> Outcome<TrustAnswer> {
+pub(crate) fn pend(
+    contract: &Contract,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Outcome<TrustAnswer> {
     let repository = match current_repository() {
         Ok(repository) => repository,
         Err(outcome) => return outcome,
     };
-    let surface = match Surface::load(&repository) {
+    let surface = match Surface::scoped(&repository, configuration) {
         Ok(surface) => surface,
         Err(error) => return load_failure(&error),
     };

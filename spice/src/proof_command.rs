@@ -21,8 +21,10 @@ const TERMINATION_GRACE: Duration = Duration::from_secs(5);
 const OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
 
 /// Seal and atomically publish the detached proof for the compiled target.
-pub(crate) fn seal() -> Outcome<ProofEvidence> {
-    let invocation = match Invocation::acquire() {
+pub(crate) fn seal(
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Outcome<ProofEvidence> {
+    let invocation = match Invocation::acquire(configuration) {
         Ok(invocation) => invocation,
         Err(failure) => return failure.outcome(),
     };
@@ -38,8 +40,10 @@ pub(crate) fn seal() -> Outcome<ProofEvidence> {
 }
 
 /// Re-execute and verify the existing detached proof for the compiled target.
-pub(crate) fn replay() -> Outcome<ProofEvidence> {
-    let invocation = match Invocation::acquire() {
+pub(crate) fn replay(
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Outcome<ProofEvidence> {
+    let invocation = match Invocation::acquire(configuration) {
         Ok(invocation) => invocation,
         Err(failure) => return failure.outcome(),
     };
@@ -68,7 +72,7 @@ struct Invocation {
 }
 
 impl Invocation {
-    fn acquire() -> Result<Self, Failure> {
+    fn acquire(configuration: Option<&spice::config::RepositoryCapture>) -> Result<Self, Failure> {
         let current = std::env::current_dir().map_err(|error| {
             Failure::fault(
                 FaultClass::Environment,
@@ -83,8 +87,9 @@ impl Invocation {
                 error.to_string(),
             )
         })?;
-        let config =
-            spice::config::load_repository(&repository, &[]).map_err(Failure::configuration)?;
+        let loaded = spice::config::capture_repository_scoped(&repository, &[], configuration)
+            .map_err(Failure::configuration)?;
+        let config = loaded.resolved().clone();
         let state =
             repository
                 .admit_state()

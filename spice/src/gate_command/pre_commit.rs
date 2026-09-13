@@ -335,9 +335,12 @@ impl Drop for WorkerFiles {
     }
 }
 
-pub(super) fn run(profile_output: Option<PathBuf>) -> Outcome<Report> {
+pub(super) fn run(
+    profile_output: Option<PathBuf>,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Outcome<Report> {
     let mut profile = profile::Profile::new(profile_output);
-    let outcome = run_profiled(&mut profile);
+    let outcome = run_profiled(&mut profile, configuration);
     profile.publish();
     outcome
 }
@@ -346,7 +349,10 @@ pub(super) fn run(profile_output: Option<PathBuf>) -> Outcome<Report> {
     clippy::disallowed_methods,
     reason = "the pre-commit binary rim acquires its explicit hook environment"
 )]
-fn run_profiled(profile: &mut profile::Profile) -> Outcome<Report> {
+fn run_profiled(
+    profile: &mut profile::Profile,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Outcome<Report> {
     if let Some(source) = env::var_os(configured::SOURCE_VARIABLE) {
         return configured::recursion_refusal(&source);
     }
@@ -381,7 +387,11 @@ fn run_profiled(profile: &mut profile::Profile) -> Outcome<Report> {
         Ok(dispatch) => dispatch,
         Err(outcome) => return outcome,
     };
-    let prepared = configured::Dispatch::capture_at_with_claim(repository.clone(), claim.clone());
+    let prepared = configured::Dispatch::capture_at_with_claim_and_configuration(
+        repository.clone(),
+        claim.clone(),
+        configuration,
+    );
     profile.repository_core(core_started.elapsed());
     let prepared = match prepared {
         Ok(prepared) => prepared,

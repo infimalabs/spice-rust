@@ -16,6 +16,7 @@ use super::{Environment, source};
 pub(crate) fn observe(
     sources: &[source::ResolvedSource],
     environment: &Environment,
+    configuration: Option<&spice::config::RepositoryCapture>,
 ) -> RecallAuthorities {
     let mut recall = empty_recall_authorities();
 
@@ -24,7 +25,7 @@ pub(crate) fn observe(
     observe_transcript_threads(sources, thread.as_deref(), &mut recall);
 
     if let Some(thread) = thread.as_deref() {
-        observe_current_authorities(thread, &mut recall);
+        observe_current_authorities(thread, &mut recall, configuration);
     } else {
         unavailable_probes(
             &mut recall,
@@ -78,7 +79,11 @@ struct ObservedAuthorities {
     peer_claims: Option<Result<usize, AuthorityReadError>>,
 }
 
-fn observe_current_authorities(thread: &str, recall: &mut RecallAuthorities) {
+fn observe_current_authorities(
+    thread: &str,
+    recall: &mut RecallAuthorities,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) {
     let current = match std::env::current_dir() {
         Ok(current) => current,
         Err(error) => {
@@ -103,8 +108,8 @@ fn observe_current_authorities(thread: &str, recall: &mut RecallAuthorities) {
             return;
         }
     };
-    let projects = match spice::config::load_repository(&repository, &[]) {
-        Ok(config) => Some(config.root().tasks().project_policy().clone()),
+    let projects = match spice::config::capture_repository_scoped(&repository, &[], configuration) {
+        Ok(config) => Some(config.resolved().root().tasks().project_policy()),
         Err(error) => {
             unknown(recall, "configuration", "load-repository", &error);
             None

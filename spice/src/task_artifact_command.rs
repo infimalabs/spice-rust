@@ -10,8 +10,12 @@ use wire::{
     Fault, FaultClass, Instant, Outcome, Refusal, Reply, ReplyPosition, Seq, TaskHandle, TaskStamp,
 };
 
-pub(crate) fn run(matches: &clap::ArgMatches, contract: &Contract) -> Outcome<ArtifactAnswer> {
-    match run_inner(matches, contract) {
+pub(crate) fn run(
+    matches: &clap::ArgMatches,
+    contract: &Contract,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Outcome<ArtifactAnswer> {
+    match run_inner(matches, contract, configuration) {
         Ok((position, body)) => Outcome::Reply(Reply { position, body }),
         Err(failure) => failure.outcome(),
     }
@@ -20,8 +24,9 @@ pub(crate) fn run(matches: &clap::ArgMatches, contract: &Contract) -> Outcome<Ar
 fn run_inner(
     matches: &clap::ArgMatches,
     contract: &Contract,
+    configuration: Option<&spice::config::RepositoryCapture>,
 ) -> Result<(ReplyPosition, ArtifactAnswer), Failure> {
-    let snapshot = snapshot()?;
+    let snapshot = snapshot(configuration)?;
     let store = Store::new(
         snapshot.state.artifacts(),
         snapshot.state.locks().join("task-artifacts.lock"),
@@ -128,7 +133,7 @@ struct Snapshot {
     statuses: BTreeMap<TaskStamp, (TaskHandle, String)>,
 }
 
-fn snapshot() -> Result<Snapshot, Failure> {
+fn snapshot(configuration: Option<&spice::config::RepositoryCapture>) -> Result<Snapshot, Failure> {
     let working = std::env::current_dir().map_err(|error| {
         Failure::fault(
             FaultClass::Environment,
@@ -143,7 +148,7 @@ fn snapshot() -> Result<Snapshot, Failure> {
             error.to_string(),
         )
     })?;
-    let projects = task_project_policy(&repository)?;
+    let projects = task_project_policy(&repository, configuration)?;
     let state = repository.admit_state().map_err(state_failure)?;
     let journal = journal::Journal::open(state.journal()).map_err(|error| {
         Failure::fault(
@@ -201,10 +206,13 @@ fn snapshot() -> Result<Snapshot, Failure> {
     })
 }
 
-fn task_project_policy(repository: &Repository) -> Result<board::ProjectPolicy, Failure> {
-    let resolved =
-        spice::config::load_repository(repository, &[]).map_err(Failure::configuration)?;
-    Ok(resolved.root().tasks().project_policy())
+fn task_project_policy(
+    repository: &Repository,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Result<board::ProjectPolicy, Failure> {
+    let loaded = spice::config::capture_repository_scoped(repository, &[], configuration)
+        .map_err(Failure::configuration)?;
+    Ok(loaded.resolved().root().tasks().project_policy())
 }
 
 struct SelectedTask {

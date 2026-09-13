@@ -1050,7 +1050,7 @@ mod tests {
             .expect("briefing syntax parses");
         let leaf = crate::cli::selected_matches(&matches);
         let wire::Outcome::Reply(reply) =
-            crate::session_command::run(leaf, &["session", "briefing"], &environment)
+            crate::session_command::run(leaf, &["session", "briefing"], &environment, None)
         else {
             panic!("third declaration reaches briefing");
         };

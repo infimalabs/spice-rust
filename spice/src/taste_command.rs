@@ -94,6 +94,18 @@ struct Surface {
 impl Surface {
     fn load(repository: &Repository) -> Result<Self, LoadError> {
         let loaded = spice::config::capture_repository(repository, &[])?;
+        Ok(Self::from_loaded(&loaded))
+    }
+
+    fn scoped(
+        repository: &Repository,
+        configuration: Option<&spice::config::RepositoryCapture>,
+    ) -> Result<Self, LoadError> {
+        let loaded = spice::config::capture_repository_scoped(repository, &[], configuration)?;
+        Ok(Self::from_loaded(&loaded))
+    }
+
+    fn from_loaded(loaded: &spice::config::Loaded) -> Self {
         let text = loaded.tracked().map(ToOwned::to_owned);
         let location = loaded.locations().tracked().display().to_string();
         let digest = tracked_digest(text.as_deref());
@@ -117,13 +129,13 @@ impl Surface {
             })
             .collect();
         let mining_threshold = loaded.resolved().root().policy().taste_mining_threshold();
-        Ok(Self {
+        Self {
             text,
             location,
             digest,
             tastes,
             mining_threshold,
-        })
+        }
     }
 
     fn provenance(&self) -> TasteProvenance {
@@ -263,15 +275,22 @@ enum Verdict {
 }
 
 /// Authenticate through the resident and report one exact tracked generation.
-pub(crate) fn report(contract: &Contract) -> Outcome<TasteReport> {
-    match snapshot::<TasteReport>(contract) {
+pub(crate) fn report(
+    contract: &Contract,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Outcome<TasteReport> {
+    match snapshot::<TasteReport>(contract, configuration) {
         Ok((_, reply)) => Outcome::Reply(reply),
         Err(outcome) => outcome,
     }
 }
 
 /// Create reviewed work for one evidence-backed taste admission.
-pub(crate) fn add(matches: &ArgMatches, contract: &Contract) -> Outcome<TaskAnswer> {
+pub(crate) fn add(
+    matches: &ArgMatches,
+    contract: &Contract,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Outcome<TaskAnswer> {
     let evidence = matches
         .get_one::<String>("TEXT")
         .expect("the generated taste add syntax requires TEXT")
@@ -292,7 +311,7 @@ pub(crate) fn add(matches: &ArgMatches, contract: &Contract) -> Outcome<TaskAnsw
         Ok(repository) => repository,
         Err(outcome) => return outcome,
     };
-    let surface = match Surface::load(&repository) {
+    let surface = match Surface::scoped(&repository, configuration) {
         Ok(surface) => surface,
         Err(error) => return load_failure(&error),
     };
@@ -329,7 +348,11 @@ pub(crate) fn add(matches: &ArgMatches, contract: &Contract) -> Outcome<TaskAnsw
 }
 
 /// Create reviewed work for one current tracked taste retirement.
-pub(crate) fn drop(matches: &ArgMatches, contract: &Contract) -> Outcome<TaskAnswer> {
+pub(crate) fn drop(
+    matches: &ArgMatches,
+    contract: &Contract,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Outcome<TaskAnswer> {
     let written = matches
         .get_one::<String>("NAME")
         .expect("the generated taste drop syntax requires NAME");
@@ -348,7 +371,7 @@ pub(crate) fn drop(matches: &ArgMatches, contract: &Contract) -> Outcome<TaskAns
         Ok(origin) => origin,
         Err(outcome) => return retag(outcome),
     };
-    let (repository, reply) = match snapshot::<TaskAnswer>(contract) {
+    let (repository, reply) = match snapshot::<TaskAnswer>(contract, configuration) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -458,13 +481,17 @@ fn render_scopes(scopes: &gate::ScopeSelector) -> String {
     format!("{{ {entries} }}")
 }
 
-fn snapshot<B>(contract: &Contract) -> Result<(Repository, Reply<TasteReport>), Outcome<B>> {
+fn snapshot<B>(
+    contract: &Contract,
+    configuration: Option<&spice::config::RepositoryCapture>,
+) -> Result<(Repository, Reply<TasteReport>), Outcome<B>> {
     let repository = current_repository()?;
     let state = repository
         .admit_state()
         .map_err(|error| crate::state_failure(&error).outcome())?;
     let epoch = crate::command_client::authenticate(state.canvas(), contract).map_err(retag)?;
-    let surface = Surface::load(&repository).map_err(|error| load_failure(&error))?;
+    let surface =
+        Surface::scoped(&repository, configuration).map_err(|error| load_failure(&error))?;
     let reader = journal::JournalReader::open(state.journal()).map_err(|error| {
         fault(
             FaultClass::Store,
