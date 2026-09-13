@@ -447,7 +447,7 @@ fn an_empty_allocator_retains_its_exact_diagnostic() {
     let retried = retry_task_next(|| {
         attempts += 1;
         if attempts == 1 {
-            moved("allocator head set changed")
+            moved("board::witness-moved: allocator head set changed")
         } else {
             refusal(
                 "board::allocator-empty",
@@ -464,7 +464,7 @@ fn an_empty_allocator_retains_its_exact_diagnostic() {
     attempts = 0;
     let exhausted = retry_task_next(|| {
         attempts += 1;
-        moved("allocator subscription head changed")
+        moved("board::witness-moved: allocator subscription head changed")
     });
     assert_eq!(attempts, TASK_NEXT_ATTEMPTS);
     assert!(
@@ -474,11 +474,11 @@ fn an_empty_allocator_retains_its_exact_diagnostic() {
     attempts = 0;
     let terminal = retry_task_next(|| {
         attempts += 1;
-        moved("allocator winner changed")
+        moved("board::witness-moved: allocator winner changed")
     });
     assert_eq!(attempts, 1);
     assert!(
-        matches!(terminal, Outcome::Refusal(ref refusal) if refusal.explanation() == "allocator winner changed"),
+        matches!(terminal, Outcome::Refusal(ref refusal) if refusal.explanation() == "board::witness-moved: allocator winner changed"),
         "semantic winner movement returns its first refusal without replanning",
     );
 
