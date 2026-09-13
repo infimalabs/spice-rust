@@ -130,7 +130,7 @@ impl MessageFeed {
         let before_message = match self.history_boundary(lane, before, &visible)? {
             HistoryBoundary::Unknown => return Ok(None),
             HistoryBoundary::Bootstrap => None,
-            HistoryBoundary::Message(message) => Some(message),
+            HistoryBoundary::Message(index) => Some(visible[index].clone()),
         };
         let history = self
             .history
@@ -202,10 +202,8 @@ impl MessageFeed {
         if let Some(before) = before {
             return Ok(visible
                 .iter()
-                .find(|message| message.locus == before)
-                .map_or(HistoryBoundary::Unknown, |message| {
-                    HistoryBoundary::Message((*message).clone())
-                }));
+                .position(|message| message.locus == before)
+                .map_or(HistoryBoundary::Unknown, HistoryBoundary::Message));
         }
         let open = self
             .history_open
@@ -248,7 +246,7 @@ impl MessageFeed {
 enum HistoryBoundary {
     Unknown,
     Bootstrap,
-    Message(AgentMessage),
+    Message(usize),
 }
 
 fn retained_history(
