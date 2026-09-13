@@ -1,19 +1,20 @@
 //! Canonical package admission and deterministic Git tree materialization.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 #[cfg(test)]
 use std::fs;
 use std::fs::File;
-use std::io::{self, Write as _};
-use std::path::Path;
-use std::process::{Command, Stdio};
+use std::io;
+use std::path::{Path, PathBuf};
 
-use sha1::{Digest as _, Sha1};
 use wire::manifest::{
-    CANVAS_APP_FILES, InventoryEntry, ProductVersion, ReleaseManifest, ReleaseTarget,
+    CANVAS_APP_FILES, InventoryEntry, ProductVersion, RELEASE_MANIFEST_VERSION,
+    RELEASE_PACKAGE_VERSION, ReleaseManifest, ReleasePackage, ReleasePackageTarget, ReleaseTarget,
 };
 use wire::{Digest, Domain};
+
+mod tree;
 
 const MAX_RELEASE_MEMBERS: usize = 32;
 const MAX_RELEASE_MEMBER_BYTES: u64 = 512 * 1024 * 1024;
@@ -46,7 +47,6 @@ struct LoadedTarget {
     executable: proof::PackageMember,
     payload: proof::PackageMember,
     proof: proof::PackageMember,
-    inventory: Vec<InventoryEntry>,
 }
 
 struct Loaded {
@@ -61,10 +61,60 @@ struct LoadedApp {
     member: proof::PackageMember,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MemberShape {
+    mode: u32,
+    length: u64,
+    digest: Digest,
+    limit: u64,
+}
+
+#[derive(Debug)]
+struct PendingFile {
+    label: String,
+    file: File,
+    shape: MemberShape,
+}
+
+#[derive(Debug)]
+struct ReleaseBudget {
+    members: BTreeMap<String, MemberShape>,
+    bytes: u64,
+}
+
+#[derive(Debug)]
+struct ReleasePreflight {
+    manifest: ReleaseManifest,
+    package_bytes: Vec<u8>,
+    pending: BTreeMap<String, PendingFile>,
+    budget: ReleaseBudget,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct ReleaseMember {
+    member: proof::PackageMember,
+    limit: u64,
+}
+
+impl ReleaseMember {
+    pub(super) fn digest(&self) -> &Digest {
+        self.member.digest()
+    }
+
+    pub(super) fn copy_to(&self, writer: &mut dyn io::Write) -> Result<u64, PackageFailure> {
+        let mut budget = CaptureBudget::default();
+        budget.admit(self.member.path(), self.member.length(), self.limit)?;
+        self.member
+            .copy_to(writer)
+            .map_err(|error| PackageFailure::Moved(error.to_string()))
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct ReleaseIndex {
     preview: Preview,
     tree: proof::PackageTree,
+    budget: ReleaseBudget,
 }
 
 impl ReleaseIndex {
@@ -76,34 +126,34 @@ impl ReleaseIndex {
         manifest: &[u8],
     ) -> Result<Self, PackageFailure> {
         validate_notes(&notes_identity, notes).map_err(PackageFailure::Moved)?;
-        let mut budget = CaptureBudget::default();
-        let notes = inline_member(
-            "release/notes.md",
-            0o644,
-            notes,
-            proof::PACKAGE_DOCUMENT_LIMIT,
-            &mut budget,
-        )?;
-        let manifest_member = inline_member(
-            "release/manifest.json",
-            0o644,
-            manifest,
-            proof::PACKAGE_DOCUMENT_LIMIT,
-            &mut budget,
-        )?;
-        let loaded = load(root, manifest, notes, manifest_member, &mut budget)?;
+        let preflight =
+            ReleasePreflight::capture(root, version, notes_identity.clone(), notes, manifest)?;
+        let ReleasePreflight {
+            manifest: document,
+            package_bytes,
+            pending,
+            budget,
+        } = preflight;
+        let notes = inline_member("release/notes.md", 0o644, notes)?;
+        let manifest_member = inline_member("release/manifest.json", 0o644, manifest)?;
+        let loaded = load(document, notes, manifest_member, admit_pending(pending)?)?;
         let tree = proof::build_package(package_input(&loaded, version, notes_identity))
             .map_err(|error| PackageFailure::Moved(error.to_string()))?;
-        budget.admit(
-            "release/package.json",
-            tree.package().bytes().len() as u64,
-            proof::PACKAGE_DOCUMENT_LIMIT,
-        )?;
+        if tree.package().bytes() != package_bytes {
+            return Err(PackageFailure::Moved(
+                "derived release package changed after staged body admission".to_owned(),
+            ));
+        }
+        budget.verify(tree.members())?;
         let preview = Preview {
             identity: tree.package().identity().clone(),
-            git_tree: tree_identity(tree.members()).map_err(PackageFailure::Moved)?,
+            git_tree: tree::identity(tree.members(), &budget).map_err(PackageFailure::Moved)?,
         };
-        Ok(Self { preview, tree })
+        Ok(Self {
+            preview,
+            tree,
+            budget,
+        })
     }
 
     pub(super) const fn preview(&self) -> &Preview {
@@ -111,8 +161,8 @@ impl ReleaseIndex {
     }
 
     pub(super) fn materialize(&self, root: &Path) -> Result<Preview, PackageFailure> {
-        let git_tree =
-            write_tree(root, self.tree.members()).map_err(PackageFailure::Environment)?;
+        let git_tree = tree::write(root, self.tree.members(), &self.budget)
+            .map_err(PackageFailure::Environment)?;
         if git_tree != self.preview.git_tree {
             return Err(PackageFailure::Moved(
                 "materialized Git tree changed from its admitted preview".to_owned(),
@@ -124,16 +174,24 @@ impl ReleaseIndex {
     pub(super) fn target_executable(
         &self,
         target: ReleaseTarget,
-    ) -> Result<proof::PackageMember, PackageFailure> {
+    ) -> Result<ReleaseMember, PackageFailure> {
         let path = format!("targets/{target}/bin/spice");
-        self.tree
+        let member = self
+            .tree
             .members()
             .iter()
             .find(|member| member.path() == path)
             .cloned()
             .ok_or_else(|| {
                 PackageFailure::Moved(format!("release manifest has no {target} target"))
-            })
+            })?;
+        let limit = self
+            .budget
+            .members
+            .get(&path)
+            .expect("admitted tree member has a budget shape")
+            .limit;
+        Ok(ReleaseMember { member, limit })
     }
 }
 
@@ -178,33 +236,15 @@ fn package_input<'a>(
 }
 
 fn load(
-    root: &Path,
-    manifest: &[u8],
+    document: ReleaseManifest,
     notes: proof::PackageMember,
     manifest_member: proof::PackageMember,
-    budget: &mut CaptureBudget,
+    mut files: BTreeMap<String, proof::PackageMember>,
 ) -> Result<Loaded, PackageFailure> {
-    let document: ReleaseManifest =
-        wire::decode(manifest).map_err(|error| PackageFailure::Moved(error.to_string()))?;
-    let canonical =
-        wire::encode(&document).map_err(|error| PackageFailure::Moved(error.to_string()))?;
-    if canonical != manifest {
-        return Err(PackageFailure::Moved(
-            "release manifest is not canonical".to_owned(),
-        ));
-    }
-    let stage = root.join("dist/stage");
     let mut targets = Vec::with_capacity(document.targets.len());
     for target in document.targets {
-        let payload_path = stage.join(format!("objects/payload-{}.json", target.payload));
-        let payload = file_member(
-            &payload_path,
-            &format!("targets/{}/payload.json", target.target),
-            0o644,
-            proof::PACKAGE_DOCUMENT_LIMIT,
-            &format!("staged {} payload", target.target),
-            budget,
-        )?;
+        let payload_path = format!("targets/{}/payload.json", target.target);
+        let payload = take_member(&mut files, &payload_path)?;
         let payload_bytes = payload
             .read_bounded(proof::PACKAGE_DOCUMENT_LIMIT)
             .map_err(|error| PackageFailure::Moved(error.to_string()))?;
@@ -219,54 +259,32 @@ fn load(
                 target.target
             )));
         }
-        let executable = read_artifact(
-            &stage,
-            &target.inventory,
-            "bin/spice",
-            &format!("targets/{}/bin/spice", target.target),
-            &format!("staged {} executable", target.target),
-            budget,
-        )?;
-        let proof_path = stage.join(format!("objects/receipt-{}.json", target.receipt));
-        let proof = file_member(
-            &proof_path,
-            &format!("targets/{}/proof.json", target.target),
-            0o644,
-            proof::PACKAGE_DOCUMENT_LIMIT,
-            &format!("staged {} proof", target.target),
-            budget,
-        )?;
+        let executable = take_member(&mut files, &format!("targets/{}/bin/spice", target.target))?;
+        let proof = take_member(&mut files, &format!("targets/{}/proof.json", target.target))?;
         targets.push(LoadedTarget {
             target: target.target,
             executable,
             payload,
             proof,
-            inventory: target.inventory,
         });
     }
-    let inventory = &targets
-        .first()
-        .expect("the current release manifest carries two targets")
-        .inventory;
-    let mut files = CANVAS_APP_FILES.to_vec();
-    files.sort_unstable();
-    let app = files
-        .into_iter()
+    let mut app_files = CANVAS_APP_FILES.to_vec();
+    app_files.sort_unstable();
+    let app = app_files
+        .iter()
         .map(|file| {
             let path = format!("app/{file}");
             Ok(LoadedApp {
-                file: file.to_owned(),
-                member: read_artifact(
-                    &stage,
-                    inventory,
-                    &path,
-                    &path,
-                    &format!("staged Canvas asset {file}"),
-                    budget,
-                )?,
+                file: (*file).to_owned(),
+                member: take_member(&mut files, &path)?,
             })
         })
         .collect::<Result<Vec<_>, PackageFailure>>()?;
+    if let Some(path) = files.keys().next() {
+        return Err(PackageFailure::Moved(format!(
+            "release preflight retained unexpected member {path:?}"
+        )));
+    }
     Ok(Loaded {
         notes,
         manifest: manifest_member,
@@ -275,76 +293,406 @@ fn load(
     })
 }
 
-fn read_artifact(
-    stage: &Path,
-    inventory: &[InventoryEntry],
+fn take_member(
+    files: &mut BTreeMap<String, proof::PackageMember>,
     path: &str,
-    member_path: &str,
-    label: &str,
-    budget: &mut CaptureBudget,
 ) -> Result<proof::PackageMember, PackageFailure> {
-    let entry = inventory
-        .iter()
-        .find(|entry| entry.path == path)
-        .ok_or_else(|| PackageFailure::Moved(format!("staged target payload has no {path}")))?;
-    if entry.bytes > MAX_RELEASE_MEMBER_BYTES {
-        return Err(PackageFailure::Moved(format!(
-            "staged target payload member {path:?} declares {} bytes; maximum is {MAX_RELEASE_MEMBER_BYTES}",
-            entry.bytes
-        )));
-    }
-    let object = stage.join(format!("objects/{}-{:04o}", entry.digest, entry.mode));
-    let member = file_member(
-        &object,
-        member_path,
-        entry.mode,
-        MAX_RELEASE_MEMBER_BYTES,
-        label,
-        budget,
-    )?;
-    if member.length() != entry.bytes || member.digest() != &entry.digest {
-        return Err(PackageFailure::Moved(format!(
-            "{label} object disagrees with its payload inventory"
-        )));
-    }
-    Ok(member)
+    files
+        .remove(path)
+        .ok_or_else(|| PackageFailure::Moved(format!("release preflight has no {path:?}")))
 }
 
-fn file_member(
-    path: &Path,
-    member_path: &str,
-    mode: u32,
-    limit: u64,
-    label: &str,
-    budget: &mut CaptureBudget,
-) -> Result<proof::PackageMember, PackageFailure> {
-    let file = File::open(path).map_err(|error| {
-        let detail = format!("cannot read {label}: {error}");
-        if error.kind() == std::io::ErrorKind::NotFound {
-            PackageFailure::Moved(detail)
-        } else {
-            PackageFailure::Environment(detail)
-        }
-    })?;
-    let length = file
-        .metadata()
-        .map_err(|error| PackageFailure::Environment(format!("cannot inspect {label}: {error}")))?
-        .len();
-    budget.admit(member_path, length, limit)?;
-    proof::PackageMember::admit_file(member_path, mode, file, limit)
-        .map_err(|error| PackageFailure::Moved(error.to_string()))
+fn admit_pending(
+    pending: BTreeMap<String, PendingFile>,
+) -> Result<BTreeMap<String, proof::PackageMember>, PackageFailure> {
+    pending
+        .into_iter()
+        .map(|(path, pending)| {
+            let member = proof::PackageMember::admit_file(
+                &path,
+                pending.shape.mode,
+                pending.file,
+                pending.shape.limit,
+            )
+            .map_err(|error| PackageFailure::Moved(error.to_string()))?;
+            if member.length() != pending.shape.length || member.digest() != &pending.shape.digest {
+                return Err(PackageFailure::Moved(format!(
+                    "{} object disagrees with its payload inventory",
+                    pending.label
+                )));
+            }
+            Ok((path, member))
+        })
+        .collect()
 }
 
 fn inline_member(
     path: &str,
     mode: u32,
     bytes: &[u8],
-    limit: u64,
-    budget: &mut CaptureBudget,
 ) -> Result<proof::PackageMember, PackageFailure> {
-    budget.admit(path, bytes.len() as u64, limit)?;
-    proof::PackageMember::admit_inline(path, mode, bytes, limit)
+    proof::PackageMember::admit_inline(path, mode, bytes, proof::PACKAGE_DOCUMENT_LIMIT)
         .map_err(|error| PackageFailure::Moved(error.to_string()))
+}
+
+impl ReleasePreflight {
+    fn capture(
+        root: &Path,
+        version: &ProductVersion,
+        notes_identity: Digest,
+        notes: &[u8],
+        manifest: &[u8],
+    ) -> Result<Self, PackageFailure> {
+        let document: ReleaseManifest =
+            wire::decode(manifest).map_err(|error| PackageFailure::Moved(error.to_string()))?;
+        let canonical =
+            wire::encode(&document).map_err(|error| PackageFailure::Moved(error.to_string()))?;
+        if canonical != manifest {
+            return Err(PackageFailure::Moved(
+                "release manifest is not canonical".to_owned(),
+            ));
+        }
+        let package_bytes = package_bytes(version, notes_identity, notes, manifest, &document)?;
+        let stage = root.join("dist/stage");
+        let mut pending = BTreeMap::new();
+        let mut shapes = BTreeMap::new();
+        let mut total = CaptureBudget::default();
+        add_inline(
+            &mut shapes,
+            &mut total,
+            "release/notes.md",
+            0o644,
+            notes,
+            Domain::DistReleaseNotesContent,
+        )?;
+        add_inline(
+            &mut shapes,
+            &mut total,
+            "release/manifest.json",
+            0o644,
+            manifest,
+            Domain::DistReleaseManifest,
+        )?;
+        add_targets(
+            &stage,
+            &document.targets,
+            &mut pending,
+            &mut shapes,
+            &mut total,
+        )?;
+        let inventory = &document
+            .targets
+            .first()
+            .ok_or_else(|| PackageFailure::Moved("release manifest has no targets".to_owned()))?
+            .inventory;
+        add_canvas(&stage, inventory, &mut pending, &mut shapes, &mut total)?;
+        add_inline(
+            &mut shapes,
+            &mut total,
+            "release/package.json",
+            0o644,
+            &package_bytes,
+            Domain::DistReleasePackage,
+        )?;
+        Ok(Self {
+            manifest: document,
+            package_bytes,
+            pending,
+            budget: ReleaseBudget {
+                members: shapes,
+                bytes: total.bytes,
+            },
+        })
+    }
+}
+
+fn add_targets(
+    stage: &Path,
+    targets: &[wire::manifest::ReleaseManifestTarget],
+    pending: &mut BTreeMap<String, PendingFile>,
+    shapes: &mut BTreeMap<String, MemberShape>,
+    total: &mut CaptureBudget,
+) -> Result<(), PackageFailure> {
+    for target in targets {
+        add_pending(
+            pending,
+            shapes,
+            total,
+            PendingSpec {
+                source: stage.join(format!("objects/payload-{}.json", target.payload)),
+                path: format!("targets/{}/payload.json", target.target),
+                label: format!("staged {} payload", target.target),
+                mode: 0o644,
+                length: target.payload_bytes,
+                digest: target.payload.clone(),
+                limit: proof::PACKAGE_DOCUMENT_LIMIT,
+            },
+        )?;
+        add_artifact(
+            stage,
+            pending,
+            shapes,
+            total,
+            inventory_entry(&target.inventory, "bin/spice")?,
+            &format!("targets/{}/bin/spice", target.target),
+            &format!("staged {} executable", target.target),
+        )?;
+        add_pending(
+            pending,
+            shapes,
+            total,
+            PendingSpec {
+                source: stage.join(format!("objects/receipt-{}.json", target.receipt)),
+                path: format!("targets/{}/proof.json", target.target),
+                label: format!("staged {} proof", target.target),
+                mode: 0o644,
+                length: target.receipt_bytes,
+                digest: target.receipt.clone(),
+                limit: proof::PACKAGE_DOCUMENT_LIMIT,
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn add_canvas(
+    stage: &Path,
+    inventory: &[InventoryEntry],
+    pending: &mut BTreeMap<String, PendingFile>,
+    shapes: &mut BTreeMap<String, MemberShape>,
+    total: &mut CaptureBudget,
+) -> Result<(), PackageFailure> {
+    let mut files = CANVAS_APP_FILES.to_vec();
+    files.sort_unstable();
+    for file in files {
+        let path = format!("app/{file}");
+        add_artifact(
+            stage,
+            pending,
+            shapes,
+            total,
+            inventory_entry(inventory, &path)?,
+            &path,
+            &format!("staged Canvas asset {file}"),
+        )?;
+    }
+    Ok(())
+}
+
+struct PendingSpec {
+    source: PathBuf,
+    path: String,
+    label: String,
+    mode: u32,
+    length: u64,
+    digest: Digest,
+    limit: u64,
+}
+
+fn add_pending(
+    pending: &mut BTreeMap<String, PendingFile>,
+    shapes: &mut BTreeMap<String, MemberShape>,
+    total: &mut CaptureBudget,
+    spec: PendingSpec,
+) -> Result<(), PackageFailure> {
+    let file = File::open(&spec.source).map_err(|error| {
+        let detail = format!("cannot read {}: {error}", spec.label);
+        if error.kind() == std::io::ErrorKind::NotFound {
+            PackageFailure::Moved(detail)
+        } else {
+            PackageFailure::Environment(detail)
+        }
+    })?;
+    let metadata = file.metadata().map_err(|error| {
+        PackageFailure::Environment(format!("cannot inspect {}: {error}", spec.label))
+    })?;
+    if !metadata.is_file() {
+        return Err(PackageFailure::Moved(format!(
+            "{} is not a regular file",
+            spec.label
+        )));
+    }
+    if metadata.len() != spec.length {
+        return Err(PackageFailure::Moved(format!(
+            "{} is {} bytes; manifest declares {}",
+            spec.label,
+            metadata.len(),
+            spec.length
+        )));
+    }
+    total.admit(&spec.path, spec.length, spec.limit)?;
+    let shape = MemberShape {
+        mode: spec.mode,
+        length: spec.length,
+        digest: spec.digest,
+        limit: spec.limit,
+    };
+    insert_shape(shapes, &spec.path, shape.clone())?;
+    if pending
+        .insert(
+            spec.path.clone(),
+            PendingFile {
+                label: spec.label,
+                file,
+                shape,
+            },
+        )
+        .is_some()
+    {
+        return Err(PackageFailure::Moved(format!(
+            "release member {:?} occurs twice",
+            spec.path
+        )));
+    }
+    Ok(())
+}
+
+fn add_artifact(
+    stage: &Path,
+    pending: &mut BTreeMap<String, PendingFile>,
+    shapes: &mut BTreeMap<String, MemberShape>,
+    total: &mut CaptureBudget,
+    entry: &InventoryEntry,
+    path: &str,
+    label: &str,
+) -> Result<(), PackageFailure> {
+    add_pending(
+        pending,
+        shapes,
+        total,
+        PendingSpec {
+            source: stage.join(format!("objects/{}-{:04o}", entry.digest, entry.mode)),
+            path: path.to_owned(),
+            label: label.to_owned(),
+            mode: entry.mode,
+            length: entry.bytes,
+            digest: entry.digest.clone(),
+            limit: MAX_RELEASE_MEMBER_BYTES,
+        },
+    )
+}
+
+fn add_inline(
+    shapes: &mut BTreeMap<String, MemberShape>,
+    total: &mut CaptureBudget,
+    path: &str,
+    mode: u32,
+    bytes: &[u8],
+    domain: Domain,
+) -> Result<(), PackageFailure> {
+    let length = bytes.len() as u64;
+    total.admit(path, length, proof::PACKAGE_DOCUMENT_LIMIT)?;
+    insert_shape(
+        shapes,
+        path,
+        MemberShape {
+            mode,
+            length,
+            digest: Digest::compute(domain, bytes),
+            limit: proof::PACKAGE_DOCUMENT_LIMIT,
+        },
+    )
+}
+
+fn insert_shape(
+    shapes: &mut BTreeMap<String, MemberShape>,
+    path: &str,
+    shape: MemberShape,
+) -> Result<(), PackageFailure> {
+    if shapes.insert(path.to_owned(), shape).is_some() {
+        Err(PackageFailure::Moved(format!(
+            "release member {path:?} occurs twice"
+        )))
+    } else {
+        Ok(())
+    }
+}
+
+fn inventory_entry<'a>(
+    inventory: &'a [InventoryEntry],
+    path: &str,
+) -> Result<&'a InventoryEntry, PackageFailure> {
+    let mut matches = inventory.iter().filter(|entry| entry.path == path);
+    let entry = matches
+        .next()
+        .ok_or_else(|| PackageFailure::Moved(format!("staged target payload has no {path}")))?;
+    if matches.next().is_some() {
+        return Err(PackageFailure::Moved(format!(
+            "staged target payload repeats {path}"
+        )));
+    }
+    Ok(entry)
+}
+
+fn package_bytes(
+    version: &ProductVersion,
+    notes_identity: Digest,
+    notes: &[u8],
+    manifest_bytes: &[u8],
+    manifest: &ReleaseManifest,
+) -> Result<Vec<u8>, PackageFailure> {
+    const TARGETS: [ReleaseTarget; 2] = [
+        ReleaseTarget::Aarch64AppleDarwin,
+        ReleaseTarget::X86_64UnknownLinuxMusl,
+    ];
+    if manifest.version != RELEASE_MANIFEST_VERSION || manifest.targets.len() != TARGETS.len() {
+        return Err(PackageFailure::Moved(
+            "release manifest has no current complete target inventory".to_owned(),
+        ));
+    }
+    let first_canvas = manifest.targets[0]
+        .inventory
+        .iter()
+        .filter(|entry| entry.path.starts_with("app/"));
+    if !manifest.targets[1]
+        .inventory
+        .iter()
+        .filter(|entry| entry.path.starts_with("app/"))
+        .eq(first_canvas)
+    {
+        return Err(PackageFailure::Moved(
+            "release manifest targets disagree on Canvas inventory".to_owned(),
+        ));
+    }
+    let targets = manifest
+        .targets
+        .iter()
+        .zip(TARGETS)
+        .enumerate()
+        .map(|(index, (target, expected))| {
+            if target.target != expected {
+                return Err(PackageFailure::Moved(format!(
+                    "release manifest target {index} is {}, expected {expected}",
+                    target.target
+                )));
+            }
+            let executable = inventory_entry(&target.inventory, "bin/spice")?;
+            if executable.mode != 0o755 {
+                return Err(PackageFailure::Moved(format!(
+                    "staged {} executable has mode {:o}",
+                    target.target, executable.mode
+                )));
+            }
+            Ok(ReleasePackageTarget {
+                target: target.target,
+                executable_path: format!("targets/{}/bin/spice", target.target),
+                executable: executable.digest.clone(),
+                payload: target.payload.clone(),
+                proof: target.receipt.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, PackageFailure>>()?;
+    wire::encode(&ReleasePackage {
+        schema: RELEASE_PACKAGE_VERSION,
+        package: "spice".to_owned(),
+        product_version: version.clone(),
+        source: manifest.source.clone(),
+        manifest: Digest::compute(Domain::DistReleaseManifest, manifest_bytes),
+        notes: notes_identity,
+        notes_content: Digest::compute(Domain::DistReleaseNotesContent, notes),
+        targets,
+    })
+    .map_err(|error| PackageFailure::Moved(error.to_string()))
 }
 
 #[derive(Default)]
@@ -385,222 +733,70 @@ impl CaptureBudget {
     }
 }
 
-enum Node<'a> {
-    Directory(BTreeMap<String, Node<'a>>),
-    File(&'a proof::PackageMember),
-}
-
-fn tree_identity(members: &[proof::PackageMember]) -> Result<String, String> {
-    let root = tree(members)?;
-    Ok(hex(&hash_node(&root)?))
-}
-
-fn write_tree(root: &Path, members: &[proof::PackageMember]) -> Result<String, String> {
-    let tree = tree(members)?;
-    write_node(root, &tree).map(|object| hex(&object))
-}
-
-fn tree(members: &[proof::PackageMember]) -> Result<Node<'_>, String> {
-    let mut root = Node::Directory(BTreeMap::new());
-    for member in members {
-        insert(&mut root, member.path(), member)?;
-    }
-    Ok(root)
-}
-
-fn insert<'a>(
-    node: &mut Node<'a>,
-    path: &str,
-    member: &'a proof::PackageMember,
-) -> Result<(), String> {
-    let (name, tail) = path
-        .split_once('/')
-        .map_or((path, None), |(name, tail)| (name, Some(tail)));
-    let Node::Directory(children) = node else {
-        return Err(format!("package path collides with a file: {path}"));
-    };
-    if let Some(tail) = tail {
-        let child = children
-            .entry(name.to_owned())
-            .or_insert_with(|| Node::Directory(BTreeMap::new()));
-        insert(child, tail, member)
-    } else if children
-        .insert(name.to_owned(), Node::File(member))
-        .is_some()
-    {
-        Err(format!("package path occurs twice: {path}"))
-    } else {
-        Ok(())
-    }
-}
-
-fn hash_node(node: &Node<'_>) -> Result<[u8; 20], String> {
-    match node {
-        Node::File(member) => hash_member(member),
-        Node::Directory(children) => tree_body(children, hash_node).map(|body| hash("tree", &body)),
-    }
-}
-
-fn write_node(root: &Path, node: &Node<'_>) -> Result<[u8; 20], String> {
-    match node {
-        Node::File(member) => write_member_object(root, member),
-        Node::Directory(children) => {
-            let body = tree_body(children, |child| write_node(root, child))?;
-            write_object(root, "tree", &body)
+impl ReleaseBudget {
+    fn stream(&self) -> StreamBudget<'_> {
+        StreamBudget {
+            expected: self,
+            observed: CaptureBudget::default(),
+            seen: BTreeSet::new(),
         }
     }
+
+    fn verify(&self, members: &[proof::PackageMember]) -> Result<(), PackageFailure> {
+        let mut stream = self.stream();
+        for member in members {
+            stream.admit(member).map_err(PackageFailure::Moved)?;
+        }
+        stream.finish().map_err(PackageFailure::Moved)
+    }
 }
 
-fn tree_body(
-    children: &BTreeMap<String, Node<'_>>,
-    mut identity: impl FnMut(&Node<'_>) -> Result<[u8; 20], String>,
-) -> Result<Vec<u8>, String> {
-    let mut body = Vec::new();
-    for (name, child) in children {
-        let (mode, object) = match child {
-            Node::Directory(_) => ("40000", identity(child)?),
-            Node::File(member) if member.mode() == 0o644 => ("100644", identity(child)?),
-            Node::File(member) if member.mode() == 0o755 => ("100755", identity(child)?),
-            Node::File(member) => {
-                return Err(format!(
-                    "package member {name} has mode {:o}",
-                    member.mode()
-                ));
-            }
+struct StreamBudget<'a> {
+    expected: &'a ReleaseBudget,
+    observed: CaptureBudget,
+    seen: BTreeSet<String>,
+}
+
+impl StreamBudget<'_> {
+    fn admit(&mut self, member: &proof::PackageMember) -> Result<(), String> {
+        let shape =
+            self.expected.members.get(member.path()).ok_or_else(|| {
+                format!("release stream has unexpected member {:?}", member.path())
+            })?;
+        let observed = MemberShape {
+            mode: member.mode(),
+            length: member.length(),
+            digest: member.digest().clone(),
+            limit: shape.limit,
         };
-        body.extend_from_slice(mode.as_bytes());
-        body.push(b' ');
-        body.extend_from_slice(name.as_bytes());
-        body.push(0);
-        body.extend_from_slice(&object);
-    }
-    Ok(body)
-}
-
-fn hash_member(member: &proof::PackageMember) -> Result<[u8; 20], String> {
-    let mut hash = Sha1::new();
-    hash.update(format!("blob {}\0", member.length()).as_bytes());
-    member
-        .copy_to(&mut HashWriter(&mut hash))
-        .map_err(|error| error.to_string())?;
-    Ok(hash.finalize().into())
-}
-
-struct HashWriter<'a>(&'a mut Sha1);
-
-impl io::Write for HashWriter<'_> {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.0.update(bytes);
-        Ok(bytes.len())
+        if &observed != shape {
+            return Err(format!(
+                "release stream member {:?} moved from its admitted shape",
+                member.path()
+            ));
+        }
+        if !self.seen.insert(member.path().to_owned()) {
+            return Err(format!(
+                "release stream member {:?} occurs twice",
+                member.path()
+            ));
+        }
+        self.observed
+            .admit(member.path(), member.length(), shape.limit)
+            .map_err(|error| error.to_string())
     }
 
-    fn flush(&mut self) -> io::Result<()> {
+    fn finish(self) -> Result<(), String> {
+        if self.seen.len() != self.expected.members.len()
+            || self.observed.members != self.expected.members.len()
+            || self.observed.bytes != self.expected.bytes
+        {
+            return Err(
+                "release stream did not consume its complete admitted inventory".to_owned(),
+            );
+        }
         Ok(())
     }
-}
-
-fn hash(kind: &str, bytes: &[u8]) -> [u8; 20] {
-    let mut hash = Sha1::new();
-    hash.update(format!("{kind} {}\0", bytes.len()).as_bytes());
-    hash.update(bytes);
-    hash.finalize().into()
-}
-
-fn write_member_object(root: &Path, member: &proof::PackageMember) -> Result<[u8; 20], String> {
-    let mut child = Command::new("git")
-        .args(["hash-object", "-w", "-t", "blob", "--stdin"])
-        .current_dir(root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("cannot launch git hash-object: {error}"))?;
-    let mut stdin = child.stdin.take().expect("piped Git stdin exists");
-    let mut hash = Sha1::new();
-    hash.update(format!("blob {}\0", member.length()).as_bytes());
-    member
-        .copy_to(&mut CopyHashWriter {
-            writer: &mut stdin,
-            hash: &mut hash,
-        })
-        .map_err(|error| error.to_string())?;
-    drop(stdin);
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("cannot wait for git hash-object: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "git hash-object refused: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    let observed = String::from_utf8(output.stdout)
-        .map_err(|error| format!("Git object id is not UTF-8: {error}"))?;
-    let expected: [u8; 20] = hash.finalize().into();
-    if observed.trim() != hex(&expected) {
-        return Err("Git blob object identity disagrees with preview".to_owned());
-    }
-    Ok(expected)
-}
-
-struct CopyHashWriter<'a> {
-    writer: &'a mut dyn io::Write,
-    hash: &'a mut Sha1,
-}
-
-impl io::Write for CopyHashWriter<'_> {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        let written = self.writer.write(bytes)?;
-        self.hash.update(&bytes[..written]);
-        Ok(written)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.writer.flush()
-    }
-}
-
-fn write_object(root: &Path, kind: &str, bytes: &[u8]) -> Result<[u8; 20], String> {
-    let mut child = Command::new("git")
-        .args(["hash-object", "-w", "-t", kind, "--stdin"])
-        .current_dir(root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("cannot launch git hash-object: {error}"))?;
-    child
-        .stdin
-        .take()
-        .expect("piped Git stdin exists")
-        .write_all(bytes)
-        .map_err(|error| format!("cannot write Git {kind} object: {error}"))?;
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("cannot wait for git hash-object: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "git hash-object refused: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    let observed = String::from_utf8(output.stdout)
-        .map_err(|error| format!("Git object id is not UTF-8: {error}"))?;
-    let expected = hash(kind, bytes);
-    if observed.trim() != hex(&expected) {
-        return Err(format!("Git {kind} object identity disagrees with preview"));
-    }
-    Ok(expected)
-}
-
-fn hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(char::from(DIGITS[usize::from(byte >> 4)]));
-        output.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
-    }
-    output
 }
 
 #[cfg(test)]
