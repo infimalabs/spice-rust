@@ -370,6 +370,23 @@ fn build_resolved(
         let options = project::phase_options(matches)?;
         return dataset::Aggregate::scan_phases(&sources, options, filters);
     }
+    if matches!(action, "briefing" | "sweep") {
+        let options = project::window_options(matches, action)?;
+        let horizon = dataset::recent_compaction_horizon(
+            &sources,
+            options.compactions(),
+            filters.end_bound(),
+        )?;
+        let start = filters.start_bound().or(horizon.start.as_deref());
+        let data =
+            dataset::WindowScan::scan(&sources, start, filters.end_bound(), &filters, options)?;
+        return if action == "briefing" {
+            let authorities = authority::observe(&sources, environment);
+            project::recall(&data, &filters, authorities)
+        } else {
+            project::sweep(&data, &filters)
+        };
+    }
     let data = if let Some(count) = project::window_horizon_count(matches, action)? {
         let horizon = dataset::recent_compaction_horizon(&sources, count, filters.end_bound())?;
         let start = filters.start_bound().or(horizon.start.as_deref());
@@ -378,11 +395,6 @@ fn build_resolved(
         dataset::load(&sources)?
     };
     match action {
-        "briefing" => {
-            let authorities = authority::observe(&sources, environment);
-            project::recall(&data, matches, &filters, authorities)
-        }
-        "sweep" => project::sweep(&data, matches, &filters),
         "timeline" => project::timeline(&data, matches, &filters),
         "turns" => project::turns(&data, matches, &filters),
         "compactions" => project::compactions(&data, matches),

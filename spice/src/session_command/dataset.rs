@@ -26,7 +26,7 @@ mod horizon;
 mod stream;
 mod work;
 
-pub(crate) use aggregate::Aggregate;
+pub(crate) use aggregate::{Aggregate, WindowOptions, WindowScan, WindowTurn};
 pub(crate) use horizon::recent_compaction_horizon;
 use stream::stream_records;
 use work::{ResidueLedger, SessionWork, SessionWorkBudget, text_bytes};
@@ -201,21 +201,16 @@ pub(crate) fn load_since(
     start: Option<&str>,
 ) -> Result<Dataset, Refusal> {
     let mut dataset = Dataset::default();
+    let mut markers = Vec::new();
     let mut residues = ResidueLedger::new();
     let mut work = SessionWork::new(SessionWorkBudget::report());
     for source in sources {
         let source_name = source.path.display().to_string();
-        let mut selected = Dataset::default();
-        let mut markers = Vec::new();
-        let mut fold = WindowFold::new(&mut selected, &mut markers, &mut residues);
+        let mut fold = WindowFold::new(&mut dataset, &mut markers, &mut residues);
         let vendor = stream_records(source, start, &mut work, |row, work, at| {
             fold.push(row, work, at)
         })?;
         fold.finish(&mut work, &source_name)?;
-        reconstruct_compactions(&markers, &mut selected, &mut work)?;
-        account_compactions(&mut selected);
-        sort_dataset(&mut selected);
-        merge_dataset(&mut dataset, selected);
         let source_view = SourceView {
             name: source.path.file_name().map_or_else(
                 || source_name.clone(),
@@ -229,6 +224,9 @@ pub(crate) fn load_since(
         work.admit_retained_text(source_view_text_bytes(&source_view), &source_view.path)?;
         dataset.sources.push(source_view);
     }
+    reconstruct_compactions(&markers, &mut dataset, &mut work)?;
+    account_compactions(&mut dataset);
+    sort_dataset(&mut dataset);
     dataset.residues = residues.finish(&mut work, "residue summary")?;
     Ok(dataset)
 }
@@ -1437,44 +1435,6 @@ fn sort_dataset(dataset: &mut Dataset) {
     dataset
         .commands
         .sort_by(|left, right| (&left.ts, &left.source).cmp(&(&right.ts, &right.source)));
-}
-
-fn merge_dataset(dataset: &mut Dataset, selected: Dataset) {
-    merge_sorted(&mut dataset.turns, selected.turns, |left, right| {
-        (&left.start_ts, &left.source).cmp(&(&right.start_ts, &right.source))
-    });
-    merge_sorted(
-        &mut dataset.compactions,
-        selected.compactions,
-        |left, right| (&left.ts, &left.source).cmp(&(&right.ts, &right.source)),
-    );
-    merge_sorted(&mut dataset.messages, selected.messages, |left, right| {
-        (&left.ts, &left.source, &left.side).cmp(&(&right.ts, &right.source, &right.side))
-    });
-    merge_sorted(&mut dataset.commands, selected.commands, |left, right| {
-        (&left.ts, &left.source).cmp(&(&right.ts, &right.source))
-    });
-}
-
-fn merge_sorted<T>(
-    target: &mut Vec<T>,
-    incoming: Vec<T>,
-    compare: impl Fn(&T, &T) -> std::cmp::Ordering,
-) {
-    let capacity = target.len().saturating_add(incoming.len());
-    let mut left = std::mem::take(target).into_iter().peekable();
-    let mut right = incoming.into_iter().peekable();
-    let mut merged = Vec::with_capacity(capacity);
-    while let (Some(left_row), Some(right_row)) = (left.peek(), right.peek()) {
-        if compare(left_row, right_row).is_le() {
-            merged.push(left.next().expect("peeked left row exists"));
-        } else {
-            merged.push(right.next().expect("peeked right row exists"));
-        }
-    }
-    merged.extend(left);
-    merged.extend(right);
-    *target = merged;
 }
 
 fn refusal(reason: &str, observed: Option<String>, detail: &str) -> Refusal {
