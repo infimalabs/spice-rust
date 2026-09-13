@@ -17,7 +17,7 @@ use crate::{JournalReader, OpenError, VerifyError};
 const MANIFEST: &str = "manifest.json";
 const MAX_MANIFEST_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_BACKUP_MEMBERS: usize = 4096;
-const MAX_BACKUP_BYTES: u64 = 512 * 1024 * 1024;
+pub const MAX_BACKUP_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_INVENTORY_ENTRIES: usize = MAX_BACKUP_MEMBERS * 2 + 1;
 const COPY_BUFFER_BYTES: usize = 64 * 1024;
 static NEXT_CAPTURE: AtomicU64 = AtomicU64::new(0);

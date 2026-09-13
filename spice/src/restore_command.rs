@@ -1,7 +1,8 @@
 use std::ffi::OsString;
-use std::fs::{self, OpenOptions};
-use std::io::{self, Read, Write};
+use std::fs::{self, File, Metadata, OpenOptions};
+use std::io::{self, Seek, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::journal_lock::JournalLock;
 use serde::Serialize;
@@ -10,6 +11,9 @@ use wire::{
     Actor, Digest, Domain, Fault, FaultClass, JournalRestore, Outcome, Producer, Refusal, Reply,
     ReplyPosition, RestoreVerification, SeqRange,
 };
+
+const CAPTURE_ATTEMPTS: usize = 128;
+static NEXT_CAPTURE: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn restore(matches: &clap::ArgMatches) -> Outcome<JournalRestore> {
     let bundle = matches
@@ -52,10 +56,54 @@ struct PreparedRestore {
     bundle: String,
     capture: journal::RestoreCapture,
     previous: Option<Digest>,
-    previous_bytes: Option<Vec<u8>>,
+    previous_authority: Option<CapturedAuthority>,
     artifacts: artifact::BackupGeneration,
     previous_artifacts: artifact::BackupGeneration,
     plan: Digest,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AuthorityIdentity {
+    bytes: u64,
+    modified: Option<std::time::SystemTime>,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+}
+
+struct CapturedAuthority {
+    root: PathBuf,
+    file: Option<File>,
+    bytes: u64,
+    digest: Digest,
+}
+
+impl CapturedAuthority {
+    fn copy_to(&mut self, target: &mut dyn Write) -> io::Result<u64> {
+        let file = self
+            .file
+            .as_mut()
+            .expect("captured authority retains its file until drop");
+        file.rewind()?;
+        let (bytes, digest) =
+            Digest::copy_reader(Domain::JournalBackupMember, file, target, self.bytes.max(1))?;
+        if bytes != self.bytes || digest != self.digest {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "captured predecessor authority changed while streaming",
+            ));
+        }
+        Ok(bytes)
+    }
+}
+
+impl Drop for CapturedAuthority {
+    fn drop(&mut self) {
+        drop(self.file.take());
+        make_capture_root_writable(&self.root);
+        let _ = fs::remove_dir_all(&self.root);
+    }
 }
 
 impl PreparedRestore {
@@ -92,10 +140,10 @@ fn prepare_restore(bundle: &Path) -> Result<PreparedRestore, Failure> {
     let artifact_store =
         artifact::Store::new(state.artifacts(), state.locks().join("task-artifacts.lock"));
     let previous_artifacts = artifact_store.capture().map_err(artifact_failure)?;
-    let previous_bytes = current_bytes(&destination)?;
-    let previous = previous_bytes
+    let previous_authority = capture_current_authority(&destination)?;
+    let previous = previous_authority
         .as_ref()
-        .map(|bytes| Digest::compute(Domain::JournalBackupMember, bytes));
+        .map(|capture| capture.digest.clone());
     let plan_document = RestorePlanIdentity {
         version: 2,
         bundle: capture.verification().bundle.clone(),
@@ -117,7 +165,7 @@ fn prepare_restore(bundle: &Path) -> Result<PreparedRestore, Failure> {
         bundle: bundle.display().to_string(),
         capture,
         previous,
-        previous_bytes,
+        previous_authority,
         artifacts,
         previous_artifacts,
         plan,
@@ -125,7 +173,7 @@ fn prepare_restore(bundle: &Path) -> Result<PreparedRestore, Failure> {
 }
 
 fn apply_restore(
-    prepared: PreparedRestore,
+    mut prepared: PreparedRestore,
     requested: &str,
 ) -> Result<(SeqRange, JournalRestore), Failure> {
     let _lock = admit_apply(&prepared, requested)?;
@@ -152,7 +200,7 @@ fn apply_restore(
     let position = match finalized {
         Ok(position) => position,
         Err(failure) => {
-            let authority_rollback = rollback_authority(&prepared);
+            let authority_rollback = rollback_authority(&mut prepared);
             let artifact_rollback = replacement.rollback();
             if let Err(rollback) = authority_rollback {
                 return Err(fault(
@@ -223,10 +271,6 @@ fn publish_captured_authority(
     authority: &journal::RestoreMember,
 ) -> Result<(), Failure> {
     publish_authority_with(destination, |staged| authority.copy_to(staged).map(|_| ()))
-}
-
-fn publish_authority(destination: &Path, bytes: &[u8]) -> Result<(), Failure> {
-    publish_authority_with(destination, |staged| staged.write_all(bytes))
 }
 
 fn publish_authority_with<F>(destination: &Path, write: F) -> Result<(), Failure>
@@ -375,9 +419,11 @@ fn append_restored(prepared: &PreparedRestore) -> Result<SeqRange, Failure> {
     })
 }
 
-fn rollback_authority(prepared: &PreparedRestore) -> Result<(), Failure> {
-    match prepared.previous_bytes.as_deref() {
-        Some(bytes) => publish_authority(&prepared.destination, bytes),
+fn rollback_authority(prepared: &mut PreparedRestore) -> Result<(), Failure> {
+    match prepared.previous_authority.as_mut() {
+        Some(authority) => publish_authority_with(&prepared.destination, |staged| {
+            authority.copy_to(staged).map(|_| ())
+        }),
         None => match fs::remove_file(&prepared.destination) {
             Ok(()) => sync_parent(&prepared.destination),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -481,31 +527,92 @@ impl artifact::BackupSource for RestoreArtifactMember<'_> {
 }
 
 fn current_identity(path: &Path) -> Result<Option<Digest>, Failure> {
-    Ok(current_bytes(path)?
-        .as_ref()
-        .map(|bytes| Digest::compute(Domain::JournalBackupMember, bytes)))
+    let Some((mut file, expected)) = current_authority(path)? else {
+        return Ok(None);
+    };
+    let (bytes, digest) = Digest::compute_reader(
+        Domain::JournalBackupMember,
+        &mut file,
+        expected.bytes.max(1),
+    )
+    .map_err(|error| authority_read_failure(path, error))?;
+    require_current_authority(path, &file, &expected, bytes)?;
+    Ok(Some(digest))
 }
 
-fn current_bytes(path: &Path) -> Result<Option<Vec<u8>>, Failure> {
+fn capture_current_authority(path: &Path) -> Result<Option<CapturedAuthority>, Failure> {
+    let Some((mut source, expected)) = current_authority(path)? else {
+        return Ok(None);
+    };
+    let root = create_capture_root()?;
+    let captured_path = root.join("authority");
+    let mut cleanup = CaptureCleanup(Some(root.clone()));
+    let mut target = create_captured_authority(&captured_path)?;
+    let (bytes, digest) = Digest::copy_reader(
+        Domain::JournalBackupMember,
+        &mut source,
+        &mut target,
+        expected.bytes.max(1),
+    )
+    .map_err(|error| authority_read_failure(path, error))?;
+    require_current_authority(path, &source, &expected, bytes)?;
+    target.sync_all().map_err(|error| {
+        fault(
+            FaultClass::Environment,
+            "restore::authority-capture-failed",
+            format!("{}: {error}", captured_path.display()),
+        )
+    })?;
+    let file = seal_captured_authority(target, &captured_path, &root)?;
+    cleanup.0.take();
+    Ok(Some(CapturedAuthority {
+        root,
+        file: Some(file),
+        bytes,
+        digest,
+    }))
+}
+
+fn current_authority(path: &Path) -> Result<Option<(File, AuthorityIdentity)>, Failure> {
     match fs::symlink_metadata(path) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(fault(
-                FaultClass::Environment,
-                "restore::authority-unreadable",
-                format!("{}: {error}", path.display()),
-            ));
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(fault(
+            FaultClass::Environment,
+            "restore::authority-unreadable",
+            format!("{}: {error}", path.display()),
+        )),
+        Ok(metadata) if !metadata.file_type().is_file() => Err(refusal(
+            "restore::authority-refused",
+            "an absent or regular-file authority destination",
+            path.display().to_string(),
+            "remove the non-file obstruction before previewing restore",
+        )),
+        Ok(metadata) if metadata.len() > journal::MAX_BACKUP_BYTES => Err(refusal(
+            "restore::authority-refused",
+            format!("at most {} authority bytes", journal::MAX_BACKUP_BYTES),
+            format!("{} bytes", metadata.len()),
+            "quiesce or repair the oversized authority before previewing restore",
+        )),
+        Ok(metadata) => {
+            let expected = AuthorityIdentity::from_metadata(&metadata);
+            let file = open_authority(path)?;
+            let opened = file.metadata().map_err(|error| {
+                fault(
+                    FaultClass::Environment,
+                    "restore::authority-unreadable",
+                    format!("{}: {error}", path.display()),
+                )
+            })?;
+            if AuthorityIdentity::from_metadata(&opened) == expected {
+                Ok(Some((file, expected)))
+            } else {
+                Err(authority_changed(path))
+            }
         }
-        Ok(metadata) if !metadata.file_type().is_file() => {
-            return Err(refusal(
-                "restore::authority-refused",
-                "an absent or regular-file authority destination",
-                path.display().to_string(),
-                "remove the non-file obstruction before previewing restore",
-            ));
-        }
-        Ok(_) => {}
     }
+}
+
+fn open_authority(path: &Path) -> Result<File, Failure> {
     #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt;
 
@@ -513,22 +620,181 @@ fn current_bytes(path: &Path) -> Result<Option<Vec<u8>>, Failure> {
     options.read(true);
     #[cfg(unix)]
     options.custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    let mut file = options.open(path).map_err(|error| {
+    options.open(path).map_err(|error| {
+        fault(
+            FaultClass::Environment,
+            "restore::authority-unreadable",
+            format!("{}: {error}", path.display()),
+        )
+    })
+}
+
+fn require_current_authority(
+    path: &Path,
+    source: &File,
+    expected: &AuthorityIdentity,
+    observed: u64,
+) -> Result<(), Failure> {
+    let named = fs::symlink_metadata(path).map_err(|error| {
         fault(
             FaultClass::Environment,
             "restore::authority-unreadable",
             format!("{}: {error}", path.display()),
         )
     })?;
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes).map_err(|error| {
+    let handle = source.metadata().map_err(|error| {
         fault(
             FaultClass::Environment,
             "restore::authority-unreadable",
             format!("{}: {error}", path.display()),
         )
     })?;
-    Ok(Some(bytes))
+    if AuthorityIdentity::from_metadata(&handle) == *expected
+        && AuthorityIdentity::from_metadata(&named) == *expected
+        && observed == expected.bytes
+    {
+        Ok(())
+    } else {
+        Err(authority_changed(path))
+    }
+}
+
+fn authority_changed(path: &Path) -> Failure {
+    refusal(
+        "restore::authority-changed",
+        "one unchanged regular-file authority generation",
+        path.display().to_string(),
+        "quiesce the authority writer and preview the restore again",
+    )
+}
+
+fn authority_read_failure(path: &Path, error: io::Error) -> Failure {
+    if error.kind() == io::ErrorKind::InvalidData {
+        authority_changed(path)
+    } else {
+        fault(
+            FaultClass::Environment,
+            "restore::authority-unreadable",
+            format!("{}: {error}", path.display()),
+        )
+    }
+}
+
+impl AuthorityIdentity {
+    fn from_metadata(metadata: &Metadata) -> Self {
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt;
+
+        Self {
+            bytes: metadata.len(),
+            modified: metadata.modified().ok(),
+            #[cfg(unix)]
+            device: metadata.dev(),
+            #[cfg(unix)]
+            inode: metadata.ino(),
+        }
+    }
+}
+
+struct CaptureCleanup(Option<PathBuf>);
+
+impl Drop for CaptureCleanup {
+    fn drop(&mut self) {
+        if let Some(root) = self.0.take() {
+            make_capture_root_writable(&root);
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+}
+
+fn create_capture_root() -> Result<PathBuf, Failure> {
+    for _ in 0..CAPTURE_ATTEMPTS {
+        let root = std::env::temp_dir().join(format!(
+            ".spice-restore-previous-{}-{}",
+            std::process::id(),
+            NEXT_CAPTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        match create_private_capture_directory(&root) {
+            Ok(()) => return Ok(root),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(fault(
+                    FaultClass::Environment,
+                    "restore::authority-capture-failed",
+                    format!("{}: {error}", root.display()),
+                ));
+            }
+        }
+    }
+    Err(fault(
+        FaultClass::Environment,
+        "restore::authority-capture-exhausted",
+        format!("no private capture root was available in {CAPTURE_ATTEMPTS} attempts"),
+    ))
+}
+
+#[cfg(unix)]
+fn create_private_capture_directory(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+
+    let mut builder = fs::DirBuilder::new();
+    builder.mode(0o700).create(path)
+}
+
+#[cfg(not(unix))]
+fn create_private_capture_directory(path: &Path) -> io::Result<()> {
+    fs::create_dir(path)
+}
+
+fn create_captured_authority(path: &Path) -> Result<File, Failure> {
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    options.open(path).map_err(|error| {
+        fault(
+            FaultClass::Environment,
+            "restore::authority-capture-failed",
+            format!("{}: {error}", path.display()),
+        )
+    })
+}
+
+fn seal_captured_authority(target: File, path: &Path, root: &Path) -> Result<File, Failure> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        target
+            .set_permissions(fs::Permissions::from_mode(0o400))
+            .map_err(|error| authority_capture_failure(path, error))?;
+        fs::set_permissions(root, fs::Permissions::from_mode(0o500))
+            .map_err(|error| authority_capture_failure(root, error))?;
+    }
+    drop(target);
+    File::open(path).map_err(|error| authority_capture_failure(path, error))
+}
+
+fn authority_capture_failure(path: &Path, error: io::Error) -> Failure {
+    fault(
+        FaultClass::Environment,
+        "restore::authority-capture-failed",
+        format!("{}: {error}", path.display()),
+    )
+}
+
+fn make_capture_root_writable(root: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _ = fs::set_permissions(root, fs::Permissions::from_mode(0o700));
+    }
+    #[cfg(not(unix))]
+    let _ = root;
 }
 
 fn refuse_sidecars(destination: &Path) -> Result<(), Failure> {
@@ -771,6 +1037,14 @@ mod tests {
         let destination = root.join("spicejournal.sqlite3");
         let predecessor = b"predecessor authority";
         fs::write(&destination, predecessor).expect("write predecessor authority");
+        let mut captured = capture_current_authority(&destination)
+            .expect("predecessor capture succeeds")
+            .expect("predecessor exists");
+        assert_eq!(captured.bytes, predecessor.len() as u64);
+        assert_eq!(
+            captured.digest,
+            Digest::compute(Domain::JournalBackupMember, predecessor)
+        );
 
         let error = publish_authority_with(&destination, |staged| {
             staged.write_all(b"partial replacement")?;
@@ -796,9 +1070,17 @@ mod tests {
             .map(|entry| entry.expect("restore publication entry").path())
             .collect::<Vec<_>>();
         assert_eq!(
-            entries,
-            [destination],
+            entries.as_slice(),
+            std::slice::from_ref(&destination),
             "interrupted staging left a temporary publication behind",
+        );
+
+        fs::write(&destination, b"later authority").expect("replace authority after capture");
+        publish_authority_with(&destination, |staged| captured.copy_to(staged).map(|_| ()))
+            .expect("captured predecessor republishes");
+        assert_eq!(
+            fs::read(&destination).expect("read republished predecessor"),
+            predecessor,
         );
     }
 }
