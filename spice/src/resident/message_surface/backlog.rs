@@ -8,8 +8,10 @@ use std::time::Duration;
 
 use super::*;
 
+mod history;
 #[cfg(test)]
 mod tests;
+use history::HistorySources;
 
 /// Fixed newest-record window for one startup or historical tape read.
 const INITIAL_WINDOW_BYTES: u64 = 32 * 1024;
@@ -101,7 +103,6 @@ impl SessionWorktrees {
 #[derive(Debug, Default)]
 pub(in crate::resident) struct BacklogReader {
     cursors: BTreeMap<CanonicalUuid, listen::Checkpoint>,
-    history_open: BTreeSet<CanonicalUuid>,
     startup_work: StartupWork,
     state: MessageState,
     steering: PresentationDirectives,
@@ -121,7 +122,6 @@ impl BacklogReader {
             .map_err(|error| store_fault("canvas::message-steering-invalid", &error))?;
         Ok(Self {
             cursors: BTreeMap::new(),
-            history_open: BTreeSet::new(),
             startup_work: StartupWork::default(),
             state: MessageState {
                 previews: CallPreviews::default(),
@@ -167,11 +167,9 @@ impl StartupWork {
 
 /// Seed each current lane's bounded Canvas backlog before discovery is published.
 ///
-/// Live capture and restart replay both cross [`publish_agent_event`], then the
-/// generation-owned publisher applies the same identity and per-lane capacity
-/// law. A record captured while startup scans is therefore either present in
-/// the replay or delivered from the queued live channel, and the second arrival
-/// is an exact duplicate rather than another execution path.
+/// Live capture and restart replay both cross [`publish_agent_event`]. A record
+/// captured during startup is replayed or queued live, then deduplicated.
+/// Startup work remains independently bounded from pageable history.
 #[cfg(test)]
 pub(in crate::resident) fn restore_agent_messages(
     paths: &RuntimePaths,
@@ -202,25 +200,23 @@ fn restore_agent_messages_with(
     reader: &mut BacklogReader,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
-    reader.history_open.clear();
     reader.startup_work = StartupWork::default();
     for row in &residency.lanes {
         if !reader.startup_work.admits_lane() {
             break;
         }
         reader.startup_work.begin_lane();
-        if let Some(restored) = restore_lane(bus, paths, row, publisher, reader, diagnostic)? {
-            reader.startup_work.add(restored.work);
-            if restored.older_history {
-                reader.history_open.insert(row.lane);
-            }
+        if let Some(work) = restore_lane(bus, paths, row, publisher, reader, diagnostic)? {
+            reader.startup_work.add(work);
         }
     }
+    let history = Arc::new(DurableHistory::new(paths, residency, reader));
+    let history_open = history.lanes.keys().copied().collect::<Vec<_>>();
     publisher
-        .set_history_provider(Arc::new(DurableHistory::new(paths, residency, reader)))
+        .set_history_provider(history)
         .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
     publisher
-        .set_history_open(reader.history_open.iter().copied())
+        .set_history_open(history_open)
         .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
     publisher
         .bound_initial_history()
@@ -231,7 +227,7 @@ fn restore_agent_messages_with(
 #[derive(Debug)]
 struct DurableHistory {
     lanes: BTreeMap<CanonicalUuid, DurableLane>,
-    continuations: Mutex<HashMap<(CanonicalUuid, wire::MessageLocus), HistoryContinuation>>,
+    continuations: Mutex<HashMap<(CanonicalUuid, Option<wire::MessageLocus>), HistoryContinuation>>,
     observations: MessageObservations,
     steering: PresentationDirectives,
     worktrees: SessionWorktrees,
@@ -322,13 +318,37 @@ impl canvas::stream::MessageHistoryProvider for DurableHistory {
     fn history(
         &self,
         lane: CanonicalUuid,
-        before: &wire::AgentMessage,
+        before: Option<&wire::AgentMessage>,
         limit: usize,
     ) -> Result<Option<canvas::stream::MessageHistoryPage>, String> {
         let Some(source) = self.lanes.get(&lane) else {
             return Ok(None);
         };
         let continuation = self.continuation(lane, source, before)?;
+        let Some(sources) = self.history_sources(lane, source, before, limit, &continuation)?
+        else {
+            return Ok(Some(canvas::stream::MessageHistoryPage {
+                messages: Vec::new(),
+                more: true,
+            }));
+        };
+        let (messages, more) = sources.page(before, limit);
+        if more {
+            self.retain_continuation(lane, before, &messages, &sources, &continuation)?;
+        }
+        Ok(Some(canvas::stream::MessageHistoryPage { messages, more }))
+    }
+}
+
+impl DurableHistory {
+    fn history_sources(
+        &self,
+        lane: CanonicalUuid,
+        source: &DurableLane,
+        before: Option<&wire::AgentMessage>,
+        limit: usize,
+        continuation: &HistoryContinuation,
+    ) -> Result<Option<HistorySources>, String> {
         let session = source
             .session
             .as_ref()
@@ -353,10 +373,7 @@ impl canvas::stream::MessageHistoryProvider for DurableHistory {
             .as_ref()
             .is_some_and(|session| session.pending_authentication)
         {
-            return Ok(Some(canvas::stream::MessageHistoryPage {
-                messages: Vec::new(),
-                more: true,
-            }));
+            return Ok(None);
         }
         let tape = if source.tape.is_dir() {
             Some(match continuation.tape.as_ref() {
@@ -368,88 +385,46 @@ impl canvas::stream::MessageHistoryProvider for DurableHistory {
         } else {
             None
         };
-        let mut visible = tape
-            .as_ref()
-            .map_or_else(Vec::new, |tape| tape.messages.clone());
-        let mut more = tape.as_ref().is_some_and(|tape| tape.more);
-        if let Some(session) = &session {
-            visible.extend(session.messages.clone());
-            more |= session.more;
-        }
-        // An incomplete source can still hide rows newer than another source's
-        // oldest decoded row. Expose only chronology covered by every source;
-        // an empty incomplete slice advances its cursor while withholding all.
-        let incomplete_floors = [
-            tape.as_ref().and_then(|scan| {
-                scan.more.then(|| {
-                    scan.messages
-                        .iter()
-                        .map(wire::AgentMessage::chronology_key)
-                        .min()
-                })
-            }),
-            session.as_ref().and_then(|scan| {
-                scan.more.then(|| {
-                    scan.messages
-                        .iter()
-                        .map(wire::AgentMessage::chronology_key)
-                        .min()
-                })
-            }),
-        ];
-        if incomplete_floors.iter().any(Option::is_some) {
-            if let Some(floor) = incomplete_floors.into_iter().flatten().flatten().max() {
-                visible.retain(|message| message.chronology_key() >= floor);
-            } else {
-                visible.clear();
-            }
-        }
-        visible.sort_by_key(wire::AgentMessage::chronology_key);
-        visible.dedup_by(|right, left| right.locus == left.locus);
-        let end =
-            visible.partition_point(|message| message.chronology_key() < before.chronology_key());
-        let start = end.saturating_sub(limit);
-        let messages = visible[start..end].to_vec();
-        let page_more = more || start > 0;
-        if page_more {
-            let continuation_anchor = messages.first().unwrap_or(before);
-            let next = HistoryContinuation {
-                tape: tape
-                    .as_ref()
-                    .map(|tape| tape_continuation(tape, continuation_anchor)),
-                session: session.as_ref().and_then(|session| {
-                    session_continuation(
-                        session,
-                        continuation.session.as_ref(),
-                        continuation_anchor,
-                    )
-                }),
-            };
-            self.continuations
-                .lock()
-                .map_err(|_| "durable history continuation is unavailable".to_owned())?
-                .insert((lane, continuation_anchor.locus), next);
-        }
-        Ok(Some(canvas::stream::MessageHistoryPage {
-            messages,
-            more: page_more,
-        }))
+        Ok(Some(HistorySources { tape, session }))
     }
-}
 
-impl DurableHistory {
+    fn retain_continuation(
+        &self,
+        lane: CanonicalUuid,
+        before: Option<&wire::AgentMessage>,
+        messages: &[wire::AgentMessage],
+        sources: &HistorySources,
+        continuation: &HistoryContinuation,
+    ) -> Result<(), String> {
+        let anchor = messages.first().or(before);
+        let next = HistoryContinuation {
+            tape: sources
+                .tape
+                .as_ref()
+                .map(|tape| tape_continuation(tape, anchor)),
+            session: sources.session.as_ref().and_then(|session| {
+                session_continuation(session, continuation.session.as_ref(), anchor)
+            }),
+        };
+        let mut retained = self
+            .continuations
+            .lock()
+            .map_err(|_| "durable history continuation is unavailable".to_owned())?;
+        retained.retain(|(known_lane, _), _| *known_lane != lane);
+        retained.insert((lane, anchor.map(|message| message.locus)), next);
+        Ok(())
+    }
     fn continuation(
         &self,
         lane: CanonicalUuid,
         source: &DurableLane,
-        before: &wire::AgentMessage,
+        before: Option<&wire::AgentMessage>,
     ) -> Result<HistoryContinuation, String> {
         if let Some(continuation) = self
             .continuations
             .lock()
             .map_err(|_| "durable history continuation is unavailable".to_owned())?
-            .get(&(lane, before.locus))
-            .cloned()
+            .remove(&(lane, before.map(|message| message.locus)))
         {
             return Ok(continuation);
         }
@@ -458,21 +433,26 @@ impl DurableHistory {
             .as_ref()
             .map(|session| session_compaction::session_member(&session.thread));
         let tape = source.source.as_ref().map(|source_end| {
-            if session_member == Some(before.locus.member) {
+            if before.is_some_and(|before| session_member == Some(before.locus.member)) {
                 source_end.clone()
             } else {
-                listen::Checkpoint {
-                    source: source_end.source.clone(),
-                    next: listen::Position {
-                        member: before.locus.member,
-                        offset: before.locus.offset,
+                before.map_or_else(
+                    || source_end.clone(),
+                    |before| listen::Checkpoint {
+                        source: source_end.source.clone(),
+                        next: listen::Position {
+                            member: before.locus.member,
+                            offset: before.locus.offset,
+                        },
                     },
-                }
+                )
             }
         });
         let session = source.session.as_ref().map(|session| {
-            if session_member == Some(before.locus.member) {
-                session.source.retreat(before.locus.offset)
+            if before.is_some_and(|before| session_member == Some(before.locus.member)) {
+                session
+                    .source
+                    .retreat(before.expect("checked session member").locus.offset)
             } else {
                 session.source.clone()
             }
@@ -484,7 +464,7 @@ impl DurableHistory {
         &self,
         lane: CanonicalUuid,
         source: &DurableLane,
-        before: &wire::AgentMessage,
+        before: Option<&wire::AgentMessage>,
         end: &listen::Checkpoint,
         limit: usize,
     ) -> Result<TapeHistoryScan, String> {
@@ -502,7 +482,7 @@ impl DurableHistory {
         &self,
         lane: CanonicalUuid,
         source: &DurableLane,
-        before: &wire::AgentMessage,
+        before: Option<&wire::AgentMessage>,
         limit: usize,
     ) -> Result<TapeHistoryScan, String> {
         let tail = tail_backlog(&source.tape, source.dialect).map_err(|error| error.to_string())?;
@@ -513,7 +493,7 @@ impl DurableHistory {
         &self,
         lane: CanonicalUuid,
         source: &DurableLane,
-        before: &wire::AgentMessage,
+        before: Option<&wire::AgentMessage>,
         limit: usize,
         tail: listen::TailScan,
     ) -> Result<TapeHistoryScan, String> {
@@ -524,7 +504,6 @@ impl DurableHistory {
         let messages = CollectedMessages::new(limit);
         let mut reader = BacklogReader {
             cursors: BTreeMap::new(),
-            history_open: BTreeSet::new(),
             startup_work: StartupWork::default(),
             state: MessageState {
                 previews: CallPreviews::default(),
@@ -553,7 +532,9 @@ impl DurableHistory {
             .into_inner()
             .map_err(|_| "durable history collection is unavailable".to_owned())?;
         let mut messages = collected.messages;
-        messages.retain(|message| message.chronology_key() < before.chronology_key());
+        if let Some(before) = before {
+            messages.retain(|message| message.chronology_key() < before.chronology_key());
+        }
         let selection_start = messages.len().saturating_sub(limit);
         let selected = messages.split_off(selection_start);
         Ok(TapeHistoryScan {
@@ -578,7 +559,10 @@ struct TapeHistoryScan {
     work: listen::TailWork,
 }
 
-fn tape_continuation(scan: &TapeHistoryScan, before: &wire::AgentMessage) -> listen::Checkpoint {
+fn tape_continuation(
+    scan: &TapeHistoryScan,
+    before: Option<&wire::AgentMessage>,
+) -> listen::Checkpoint {
     #[cfg(test)]
     {
         debug_assert!(scan.work.source_bytes <= TAIL_SOURCE_BYTES);
@@ -593,7 +577,9 @@ fn tape_continuation(scan: &TapeHistoryScan, before: &wire::AgentMessage) -> lis
     let boundary = scan
         .messages
         .iter()
-        .filter(|message| message.chronology_key() >= before.chronology_key())
+        .filter(|message| {
+            before.is_some_and(|before| message.chronology_key() >= before.chronology_key())
+        })
         .min_by_key(|message| message.chronology_key());
     let Some(message) = boundary else {
         return end;
@@ -610,7 +596,7 @@ fn tape_continuation(scan: &TapeHistoryScan, before: &wire::AgentMessage) -> lis
 fn session_continuation(
     scan: &session_compaction::HistoryScan,
     end: Option<&session_compaction::HistoryCheckpoint>,
-    before: &wire::AgentMessage,
+    before: Option<&wire::AgentMessage>,
 ) -> Option<session_compaction::HistoryCheckpoint> {
     debug_assert!(scan.work.within_limits());
     let end = end?;
@@ -620,7 +606,9 @@ fn session_continuation(
     let next = scan
         .messages
         .iter()
-        .filter(|message| message.chronology_key() >= before.chronology_key())
+        .filter(|message| {
+            before.is_some_and(|before| message.chronology_key() >= before.chronology_key())
+        })
         .min_by_key(|message| message.chronology_key())
         .map_or(end.next(), |message| message.locus.offset);
     Some(end.retreat(next))
@@ -636,11 +624,6 @@ struct CollectedMessages {
 struct CollectedHistory {
     messages: Vec<wire::AgentMessage>,
     dropped: bool,
-}
-
-struct LaneRestore {
-    work: listen::TailWork,
-    older_history: bool,
 }
 
 impl CollectedMessages {
@@ -699,7 +682,7 @@ fn restore_lane(
     publisher: &impl AgentMessagePublisher,
     reader: &mut BacklogReader,
     diagnostic: &mut dyn io::Write,
-) -> CommandResult<Option<LaneRestore>> {
+) -> CommandResult<Option<listen::TailWork>> {
     let Some(author) = row
         .occupant
         .or_else(|| row.session.as_ref().map(|session| session.occupant))
@@ -722,14 +705,10 @@ fn restore_lane(
         Err(error) => {
             let work = error.tail_work().copied();
             forget_changed_source(error, row.lane, reader, diagnostic);
-            return Ok(work.map(|work| LaneRestore {
-                work,
-                older_history: false,
-            }));
+            return Ok(work);
         }
     };
     let work = tail.work;
-    let older_history = tail.start.next != listen::Position::start();
     let scan = tail.scan;
     if let Some(bus) = bus {
         hydrate_observations(bus, row.lane, &scan, reader)?;
@@ -749,10 +728,7 @@ fn restore_lane(
         reader,
         diagnostic,
     )?;
-    Ok(Some(LaneRestore {
-        work,
-        older_history,
-    }))
+    Ok(Some(work))
 }
 
 fn hydrate_observations(

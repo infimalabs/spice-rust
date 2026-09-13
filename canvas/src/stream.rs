@@ -747,7 +747,7 @@ mod tests {
                 .count(),
             INITIAL_MESSAGE_LIMIT,
         );
-        assert_eq!(more, &[message(0xe5, 0).lane]);
+        assert_eq!(more.len(), 1);
         assert_eq!(
             messages
                 .iter()

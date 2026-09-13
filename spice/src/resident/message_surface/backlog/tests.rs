@@ -243,7 +243,7 @@ fn collect_merged_history_pages(
         .tape_messages(
             fixture.lane,
             source,
-            &fixture.future,
+            Some(&fixture.future),
             &fixture.source_end,
             canvas::stream::INITIAL_MESSAGE_LIMIT,
         )
@@ -260,7 +260,7 @@ fn collect_merged_history_pages(
         let page = canvas::stream::MessageHistoryProvider::history(
             &fixture.history,
             fixture.lane,
-            &before,
+            Some(&before),
             canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT,
         )
         .expect("merged history reads")
@@ -291,7 +291,7 @@ fn collect_merged_history_pages(
             .continuations
             .lock()
             .expect("continuation lock")
-            .get(&(fixture.lane, before.locus))
+            .get(&(fixture.lane, Some(before.locus)))
             .cloned()
             .expect("oldest returned locus owns continuation");
         let tape_next = continuation.tape.expect("tape continuation").next.offset;
@@ -324,7 +324,7 @@ fn assert_replaced_session_is_refused(
     let error = canvas::stream::MessageHistoryProvider::history(
         &fixture.history,
         fixture.lane,
-        initial_before,
+        Some(initial_before),
         canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT,
     )
     .expect_err("a replacement preserved session is refused");
@@ -390,7 +390,7 @@ fn visible_card_target_stops_a_season_tail_before_byte_zero() {
 }
 
 #[test]
-fn tool_only_tail_stops_at_one_fixed_read_with_older_history_open() {
+fn tool_only_tail_stops_at_one_fixed_read_with_a_backward_cursor() {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
         "spice-backlog-sparse-tail-{}-{}",

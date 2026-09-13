@@ -35,6 +35,21 @@ pub struct MessageLocus {
     pub event: u32,
 }
 
+/// One independently pageable lane-local transcript frontier.
+///
+/// An absent `before` names the newest durable page for a lane whose cold
+/// snapshot retained no visible card. Once a page yields a card, subsequent
+/// requests carry that card's exact locus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MessageHistoryCursor {
+    /// Independently paged member lane.
+    pub lane: CanonicalUuid,
+    /// Oldest card already admitted, or `None` for a cold bootstrap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<MessageLocus>,
+}
+
 /// Visible kind of one agent-authored transcript activity.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -416,8 +431,10 @@ pub enum StreamRequest {
         epoch: CanonicalUuid,
         /// Independently paged member lane.
         lane: CanonicalUuid,
-        /// Oldest message this browser has already admitted for that lane.
-        before: MessageLocus,
+        /// Oldest message this browser has already admitted, or absent when
+        /// bootstrapping a lane with no cold-snapshot card.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<MessageLocus>,
     },
     /// Ask the resident to prove it is still reading this socket.
     ///
@@ -768,9 +785,9 @@ pub enum StreamFrame {
         /// Maximum number of newest visible cards retained for each lane by this generation.
         limit: u32,
         messages: Vec<AgentMessage>,
-        /// Member lanes with retained cards older than this initial projection.
+        /// Independently pageable member-local history frontiers.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        more: Vec<CanonicalUuid>,
+        more: Vec<MessageHistoryCursor>,
     },
     /// One lane-local retained history page merged behind the current snapshot.
     MessageHistory {
@@ -778,8 +795,10 @@ pub enum StreamFrame {
         id: CanonicalUuid,
         epoch: CanonicalUuid,
         lane: CanonicalUuid,
-        /// Cursor this page was requested immediately before.
-        before: MessageLocus,
+        /// Cursor this page was requested immediately before; absent for a
+        /// newest-page bootstrap.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<MessageLocus>,
         /// Whether another older page remains after this one.
         more: bool,
         messages: Vec<AgentMessage>,

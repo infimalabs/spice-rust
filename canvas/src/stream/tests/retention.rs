@@ -11,25 +11,26 @@ fn complete_lane_history(
     source: &Source,
     lane: wire::CanonicalUuid,
     initial: &[AgentMessage],
-    advertised_more: &[wire::CanonicalUuid],
+    advertised_more: &[wire::MessageHistoryCursor],
 ) -> Vec<AgentMessage> {
     let mut messages = initial
         .iter()
         .filter(|message| message.lane == lane)
         .cloned()
         .collect::<Vec<_>>();
-    let mut more = advertised_more.contains(&lane);
+    let mut before = advertised_more
+        .iter()
+        .find(|cursor| cursor.lane == lane)
+        .map(|cursor| cursor.before);
+    let mut more = before.is_some();
     while more {
-        let before = messages
-            .first()
-            .expect("paged lane has an oldest card")
-            .locus;
+        let requested_before = before.expect("paged lane has a frontier");
         let request = StreamRequest::MessageHistory {
             v: WireVersion::CURRENT,
             id: uuid("018f82d4-6f59-7d06-92e3-bce9131163c5"),
             epoch: epoch(),
             lane,
-            before,
+            before: requested_before,
         };
         let frame = source
             .message_history(&accepted(Actor::Operator), &request)
@@ -45,8 +46,11 @@ fn complete_lane_history(
             panic!("expected older message page")
         };
         assert_eq!(answered, lane);
-        assert_eq!(answered_before, before);
+        assert_eq!(answered_before, requested_before);
         assert!(older.iter().all(|message| message.lane == lane));
+        if let Some(oldest) = older.first() {
+            before = Some(Some(oldest.locus));
+        }
         messages.splice(0..0, older);
         more = page_more;
     }
@@ -283,7 +287,7 @@ impl MessageHistoryProvider for FixtureHistory {
     fn history(
         &self,
         lane: wire::CanonicalUuid,
-        before: &AgentMessage,
+        before: Option<&AgentMessage>,
         limit: usize,
     ) -> Result<Option<MessageHistoryPage>, String> {
         self.reads.fetch_add(1, Ordering::Relaxed);
@@ -291,7 +295,9 @@ impl MessageHistoryProvider for FixtureHistory {
             .messages
             .iter()
             .filter(|message| {
-                message.lane == lane && message.chronology_key() < before.chronology_key()
+                message.lane == lane
+                    && before
+                        .is_none_or(|before| message.chronology_key() < before.chronology_key())
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -343,7 +349,13 @@ fn cold_history_keeps_one_page_and_loads_older_pages_without_live_updates() {
     };
     assert_eq!(messages.len(), INITIAL_MESSAGE_LIMIT);
     assert_eq!(messages[0].locus.offset, 55);
-    assert_eq!(more, &[lane]);
+    assert_eq!(
+        more,
+        &[wire::MessageHistoryCursor {
+            lane,
+            before: Some(messages[0].locus),
+        }]
+    );
 
     let restored = complete_lane_history(&source, lane, messages, more);
     assert_eq!(
@@ -417,7 +429,7 @@ fn short_provider_pages_continue_until_the_actual_lane_capacity_is_reached() {
 }
 
 #[test]
-fn explicit_history_hint_keeps_a_partial_initial_page_cursor_addressable() {
+fn explicit_history_hint_bootstraps_a_lane_without_an_initial_card() {
     let bus = fixture(1);
     let source = Source::new(bus.reader(), epoch(), 10);
     let publisher = source.message_publisher();
@@ -425,11 +437,6 @@ fn explicit_history_hint_keeps_a_partial_initial_page_cursor_addressable() {
     let durable = (0..20)
         .map(|offset| message(0xe5, offset))
         .collect::<Vec<_>>();
-    for activity in &durable[15..] {
-        publisher
-            .publish(activity.clone())
-            .expect("partial startup history publishes");
-    }
     let history = Arc::new(FixtureHistory {
         messages: durable,
         page_limit: usize::MAX,
@@ -451,8 +458,8 @@ fn explicit_history_hint_keeps_a_partial_initial_page_cursor_addressable() {
     let StreamFrame::Messages { messages, more, .. } = &frames[0] else {
         panic!("expected retained message snapshot")
     };
-    assert_eq!(messages.len(), 5);
-    assert_eq!(more, &[lane]);
+    assert!(messages.is_empty());
+    assert_eq!(more, &[wire::MessageHistoryCursor { lane, before: None }]);
 
     let restored = complete_lane_history(&source, lane, messages, more);
     assert_eq!(
@@ -535,7 +542,7 @@ fn a_full_page_that_exhausts_capacity_closes_after_compaction_trimming() {
     for page_number in 1..=4 {
         let page = publisher
             .feed
-            .history(lane, before)
+            .history(lane, Some(before))
             .expect("older message page reads")
             .expect("retained cursor is known");
         assert_eq!(page.messages.len(), MESSAGE_HISTORY_PAGE_LIMIT);

@@ -370,9 +370,9 @@ impl CanvasRuntime {
         &mut self,
         limit: usize,
         messages: &[AgentMessage],
-        more: &[CanonicalUuid],
+        more: &[wire::MessageHistoryCursor],
     ) -> StreamApplication {
-        let next_history = message_history_frontiers(messages, more);
+        let next_history = message_history_frontiers(more);
         let history_changed = self.message_history != next_history;
         let reconnect = std::mem::take(&mut self.message_reconnect_pending);
         let cards_changed = if reconnect {
@@ -396,11 +396,11 @@ impl CanvasRuntime {
     fn apply_message_history(
         &mut self,
         lane: CanonicalUuid,
-        before: MessageLocus,
+        before: Option<MessageLocus>,
         messages: &[AgentMessage],
         more: bool,
     ) -> StreamApplication {
-        if self.message_history.get(&lane).copied() != Some(before) {
+        if self.message_history.get(&lane).map(|cursor| cursor.before) != Some(before) {
             return StreamApplication::new(Vec::new(), false);
         }
         let changed = self
@@ -411,10 +411,16 @@ impl CanvasRuntime {
             .filter(|message| message.lane == lane && message_cards::is_card(message))
             .min_by_key(|message| message.chronology_key())
             .map(|message| message.locus)
-            .filter(|next| *next != before);
+            .filter(|next| Some(*next) != before);
         let previous = self.message_history.get(&lane).copied();
         if more {
-            self.message_history.insert(lane, next.unwrap_or(before));
+            self.message_history.insert(
+                lane,
+                wire::MessageHistoryCursor {
+                    lane,
+                    before: next.or(before),
+                },
+            );
             let completion = self.message_history_completions.entry(lane).or_default();
             *completion = completion.saturating_add(1);
         } else {
@@ -505,18 +511,9 @@ impl CanvasRuntime {
 }
 
 fn message_history_frontiers(
-    messages: &[AgentMessage],
-    more: &[CanonicalUuid],
-) -> BTreeMap<CanonicalUuid, MessageLocus> {
-    more.iter()
-        .filter_map(|lane| {
-            messages
-                .iter()
-                .filter(|message| message.lane == *lane && message_cards::is_card(message))
-                .min_by_key(|message| message.chronology_key())
-                .map(|message| (*lane, message.locus))
-        })
-        .collect()
+    more: &[wire::MessageHistoryCursor],
+) -> BTreeMap<CanonicalUuid, wire::MessageHistoryCursor> {
+    more.iter().map(|cursor| (cursor.lane, *cursor)).collect()
 }
 
 fn trim_operator_messages(messages: &mut Vec<OperatorMessage>, limit: usize) {

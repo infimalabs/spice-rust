@@ -4,6 +4,11 @@ import { Buffer } from "node:buffer";
 import { TOOL_ACTIVITY_TEXT, TRANSITION_MS, waitForPageFunction } from "./canvas-fixture.mjs";
 import { createMessageHistoryFixture } from "./message-history-fixture.mjs";
 
+function historyCursor(messages, lane) {
+  const before = messages.filter((message) => message.lane === lane).sort(compareAgentMessages)[0];
+  return { lane, before: before.locus };
+}
+
 function assignOptional(object, key, value) {
   if (value === undefined) delete object[key];
   else object[key] = value;
@@ -194,7 +199,7 @@ export async function installActivityReplay(
         epoch: source.epoch,
         limit: 256,
         messages: [...snapshotMessages.values()].sort(compareAgentMessages),
-        more: [lane],
+        more: [historyCursor([...snapshotMessages.values()], lane)],
       })));
       const request = await Promise.race([
         requested,

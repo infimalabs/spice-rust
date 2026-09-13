@@ -56,6 +56,7 @@ fn every_crossing_type_obeys_the_identity_law() {
     cover_head_enums(&mut covered);
     cover_command_frames(&mut covered);
     cover_message_badges(&mut covered);
+    cover_history_cursors(&mut covered);
     cover_stream_frames(&mut covered);
     cover_packed_frames(&mut covered);
     cover_refusal_frames(&mut covered);
@@ -122,6 +123,28 @@ fn cover_message_badges(covered: &mut BTreeSet<String>) {
             AutomaticSpeech {
                 kind: AutomaticSpeechKind::Acknowledgement,
                 text: "applied".to_owned(),
+            },
+        ],
+    );
+}
+
+fn cover_history_cursors(covered: &mut BTreeSet<String>) {
+    law(
+        covered,
+        "MessageHistoryCursor",
+        &[
+            MessageHistoryCursor {
+                lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163d1"),
+                before: None,
+            },
+            MessageHistoryCursor {
+                lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163d2"),
+                before: Some(MessageLocus {
+                    member: 1,
+                    offset: 2,
+                    length: 3,
+                    event: 4,
+                }),
             },
         ],
     );
@@ -991,12 +1014,12 @@ fn stream_request_samples(
             id: first_id,
             epoch,
             lane: second_id,
-            before: MessageLocus {
+            before: Some(MessageLocus {
                 member: 1,
                 offset: 2,
                 length: 3,
                 event: 4,
-            },
+            }),
         },
     ]
 }
@@ -1053,12 +1076,12 @@ fn stream_data_samples(
             id: first_id,
             epoch,
             lane: second_id,
-            before: MessageLocus {
+            before: Some(MessageLocus {
                 member: 5,
                 offset: 6,
                 length: 7,
                 event: 8,
-            },
+            }),
             more: true,
             messages: vec![history_message],
         },

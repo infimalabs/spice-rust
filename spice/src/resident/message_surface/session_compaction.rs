@@ -29,10 +29,8 @@ use presentation::publish;
 ///
 /// Codex's `exec --json` stream does not expose the `compacted` record stored
 /// in its rollout, so selected-stream capture cannot manufacture this view.
-/// The preserved transcript is already the durable source used by `session`;
 /// this reader records Codex boundaries into lane authority, projects typed
 /// compaction events into Canvas, and folds adjacent tool evidence only to
-/// describe terminal records missing at each boundary.
 pub(in crate::resident) struct SessionCompactions {
     environment: crate::session_command::Environment,
     cursors: BTreeMap<CanonicalUuid, Cursor>,
@@ -900,7 +898,7 @@ pub(super) struct HistoryRequest<'a> {
     pub(super) lane: CanonicalUuid,
     pub(super) author: CanonicalUuid,
     pub(super) observations: &'a MessageObservations,
-    pub(super) before: &'a wire::AgentMessage,
+    pub(super) before: Option<&'a wire::AgentMessage>,
     pub(super) end: &'a HistoryCheckpoint,
     pub(super) limit: usize,
 }
@@ -938,7 +936,9 @@ pub(super) fn retained_messages(request: HistoryRequest<'_>) -> CommandResult<Hi
         )
     })?;
     let mut messages = collected.messages;
-    messages.retain(|message| message.chronology_key() < request.before.chronology_key());
+    if let Some(before) = request.before {
+        messages.retain(|message| message.chronology_key() < before.chronology_key());
+    }
     let start = messages.len().saturating_sub(request.limit);
     let selected = messages.split_off(start);
     Ok(HistoryScan {

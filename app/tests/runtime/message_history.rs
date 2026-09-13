@@ -21,6 +21,17 @@ fn agent_message(
 }
 
 fn message_snapshot(messages: Vec<serde_json::Value>, more: &[&str]) -> Vec<u8> {
+    let cursors = more
+        .iter()
+        .map(|lane| {
+            let before = messages
+                .iter()
+                .filter(|message| message["lane"] == **lane)
+                .min_by_key(|message| message["locus"]["offset"].as_u64())
+                .map(|message| message["locus"].clone());
+            serde_json::json!({"lane": lane, "before": before})
+        })
+        .collect::<Vec<_>>();
     serde_json::to_vec(&serde_json::json!({
         "stream": "messages",
         "v": 1,
@@ -28,7 +39,7 @@ fn message_snapshot(messages: Vec<serde_json::Value>, more: &[&str]) -> Vec<u8> 
         "epoch": EPOCH,
         "limit": 256,
         "messages": messages,
-        "more": more,
+        "more": cursors,
     }))
     .expect("message snapshot serializes")
 }
@@ -56,7 +67,7 @@ fn apply(runtime: &mut CanvasRuntime, session: &Session, frame: &[u8]) -> bool {
 fn target_offset(runtime: &CanvasRuntime, lane: &str) -> Option<u64> {
     runtime
         .message_history_target(uuid(lane))
-        .map(|target| target.offset)
+        .and_then(|target| target.before.map(|before| before.offset))
 }
 
 #[test]
@@ -78,7 +89,10 @@ fn older_member_history_merges_without_replacing_the_live_activity_head() {
         "epoch": EPOCH,
         "limit": 256,
         "messages": [newest],
-        "more": [LANE],
+        "more": [{
+            "lane": LANE,
+            "before": {"member": 1, "offset": 100, "length": 20, "event": 0},
+        }],
     }))
     .expect("message snapshot serializes");
     assert!(

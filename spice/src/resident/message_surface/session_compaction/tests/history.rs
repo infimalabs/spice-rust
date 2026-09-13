@@ -154,7 +154,7 @@ fn on_demand_history_recovers_boundaries_across_the_retained_horizon() {
                 lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163e5"),
                 author: uuid("018f82d4-6f59-7d06-92e3-bce9131163ef"),
                 observations: &observations,
-                before: &before,
+                before: Some(&before),
                 end: &end,
                 limit: canvas::stream::MESSAGE_CAPACITY,
             })
@@ -178,7 +178,7 @@ fn on_demand_history_recovers_boundaries_across_the_retained_horizon() {
         lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163e5"),
         author: uuid("018f82d4-6f59-7d06-92e3-bce9131163ef"),
         observations: &observations,
-        before: &before,
+        before: Some(&before),
         end: &older_end,
         limit: canvas::stream::MESSAGE_CAPACITY,
     })

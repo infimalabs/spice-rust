@@ -20,7 +20,7 @@ pub const MESSAGE_HISTORY_PAGE_LIMIT: usize = 50;
 
 pub(super) struct MessageSnapshot {
     pub(super) messages: Vec<AgentMessage>,
-    pub(super) more: Vec<wire::CanonicalUuid>,
+    pub(super) more: Vec<wire::MessageHistoryCursor>,
 }
 
 /// One source-backed page immediately preceding a retained message.
@@ -41,7 +41,7 @@ pub trait MessageHistoryProvider: fmt::Debug + Send + Sync {
     fn history(
         &self,
         lane: wire::CanonicalUuid,
-        before: &AgentMessage,
+        before: Option<&AgentMessage>,
         limit: usize,
     ) -> Result<Option<MessageHistoryPage>, String>;
 }
@@ -74,7 +74,7 @@ impl MessageFeed {
             .retained
             .lock()
             .map_err(|_| MessagePublishError::Unavailable)?;
-        let lanes = retained
+        let mut lanes = retained
             .iter()
             .filter(|message| visible_message(message))
             .map(|message| message.lane)
@@ -85,6 +85,7 @@ impl MessageFeed {
             .history_open
             .lock()
             .map_err(|_| MessagePublishError::Unavailable)?;
+        lanes.extend(history_open.iter().copied());
         for lane in lanes {
             let visible = retained
                 .iter()
@@ -92,7 +93,10 @@ impl MessageFeed {
                 .collect::<Vec<_>>();
             let start = visible.len().saturating_sub(INITIAL_MESSAGE_LIMIT);
             if start > 0 || history_open.contains(&lane) {
-                more.push(lane);
+                more.push(wire::MessageHistoryCursor {
+                    lane,
+                    before: visible.get(start).map(|message| message.locus),
+                });
             }
             selected.extend(
                 visible[start..]
@@ -113,7 +117,7 @@ impl MessageFeed {
     pub(super) fn history(
         &self,
         lane: wire::CanonicalUuid,
-        before: wire::MessageLocus,
+        before: Option<wire::MessageLocus>,
     ) -> Result<Option<MessageHistoryPage>, MessagePublishError> {
         let retained = self
             .retained
@@ -123,17 +127,18 @@ impl MessageFeed {
             .iter()
             .filter(|message| message.lane == lane && visible_message(message))
             .collect::<Vec<_>>();
-        let Some(end) = visible.iter().position(|message| message.locus == before) else {
-            return Ok(None);
+        let before_message = match self.history_boundary(lane, before, &visible)? {
+            HistoryBoundary::Unknown => return Ok(None),
+            HistoryBoundary::Bootstrap => None,
+            HistoryBoundary::Message(message) => Some(message),
         };
-        let before_message = (*visible[end]).clone();
         let history = self
             .history
             .lock()
             .map_err(|_| MessagePublishError::Unavailable)?
             .clone();
         let Some(history) = history else {
-            return retained_history(&retained, lane, before);
+            return before.map_or(Ok(None), |before| retained_history(&retained, lane, before));
         };
         if self
             .history_closed
@@ -164,10 +169,10 @@ impl MessageFeed {
         let limit = remaining.min(MESSAGE_HISTORY_PAGE_LIMIT);
         drop(retained);
         if let Some(mut page) = history
-            .history(lane, &before_message, limit)
+            .history(lane, before_message.as_ref(), limit)
             .map_err(MessagePublishError::History)?
         {
-            self.retain_history_page(lane, &before_message, &mut page)?;
+            self.retain_history_page(lane, before_message.as_ref(), &mut page)?;
             if page.messages.len() >= remaining || !page.more {
                 page.more = false;
                 self.history_closed
@@ -185,13 +190,39 @@ impl MessageFeed {
             .retained
             .lock()
             .map_err(|_| MessagePublishError::Unavailable)?;
-        retained_history(&retained, lane, before)
+        before.map_or(Ok(None), |before| retained_history(&retained, lane, before))
+    }
+
+    fn history_boundary(
+        &self,
+        lane: wire::CanonicalUuid,
+        before: Option<wire::MessageLocus>,
+        visible: &[&AgentMessage],
+    ) -> Result<HistoryBoundary, MessagePublishError> {
+        if let Some(before) = before {
+            return Ok(visible
+                .iter()
+                .find(|message| message.locus == before)
+                .map_or(HistoryBoundary::Unknown, |message| {
+                    HistoryBoundary::Message((*message).clone())
+                }));
+        }
+        let open = self
+            .history_open
+            .lock()
+            .map_err(|_| MessagePublishError::Unavailable)?
+            .contains(&lane);
+        Ok(if open {
+            HistoryBoundary::Bootstrap
+        } else {
+            HistoryBoundary::Unknown
+        })
     }
 
     fn retain_history_page(
         &self,
         lane: wire::CanonicalUuid,
-        before: &AgentMessage,
+        before: Option<&AgentMessage>,
         page: &mut MessageHistoryPage,
     ) -> Result<(), MessagePublishError> {
         let mut retained = self
@@ -212,6 +243,12 @@ impl MessageFeed {
         }
         Ok(())
     }
+}
+
+enum HistoryBoundary {
+    Unknown,
+    Bootstrap,
+    Message(AgentMessage),
 }
 
 fn retained_history(
@@ -238,14 +275,14 @@ fn retained_history(
 
 fn validate_history_page(
     lane: wire::CanonicalUuid,
-    before: &AgentMessage,
+    before: Option<&AgentMessage>,
     page: &MessageHistoryPage,
 ) -> Result<(), MessagePublishError> {
     if page.messages.len() > MESSAGE_HISTORY_PAGE_LIMIT
         || page.messages.iter().any(|message| {
             message.lane != lane
                 || !visible_message(message)
-                || message.chronology_key() >= before.chronology_key()
+                || before.is_some_and(|before| message.chronology_key() >= before.chronology_key())
         })
         || page
             .messages

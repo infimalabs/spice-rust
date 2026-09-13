@@ -278,12 +278,16 @@ export function createMessageHistoryFixture({
       const target = sockets.get(targetGeneration) ?? activeSocket;
       const meta = frameMetadata(targetGeneration);
       const heads = reason === "initial" ? initialHeads : currentHeads;
+      const frontiers = more.map((lane) => ({
+        lane,
+        before: heads.find((message) => message.lane === lane).locus,
+      }));
       const frame = {
         stream: "messages",
         ...meta,
         limit: 256,
         messages: heads,
-        more,
+        more: frontiers,
       };
       snapshots.push({
         reason,
