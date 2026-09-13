@@ -39,7 +39,9 @@ fn package_preview_reads_only_content_addressed_executables() {
     {
         assert_eq!(
             target_executable(&fixture.root, target, &fixture.manifest)
-                .unwrap_or_else(|error| panic!("sealed executable load failed: {error}")),
+                .unwrap_or_else(|error| panic!("sealed executable load failed: {error}"))
+                .read_bounded(proof::PACKAGE_DOCUMENT_LIMIT)
+                .expect("fixture executable reads"),
             fs::read(&fixture.executables[index]).expect("read fixture executable object")
         );
         assert!(

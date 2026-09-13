@@ -19,41 +19,45 @@ const EXECUTABLE_MODE: u32 = 0o755;
 const MANIFEST_PATH: &str = "release/manifest.json";
 const NOTES_PATH: &str = "release/notes.md";
 const PACKAGE_PATH: &str = "release/package.json";
+pub const PACKAGE_DOCUMENT_LIMIT: u64 = 8 * 1024 * 1024;
 const TARGETS: [ReleaseTarget; 2] = [
     ReleaseTarget::Aarch64AppleDarwin,
     ReleaseTarget::X86_64UnknownLinuxMusl,
 ];
 
 /// Exact bytes supplied for one supported target package entry.
-#[derive(Clone, Copy, Debug)]
-pub struct PackageTargetInput<'a> {
+#[derive(Clone, Debug)]
+pub struct PackageTargetInput {
     target: ReleaseTarget,
-    executable: &'a [u8],
-    payload: &'a [u8],
-    proof: &'a [u8],
+    executable: PackageMember,
+    payload: PackageMember,
+    proof: PackageMember,
 }
 
 /// Exact bytes supplied for one member of the shared Canvas generation.
-#[derive(Clone, Copy, Debug)]
-pub struct PackageAppInput<'a> {
-    file: &'a str,
-    bytes: &'a [u8],
+#[derive(Clone, Debug)]
+pub struct PackageAppInput {
+    file: String,
+    member: PackageMember,
 }
 
-impl<'a> PackageAppInput<'a> {
+impl PackageAppInput {
     #[must_use]
-    pub const fn new(file: &'a str, bytes: &'a [u8]) -> Self {
-        Self { file, bytes }
+    pub fn new(file: impl Into<String>, member: PackageMember) -> Self {
+        Self {
+            file: file.into(),
+            member,
+        }
     }
 }
 
-impl<'a> PackageTargetInput<'a> {
+impl PackageTargetInput {
     #[must_use]
     pub const fn new(
         target: ReleaseTarget,
-        executable: &'a [u8],
-        payload: &'a [u8],
-        proof: &'a [u8],
+        executable: PackageMember,
+        payload: PackageMember,
+        proof: PackageMember,
     ) -> Self {
         Self {
             target,
@@ -69,10 +73,10 @@ impl<'a> PackageTargetInput<'a> {
 pub struct PackageInput<'a> {
     version: &'a ProductVersion,
     notes_identity: Digest,
-    notes: &'a [u8],
-    manifest: &'a [u8],
-    app: Vec<PackageAppInput<'a>>,
-    targets: Vec<PackageTargetInput<'a>>,
+    notes: PackageMember,
+    manifest: PackageMember,
+    app: Vec<PackageAppInput>,
+    targets: Vec<PackageTargetInput>,
 }
 
 impl<'a> PackageInput<'a> {
@@ -80,10 +84,10 @@ impl<'a> PackageInput<'a> {
     pub fn new(
         version: &'a ProductVersion,
         notes_identity: Digest,
-        notes: &'a [u8],
-        manifest: &'a [u8],
-        app: Vec<PackageAppInput<'a>>,
-        targets: Vec<PackageTargetInput<'a>>,
+        notes: PackageMember,
+        manifest: PackageMember,
+        app: Vec<PackageAppInput>,
+        targets: Vec<PackageTargetInput>,
     ) -> Self {
         Self {
             version,
@@ -131,7 +135,7 @@ impl PackageMember {
     /// The role is derived from the path so callers re-reading a staged tree
     /// cannot choose a digest domain independently from the package grammar.
     #[must_use]
-    pub fn new(path: impl Into<String>, mode: u32, bytes: impl Into<Vec<u8>>) -> Self {
+    fn inline(path: impl Into<String>, mode: u32, bytes: impl Into<Vec<u8>>) -> Self {
         let path = path.into();
         let bytes = bytes.into();
         let digest = Digest::compute(member_domain(&path), &bytes);
@@ -156,13 +160,16 @@ impl PackageMember {
         limit: u64,
     ) -> Result<Self, PackageError> {
         let bytes = bytes.into();
-        if limit == 0 || bytes.len() as u64 > limit {
+        if limit == 0 || limit > PACKAGE_DOCUMENT_LIMIT || bytes.len() as u64 > limit {
             return Err(member_error(
                 &path.into(),
-                &format!("length={} maximum={limit}", bytes.len()),
+                &format!(
+                    "length={} requested={limit} maximum={PACKAGE_DOCUMENT_LIMIT}",
+                    bytes.len()
+                ),
             ));
         }
-        Ok(Self::new(path, mode, bytes))
+        Ok(Self::inline(path, mode, bytes))
     }
 
     /// Admit one already-confined regular file without retaining its body.
@@ -214,16 +221,17 @@ impl PackageMember {
     }
 
     #[must_use]
-    pub fn bytes(&self) -> &[u8] {
-        match &self.body {
-            MemberBody::Inline(bytes) => bytes,
-            MemberBody::File { .. } => panic!("file-backed package members must be streamed"),
-        }
-    }
-
-    #[must_use]
     pub const fn digest(&self) -> &Digest {
         &self.digest
+    }
+
+    fn inline_identity_holds(&self) -> bool {
+        match &self.body {
+            MemberBody::Inline(bytes) => {
+                Digest::compute(member_domain(&self.path), bytes) == self.digest
+            }
+            MemberBody::File { .. } => true,
+        }
     }
 
     /// Read a canonical document only after its complete size is admitted.
@@ -449,8 +457,12 @@ pub fn build_package_index(input: PackageInput<'_>) -> Result<AdmittedPackage, P
 /// Refuses extra, missing, duplicated, reordered, mis-moded, noncanonical, or
 /// digest-mismatched members and any evidence binding drift.
 pub fn admit_package_tree(members: &[PackageMember]) -> Result<AdmittedPackage, PackageError> {
+    if members.iter().any(|member| !member.inline_identity_holds()) {
+        return Err(PackageError::Closure);
+    }
     let package_member = exact_member(members, PACKAGE_PATH, DATA_MODE)?;
-    let document: ReleasePackage = canonical(package_member.bytes(), "release package")?;
+    let package_bytes = package_member.read_bounded(PACKAGE_DOCUMENT_LIMIT)?;
+    let document: ReleasePackage = canonical(&package_bytes, "release package")?;
     admit_package_document(&document)?;
     let version = document.product_version.clone();
     let manifest = exact_member(members, MANIFEST_PATH, DATA_MODE)?;
@@ -459,24 +471,24 @@ pub fn admit_package_tree(members: &[PackageMember]) -> Result<AdmittedPackage, 
     for target in TARGETS {
         targets.push(PackageTargetInput::new(
             target,
-            exact_member(members, &executable_path(target), EXECUTABLE_MODE)?.bytes(),
-            exact_member(members, &payload_path(target), DATA_MODE)?.bytes(),
-            exact_member(members, &proof_path(target), DATA_MODE)?.bytes(),
+            exact_member(members, &executable_path(target), EXECUTABLE_MODE)?.clone(),
+            exact_member(members, &payload_path(target), DATA_MODE)?.clone(),
+            exact_member(members, &proof_path(target), DATA_MODE)?.clone(),
         ));
     }
     let mut app = CANVAS_APP_FILES
         .iter()
         .map(|file| {
             exact_member(members, &app_path(file), DATA_MODE)
-                .map(|member| PackageAppInput::new(file, member.bytes()))
+                .map(|member| PackageAppInput::new(*file, member.clone()))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    app.sort_by(|left, right| left.file.cmp(right.file));
+    app.sort_by(|left, right| left.file.cmp(&right.file));
     let rebuilt = assemble_package(PackageInput::new(
         &version,
         document.notes.clone(),
-        notes.bytes(),
-        manifest.bytes(),
+        notes.clone(),
+        manifest.clone(),
         app,
         targets,
     ))?;
@@ -489,18 +501,8 @@ pub fn admit_package_tree(members: &[PackageMember]) -> Result<AdmittedPackage, 
 fn assemble_package(input: PackageInput<'_>) -> Result<PackageTree, PackageError> {
     let package = assemble_package_index(&input)?;
     let mut members = vec![
-        member(
-            MANIFEST_PATH,
-            DATA_MODE,
-            input.manifest,
-            Domain::DistReleaseManifest,
-        ),
-        member(
-            NOTES_PATH,
-            DATA_MODE,
-            input.notes,
-            Domain::DistReleaseNotesContent,
-        ),
+        input.manifest.clone(),
+        input.notes.clone(),
         member(
             PACKAGE_PATH,
             DATA_MODE,
@@ -510,41 +512,24 @@ fn assemble_package(input: PackageInput<'_>) -> Result<PackageTree, PackageError
     ];
     for target in &input.targets {
         members.extend([
-            member(
-                &executable_path(target.target),
-                EXECUTABLE_MODE,
-                target.executable,
-                Domain::DistArtifact,
-            ),
-            member(
-                &payload_path(target.target),
-                DATA_MODE,
-                target.payload,
-                Domain::DistTargetPayload,
-            ),
-            member(
-                &proof_path(target.target),
-                DATA_MODE,
-                target.proof,
-                Domain::ProofReceiptV3,
-            ),
+            target.executable.clone(),
+            target.payload.clone(),
+            target.proof.clone(),
         ]);
     }
     for asset in &input.app {
-        members.push(member(
-            &app_path(asset.file),
-            DATA_MODE,
-            asset.bytes,
-            Domain::DistArtifact,
-        ));
+        members.push(asset.member.clone());
     }
     members.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(PackageTree { package, members })
 }
 
 fn assemble_package_index(input: &PackageInput<'_>) -> Result<AdmittedPackage, PackageError> {
-    let manifest: ReleaseManifest = canonical(input.manifest, "release manifest")?;
-    let manifest_identity = Digest::compute(Domain::DistReleaseManifest, input.manifest);
+    require_member(&input.manifest, MANIFEST_PATH, DATA_MODE)?;
+    require_member(&input.notes, NOTES_PATH, DATA_MODE)?;
+    let manifest_bytes = input.manifest.read_bounded(PACKAGE_DOCUMENT_LIMIT)?;
+    let manifest: ReleaseManifest = canonical(&manifest_bytes, "release manifest")?;
+    let manifest_identity = input.manifest.digest.clone();
     admit_manifest_shape(&manifest)?;
     if input.targets.len() != TARGETS.len() {
         return Err(PackageError::TargetCount(input.targets.len()));
@@ -592,7 +577,7 @@ fn assemble_package_index(input: &PackageInput<'_>) -> Result<AdmittedPackage, P
         source: manifest.source.clone(),
         manifest: manifest_identity,
         notes: input.notes_identity.clone(),
-        notes_content: Digest::compute(Domain::DistReleaseNotesContent, input.notes),
+        notes_content: input.notes.digest.clone(),
         targets: package_targets,
     };
     let bytes = wire::encode(&document).map_err(|error| PackageError::Encode {
@@ -616,20 +601,29 @@ struct TargetEvidence {
 }
 
 fn admit_target(
-    input: &PackageTargetInput<'_>,
-    app: &[PackageAppInput<'_>],
+    input: &PackageTargetInput,
+    app: &[PackageAppInput],
     sealed: &wire::manifest::ReleaseManifestTarget,
     source: &Digest,
     index: usize,
 ) -> Result<TargetEvidence, PackageError> {
-    let admitted_payload = crate::payload::admit(input.payload).map_err(PackageError::Payload)?;
+    require_member(
+        &input.executable,
+        &executable_path(input.target),
+        EXECUTABLE_MODE,
+    )?;
+    require_member(&input.payload, &payload_path(input.target), DATA_MODE)?;
+    require_member(&input.proof, &proof_path(input.target), DATA_MODE)?;
+    let payload_bytes = input.payload.read_bounded(PACKAGE_DOCUMENT_LIMIT)?;
+    let proof_bytes = input.proof.read_bounded(PACKAGE_DOCUMENT_LIMIT)?;
+    let admitted_payload = crate::payload::admit(&payload_bytes).map_err(PackageError::Payload)?;
     let payload = admitted_payload.value();
     let admitted_proof =
-        crate::evidence::admit_receipt(input.proof).map_err(PackageError::Proof)?;
+        crate::evidence::admit_receipt(&proof_bytes).map_err(PackageError::Proof)?;
     let proof = admitted_proof.value();
     let payload_identity = admitted_payload.digest().clone();
     let proof_identity = admitted_proof.digest().clone();
-    let executable = Digest::compute(Domain::DistArtifact, input.executable);
+    let executable = input.executable.digest.clone();
     admit_app(app, payload, index)?;
     let executable_inventory = payload
         .inventory
@@ -679,13 +673,18 @@ fn admit_target(
 }
 
 fn admit_app(
-    app: &[PackageAppInput<'_>],
+    app: &[PackageAppInput],
     payload: &wire::manifest::TargetPayload,
     index: usize,
 ) -> Result<(), PackageError> {
     let mut expected = CANVAS_APP_FILES.to_vec();
     expected.sort_unstable();
-    if app.iter().map(|asset| asset.file).collect::<Vec<_>>() != expected {
+    if app
+        .iter()
+        .map(|asset| asset.file.as_str())
+        .collect::<Vec<_>>()
+        != expected
+    {
         return Err(PackageError::Binding {
             index,
             field: "Canvas package inventory",
@@ -693,6 +692,7 @@ fn admit_app(
     }
     for asset in app {
         let path = format!("app/{}", asset.file);
+        require_member(&asset.member, &path, DATA_MODE)?;
         let Some(entry) = payload.inventory.iter().find(|entry| entry.path == path) else {
             return Err(PackageError::Binding {
                 index,
@@ -700,8 +700,8 @@ fn admit_app(
             });
         };
         if entry.mode != DATA_MODE
-            || entry.bytes != asset.bytes.len() as u64
-            || entry.digest != Digest::compute(Domain::DistArtifact, asset.bytes)
+            || entry.bytes != asset.member.length
+            || entry.digest != asset.member.digest
         {
             return Err(PackageError::Binding {
                 index,
@@ -760,9 +760,17 @@ where
 }
 
 fn member(path: &str, mode: u32, bytes: &[u8], domain: Domain) -> PackageMember {
-    let member = PackageMember::new(path, mode, bytes);
+    let member = PackageMember::inline(path, mode, bytes);
     debug_assert_eq!(member.digest, Digest::compute(domain, bytes));
     member
+}
+
+fn require_member(member: &PackageMember, path: &str, mode: u32) -> Result<(), PackageError> {
+    if member.path == path && member.mode == mode {
+        Ok(())
+    } else {
+        Err(PackageError::Closure)
+    }
 }
 
 fn member_domain(path: &str) -> Domain {
@@ -956,11 +964,26 @@ mod tests {
             PackageInput::new(
                 &self.version,
                 self.notes_identity.clone(),
-                &self.notes,
-                &self.manifest,
+                member(
+                    NOTES_PATH,
+                    DATA_MODE,
+                    &self.notes,
+                    Domain::DistReleaseNotesContent,
+                ),
+                member(
+                    MANIFEST_PATH,
+                    DATA_MODE,
+                    &self.manifest,
+                    Domain::DistReleaseManifest,
+                ),
                 self.app
                     .iter()
-                    .map(|(file, bytes)| PackageAppInput::new(file, bytes))
+                    .map(|(file, bytes)| {
+                        PackageAppInput::new(
+                            file,
+                            member(&app_path(file), DATA_MODE, bytes, Domain::DistArtifact),
+                        )
+                    })
                     .collect(),
                 TARGETS
                     .into_iter()
@@ -968,9 +991,24 @@ mod tests {
                     .map(|(index, target)| {
                         PackageTargetInput::new(
                             target,
-                            &self.executables[index],
-                            &self.payloads[index],
-                            &self.proofs[index],
+                            member(
+                                &executable_path(target),
+                                EXECUTABLE_MODE,
+                                &self.executables[index],
+                                Domain::DistArtifact,
+                            ),
+                            member(
+                                &payload_path(target),
+                                DATA_MODE,
+                                &self.payloads[index],
+                                Domain::DistTargetPayload,
+                            ),
+                            member(
+                                &proof_path(target),
+                                DATA_MODE,
+                                &self.proofs[index],
+                                Domain::ProofReceiptV3,
+                            ),
                         )
                     })
                     .collect(),

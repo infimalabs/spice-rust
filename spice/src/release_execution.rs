@@ -365,7 +365,7 @@ impl SystemEffects {
     ) -> Result<(dist::OperationState, dist::Convergence), dist::EffectError> {
         let target = proof::compiled_target()
             .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
-        let bytes = crate::release_package::target_executable(
+        let executable = crate::release_package::target_executable(
             &self.root,
             target,
             &manifest_bytes(&self.root, plan)?,
@@ -378,7 +378,7 @@ impl SystemEffects {
                 dist::EffectError::Environment(detail)
             }
         })?;
-        let identity = Digest::compute(wire::Domain::DistArtifact, &bytes);
+        let identity = executable.digest().clone();
         if identity != plan.installed_artifact {
             return Err(dist::EffectError::Moved(
                 "sealed host executable identity moved".to_owned(),
@@ -401,9 +401,9 @@ impl SystemEffects {
                 .map_err(|error| dist::EffectError::Environment(error.to_string()))?
                 .stage()
                 .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
-            staged
-                .write_all(&bytes)
-                .map_err(|error| dist::EffectError::Environment(error.to_string()))?;
+            executable
+                .copy_to(&mut staged)
+                .map_err(|error| dist::EffectError::Moved(error.to_string()))?;
             make_executable(staged.temporary_path())?;
             staged
                 .commit()
