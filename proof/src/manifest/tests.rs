@@ -69,6 +69,13 @@ fn both_verified_targets_form_one_stable_manifest_and_pointer_last() {
     assert_eq!(first.files, second.files);
     assert_eq!(published.manifest.source, source);
     assert_eq!(published.manifest.targets.len(), 2);
+    for (target, prepared) in published.manifest.targets.iter().zip([&darwin, &linux]) {
+        let payload: TargetPayload =
+            wire::decode(&prepared.payload).expect("fixture payload decodes");
+        assert_eq!(target.payload_bytes, prepared.payload.len() as u64);
+        assert_eq!(target.inventory, payload.inventory);
+        assert_eq!(target.receipt_bytes, prepared.receipt.len() as u64);
+    }
     assert_eq!(
         published
             .manifest
@@ -367,6 +374,34 @@ fn manifest_admission_refuses_missing_stale_and_mixed_objects() {
             &expected.native,
         ),
         Err(ManifestAdmissionError::ManifestVersion(_))
+    ));
+
+    let divergent = Scratch::new();
+    let mut publisher = FileManifestPublisher::new(&divergent.root);
+    let published =
+        publish_manifest(inputs(&darwin, &linux), &mut publisher).expect("fixture publishes");
+    let mut manifest = published.manifest;
+    manifest.targets[0].inventory[0].bytes += 1;
+    let bytes = wire::encode(&manifest).expect("divergent manifest encodes");
+    let identity = Digest::compute(Domain::DistReleaseManifest, &bytes);
+    fs::write(
+        divergent.root.join(object_path("manifest", &identity)),
+        &bytes,
+    )
+    .expect("write divergent manifest object");
+    fs::write(divergent.root.join(MANIFEST_POINTER), bytes)
+        .expect("write divergent manifest pointer");
+    assert!(matches!(
+        admit_manifest(
+            &divergent.root,
+            &expected.app,
+            expected.target,
+            &expected.native,
+        ),
+        Err(ManifestAdmissionError::Binding {
+            field: "payload inventory",
+            ..
+        })
     ));
 
     let mixed = Scratch::new();

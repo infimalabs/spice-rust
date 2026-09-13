@@ -200,6 +200,7 @@ fn stage_target(
 ) -> StagedFixtureTarget {
     let executable = format!("native:{target}").into_bytes();
     let inventory = stage_inventory(stage, app_members, &executable);
+    let manifest_inventory = inventory.clone();
     let payload = TargetPayload {
         version: wire::manifest::TARGET_PAYLOAD_VERSION,
         target,
@@ -243,7 +244,7 @@ fn stage_target(
     let proof_identity = Digest::compute(Domain::ProofReceiptV3, &proof);
     fs::write(
         stage.join(format!("objects/receipt-{proof_identity}.json")),
-        proof,
+        &proof,
     )
     .expect("write proof object");
     StagedFixtureTarget {
@@ -254,7 +255,10 @@ fn stage_target(
         manifest: ReleaseManifestTarget {
             target,
             payload: payload_identity,
+            payload_bytes: payload.len() as u64,
+            inventory: manifest_inventory,
             receipt: proof_identity,
+            receipt_bytes: proof.len() as u64,
             battery: battery.clone(),
             replay,
             environment,

@@ -77,7 +77,7 @@ pub const CANVAS_RESPONSIVE_STYLE: &str = "responsive.css";
 /// Browser application WebAssembly module.
 pub const CANVAS_WASM: &str = "app_bg.wasm";
 /// The sole current multi-target release manifest schema.
-pub const RELEASE_MANIFEST_VERSION: u16 = 1;
+pub const RELEASE_MANIFEST_VERSION: u16 = 2;
 /// The sole current deterministic release-note document schema.
 pub const RELEASE_NOTES_VERSION: u16 = 1;
 /// The sole current externally installable release-package schema.
@@ -457,8 +457,14 @@ pub struct ReleaseManifestTarget {
     pub target: ReleaseTarget,
     /// Canonical receipt-free target-payload identity.
     pub payload: Digest,
+    /// Exact encoded length of the target-payload object.
+    pub payload_bytes: u64,
+    /// Complete canonical artifact inventory authenticated by the payload.
+    pub inventory: Vec<InventoryEntry>,
     /// Canonical detached proof-receipt identity.
     pub receipt: Digest,
+    /// Exact encoded length of the detached proof-receipt object.
+    pub receipt_bytes: u64,
     /// Current generated proof battery identity.
     pub battery: Digest,
     /// Complete replay-result identity.

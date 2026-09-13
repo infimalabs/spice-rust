@@ -210,7 +210,10 @@ fn load(
             .map_err(|error| PackageFailure::Moved(error.to_string()))?;
         let admitted = proof::admit(&payload_bytes)
             .map_err(|error| PackageFailure::Moved(error.to_string()))?;
-        if admitted.digest() != &target.payload || admitted.value().target != target.target {
+        if admitted.digest() != &target.payload
+            || admitted.value().target != target.target
+            || admitted.value().inventory != target.inventory
+        {
             return Err(PackageFailure::Moved(format!(
                 "staged {} payload disagrees with the release manifest",
                 target.target
@@ -218,7 +221,7 @@ fn load(
         }
         let executable = read_artifact(
             &stage,
-            &admitted.value().inventory,
+            &target.inventory,
             "bin/spice",
             &format!("targets/{}/bin/spice", target.target),
             &format!("staged {} executable", target.target),
@@ -238,7 +241,7 @@ fn load(
             executable,
             payload,
             proof,
-            inventory: admitted.value().inventory.clone(),
+            inventory: target.inventory,
         });
     }
     let inventory = &targets

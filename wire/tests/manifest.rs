@@ -250,7 +250,15 @@ fn release_manifests_round_trip_and_refuse_unknown_fields_at_every_level() {
                 ReleaseManifestTarget {
                     target: receipt.target,
                     payload: receipt.payload,
+                    payload_bytes: 1,
+                    inventory: vec![InventoryEntry {
+                        path: "bin/spice".to_owned(),
+                        mode: 0o755,
+                        bytes: 1,
+                        digest: digest("release manifest executable"),
+                    }],
                     receipt: receipt_digest,
+                    receipt_bytes: 1,
                     battery: receipt.battery,
                     replay: receipt.replay,
                     environment: receipt.environment,
@@ -267,7 +275,11 @@ fn release_manifests_round_trip_and_refuse_unknown_fields_at_every_level() {
     let original: serde_json::Value =
         serde_json::from_slice(&encoded).expect("release manifest is JSON");
 
-    for path in [Vec::new(), vec!["targets", "0"]] {
+    for path in [
+        Vec::new(),
+        vec!["targets", "0"],
+        vec!["targets", "0", "inventory", "0"],
+    ] {
         let mut changed = original.clone();
         let mut object = &mut changed;
         for &segment in &path {
