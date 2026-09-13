@@ -54,7 +54,7 @@ struct PreparedRestore {
     previous: Option<Digest>,
     previous_bytes: Option<Vec<u8>>,
     artifacts: artifact::BackupImage,
-    previous_artifacts: artifact::BackupImage,
+    previous_artifacts: artifact::BackupGeneration,
     plan: Digest,
 }
 
@@ -101,7 +101,7 @@ fn prepare_restore(bundle: &Path) -> Result<PreparedRestore, Failure> {
         bundle: capture.verification().bundle.clone(),
         destination: destination.display().to_string(),
         previous: previous.clone(),
-        previous_artifacts: artifact_identity(&previous_artifacts)?,
+        previous_artifacts: previous_artifacts.identity().clone(),
     };
     let plan_bytes = wire::encode(&plan_document).map_err(|error| {
         fault(
@@ -415,15 +415,6 @@ struct RestorePlanIdentity {
     previous_artifacts: Digest,
 }
 
-#[derive(Serialize)]
-#[serde(deny_unknown_fields)]
-struct ArtifactGenerationMember {
-    path: String,
-    mode: u32,
-    bytes: u64,
-    digest: Digest,
-}
-
 fn artifact_image(capture: &journal::RestoreCapture) -> Result<artifact::BackupImage, Failure> {
     const PREFIX: &str = "artifacts/tasks/";
 
@@ -477,32 +468,6 @@ fn artifact_image(capture: &journal::RestoreCapture) -> Result<artifact::BackupI
         ));
     }
     Ok(image)
-}
-
-fn artifact_identity(image: &artifact::BackupImage) -> Result<Digest, Failure> {
-    let mut members = Vec::with_capacity(image.files().len());
-    for member in image.files() {
-        members.push(ArtifactGenerationMember {
-            path: member.path.clone(),
-            mode: member.mode,
-            bytes: u64::try_from(member.bytes.len()).map_err(|error| {
-                fault(
-                    FaultClass::Protocol,
-                    "restore::artifact-size-invalid",
-                    error.to_string(),
-                )
-            })?,
-            digest: Digest::compute(Domain::TaskArtifactPayload, &member.bytes),
-        });
-    }
-    let bytes = wire::encode(&members).map_err(|error| {
-        fault(
-            FaultClass::Protocol,
-            "restore::artifact-identity-unencodable",
-            error.to_string(),
-        )
-    })?;
-    Ok(Digest::compute(Domain::TaskArtifactStore, &bytes))
 }
 
 fn current_identity(path: &Path) -> Result<Option<Digest>, Failure> {
