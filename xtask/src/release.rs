@@ -22,7 +22,7 @@ use wire::manifest::{BuildPins, ReleaseTarget};
 use wire::{Digest, Domain};
 
 mod symbols;
-use symbols::encode_symbol_bundle;
+use symbols::SymbolBundle;
 
 const OUTPUT_LIMIT: usize = 4 * 1024 * 1024;
 const BUILD_RUNTIME: Duration = Duration::from_secs(60 * 60);
@@ -67,6 +67,11 @@ pub struct TargetBuild {
 pub struct MacSymbols {
     bundle: PathBuf,
     uuid: String,
+}
+
+struct DerivedMacSymbols {
+    public: MacSymbols,
+    capture: SymbolBundle,
 }
 
 impl MacSymbols {
@@ -480,15 +485,13 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
             None
         };
         let native = read_regular(&executable).map_err(build_error)?;
-        if let Some(symbols) = &symbols {
-            self.symbol_artifact = Some(encode_symbol_bundle(
-                &symbols.bundle,
-                &executable,
-                &symbols.uuid,
+        if let Some(symbols) = symbols {
+            self.symbol_artifact = Some(symbols.capture.encode(
+                &symbols.public.uuid,
                 Digest::compute(Domain::DistArtifact, &native),
             )?);
+            self.symbols = Some(symbols.public);
         }
-        self.symbols = symbols;
         Ok(native)
     }
 
@@ -562,7 +565,7 @@ impl<E: Executor> CommandBuilder<'_, E> {
         successful(record).map_err(build_error)
     }
 
-    fn derive_macos_symbols(&self, executable: &Path) -> Result<MacSymbols, BuildError> {
+    fn derive_macos_symbols(&self, executable: &Path) -> Result<DerivedMacSymbols, BuildError> {
         let tools = self
             .programs
             .macos
@@ -578,26 +581,24 @@ impl<E: Executor> CommandBuilder<'_, E> {
                 bundle.as_os_str().to_owned(),
             ],
         ))?;
-        let metadata = fs::symlink_metadata(&bundle).map_err(|error| {
-            BuildError::new(format!("cannot inspect {}: {error}", bundle.display()))
-        })?;
-        if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
-            return Err(BuildError::new(format!(
-                "dsymutil produced no regular bundle at {}",
-                bundle.display()
-            )));
-        }
+        let capture = SymbolBundle::capture(&bundle, executable)?;
         let executable_uuid = self.run(CommandSpec::new(
             "executable-uuid",
             &tools.dwarfdump,
             [OsString::from("--uuid"), executable.as_os_str().to_owned()],
         ))?;
         let executable_uuid = parse_macho_uuid(&executable_uuid.stdout, "executable UUID")?;
-        let symbol_uuid = self.run(CommandSpec::new(
-            "dsym-uuid",
-            &tools.dwarfdump,
-            [OsString::from("--uuid"), bundle.as_os_str().to_owned()],
-        ))?;
+        let symbol_uuid = {
+            let input = capture.uuid_input()?;
+            self.run(CommandSpec::new(
+                "dsym-uuid",
+                &tools.dwarfdump,
+                [
+                    OsString::from("--uuid"),
+                    input.path().as_os_str().to_owned(),
+                ],
+            ))?
+        };
         let symbol_uuid = parse_macho_uuid(&symbol_uuid.stdout, "dSYM UUID")?;
         if executable_uuid != symbol_uuid {
             return Err(BuildError::new(format!(
@@ -609,9 +610,12 @@ impl<E: Executor> CommandBuilder<'_, E> {
             &tools.strip,
             [OsString::from("-S"), executable.as_os_str().to_owned()],
         ))?;
-        Ok(MacSymbols {
-            bundle,
-            uuid: executable_uuid,
+        Ok(DerivedMacSymbols {
+            public: MacSymbols {
+                bundle,
+                uuid: executable_uuid,
+            },
+            capture,
         })
     }
 }

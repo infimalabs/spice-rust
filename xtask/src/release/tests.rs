@@ -88,7 +88,7 @@ struct FakeExecutor {
     tracked_dirty: Cell<bool>,
     untracked: RefCell<String>,
     moved_after_native: Cell<bool>,
-    linked_symbols_after_uuid: Cell<bool>,
+    moved_symbols_after_uuid: Cell<bool>,
     native_ran: Cell<bool>,
     executable_uuid: RefCell<Vec<u8>>,
     dsym_uuid: RefCell<Vec<u8>>,
@@ -106,7 +106,7 @@ impl FakeExecutor {
             tracked_dirty: Cell::new(false),
             untracked: RefCell::new(String::new()),
             moved_after_native: Cell::new(false),
-            linked_symbols_after_uuid: Cell::new(false),
+            moved_symbols_after_uuid: Cell::new(false),
             native_ran: Cell::new(false),
             executable_uuid: RefCell::new(format!("UUID: {UUID} (arm64) executable\n").into()),
             dsym_uuid: RefCell::new(format!("UUID: {UUID} (arm64) symbols\n").into()),
@@ -148,14 +148,13 @@ impl Executor for FakeExecutor {
         if command.label == "native-strip" && !refused {
             fs::write(PathBuf::from(&command.arguments[1]), STRIPPED_NATIVE)
                 .expect("strip exact linked executable fixture");
-            if self.linked_symbols_after_uuid.get() {
-                use std::os::unix::fs::symlink;
-
+            if self.moved_symbols_after_uuid.get() {
                 let dwarf = dsym_path(Path::new(&command.arguments[1]))
                     .join("Contents/Resources/DWARF/spice");
-                fs::remove_file(&dwarf).expect("remove verified DWARF fixture");
-                symlink(Path::new(&command.arguments[1]), dwarf)
-                    .expect("substitute linked DWARF fixture");
+                fs::rename(&dwarf, dwarf.with_extension("captured"))
+                    .expect("retain captured DWARF fixture");
+                fs::write(dwarf, b"changed DWARF")
+                    .expect("substitute same-length regular DWARF fixture");
             }
         }
         let stdout = match command.label {
@@ -309,7 +308,7 @@ fn both_targets_use_the_fixed_commands_and_real_artifact_bytes() {
     let fixture = Fixture::new();
     let target = ReleaseTarget::Aarch64AppleDarwin;
     let executor = FakeExecutor::new(&fixture.root, target);
-    executor.linked_symbols_after_uuid.set(true);
+    executor.moved_symbols_after_uuid.set(true);
     let error = stage_with(
         &fixture.root,
         &fixture.root.join("target"),
@@ -317,7 +316,7 @@ fn both_targets_use_the_fixed_commands_and_real_artifact_bytes() {
         &fixture.programs(),
         &executor,
     )
-    .expect_err("a linked dSYM member refuses before target publication");
+    .expect_err("a substituted dSYM member refuses before target publication");
     assert!(matches!(error, TargetBuildError::Stage(_)), "{error:?}");
     assert!(!fixture.pointer(target).exists());
 }
@@ -409,9 +408,11 @@ fn assert_symbol_result(fixture: &Fixture, programs: &Programs, build: &TargetBu
         record("executable-uuid").arguments,
         [OsStr::new("--uuid"), executable.as_os_str()]
     );
-    assert_eq!(
-        record("dsym-uuid").arguments,
-        [OsStr::new("--uuid"), bundle.as_os_str()]
+    let symbol_uuid = &record("dsym-uuid").arguments;
+    assert_eq!(symbol_uuid[0], OsStr::new("--uuid"));
+    assert!(
+        Path::new(&symbol_uuid[1]).starts_with("/dev/fd"),
+        "dSYM UUID must read the held DWARF descriptor: {symbol_uuid:?}"
     );
     assert_eq!(record("native-strip").program, macos.strip);
     assert_eq!(
