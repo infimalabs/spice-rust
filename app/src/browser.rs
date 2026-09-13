@@ -460,6 +460,7 @@ fn canvas_app() -> Html {
         note_text: &note_text,
         note_notice: &note_notice,
         action_issue: &action_issue,
+        speech_status: &speech_status,
         submit_note,
         refresh,
     })
