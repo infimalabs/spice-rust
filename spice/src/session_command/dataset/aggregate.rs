@@ -71,6 +71,10 @@ pub(crate) enum WindowOptions {
         compactions: usize,
         oldest: bool,
     },
+    Turns {
+        limit: usize,
+        full: bool,
+    },
 }
 
 impl WindowOptions {
@@ -79,6 +83,7 @@ impl WindowOptions {
             Self::Briefing { compactions, .. }
             | Self::Sweep { compactions }
             | Self::Slices { compactions, .. } => compactions,
+            Self::Turns { .. } => 1,
         }
     }
 
@@ -90,7 +95,7 @@ impl WindowOptions {
                 explain,
                 ..
             } => Some((max_lines, max_bytes, explain)),
-            Self::Sweep { .. } | Self::Slices { .. } => None,
+            Self::Sweep { .. } | Self::Slices { .. } | Self::Turns { .. } => None,
         }
     }
 
@@ -116,7 +121,7 @@ pub(crate) struct WindowTurn {
 }
 
 impl WindowTurn {
-    fn project(turn: TurnRecord) -> Self {
+    fn project(turn: TurnRecord, options: WindowOptions) -> Self {
         let latest_final = turn.messages.iter().rev().find_map(|message| {
             (message.phase == "final_answer")
                 .then(|| message.authored.clone())
@@ -134,7 +139,10 @@ impl WindowTurn {
             .map(String::len)
             .sum();
         let end = turn_end(&turn);
-        let view = turn_view(&turn, false, 180, true);
+        let view = match options {
+            WindowOptions::Turns { full, .. } => turn_view(&turn, full, 180, false),
+            _ => turn_view(&turn, false, 180, true),
+        };
         Self {
             view,
             end,
@@ -201,7 +209,7 @@ impl WindowScan {
                 .expect("selected window frontier is nonempty");
             any_turn_identity |= turn.turn_id.is_some();
             if filters.turn_matches(&turn) {
-                turns.push(WindowTurn::project(turn))?;
+                turns.push(WindowTurn::project(turn, options))?;
             }
             streams[index].advance(&mut residues, &mut work)?;
         }
@@ -265,6 +273,16 @@ impl WindowTurnFrontier {
         self.lines = self.lines.saturating_add(turn.lines);
         self.bytes = self.bytes.saturating_add(turn.bytes);
         self.rows.push_back(turn);
+        if let WindowOptions::Turns { limit, .. } = self.options
+            && self.rows.len() > limit
+        {
+            let removed = self
+                .rows
+                .pop_front()
+                .expect("full turn frontier has an oldest");
+            self.lines -= removed.lines;
+            self.bytes -= removed.bytes;
+        }
         if let Some((max_lines, max_bytes, _)) = self.options.briefing() {
             while self.rows.len() > 1 && (self.lines > max_lines || self.bytes > max_bytes) {
                 let removed = self
