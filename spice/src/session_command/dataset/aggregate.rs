@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use wire::Refusal;
 
 use super::super::model::{
-    ActivityView, Dataset, MessageRecord, PhaseExample, PhaseView, Report, Residue, SourceView,
-    ThreadView, TokenRecord, TokenView, TurnRecord, Vendor,
+    ActivityView, CompactionRecord, Dataset, MessageRecord, PhaseExample, PhaseView, Report,
+    Residue, SourceView, ThreadView, TokenRecord, TokenView, TurnRecord, TurnView, Vendor,
 };
 use super::super::project::{
     Filters, PhaseOptions, authored_message_view, phase_example, turn_end, turn_family, turn_view,
@@ -15,8 +15,9 @@ use super::super::source::ResolvedSource;
 use super::stream::{ForwardCursor, ForwardProgress};
 use super::{
     DecodedRow, FoldState, FoldStorage, FrontierDirection, Marker, MessageQuery, ResidueLedger,
-    ResultFrontier, SessionWork, SessionWorkBudget, finish_fold, message_text_bytes, reduce_record,
-    refusal, source_view_text_bytes, stream_records,
+    ResultFrontier, SessionWork, SessionWorkBudget, compaction_intent, compaction_text_bytes,
+    finish_fold, message_text_bytes, reduce_record, refusal, source_view_text_bytes,
+    stream_records,
 };
 
 const OPEN_TURN_LIMIT: usize = 64;
@@ -25,6 +26,7 @@ const PHASE_GAP_SECONDS: i64 = 45 * 60;
 const PHASE_PATH_LIMIT: usize = 4_096;
 const SOURCE_LIMIT: usize = 64;
 const MAX_MESSAGE_IDENTITIES: usize = 4 * 1_024;
+const WINDOW_TURN_LIMIT: usize = 4 * 1_024;
 
 impl MessageQuery {
     fn matches(&self, row: &MessageRecord) -> bool {
@@ -51,6 +53,214 @@ pub(super) struct MessageSourceScan {
     pub(super) rows: Vec<MessageRecord>,
     pub(super) residues: Vec<Residue>,
     pub(super) vendor: Vendor,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum WindowOptions {
+    Briefing {
+        max_lines: usize,
+        max_bytes: usize,
+        explain: bool,
+        compactions: usize,
+    },
+    Sweep {
+        compactions: usize,
+    },
+}
+
+impl WindowOptions {
+    pub(crate) const fn compactions(self) -> usize {
+        match self {
+            Self::Briefing { compactions, .. } | Self::Sweep { compactions } => compactions,
+        }
+    }
+
+    pub(crate) const fn briefing(self) -> Option<(usize, usize, bool)> {
+        match self {
+            Self::Briefing {
+                max_lines,
+                max_bytes,
+                explain,
+                ..
+            } => Some((max_lines, max_bytes, explain)),
+            Self::Sweep { .. } => None,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct WindowTurn {
+    pub(crate) view: TurnView,
+    pub(crate) end: String,
+    pub(crate) latest_final: Option<String>,
+    lines: usize,
+    bytes: usize,
+}
+
+impl WindowTurn {
+    fn project(turn: TurnRecord) -> Self {
+        let latest_final = turn.messages.iter().rev().find_map(|message| {
+            (message.phase == "final_answer")
+                .then(|| message.authored.clone())
+                .flatten()
+        });
+        let lines = 1 + turn
+            .messages
+            .iter()
+            .filter(|message| message.authored.is_some())
+            .count();
+        let bytes = turn
+            .messages
+            .iter()
+            .filter_map(|message| message.authored.as_ref())
+            .map(String::len)
+            .sum();
+        let end = turn_end(&turn);
+        let view = turn_view(&turn, false, 180, true);
+        Self {
+            view,
+            end,
+            latest_final,
+            lines,
+            bytes,
+        }
+    }
+}
+
+pub(crate) struct WindowScan {
+    pub(crate) sources: Vec<SourceView>,
+    pub(crate) turns: Vec<WindowTurn>,
+    pub(crate) compactions: Vec<CompactionRecord>,
+    pub(crate) residues: Vec<Residue>,
+    pub(crate) turns_before: usize,
+    pub(crate) options: WindowOptions,
+}
+
+impl WindowScan {
+    pub(crate) fn scan(
+        sources: &[ResolvedSource],
+        start: Option<&str>,
+        end: Option<&str>,
+        filters: &Filters,
+        options: WindowOptions,
+    ) -> Result<Self, Refusal> {
+        admit_sources(sources)?;
+        let mut work = SessionWork::new(SessionWorkBudget::report());
+        let mut residues = ResidueLedger::new();
+        let mut streams = sources
+            .iter()
+            .map(|source| PhaseSource::window(source, start, end, options.compactions(), &mut work))
+            .collect::<Result<Vec<_>, _>>()?;
+        for stream in &mut streams {
+            stream.advance(&mut residues, &mut work)?;
+        }
+        let mut turns = WindowTurnFrontier::new(options);
+        let mut any_turn_identity = false;
+        while let Some(index) = streams
+            .iter()
+            .enumerate()
+            .filter(|(_, stream)| !stream.ready.is_empty())
+            .min_by_key(|(_, stream)| {
+                let turn = stream.ready.front().expect("filtered nonempty frontier");
+                (&turn.start_ts, &turn.source)
+            })
+            .map(|(index, _)| index)
+        {
+            let turn = streams[index]
+                .ready
+                .pop_front()
+                .expect("selected window frontier is nonempty");
+            any_turn_identity |= turn.turn_id.is_some();
+            if filters.turn_matches(&turn) {
+                turns.push(WindowTurn::project(turn))?;
+            }
+            streams[index].advance(&mut residues, &mut work)?;
+        }
+        filters.validate_turn_identity_available(any_turn_identity)?;
+        let mut sources = Vec::with_capacity(streams.len());
+        let mut compaction_sources = Vec::with_capacity(streams.len());
+        for stream in streams {
+            let (source, compactions) = stream.into_window(&mut work)?;
+            work.admit_retained_text(source_view_text_bytes(&source), &source.path)?;
+            sources.push(source);
+            compaction_sources.push(VecDeque::from(compactions));
+        }
+        let mut compactions =
+            ResultFrontier::new(options.compactions(), FrontierDirection::Newest)?;
+        while let Some(index) = compaction_sources
+            .iter()
+            .enumerate()
+            .filter(|(_, rows)| !rows.is_empty())
+            .min_by_key(|(_, rows)| {
+                let row = rows
+                    .front()
+                    .expect("filtered compaction source is nonempty");
+                (&row.ts, &row.source)
+            })
+            .map(|(index, _)| index)
+        {
+            compactions.push(
+                compaction_sources[index]
+                    .pop_front()
+                    .expect("selected compaction source is nonempty"),
+            );
+        }
+        Ok(Self {
+            sources,
+            turns: turns.rows.into(),
+            compactions: compactions.into_rows(),
+            residues: residues.finish(&mut work, "window residue summary")?,
+            turns_before: turns.before,
+            options,
+        })
+    }
+}
+
+struct WindowTurnFrontier {
+    options: WindowOptions,
+    rows: VecDeque<WindowTurn>,
+    lines: usize,
+    bytes: usize,
+    before: usize,
+}
+
+impl WindowTurnFrontier {
+    fn new(options: WindowOptions) -> Self {
+        Self {
+            options,
+            rows: VecDeque::new(),
+            lines: 0,
+            bytes: 0,
+            before: 0,
+        }
+    }
+
+    fn push(&mut self, turn: WindowTurn) -> Result<(), Refusal> {
+        if matches!(self.options, WindowOptions::Sweep { .. })
+            && self.rows.len() == WINDOW_TURN_LIMIT
+        {
+            return Err(refusal(
+                "session::window-turn-limit",
+                Some(format!("maximum={WINDOW_TURN_LIMIT}")),
+                "narrow the requested compaction windows or transcript filters",
+            ));
+        }
+        self.before = self.before.saturating_add(1);
+        self.lines = self.lines.saturating_add(turn.lines);
+        self.bytes = self.bytes.saturating_add(turn.bytes);
+        self.rows.push_back(turn);
+        if let Some((max_lines, max_bytes, _)) = self.options.briefing() {
+            while self.rows.len() > 1 && (self.lines > max_lines || self.bytes > max_bytes) {
+                let removed = self
+                    .rows
+                    .pop_front()
+                    .expect("multiple turns have an oldest");
+                self.lines -= removed.lines;
+                self.bytes -= removed.bytes;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Eq, Ord, PartialEq, PartialOrd)]
@@ -574,6 +784,109 @@ impl Aggregate {
     }
 }
 
+struct PendingCompaction {
+    marker: Marker,
+    assistant_before: String,
+    summary: String,
+    summary_seen: bool,
+    user_after: String,
+    user_seen: bool,
+}
+
+struct CompactionTracker {
+    last_assistant: Option<String>,
+    pending: Option<PendingCompaction>,
+    rows: ResultFrontier<CompactionRecord>,
+    end: Option<String>,
+}
+
+impl CompactionTracker {
+    fn new(limit: usize, end: Option<&str>) -> Result<Self, Refusal> {
+        Ok(Self {
+            last_assistant: None,
+            pending: None,
+            rows: ResultFrontier::new(limit, FrontierDirection::Newest)?,
+            end: end.map(str::to_owned),
+        })
+    }
+
+    fn observe(
+        &mut self,
+        markers: impl IntoIterator<Item = Marker>,
+        messages: &[MessageRecord],
+        work: &mut SessionWork,
+        at: &str,
+    ) -> Result<(), Refusal> {
+        for marker in markers {
+            self.finish_pending(work, at)?;
+            if self.end.as_ref().is_none_or(|end| marker.ts <= *end) {
+                let summary_seen = !marker.summary.is_empty();
+                self.pending = Some(PendingCompaction {
+                    summary: marker.summary.clone(),
+                    marker,
+                    assistant_before: self.last_assistant.clone().unwrap_or_default(),
+                    summary_seen,
+                    user_after: String::new(),
+                    user_seen: false,
+                });
+            }
+        }
+        for message in messages {
+            if let Some(pending) = &mut self.pending
+                && message.position > pending.marker.position
+            {
+                if !pending.summary_seen
+                    && message.shape == crate::message_shape::MessageShape::CompactionRehydration
+                {
+                    pending.summary = message.text.clone();
+                    pending.summary_seen = true;
+                }
+                if !pending.user_seen && message.side == "user" && message.shape.is_authored() {
+                    pending.user_after = message.authored.clone().unwrap_or_default();
+                    pending.user_seen = true;
+                }
+            }
+            if message.side == "assistant" {
+                self.last_assistant = Some(message.text.clone());
+            }
+        }
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.summary_seen && pending.user_seen)
+        {
+            self.finish_pending(work, at)?;
+        }
+        Ok(())
+    }
+
+    fn finish_pending(&mut self, work: &mut SessionWork, at: &str) -> Result<(), Refusal> {
+        let Some(pending) = self.pending.take() else {
+            return Ok(());
+        };
+        let row = CompactionRecord {
+            source: pending.marker.source,
+            ts: pending.marker.ts,
+            assistant_before: pending.assistant_before,
+            intent: compaction_intent(&pending.summary),
+            summary_after: pending.summary,
+            user_after: pending.user_after,
+        };
+        work.admit_retained_text(compaction_text_bytes(&row), at)?;
+        self.rows.push(row);
+        Ok(())
+    }
+
+    fn finish(
+        mut self,
+        work: &mut SessionWork,
+        at: &str,
+    ) -> Result<Vec<CompactionRecord>, Refusal> {
+        self.finish_pending(work, at)?;
+        Ok(self.rows.into_rows())
+    }
+}
+
 struct PhaseSource<'a> {
     source: &'a ResolvedSource,
     cursor: ForwardCursor<'a>,
@@ -581,6 +894,7 @@ struct PhaseSource<'a> {
     markers: Vec<Marker>,
     fold: FoldState,
     ready: VecDeque<TurnRecord>,
+    compactions: Option<CompactionTracker>,
     complete: bool,
 }
 
@@ -593,6 +907,26 @@ impl<'a> PhaseSource<'a> {
             markers: Vec::new(),
             fold: FoldState::default(),
             ready: VecDeque::with_capacity(OPEN_TURN_LIMIT),
+            compactions: None,
+            complete: false,
+        })
+    }
+
+    fn window(
+        source: &'a ResolvedSource,
+        start: Option<&str>,
+        end: Option<&str>,
+        compactions: usize,
+        work: &mut SessionWork,
+    ) -> Result<Self, Refusal> {
+        Ok(Self {
+            source,
+            cursor: ForwardCursor::new(source, start, work)?,
+            scratch: super::super::model::Dataset::default(),
+            markers: Vec::new(),
+            fold: FoldState::default(),
+            ready: VecDeque::with_capacity(OPEN_TURN_LIMIT),
+            compactions: Some(CompactionTracker::new(compactions, end)?),
             complete: false,
         })
     }
@@ -635,7 +969,20 @@ impl<'a> PhaseSource<'a> {
                             turn.compaction_count =
                                 turn.compaction_count.saturating_add(added as u64);
                         }
-                        self.markers.clear();
+                        if let Some(compactions) = &mut self.compactions {
+                            compactions.observe(
+                                self.markers.drain(..),
+                                &self.scratch.messages,
+                                work,
+                                &format!(
+                                    "{}:record {}",
+                                    self.source.path.display(),
+                                    self.cursor.continuation().line
+                                ),
+                            )?;
+                        } else {
+                            self.markers.clear();
+                        }
                     }
                     DecodedRow::Residue(residue) => residues.push(
                         residue,
@@ -697,6 +1044,18 @@ impl<'a> PhaseSource<'a> {
             thread: self.source.thread.clone(),
             compressed: self.source.path.to_string_lossy().ends_with(".gz"),
         }
+    }
+
+    fn into_window(
+        mut self,
+        work: &mut SessionWork,
+    ) -> Result<(SourceView, Vec<CompactionRecord>), Refusal> {
+        let compactions = self
+            .compactions
+            .take()
+            .expect("window source retains compaction state")
+            .finish(work, &self.source.path.display().to_string())?;
+        Ok((self.source_view(), compactions))
     }
 }
 
