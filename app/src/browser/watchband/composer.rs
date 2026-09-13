@@ -464,20 +464,13 @@ fn render_agent_message_footer(
 }
 
 fn render_agent_message_badges(message: &wire::AgentMessage) -> Html {
-    if message.badges.acknowledgements == 0 && !message.final_answer {
+    if !message.final_answer {
         return Html::default();
     }
     html! {
         <span class="message-badges" role="list" aria-label="Message classifications">
             if message.final_answer {
                 {render_agent_message_badge("FINAL", "final", None)}
-            }
-            if message.badges.acknowledgements > 0 {
-                {render_agent_message_badge(
-                    "ACK",
-                    "ack",
-                    Some(message.badges.acknowledgements),
-                )}
             }
         </span>
     }

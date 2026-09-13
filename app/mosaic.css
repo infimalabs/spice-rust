@@ -950,6 +950,7 @@ html[data-command-modifier-held="true"]
   min-width: 0;
 }
 .organization-surface .message-task-chip,
+.organization-surface .message-ack-pill,
 .organization-surface .message-taste-pill,
 .organization-surface .message-broadcast-pill,
 .organization-surface .message-review-pill,
@@ -1018,6 +1019,7 @@ html[data-command-modifier-held="true"]
   min-width: 0;
 }
 .organization-surface .message-task-chip,
+.organization-surface .message-ack-pill,
 .organization-surface .message-taste-pill,
 .organization-surface .message-broadcast-pill,
 .organization-surface .message-review-pill {
@@ -1044,6 +1046,10 @@ html[data-command-modifier-held="true"]
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.organization-surface .message-ack-pill {
+  --message-inline-pill-accent: var(--accent);
+  gap: 4px;
 }
 .organization-surface .message-task-chip-label {
   display: block;

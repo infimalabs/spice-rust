@@ -38,7 +38,28 @@ pub(crate) fn render_received_with_badges(
     markdown: &str,
     badges: wire::AgentMessageBadges,
 ) -> RenderedMarkdown {
-    render_received_with_classifications(markdown, badges.reviews, badges.tastes, badges.broadcasts)
+    let mut rendered = render_received_with_classifications(
+        markdown,
+        badges.reviews,
+        badges.tastes,
+        badges.broadcasts,
+    );
+    if badges.acknowledgements > 0 {
+        rendered.html = format!(
+            "<span class=\"message-classifiers\">{}</span>{}",
+            acknowledgement_pill(badges.acknowledgements),
+            rendered.html,
+        );
+    }
+    rendered
+}
+
+fn acknowledgement_pill(count: u32) -> String {
+    format!(
+        "<span class=\"message-ack-pill\" data-message-classification=\"ack\" \
+         aria-label=\"Acknowledgement classification, {count} contexts\">ACK<span \
+         class=\"message-badge-count\">{count}</span></span>"
+    )
 }
 
 /// Render received text and replace authenticated quoted classification markers inline.

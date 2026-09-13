@@ -425,7 +425,7 @@ async function assertExternalOperatorReplay(page, fixture, console, lane, worktr
         && card.dataset.messageRole === "agent"
         && card.dataset.messageAckCount === "1"
         && card.dataset.messageTasteCount === "0"
-        && [...card.querySelectorAll(".message-badge")]
+        && [...card.querySelectorAll(".message-ack-pill")]
           .map((badge) => badge.textContent).join(",") === "ACK1"
     )), { lane, replyText });
   assert.equal(await acknowledgedCard.count(), 1, "acknowledgement renders one assistant card");
@@ -434,7 +434,7 @@ async function assertExternalOperatorReplay(page, fixture, console, lane, worktr
   assert.equal(await acknowledgedCard.getAttribute("data-message-taste-count"), "0");
   assert.equal(await acknowledgedCard.getAttribute("data-message-review-count"), "0");
   assert.deepEqual(
-    await acknowledgedCard.locator(".message-badge").allTextContents(),
+    await acknowledgedCard.locator(".message-ack-pill").allTextContents(),
     ["ACK1"],
     "authenticated acknowledgement evidence renders one counted ACK badge",
   );
@@ -477,7 +477,7 @@ async function assertExternalOperatorReplay(page, fixture, console, lane, worktr
   await acknowledgedCard.waitFor({ timeout: CONNECT_MS });
   assert.equal(await acknowledgedCard.count(), 1, "bootstrap restores one acknowledged assistant card");
   assert.deepEqual(
-    await acknowledgedCard.locator(".message-badge").allTextContents(),
+    await acknowledgedCard.locator(".message-ack-pill").allTextContents(),
     ["ACK1"],
     "durable replay restores the typed ACK badge",
   );
@@ -553,9 +553,9 @@ async function assertInlineTastePills(page, console, lane, activityReplay) {
     "inline taste pills carry no ordinal or count",
   );
   assert.deepEqual(
-    await card.locator(".message-footer .message-badge").allTextContents(),
+    await card.locator(".message-body .message-ack-pill").allTextContents(),
     ["ACK2"],
-    "taste flavor remains inline while acknowledgement state stays in the footer",
+    "taste flavor and acknowledgement state remain inline",
   );
   const body = await card.locator(".message-body").innerText();
   assert.doesNotMatch(body, /\[TASTE\]/, "quoted taste markers are replaced in presentation");
@@ -570,7 +570,7 @@ async function assertInlineTastePills(page, console, lane, activityReplay) {
     "replay preserves every taste flavor pill",
   );
   assert.deepEqual(
-    await card.locator(".message-footer .message-badge").allTextContents(),
+    await card.locator(".message-body .message-ack-pill").allTextContents(),
     ["ACK2"],
     "replay preserves taste acknowledgement state",
   );
@@ -594,9 +594,9 @@ async function assertInlineBroadcastPill(page, console, lane, activityReplay) {
   assert.equal(await card.getAttribute("data-message-ack-count"), "1");
   assert.equal(await card.getAttribute("data-message-broadcast-count"), "1");
   assert.deepEqual(
-    await card.locator(".message-footer .message-badge").allTextContents(),
+    await card.locator(".message-body .message-ack-pill").allTextContents(),
     ["ACK1"],
-    "broadcast flavor remains inline while acknowledgement state stays in the footer",
+    "broadcast flavor and acknowledgement state remain inline",
   );
   const pill = card.locator(".message-broadcast-pill");
   assert.equal(await pill.innerText(), "BROADCAST");
@@ -636,7 +636,7 @@ async function assertInlineBroadcastPill(page, console, lane, activityReplay) {
   await activityReplay.replayAgentMessage(page, key);
   assert.equal(await card.locator(".message-broadcast-pill").count(), 1);
   assert.deepEqual(
-    await card.locator(".message-footer .message-badge").allTextContents(),
+    await card.locator(".message-body .message-ack-pill").allTextContents(),
     ["ACK1"],
     "replay preserves broadcast flavor and acknowledgement state",
   );
@@ -749,7 +749,7 @@ async function assertFlavorAcknowledgementsAfterReload(page, console, activityRe
     assert.equal(await card.getAttribute("data-message-ack-count"), String(count));
     assert.equal(await card.locator(`.message-${flavor}-pill`).count(), count);
     assert.deepEqual(
-      await card.locator(".message-footer .message-badge").allTextContents(),
+      await card.locator(".message-body .message-ack-pill").allTextContents(),
       [`ACK${count}`],
       `reload preserves ${flavor} flavor and acknowledgement state`,
     );
