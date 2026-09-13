@@ -15,89 +15,134 @@ const MAC_SYMBOL_ARTIFACT_BYTES_LIMIT: u64 = 512 * 1024 * 1024;
 const MAC_SYMBOL_ENCODING_OVERHEAD: u64 = 4096;
 const MAC_SYMBOL_RAW_BYTES_LIMIT: u64 =
     (MAC_SYMBOL_ARTIFACT_BYTES_LIMIT - MAC_SYMBOL_ENCODING_OVERHEAD) / 4;
+const INHERITED_DESCRIPTOR_MINIMUM: libc::c_int = 10;
 
-pub(super) fn encode_symbol_bundle(
-    bundle: &Path,
-    executable: &Path,
-    uuid: &str,
-    executable_digest: Digest,
-) -> Result<Vec<u8>, BuildError> {
-    let name = executable
-        .file_name()
-        .ok_or_else(|| BuildError::new("linked executable has no filename"))?;
-    let root = open_directory(bundle)?;
-    require_entries(&root, bundle, &[OsStr::new("Contents")])?;
-    let contents_path = bundle.join("Contents");
-    let contents = open_directory_at(&root, OsStr::new("Contents"), &contents_path)?;
-    require_entries(
-        &contents,
-        &contents_path,
-        &[OsStr::new("Info.plist"), OsStr::new("Resources")],
-    )?;
-    let resources_path = contents_path.join("Resources");
-    let resources = open_directory_at(&contents, OsStr::new("Resources"), &resources_path)?;
-    require_entries(&resources, &resources_path, &[OsStr::new("DWARF")])?;
-    let dwarf_path = resources_path.join("DWARF");
-    let dwarf_root = open_directory_at(&resources, OsStr::new("DWARF"), &dwarf_path)?;
-    require_entries(&dwarf_root, &dwarf_path, &[name])?;
+pub(super) struct SymbolBundle {
+    bundle: PathBuf,
+    name: OsString,
+    root: File,
+    contents: File,
+    resources: File,
+    dwarf_root: File,
+    info: SymbolMember,
+    dwarf: SymbolMember,
+}
 
-    let info_path = contents_path.join("Info.plist");
-    let info = SymbolMember::open(&contents, OsStr::new("Info.plist"), info_path)?;
-    let dwarf = SymbolMember::open(&dwarf_root, name, dwarf_path.join(name))?;
-    let raw_bytes = info
-        .identity
-        .length
-        .checked_add(dwarf.identity.length)
-        .filter(|bytes| *bytes <= MAC_SYMBOL_RAW_BYTES_LIMIT)
-        .ok_or_else(|| BuildError::new("dSYM bundle exceeds its fixed encoded byte limit"))?;
-    if raw_bytes
-        .checked_mul(4)
-        .and_then(|bytes| bytes.checked_add(MAC_SYMBOL_ENCODING_OVERHEAD))
-        .is_none_or(|bytes| bytes > MAC_SYMBOL_ARTIFACT_BYTES_LIMIT)
-    {
-        return Err(BuildError::new(
-            "dSYM bundle exceeds its fixed encoded byte limit",
-        ));
+impl SymbolBundle {
+    pub(super) fn capture(bundle: &Path, executable: &Path) -> Result<Self, BuildError> {
+        let name = executable
+            .file_name()
+            .ok_or_else(|| BuildError::new("linked executable has no filename"))?;
+        let root = open_directory(bundle)?;
+        require_entries(&root, bundle, &[OsStr::new("Contents")])?;
+        let contents_path = bundle.join("Contents");
+        let contents = open_directory_at(&root, OsStr::new("Contents"), &contents_path)?;
+        require_entries(
+            &contents,
+            &contents_path,
+            &[OsStr::new("Info.plist"), OsStr::new("Resources")],
+        )?;
+        let resources_path = contents_path.join("Resources");
+        let resources = open_directory_at(&contents, OsStr::new("Resources"), &resources_path)?;
+        require_entries(&resources, &resources_path, &[OsStr::new("DWARF")])?;
+        let dwarf_path = resources_path.join("DWARF");
+        let dwarf_root = open_directory_at(&resources, OsStr::new("DWARF"), &dwarf_path)?;
+        require_entries(&dwarf_root, &dwarf_path, &[name])?;
+
+        let info_path = contents_path.join("Info.plist");
+        let info = SymbolMember::open(&contents, OsStr::new("Info.plist"), info_path)?;
+        let dwarf = SymbolMember::open(&dwarf_root, name, dwarf_path.join(name))?;
+        let raw_bytes = info
+            .identity
+            .length
+            .checked_add(dwarf.identity.length)
+            .filter(|bytes| *bytes <= MAC_SYMBOL_RAW_BYTES_LIMIT)
+            .ok_or_else(|| BuildError::new("dSYM bundle exceeds its fixed encoded byte limit"))?;
+        if raw_bytes
+            .checked_mul(4)
+            .and_then(|bytes| bytes.checked_add(MAC_SYMBOL_ENCODING_OVERHEAD))
+            .is_none_or(|bytes| bytes > MAC_SYMBOL_ARTIFACT_BYTES_LIMIT)
+        {
+            return Err(BuildError::new(
+                "dSYM bundle exceeds its fixed encoded byte limit",
+            ));
+        }
+
+        Ok(Self {
+            bundle: bundle.to_path_buf(),
+            name: name.to_os_string(),
+            root,
+            contents,
+            resources,
+            dwarf_root,
+            info,
+            dwarf,
+        })
     }
 
-    let artifact = wire::encode(&MacSymbolArtifact {
-        version: MAC_SYMBOL_ARTIFACT_VERSION,
-        uuid: uuid.to_owned(),
-        executable: executable_digest,
-        info: info.read()?,
-        dwarf: dwarf.read()?,
-    })
-    .map_err(|error| BuildError::new(error.to_string()))?;
-    if artifact.len() as u64 > MAC_SYMBOL_ARTIFACT_BYTES_LIMIT {
-        return Err(BuildError::new(
-            "encoded dSYM artifact exceeds its fixed byte limit",
-        ));
+    pub(super) fn uuid_input(&self) -> Result<InheritedMember, BuildError> {
+        self.dwarf.inherit()
     }
-    require_same_path(bundle, &root)?;
-    require_child(
-        &root,
-        OsStr::new("Contents"),
-        &contents,
-        &contents_path,
-        true,
-    )?;
-    require_child(
-        &contents,
-        OsStr::new("Resources"),
-        &resources,
-        &resources_path,
-        true,
-    )?;
-    require_child(
-        &resources,
-        OsStr::new("DWARF"),
-        &dwarf_root,
-        &dwarf_path,
-        true,
-    )?;
-    info.require_current(&contents, OsStr::new("Info.plist"))?;
-    dwarf.require_current(&dwarf_root, name)?;
-    Ok(artifact)
+
+    pub(super) fn encode(
+        self,
+        uuid: &str,
+        executable_digest: Digest,
+    ) -> Result<Vec<u8>, BuildError> {
+        let artifact = wire::encode(&MacSymbolArtifact {
+            version: MAC_SYMBOL_ARTIFACT_VERSION,
+            uuid: uuid.to_owned(),
+            executable: executable_digest,
+            info: self.info.read()?,
+            dwarf: self.dwarf.read()?,
+        })
+        .map_err(|error| BuildError::new(error.to_string()))?;
+        if artifact.len() as u64 > MAC_SYMBOL_ARTIFACT_BYTES_LIMIT {
+            return Err(BuildError::new(
+                "encoded dSYM artifact exceeds its fixed byte limit",
+            ));
+        }
+        let contents_path = self.bundle.join("Contents");
+        let resources_path = contents_path.join("Resources");
+        let dwarf_path = resources_path.join("DWARF");
+        require_same_path(&self.bundle, &self.root)?;
+        require_child(
+            &self.root,
+            OsStr::new("Contents"),
+            &self.contents,
+            &contents_path,
+            true,
+        )?;
+        require_child(
+            &self.contents,
+            OsStr::new("Resources"),
+            &self.resources,
+            &resources_path,
+            true,
+        )?;
+        require_child(
+            &self.resources,
+            OsStr::new("DWARF"),
+            &self.dwarf_root,
+            &dwarf_path,
+            true,
+        )?;
+        self.info
+            .require_current(&self.contents, OsStr::new("Info.plist"))?;
+        self.dwarf.require_current(&self.dwarf_root, &self.name)?;
+        Ok(artifact)
+    }
+}
+
+pub(super) struct InheritedMember {
+    _file: File,
+    path: PathBuf,
+}
+
+impl InheritedMember {
+    pub(super) fn path(&self) -> &Path {
+        &self.path
+    }
 }
 
 struct SymbolMember {
@@ -136,10 +181,13 @@ impl SymbolMember {
         let mut file = self
             .file
             .try_clone()
-            .map_err(|error| path_error("clone", &self.path, error))?;
+            .map_err(|error| path_error("duplicate", &self.path, error))?;
         let mut bytes = Vec::with_capacity(
             usize::try_from(self.identity.length).expect("bounded dSYM member length fits usize"),
         );
+        use std::io::{Seek as _, SeekFrom};
+        file.seek(SeekFrom::Start(0))
+            .map_err(|error| path_error("seek", &self.path, error))?;
         file.by_ref()
             .take(self.identity.length.saturating_add(1))
             .read_to_end(&mut bytes)
@@ -154,6 +202,30 @@ impl SymbolMember {
 
     fn require_current(&self, parent: &File, name: &OsStr) -> Result<(), BuildError> {
         require_child(parent, name, &self.file, &self.path, false)
+    }
+
+    fn inherit(&self) -> Result<InheritedMember, BuildError> {
+        // SAFETY: F_DUPFD duplicates this live descriptor, and the successful
+        // result is transferred exactly once into File below.
+        let descriptor = unsafe {
+            libc::fcntl(
+                self.file.as_raw_fd(),
+                libc::F_DUPFD,
+                INHERITED_DESCRIPTOR_MINIMUM,
+            )
+        };
+        if descriptor < 0 {
+            return Err(path_error(
+                "duplicate",
+                &self.path,
+                std::io::Error::last_os_error(),
+            ));
+        }
+        Ok(InheritedMember {
+            // SAFETY: fcntl returned this newly owned descriptor.
+            _file: unsafe { File::from_raw_fd(descriptor) },
+            path: PathBuf::from(format!("/dev/fd/{descriptor}")),
+        })
     }
 }
 
