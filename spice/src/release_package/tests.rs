@@ -27,6 +27,12 @@ fn package_preview_reads_only_content_addressed_executables() {
         .iter()
         .map(|path| fs::read(path).expect("read admitted executable fixture"))
         .collect::<Vec<_>>();
+    let symbol_path = fixture.symbols[0]
+        .as_ref()
+        .expect("Darwin fixture has a symbol object");
+    let replaced_symbols = fixture.root.join("replaced-symbols");
+    fs::rename(symbol_path, &replaced_symbols).expect("replace admitted symbol path");
+    fs::write(symbol_path, b"later symbols").expect("publish later symbol generation");
     let replaced = fixture.root.join("replaced-executable");
     fs::rename(&fixture.executables[0], &replaced).expect("replace admitted executable path");
     fs::write(&fixture.executables[0], b"later generation")
@@ -89,6 +95,8 @@ fn package_preview_refuses_missing_and_mismatched_executable_objects() {
     )
     .expect_err("missing executable object must refuse");
     assert!(missing.to_string().contains("cannot read staged"));
+
+    assert_symbol_object_refusals();
 
     let fixture = Fixture::new();
     let mut moved_manifest = fixture.manifest.clone();
@@ -178,6 +186,29 @@ fn package_preview_refuses_missing_and_mismatched_executable_objects() {
     );
 }
 
+fn assert_symbol_object_refusals() {
+    for (remove, expected) in [(false, "manifest declares"), (true, "cannot read staged")] {
+        let fixture = Fixture::new();
+        let symbols = fixture.symbols[0]
+            .as_ref()
+            .expect("Darwin fixture has a symbol object");
+        if remove {
+            fs::remove_file(symbols).expect("remove symbol object");
+        } else {
+            fs::write(symbols, b"changed symbols").expect("replace symbol object");
+        }
+        let refusal = ReleaseIndex::admit(
+            &fixture.root,
+            &fixture.version,
+            fixture.notes_identity.clone(),
+            &fixture.notes,
+            &fixture.manifest_identity,
+        )
+        .expect_err("missing or mismatched symbol object must refuse");
+        assert!(refusal.to_string().contains(expected));
+    }
+}
+
 struct Fixture {
     root: PathBuf,
     version: ProductVersion,
@@ -188,6 +219,7 @@ struct Fixture {
     manifest_path: PathBuf,
     executables: Vec<PathBuf>,
     payloads: Vec<PathBuf>,
+    symbols: Vec<Option<PathBuf>>,
 }
 
 impl Fixture {
@@ -229,6 +261,7 @@ impl Fixture {
             .iter()
             .map(|target| target.executable.clone())
             .collect();
+        let symbols = staged.iter().map(|target| target.symbols.clone()).collect();
         let payloads = staged.into_iter().map(|target| target.payload).collect();
         let manifest = wire::encode(&ReleaseManifest {
             version: RELEASE_MANIFEST_VERSION,
@@ -251,6 +284,7 @@ impl Fixture {
             manifest_path,
             executables,
             payloads,
+            symbols,
         }
     }
 }
@@ -259,6 +293,7 @@ struct StagedFixtureTarget {
     manifest: ReleaseManifestTarget,
     executable: PathBuf,
     payload: PathBuf,
+    symbols: Option<PathBuf>,
 }
 
 fn stage_target(
@@ -282,12 +317,14 @@ fn stage_target(
             uuid: "11111111-2222-3333-4444-555555555555".to_owned(),
             executable: native.clone(),
         };
-        inventory.push(InventoryEntry {
+        let entry = InventoryEntry {
             path: metadata.path.clone(),
             mode: metadata.mode,
             bytes: metadata.bytes,
             digest: metadata.digest.clone(),
-        });
+        };
+        write_object_file(stage, &entry, b"symbol fixture");
+        inventory.push(entry);
         inventory.sort_by(|left, right| left.path.cmp(&right.path));
         metadata
     });
@@ -336,12 +373,16 @@ fn stage_target(
         &proof,
     )
     .expect("write proof object");
+    let symbol_path = symbols
+        .as_ref()
+        .map(|metadata| stage.join(format!("objects/{}-{:04o}", metadata.digest, metadata.mode)));
     StagedFixtureTarget {
         executable: stage.join(format!(
             "objects/{}-0755",
             Digest::compute(Domain::DistArtifact, &executable)
         )),
         payload: payload_path,
+        symbols: symbol_path,
         manifest: ReleaseManifestTarget {
             target,
             payload: payload_identity,

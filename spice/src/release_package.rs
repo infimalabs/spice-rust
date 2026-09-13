@@ -45,6 +45,7 @@ struct LoadedTarget {
     executable: proof::PackageMember,
     payload: proof::PackageMember,
     proof: proof::PackageMember,
+    symbols: Option<proof::PackageMember>,
 }
 
 struct Loaded {
@@ -228,6 +229,7 @@ fn package_input<'a>(
                 target.payload.clone(),
                 target.proof.clone(),
             )
+            .with_symbols(target.symbols.clone())
         })
         .collect();
     proof::PackageInput::new(
@@ -266,11 +268,22 @@ fn load(
         }
         let executable = take_member(&mut files, &format!("targets/{}/bin/spice", target.target))?;
         let proof = take_member(&mut files, &format!("targets/{}/proof.json", target.target))?;
+        let symbols = target
+            .symbols
+            .as_ref()
+            .map(|_| {
+                take_member(
+                    &mut files,
+                    &format!("targets/{}/symbols/spice.dSYM.json", target.target),
+                )
+            })
+            .transpose()?;
         targets.push(LoadedTarget {
             target: target.target,
             executable,
             payload,
             proof,
+            symbols,
         });
     }
     let mut app_files = CANVAS_APP_FILES.to_vec();
@@ -561,6 +574,26 @@ fn add_targets(
             &format!("targets/{}/bin/spice", target.target),
             &format!("staged {} executable", target.target),
         )?;
+        if let Some(symbols) = &target.symbols {
+            let entry = inventory_entry(&target.inventory, &symbols.path)?;
+            if (entry.mode, entry.bytes, &entry.digest)
+                != (symbols.mode, symbols.bytes, &symbols.digest)
+            {
+                return Err(PackageFailure::Moved(format!(
+                    "staged {} symbol metadata disagrees with its inventory",
+                    target.target
+                )));
+            }
+            add_artifact(
+                stage,
+                pending,
+                shapes,
+                total,
+                entry,
+                &format!("targets/{}/symbols/spice.dSYM.json", target.target),
+                &format!("staged {} symbols", target.target),
+            )?;
+        }
         add_pending(
             pending,
             shapes,

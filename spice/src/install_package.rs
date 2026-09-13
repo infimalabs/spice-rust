@@ -439,6 +439,11 @@ mod tests {
         let tree = complete_package(&observed);
         write_package(&package, &tree);
         let acquired = acquire(&package).expect("complete package acquires");
+        let symbol_path = "targets/aarch64-apple-darwin/symbols/spice.dSYM.json";
+        assert_eq!(
+            acquired.member(symbol_path).unwrap().digest(),
+            &Digest::compute(Domain::DistArtifact, b"symbol fixture"),
+        );
         let staged = StagedPackage::new(&acquired).expect("selected package stages");
         let staged_root = staged.root.clone();
         assert!(staged.executable().is_file());
@@ -456,6 +461,7 @@ mod tests {
         );
         assert!(staged_root.join(PACKAGE_DOCUMENT_PATH).is_file());
         assert!(staged_root.join(&acquired.payload_path).is_file());
+        assert!(!staged_root.join(symbol_path).exists());
         for file in CANVAS_APP_FILES {
             assert_eq!(
                 fs::read(staged_root.join("app").join(file)).unwrap(),
@@ -623,6 +629,15 @@ mod tests {
                             0o644,
                             &proofs[index],
                         ),
+                    )
+                    .with_symbols(
+                        (target == ReleaseTarget::Aarch64AppleDarwin).then(|| {
+                            inline(
+                                &format!("targets/{target}/symbols/spice.dSYM.json"),
+                                0o644,
+                                b"symbol fixture",
+                            )
+                        }),
                     )
                 })
                 .collect(),
