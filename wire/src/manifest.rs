@@ -48,6 +48,8 @@ pub struct JournalBackupManifest {
 pub const PROOF_RECEIPT_VERSION: u16 = 3;
 /// The sole current target payload schema.
 pub const TARGET_PAYLOAD_VERSION: u16 = 2;
+/// The sole current deterministic macOS symbol artifact schema.
+pub const MAC_SYMBOL_ARTIFACT_VERSION: u16 = 1;
 
 /// Complete browser-app file inventory carried by every current appliance target.
 pub const CANVAS_APP_FILES: [&str; 8] = [
@@ -400,6 +402,17 @@ pub struct InventoryEntry {
     pub mode: u32,
     pub bytes: u64,
     pub digest: Digest,
+}
+
+/// One deterministic dSYM payload bound to its stripped executable.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MacSymbolArtifact {
+    pub version: u16,
+    pub uuid: String,
+    pub executable: Digest,
+    pub info: Vec<u8>,
+    pub dwarf: Vec<u8>,
 }
 
 /// The receipt-free object submitted to proof for one release target.

@@ -77,7 +77,7 @@ pub fn admit(bytes: &[u8]) -> Result<AdmittedPayload, PayloadError> {
 }
 
 fn verify_inventory(payload: &TargetPayload) -> Result<(), PayloadError> {
-    let artifacts = expected_artifacts();
+    let artifacts = expected_artifacts(payload);
     let mut paths = BTreeSet::new();
     for entry in &payload.inventory {
         if !paths.insert(entry.path.as_str()) {
@@ -132,7 +132,7 @@ fn verify_artifact(
     Ok(())
 }
 
-fn expected_artifacts() -> Vec<Artifact> {
+fn expected_artifacts(payload: &TargetPayload) -> Vec<Artifact> {
     let mut artifacts = CANVAS_APP_FILES
         .iter()
         .map(|file| Artifact {
@@ -146,6 +146,18 @@ fn expected_artifacts() -> Vec<Artifact> {
         mode: 0o755,
         digest: Some(DigestField::Native),
     });
+    if payload.target == wire::manifest::ReleaseTarget::Aarch64AppleDarwin
+        && payload
+            .inventory
+            .iter()
+            .any(|entry| entry.path == "symbols/spice.dSYM.json")
+    {
+        artifacts.push(Artifact {
+            path: "symbols/spice.dSYM.json".to_owned(),
+            mode: 0o644,
+            digest: None,
+        });
+    }
     artifacts.sort_by(|left, right| left.path.cmp(&right.path));
     artifacts
 }
