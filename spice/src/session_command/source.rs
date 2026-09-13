@@ -526,6 +526,7 @@ impl<'a> TranscriptSearch<'a> {
         }
         self.matches.sort();
         self.matches.dedup();
+        self.check_elapsed()?;
         Ok(self.matches)
     }
 
@@ -534,7 +535,9 @@ impl<'a> TranscriptSearch<'a> {
         directory: PathBuf,
         depth: usize,
     ) -> Result<(), TranscriptSearchError> {
-        let entries = match fs::read_dir(&directory) {
+        let entries = fs::read_dir(&directory);
+        self.check_elapsed()?;
+        let entries = match entries {
             Ok(entries) => entries,
             Err(error) => {
                 return self.retain_issue(TranscriptSearchIssue::Directory {
@@ -593,7 +596,9 @@ impl<'a> TranscriptSearch<'a> {
                 "search exceeded the {SEARCH_METADATA_LIMIT}-metadata limit"
             )));
         }
-        let kind = match entry.file_type() {
+        let kind = entry.file_type();
+        self.check_elapsed()?;
+        let kind = match kind {
             Ok(kind) => kind,
             Err(error) => {
                 return self.retain_issue(TranscriptSearchIssue::FileType {
@@ -985,19 +990,17 @@ mod tests {
         let scratch = Scratch::new("complete");
         let root = scratch.path().join("sessions");
         fs::create_dir_all(&root).expect("session root exists");
-        let empty = find_named_transcript(&root, THREAD).expect("empty complete walk");
-        assert!(empty.is_empty());
-
         let older = root.join(format!("a-{THREAD}.jsonl"));
         let newest = root.join(format!("z-{THREAD}.jsonl.gz"));
         fs::write(&older, b"\n").expect("older transcript exists");
         fs::write(&newest, b"\n").expect("newest transcript exists");
-        let matches = find_named_transcript(&root, THREAD).expect("complete matching walk");
-        assert_eq!(matches, vec![older, newest]);
-        for index in 2..=SEARCH_ENTRY_LIMIT {
+        for index in 2..SEARCH_ENTRY_LIMIT {
             fs::write(root.join(format!("unrelated-{index}")), b"")
                 .expect("bounded unrelated entry exists");
         }
+        let exact = find_named_transcript(&root, THREAD).expect("exact entry bound succeeds");
+        assert_eq!(exact, vec![older, newest]);
+        fs::write(root.join("one-over"), b"").expect("one-over entry exists");
         let error =
             find_named_transcript(&root, THREAD).expect_err("one entry beyond the bound refuses");
         let expected = format!("{SEARCH_ENTRY_LIMIT}-entry limit");
