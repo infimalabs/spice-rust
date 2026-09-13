@@ -10,6 +10,14 @@ use super::{Environment, model::Vendor};
 
 const THREAD_HEX_LEN: usize = 32;
 const SEARCH_DEPTH: usize = 8;
+const SEARCH_DIRECTORY_LIMIT: usize = 64;
+const SEARCH_ENTRY_LIMIT: usize = 256;
+const SEARCH_METADATA_LIMIT: usize = SEARCH_ENTRY_LIMIT;
+const SEARCH_PATH_BYTES_LIMIT: usize = 64 * 1024;
+const SEARCH_MATCH_LIMIT: usize = 64;
+const SEARCH_ISSUE_LIMIT: usize = 32;
+const SEARCH_DIAGNOSTIC_BYTES_LIMIT: usize = 64 * 1024;
+const SEARCH_ELAPSED_LIMIT: std::time::Duration = std::time::Duration::from_secs(1);
 const INDEX_ROW_LIMIT: usize = 128;
 const INDEX_PATH_BYTES_LIMIT: usize = 64 * 1024;
 const INDEX_DIAGNOSTIC_BYTES_LIMIT: usize = 8 * 1024;
@@ -411,12 +419,13 @@ fn codex_state_path(state: &Path, thread: &str) -> Result<Option<PathBuf>, State
     Ok(found)
 }
 
-#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum TranscriptSearchIssue {
     Directory { path: PathBuf, detail: String },
     Entry { path: PathBuf, detail: String },
     FileType { path: PathBuf, detail: String },
     Depth { path: PathBuf },
+    Bound { detail: String },
 }
 
 impl fmt::Display for TranscriptSearchIssue {
@@ -442,6 +451,7 @@ impl fmt::Display for TranscriptSearchIssue {
                 "search depth {SEARCH_DEPTH} was reached at {}",
                 path.display()
             ),
+            Self::Bound { detail } => formatter.write_str(detail),
         }
     }
 }
@@ -465,67 +475,214 @@ impl fmt::Display for TranscriptSearchError {
 }
 
 fn find_named_transcript(root: &Path, thread: &str) -> Result<Vec<PathBuf>, TranscriptSearchError> {
-    let mut pending = vec![(root.to_path_buf(), 0_usize)];
-    let mut matches = Vec::new();
-    let mut issues = Vec::new();
-    while let Some((directory, depth)) = pending.pop() {
+    TranscriptSearch::new(root, thread).run()
+}
+
+struct TranscriptSearch<'a> {
+    thread: &'a str,
+    started: std::time::Instant,
+    pending: BTreeSet<(usize, PathBuf)>,
+    matches: Vec<PathBuf>,
+    issues: Vec<TranscriptSearchIssue>,
+    directories: usize,
+    entries: usize,
+    metadata: usize,
+    path_bytes: usize,
+    diagnostic_bytes: usize,
+}
+
+impl<'a> TranscriptSearch<'a> {
+    fn new(root: &Path, thread: &'a str) -> Self {
+        Self {
+            thread,
+            started: std::time::Instant::now(),
+            pending: BTreeSet::from([(0, root.to_path_buf())]),
+            matches: Vec::new(),
+            issues: Vec::new(),
+            directories: 0,
+            entries: 0,
+            metadata: 0,
+            path_bytes: root.as_os_str().as_encoded_bytes().len(),
+            diagnostic_bytes: 0,
+        }
+    }
+
+    fn run(mut self) -> Result<Vec<PathBuf>, TranscriptSearchError> {
+        while let Some((depth, directory)) = self.pending.pop_first() {
+            self.check_elapsed()?;
+            self.directories = self.directories.saturating_add(1);
+            if self.directories > SEARCH_DIRECTORY_LIMIT {
+                return Err(self.bound(format!(
+                    "search exceeded the {SEARCH_DIRECTORY_LIMIT}-directory limit"
+                )));
+            }
+            self.visit_directory(directory, depth)?;
+        }
+        self.issues.sort();
+        if !self.issues.is_empty() {
+            return Err(TranscriptSearchError {
+                issues: self.issues,
+            });
+        }
+        self.matches.sort();
+        self.matches.dedup();
+        Ok(self.matches)
+    }
+
+    fn visit_directory(
+        &mut self,
+        directory: PathBuf,
+        depth: usize,
+    ) -> Result<(), TranscriptSearchError> {
         let entries = match fs::read_dir(&directory) {
             Ok(entries) => entries,
             Err(error) => {
-                issues.push(TranscriptSearchIssue::Directory {
+                return self.retain_issue(TranscriptSearchIssue::Directory {
                     path: directory,
                     detail: error.to_string(),
                 });
-                continue;
             }
         };
+        let mut readable = self.collect_entries(&directory, entries)?;
+        readable.sort_by(|left, right| left.0.cmp(&right.0));
+        for (_, entry, path) in readable {
+            self.visit_entry(entry, path, depth)?;
+        }
+        Ok(())
+    }
+
+    fn collect_entries(
+        &mut self,
+        directory: &Path,
+        entries: fs::ReadDir,
+    ) -> Result<Vec<(std::ffi::OsString, fs::DirEntry, PathBuf)>, TranscriptSearchError> {
         let mut readable = Vec::new();
         for entry in entries {
+            self.check_elapsed()?;
+            self.entries = self.entries.saturating_add(1);
+            if self.entries > SEARCH_ENTRY_LIMIT {
+                return Err(self.bound(format!(
+                    "search exceeded the {SEARCH_ENTRY_LIMIT}-entry limit"
+                )));
+            }
             match entry {
-                Ok(entry) => readable.push(entry),
-                Err(error) => issues.push(TranscriptSearchIssue::Entry {
-                    path: directory.clone(),
+                Ok(entry) => {
+                    let path = entry.path();
+                    self.retain_path(&path)?;
+                    readable.push((entry.file_name(), entry, path));
+                }
+                Err(error) => self.retain_issue(TranscriptSearchIssue::Entry {
+                    path: directory.to_path_buf(),
                     detail: error.to_string(),
-                }),
+                })?,
             }
         }
-        readable.sort_by_key(fs::DirEntry::file_name);
-        for entry in readable {
-            let path = entry.path();
-            let kind = match entry.file_type() {
-                Ok(kind) => kind,
-                Err(error) => {
-                    issues.push(TranscriptSearchIssue::FileType {
-                        path,
-                        detail: error.to_string(),
-                    });
-                    continue;
-                }
-            };
-            if kind.is_symlink() {
-                continue;
+        Ok(readable)
+    }
+
+    fn visit_entry(
+        &mut self,
+        entry: fs::DirEntry,
+        path: PathBuf,
+        depth: usize,
+    ) -> Result<(), TranscriptSearchError> {
+        self.check_elapsed()?;
+        self.metadata = self.metadata.saturating_add(1);
+        if self.metadata > SEARCH_METADATA_LIMIT {
+            return Err(self.bound(format!(
+                "search exceeded the {SEARCH_METADATA_LIMIT}-metadata limit"
+            )));
+        }
+        let kind = match entry.file_type() {
+            Ok(kind) => kind,
+            Err(error) => {
+                return self.retain_issue(TranscriptSearchIssue::FileType {
+                    path,
+                    detail: error.to_string(),
+                });
             }
-            if kind.is_dir() {
-                if depth == SEARCH_DEPTH {
-                    issues.push(TranscriptSearchIssue::Depth { path });
-                } else {
-                    pending.push((path, depth + 1));
-                }
-                continue;
-            }
-            let name = entry.file_name().to_string_lossy().replace('-', "");
-            if kind.is_file() && transcript_extension(&path) && name.contains(thread) {
-                matches.push(path);
-            }
+        };
+        if kind.is_symlink() {
+            return Ok(());
+        }
+        if kind.is_dir() {
+            return self.visit_subdirectory(path, depth);
+        }
+        let name = entry.file_name().to_string_lossy().replace('-', "");
+        if kind.is_file() && transcript_extension(&path) && name.contains(self.thread) {
+            self.retain_match(path)?;
+        }
+        Ok(())
+    }
+
+    fn visit_subdirectory(
+        &mut self,
+        path: PathBuf,
+        depth: usize,
+    ) -> Result<(), TranscriptSearchError> {
+        if depth == SEARCH_DEPTH {
+            self.retain_issue(TranscriptSearchIssue::Depth { path })
+        } else {
+            self.pending.insert((depth + 1, path));
+            Ok(())
         }
     }
-    issues.sort();
-    if !issues.is_empty() {
-        return Err(TranscriptSearchError { issues });
+
+    fn retain_path(&mut self, path: &Path) -> Result<(), TranscriptSearchError> {
+        self.path_bytes = self
+            .path_bytes
+            .saturating_add(path.as_os_str().as_encoded_bytes().len());
+        if self.path_bytes > SEARCH_PATH_BYTES_LIMIT {
+            Err(self.bound(format!(
+                "search exceeded the {SEARCH_PATH_BYTES_LIMIT}-byte retained-path limit"
+            )))
+        } else {
+            Ok(())
+        }
     }
-    matches.sort();
-    matches.dedup();
-    Ok(matches)
+
+    fn retain_match(&mut self, path: PathBuf) -> Result<(), TranscriptSearchError> {
+        if self.matches.len() == SEARCH_MATCH_LIMIT {
+            return Err(self.bound(format!(
+                "search exceeded the {SEARCH_MATCH_LIMIT}-match limit"
+            )));
+        }
+        self.matches.push(path);
+        Ok(())
+    }
+
+    fn retain_issue(&mut self, issue: TranscriptSearchIssue) -> Result<(), TranscriptSearchError> {
+        let bytes = issue.to_string().len();
+        if self.issues.len() == SEARCH_ISSUE_LIMIT
+            || self.diagnostic_bytes.saturating_add(bytes) > SEARCH_DIAGNOSTIC_BYTES_LIMIT
+        {
+            return Err(self.bound(format!(
+                "search exceeded its {SEARCH_ISSUE_LIMIT}-issue or \
+                 {SEARCH_DIAGNOSTIC_BYTES_LIMIT}-byte diagnostic limit"
+            )));
+        }
+        self.diagnostic_bytes += bytes;
+        self.issues.push(issue);
+        Ok(())
+    }
+
+    fn check_elapsed(&self) -> Result<(), TranscriptSearchError> {
+        if self.started.elapsed() <= SEARCH_ELAPSED_LIMIT {
+            Ok(())
+        } else {
+            Err(self.bound(format!(
+                "search exceeded the {SEARCH_ELAPSED_LIMIT:?} elapsed-work limit"
+            )))
+        }
+    }
+
+    fn bound(&self, detail: String) -> TranscriptSearchError {
+        let mut issues = self.issues.clone();
+        issues.push(TranscriptSearchIssue::Bound { detail });
+        issues.sort();
+        issues.dedup();
+        TranscriptSearchError { issues }
+    }
 }
 
 fn environment_root(
@@ -591,8 +748,8 @@ mod tests {
     use std::os::unix::fs::PermissionsExt as _;
 
     use super::{
-        Environment, SEARCH_DEPTH, canonical_thread, find_named_transcript, find_thread,
-        resolve_inputs, resolve_thread_from_registry,
+        Environment, SEARCH_DEPTH, SEARCH_ENTRY_LIMIT, canonical_thread, find_named_transcript,
+        find_thread, resolve_inputs, resolve_thread_from_registry,
     };
     use crate::session_command::VendorEnvironment;
 
@@ -844,6 +1001,16 @@ mod tests {
         assert_eq!(
             find_named_transcript(&root, THREAD).expect("complete matching walk"),
             vec![older, newest]
+        );
+        for index in 2..=SEARCH_ENTRY_LIMIT {
+            fs::write(root.join(format!("unrelated-{index}")), b"")
+                .expect("bounded unrelated entry exists");
+        }
+        assert!(
+            find_named_transcript(&root, THREAD)
+                .expect_err("one entry beyond the bound refuses")
+                .to_string()
+                .contains(&format!("{SEARCH_ENTRY_LIMIT}-entry limit"))
         );
     }
 
