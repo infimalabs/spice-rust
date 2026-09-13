@@ -147,6 +147,29 @@ impl CausalPage {
 }
 
 impl JournalRead<'_> {
+    /// Greatest current task-statement or workflow head position.
+    ///
+    /// This is the compact movement witness for the board document projection:
+    /// claim, lease, and trust head movement cannot change it.
+    pub fn task_projection_cursor(&self) -> Result<Option<wire::Seq>, GuardError> {
+        read_metrics::observe_query();
+        let position = self
+            .connection
+            .query_row(
+                "SELECT max(head_seq) FROM (\
+                    SELECT head_seq FROM task_heads UNION ALL \
+                    SELECT head_seq FROM workflow_heads\
+                 )",
+                [],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .map_err(GuardError::Store)?;
+        read_metrics::observe_row();
+        position
+            .map(|position| decode_seq(position).map_err(GuardError::Invalid))
+            .transpose()
+    }
+
     /// Observe only the current trust heads named by one canonical requirement set.
     pub fn environment(
         &self,
