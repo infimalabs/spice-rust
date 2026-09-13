@@ -228,6 +228,18 @@ fn require_current_source(
     }
 }
 
+fn proof_recognition(
+    key: wire::Digest,
+    first: Seq,
+    last: Seq,
+    fresh: bool,
+) -> Outcome<CommandAnswer> {
+    Outcome::Reply(Reply {
+        position: ReplyPosition::Committed(SeqRange { first, last }),
+        body: CommandAnswer::Recognition(RecognitionAnswer { key, fresh }),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use wire::{Digest, Domain};
@@ -249,16 +261,4 @@ mod tests {
         assert_eq!(refusal.reason(), "proof::source-mismatch");
         assert!(require_current_source(&source.digest, &source).is_ok());
     }
-}
-
-fn proof_recognition(
-    key: wire::Digest,
-    first: Seq,
-    last: Seq,
-    fresh: bool,
-) -> Outcome<CommandAnswer> {
-    Outcome::Reply(Reply {
-        position: ReplyPosition::Committed(SeqRange { first, last }),
-        body: CommandAnswer::Recognition(RecognitionAnswer { key, fresh }),
-    })
 }

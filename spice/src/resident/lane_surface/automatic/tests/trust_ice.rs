@@ -62,7 +62,7 @@ fn admitted_thaw(
         renewal: None,
     };
     let admitted =
-        admit_automatic_wake(&bus, &fixture.paths, fixture.epoch, &Seats::new(), &request)
+        admit_automatic_wake(bus, &fixture.paths, fixture.epoch, &Seats::new(), &request)
             .expect("thaw authority admits");
     assert!(admitted.claim.as_ref().is_some_and(|claim| claim.thaw));
     let launch = crate::resident::supervisor::launch(

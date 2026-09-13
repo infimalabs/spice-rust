@@ -193,8 +193,7 @@ fn assert_media_replays(
         epoch,
     })
     .expect("operator inbox admits");
-    let Outcome::Reply(reply) =
-        steering::inbox(&bus, &paths, epoch, &inbox_command, &inbox_request)
+    let Outcome::Reply(reply) = steering::inbox(&bus, paths, epoch, &inbox_command, &inbox_request)
     else {
         panic!("restarted inbox reads durable authority");
     };
