@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::io::{Read, Write};
 use std::thread;
 
 use blake3::hazmat::{
@@ -41,8 +41,26 @@ fn sequential(domain: Domain, bytes: &[u8]) -> Hash {
 
 pub(super) fn compute_reader(
     domain: Domain,
+    reader: impl Read,
+    limit: u64,
+) -> std::io::Result<(u64, Hash)> {
+    consume_reader(domain, reader, limit, |_| Ok(()))
+}
+
+pub(super) fn copy_reader(
+    domain: Domain,
+    reader: impl Read,
+    writer: &mut dyn Write,
+    limit: u64,
+) -> std::io::Result<(u64, Hash)> {
+    consume_reader(domain, reader, limit, |bytes| writer.write_all(bytes))
+}
+
+fn consume_reader(
+    domain: Domain,
     mut reader: impl Read,
     limit: u64,
+    mut consume: impl FnMut(&[u8]) -> std::io::Result<()>,
 ) -> std::io::Result<(u64, Hash)> {
     if limit == 0 {
         return Err(std::io::Error::new(
@@ -71,6 +89,7 @@ pub(super) fn compute_reader(
         if read == 0 {
             return Ok((length, hasher.finalize()));
         }
+        consume(&buffer[..read])?;
         hasher.update(&buffer[..read]);
         length += read as u64;
     }
@@ -172,8 +191,7 @@ mod tests {
     struct FailingReader;
 
     impl Read for FailingReader {
-        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
-            let _ = bytes;
+        fn read(&mut self, _bytes: &mut [u8]) -> io::Result<usize> {
             Err(io::Error::other("fixture read failure"))
         }
     }
@@ -203,27 +221,28 @@ mod tests {
             }
         }
         let body = b"bounded reader";
-        let (length, streamed) =
-            compute_reader(Domain::DistArtifact, body.as_slice(), body.len() as u64)
-                .expect("exact-limit body streams");
-        assert_eq!(length, body.len() as u64);
-        assert_eq!(streamed, compute(Domain::DistArtifact, body));
-        for (limit, kind) in [
+        let domain = Domain::DistArtifact;
+        let limit = body.len() as u64;
+        let expected = (limit, compute(domain, body));
+        let computed = compute_reader(domain, body.as_slice(), limit).unwrap();
+        assert_eq!(computed, expected);
+        let mut copied = Vec::new();
+        let streamed = copy_reader(domain, body.as_slice(), &mut copied, limit).unwrap();
+        assert_eq!(streamed, expected);
+        assert_eq!(copied, body);
+        for (invalid, kind) in [
             (0, io::ErrorKind::InvalidInput),
-            (body.len() as u64 - 1, io::ErrorKind::InvalidData),
+            (limit - 1, io::ErrorKind::InvalidData),
         ] {
-            assert_eq!(
-                compute_reader(Domain::DistArtifact, body.as_slice(), limit)
-                    .expect_err("invalid bound refuses")
-                    .kind(),
-                kind
-            );
+            let computed = compute_reader(domain, body.as_slice(), invalid).unwrap_err();
+            let copied =
+                copy_reader(domain, body.as_slice(), &mut io::sink(), invalid).unwrap_err();
+            assert_eq!((computed.kind(), copied.kind()), (kind, kind),);
         }
-        assert_eq!(
-            compute_reader(Domain::DistArtifact, FailingReader, 1)
-                .expect_err("reader failure remains explicit")
-                .kind(),
-            io::ErrorKind::Other
-        );
+        let read_error = compute_reader(domain, FailingReader, 1).unwrap_err();
+        assert_eq!(read_error.kind(), io::ErrorKind::Other);
+        let mut empty = io::Cursor::new(&mut [] as &mut [u8]);
+        let write_error = copy_reader(domain, body.as_slice(), &mut empty, limit).unwrap_err();
+        assert_eq!(write_error.kind(), io::ErrorKind::WriteZero);
     }
 }
