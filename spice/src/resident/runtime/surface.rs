@@ -222,7 +222,7 @@ pub(super) async fn run_surface(
     )
     .await?;
     let mut inbox_projections = InboxProjections::new();
-    let mut lifecycle_reconciliation = LifecycleReconciliation::default();
+    let mut lifecycle_reconciliation = lifecycle::Reconciliation::default();
     let Some(message_startup) = await_message_startup(
         &mut message_startup,
         bus,
@@ -351,7 +351,7 @@ async fn await_message_startup(
     control: &mut canvas::axum::Control,
     server_task: &mut tokio::task::JoinHandle<Result<(), io::Error>>,
     inbox_projections: &mut InboxProjections,
-    lifecycle_reconciliation: &mut LifecycleReconciliation,
+    lifecycle_reconciliation: &mut lifecycle::Reconciliation,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<Option<MessageStartup>> {
     loop {
@@ -364,9 +364,13 @@ async fn await_message_startup(
                 return ready.map(Some);
             }
             (turn, request) = control_projection_turn(
-                control, inbox_projections, !lifecycle_reconciliation.is_pending(),
+                control, inbox_projections, lifecycle_reconciliation.control_enabled(),
             ) => match turn {
                 ControlProjectionTurn::Control => {
+                    reconcile_for_control(
+                        lifecycle_reconciliation, bus, command_surface, seats, diagnostic, timers,
+                        lifecycle,
+                    )?;
                     if dispatch_control_projection_burst(
                         command_surface, seats, lifecycle, control, request, inbox_projections,
                         lifecycle_reconciliation,
@@ -378,11 +382,6 @@ async fn await_message_startup(
                     project_owed_inbox(command_surface, inbox_projections).await?;
                 }
             },
-            () = std::future::ready(()), if lifecycle_reconciliation.is_ready() => {
-                lifecycle_reconciliation.reconcile(
-                    bus, command_surface, seats, diagnostic, timers, lifecycle,
-                )?;
-            }
             ending = &mut *server_task => return Err(server_outcome(ending)),
         }
     }
@@ -495,14 +494,18 @@ async fn drive_surface(
     mut timer_commits: bus::BroadcastSubscriber,
     mut lifecycle: lifecycle::Runtime,
     mut inbox_projections: InboxProjections,
-    mut lifecycle_reconciliation: LifecycleReconciliation,
+    mut lifecycle_reconciliation: lifecycle::Reconciliation,
 ) -> CommandResult<()> {
     loop {
         tokio::select! {
             (turn, request) = control_projection_turn(
-                &mut control, &inbox_projections, !lifecycle_reconciliation.is_pending(),
+                &mut control, &inbox_projections, lifecycle_reconciliation.control_enabled(),
             ) => match turn {
                 ControlProjectionTurn::Control => {
+                    reconcile_for_control(
+                        &mut lifecycle_reconciliation, bus, command_surface, seats, diagnostic,
+                        &mut timers, &mut lifecycle,
+                    )?;
                     if dispatch_control_projection_burst(
                         command_surface, seats, &mut lifecycle, &mut control, request,
                         &mut inbox_projections, &mut lifecycle_reconciliation,
@@ -515,11 +518,6 @@ async fn drive_surface(
                     project_owed_inbox(command_surface, &mut inbox_projections).await?;
                 }
             },
-            () = std::future::ready(()), if lifecycle_reconciliation.is_ready() => {
-                lifecycle_reconciliation.reconcile(
-                    bus, command_surface, seats, diagnostic, &mut timers, &mut lifecycle,
-                )?;
-            }
             record = records.recv() => {
                 let lane = record.as_ref().map(|record| record.lane);
                 let residency = current_residency(bus, epoch)?;
@@ -569,16 +567,18 @@ async fn drive_surface(
                 ))?;
                 let fired = timers.consume(bus, timer)?;
                 accept_timer_fired(bus, command_surface, &mut lifecycle, fired)?;
-                lifecycle_reconciliation.reconcile(
+                reconcile_lifecycle(
+                    &mut lifecycle_reconciliation,
                     bus, command_surface, seats, diagnostic, &mut timers, &mut lifecycle,
                 )?;
             }
             committed = timer_commits.recv() => {
-                if accept_commit(
+                match accept_commit(
                     bus, command_surface, seats, diagnostic, &mut timers,
                     &mut lifecycle, committed,
                 )? {
-                    lifecycle_reconciliation.settle();
+                    Some(commit) => lifecycle_reconciliation.settle_commit(commit),
+                    None => lifecycle_reconciliation.settle(),
                 }
             }
             ending = &mut server_task => return Err(server_outcome(ending)),
@@ -620,7 +620,7 @@ async fn dispatch_control_projection_burst(
     control: &mut canvas::axum::Control,
     request: Option<canvas::axum::ControlRequest>,
     inbox_projections: &mut InboxProjections,
-    lifecycle_reconciliation: &mut LifecycleReconciliation,
+    lifecycle_reconciliation: &mut lifecycle::Reconciliation,
 ) -> CommandResult<bool> {
     let dispatched = dispatch_control_burst(
         command_surface,
@@ -879,20 +879,19 @@ fn accept_commit(
     timers: &mut timers::Runtime,
     lifecycle: &mut lifecycle::Runtime,
     committed: Result<JournalCommit, tokio::sync::broadcast::error::RecvError>,
-) -> CommandResult<bool> {
+) -> CommandResult<Option<JournalCommit>> {
     match committed {
         Ok(commit) => {
             command_surface.refresh_reads()?;
-            if timers.covers(commit) {
-                return Ok(false);
+            if !timers.covers(commit) {
+                reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle)?;
             }
-            reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle)
-                .map(|()| true)
+            Ok(Some(commit))
         }
         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
             command_surface.refresh_reads()?;
-            reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle)
-                .map(|()| true)
+            reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle)?;
+            Ok(None)
         }
         Err(tokio::sync::broadcast::error::RecvError::Closed) => Err(environment_fault(
             "bus::lifecycle-commits-closed",
@@ -901,51 +900,50 @@ fn accept_commit(
     }
 }
 
-/// One owed event turn; `lifecycle::Runtime` retains cursor and movement authority.
-#[derive(Default)]
-struct LifecycleReconciliation {
-    pending: bool,
-}
-
-impl LifecycleReconciliation {
-    fn is_pending(&self) -> bool {
-        self.pending
-    }
-
-    fn is_ready(&self) -> bool {
-        self.pending
-    }
-
-    fn request(&mut self) {
-        self.pending = true;
-    }
-
-    fn settle(&mut self) {
-        self.pending = false;
-    }
-
-    fn reconcile(
-        &mut self,
-        bus: &Bus,
-        command_surface: &command_surface::Surface<'_>,
-        seats: &mut Seats,
-        diagnostic: &mut dyn io::Write,
-        timers: &mut timers::Runtime,
-        lifecycle: &mut lifecycle::Runtime,
-    ) -> CommandResult<()> {
-        reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle)?;
-        self.settle();
-        Ok(())
-    }
-}
-
 fn request_lifecycle_reconciliation(
-    reconciliation: &mut LifecycleReconciliation,
+    reconciliation: &mut lifecycle::Reconciliation,
     dispatched: &ControlDispatch,
 ) {
-    if dispatched.lifecycle_released {
-        reconciliation.request();
+    if let Some(witness) = dispatched.lifecycle_witness {
+        reconciliation.request(witness);
     }
+}
+
+fn reconcile_for_control(
+    reconciliation: &mut lifecycle::Reconciliation,
+    bus: &Bus,
+    command_surface: &command_surface::Surface<'_>,
+    seats: &mut Seats,
+    diagnostic: &mut dyn io::Write,
+    timers: &mut timers::Runtime,
+    lifecycle: &mut lifecycle::Runtime,
+) -> CommandResult<()> {
+    if reconciliation.control_settles() {
+        reconcile_lifecycle(
+            reconciliation,
+            bus,
+            command_surface,
+            seats,
+            diagnostic,
+            timers,
+            lifecycle,
+        )?;
+    }
+    Ok(())
+}
+
+fn reconcile_lifecycle(
+    reconciliation: &mut lifecycle::Reconciliation,
+    bus: &Bus,
+    command_surface: &command_surface::Surface<'_>,
+    seats: &mut Seats,
+    diagnostic: &mut dyn io::Write,
+    timers: &mut timers::Runtime,
+    lifecycle: &mut lifecycle::Runtime,
+) -> CommandResult<()> {
+    reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle)?;
+    reconciliation.settle();
+    Ok(())
 }
 
 fn reconcile_wakes(
@@ -962,7 +960,7 @@ fn reconcile_wakes(
 }
 pub(in crate::resident) struct ControlDispatch {
     pub(in crate::resident) reached_dark: bool,
-    pub(in crate::resident) lifecycle_released: bool,
+    lifecycle_witness: Option<lifecycle::ReconciliationWitness>,
     inbox_projection: Option<CanonicalUuid>,
 }
 
@@ -984,11 +982,20 @@ pub(in crate::resident) async fn dispatch_control(
         command_surface.prepare_explicit_lifecycle(lifecycle, request.command())?
     };
     let dark = is_dark_command(request.command());
+    let command = request.command().id();
+    let epoch = request.command().epoch();
     let dispatched = replayed.map_or_else(
         || command_surface.dispatch_fresh(seats, request.command()),
         CommandDispatch::ordinary,
     );
     let (outcome, effects) = dispatched.into_parts();
+    let lifecycle_witness = lifecycle_released.then(|| {
+        let position = match &outcome {
+            Outcome::Reply(reply) => Some(reply.position),
+            Outcome::Refusal(_) | Outcome::Fault(_) => None,
+        };
+        lifecycle::ReconciliationWitness::new(command, epoch, position)
+    });
     let reached_dark = !is_replay && dark && matches!(outcome, Outcome::Reply(_));
     complete_response(request, outcome).await;
     if reached_dark {
@@ -996,7 +1003,7 @@ pub(in crate::resident) async fn dispatch_control(
     }
     Ok(ControlDispatch {
         reached_dark,
-        lifecycle_released,
+        lifecycle_witness,
         inbox_projection: effects.inbox_projection,
     })
 }
@@ -1012,7 +1019,7 @@ pub(in crate::resident) async fn dispatch_control_burst(
     let mut request = request;
     let mut burst = ControlDispatch {
         reached_dark: false,
-        lifecycle_released: false,
+        lifecycle_witness: None,
         inbox_projection: None,
     };
     for turn in 0..canvas::axum::Control::FAIR_CYCLE_LIMIT {
@@ -1022,9 +1029,11 @@ pub(in crate::resident) async fn dispatch_control_burst(
             inbox_projections.insert(lane);
         }
         burst.reached_dark |= dispatched.reached_dark;
-        burst.lifecycle_released |= dispatched.lifecycle_released;
+        if dispatched.lifecycle_witness.is_some() {
+            burst.lifecycle_witness = dispatched.lifecycle_witness;
+        }
         if burst.reached_dark
-            || burst.lifecycle_released
+            || burst.lifecycle_witness.is_some()
             || turn + 1 == canvas::axum::Control::FAIR_CYCLE_LIMIT
         {
             break;
