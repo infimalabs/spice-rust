@@ -12,38 +12,24 @@ pub(super) struct Corpus {
 
 impl Corpus {
     pub(super) fn load(
-        jurisdiction: &Jurisdiction,
+        documents: &[HygieneDocument],
         configuration: &HygieneConfiguration,
         started: Instant,
         reached_paths: Option<&BTreeSet<String>>,
     ) -> (u32, Self, Terminal) {
-        let paths: Vec<_> = jurisdiction
-            .measurable()
-            .filter(|entry| is_python_path(entry.path()))
-            .filter(|entry| reached_paths.is_none_or(|reached| reached.contains(entry.path())))
-            .map(|entry| entry.path().to_owned())
-            .collect();
-        let selected_files = u32::try_from(paths.len()).unwrap_or(u32::MAX);
+        let documents = documents
+            .iter()
+            .filter(|document| reached_paths.is_none_or(|reached| reached.contains(&document.path)))
+            .collect::<Vec<_>>();
+        let selected_files = u32::try_from(documents.len()).unwrap_or(u32::MAX);
         let mut corpus = Self::default();
-        for (index, path) in paths.iter().enumerate() {
+        for (index, document) in documents.iter().enumerate() {
+            let path = &document.path;
             let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
             if elapsed_ms > configuration.deadline_ms {
                 return (selected_files, corpus, Terminal::TimedOut { elapsed_ms });
             }
-            let absolute = jurisdiction.root().join(path);
-            let bytes = match fs::read(&absolute) {
-                Ok(bytes) => bytes,
-                Err(_) => {
-                    return (
-                        selected_files,
-                        corpus,
-                        Terminal::Failed {
-                            stage: "selected-tree-read",
-                        },
-                    );
-                }
-            };
-            let source = match std::str::from_utf8(&bytes) {
+            let source = match std::str::from_utf8(&document.bytes) {
                 Ok(source) => source,
                 Err(error) => {
                     return (

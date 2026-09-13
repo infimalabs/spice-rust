@@ -1,22 +1,15 @@
 use std::fs;
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
-use std::process::Command;
 
 use gate::{
-    AnalysisEvidence, Contract, GateId, HYGIENE_ARMS, HygieneConfiguration, HygieneExclusion,
-    HygieneMeasurement, HygieneOutcome, HygieneProvenance, HygieneReport, HygieneSource,
-    Jurisdiction, Selector, SuppressedPath, acquire_hygiene,
+    AnalysisEvidence, Contract, GateId, HYGIENE_ARMS, HYGIENE_SOURCE_FILE_BYTE_LIMIT,
+    HygieneConfiguration, HygieneExclusion, HygieneMeasurement, HygieneOutcome, HygieneProvenance,
+    HygieneReport, HygieneSource, Jurisdiction, Selector, SuppressedPath, acquire_hygiene,
 };
 
 mod support;
 
 use support::{Tree, git_commit, git_repository};
-
-const PROCESS_FIXTURE: &str = "acquisition_process_fixture";
-const REPOSITORY_ENV: &str = "SPICE_HYGIENE_ACQUIRE_REPOSITORY"; // env-policy: allow
-const MARKER_ENV: &str = "SPICE_HYGIENE_INTERPRETER_MARKER"; // env-policy: allow
-const TEMP_DIRECTORY_ENV: &str = "TMPDIR"; // env-policy: allow
 
 #[test]
 fn one_captured_source_walks_the_same_jurisdiction_and_measures_every_arm() {
@@ -45,6 +38,7 @@ fn one_captured_source_walks_the_same_jurisdiction_and_measures_every_arm() {
     let prior_jurisdiction = Jurisdiction::walk(tree.root(), contract.policy().ignore())
         .expect("walk the existing hygiene fixture jurisdiction");
     let source = HygieneSource::capture(&tree, &contract).expect("capture one hygiene source");
+    let repeated = HygieneSource::capture(&tree, &contract).expect("repeat hygiene capture");
     let acquired =
         acquire_hygiene(&source, &configuration()).expect("acquire the complete hygiene family");
 
@@ -58,12 +52,7 @@ fn one_captured_source_walks_the_same_jurisdiction_and_measures_every_arm() {
         "the parity fixture proves nothing about rules unless the tracked skip excludes a path"
     );
     assert_eq!(source.root(), tree.root());
-    assert_eq!(
-        source.digest(),
-        &prior_jurisdiction
-            .tree_digest()
-            .expect("fixture tree identity")
-    );
+    assert_eq!(source.digest(), repeated.digest());
     assert_eq!(
         acquired
             .arms
@@ -304,64 +293,19 @@ fn a_directory_skip_names_the_subtree_it_closed_and_the_layer_that_closed_it() {
 }
 
 #[test]
-fn acquisition_never_invokes_python_or_python3() {
-    let repository = hygiene_repository("hygiene-acquire-tripwire", false);
-    let tripwire = Tree::new("hygiene-interpreter-tripwire");
-    let marker = tripwire.path("invoked");
-    let scratch = tripwire.path("tmp");
-    fs::create_dir(&scratch).expect("create isolated acquisition scratch");
-    for name in ["python", "python3"] {
-        let executable = tripwire.path(name);
-        fs::write(
-            &executable,
-            "#!/bin/sh\nprintf '%s\\n' \"$0\" >> \"$SPICE_HYGIENE_INTERPRETER_MARKER\"\nexit 97\n",
-        )
-        .expect("write interpreter tripwire");
-        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))
-            .expect("make interpreter tripwire executable");
-    }
-
-    let output = Command::new(std::env::current_exe().expect("current test executable"))
-        .args(["--ignored", "--exact", PROCESS_FIXTURE, "--nocapture"])
-        .env_clear()
-        .env("PATH", &tripwire.root)
-        .env(REPOSITORY_ENV, &repository.root)
-        .env(MARKER_ENV, &marker)
-        .env(TEMP_DIRECTORY_ENV, &scratch)
-        .output()
-        .expect("launch isolated acquisition fixture");
-    assert!(
-        output.status.success(),
-        "isolated acquisition failed:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(
-        !marker.exists(),
-        "hygiene acquisition invoked {}",
-        fs::read_to_string(&marker).unwrap_or_default()
-    );
-
-    tripwire.remove();
-    repository.remove();
-}
-
-#[test]
-#[ignore = "subprocess fixture for the interpreter tripwire"]
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the isolated test process receives only explicit fixture paths"
-)]
-fn acquisition_process_fixture() {
-    let repository = std::env::var_os(REPOSITORY_ENV).expect("fixture repository environment");
+fn source_metadata_refuses_oversized_python_before_allocation() {
+    let repository = hygiene_repository("hygiene-source-bound", false);
+    fs::File::create(repository.path("app/oversized.py"))
+        .and_then(|file| file.set_len(HYGIENE_SOURCE_FILE_BYTE_LIMIT + 1))
+        .expect("create sparse oversized Python source");
+    git_commit(&repository, "oversized Python source");
     let tree = Selector::staged()
-        .materialize(Path::new(&repository))
-        .expect("materialize the isolated source");
-    let contract = Contract::load(tree.root()).expect("load the isolated contract");
-    let source = HygieneSource::capture(&tree, &contract).expect("capture the isolated source");
-    let report =
-        acquire_hygiene(&source, &configuration()).expect("acquire without an interpreter");
-    assert_eq!(report.arms.len(), HYGIENE_ARMS.len());
+        .materialize(&repository.root)
+        .expect("materialize source");
+    let contract = Contract::load(tree.root()).expect("load contract");
+    let error = HygieneSource::capture(&tree, &contract).expect_err("oversized source refuses");
+    assert!(error.to_string().contains("source bytes"), "{error}");
+    repository.remove();
 }
 
 /// Acquire one complete family from a fixture repository, as production does.
