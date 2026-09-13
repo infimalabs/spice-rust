@@ -823,6 +823,29 @@ fn timestamp_less_claude_boundary_is_refused_without_a_chronology_fallback() {
             .contains("preserved session compaction record carries no timestamp"),
         "the missing contract field is diagnosed without another chronology source",
     );
+    let reported = diagnostic.len();
+    let failure = compactions
+        .cursors
+        .get(&lane)
+        .and_then(|cursor| cursor.failure)
+        .expect("the unchanged source generation latches its failure");
+    compactions
+        .synchronize_display_only(
+            &session_residency(lane, author, THREAD),
+            &publisher,
+            &mut state,
+            &mut diagnostic,
+        )
+        .expect("an unchanged failed source performs no retry work");
+    assert_eq!(diagnostic.len(), reported);
+    assert_eq!(
+        compactions
+            .cursors
+            .get(&lane)
+            .and_then(|cursor| cursor.failure),
+        Some(failure),
+        "the stable failed generation remains latched",
+    );
 
     append(
         &transcript,
@@ -838,6 +861,13 @@ fn timestamp_less_claude_boundary_is_refused_without_a_chronology_fallback() {
         .expect("a later valid boundary remains publishable");
     let messages = publisher.0.lock().expect("message lock");
     assert_eq!(messages.len(), 1);
+    assert!(
+        compactions
+            .cursors
+            .get(&lane)
+            .is_some_and(|cursor| cursor.failure.is_none()),
+        "real source movement releases the failed generation latch",
+    );
     assert!(
         messages[0].unavailable_tool_terminals.is_empty(),
         "the refused boundary clears its unavailable-tool epoch",

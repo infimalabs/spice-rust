@@ -36,7 +36,17 @@ use presentation::publish;
 pub(in crate::resident) struct SessionCompactions {
     environment: crate::session_command::Environment,
     cursors: BTreeMap<CanonicalUuid, Cursor>,
-    reported: BTreeMap<CanonicalUuid, (Option<PathBuf>, String)>,
+    reported: BTreeMap<CanonicalUuid, ReportKey>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum ReportKey {
+    Resolution(String),
+    Scan {
+        path: PathBuf,
+        source: FileObservation,
+        class: String,
+    },
 }
 
 struct Cursor {
@@ -56,6 +66,40 @@ struct Cursor {
     validation: Option<PrefixValidation>,
     startup_recovery: Option<listen::Locus>,
     startup_search: Option<HistoryCheckpoint>,
+    failure: Option<FileObservation>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FileObservation {
+    Present(FileStamp),
+    Unavailable {
+        kind: io::ErrorKind,
+        raw_os_error: Option<i32>,
+    },
+}
+
+impl FileObservation {
+    fn read(path: &Path) -> Self {
+        File::open(path)
+            .and_then(|file| FileStamp::read(&file))
+            .map_or_else(
+                |error| Self::Unavailable {
+                    kind: error.kind(),
+                    raw_os_error: error.raw_os_error(),
+                },
+                Self::Present,
+            )
+    }
+}
+
+enum ScanAttempt {
+    Complete(Vec<CompactionRecord>),
+    Latched,
+    Failed {
+        error: io::Error,
+        source: FileObservation,
+        class: String,
+    },
 }
 
 struct PendingTool {
@@ -189,8 +233,10 @@ impl SessionCompactions {
                     let author = cursor.author;
                     let dialect = cursor.dialect;
                     let thread = cursor.thread.clone();
-                    let scanned = scan(cursor);
-                    let startup_recovery = cursor.startup_recovery.take();
+                    let scanned = scan_once_per_source(cursor);
+                    let startup_recovery = matches!(&scanned, ScanAttempt::Complete(_))
+                        .then(|| cursor.startup_recovery.take())
+                        .flatten();
                     (
                         scanned,
                         startup_recovery,
@@ -205,7 +251,7 @@ impl SessionCompactions {
                 continue;
             };
             match scanned {
-                Ok(records) => {
+                ScanAttempt::Complete(records) => {
                     if dialect == listen::Dialect::Codex
                         && let Some(locus) = startup_recovery
                     {
@@ -218,7 +264,12 @@ impl SessionCompactions {
                         publish(record, lane, author, &worktree, publisher, state)?;
                     }
                 }
-                Err(error) => self.report_scan_once(lane, &path, error, diagnostic),
+                ScanAttempt::Latched => {}
+                ScanAttempt::Failed {
+                    error,
+                    source,
+                    class,
+                } => self.report_scan_once(lane, &path, source, class, error, diagnostic),
             }
         }
         Ok(())
@@ -265,7 +316,12 @@ impl SessionCompactions {
                     ),
                 );
             }
-            Err(error) => self.report_once(lane, (None, error.clone()), error, diagnostic),
+            Err(error) => self.report_once(
+                lane,
+                ReportKey::Resolution(error.clone()),
+                error,
+                diagnostic,
+            ),
         }
     }
 
@@ -273,25 +329,18 @@ impl SessionCompactions {
         &mut self,
         lane: CanonicalUuid,
         path: &Path,
+        source: FileObservation,
+        class: String,
         error: io::Error,
         diagnostic: &mut dyn io::Write,
     ) {
-        let class = error
-            .get_ref()
-            .and_then(|error| error.downcast_ref::<HistoryExhaustion>())
-            .map_or_else(
-                || format!("{:?}: {error}", error.kind()),
-                |error| {
-                    if error.oversized_record {
-                        "history-record-oversized".to_owned()
-                    } else {
-                        "history-work-exhausted".to_owned()
-                    }
-                },
-            );
         self.report_once(
             lane,
-            (Some(path.to_path_buf()), class),
+            ReportKey::Scan {
+                path: path.to_path_buf(),
+                source,
+                class,
+            },
             format!("{}: {error}", path.display()),
             diagnostic,
         );
@@ -300,7 +349,7 @@ impl SessionCompactions {
     fn report_once(
         &mut self,
         lane: CanonicalUuid,
-        key: (Option<PathBuf>, String),
+        key: ReportKey,
         detail: String,
         diagnostic: &mut dyn io::Write,
     ) {
@@ -340,8 +389,48 @@ impl Cursor {
             validation: None,
             startup_recovery: None,
             startup_search: None,
+            failure: None,
         }
     }
+}
+
+fn scan_once_per_source(cursor: &mut Cursor) -> ScanAttempt {
+    let observed = FileObservation::read(&cursor.path);
+    if cursor.failure == Some(observed) {
+        return ScanAttempt::Latched;
+    }
+    if cursor.failure.take().is_some() && !cursor.initialized {
+        reset(cursor);
+    }
+    match scan(cursor) {
+        Ok(records) => ScanAttempt::Complete(records),
+        Err(error) => {
+            let source = FileObservation::read(&cursor.path);
+            let class = scan_error_class(&error);
+            cursor.failure = Some(source);
+            ScanAttempt::Failed {
+                error,
+                source,
+                class,
+            }
+        }
+    }
+}
+
+fn scan_error_class(error: &io::Error) -> String {
+    error
+        .get_ref()
+        .and_then(|error| error.downcast_ref::<HistoryExhaustion>())
+        .map_or_else(
+            || format!("io::{:?}", error.kind()),
+            |error| {
+                if error.oversized_record {
+                    "history-record-oversized".to_owned()
+                } else {
+                    "history-work-exhausted".to_owned()
+                }
+            },
+        )
 }
 
 struct CompactionRecord {

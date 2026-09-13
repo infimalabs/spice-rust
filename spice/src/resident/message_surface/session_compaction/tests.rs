@@ -771,6 +771,7 @@ fn cursor(path: &Path, dialect: listen::Dialect) -> Cursor {
         validation: None,
         startup_recovery: None,
         startup_search: None,
+        failure: None,
     }
 }
 
