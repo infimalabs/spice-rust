@@ -11,9 +11,7 @@ use serde_json::Value;
 use spice::session_meter::ContextSnapshot;
 use wire::Refusal;
 
-use crate::message_shape::{
-    MessageShape, UNRECOVERABLE_REHYDRATION_INTENT, classify, rehydration_intent,
-};
+use crate::message_shape::{UNRECOVERABLE_REHYDRATION_INTENT, classify, rehydration_intent};
 
 use super::model::{
     CommandRecord, CompactionRecord, Dataset, MessageRecord, Residue, SourceView, TokenRecord,
@@ -21,7 +19,7 @@ use super::model::{
 };
 use super::source::ResolvedSource;
 
-mod aggregate;
+pub(crate) mod aggregate;
 mod horizon;
 pub(crate) mod stream;
 mod work;
@@ -206,45 +204,6 @@ pub(crate) enum DecodedRow {
     Typed(TypedRecord),
     Residue(Residue),
     Ignored,
-}
-
-pub(crate) fn load(sources: &[ResolvedSource]) -> Result<Dataset, Refusal> {
-    load_since(sources, None)
-}
-
-pub(crate) fn load_since(
-    sources: &[ResolvedSource],
-    start: Option<&str>,
-) -> Result<Dataset, Refusal> {
-    let mut dataset = Dataset::default();
-    let mut markers = Vec::new();
-    let mut residues = ResidueLedger::new();
-    let mut work = SessionWork::new(SessionWorkBudget::report());
-    for source in sources {
-        let source_name = source.path.display().to_string();
-        let mut fold = WindowFold::new(&mut dataset, &mut markers, &mut residues);
-        let vendor = stream_records(source, start, &mut work, |row, work, at| {
-            fold.push(row, work, at)
-        })?;
-        fold.finish(&mut work, &source_name)?;
-        let source_view = SourceView {
-            name: source.path.file_name().map_or_else(
-                || source_name.clone(),
-                |name| name.to_string_lossy().into_owned(),
-            ),
-            path: source_name,
-            vendor,
-            thread: source.thread.clone(),
-            compressed: source.path.to_string_lossy().ends_with(".gz"),
-        };
-        work.admit_retained_text(source_view_text_bytes(&source_view), &source_view.path)?;
-        dataset.sources.push(source_view);
-    }
-    reconstruct_compactions(&markers, &mut dataset, &mut work)?;
-    account_compactions(&mut dataset);
-    sort_dataset(&mut dataset);
-    dataset.residues = residues.finish(&mut work, "residue summary")?;
-    Ok(dataset)
 }
 
 fn decode_row(
@@ -444,53 +403,6 @@ pub(crate) struct FoldStorage<'a> {
     pub(crate) residues: &'a mut ResidueLedger,
     pub(crate) state: &'a mut FoldState,
     pub(crate) tokens: Option<&'a mut Vec<TokenRecord>>,
-}
-
-struct WindowFold<'a> {
-    dataset: &'a mut Dataset,
-    markers: &'a mut Vec<Marker>,
-    residues: &'a mut ResidueLedger,
-    tokens: Option<&'a mut Vec<TokenRecord>>,
-    state: FoldState,
-}
-
-impl<'a> WindowFold<'a> {
-    fn new(
-        dataset: &'a mut Dataset,
-        markers: &'a mut Vec<Marker>,
-        residues: &'a mut ResidueLedger,
-    ) -> Self {
-        Self {
-            dataset,
-            markers,
-            residues,
-            tokens: None,
-            state: FoldState::default(),
-        }
-    }
-
-    fn push(&mut self, row: DecodedRow, work: &mut SessionWork, at: &str) -> Result<(), Refusal> {
-        match row {
-            DecodedRow::Typed(record) => reduce_record(
-                &record,
-                &mut FoldStorage {
-                    dataset: self.dataset,
-                    markers: self.markers,
-                    residues: self.residues,
-                    state: &mut self.state,
-                    tokens: self.tokens.as_deref_mut(),
-                },
-                work,
-                at,
-            ),
-            DecodedRow::Residue(residue) => self.residues.push(residue, work, at),
-            DecodedRow::Ignored => Ok(()),
-        }
-    }
-
-    fn finish(self, work: &mut SessionWork, at: &str) -> Result<(), Refusal> {
-        finish_fold(self.dataset, self.state, work, at)
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -764,6 +676,9 @@ pub(crate) fn finish_fold(
     work: &mut SessionWork,
     at: &str,
 ) -> Result<(), Refusal> {
+    debug_assert!(
+        dataset.sources.is_empty() && dataset.compactions.is_empty() && dataset.residues.is_empty()
+    );
     if let Some(index) = state.current {
         let end = dataset.turns[index].last_activity_ts.clone();
         finish_turn(dataset, index, &end, false, work, at)?;
@@ -1355,101 +1270,11 @@ fn token_record(record: &TypedRecord, usage: &listen::Usage) -> Option<TokenReco
     Some(token)
 }
 
-fn reconstruct_compactions(
-    markers: &[Marker],
-    dataset: &mut Dataset,
-    work: &mut SessionWork,
-) -> Result<(), Refusal> {
-    let mut ordered = markers.iter().collect::<Vec<_>>();
-    ordered.sort_by_key(|marker| (&marker.source, marker.position));
-    for (index, marker) in ordered.iter().enumerate() {
-        let next = ordered
-            .iter()
-            .skip(index + 1)
-            .find(|candidate| candidate.source == marker.source)
-            .map(|candidate| candidate.position);
-        let before = dataset
-            .messages
-            .iter()
-            .filter(|message| {
-                message.source == marker.source
-                    && message.side == "assistant"
-                    && message.position < marker.position
-            })
-            .max_by_key(|message| message.position)
-            .map_or_else(String::new, |message| message.text.clone());
-        let after = |message: &&MessageRecord| {
-            message.source == marker.source
-                && message.position > marker.position
-                && next.is_none_or(|end| message.position < end)
-        };
-        let summary = if marker.summary.is_empty() {
-            dataset
-                .messages
-                .iter()
-                .filter(after)
-                .find(|message| message.shape == MessageShape::CompactionRehydration)
-                .map_or_else(String::new, |message| message.text.clone())
-        } else {
-            marker.summary.clone()
-        };
-        let user_after = dataset
-            .messages
-            .iter()
-            .filter(after)
-            .find(|message| message.side == "user" && message.shape.is_authored())
-            .and_then(|message| message.authored.clone())
-            .unwrap_or_default();
-        let compaction = CompactionRecord {
-            source: marker.source.clone(),
-            ts: marker.ts.clone(),
-            assistant_before: before,
-            intent: compaction_intent(&summary),
-            summary_after: summary,
-            user_after,
-        };
-        work.admit_retained_text(
-            compaction_text_bytes(&compaction),
-            "compaction reconstruction",
-        )?;
-        dataset.compactions.push(compaction);
-    }
-    Ok(())
-}
-
 fn compaction_intent(summary: &str) -> String {
     if summary.is_empty() {
         return UNRECOVERABLE_REHYDRATION_INTENT.to_owned();
     }
     rehydration_intent(summary)
-}
-
-fn account_compactions(dataset: &mut Dataset) {
-    for turn in &mut dataset.turns {
-        let end = turn.end_ts.as_deref().unwrap_or(&turn.last_activity_ts);
-        turn.compaction_count = dataset
-            .compactions
-            .iter()
-            .filter(|row| {
-                row.source == turn.source && row.ts >= turn.start_ts && row.ts.as_str() <= end
-            })
-            .count() as u64;
-    }
-}
-
-fn sort_dataset(dataset: &mut Dataset) {
-    dataset.turns.sort_by(|left, right| {
-        (&left.start_ts, &left.source).cmp(&(&right.start_ts, &right.source))
-    });
-    dataset
-        .compactions
-        .sort_by(|left, right| (&left.ts, &left.source).cmp(&(&right.ts, &right.source)));
-    dataset.messages.sort_by(|left, right| {
-        (&left.ts, &left.source, &left.side).cmp(&(&right.ts, &right.source, &right.side))
-    });
-    dataset
-        .commands
-        .sort_by(|left, right| (&left.ts, &left.source).cmp(&(&right.ts, &right.source)));
 }
 
 fn refusal(reason: &str, observed: Option<String>, detail: &str) -> Refusal {

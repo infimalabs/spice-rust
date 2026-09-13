@@ -15,6 +15,7 @@ use super::{
     ResultFrontier, TypedRecord, compaction_intent, compaction_text_bytes, frontier_limit,
     record_timestamp, refusal, text_bytes,
 };
+use crate::session_command::project::Filters;
 
 const BACKWARD_CHUNK_BYTES: u64 = 64 * 1024;
 const HORIZON_CONTEXT_LINES: usize = 20;
@@ -34,6 +35,7 @@ pub(super) struct CompactionTracker {
     last: Option<String>,
     pending: Option<PendingCompaction>,
     rows: ResultFrontier<CompactionRecord>,
+    filter: Option<Filters>,
     start: Option<String>,
     end: Option<String>,
 }
@@ -51,6 +53,7 @@ impl CompactionTracker {
             last: None,
             pending: None,
             rows: ResultFrontier::new(limit, direction)?,
+            filter: None,
             start: start.map(str::to_owned),
             end: end.map(str::to_owned),
         })
@@ -113,6 +116,10 @@ impl CompactionTracker {
 
     pub(super) fn seed_assistant(&mut self, assistant: String) {
         self.last_assistant = (!assistant.is_empty()).then_some(assistant);
+    }
+
+    pub(super) fn filter_with(&mut self, filter: Filters) {
+        self.filter = Some(filter);
     }
 
     pub(super) fn observe_record(
@@ -189,8 +196,14 @@ impl CompactionTracker {
             user_after: pending.user_after,
         };
         admit_source_order(&mut self.last, &row.ts)?;
-        work.admit_retained_text(compaction_text_bytes(&row), at)?;
-        self.rows.push(row);
+        if self
+            .filter
+            .as_ref()
+            .is_none_or(|filter| filter.timeline_compaction_matches(&row))
+        {
+            work.admit_retained_text(compaction_text_bytes(&row), at)?;
+            self.rows.push(row);
+        }
         Ok(())
     }
 

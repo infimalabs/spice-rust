@@ -21,8 +21,8 @@ mod recovery;
 mod window_planner;
 
 use fixtures::{
-    assert_commit_rows, codex_event, codex_message, codex_message_content, token_payload,
-    transcript_event,
+    assert_commit_rows, assert_filtered_timeline, codex_event, codex_message,
+    codex_message_content, token_payload, transcript_event,
 };
 
 const REFUSAL_EXIT: i32 = 2;
@@ -933,7 +933,7 @@ fn assert_codex_turn_and_recall_rows(codex: &str) {
     );
 }
 
-fn assert_claude_identity_rows(claude: &str) {
+fn assert_claude_identity_rows(codex: &str, claude: &str) {
     let tokens = reply_forms(&strings(&["session", "tokens", claude]), &[], "tokens");
     assert_eq!(tokens["usage"][0]["snapshots"], 3);
     assert_eq!(tokens["usage"][0]["input"], 75);
@@ -973,13 +973,7 @@ fn assert_claude_identity_rows(claude: &str) {
     assert_eq!(claude_turns["rows"].as_array().map(Vec::len), Some(1));
     assert_eq!(claude_turns["rows"][0]["turn_id"], "prompt-one");
 
-    let timeline = reply_forms(
-        &strings(&["session", "timeline", claude, "--turn-id", "prompt-two"]),
-        &[],
-        "timeline",
-    );
-    assert_eq!(timeline["rows"].as_array().map(Vec::len), Some(1));
-    assert_eq!(timeline["rows"][0]["turn_id"], "prompt-two");
+    assert_filtered_timeline(codex, claude);
 
     let recall = reply_forms(
         &strings(&["session", "briefing", claude, "--turn-id", "prompt-two"]),
@@ -1008,7 +1002,7 @@ fn provider_turn_identity_and_final_deduplication_cross_query_folds() {
 
     assert_codex_final_rows(&codex);
     assert_codex_turn_and_recall_rows(&codex);
-    assert_claude_identity_rows(&claude);
+    assert_claude_identity_rows(&codex, &claude);
 
     scratch.remove();
 }

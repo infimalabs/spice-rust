@@ -28,6 +28,31 @@ pub(super) fn assert_commit_rows(commits: &Value, file: &str, peer: &str) {
     assert_eq!(commits["rows"].as_array().map(Vec::len), Some(3));
 }
 
+pub(super) fn assert_filtered_timeline(codex: &str, claude: &str) {
+    let timeline = super::reply_forms(
+        &super::strings(&[
+            "session",
+            "timeline",
+            codex,
+            claude,
+            "--contains",
+            "after verification",
+            "--limit",
+            "1",
+        ]),
+        &[],
+        "timeline",
+    );
+    assert_eq!(timeline["rows"].as_array().map(Vec::len), Some(1));
+    assert_eq!(timeline["rows"][0]["kind"], "compaction");
+    assert!(
+        timeline["rows"][0]["source"]
+            .as_str()
+            .unwrap()
+            .ends_with("codex.jsonl")
+    );
+}
+
 pub(super) fn transcript_event(timestamp: &str, kind: &str, fields: Value) -> Value {
     let Value::Object(mut fields) = fields else {
         panic!("transcript fixture fields must be an object");
