@@ -403,6 +403,7 @@ impl CommandSourceFold {
             DecodedRow::Ignored => {}
         }
         self.markers.clear();
+        self.scratch.messages.clear();
         for command in drain_command_records(&mut self.scratch, &mut self.state) {
             if let Some(audit) = audit {
                 audit.observe(&command, latest_compaction, query, work, at)?;
