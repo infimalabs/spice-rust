@@ -282,6 +282,7 @@ fn record_context(dialect: Dialect, record: &Object) -> Result<RecordContext, Re
             _ => None,
         },
         Dialect::Claude => match top {
+            "user" if turn_id.is_some() && claude_text_prompt(message) => Some(TurnMoment::Started),
             "user" if turn_id.is_some() => Some(TurnMoment::Observed),
             "assistant"
                 if message
@@ -330,6 +331,28 @@ fn record_context(dialect: Dialect, record: &Object) -> Result<RecordContext, Re
         turn,
         model_context_window,
     })
+}
+
+fn claude_text_prompt(message: Option<&Object>) -> bool {
+    let Some(content) = message
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_array)
+    else {
+        return false;
+    };
+    let mut text = false;
+    for content_type in content
+        .iter()
+        .filter_map(Value::as_object)
+        .filter_map(|item| item.get("type"))
+        .filter_map(Value::as_str)
+    {
+        if content_type == "tool_result" {
+            return false;
+        }
+        text |= content_type == "text";
+    }
+    text
 }
 
 fn claude_turn_completed(stop_reason: &str) -> bool {

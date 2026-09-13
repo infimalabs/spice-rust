@@ -136,24 +136,47 @@ fn codex_completed_turn_materializes_history_as_one_final_card() {
 }
 
 #[test]
-fn replay_keeps_a_zero_event_turn_boundary_after_compaction() {
+fn replay_keeps_vendor_turn_boundaries_after_compaction() {
+    assert_replay_boundary(
+        "codex",
+        listen::Dialect::Codex,
+        concat!(
+            "{\"timestamp\":\"2026-08-09T01:00:00.000Z\",\"type\":\"compacted\",",
+            "\"payload\":{}}\n",
+            "{\"timestamp\":\"2026-08-09T01:00:01.000Z\",\"type\":\"event_msg\",",
+            "\"payload\":{\"type\":\"task_started\",\"turn_id\":\"turn-2\"}}\n",
+            "{\"timestamp\":\"2026-08-09T01:00:02.000Z\",\"type\":\"item.completed\",",
+            "\"item\":{\"id\":\"commentary\",\"type\":\"agent_message\",",
+            "\"text\":\"resumed work\"}}\n",
+        ),
+    );
+    assert_replay_boundary(
+        "claude",
+        listen::Dialect::Claude,
+        concat!(
+            "{\"timestamp\":\"2026-08-09T01:00:00.000Z\",\"type\":\"summary\",",
+            "\"summary\":\"compacted context\"}\n",
+            "{\"timestamp\":\"2026-08-09T01:00:01.000Z\",\"type\":\"user\",",
+            "\"promptId\":\"turn-2\",\"message\":{\"type\":\"message\",\"role\":\"user\",",
+            "\"content\":[{\"type\":\"text\",\"text\":\"continue\"}]}}\n",
+            "{\"timestamp\":\"2026-08-09T01:00:02.000Z\",\"type\":\"assistant\",",
+            "\"message\":{\"type\":\"message\",\"role\":\"assistant\",",
+            "\"content\":[{\"type\":\"text\",\"text\":\"resumed work\"}]}}\n",
+        ),
+    );
+}
+
+fn assert_replay_boundary(label: &str, dialect: listen::Dialect, contents: &str) {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
-        "spice-backlog-turn-boundary-{}-{}",
+        "spice-backlog-turn-boundary-{label}-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed),
     ));
     let tape = tape::Tape::open(&root).expect("turn boundary tape opens");
-    tape.tee(
-        concat!(
-            "{\"timestamp\":\"2026-08-09T01:00:00.000Z\",\"type\":\"compacted\",\"payload\":{}}\n",
-            "{\"timestamp\":\"2026-08-09T01:00:01.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"turn-2\"}}\n",
-            "{\"timestamp\":\"2026-08-09T01:00:02.000Z\",\"type\":\"item.completed\",\"item\":{\"id\":\"commentary\",\"type\":\"agent_message\",\"text\":\"resumed work\"}}\n",
-        )
-        .as_bytes(),
-    )
-    .expect("compacted turn sequence is durable");
-    let scan = listen::scan(&root, listen::Dialect::Codex, None).expect("turn sequence scans");
+    tape.tee(contents.as_bytes())
+        .expect("compacted turn sequence is durable");
+    let scan = listen::scan(&root, dialect, None).expect("turn sequence scans");
     let messages = CollectedMessages::new(canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT);
     let mut reader = BacklogReader::default();
     let mut diagnostic = Vec::new();
