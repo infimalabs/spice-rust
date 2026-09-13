@@ -49,6 +49,10 @@ pub trait Builder {
         target: ReleaseTarget,
         app: &AppBundle,
     ) -> Result<Vec<u8>, BuildError>;
+
+    fn take_symbol_artifact(&mut self) -> Option<Vec<u8>> {
+        None
+    }
 }
 
 /// One browser-app member returned by a concrete build adapter.
@@ -259,6 +263,7 @@ fn build_artifacts<B: Builder>(
             step: BuildStep::Native,
             source,
         })?;
+    let symbols = builder.take_symbol_artifact();
     let mut files = embedded.files;
     files.sort_by(|left, right| left.path.cmp(&right.path));
     let mut expected = CANVAS_APP_FILES.to_vec();
@@ -280,6 +285,9 @@ fn build_artifacts<B: Builder>(
         .map(|file| artifact(format!("app/{}", file.path), DATA_MODE, file.bytes))
         .collect::<Vec<_>>();
     artifacts.push(artifact("bin/spice", EXECUTABLE_MODE, native));
+    if let Some(symbols) = symbols {
+        artifacts.push(artifact("symbols/spice.dSYM.json", DATA_MODE, symbols));
+    }
     Ok(BuiltArtifacts {
         app: embedded.generation,
         artifacts,

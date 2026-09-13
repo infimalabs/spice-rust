@@ -21,6 +21,9 @@ use sill::{
 use wire::manifest::{BuildPins, ReleaseTarget};
 use wire::{Digest, Domain};
 
+mod symbols;
+use symbols::read_symbol_bundle;
+
 const OUTPUT_LIMIT: usize = 4 * 1024 * 1024;
 const BUILD_RUNTIME: Duration = Duration::from_secs(60 * 60);
 const OUTPUT_DRAIN: Duration = Duration::from_secs(10);
@@ -64,6 +67,9 @@ pub struct TargetBuild {
 pub struct MacSymbols {
     bundle: PathBuf,
     uuid: String,
+    info: Vec<u8>,
+    dwarf: Vec<u8>,
+    artifact: Vec<u8>,
 }
 
 impl MacSymbols {
@@ -469,10 +475,30 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
             native_cargo_arguments(target, self.target_dir),
         ))?;
         let executable = cargo_executable(&native.stdout)?;
-        if target == ReleaseTarget::Aarch64AppleDarwin {
-            self.symbols = Some(self.derive_macos_symbols(&executable)?);
+        let mut symbols = if target == ReleaseTarget::Aarch64AppleDarwin {
+            Some(self.derive_macos_symbols(&executable)?)
+        } else {
+            None
+        };
+        let native = read_regular(&executable).map_err(build_error)?;
+        if let Some(symbols) = &mut symbols {
+            symbols.artifact = wire::encode(&wire::manifest::MacSymbolArtifact {
+                version: wire::manifest::MAC_SYMBOL_ARTIFACT_VERSION,
+                uuid: symbols.uuid.clone(),
+                executable: Digest::compute(Domain::DistArtifact, &native),
+                info: symbols.info.clone(),
+                dwarf: symbols.dwarf.clone(),
+            })
+            .map_err(|error| BuildError::new(error.to_string()))?;
         }
-        read_regular(&executable).map_err(build_error)
+        self.symbols = symbols;
+        Ok(native)
+    }
+
+    fn take_symbol_artifact(&mut self) -> Option<Vec<u8>> {
+        self.symbols
+            .as_ref()
+            .map(|symbols| symbols.artifact.clone())
     }
 }
 
@@ -588,9 +614,13 @@ impl<E: Executor> CommandBuilder<'_, E> {
             &tools.strip,
             [OsString::from("-S"), executable.as_os_str().to_owned()],
         ))?;
+        let (info, dwarf) = read_symbol_bundle(&bundle, executable)?;
         Ok(MacSymbols {
             bundle,
             uuid: executable_uuid,
+            info,
+            dwarf,
+            artifact: Vec::new(),
         })
     }
 }

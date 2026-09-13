@@ -133,8 +133,15 @@ impl Executor for FakeExecutor {
             self.native_ran.set(true);
         }
         if command.label == "dsym-generate" && !refused {
-            fs::create_dir_all(PathBuf::from(&command.arguments[2]))
+            let dwarf = PathBuf::from(&command.arguments[2]).join("Contents/Resources/DWARF/spice");
+            fs::create_dir_all(dwarf.parent().expect("dSYM DWARF parent"))
                 .expect("create derived dSYM bundle");
+            fs::write(
+                PathBuf::from(&command.arguments[2]).join("Contents/Info.plist"),
+                b"fixture plist",
+            )
+            .expect("write derived dSYM metadata");
+            fs::write(dwarf, b"fixture DWARF").expect("write derived DWARF member");
         }
         if command.label == "native-strip" && !refused {
             fs::write(PathBuf::from(&command.arguments[1]), STRIPPED_NATIVE)
@@ -328,6 +335,24 @@ fn assert_symbol_result(fixture: &Fixture, programs: &Programs, build: &TargetBu
     };
     assert_eq!(target, ReleaseTarget::Aarch64AppleDarwin);
     assert_eq!(symbols.uuid(), UUID);
+    let artifact: wire::manifest::MacSymbolArtifact =
+        wire::decode(&symbols.artifact).expect("symbol artifact decodes");
+    assert_eq!(artifact.uuid, UUID);
+    assert_eq!(artifact.executable, build.staged.payload.native);
+    assert_eq!(artifact.info, b"fixture plist");
+    assert_eq!(artifact.dwarf, b"fixture DWARF");
+    let inventory = build
+        .staged
+        .payload
+        .inventory
+        .iter()
+        .find(|entry| entry.path == "symbols/spice.dSYM.json")
+        .expect("Darwin inventory binds symbols");
+    assert_eq!(inventory.bytes, symbols.artifact.len() as u64);
+    assert_eq!(
+        inventory.digest,
+        Digest::compute(Domain::DistArtifact, &symbols.artifact)
+    );
     let executable = fixture
         .root
         .join("target/release-appliance")
@@ -365,23 +390,27 @@ fn assert_symbol_result(fixture: &Fixture, programs: &Programs, build: &TargetBu
 }
 
 fn assert_complete_app_inventory(payload: &wire::manifest::TargetPayload) {
+    let mut expected = vec![
+        "app/app.module",
+        "app/app_bg.wasm",
+        "app/canvas-app.html",
+        "app/chrome.css",
+        "app/composer.css",
+        "app/mosaic.css",
+        "app/responsive.css",
+        "app/style.css",
+        "bin/spice",
+    ];
+    if payload.target == ReleaseTarget::Aarch64AppleDarwin {
+        expected.push("symbols/spice.dSYM.json");
+    }
     assert_eq!(
         payload
             .inventory
             .iter()
             .map(|entry| entry.path.as_str())
             .collect::<Vec<_>>(),
-        [
-            "app/app.module",
-            "app/app_bg.wasm",
-            "app/canvas-app.html",
-            "app/chrome.css",
-            "app/composer.css",
-            "app/mosaic.css",
-            "app/responsive.css",
-            "app/style.css",
-            "bin/spice",
-        ],
+        expected,
     );
 }
 
