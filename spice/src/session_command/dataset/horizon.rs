@@ -559,22 +559,28 @@ impl HorizonContinuation {
 
 pub(super) fn start_offset_after_prior_timestamp(
     source: &ResolvedSource,
+    file: File,
+    transcript_length: u64,
     start: &str,
     work: &mut SessionWork,
 ) -> Result<u64, Refusal> {
-    start_boundary(source, start, false, work).map(|(offset, _)| offset)
+    start_boundary(source, file, transcript_length, start, false, work).map(|(offset, _)| offset)
 }
 
 pub(super) fn start_offset_after_prior_assistant(
     source: &ResolvedSource,
+    file: File,
+    transcript_length: u64,
     start: &str,
     work: &mut SessionWork,
 ) -> Result<(u64, Option<String>), Refusal> {
-    start_boundary(source, start, true, work)
+    start_boundary(source, file, transcript_length, start, true, work)
 }
 
 fn start_boundary(
     source: &ResolvedSource,
+    file: File,
+    transcript_length: u64,
     start: &str,
     require_assistant: bool,
     work: &mut SessionWork,
@@ -582,7 +588,8 @@ fn start_boundary(
     let mut offset = 0_u64;
     let mut context: Option<usize> = None;
     let mut assistant = None;
-    let progress = reverse_lines(&source.path, work, |line, current, _, _, work| {
+    let cursor = ReverseCursor::from_file(file, &source.path, transcript_length);
+    let progress = reverse_cursor(cursor, work, |line, current, _, _, work| {
         if let Some(remaining) = context.as_mut() {
             if *remaining > 0 {
                 offset = current;
@@ -670,12 +677,22 @@ pub(super) struct ReverseCursor {
 fn reverse_lines<F>(
     path: &Path,
     work: &mut SessionWork,
+    visit: F,
+) -> Result<FrontierProgress<ReverseContinuation>, Refusal>
+where
+    F: FnMut(&[u8], u64, u64, bool, &mut SessionWork) -> Result<bool, Refusal>,
+{
+    reverse_cursor(ReverseCursor::new(path)?, work, visit)
+}
+
+fn reverse_cursor<F>(
+    mut cursor: ReverseCursor,
+    work: &mut SessionWork,
     mut visit: F,
 ) -> Result<FrontierProgress<ReverseContinuation>, Refusal>
 where
     F: FnMut(&[u8], u64, u64, bool, &mut SessionWork) -> Result<bool, Refusal>,
 {
-    let mut cursor = ReverseCursor::new(path)?;
     loop {
         let ReverseWindow {
             bytes,
@@ -686,7 +703,7 @@ where
             Err(error) => return Ok(refused(cursor.continuation(), error)),
         };
         for record in records.into_iter().rev() {
-            let at = format!("{}:byte {}", path.display(), record.offset);
+            let at = format!("{}:byte {}", cursor.path.display(), record.offset);
             if let Err(error) = work.admit_record(&at) {
                 return Ok(refused(reverse_continuation(record.next), error));
             }
@@ -738,13 +755,17 @@ impl ReverseCursor {
             .metadata()
             .map_err(|error| unreadable(path, &error))?
             .len();
-        Ok(Self {
+        Ok(Self::from_file(file, path, position))
+    }
+
+    fn from_file(file: File, path: &Path, transcript_length: u64) -> Self {
+        Self {
             file,
             path: path.to_owned(),
-            position,
-            transcript_length: position,
+            position: transcript_length,
+            transcript_length,
             carry: Vec::new(),
-        })
+        }
     }
 
     pub(super) fn advance(&mut self, work: &mut SessionWork) -> Result<ReverseWindow, Refusal> {
@@ -905,10 +926,10 @@ fn decode_reverse_row(
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::fs::{self, File, OpenOptions};
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use super::super::stream::stream_records;
+    use super::super::stream::{ForwardCursor, stream_records};
     use super::super::work::SessionWorkBudget;
     use super::super::{WindowOptions, WindowScan};
     use super::*;
@@ -923,6 +944,7 @@ mod tests {
         assert_eq!(horizon.start.as_deref(), Some("2026-01-01T00:00:01.000Z"));
         assert_fold_accounting(&source);
         assert_budget_refusals(&source);
+        assert_exact_generation(&source);
         fs::remove_file(source.path).expect("fixture transcript is removed");
     }
 
@@ -992,5 +1014,47 @@ mod tests {
         .expect("reverse refusal");
         assert!(matches!(progress, FrontierProgress::Refused { .. }));
         assert!(SessionWorkBudget::new(0, 1, 1, 1, 1, deadline).is_err());
+    }
+
+    fn assert_exact_generation(source: &ResolvedSource) {
+        let captured = File::open(&source.path).expect("capture original generation");
+        let displaced = source.path.with_extension("captured");
+        fs::rename(&source.path, &displaced).expect("replace source path");
+        fs::write(&source.path, b"replacement generation\n").expect("write replacement");
+        let mut work = SessionWork::new(SessionWorkBudget::report());
+        let mut cursor = ForwardCursor::with_preceding_assistant_from_file(
+            source,
+            captured,
+            "2026-01-01T00:00:03.500Z",
+            &mut work,
+        )
+        .expect("captured generation locates its own boundary");
+        let assistant = (0..4).find_map(|_| {
+            cursor.advance(&mut work).expect("captured fold advances");
+            cursor.take_preceding_assistant()
+        });
+        assert_eq!(assistant.as_deref(), Some("x"));
+        drop(cursor);
+
+        let captured = File::open(&displaced).expect("recapture original generation");
+        let mut cursor = ForwardCursor::with_preceding_assistant_from_file(
+            source,
+            captured,
+            "2026-01-01T00:00:03.500Z",
+            &mut work,
+        )
+        .expect("capture before truncation");
+        OpenOptions::new()
+            .write(true)
+            .open(&displaced)
+            .expect("open captured source for truncation")
+            .set_len(0)
+            .expect("truncate captured source");
+        let Err(refusal) = cursor.advance(&mut work) else {
+            panic!("truncation must refuse")
+        };
+        assert_eq!(refusal.reason(), "session::transcript-generation-changed");
+        fs::remove_file(&source.path).expect("remove replacement generation");
+        fs::rename(displaced, &source.path).expect("restore original source path");
     }
 }
