@@ -135,8 +135,9 @@ impl ReleaseIndex {
             budget,
         } = preflight;
         let notes = inline_member("release/notes.md", 0o644, notes)?;
-        let manifest_member = inline_member("release/manifest.json", 0o644, manifest)?;
-        let loaded = load(document, notes, manifest_member, admit_pending(pending)?)?;
+        let mut admitted = admit_pending(pending)?;
+        let manifest_member = take_member(&mut admitted, "release/manifest.json")?;
+        let loaded = load(document, notes, manifest_member, admitted)?;
         let tree = proof::build_package(package_input(&loaded, version, notes_identity))
             .map_err(|error| PackageFailure::Moved(error.to_string()))?;
         if tree.package().bytes() != package_bytes {
@@ -365,13 +366,19 @@ impl ReleasePreflight {
             notes,
             Domain::DistReleaseNotesContent,
         )?;
-        add_inline(
+        add_pending(
+            &mut pending,
             &mut shapes,
             &mut total,
-            "release/manifest.json",
-            0o644,
-            manifest,
-            Domain::DistReleaseManifest,
+            PendingSpec {
+                source: stage.join("release/manifest.json"),
+                path: "release/manifest.json".to_owned(),
+                label: "staged release manifest".to_owned(),
+                mode: 0o644,
+                length: manifest.len() as u64,
+                digest: Digest::compute(Domain::DistReleaseManifest, manifest),
+                limit: proof::PACKAGE_DOCUMENT_LIMIT,
+            },
         )?;
         add_targets(
             &stage,
