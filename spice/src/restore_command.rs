@@ -462,11 +462,11 @@ fn artifact_image(capture: &journal::RestoreCapture) -> Result<artifact::BackupI
         });
     }
     let image = artifact::BackupImage::admit(files).map_err(artifact_failure)?;
-    let unknown = image
-        .tasks()
-        .iter()
-        .filter(|task| capture.tasks().binary_search(task).is_err())
-        .map(ToString::to_string)
+    let unknown = capture
+        .missing_tasks(image.tasks())
+        .map_err(bundle_failure)?
+        .into_iter()
+        .map(|task| task.to_string())
         .collect::<Vec<_>>();
     if !unknown.is_empty() {
         return Err(refusal(
