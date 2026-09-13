@@ -31,6 +31,10 @@ fn package_preview_reads_only_content_addressed_executables() {
     fs::rename(&fixture.executables[0], &replaced).expect("replace admitted executable path");
     fs::write(&fixture.executables[0], b"later generation")
         .expect("publish later executable generation");
+    let replaced_manifest = fixture.root.join("replaced-manifest");
+    fs::rename(&fixture.manifest_path, &replaced_manifest).expect("replace admitted manifest path");
+    fs::write(&fixture.manifest_path, b"later generation")
+        .expect("publish later manifest generation");
     let materialized = index.materialize(&fixture.root).unwrap_or_else(|error| {
         panic!("content-addressed package materialization failed: {error}")
     });
@@ -86,6 +90,25 @@ fn package_preview_refuses_missing_and_mismatched_executable_objects() {
     .expect_err("missing executable object must refuse");
     assert!(missing.to_string().contains("cannot read staged"));
 
+    let fixture = Fixture::new();
+    let mut moved_manifest = fixture.manifest.clone();
+    moved_manifest[0] = b'[';
+    fs::write(&fixture.manifest_path, moved_manifest)
+        .expect("replace staged manifest without changing its length");
+    let moved = ReleaseIndex::admit(
+        &fixture.root,
+        &fixture.version,
+        fixture.notes_identity.clone(),
+        &fixture.notes,
+        &fixture.manifest,
+    )
+    .expect_err("staged manifest mismatch must refuse");
+    assert!(
+        moved
+            .to_string()
+            .contains("staged release manifest object disagrees")
+    );
+
     let mut count = CaptureBudget::default();
     for index in 0..MAX_RELEASE_MEMBERS {
         count
@@ -138,6 +161,8 @@ fn package_preview_refuses_missing_and_mismatched_executable_objects() {
             .expect("extend sparse executable");
     }
     fixture.manifest = wire::encode(&manifest).expect("oversized manifest encodes");
+    fs::write(&fixture.manifest_path, &fixture.manifest)
+        .expect("publish oversized manifest fixture");
     let overflow = ReleaseIndex::admit(
         &fixture.root,
         &fixture.version,
@@ -158,6 +183,7 @@ struct Fixture {
     notes: Vec<u8>,
     notes_identity: Digest,
     manifest: Vec<u8>,
+    manifest_path: PathBuf,
     executables: Vec<PathBuf>,
     payloads: Vec<PathBuf>,
 }
@@ -173,6 +199,7 @@ impl Fixture {
         crate::test_repository::initialize(&root);
         let stage = root.join("dist/stage");
         fs::create_dir_all(stage.join("objects")).expect("create object stage");
+        fs::create_dir_all(stage.join("release")).expect("create release stage");
         let source = Digest::compute(Domain::DistSourceCommit, b"source");
         let app = Digest::compute(Domain::DistArtifact, b"Canvas generation");
         let pins = BuildPins {
@@ -207,6 +234,8 @@ impl Fixture {
             targets,
         })
         .expect("manifest encodes");
+        let manifest_path = stage.join("release/manifest.json");
+        fs::write(&manifest_path, &manifest).expect("write staged manifest");
         let notes = b"release notes\n".to_vec();
         let notes_identity = Digest::compute(Domain::DistReleaseNotes, &notes);
         Self {
@@ -215,6 +244,7 @@ impl Fixture {
             notes,
             notes_identity,
             manifest,
+            manifest_path,
             executables,
             payloads,
         }
