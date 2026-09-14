@@ -119,6 +119,7 @@ fn every_contract_has_an_executable_landing_disposition() {
     assert_eq!(landing(&["gate", "selection"]), Landing::Landed);
     assert_eq!(landing(&["demo"]), Landing::Landed);
     assert_eq!(landing(&["install"]), Landing::Landed);
+    assert_eq!(landing(&["install", "symbols"]), Landing::Landed);
     assert_eq!(landing(&["lock"]), Landing::Landed);
     assert_eq!(landing(&["lock", "run"]), Landing::Landed);
     assert_eq!(landing(&["config", "migrate-tasks"]), Landing::Landed);
@@ -582,6 +583,7 @@ fn tool_postures_follow_the_closed_command_order() {
         vec![
             ("doctor".to_owned(), vec!["rtk"]),
             ("rtk gain".to_owned(), vec!["rtk"]),
+            ("install symbols".to_owned(), vec!["dwarfdump"]),
             ("dev cargo".to_owned(), vec!["cargo"]),
             ("dev xtask".to_owned(), vec!["cargo"]),
             ("lock run".to_owned(), vec!["CMD"]),
@@ -890,6 +892,14 @@ fn contract_syntax_drives_argument_registration() {
         ],
         &["spice", "install", "--apply=digest"],
         &["spice", "install", "--package", "/tmp/spice-package"],
+        &["spice", "install", "symbols"],
+        &[
+            "spice",
+            "install",
+            "symbols",
+            "--sample",
+            "/tmp/spice-sample.txt",
+        ],
         &["spice", "restore", "verify", "bundle"],
         &["spice", "run", "--", "cargo", "test", "--locked"],
         &["spice", "task", "recover", "TASK-1k4Q5gJw"],

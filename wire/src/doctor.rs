@@ -288,6 +288,8 @@ pub enum DoctorToolSource {
     TaskBoundaryContract,
     /// The shared adjudication contract supplies the optional judge executable.
     AdjudicationContract,
+    /// The installed-symbol verification contract supplies the DWARF lookup tool.
+    SymbolLookupContract,
     /// A worktree-local integration seam supplies the executable.
     WorktreeConfiguration,
 }
@@ -304,6 +306,7 @@ impl DoctorToolSource {
         Self::ProofBattery,
         Self::TaskBoundaryContract,
         Self::AdjudicationContract,
+        Self::SymbolLookupContract,
         Self::WorktreeConfiguration,
     ];
 }
@@ -324,6 +327,8 @@ pub enum DoctorToolBounds {
     Adjudication,
     /// Parent Git owns the hook lifetime while reference locks may be held.
     ReferenceTransaction,
+    /// The owning command fixes its own deadline, invocation count, and capture limit.
+    CommandOwned,
     /// Observation never starts the tool.
     NotExecuted,
 }
@@ -337,6 +342,7 @@ impl DoctorToolBounds {
         Self::TaskBoundary,
         Self::Adjudication,
         Self::ReferenceTransaction,
+        Self::CommandOwned,
         Self::NotExecuted,
     ];
 }

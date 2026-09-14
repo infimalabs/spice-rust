@@ -26,6 +26,8 @@ mod path;
 mod progress;
 mod record;
 mod rollback;
+mod symbol_sample;
+mod symbol_verification;
 mod symbols;
 mod validation;
 
@@ -59,6 +61,14 @@ pub use maintenance::{
 };
 pub use model::{Asset, FileImage, GeneratedImage, Location, Operation, Retirement};
 use model::{ObservedFile, ReceiptGeneration, RepositoryIdentity};
+pub use symbol_sample::{
+    DwarfLookup, DwarfdumpLookup, LookupError, MAX_SAMPLE_ADDRESSES, MAX_SAMPLE_BYTES, SampleError,
+    SampleSymbolization, SampleTarget, SampledFrame, SourceLocation, SymbolizedFrame,
+    symbolize_sample,
+};
+pub use symbol_verification::{
+    SymbolImage, SymbolVerification, SymbolVerificationError, verify_symbols,
+};
 pub use symbols::SymbolProvenance;
 
 const PLAN_VERSION: u16 = 15;

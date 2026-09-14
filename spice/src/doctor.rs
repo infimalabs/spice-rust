@@ -234,10 +234,12 @@ fn tool_observation(
             Ok(()) => DoctorObservation::Ready {},
             Err(reason) => DoctorObservation::Unavailable { reason },
         },
-        DoctorToolSource::AdjudicationContract => match probe.named(tool.name) {
-            Ok(()) => DoctorObservation::Ready {},
-            Err(reason) => DoctorObservation::Unavailable { reason },
-        },
+        DoctorToolSource::AdjudicationContract | DoctorToolSource::SymbolLookupContract => {
+            match probe.named(tool.name) {
+                Ok(()) => DoctorObservation::Ready {},
+                Err(reason) => DoctorObservation::Unavailable { reason },
+            }
+        }
         DoctorToolSource::WorktreeConfiguration => {
             let executable = configuration.rtk().executable();
             match probe.rtk(executable) {

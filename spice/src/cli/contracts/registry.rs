@@ -192,6 +192,17 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "spice::install"
     ),
     row!(
+        ["install", "symbols"],
+        "install symbols [--sample FILE]",
+        Local,
+        None,
+        [],
+        [Daemonless, Toolful],
+        INSTALL_SYMBOLS_TOOLS,
+        Reply,
+        "spice::install_symbols"
+    ),
+    row!(
         ["dev", "cargo"],
         "dev cargo -- CARGO_ARGS...",
         Local,

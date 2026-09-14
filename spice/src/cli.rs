@@ -22,9 +22,9 @@ pub use tools::ExternalTool;
 /// The one compiled optional judge executable shared by resident and task adjudication.
 pub const JUDGE_EXECUTABLE: &str = tools::JUDGE_EXECUTABLE;
 use tools::{
-    CALLER_COMMAND, DOCTOR_TOOLS, GATE_MUTATION_TOOLS, GATE_POLICY_TOOLS, NATIVE_CARGO_TOOL,
-    NO_TOOLS, PROOF_TOOLS, REFERENCE_TRANSACTION_TOOLS, RTK_QUERY_TOOLS, TASK_DONE_TOOLS,
-    TASK_GIT_TOOLS, UP_TOOLS,
+    CALLER_COMMAND, DOCTOR_TOOLS, GATE_MUTATION_TOOLS, GATE_POLICY_TOOLS, INSTALL_SYMBOLS_TOOLS,
+    NATIVE_CARGO_TOOL, NO_TOOLS, PROOF_TOOLS, REFERENCE_TRANSACTION_TOOLS, RTK_QUERY_TOOLS,
+    TASK_DONE_TOOLS, TASK_GIT_TOOLS, UP_TOOLS,
 };
 #[cfg(test)]
 use tools::{
@@ -300,6 +300,7 @@ fn repository_landed(path: &[&str]) -> bool {
     matches!(
         path,
         ["install"]
+            | ["install", "symbols"]
             | ["dev", "cargo"]
             | ["dev", "xtask"]
             | ["dev", "cargo-store"]
