@@ -17,6 +17,10 @@ fn root(document: &str) -> Root {
     serde_path_to_error::deserialize(deserializer).expect("launch fixture root admits")
 }
 
+fn lane() -> CanonicalUuid {
+    LANE.parse::<CanonicalUuid>().expect("fixture lane")
+}
+
 fn inputs(vendor: &str, environment: Environment, resume: Resume) -> Inputs {
     Inputs {
         worktree: PathBuf::from("/work/tree"),
@@ -24,7 +28,7 @@ fn inputs(vendor: &str, environment: Environment, resume: Resume) -> Inputs {
         prompt: "[$spice](.agents/skills/spice/SKILL.md)".to_owned(),
         executable: "/opt/spice's bin".to_owned(),
         environment,
-        lane: LANE.parse::<CanonicalUuid>().expect("fixture lane"),
+        lane: lane(),
         resume,
         fast_mode: true,
     }
@@ -87,13 +91,19 @@ auto_compact_window_tokens = 123456
     );
     assert_eq!(launch.hook.command, "'/opt/spice'\\''s bin' hook claude");
     assert_eq!(launch.mcp, None);
+    let announced = &launch
+        .steering_key
+        .as_ref()
+        .expect("steering key is materialized")
+        .token;
     assert_eq!(
-        launch
-            .steering_key
-            .as_ref()
-            .expect("steering key is materialized")
-            .token,
-        LANE
+        announced,
+        steer::Key::for_identity(lane()).as_str(),
+        "the announced steering key is the seal derived from the lane identity"
+    );
+    assert_ne!(
+        announced, LANE,
+        "the raw lane uuid is not the announced key"
     );
     assert_eq!(
         environment_value(plan.environment(), CLAUDE_AUTO_COMPACT_WINDOW),
