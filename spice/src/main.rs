@@ -460,7 +460,7 @@ impl NativeInvocation<'_> {
             | ["doc"]
             | ["doc", "ledger"] => deliver(&board_command::run(leaf, contract), form),
             ["task", "next"] => task_next_delivery::deliver(
-                &board_command::run(leaf, contract),
+                &board_command::run_task_next(contract),
                 form,
                 bootstrap_environment(steer::hook::INBOX).is_some(),
             ),

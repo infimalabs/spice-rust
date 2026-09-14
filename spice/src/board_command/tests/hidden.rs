@@ -4,7 +4,13 @@ use super::*;
 // they share: authoritative hidden evidence never crosses into any public
 // presentation, while the actor who owns it still reads it in full.
 
-fn add_oops(bus: &Bus, epoch: CanonicalUuid, actor: Actor, task: &str, title: &str) -> TaskHandle {
+pub(super) fn add_oops(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    actor: Actor,
+    task: &str,
+    title: &str,
+) -> TaskHandle {
     let value = task.bytes().fold(0_i64, |value, byte| {
         (value * 131 + i64::from(byte)) % 10_000_000_000_000
     });
