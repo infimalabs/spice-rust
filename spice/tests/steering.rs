@@ -540,6 +540,11 @@ fn setup() -> (Fixture, RunningResident, Lanes) {
     );
     let mut resident = RunningResident::spawn(&fixture);
     resident.assert_ready(&fixture);
+    // Since 40baef75 a restart no longer resurrects a durably occupied lane
+    // whose supervisor left no trace: the seeded rows degrade to vacant and an
+    // operator wakes them explicitly, which is what the fixture does here.
+    wake_lane(&fixture, lanes.target);
+    wake_lane(&fixture, lanes.other);
     assert!(
         fixture
             .runtime
@@ -549,6 +554,16 @@ fn setup() -> (Fixture, RunningResident, Lanes) {
         "resident did not publish the lane capability document"
     );
     (fixture, resident, lanes)
+}
+
+fn wake_lane(fixture: &Fixture, lane: wire::CanonicalUuid) {
+    let woken = invoke(fixture, &["lane", "wake", &lane.to_string()], true);
+    assert!(
+        woken.status.success(),
+        "lane wake failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&woken.stdout),
+        String::from_utf8_lossy(&woken.stderr),
+    );
 }
 
 fn current_occupant(fixture: &Fixture, lane: wire::CanonicalUuid) -> wire::CanonicalUuid {
