@@ -603,9 +603,18 @@ fn image_uuid(text: &str, image: &str, load_address: u64) -> Result<String, &'st
 }
 
 /// The runtime address and sample count of one call-tree frame line.
+///
+/// `sample(1)` resolves a frame itself when it can already find symbols for
+/// the sampled image -- exactly what happens once a dSYM sits at this
+/// installer's own retained path, since the system symbolizer discovers it
+/// there too. A resolved frame keeps its bracketed runtime address but
+/// appends the function name before it and a source location after it, so
+/// the address is read from the first `[...]` following the last `[`
+/// instead of requiring it to end the line.
 fn parse_frame(line: &str) -> Option<(u64, u64)> {
     let (_, tail) = line.rsplit_once('[')?;
-    let address = parse_hex(tail.strip_suffix(']')?.trim())?;
+    let (address, _) = tail.split_once(']')?;
+    let address = parse_hex(address.trim())?;
     let samples = line
         .split_whitespace()
         .find_map(|token| token.parse::<u64>().ok())?;

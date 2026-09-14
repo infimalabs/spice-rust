@@ -170,6 +170,13 @@ fn frame_lines_read_the_first_count_and_the_bracketed_runtime_address() {
         parse_frame("    + 783 start  (in dyld) + 6992  [0x1888704e4"),
         None
     );
+    // The system symbolizer resolves a frame itself once a dSYM sits beside
+    // the sampled image, appending a function name before the bracket and a
+    // source location after it rather than leaving the bracket at the end.
+    assert_eq!(
+        parse_frame("    +     2573 spice::main  (in spice) + 2928  [0x1032b36c4]  main.rs:251"),
+        Some((0x1032_b36c4, 2573))
+    );
 }
 
 #[test]
