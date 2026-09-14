@@ -3,10 +3,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use wire::manifest::{
-    BuildPins, CANVAS_APP_FILES, CANVAS_APP_HTML, InventoryEntry, MacSymbolMetadata,
-    PROOF_RECEIPT_VERSION, ProductVersion, ProofEnvironment, ProofReceipt, ProofStanding,
-    RELEASE_MANIFEST_VERSION, ReleaseManifest, ReleaseManifestTarget, ReleaseTarget,
-    TARGET_PAYLOAD_VERSION, TargetPayload,
+    BuildPins, CANVAS_APP_FILES, CANVAS_APP_HTML, InventoryEntry, MAC_SYMBOL_ARTIFACT_VERSION,
+    MacSymbolArtifact, MacSymbolMetadata, PROOF_RECEIPT_VERSION, ProductVersion, ProofEnvironment,
+    ProofReceipt, ProofStanding, RELEASE_MANIFEST_VERSION, ReleaseManifest, ReleaseManifestTarget,
+    ReleaseTarget, TARGET_PAYLOAD_VERSION, TargetPayload,
 };
 use wire::{Digest, Domain};
 
@@ -15,10 +15,125 @@ const TARGETS: [ReleaseTarget; 2] = [
     ReleaseTarget::X86_64UnknownLinuxMusl,
 ];
 const MAX_FIXTURE_MEMBER_BYTES: u64 = 512 * 1024 * 1024;
+/// Clean commit the fixture claims every target executable was linked from.
+pub(crate) const FIXTURE_COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+/// LC_UUID the fixture fabricates when the executable is not a Mach-O image.
+pub(crate) const FALLBACK_UUID: [u8; 16] = [
+    0x11, 0x11, 0x11, 0x11, 0x22, 0x22, 0x33, 0x33, 0x44, 0x44, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55,
+];
+const MH_MAGIC_64: u32 = 0xFEED_FACF;
+const LC_UUID: u32 = 0x1B;
 
 pub(crate) struct PackageFixture {
     root: PathBuf,
     app: Vec<(String, Vec<u8>)>,
+    symbols: SymbolFixture,
+}
+
+/// The symbol artifact the fixture bound to its Darwin executable.
+struct SymbolFixture {
+    uuid: String,
+    artifact: Vec<u8>,
+}
+
+impl SymbolFixture {
+    fn create(executable: &[u8], native: &Digest) -> Self {
+        let raw = macho_uuid(executable).unwrap_or(FALLBACK_UUID);
+        let uuid = format_uuid(&raw);
+        let info = format!(
+            concat!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n",
+                "<plist version=\"1.0\"><dict>",
+                "<key>CFBundleIdentifier</key><string>com.apple.xcode.dsym.spice</string>",
+                "<key>dSYM_UUID</key><string>{uuid}</string>",
+                "</dict></plist>\n"
+            ),
+            uuid = uuid
+        );
+        let artifact = MacSymbolArtifact {
+            version: MAC_SYMBOL_ARTIFACT_VERSION,
+            uuid: uuid.clone(),
+            executable: native.clone(),
+            commit: FIXTURE_COMMIT.to_owned(),
+            dirty: false,
+            info: info.into_bytes(),
+            dwarf: fabricate_macho(raw),
+        };
+        let artifact = wire::encode(&artifact).expect("encode package fixture symbol artifact");
+        Self { uuid, artifact }
+    }
+
+    fn artifact(&self) -> &[u8] {
+        &self.artifact
+    }
+
+    fn metadata(&self, native: &Digest) -> MacSymbolMetadata {
+        MacSymbolMetadata {
+            path: "symbols/spice.dSYM.json".to_owned(),
+            mode: 0o644,
+            bytes: self.artifact.len() as u64,
+            digest: Digest::compute(Domain::DistArtifact, &self.artifact),
+            uuid: self.uuid.clone(),
+            executable: native.clone(),
+        }
+    }
+}
+
+/// The smallest thin 64-bit Mach-O image carrying exactly one LC_UUID.
+pub(crate) fn fabricate_macho(uuid: [u8; 16]) -> Vec<u8> {
+    let mut image = Vec::with_capacity(56);
+    image.extend_from_slice(&MH_MAGIC_64.to_le_bytes());
+    image.extend_from_slice(&0x0100_000C_u32.to_le_bytes());
+    image.extend_from_slice(&0_u32.to_le_bytes());
+    image.extend_from_slice(&2_u32.to_le_bytes());
+    image.extend_from_slice(&1_u32.to_le_bytes());
+    image.extend_from_slice(&24_u32.to_le_bytes());
+    image.extend_from_slice(&0_u32.to_le_bytes());
+    image.extend_from_slice(&0_u32.to_le_bytes());
+    image.extend_from_slice(&LC_UUID.to_le_bytes());
+    image.extend_from_slice(&24_u32.to_le_bytes());
+    image.extend_from_slice(&uuid);
+    image
+}
+
+/// Read the sole LC_UUID of a thin 64-bit little-endian Mach-O image.
+pub(crate) fn macho_uuid(bytes: &[u8]) -> Option<[u8; 16]> {
+    let word = |offset: usize| {
+        bytes
+            .get(offset..offset + 4)
+            .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+    };
+    if word(0)? != MH_MAGIC_64 {
+        return None;
+    }
+    let commands = word(16)?;
+    let mut offset = 32;
+    for _ in 0..commands {
+        let command = word(offset)?;
+        let length = word(offset + 4)? as usize;
+        if command == LC_UUID {
+            let mut uuid = [0; 16];
+            uuid.copy_from_slice(bytes.get(offset + 8..offset + 24)?);
+            return Some(uuid);
+        }
+        offset += length.max(8);
+    }
+    None
+}
+
+pub(crate) fn format_uuid(raw: &[u8; 16]) -> String {
+    let hex = raw
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<String>();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    )
 }
 
 impl PackageFixture {
@@ -26,7 +141,11 @@ impl PackageFixture {
         fs::create_dir(&root).expect("create package fixture root");
         let executable_path = executable;
         let executable = fs::read(executable_path).expect("read package fixture executable");
-        let source = Digest::compute(Domain::DistSourceCommit, b"package fixture source");
+        let source = Digest::compute(Domain::DistSourceCommit, FIXTURE_COMMIT.as_bytes());
+        let symbols = SymbolFixture::create(
+            &executable,
+            &Digest::compute(Domain::DistArtifact, &executable),
+        );
         let app_identity = Digest::compute(Domain::DistArtifact, b"package fixture Canvas");
         let mut app = CANVAS_APP_FILES
             .iter()
@@ -62,6 +181,7 @@ impl PackageFixture {
                 &app,
                 &battery,
                 &environment,
+                &symbols,
             );
             payloads.push(payload);
             proofs.push(proof);
@@ -97,23 +217,11 @@ impl PackageFixture {
                 .into_iter()
                 .enumerate()
                 .map(|(index, target)| {
-                    proof::PackageTargetInput::new(
+                    target_input(
                         target,
-                        file_member(
-                            executable_path,
-                            &format!("targets/{target}/bin/spice"),
-                            0o755,
-                        ),
-                        inline(
-                            &format!("targets/{target}/payload.json"),
-                            0o644,
-                            &payloads[index],
-                        ),
-                        inline(
-                            &format!("targets/{target}/proof.json"),
-                            0o644,
-                            &proofs[index],
-                        ),
+                        executable_path,
+                        (&payloads[index], &proofs[index]),
+                        &symbols,
                     )
                 })
                 .collect(),
@@ -130,11 +238,16 @@ impl PackageFixture {
             fs::set_permissions(&path, fs::Permissions::from_mode(member.mode()))
                 .expect("mode package fixture member");
         }
-        Self { root, app }
+        Self { root, app, symbols }
     }
 
     pub(crate) fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Mach-O UUID the fixture bound its Darwin symbol artifact to.
+    pub(crate) fn symbol_uuid(&self) -> &str {
+        &self.symbols.uuid
     }
 
     pub(crate) fn app_bytes(&self, file: &str) -> &[u8] {
@@ -160,6 +273,28 @@ fn file_member(source: &Path, path: &str, mode: u32) -> proof::PackageMember {
     .expect("fixture member admits")
 }
 
+/// One package target member set; only the Darwin target carries symbols.
+fn target_input(
+    target: ReleaseTarget,
+    executable: &Path,
+    (payload, proof): (&[u8], &[u8]),
+    symbols: &SymbolFixture,
+) -> proof::PackageTargetInput {
+    proof::PackageTargetInput::new(
+        target,
+        file_member(executable, &format!("targets/{target}/bin/spice"), 0o755),
+        inline(&format!("targets/{target}/payload.json"), 0o644, payload),
+        inline(&format!("targets/{target}/proof.json"), 0o644, proof),
+    )
+    .with_symbols((target == ReleaseTarget::Aarch64AppleDarwin).then(|| {
+        inline(
+            &format!("targets/{target}/symbols/spice.dSYM.json"),
+            0o644,
+            symbols.artifact(),
+        )
+    }))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn target_evidence(
     target: ReleaseTarget,
@@ -169,6 +304,7 @@ fn target_evidence(
     app: &[(String, Vec<u8>)],
     battery: &Digest,
     environment: &ProofEnvironment,
+    symbols: &SymbolFixture,
 ) -> (Vec<u8>, Vec<u8>, ReleaseManifestTarget) {
     let native = Digest::compute(Domain::DistArtifact, executable);
     let pins = BuildPins {
@@ -194,14 +330,7 @@ fn target_evidence(
         digest: native.clone(),
     });
     let symbols = (target == ReleaseTarget::Aarch64AppleDarwin).then(|| {
-        let metadata = MacSymbolMetadata {
-            path: "symbols/spice.dSYM.json".to_owned(),
-            mode: 0o644,
-            bytes: 14,
-            digest: Digest::compute(Domain::DistArtifact, b"symbol fixture"),
-            uuid: "11111111-2222-3333-4444-555555555555".to_owned(),
-            executable: native.clone(),
-        };
+        let metadata = symbols.metadata(&native);
         inventory.push(InventoryEntry {
             path: metadata.path.clone(),
             mode: metadata.mode,

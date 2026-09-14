@@ -158,7 +158,7 @@ fn packaged(binary: &Path) -> Result<Option<Source>, InstallError> {
     }))
 }
 
-fn package_layout(binary: &Path) -> Option<(&Path, &Path)> {
+pub(super) fn package_layout(binary: &Path) -> Option<(&Path, &Path)> {
     let bin = binary
         .parent()
         .filter(|path| path.file_name().is_some_and(|name| name == "bin"))?;

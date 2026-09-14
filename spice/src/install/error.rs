@@ -30,6 +30,11 @@ pub enum InstallError {
         path: PathBuf,
         reason: &'static str,
     },
+    /// A macOS symbol input failed to establish the executable it belongs to.
+    SymbolsRefused {
+        path: PathBuf,
+        reason: &'static str,
+    },
     ForeignHookPath {
         worktree: PathBuf,
         observed: Vec<String>,
@@ -95,7 +100,8 @@ impl fmt::Display for InstallError {
             | Self::GenerationChanged(_)
             | Self::BinaryNotRegular(_)
             | Self::BinaryEmpty(_)
-            | Self::HookPathUnrepresentable { .. } => fmt_input_error(self, formatter),
+            | Self::HookPathUnrepresentable { .. }
+            | Self::SymbolsRefused { .. } => fmt_input_error(self, formatter),
             Self::ForeignHookPath { .. }
             | Self::GitConfigurationDrift { .. }
             | Self::GitLaunch { .. }
@@ -163,6 +169,9 @@ fn fmt_input_error(error: &InstallError, formatter: &mut fmt::Formatter<'_>) -> 
             formatter,
             "installed Spice hook path {path:?} {reason} and cannot be rendered on one shell line",
         ),
+        InstallError::SymbolsRefused { path, reason } => {
+            write!(formatter, "macOS symbol input {} {reason}", path.display())
+        }
         _ => unreachable!("input error formatter received another install error"),
     }
 }

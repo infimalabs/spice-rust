@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use sha2::Digest as _;
 use spice::install::{
     InstallPlanSummary, InstallPreview, InstallReceipt, InstallStatus, Location,
     publish_test_historical_receipt,
@@ -599,13 +600,48 @@ fn package_preview_apply_and_unapply_use_the_verified_canvas_authority() {
         fs::read(fixture.installed_binary()).unwrap(),
         fs::read(env!("CARGO_BIN_EXE_spice")).unwrap(),
     );
+    assert_package_symbols(&fixture, &receipt, &package);
     assert!(!fixture.root.join(".spice-install").exists());
     assert!(!linked.join(".spice-install").exists());
 
     let removed: InstallReceipt = reply_body(invoke(&["--json", "install", "--unapply"]));
     assert_eq!(removed.status(), InstallStatus::Uninstalled);
     assert!(!fixture.installed_binary().exists());
+    assert!(
+        !fixture
+            .root
+            .join(".git/.spice-install/bin/spice.dSYM")
+            .exists()
+    );
     assert!(!app.exists());
+}
+
+/// A package install on macOS retains the dSYM beside the executable and
+/// records its provenance; Linux records none and publishes no bundle.
+fn assert_package_symbols(
+    fixture: &Fixture,
+    receipt: &InstallReceipt,
+    package: &install_package_fixture::PackageFixture,
+) {
+    let bundle = fixture.root.join(".git/.spice-install/bin/spice.dSYM");
+    let darwin = cfg!(target_os = "macos");
+    assert_eq!(receipt.plan().symbols().is_some(), darwin);
+    let Some(provenance) = receipt.plan().symbols() else {
+        assert!(!bundle.exists());
+        return;
+    };
+    assert_eq!(provenance.uuid(), package.symbol_uuid());
+    assert_eq!(provenance.commit(), install_package_fixture::FIXTURE_COMMIT);
+    assert!(!provenance.dirty());
+    assert_eq!(provenance.path(), ".spice-install/bin/spice.dSYM");
+    let executable = fs::read(env!("CARGO_BIN_EXE_spice")).unwrap();
+    let expected = sha2::Sha256::digest(&executable)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    assert_eq!(provenance.executable_sha256(), expected);
+    assert!(bundle.join("Contents/Info.plist").is_file());
+    assert!(bundle.join("Contents/Resources/DWARF/spice").is_file());
 }
 
 #[test]
@@ -617,7 +653,7 @@ fn latest_package_directly_upgrades_every_supported_historical_receipt() {
     );
     let package_root = package.root().to_str().expect("package root is UTF-8");
 
-    for version in [7, 8, 9, 13] {
+    for version in [7, 8, 9, 14] {
         let fixture = Fixture::new(&format!("package-historical-{version}"));
         let initial: InstallPreview = reply_body(fixture.invoke(&["--json", "install"]));
         let _: InstallReceipt = reply_body(fixture.invoke(&[
@@ -661,13 +697,14 @@ fn latest_package_directly_upgrades_every_supported_historical_receipt() {
             serde_json::from_slice(&fs::read(fixture.record()).expect("current receipt reads"))
                 .expect("current receipt decodes");
         assert_eq!(
-            current["version"], 14,
+            current["version"], 15,
             "schema {version} did not reach current"
         );
         assert_eq!(
             fs::read(fixture.installed_binary()).expect("installed package binary reads"),
             fs::read(env!("CARGO_BIN_EXE_spice")).expect("current package binary reads"),
         );
+        assert_package_symbols(&fixture, &receipt, &package);
     }
 }
 
@@ -693,6 +730,7 @@ fn every_retired_historical_schema_refuses_without_mutation_and_names_its_owner(
         (10, "WRAPPER-1kNYClbf"),
         (11, "WRAPPER-1kNYClbf"),
         (12, "RETIREM-1kSR91Zl"),
+        (13, "INSTALL-1kSWFBN0"),
     ] {
         let mut retired = current.clone();
         retired["version"] = version.into();
@@ -719,7 +757,7 @@ fn every_retired_historical_schema_refuses_without_mutation_and_names_its_owner(
 
     let future = String::from_utf8(current_bytes)
         .expect("current receipt is UTF-8")
-        .replacen("{\"version\":14", "{\"version\":15", 1)
+        .replacen("{\"version\":15", "{\"version\":16", 1)
         .into_bytes();
     for unsupported in [future, b"{\"version\":".to_vec()] {
         fs::write(fixture.record(), unsupported).expect("unsupported receipt publishes");

@@ -61,6 +61,8 @@ impl Builder for RecordingBuilder {
                     version: MAC_SYMBOL_ARTIFACT_VERSION,
                     uuid: "11111111-2222-3333-4444-555555555555".to_owned(),
                     executable: Digest::compute(Domain::DistArtifact, &native),
+                    commit: "1".repeat(40),
+                    dirty: false,
                     info: b"fixture plist".to_vec(),
                     dwarf: b"fixture dwarf".to_vec(),
                 })

@@ -561,10 +561,10 @@ fn transition_state(observed: &[String], target: &[String]) -> bool {
 }
 
 fn verify_assets(repository: &Repository, plan: &InstallPlan) -> Result<(), InstallError> {
-    if plan
+    if !plan
         .operations()
-        .last()
-        .is_none_or(|operation| operation.path() != BINARY_PATH)
+        .iter()
+        .any(|operation| operation.path() == BINARY_PATH)
     {
         return Err(InstallError::InvalidRecord(
             "hook activation requires an installed Spice executable".to_owned(),

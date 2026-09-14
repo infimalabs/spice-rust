@@ -12,9 +12,13 @@ use spice::install::{
     installed_spice_wrapper, installed_zdotdir, plan, publish_test_historical_receipt, unapply,
 };
 use spice::repository::Repository;
+use wire::manifest::{MacSymbolArtifact, TargetPayload};
+use wire::{Digest, Domain};
 
 #[path = "support/git_repository.rs"]
 mod git_repository;
+#[path = "support/install_package.rs"]
+mod install_package_fixture;
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 const MAX_COMPACT_RECORD_BYTES: u64 = 64 * 1024;
@@ -141,42 +145,34 @@ fn obsolete_fold_store_symlink_and_non_regular_path_are_inert() {
 }
 
 #[test]
-fn version_13_payload_receipt_compacts_without_restoring_the_fold_store() {
-    let scratch = Scratch::new("version-13-fold-store");
+fn version_14_receipt_refreshes_into_the_symbol_bearing_schema_before_unapply() {
+    let scratch = Scratch::new("version-14-receipt");
     let repository = scratch.repository();
     let store = scratch.join(RETIRED_FOLD_STORE);
-    fs::create_dir_all(store.parent().unwrap()).unwrap();
     let current = plan(&repository, None).unwrap();
     apply(&repository, None, &current.digest().unwrap()).unwrap();
-    fs::write(&store, b"legacy fold bytes\n").unwrap();
-    publish_test_historical_receipt(&repository, 13).unwrap();
-    assert!(!store.exists());
+    publish_test_historical_receipt(&repository, 14).unwrap();
     let legacy: serde_json::Value =
         serde_json::from_slice(&fs::read(scratch.record()).unwrap()).unwrap();
+    assert_eq!(legacy["version"], 14);
+    assert_eq!(legacy["plan"]["version"], 14);
+    assert!(legacy["plan"].get("symbols").is_none());
     let retirement = legacy["plan"]["retirements"]
         .as_array()
         .unwrap()
         .iter()
         .find(|retirement| retirement["path"] == ".spice-rs/data/spicefolds.sqlite3")
         .unwrap();
-    assert_eq!(
-        retirement["previous"]["image"],
-        retirement["observed"]["image"]
-    );
+    assert_eq!(retirement["discard"], true);
     let error = unapply(&repository).unwrap_err();
     assert!(matches!(error, InstallError::InvalidRecord(detail)
-            if detail.contains("RETIREM-1kSR91Zl") && detail.contains("before unapply")));
-    assert!(!store.exists());
+            if detail.contains("INSTALL-1kSWFBN0") && detail.contains("before unapply")));
 
     let planned = plan(&repository, None).unwrap();
-    assert!(planned.version() > 13);
+    assert_eq!(planned.version(), 15);
+    assert!(planned.symbol_provenance().is_none());
     assert!(!planned.has_rollback_archive());
-    let retirement = planned
-        .retirements()
-        .iter()
-        .find(|retirement| retirement.path() == ".spice-rs/data/spicefolds.sqlite3")
-        .expect("forward migration adds the fold-store retirement");
-    assert!(retirement.previous().is_none());
+    assert_eq!(planned.retirements().len(), 3);
     apply(&repository, None, &planned.digest().unwrap()).unwrap();
     assert!(!store.exists());
     assert!(fs::metadata(scratch.record()).unwrap().len() < MAX_COMPACT_RECORD_BYTES);
@@ -212,6 +208,500 @@ fn compact_migration_deletes_without_archiving_or_restoring_the_obsolete_fold_st
 
     unapply(&repository).unwrap();
     assert!(!store.exists());
+}
+
+const DSYM_INFO: &str = ".git/.spice-install/bin/spice.dSYM/Contents/Info.plist";
+const DSYM_DWARF: &str = ".git/.spice-install/bin/spice.dSYM/Contents/Resources/DWARF/spice";
+const EXECUTABLE_UUID: [u8; 16] = [
+    0xA0, 0xA1, 0xA2, 0xA3, 0xB0, 0xB1, 0xC0, 0xC1, 0xD0, 0xD1, 0xE0, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5,
+];
+const OTHER_UUID: [u8; 16] = [
+    0x0F, 0x0E, 0x0D, 0x0C, 0x0B, 0x0A, 0x09, 0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, 0x00,
+];
+
+#[test]
+fn package_install_publishes_the_executable_and_its_dsym_as_one_generation() {
+    let scratch = Scratch::new("package-symbols");
+    let repository = scratch.repository();
+    let (package, darwin, executable) = package_fixture(&scratch, "release-package");
+
+    let planned = plan(&repository, Some(&darwin)).unwrap();
+    let provenance = planned
+        .symbol_provenance()
+        .expect("Darwin plan carries provenance");
+    assert_eq!(provenance.uuid(), package.symbol_uuid());
+    assert_eq!(
+        provenance.uuid(),
+        install_package_fixture::format_uuid(&EXECUTABLE_UUID)
+    );
+    assert_eq!(provenance.commit(), install_package_fixture::FIXTURE_COMMIT);
+    assert!(!provenance.dirty());
+    assert_eq!(provenance.path(), ".spice-install/bin/spice.dSYM");
+    assert_eq!(provenance.executable_sha256(), sha256_hex(&executable));
+    let tail = planned
+        .operations()
+        .iter()
+        .rev()
+        .take(3)
+        .map(|operation| operation.path().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        tail,
+        [
+            ".spice-install/bin/spice.dSYM/Contents/Resources/DWARF/spice",
+            ".spice-install/bin/spice.dSYM/Contents/Info.plist",
+            ".spice-install/bin/spice",
+        ]
+    );
+    assert_eq!(planned.retirements().len(), 3);
+    let document: serde_json::Value =
+        serde_json::from_slice(&planned.canonical_bytes().unwrap()).unwrap();
+    assert_eq!(document["symbols"]["uuid"], package.symbol_uuid());
+    assert_eq!(document["symbols"]["dirty"], false);
+
+    let receipt = apply(&repository, Some(&darwin), &planned.digest().unwrap()).unwrap();
+    assert_eq!(receipt.status(), InstallStatus::Complete);
+    assert_eq!(receipt.plan().symbols(), Some(provenance));
+    assert_eq!(fs::read(installed_binary(&repository)).unwrap(), executable);
+    let info = fs::read(scratch.join(DSYM_INFO)).unwrap();
+    assert!(
+        String::from_utf8(info)
+            .unwrap()
+            .contains(package.symbol_uuid())
+    );
+    assert_eq!(
+        fs::read(scratch.join(DSYM_DWARF)).unwrap(),
+        install_package_fixture::fabricate_macho(EXECUTABLE_UUID)
+    );
+    for path in [DSYM_INFO, DSYM_DWARF] {
+        let mode = fs::metadata(scratch.join(path))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o644, "{path}");
+    }
+    let app = repository.common_dir().join(".spice-install/app");
+    let generation = fs::read_to_string(app.join("current")).unwrap();
+    assert_eq!(
+        fs::read(
+            app.join("generations")
+                .join(generation.trim())
+                .join(wire::manifest::CANVAS_APP_HTML)
+        )
+        .unwrap(),
+        package.app_bytes(wire::manifest::CANVAS_APP_HTML)
+    );
+    assert_eq!(
+        audit_appliance(&repository, &darwin).unwrap().state(),
+        ApplianceState::Current
+    );
+
+    // Tampering with either half of the bundle is drift of the one generation.
+    let dwarf = scratch.join(DSYM_DWARF);
+    let retained = fs::read(&dwarf).unwrap();
+    fs::write(&dwarf, install_package_fixture::fabricate_macho(OTHER_UUID)).unwrap();
+    assert_eq!(
+        audit_appliance(&repository, &darwin).unwrap().state(),
+        ApplianceState::AssetTampered
+    );
+    assert!(matches!(
+        unapply(&repository).unwrap_err(),
+        InstallError::Drift { .. }
+    ));
+    fs::write(&dwarf, retained).unwrap();
+
+    assert_eq!(
+        unapply(&repository).unwrap().status(),
+        InstallStatus::Uninstalled
+    );
+    assert!(!installed_binary(&repository).exists());
+    assert!(!scratch.join(DSYM_INFO).exists());
+    assert!(!scratch.join(DSYM_DWARF).exists());
+}
+
+#[test]
+fn refreshing_between_symbol_bearing_and_bare_executables_moves_the_bundle_as_one() {
+    let scratch = Scratch::new("package-symbol-refresh");
+    let repository = scratch.repository();
+    let (package, darwin, executable) = package_fixture(&scratch, "release-package");
+    let linux = package
+        .root()
+        .join("targets/x86_64-unknown-linux-musl/bin/spice");
+    let bare = plan(&repository, Some(&linux)).unwrap();
+    assert!(bare.symbol_provenance().is_none());
+    assert_eq!(bare.retirements().len(), 3);
+    apply(&repository, Some(&linux), &bare.digest().unwrap()).unwrap();
+    assert!(!scratch.join(DSYM_INFO).exists());
+
+    // Adding symbols on refresh is a pure addition.
+    assert_eq!(
+        audit_appliance(&repository, &darwin).unwrap().state(),
+        ApplianceState::AnotherBuild
+    );
+    let symbolic = plan(&repository, Some(&darwin)).unwrap();
+    assert!(symbolic.symbol_provenance().is_some());
+    assert_eq!(symbolic.retirements().len(), 3);
+    let receipt = apply(&repository, Some(&darwin), &symbolic.digest().unwrap()).unwrap();
+    assert_eq!(
+        receipt.plan().symbols().map(|symbols| symbols.uuid()),
+        Some(package.symbol_uuid())
+    );
+    assert_eq!(fs::read(installed_binary(&repository)).unwrap(), executable);
+    assert!(scratch.join(DSYM_DWARF).is_file());
+    assert_eq!(
+        audit_appliance(&repository, &darwin).unwrap().state(),
+        ApplianceState::Current
+    );
+
+    // Dropping symbols discards the retained bundle with the executable it
+    // described, and the discard is derived only for that transition.
+    assert_eq!(
+        audit_appliance(&repository, &linux).unwrap().state(),
+        ApplianceState::AnotherBuild
+    );
+    let dropped = plan(&repository, Some(&linux)).unwrap();
+    assert!(dropped.symbol_provenance().is_none());
+    let discards = dropped
+        .retirements()
+        .iter()
+        .skip(3)
+        .map(|retirement| {
+            (
+                retirement.path().to_owned(),
+                retirement.previous().is_none(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        discards,
+        [
+            (
+                ".spice-install/bin/spice.dSYM/Contents/Info.plist".to_owned(),
+                true
+            ),
+            (
+                ".spice-install/bin/spice.dSYM/Contents/Resources/DWARF/spice".to_owned(),
+                true
+            ),
+        ]
+    );
+    let document: serde_json::Value =
+        serde_json::from_slice(&dropped.canonical_bytes().unwrap()).unwrap();
+    assert!(document.get("symbols").is_none());
+    assert_eq!(document["retirements"][3]["discard"], true);
+    let receipt = apply(&repository, Some(&linux), &dropped.digest().unwrap()).unwrap();
+    assert!(receipt.plan().symbols().is_none());
+    assert!(!scratch.join(DSYM_INFO).exists());
+    assert!(!scratch.join(DSYM_DWARF).exists());
+    assert!(fs::metadata(scratch.record()).unwrap().len() < MAX_COMPACT_RECORD_BYTES);
+    assert_eq!(
+        audit_appliance(&repository, &linux).unwrap().state(),
+        ApplianceState::Current
+    );
+    let settled = plan(&repository, Some(&linux)).unwrap();
+    assert_eq!(settled.digest().unwrap(), *receipt.digest());
+    assert_eq!(settled.retirements().len(), 5);
+
+    // Re-adding symbols over the discarding generation derives no discard,
+    // so the retirement never accumulates across generations.
+    let restored = plan(&repository, Some(&darwin)).unwrap();
+    assert!(restored.symbol_provenance().is_some());
+    assert_eq!(restored.retirements().len(), 3);
+    apply(&repository, Some(&darwin), &restored.digest().unwrap()).unwrap();
+    assert!(scratch.join(DSYM_DWARF).is_file());
+    let dropped_again = plan(&repository, Some(&linux)).unwrap();
+    assert_eq!(dropped_again.retirements().len(), 5);
+
+    assert_eq!(
+        unapply(&repository).unwrap().status(),
+        InstallStatus::Uninstalled
+    );
+    assert!(!installed_binary(&repository).exists());
+    // Refreshed generations leave only the directory skeleton behind, exactly
+    // as every other refreshed install does; no bundle file survives.
+    assert!(!scratch.join(DSYM_INFO).exists());
+    assert!(!scratch.join(DSYM_DWARF).exists());
+    let mut residue = Vec::new();
+    snapshot_walk(
+        scratch.path(),
+        &scratch.join(".git/.spice-install"),
+        &mut residue,
+    );
+    assert!(
+        residue
+            .iter()
+            .all(|(_, _, node)| matches!(node, Node::Directory)),
+        "{residue:?}"
+    );
+}
+
+#[test]
+fn absent_nonregular_mismatched_and_misbound_symbol_inputs_refuse_before_publication() {
+    let scratch = Scratch::new("package-symbol-refusals");
+    let repository = scratch.repository();
+    let (package, darwin, _) = package_fixture(&scratch, "release-package");
+    let target = package.root().join("targets/aarch64-apple-darwin");
+    let artifact = target.join("symbols/spice.dSYM.json");
+    let pristine = fs::read(&artifact).unwrap();
+    let refusal = |scratch: &Scratch| {
+        let before = scratch.snapshot();
+        let error = plan(&repository, Some(&darwin)).unwrap_err();
+        assert_eq!(scratch.snapshot(), before);
+        assert!(!scratch.record().exists());
+        match error {
+            InstallError::SymbolsRefused { path, reason } => (path, reason),
+            other => panic!("expected a symbol refusal, got {other:?}"),
+        }
+    };
+
+    fs::remove_file(&artifact).unwrap();
+    assert_eq!(refusal(&scratch), (artifact.clone(), "is absent"));
+    fs::create_dir(&artifact).unwrap();
+    assert_eq!(
+        refusal(&scratch),
+        (artifact.clone(), "is not a regular file")
+    );
+    fs::remove_dir(&artifact).unwrap();
+    fs::write(target.join("elsewhere.json"), &pristine).unwrap();
+    symlink("../elsewhere.json", &artifact).unwrap();
+    assert_eq!(
+        refusal(&scratch),
+        (artifact.clone(), "is not a regular file")
+    );
+    fs::remove_file(&artifact).unwrap();
+
+    let mut grown = pristine.clone();
+    grown.push(b'\n');
+    fs::write(&artifact, &grown).unwrap();
+    assert_eq!(
+        refusal(&scratch),
+        (artifact.clone(), "differs from the authenticated payload")
+    );
+    fs::write(&artifact, &pristine).unwrap();
+    fs::set_permissions(&artifact, fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(
+        refusal(&scratch),
+        (artifact.clone(), "differs from the authenticated payload")
+    );
+    fs::set_permissions(&artifact, fs::Permissions::from_mode(0o644)).unwrap();
+
+    forge_symbols(&target, &pristine, |forged| {
+        forged.uuid = install_package_fixture::format_uuid(&OTHER_UUID);
+    });
+    assert_eq!(
+        refusal(&scratch),
+        (artifact.clone(), "UUID differs from the executable")
+    );
+    forge_symbols(&target, &pristine, |forged| {
+        forged.dwarf = install_package_fixture::fabricate_macho(OTHER_UUID);
+    });
+    assert_eq!(
+        refusal(&scratch),
+        (artifact.clone(), "DWARF UUID differs from the executable")
+    );
+    forge_symbols(&target, &pristine, |forged| forged.commit = "f".repeat(40));
+    assert_eq!(
+        refusal(&scratch),
+        (artifact.clone(), "names another commit than the payload")
+    );
+    forge_symbols(&target, &pristine, |forged| {
+        forged.commit = install_package_fixture::FIXTURE_COMMIT.to_uppercase();
+    });
+    assert_eq!(
+        refusal(&scratch),
+        (artifact.clone(), "names another commit than the payload")
+    );
+    forge_symbols(&target, &pristine, |forged| forged.dirty = true);
+    let planned = plan(&repository, Some(&darwin)).unwrap();
+    assert!(planned.symbol_provenance().unwrap().dirty());
+    forge_symbols(&target, &pristine, |forged| forged.info.clear());
+    assert_eq!(
+        refusal(&scratch),
+        (
+            artifact.clone(),
+            "is not a canonical current symbol artifact"
+        )
+    );
+
+    // An executable without a Mach-O UUID cannot be bound to any dSYM.
+    let script = scratch.join("script-spice");
+    fs::write(&script, b"#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    let scripted =
+        install_package_fixture::PackageFixture::create(scratch.join("script-package"), &script);
+    let scripted_darwin = scripted
+        .root()
+        .join("targets/aarch64-apple-darwin/bin/spice");
+    let error = plan(&repository, Some(&scripted_darwin)).unwrap_err();
+    assert!(matches!(
+        error,
+        InstallError::SymbolsRefused { path, reason: "carries no thin 64-bit Mach-O LC_UUID" }
+            if path == scripted_darwin
+    ));
+    assert!(!scratch.record().exists());
+}
+
+#[test]
+fn records_that_do_not_establish_symbol_provenance_are_refused_inertly() {
+    let scratch = Scratch::new("package-symbol-records");
+    let repository = scratch.repository();
+    let (_, darwin, _) = package_fixture(&scratch, "release-package");
+    let planned = plan(&repository, Some(&darwin)).unwrap();
+    let receipt = apply(&repository, Some(&darwin), &planned.digest().unwrap()).unwrap();
+    let pristine = fs::read(scratch.record()).unwrap();
+    let symbols = receipt.plan().symbols().unwrap();
+    let sha = format!("\"executable_sha256\":\"{}\"", symbols.executable_sha256());
+    let uuid = format!("\"uuid\":\"{}\"", symbols.uuid());
+    let commit = format!("\"commit\":\"{}\"", symbols.commit());
+    let path = format!("\"path\":\"{}\"", symbols.path());
+    let provenance = "install symbol provenance is not canonical";
+    let together = "symbol provenance and retained symbol operations must be planned together";
+    let closing = "optional executable and symbols do not close the operation inventory";
+    let cases = [
+        (
+            "sha256 too short",
+            provenance,
+            sha.clone(),
+            "\"executable_sha256\":\"abc\"".to_owned(),
+        ),
+        (
+            "sha256 uppercase",
+            provenance,
+            sha.clone(),
+            format!(
+                "\"executable_sha256\":\"{}\"",
+                symbols.executable_sha256().to_uppercase()
+            ),
+        ),
+        (
+            "uuid lowercase",
+            provenance,
+            uuid.clone(),
+            format!("\"uuid\":\"{}\"", symbols.uuid().to_lowercase()),
+        ),
+        (
+            "commit short",
+            provenance,
+            commit.clone(),
+            "\"commit\":\"0123456\"".to_owned(),
+        ),
+        (
+            "commit uppercase",
+            provenance,
+            commit.clone(),
+            format!("\"commit\":\"{}\"", symbols.commit().to_uppercase()),
+        ),
+        (
+            "path moved",
+            provenance,
+            path.clone(),
+            path.replace("spice.dSYM", "other.dSYM"),
+        ),
+        (
+            "provenance missing",
+            together,
+            format!(",\"symbols\":{{{sha},{uuid},{commit},\"dirty\":false,{path}}}"),
+            String::new(),
+        ),
+        (
+            "dwarf operation missing",
+            closing,
+            "\"symbols-dwarf\"".to_owned(),
+            "\"symbols-info\"".to_owned(),
+        ),
+    ];
+    for (label, expected, from, to) in cases {
+        fs::write(scratch.record(), tamper_plan(&pristine, &from, &to)).unwrap();
+        let before = scratch.snapshot();
+        for error in [
+            unapply(&repository).unwrap_err(),
+            plan(&repository, Some(&darwin)).unwrap_err(),
+        ] {
+            assert!(
+                matches!(&error, InstallError::InvalidRecord(detail) if detail == expected),
+                "{label}: {error:?}"
+            );
+        }
+        assert_eq!(scratch.snapshot(), before, "{label}");
+    }
+    fs::write(scratch.record(), &pristine).unwrap();
+    assert_eq!(
+        unapply(&repository).unwrap().status(),
+        InstallStatus::Uninstalled
+    );
+}
+
+/// Replace one unique plan fragment and reseal the plan digest so only the
+/// plan validators, not the closure check, can name the tampered record.
+fn tamper_plan(record: &[u8], from: &str, to: &str) -> Vec<u8> {
+    let text = std::str::from_utf8(record).unwrap();
+    let plan_start = text.find("\"plan\":").unwrap() + "\"plan\":".len();
+    let plan_end = text.find(",\"plan_digest\":\"").unwrap();
+    let digest_start = plan_end + ",\"plan_digest\":\"".len();
+    let digest_end = digest_start + text[digest_start..].find('"').unwrap();
+    let plan = &text[plan_start..plan_end];
+    assert_eq!(plan.matches(from).count(), 1, "{from}");
+    let tampered = plan.replace(from, to);
+    let digest = Digest::compute(Domain::InstallPlan, tampered.as_bytes());
+    format!(
+        "{}{tampered},\"plan_digest\":\"{digest}{}",
+        &text[..plan_start],
+        &text[digest_end..]
+    )
+    .into_bytes()
+}
+
+/// Publish a package whose Darwin executable is a minimal Mach-O image.
+fn package_fixture(
+    scratch: &Scratch,
+    label: &str,
+) -> (install_package_fixture::PackageFixture, PathBuf, Vec<u8>) {
+    let executable = install_package_fixture::fabricate_macho(EXECUTABLE_UUID);
+    let source = scratch.join("fixture-spice");
+    fs::write(&source, &executable).unwrap();
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
+    let package = install_package_fixture::PackageFixture::create(scratch.join(label), &source);
+    let darwin = package
+        .root()
+        .join("targets/aarch64-apple-darwin/bin/spice");
+    (package, darwin, executable)
+}
+
+/// Rewrite the Darwin symbol artifact and reseal the payload around it, so
+/// every refusal below is about the binding rather than a torn package.
+fn forge_symbols(target: &Path, pristine: &[u8], edit: impl FnOnce(&mut MacSymbolArtifact)) {
+    let artifact_path = target.join("symbols/spice.dSYM.json");
+    let mut artifact: MacSymbolArtifact = wire::decode(pristine).unwrap();
+    edit(&mut artifact);
+    let bytes = wire::encode(&artifact).unwrap();
+    fs::write(&artifact_path, &bytes).unwrap();
+    let payload_path = target.join("payload.json");
+    let mut payload: TargetPayload = wire::decode(&fs::read(&payload_path).unwrap()).unwrap();
+    let metadata = payload.symbols.as_mut().unwrap();
+    metadata.bytes = bytes.len() as u64;
+    metadata.digest = Digest::compute(Domain::DistArtifact, &bytes);
+    metadata.uuid = artifact.uuid.clone();
+    let (bytes, digest) = (metadata.bytes, metadata.digest.clone());
+    let entry = payload
+        .inventory
+        .iter_mut()
+        .find(|entry| entry.path == "symbols/spice.dSYM.json")
+        .unwrap();
+    entry.bytes = bytes;
+    entry.digest = digest;
+    payload.inventory_digest = Digest::compute(
+        Domain::DistInventory,
+        &wire::encode(&payload.inventory).unwrap(),
+    );
+    fs::write(&payload_path, wire::encode(&payload).unwrap()).unwrap();
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest as _;
+    sha2::Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 #[test]

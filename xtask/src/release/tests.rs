@@ -399,6 +399,8 @@ fn assert_symbol_result(fixture: &Fixture, programs: &Programs, build: &TargetBu
         wire::decode(&bytes).expect("symbol artifact decodes");
     assert_eq!(artifact.uuid, UUID);
     assert_eq!(artifact.executable, build.staged.payload.native);
+    assert_eq!(artifact.commit, COMMIT);
+    assert!(!artifact.dirty);
     assert_eq!(artifact.info, b"fixture plist");
     assert_eq!(artifact.dwarf, b"fixture DWARF");
     assert_eq!(inventory.bytes, bytes.len() as u64);

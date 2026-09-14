@@ -32,6 +32,10 @@ pub enum Asset {
     CanvasStyle,
     CanvasCurrent,
     Binary,
+    /// Retained dSYM `Info.plist` published only with a symbol-bearing executable.
+    SymbolsInfo,
+    /// Retained dSYM DWARF image sharing the installed executable `LC_UUID`.
+    SymbolsDwarf,
 }
 
 /// Root against which an operation's relative path resolves.

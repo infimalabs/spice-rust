@@ -22,10 +22,10 @@ fn admitted(session: &Session, bytes: &[u8]) -> app::Admitted<StreamFrame> {
 }
 
 fn snapshot(messages: Vec<serde_json::Value>) -> Vec<u8> {
-    snapshot_with_more(messages, &[])
+    snapshot_with_more(messages, Vec::new())
 }
 
-fn snapshot_with_more(messages: Vec<serde_json::Value>, more: &[&str]) -> Vec<u8> {
+fn snapshot_with_more(messages: Vec<serde_json::Value>, more: Vec<serde_json::Value>) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({
         "stream": "messages",
         "v": 1,
@@ -231,7 +231,10 @@ fn mixed_cards_reduce_identically_across_snapshot_history_and_replay() {
         &session,
         &snapshot_with_more(
             vec![second_provider.clone(), media.clone(), command.clone()],
-            &[LANE],
+            vec![serde_json::json!({
+                "lane": LANE,
+                "before": {"member": 1, "offset": 50, "length": 20, "event": 1},
+            })],
         ),
     ));
     let retained_media = Rc::clone(&staged.messages()[0]);

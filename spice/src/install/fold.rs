@@ -5,6 +5,7 @@ use wire::Digest;
 
 use super::{
     Asset, GeneratedImage, InstallError, InstallPlan, Location, ObservedFile, RollbackArchive,
+    SymbolProvenance,
 };
 
 /// Kind of durable action represented by one ordered public stage.
@@ -234,6 +235,8 @@ pub struct InstallPlanSummary {
     rollback_archive: Option<RollbackArchiveSummary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     hook_activation: Option<HookActivationSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    symbols: Option<SymbolProvenance>,
 }
 
 impl InstallPlanSummary {
@@ -294,6 +297,7 @@ impl InstallPlanSummary {
             retirements,
             rollback_archive,
             hook_activation,
+            symbols: plan.symbols.clone(),
         }
     }
 
@@ -331,6 +335,12 @@ impl InstallPlanSummary {
     #[must_use]
     pub const fn hook_activation(&self) -> Option<&HookActivationSummary> {
         self.hook_activation.as_ref()
+    }
+
+    /// Provenance of the executable and retained dSYM, when symbols publish.
+    #[must_use]
+    pub const fn symbols(&self) -> Option<&SymbolProvenance> {
+        self.symbols.as_ref()
     }
 }
 

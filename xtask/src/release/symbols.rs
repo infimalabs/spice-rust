@@ -88,11 +88,16 @@ impl SymbolBundle {
         self,
         uuid: &str,
         executable_digest: Digest,
+        commit: &str,
     ) -> Result<Vec<u8>, BuildError> {
+        // Release refuses dirty checkouts before building, so the linked
+        // executable always derives from the clean commit named here.
         let artifact = wire::encode(&MacSymbolArtifact {
             version: MAC_SYMBOL_ARTIFACT_VERSION,
             uuid: uuid.to_owned(),
             executable: executable_digest,
+            commit: commit.to_owned(),
+            dirty: false,
             info: self.info.read()?,
             dwarf: self.dwarf.read()?,
         })

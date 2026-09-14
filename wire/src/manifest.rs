@@ -49,7 +49,7 @@ pub const PROOF_RECEIPT_VERSION: u16 = 3;
 /// The sole current target payload schema.
 pub const TARGET_PAYLOAD_VERSION: u16 = 3;
 /// The sole current deterministic macOS symbol artifact schema.
-pub const MAC_SYMBOL_ARTIFACT_VERSION: u16 = 1;
+pub const MAC_SYMBOL_ARTIFACT_VERSION: u16 = 2;
 const MACHO_UUID_LENGTH: usize = 36;
 const MACHO_UUID_HYPHENS: [usize; 4] = [8, 13, 18, 23];
 
@@ -413,8 +413,48 @@ pub struct MacSymbolArtifact {
     pub version: u16,
     pub uuid: String,
     pub executable: Digest,
+    /// Full lowercase hex Git commit the executable was linked from.
+    pub commit: String,
+    /// Whether tracked files differed from that commit when linked.
+    pub dirty: bool,
     pub info: Vec<u8>,
     pub dwarf: Vec<u8>,
+}
+
+impl MacSymbolArtifact {
+    /// Whether the UUID has the canonical uppercase Mach-O spelling.
+    #[must_use]
+    pub fn uuid_is_canonical(&self) -> bool {
+        macho_uuid_is_canonical(&self.uuid)
+    }
+
+    /// Whether the commit is a full lowercase SHA-1 or SHA-256 object name.
+    #[must_use]
+    pub fn commit_is_canonical(&self) -> bool {
+        git_commit_is_canonical(&self.commit)
+    }
+}
+
+/// Whether `uuid` has the canonical uppercase Mach-O spelling.
+#[must_use]
+pub fn macho_uuid_is_canonical(uuid: &str) -> bool {
+    uuid.len() == MACHO_UUID_LENGTH
+        && uuid.bytes().enumerate().all(|(index, byte)| {
+            if MACHO_UUID_HYPHENS.contains(&index) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_digit() || (b'A'..=b'F').contains(&byte)
+            }
+        })
+}
+
+/// Whether `commit` is a full lowercase SHA-1 or SHA-256 Git object name.
+#[must_use]
+pub fn git_commit_is_canonical(commit: &str) -> bool {
+    matches!(commit.len(), 40 | 64)
+        && commit
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 /// Authenticated identity of one platform-conditional macOS symbol artifact.
@@ -433,14 +473,7 @@ impl MacSymbolMetadata {
     /// Whether the UUID has the canonical uppercase Mach-O spelling.
     #[must_use]
     pub fn uuid_is_canonical(&self) -> bool {
-        self.uuid.len() == MACHO_UUID_LENGTH
-            && self.uuid.bytes().enumerate().all(|(index, byte)| {
-                if MACHO_UUID_HYPHENS.contains(&index) {
-                    byte == b'-'
-                } else {
-                    byte.is_ascii_digit() || (b'A'..=b'F').contains(&byte)
-                }
-            })
+        macho_uuid_is_canonical(&self.uuid)
     }
 }
 

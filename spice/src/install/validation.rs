@@ -67,41 +67,59 @@ fn validate_operation_inventory(
     } else {
         &current[..]
     };
-    if plan.operations.len() != expected.len() && plan.operations.len() != expected.len() + 1 {
-        return Err(InstallError::InvalidRecord(
-            "install plan has an incomplete or extra operation inventory".to_owned(),
-        ));
-    }
-    if plan
-        .operations
-        .iter()
-        .zip(expected)
-        .any(|(operation, asset)| operation.asset != *asset)
+    if plan.operations.len() < expected.len()
+        || plan
+            .operations
+            .iter()
+            .zip(expected)
+            .any(|(operation, asset)| operation.asset != *asset)
     {
         return Err(InstallError::InvalidRecord(
             "install plan operation order is not canonical".to_owned(),
         ));
     }
-    if plan.operations.len() > expected.len()
-        && plan.operations.last().map(|operation| operation.asset) != Some(Asset::Binary)
-    {
-        return Err(InstallError::InvalidRecord(
-            "optional binary is not the final operation".to_owned(),
-        ));
-    }
-    if plan.hook_activation.is_some()
-        != plan
-            .operations
-            .last()
-            .is_some_and(|operation| operation.asset == Asset::Binary)
-    {
-        return Err(InstallError::InvalidRecord(
-            "hook activation and installed executable must be planned together".to_owned(),
-        ));
-    }
+    validate_optional_tail(plan, &plan.operations[expected.len()..])?;
     validate_app_generations(plan)?;
     if let Some(activation) = &plan.hook_activation {
         activation.validate(content == GeneratedContentAuthority::HistoricalReceipt)?;
+    }
+    Ok(())
+}
+
+/// The executable and its symbols are the only optional operations, and they
+/// close the inventory: `[]`, `[Binary]`, or `[Binary, SymbolsInfo, SymbolsDwarf]`.
+fn validate_optional_tail(plan: &InstallPlan, tail: &[Operation]) -> Result<(), InstallError> {
+    let tail = tail
+        .iter()
+        .map(|operation| operation.asset)
+        .collect::<Vec<_>>();
+    let with_symbols = [Asset::Binary, Asset::SymbolsInfo, Asset::SymbolsDwarf];
+    let admitted = tail.is_empty()
+        || tail == [Asset::Binary]
+        || (plan.version == PLAN_VERSION && tail == with_symbols);
+    if !admitted {
+        return Err(InstallError::InvalidRecord(
+            "optional executable and symbols do not close the operation inventory".to_owned(),
+        ));
+    }
+    if plan.symbols.is_some() != (tail == with_symbols) {
+        return Err(InstallError::InvalidRecord(
+            "symbol provenance and retained symbol operations must be planned together".to_owned(),
+        ));
+    }
+    if let Some(symbols) = &plan.symbols {
+        symbols.validate()?;
+    }
+    // Historical inventories place the executable inside the fixed prefix,
+    // so the activation pairs with any installed executable, not the tail.
+    let installed_executable = plan
+        .operations
+        .iter()
+        .any(|operation| operation.asset == Asset::Binary);
+    if plan.hook_activation.is_some() != installed_executable {
+        return Err(InstallError::InvalidRecord(
+            "hook activation and installed executable must be planned together".to_owned(),
+        ));
     }
     Ok(())
 }
@@ -166,21 +184,23 @@ fn validate_retirement_inventory(plan: &InstallPlan, migratable: bool) -> Result
             ));
         }
     } else {
-        let expected = if matches!(plan.version, PLAN_VERSION | PREVIOUS_RECORD_VERSION) {
-            &[
-                RETIRED_XTASK_PATH,
-                RETIRED_XTASK_GUARD_PATH,
-                RETIRED_FOLD_STORE_PATH,
-            ][..]
-        } else {
-            &[RETIRED_XTASK_PATH, RETIRED_XTASK_GUARD_PATH][..]
-        };
+        let mut expected = vec![RETIRED_XTASK_PATH, RETIRED_XTASK_GUARD_PATH];
+        if matches!(plan.version, PLAN_VERSION | PREVIOUS_RECORD_VERSION) {
+            expected.push(RETIRED_FOLD_STORE_PATH);
+        }
+        // Only a current plan without symbols may discard a retained bundle.
+        if plan.version == PLAN_VERSION
+            && plan.symbols.is_none()
+            && plan.retirements.len() == expected.len() + symbols::DISCARD_PATHS.len()
+        {
+            expected.extend(symbols::DISCARD_PATHS);
+        }
         if plan.retirements.len() != expected.len()
             || plan
                 .retirements
                 .iter()
                 .zip(expected)
-                .any(|(retirement, path)| retirement.path != *path)
+                .any(|(retirement, path)| retirement.path != path)
         {
             return Err(InstallError::InvalidRecord(
                 "install retirement inventory is not exact and ordered".to_owned(),
@@ -268,8 +288,10 @@ fn validate_retirement(retirement: &Retirement, plan_version: u16) -> Result<(),
     validate_relative(&retirement.path)?;
     validate_relative(&retirement.destination)?;
     let expected_parent = Path::new(&retirement.parent.ancestor).join(&retirement.parent.missing);
-    let current_discard =
-        plan_version == PLAN_VERSION && retirement.path == RETIRED_FOLD_STORE_PATH;
+    let current_discard = (matches!(plan_version, PLAN_VERSION | PREVIOUS_RECORD_VERSION)
+        && retirement.path == RETIRED_FOLD_STORE_PATH)
+        || (plan_version == PLAN_VERSION
+            && symbols::DISCARD_PATHS.contains(&retirement.path.as_str()));
     let invalid_discard = if current_discard {
         !retirement.discard
             || retirement.previous.is_some()
@@ -376,12 +398,16 @@ fn validate_generated_content(
             asset_name(operation.asset)
         )));
     }
+    let empty = Digest::compute(Domain::InstallArtifact, &[]);
     match operation.asset {
-        Asset::Binary
-            if operation.generated.digest == Digest::compute(Domain::InstallArtifact, &[]) =>
-        {
+        Asset::Binary if operation.generated.digest == empty => {
             return Err(InstallError::InvalidRecord(
                 "explicit Spice executable is empty".to_owned(),
+            ));
+        }
+        Asset::SymbolsInfo | Asset::SymbolsDwarf if operation.generated.digest == empty => {
+            return Err(InstallError::InvalidRecord(
+                "retained symbol asset is empty".to_owned(),
             ));
         }
         _ => {}
@@ -424,6 +450,8 @@ fn asset_name(asset: Asset) -> &'static str {
         Asset::Skill => "generated skill",
         Asset::CanvasCurrent => "Canvas generation pointer",
         Asset::Binary => "Spice executable",
+        Asset::SymbolsInfo => "retained dSYM Info.plist",
+        Asset::SymbolsDwarf => "retained dSYM DWARF image",
         _ => unreachable!("Canvas generation assets returned above"),
     }
 }
@@ -474,6 +502,9 @@ pub(super) fn asset_contract(
 ) -> Result<(Location, String, u32), InstallError> {
     if let Some(path) = app::operation_path(asset, app)? {
         return Ok((Location::CommonGit, path, DATA_MODE));
+    }
+    if let Some(path) = symbols::path(asset) {
+        return Ok((Location::CommonGit, path.to_owned(), DATA_MODE));
     }
     let contract = match asset {
         Asset::Exclusions => (Location::CommonGit, EXCLUDE_PATH.to_owned(), DATA_MODE),
