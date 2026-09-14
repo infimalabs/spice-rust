@@ -329,11 +329,24 @@ fn fixture(path: Option<&Path>) -> Journal {
 /// `observe` reads it only after the claim, the lease and the expiry chain
 /// pass, so reaching that read empty needs a board that never seated one.
 fn seeded(path: Option<&Path>, residency: bool) -> Journal {
+    seeded_at(path, residency, "todo")
+}
+
+/// Seed the board with the fixture task sitting in `current`.
+///
+/// The flow always runs todo then review, so a task seeded at review is one
+/// whose implementation already completed: the row a review claim is minted
+/// against.
+fn seeded_at(path: Option<&Path>, residency: bool, current: &str) -> Journal {
     let mut journal = path.map_or_else(
         || Journal::in_memory().expect("memory journal"),
         |path| Journal::open(path).expect("file journal"),
     );
-    let phase = "todo".parse::<Phase>().expect("phase");
+    let flow = vec![
+        "todo".parse::<Phase>().expect("phase"),
+        "review".parse::<Phase>().expect("phase"),
+    ];
+    let phase = current.parse::<Phase>().expect("phase");
     let origin = "task:BOARD-root".parse::<Origin>().expect("origin");
     let mut write = JournalWrite::new(
         Actor::Spice,
@@ -352,7 +365,7 @@ fn seeded(path: Option<&Path>, residency: bool) -> Journal {
                 project: "board.possession".to_owned(),
                 tags: vec!["priority:high".to_owned()],
                 depends: Vec::new(),
-                flow: vec![phase.clone()],
+                flow: flow.clone(),
                 phase: phase.clone(),
                 revision: 1,
                 creation: body::TaskCreationContext::unavailable(
@@ -378,7 +391,7 @@ fn seeded(path: Option<&Path>, residency: bool) -> Journal {
         revision: position,
     });
     write.workflow_head(born(), fact, move |_| WorkflowHead {
-        flow: vec![phase.clone()],
+        flow,
         phase,
         status: "pending".to_owned(),
         review: "unassigned".to_owned(),
@@ -454,6 +467,216 @@ fn lapse_preserves_lease_and_makes_the_task_allocatable_again() {
         allocatable(&after),
         "a lapsed claim leaves the task allocatable again"
     );
+}
+
+/// Pin the review assignment to someone other than the claim holder.
+///
+/// No production writer produces this shape: the minter assigns the review to
+/// whoever wins it. It exists to prove the lapse checks the assignee rather
+/// than the phase, so a pin belonging to another actor survives the lapse.
+fn assign_review_elsewhere(journal: &mut Journal, reviewer: Actor) {
+    let selected = journal
+        .read_with(|read| read.task_heads_for(&born()))
+        .expect("heads before the reassignment")
+        .expect("the fixture task is on the board");
+    let mut next = selected.workflow().body().clone();
+    next.assignment = Some(reviewer.clone());
+    next.review = "assigned".to_owned();
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        "task:BOARD-a1".parse().expect("assignment origin"),
+        instant(6),
+        Producer::CommandDoor,
+    );
+    let fact = write
+        .fact(
+            body::TaskAssigned {
+                task: born(),
+                reviewer,
+                phase: next.phase.clone(),
+            },
+            FactCause::Root,
+        )
+        .expect("assignment fact");
+    write.workflow_head(born(), fact, move |_| next);
+    journal.apply(write).expect("the reassignment commits");
+}
+
+/// A review claim's lapse releases the review in the same transaction.
+///
+/// The claim head and the workflow head are read back together, because the
+/// defect this pins is the two disagreeing: a claim nobody holds beside an
+/// assignment that still routes the row to the departed reviewer alone.
+#[test]
+fn lapsing_a_review_claim_releases_its_assignment_in_the_same_transaction() {
+    let mut journal = seeded_at(None, true, "review");
+    claim(&mut journal, 31);
+    let before = journal
+        .read_with(|read| read.task_heads_for(&born()))
+        .expect("heads before the lapse")
+        .expect("the fixture task is on the board");
+    let assigned = before.workflow().body().clone();
+    assert_eq!(assigned.assignment, Some(Actor::Lane(uuid(20))));
+    assert_eq!(assigned.review, "assigned");
+
+    let expired = lapse(&mut journal, lapse_request(32, 20)).expect("lapse review claim");
+    assert_eq!(expired.first(), expired.last());
+    let after = snapshot(&journal);
+    let entry = &after.entries()[0];
+    assert_eq!(
+        entry.claim().expect("claim").disposition,
+        ClaimDisposition::Lapsed
+    );
+    assert_eq!(entry.workflow().assignment, None);
+    assert_eq!(entry.workflow().review, "unassigned");
+    assert_eq!(entry.workflow().phase.as_str(), "review");
+    assert_eq!(entry.workflow().flow, assigned.flow);
+    let heads = journal
+        .read_with(|read| read.task_heads_for(&born()))
+        .expect("heads after the lapse")
+        .expect("the fixture task remains");
+    assert_eq!(
+        heads.workflow().position(),
+        expired.first(),
+        "the released workflow head hangs off the lapse fact"
+    );
+    assert_eq!(
+        heads.claim().expect("claim head").position(),
+        expired.first()
+    );
+    let facts = journal.fact_snapshot().expect("lapsed facts");
+    assert_eq!(facts.facts().len(), 4);
+    assert_eq!(facts.facts()[3].fact.kind(), wire::FactKind::ClaimLapsed);
+    assert_eq!(journal.verify().expect("authority verifies").receipts, 2);
+    let (claim, lease, mut expected) = possession(&journal);
+    assert_eq!(claim.disposition, ClaimDisposition::Lapsed);
+    assert_eq!(lease.expiry, instant(20));
+    expected.retain(|witness| !matches!(witness, Witness::Claim { .. }));
+    expected.insert(
+        0,
+        Witness::Claim {
+            task: born(),
+            head: Some(before.claim().expect("claim head").position()),
+        },
+    );
+    assert_eq!(
+        lapse_replay(&journal, 32, expected.clone()),
+        Some(journal::CommandReplay::Conflict),
+        "the receipt is not the bare possession witness set"
+    );
+    expected.push(Witness::Workflow {
+        task: born(),
+        head: before.workflow().position(),
+        phase: assigned.phase,
+    });
+    assert!(
+        matches!(
+            lapse_replay(&journal, 32, expected),
+            Some(journal::CommandReplay::Exact(_))
+        ),
+        "the receipt witnesses the workflow head it rewrote"
+    );
+    assert!(
+        board::eligible_entry(
+            after.entries(),
+            entry,
+            &Actor::Lane(uuid(24)),
+            after.environment()
+        ),
+        "another lane is handed the released review"
+    );
+}
+
+/// A review pinned to someone else keeps its pin through the holder's lapse.
+#[test]
+fn lapsing_a_review_claim_assigned_elsewhere_leaves_the_workflow_head_alone() {
+    let mut journal = seeded_at(None, true, "review");
+    claim(&mut journal, 31);
+    assign_review_elsewhere(&mut journal, Actor::Lane(uuid(25)));
+    let before = journal
+        .read_with(|read| read.task_heads_for(&born()))
+        .expect("heads before the lapse")
+        .expect("the fixture task is on the board");
+
+    let expired = lapse(&mut journal, lapse_request(33, 20)).expect("lapse review claim");
+    let after = journal
+        .read_with(|read| read.task_heads_for(&born()))
+        .expect("heads after the lapse")
+        .expect("the fixture task remains");
+    assert_eq!(after.workflow(), before.workflow());
+    assert_eq!(
+        after.workflow().body().assignment,
+        Some(Actor::Lane(uuid(25)))
+    );
+    assert_eq!(
+        after.claim().expect("claim head").body().disposition,
+        ClaimDisposition::Lapsed
+    );
+    assert_eq!(expired.first(), expired.last());
+    let mut expected = vec![
+        Witness::Claim {
+            task: born(),
+            head: Some(before.claim().expect("claim head").position()),
+        },
+        Witness::Lease {
+            task: born(),
+            head: before.lease().expect("lease head").position(),
+        },
+        Witness::Residency {
+            lane: uuid(20),
+            occupant: uuid(21),
+            epoch: uuid(22),
+        },
+    ];
+    assert!(
+        matches!(
+            lapse_replay(&journal, 33, expected.clone()),
+            Some(journal::CommandReplay::Exact(_))
+        ),
+        "an untouched workflow head is not witnessed"
+    );
+    expected.push(Witness::Workflow {
+        task: born(),
+        head: before.workflow().position(),
+        phase: before.workflow().body().phase.clone(),
+    });
+    assert_eq!(
+        lapse_replay(&journal, 33, expected),
+        Some(journal::CommandReplay::Conflict)
+    );
+}
+
+/// Replay the lapse receipt `command` against one exact witness set.
+///
+/// The receipt stores the admitted request whole, so replaying it with a
+/// different witness list answers `Conflict`: this is how the test reads which
+/// witnesses the lapse actually spent without reaching into the store.
+fn lapse_replay(
+    journal: &Journal,
+    command: u8,
+    expected: Vec<Witness>,
+) -> Option<journal::CommandReplay> {
+    let request = wire::encode(&Command {
+        v: WireVersion::CURRENT,
+        id: uuid(command),
+        epoch: uuid(22),
+        kind: CommandKind::ClaimLapse,
+        expected,
+        body: intent::TaskRef { task: task() },
+    })
+    .expect("the lapse request encodes");
+    let admitted = Command::admit(
+        wire::decode(&request).expect("the lapse request decodes"),
+        &wire::Accepted {
+            wire: WireVersion::CURRENT,
+            actor: Actor::Lane(uuid(20)),
+            epoch: uuid(22),
+        },
+    )
+    .expect("the lapse request admits under its law");
+    journal
+        .read_with(|read| read.command_replay(&admitted))
+        .expect("receipt replay reads")
 }
 
 #[test]

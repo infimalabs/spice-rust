@@ -348,10 +348,14 @@ fn build_write(request: Request, observed: Observation) -> Result<JournalWrite, 
         .map_err(LapseError::Build)?;
     let mut next = observed.claim.body().clone();
     next.disposition = ClaimDisposition::Lapsed;
-    write.claim_head(stamp, fact, move |position| {
+    write.claim_head(stamp.clone(), fact, move |position| {
         next.fact = position;
         next
     });
+    let released = released_workflow(&observed);
+    if let Some(workflow) = released.clone() {
+        write.workflow_head(stamp, fact, move |_| workflow);
+    }
     write
         .command_result(
             Command {
@@ -359,7 +363,7 @@ fn build_write(request: Request, observed: Observation) -> Result<JournalWrite, 
                 id: request.command,
                 epoch: request.epoch,
                 kind: CommandKind::ClaimLapse,
-                expected: witnesses(&request, &observed, lane),
+                expected: witnesses(&request, &observed, lane, released.is_some()),
                 body: request.intent,
             },
             request.epoch,
@@ -376,15 +380,40 @@ fn build_write(request: Request, observed: Observation) -> Result<JournalWrite, 
     Ok(write)
 }
 
-fn witnesses(request: &Request, observed: &Observation, lane: CanonicalUuid) -> Vec<Witness> {
+/// The workflow head a lapse rewrites when it also releases a review.
+///
+/// A review claim carries its reviewer on the workflow head as well as on the
+/// claim head, so lapsing only the claim would leave a row nobody holds that
+/// the allocator still routes to the departed reviewer alone. This mirrors the
+/// release the free command writes: a review-phase row whose assignment names
+/// the lapsing actor goes back to unassigned in the same transaction. Any
+/// other row, or a review assigned to someone else, keeps its workflow head.
+fn released_workflow(observed: &Observation) -> Option<wire::WorkflowHead> {
+    let workflow = observed.workflow.body();
+    let released = workflow.phase.as_str() == "review"
+        && workflow.assignment.as_ref() == Some(&observed.claim.body().actor);
+    released.then(|| {
+        let mut next = workflow.clone();
+        next.assignment = None;
+        next.review = "unassigned".to_owned();
+        next
+    })
+}
+
+fn witnesses(
+    request: &Request,
+    observed: &Observation,
+    lane: CanonicalUuid,
+    released: bool,
+) -> Vec<Witness> {
     let task = observed.statement.body().born.clone();
-    vec![
+    let mut expected = vec![
         Witness::Claim {
             task: task.clone(),
             head: Some(observed.claim.position()),
         },
         Witness::Lease {
-            task,
+            task: task.clone(),
             head: observed.lease.position(),
         },
         Witness::Residency {
@@ -392,7 +421,15 @@ fn witnesses(request: &Request, observed: &Observation, lane: CanonicalUuid) -> 
             occupant: request.occupant,
             epoch: request.epoch,
         },
-    ]
+    ];
+    if released {
+        expected.push(Witness::Workflow {
+            task,
+            head: observed.workflow.position(),
+            phase: observed.workflow.body().phase.clone(),
+        });
+    }
+    expected
 }
 
 fn change_guard(request: Request, expected: Observation) -> JournalGuard {
