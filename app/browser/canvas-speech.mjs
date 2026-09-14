@@ -85,6 +85,16 @@ export async function installBrowserSpeech(context, voices = ["Zoe (Premium)"]) 
         cancel() {
           window.__speechLog.push({ action: "cancel" });
           window.__speechActive = 0;
+          // A closing page cannot be asked afterwards, so the cancel also
+          // leaves a same-origin receipt the next page can read.
+          try {
+            window.localStorage.setItem(
+              "spice-fixture:speech-cancels",
+              String(Number(window.localStorage.getItem("spice-fixture:speech-cancels") ?? 0) + 1),
+            );
+          } catch {
+            // Storage may be unavailable while the document unloads.
+          }
         },
         getVoices() { return voiceNames.map((name) => new FakeVoice(name)); },
         speak(utterance) {
@@ -345,6 +355,8 @@ export async function assertSpeechVariants(browser, endpoint) {
   externalMonitor.assertClean();
   await external.close();
 
+  await assertSpeechStopsWithThePage(variants, endpoint);
+
   const malformed = await variants.newPage();
   const malformedMonitor = monitorPage(malformed);
   await routeSpeechBootstrap(malformed, { backend: "system", voice: "Zoe (Premium)" });
@@ -357,4 +369,45 @@ export async function assertSpeechVariants(browser, endpoint) {
   await malformed.close();
 
   await variants.close();
+}
+
+/// Closing the page that queued a system utterance cancels it, so speech
+/// never continues out of the operating system speech server after the
+/// Canvas window is gone.
+async function assertSpeechStopsWithThePage(context, endpoint) {
+  const closing = await context.newPage();
+  const closingMonitor = monitorPage(closing);
+  await closing.goto(endpoint, { waitUntil: "networkidle" });
+  await chooseCanvasView(closing, "Flow");
+  await assertOnlineObserved(closing, "the page loads with system speech", CONNECT_MS);
+  await chooseCanvasView(closing, "Lanes");
+  const card = closing.locator('[data-card-kind="agent-message"]').first();
+  await card.waitFor();
+  await card.getByLabel("Speak this message").click();
+  await waitForPage(closing, "system speech starts before the page closes", CONNECT_MS,
+    () => window.__speechActive === 1);
+  await closing.evaluate(() => {
+    window.localStorage.removeItem("spice-fixture:speech-cancels");
+  });
+  assert.equal(
+    await closing.evaluate(() => window.__speechLog.filter((row) => row.action === "cancel").length),
+    0,
+    "starting one utterance cancels nothing",
+  );
+  closingMonitor.assertClean();
+  await closing.close();
+
+  const successor = await context.newPage();
+  const successorMonitor = monitorPage(successor);
+  await successor.goto(endpoint, { waitUntil: "networkidle" });
+  assert.equal(
+    await successor.evaluate(() => window.localStorage.getItem("spice-fixture:speech-cancels")),
+    "1",
+    "closing the page cancelled its in-flight system utterance exactly once",
+  );
+  await successor.evaluate(() => {
+    window.localStorage.removeItem("spice-fixture:speech-cancels");
+  });
+  successorMonitor.assertClean();
+  await successor.close();
 }

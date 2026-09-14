@@ -424,6 +424,7 @@ fn canvas_app() -> Html {
     );
     use_lineage_speech_abandonment(&surface, speech_runtime.clone());
     use_speech_reset(speech.clone(), speech_runtime.clone());
+    use_page_hide_speech_stop(speech_runtime.clone());
     use_mosaic_root_scroll(*mosaic);
     use_canvas_menu_dismissal(canvas_menu_open.clone());
     watchband::use_command_modifier_preview();
@@ -606,6 +607,37 @@ fn use_speech_reset(speech: UseStateHandle<wire::SpeechPlayback>, speech_runtime
     let effective = (*speech).clone();
     use_effect_with(effective, move |_| {
         speech_runtime.stop();
+    });
+}
+
+/// Stop every clip the moment the page is hidden for navigation or close.
+///
+/// System synthesis runs in the operating system speech server, so an
+/// utterance queued by this page keeps playing after the window that queued
+/// it is gone unless the page cancels it on the way out. `pagehide` is the
+/// last event every browser dispatches before a document is unloaded or
+/// frozen, including tab and window close.
+#[hook]
+fn use_page_hide_speech_stop(speech_runtime: SpeechRuntime) {
+    use_effect_with((), move |()| {
+        let registration = web_sys::window().and_then(|window| {
+            let callback =
+                Closure::<dyn FnMut(web_sys::Event)>::new(move |_event: web_sys::Event| {
+                    speech_runtime.stop()
+                });
+            window
+                .add_event_listener_with_callback("pagehide", callback.as_ref().unchecked_ref())
+                .ok()
+                .map(|()| (window, callback))
+        });
+        move || {
+            if let Some((window, callback)) = registration {
+                let _ = window.remove_event_listener_with_callback(
+                    "pagehide",
+                    callback.as_ref().unchecked_ref(),
+                );
+            }
+        }
     });
 }
 

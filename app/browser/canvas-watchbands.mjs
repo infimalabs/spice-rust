@@ -547,6 +547,56 @@ export async function assertPerOrgWatchbands(
   assert.equal(await primarySurface.locator(".organization-speech span").innerText(), "quiet");
   assert.equal(await secondarySurface.locator(".organization-speech span").innerText(), "narrate");
 
+  await page.evaluate(() => {
+    window.__speechLog = [];
+    window.__speechUtterances = [];
+  });
+  const quietFinal = await streamAgentProse(
+    primaryNarrator.worktree,
+    primaryNarrationCards,
+    "quiet final answer",
+    { final: true },
+  );
+  await waitForNarrationCursor(
+    primarySurface,
+    await quietFinal.getAttribute("data-mosaic-card-key"),
+  );
+  assert.deepEqual(
+    await page.evaluate(() => window.__speechLog),
+    [],
+    "Quiet hands a final answer to neither speechSynthesis nor an audio element",
+  );
+  await primarySpeech.fill("1");
+  assert.equal(await primarySurface.locator(".organization-speech span").innerText(), "speak");
+  const spokenFinal = await streamAgentProse(
+    primaryNarrator.worktree,
+    primaryNarrationCards,
+    "spoken final answer",
+    { final: true },
+  );
+  const spokenFinalKey = await spokenFinal.getAttribute("data-mosaic-card-key");
+  await waitForNarrationCursor(primarySurface, spokenFinalKey);
+  await waitForPage(page, "Speak dispatches the final answer it is bound to", TRANSITION_MS,
+    () => window.__speechLog.filter((row) => row.action === "speak").length === 1);
+  assert.deepEqual(
+    await page.evaluate(() => window.__speechLog.map((row) => [row.action, row.text])),
+    [["speak", "spoken final answer"]],
+    "returning to Speak speaks only the new final answer, never the Quiet-era one",
+  );
+  assert.equal(
+    await spokenFinal.getAttribute("data-speech-active"),
+    "true",
+    "the automatic utterance marks its message card while the page is visible",
+  );
+  await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+  await waitForPage(page, "pagehide cancels the in-flight system utterance", TRANSITION_MS,
+    () => window.__speechLog.at(-1)?.action === "cancel" && window.__speechActive === 0);
+  await waitForPage(page, "pagehide releases the message card", TRANSITION_MS,
+    (key) => document.querySelector(`[data-mosaic-card-key="${key}"]`)?.dataset.speechActive
+      === "false", spokenFinalKey);
+  await primarySpeech.fill("0");
+  assert.equal(await primarySurface.locator(".organization-speech span").innerText(), "quiet");
+
   await page.evaluate(() => { window.__speechLog = []; });
   const quietManual = primarySurface.getByLabel("Speak this message").first();
   await quietManual.click();
