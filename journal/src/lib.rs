@@ -8,6 +8,17 @@
 /// release that wrote it added.
 pub const SCHEMA_VERSION: u32 = 25;
 
+/// How long a connection to the on-disk authority waits on a lock another
+/// process holds before giving up, instead of refusing on the first try.
+///
+/// A sibling resident releasing this same file (its own shutdown, a commit,
+/// a read-only inspection) can hold SQLite's lock for a moment after every
+/// higher-level handoff this crate coordinates has already completed, since
+/// that handoff has no visibility into SQLite's own file lock. Five seconds
+/// comfortably outlasts that moment without masking a genuinely stuck holder.
+#[cfg(not(target_arch = "wasm32"))]
+const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+
 #[cfg(not(target_arch = "wasm32"))]
 mod guard;
 #[cfg(not(target_arch = "wasm32"))]
@@ -63,6 +74,8 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Seek, Write};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Duration;
 
 #[cfg(not(target_arch = "wasm32"))]
 use rusqlite::{Connection, OpenFlags};
@@ -232,6 +245,9 @@ impl Journal {
             source,
         })?;
         connection
+            .busy_timeout(BUSY_TIMEOUT)
+            .map_err(OpenError::Sqlite)?;
+        connection
             .execute_batch("PRAGMA foreign_keys = ON; PRAGMA trusted_schema = OFF;")
             .map_err(OpenError::Sqlite)?;
         let migration = migrate::baseline_for_reindex(&mut connection)?;
@@ -280,6 +296,9 @@ impl Journal {
                 source,
             })?;
         connection
+            .busy_timeout(BUSY_TIMEOUT)
+            .map_err(OpenError::Sqlite)?;
+        connection
             .pragma_update(None, "query_only", true)
             .map_err(OpenError::Sqlite)?;
         connection
@@ -289,6 +308,9 @@ impl Journal {
     }
 
     fn from_connection(mut connection: Connection) -> Result<Self, OpenError> {
+        connection
+            .busy_timeout(BUSY_TIMEOUT)
+            .map_err(OpenError::Sqlite)?;
         connection
             .execute_batch("PRAGMA foreign_keys = ON; PRAGMA trusted_schema = OFF;")
             .map_err(OpenError::Sqlite)?;
@@ -320,6 +342,9 @@ impl JournalReader {
     }
 
     fn from_connection(connection: Connection) -> Result<Self, OpenError> {
+        connection
+            .busy_timeout(BUSY_TIMEOUT)
+            .map_err(OpenError::Sqlite)?;
         connection
             .pragma_update(None, "query_only", true)
             .map_err(OpenError::Sqlite)?;
