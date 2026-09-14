@@ -37,6 +37,9 @@ const MH_MAGIC_64: u32 = 0xFEED_FACF;
 const MH_HEADER_64_LENGTH: usize = 32;
 const LC_UUID: u32 = 0x1B;
 const LC_UUID_LENGTH: usize = 24;
+const LC_SEGMENT_64: u32 = 0x19;
+const LC_SEGMENT_64_LENGTH: usize = 72;
+const TEXT_SEGMENT: &[u8] = b"__TEXT\0";
 const SHA256_HEX_LENGTH: usize = 64;
 
 /// Provenance of the executable and dSYM one install record retains.
@@ -321,8 +324,12 @@ fn read_artifact(
     Ok(artifact)
 }
 
-/// `LC_UUID` of a thin little-endian 64-bit Mach-O image, canonically spelled.
-pub(super) fn executable_uuid(bytes: &[u8]) -> Option<String> {
+/// Load commands of a thin little-endian 64-bit Mach-O image, in order.
+///
+/// Each entry pairs the command kind with its complete bytes, including the
+/// eight-byte command header. Any header or command that does not fit the
+/// image rejects the whole image rather than the one command.
+pub(super) fn load_commands(bytes: &[u8]) -> Option<Vec<(u32, &[u8])>> {
     let word = |offset: usize| {
         bytes
             .get(offset..offset + 4)
@@ -338,22 +345,46 @@ pub(super) fn executable_uuid(bytes: &[u8]) -> Option<String> {
         return None;
     }
     let mut offset = MH_HEADER_64_LENGTH;
-    let mut uuid = None;
+    let mut loaded = Vec::new();
     for _ in 0..commands {
         let command = word(offset)?;
         let length = word(offset + 4)? as usize;
         if length < 8 || offset.checked_add(length)? > end {
             return None;
         }
-        if command == LC_UUID {
-            if length != LC_UUID_LENGTH || uuid.is_some() {
-                return None;
-            }
-            uuid = Some(format_uuid(bytes.get(offset + 8..offset + LC_UUID_LENGTH)?));
-        }
+        loaded.push((command, &bytes[offset..offset + length]));
         offset += length;
     }
+    Some(loaded)
+}
+
+/// `LC_UUID` of a thin little-endian 64-bit Mach-O image, canonically spelled.
+pub(super) fn executable_uuid(bytes: &[u8]) -> Option<String> {
+    let mut uuid = None;
+    for (command, body) in load_commands(bytes)? {
+        if command == LC_UUID {
+            if body.len() != LC_UUID_LENGTH || uuid.is_some() {
+                return None;
+            }
+            uuid = Some(format_uuid(&body[8..LC_UUID_LENGTH]));
+        }
+    }
     uuid
+}
+
+/// Preferred address of the `__TEXT` segment, from which every sampled
+/// runtime address slides by one image-wide offset.
+pub(super) fn text_segment_address(bytes: &[u8]) -> Option<u64> {
+    load_commands(bytes)?
+        .into_iter()
+        .find_map(|(command, body)| {
+            if command != LC_SEGMENT_64 || body.len() < LC_SEGMENT_64_LENGTH {
+                return None;
+            }
+            let name = &body[8..24];
+            let address = body[24..32].try_into().map(u64::from_le_bytes).ok()?;
+            name.starts_with(TEXT_SEGMENT).then_some(address)
+        })
 }
 
 fn format_uuid(raw: &[u8]) -> String {
@@ -446,5 +477,39 @@ mod tests {
         doubled.extend_from_slice(&raw);
         assert_eq!(executable_uuid(&doubled), None);
         assert_eq!(executable_uuid(b"#!/bin/sh\n"), None);
+    }
+
+    #[test]
+    fn text_segment_address_reads_only_the_text_segment_command() {
+        let segment = |name: &[u8], address: u64| {
+            let mut command = Vec::new();
+            command.extend_from_slice(&LC_SEGMENT_64.to_le_bytes());
+            command.extend_from_slice(&(LC_SEGMENT_64_LENGTH as u32).to_le_bytes());
+            let mut segname = [0_u8; 16];
+            segname[..name.len()].copy_from_slice(name);
+            command.extend_from_slice(&segname);
+            command.extend_from_slice(&address.to_le_bytes());
+            command.extend_from_slice(&[0; LC_SEGMENT_64_LENGTH - 32]);
+            command
+        };
+        let mut image = Vec::new();
+        image.extend_from_slice(&MH_MAGIC_64.to_le_bytes());
+        image.extend_from_slice(&[0; 12]);
+        image.extend_from_slice(&2_u32.to_le_bytes());
+        image.extend_from_slice(&(2 * LC_SEGMENT_64_LENGTH as u32).to_le_bytes());
+        image.extend_from_slice(&[0; 8]);
+        image.extend_from_slice(&segment(b"__PAGEZERO", 0));
+        image.extend_from_slice(&segment(b"__TEXT", 0x1_0000_0000));
+        assert_eq!(text_segment_address(&image), Some(0x1_0000_0000));
+        assert_eq!(executable_uuid(&image), None);
+        let mut without_text = image.clone();
+        without_text[16..20].copy_from_slice(&1_u32.to_le_bytes());
+        without_text[20..24].copy_from_slice(&(LC_SEGMENT_64_LENGTH as u32).to_le_bytes());
+        without_text.truncate(MH_HEADER_64_LENGTH + LC_SEGMENT_64_LENGTH);
+        assert_eq!(text_segment_address(&without_text), None);
+        let mut short = image.clone();
+        short[MH_HEADER_64_LENGTH + LC_SEGMENT_64_LENGTH + 4..][..4]
+            .copy_from_slice(&8_u32.to_le_bytes());
+        assert_eq!(text_segment_address(&short), None);
     }
 }

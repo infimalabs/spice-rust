@@ -270,6 +270,33 @@ only its preview digest. Every linked worktree observes one Git-common upgrade,
 and the installed pre-commit worker verifies the receipt, assets, and exact
 binary before selected-source verification.
 
+## macOS symbols
+
+A macOS release package installs the executable together with its dSYM, and
+the receipt records the executable SHA-256, the shared Mach-O UUID, and the Git
+commit it was linked from. Verification reads the installed pair and the
+receipt and succeeds only when every recorded value agrees with the files on
+disk; a mismatch names the exact observed value:
+
+```sh
+"$SPICE_BIN" --json install symbols
+```
+
+To attribute a short sample of a running installed executable to named Rust
+functions and source lines, capture it with the system sampler and hand the
+report to the same command:
+
+```sh
+sample "$(pgrep -n -f "$SPICE_BIN")" 1 -file "$TMPDIR/spice-sample.txt"
+"$SPICE_BIN" --json install symbols --sample "$TMPDIR/spice-sample.txt"
+```
+
+The report must come from the installed image: its UUID is compared with the
+verified receipt before any lookup. The symbolizer reads at most 4 MiB, resolves
+at most 256 distinct addresses of the installed image, and runs one bounded
+`dwarfdump --lookup` of at most five seconds per address against the retained
+DWARF. Both forms are read-only and record nothing.
+
 ## Ownership and reversal
 
 Preview changes nothing. After admitting the exact preview digest, apply may

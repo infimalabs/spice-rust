@@ -178,7 +178,7 @@ fn result<B>(result: Result<B, InstallError>) -> Outcome<B> {
     }
 }
 
-fn failure<B>(error: InstallError) -> Outcome<B> {
+pub(crate) fn failure<B>(error: InstallError) -> Outcome<B> {
     match &error {
         InstallError::PathShape(_)
         | InstallError::PathOutsideRoot(_)

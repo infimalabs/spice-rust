@@ -66,6 +66,7 @@ const CASES: &[Case] = &[
     case("version", &["version"]),
     case("rtk gain", &["rtk", "gain", UUID]),
     case("install", &["install"]),
+    case("install symbols", &["install", "symbols"]),
     case("dev cargo", &["dev", "cargo", "--", "--version"]),
     case("dev xtask", &["dev", "xtask", "--", "help"]),
     case("dev cargo-store", &["dev", "cargo-store"]),

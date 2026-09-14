@@ -135,6 +135,17 @@ const JUDGE_TOOL: ExternalTool = ExternalTool {
 pub(super) const TASK_DONE_TOOLS: &[ExternalTool] = &[TASK_GIT_TOOL, JUDGE_TOOL];
 pub(super) const UP_TOOLS: &[ExternalTool] = &[JUDGE_TOOL];
 
+pub(super) const INSTALL_SYMBOLS_TOOLS: &[ExternalTool] = &[ExternalTool {
+    name: "dwarfdump",
+    owner: "install::DwarfdumpLookup",
+    mode: ToolMode::Launch,
+    requirement: ToolRequirement::Conditional,
+    source: ToolSource::SymbolLookupContract,
+    bounds: ToolBounds::CommandOwned,
+    cancellation: ToolCancellation::Deadline,
+    network: ToolNetwork::Permitted,
+}];
+
 pub(super) const PROOF_TOOLS: &[ExternalTool] = &[
     ExternalTool {
         name: "OCI runtime",
@@ -307,6 +318,12 @@ fn validate_source_posture(path: &str, tool: &ExternalTool, violations: &mut Vec
         ToolSource::AdjudicationContract => (
             ToolMode::Launch,
             ToolBounds::Adjudication,
+            ToolCancellation::Deadline,
+            ToolNetwork::Permitted,
+        ),
+        ToolSource::SymbolLookupContract => (
+            ToolMode::Launch,
+            ToolBounds::CommandOwned,
             ToolCancellation::Deadline,
             ToolNetwork::Permitted,
         ),

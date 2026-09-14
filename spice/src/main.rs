@@ -36,6 +36,8 @@ mod install_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod install_package;
 #[cfg(not(target_arch = "wasm32"))]
+mod install_symbols_command;
+#[cfg(not(target_arch = "wasm32"))]
 mod journal_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod journal_lock;
@@ -341,6 +343,7 @@ impl NativeInvocation<'_> {
                 install_command::Answer::Receipt(outcome) => deliver(&outcome, form),
                 install_command::Answer::Child(status) => terminate_child(status),
             },
+            ["install", "symbols"] => deliver(&install_symbols_command::run(leaf), form),
             ["config"] => deliver_config(&config_command::run(leaf), form),
             ["config", "migrate-tasks"] => {
                 deliver_task_migration(&task_migration_command::run(leaf), form)
@@ -549,6 +552,10 @@ fn target_unsupported(path: &[&str]) -> Option<Fault> {
         ["install"] => (
             "install::target-unsupported",
             "filesystem installation is unavailable on wasm32",
+        ),
+        ["install", "symbols"] => (
+            "install::target-unsupported",
+            "installed symbol verification is unavailable on wasm32",
         ),
         ["lock"] | ["lock", "run"] => (
             "lock::target-unsupported",
