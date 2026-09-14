@@ -140,6 +140,7 @@ pub(super) fn materialize_generated(
     operation: &Operation,
     spice_binary: Option<&Path>,
     app: Option<&super::app::Source>,
+    symbols: Option<&super::symbols::Source>,
     common_git: &Path,
 ) -> Result<FileImage, InstallError> {
     let retained = super::app::operation_generation(operation.asset, &operation.path)
@@ -162,6 +163,10 @@ pub(super) fn materialize_generated(
                 Asset::Binary => {
                     read_binary(spice_binary.ok_or(InstallError::BinaryContextChanged)?)?
                 }
+                Asset::SymbolsInfo | Asset::SymbolsDwarf => symbols
+                    .and_then(|source| source.bytes(operation.asset))
+                    .ok_or(InstallError::BinaryContextChanged)?
+                    .to_vec(),
                 _ => return Err(InstallError::BinaryContextChanged),
             },
         },

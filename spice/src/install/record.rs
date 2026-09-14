@@ -104,19 +104,29 @@ impl InstallRecord {
         })
     }
 
-    /// Remove hook assets introduced after the version-7 receipt shape.
+    /// Strip the version-15 symbol operations, provenance, and published files.
     #[cfg(debug_assertions)]
-    pub(super) fn remove_test_newer_hook_assets(
+    pub(super) fn remove_test_symbol_assets(
         &mut self,
         repository: &Repository,
     ) -> Result<(), InstallError> {
-        let mut assets = vec![
-            super::Asset::HookZsh,
-            super::Asset::HookBash,
-            super::Asset::HookWrapperSpice,
-        ];
-        assets.extend(super::app::ASSETS.into_iter().map(|(asset, _)| asset));
-        assets.push(super::Asset::CanvasCurrent);
+        if self.plan.symbols.take().is_none() {
+            return Ok(());
+        }
+        self.remove_test_operations(repository, &super::symbols::ASSETS, None)?;
+        let bundle = repository.common_dir().join(super::symbols::SYMBOLS_PATH);
+        fs::remove_dir_all(&bundle)
+            .map_err(|source| InstallError::io("remove future symbol test bundle", bundle, source))
+    }
+
+    /// Remove `assets` from the plan, its bookkeeping, and the filesystem.
+    #[cfg(debug_assertions)]
+    fn remove_test_operations(
+        &mut self,
+        repository: &Repository,
+        assets: &[super::Asset],
+        app: Option<&Digest>,
+    ) -> Result<(), InstallError> {
         let mut indices = assets
             .iter()
             .map(|asset| {
@@ -154,17 +164,32 @@ impl InstallRecord {
             self.installed_parents.remove(index);
             self.restored.remove(index);
         }
-        let app = self.plan.app.take();
         self.completed = self.plan.operation_count();
         self.plan_digest = self.plan.digest()?;
-
         for asset in assets {
-            let (_, relative, _) = super::asset_contract(asset, app.as_ref())?;
+            let (_, relative, _) = super::asset_contract(*asset, app)?;
             let path = repository.common_dir().join(relative);
-            fs::remove_file(&path).map_err(|source| {
-                InstallError::io("remove future hook test asset", path, source)
-            })?;
+            fs::remove_file(&path)
+                .map_err(|source| InstallError::io("remove future test asset", path, source))?;
         }
+        Ok(())
+    }
+
+    /// Remove hook assets introduced after the version-7 receipt shape.
+    #[cfg(debug_assertions)]
+    pub(super) fn remove_test_newer_hook_assets(
+        &mut self,
+        repository: &Repository,
+    ) -> Result<(), InstallError> {
+        let mut assets = vec![
+            super::Asset::HookZsh,
+            super::Asset::HookBash,
+            super::Asset::HookWrapperSpice,
+        ];
+        assets.extend(super::app::ASSETS.into_iter().map(|(asset, _)| asset));
+        assets.push(super::Asset::CanvasCurrent);
+        let app = self.plan.app.take();
+        self.remove_test_operations(repository, &assets, app.as_ref())?;
         let app_root = repository.common_dir().join(".spice-install/app");
         fs::remove_dir_all(&app_root).map_err(|source| {
             InstallError::io("remove future Canvas test assets", app_root, source)
@@ -790,6 +815,7 @@ pub(super) fn publish_test_historical_receipt(
             "test fixture receipt is not complete".to_owned(),
         ));
     }
+    record.remove_test_symbol_assets(repository)?;
     match version {
         super::MIGRATABLE_RECORD_VERSION
         | super::FORWARD_MIGRATABLE_RECORD_VERSION
@@ -819,7 +845,7 @@ pub(super) fn publish_test_historical_receipt(
                 }
             }
         }
-        super::PREVIOUS_RECORD_VERSION => downgrade_test_version_13(&mut record, repository)?,
+        super::PREVIOUS_RECORD_VERSION => {}
         _ => {
             return Err(InstallError::InvalidRecord(format!(
                 "test receipt schema {version} is not directly upgradable"
@@ -836,32 +862,4 @@ pub(super) fn publish_test_historical_receipt(
     let path = record_path(repository)?;
     fs::write(&path, bytes)
         .map_err(|source| InstallError::io("publish historical test receipt", path, source))
-}
-
-#[cfg(debug_assertions)]
-fn downgrade_test_version_13(
-    record: &mut InstallRecord,
-    repository: &Repository,
-) -> Result<(), InstallError> {
-    let index = record
-        .plan
-        .retirements
-        .iter()
-        .position(|retirement| retirement.path == super::RETIRED_FOLD_STORE_PATH)
-        .ok_or_else(|| {
-            InstallError::InvalidRecord("test receipt has no fold-store retirement".to_owned())
-        })?;
-    let retirement = &mut record.plan.retirements[index];
-    let path = retirement.destination(repository);
-    if let Some(observed) = super::files::observe(&path)? {
-        retirement.previous = Some(observed.clone());
-        retirement.observed = Some(observed);
-        fs::remove_file(&path).map_err(|source| {
-            InstallError::io("remove version-13 fold-store test fixture", &path, source)
-        })?;
-    }
-    retirement.discard = false;
-    retirement.superseded = None;
-    retirement.rollback = None;
-    Ok(())
 }

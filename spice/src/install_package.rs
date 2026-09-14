@@ -90,9 +90,17 @@ fn acquire(root: &Path) -> Result<AcquiredPackage, Error> {
         .iter()
         .find(|candidate| candidate.target == target)
         .ok_or_else(|| Error::input(format!("package has no executable for {target}")))?;
+    // Admission already bound the symbol member to the payload metadata, so
+    // its presence alone decides whether the staged tree carries a dSYM.
+    let symbols_path = format!("targets/{}/symbols/spice.dSYM.json", target.as_str());
+    let symbols_path = members
+        .iter()
+        .any(|member| member.path() == symbols_path)
+        .then_some(symbols_path);
     let acquired = AcquiredPackage {
         executable_path: selected.executable_path.clone(),
         payload_path: format!("targets/{}/payload.json", target.as_str()),
+        symbols_path,
         members,
     };
     acquired.member(&acquired.executable_path)?;
@@ -104,6 +112,7 @@ fn acquire(root: &Path) -> Result<AcquiredPackage, Error> {
 struct AcquiredPackage {
     executable_path: String,
     payload_path: String,
+    symbols_path: Option<String>,
     members: Vec<proof::PackageMember>,
 }
 
@@ -320,6 +329,9 @@ impl StagedPackage {
             }
             staged.publish(acquired.member(&acquired.payload_path)?)?;
             staged.publish(acquired.member(&acquired.executable_path)?)?;
+            if let Some(symbols_path) = &acquired.symbols_path {
+                staged.publish(acquired.member(symbols_path)?)?;
+            }
             return Ok(staged);
         }
         Err(Error::input(
@@ -461,7 +473,26 @@ mod tests {
         );
         assert!(staged_root.join(PACKAGE_DOCUMENT_PATH).is_file());
         assert!(staged_root.join(&acquired.payload_path).is_file());
-        assert!(!staged_root.join(symbol_path).exists());
+        let darwin = current_target().unwrap() == ReleaseTarget::Aarch64AppleDarwin;
+        assert_eq!(
+            acquired.symbols_path.as_deref(),
+            darwin.then_some(symbol_path)
+        );
+        assert_eq!(staged_root.join(symbol_path).is_file(), darwin);
+        if darwin {
+            assert_eq!(
+                fs::read(staged_root.join(symbol_path)).unwrap(),
+                b"symbol fixture"
+            );
+            assert_eq!(
+                fs::metadata(staged_root.join(symbol_path))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o644,
+            );
+        }
         for file in CANVAS_APP_FILES {
             assert_eq!(
                 fs::read(staged_root.join("app").join(file)).unwrap(),

@@ -58,6 +58,9 @@ opt-level = 3
 [profile.dev.package.sha1]
 opt-level = 3
 
+[profile.dev.package.sha2]
+opt-level = 3
+
 [profile.dev.package.wire]
 opt-level = 3
 
@@ -71,6 +74,9 @@ debug = 1
 opt-level = 3
 
 [profile.test.package.sha1]
+opt-level = 3
+
+[profile.test.package.sha2]
 opt-level = 3
 
 [profile.test.package.wire]

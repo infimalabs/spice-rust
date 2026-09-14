@@ -26,6 +26,7 @@ mod path;
 mod progress;
 mod record;
 mod rollback;
+mod symbols;
 mod validation;
 
 pub use audit::{ApplianceAudit, ApplianceState, audit_appliance};
@@ -58,15 +59,16 @@ pub use maintenance::{
 };
 pub use model::{Asset, FileImage, GeneratedImage, Location, Operation, Retirement};
 use model::{ObservedFile, ReceiptGeneration, RepositoryIdentity};
+pub use symbols::SymbolProvenance;
 
-const PLAN_VERSION: u16 = 14;
-const RECORD_VERSION: u16 = 14;
+const PLAN_VERSION: u16 = 15;
+const RECORD_VERSION: u16 = 15;
 const RETIREMENT_WITNESS_MISMATCH: &str =
     "migration rollback archive does not match its retirement witnesses";
 const MIGRATABLE_RECORD_VERSION: u16 = 7;
 const FORWARD_MIGRATABLE_RECORD_VERSION: u16 = 8;
 const INLINE_ROLLBACK_RECORD_VERSION: u16 = 9;
-const PREVIOUS_RECORD_VERSION: u16 = 13;
+const PREVIOUS_RECORD_VERSION: u16 = 14;
 /// Environment marker exported only by the installed pre-commit launcher.
 pub const INSTALLED_PRE_COMMIT_ENVIRONMENT: &str = "SPICE_SHELL_HOOK_INSTALLED_APPLIANCE"; // env-policy: allow
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -76,7 +78,7 @@ enum ReceiptSupport {
     Retired(&'static str),
 }
 
-const RECEIPT_SUPPORT: [(u16, ReceiptSupport); 14] = [
+const RECEIPT_SUPPORT: [(u16, ReceiptSupport); 15] = [
     (1, ReceiptSupport::Retired("SURFACE-1kJQkpFs")),
     (2, ReceiptSupport::Retired("SURFACE-1kJRGpf2")),
     (3, ReceiptSupport::Retired("HOOKS-1kJQnmG8")),
@@ -89,6 +91,7 @@ const RECEIPT_SUPPORT: [(u16, ReceiptSupport); 14] = [
     (10, ReceiptSupport::Retired("WRAPPER-1kNYClbf")),
     (11, ReceiptSupport::Retired("WRAPPER-1kNYClbf")),
     (12, ReceiptSupport::Retired("RETIREM-1kSR91Zl")),
+    (13, ReceiptSupport::Retired("INSTALL-1kSWFBN0")),
     (PREVIOUS_RECORD_VERSION, ReceiptSupport::Direct),
     (RECORD_VERSION, ReceiptSupport::Current),
 ];
@@ -186,6 +189,8 @@ pub struct InstallPlan {
     rollback_archive: Option<RollbackArchive>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     hook_activation: Option<HookActivationPlan>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    symbols: Option<SymbolProvenance>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -229,6 +234,12 @@ impl InstallPlan {
     #[must_use]
     pub const fn hook_activation(&self) -> Option<&HookActivationPlan> {
         self.hook_activation.as_ref()
+    }
+
+    /// Provenance of the executable and dSYM a symbol-bearing plan retains.
+    #[must_use]
+    pub const fn symbol_provenance(&self) -> Option<&SymbolProvenance> {
+        self.symbols.as_ref()
     }
 
     /// Number of durable publication stages in this plan.
@@ -621,27 +632,23 @@ fn build_plan(
 /// Passing a completed plan makes this a refresh: every operation keeps that
 /// plan's reversal image and names its generated image as superseded, so apply
 /// replaces each destination in place instead of reversing the install first.
-fn build_plan_over(
+/// Assemble every planned operation in canonical order: the fixed prefix,
+/// the app bundle, the executable, and finally its retained symbols.
+fn append_planned_operations(
     repository: &Repository,
-    spice_binary: Option<&Path>,
     installed: Option<&InstallPlan>,
-    binary_superseded: Option<&GeneratedImage>,
-    rollback_record: Option<&FileImage>,
-    rollback_archive: Option<&RollbackArchive>,
-) -> Result<InstallPlan, InstallError> {
-    let app = spice_binary
-        .map(|binary| app::Source::resolve(repository, binary))
-        .transpose()?;
+    (spice_binary, binary_superseded): (Option<&Path>, Option<&GeneratedImage>),
+    (app, symbols): (Option<&app::Source>, Option<&symbols::Source>),
+    archiving: bool,
+) -> Result<(Vec<Operation>, Vec<Option<FileImage>>), InstallError> {
     let mut virtual_directories = BTreeSet::new();
     let mut operations = Vec::new();
     let mut observed_operations = Vec::new();
-    let compacting = rollback_record.is_some();
-    let archiving = compacting || rollback_archive.is_some();
 
     append_fixed_operations(
         repository,
         installed,
-        app.as_ref().map(app::Source::generation),
+        app.map(app::Source::generation),
         archiving,
         (
             &mut virtual_directories,
@@ -650,7 +657,7 @@ fn build_plan_over(
         ),
     )?;
 
-    if let Some(app) = &app {
+    if let Some(app) = app {
         append_app_operations(
             repository,
             installed,
@@ -669,7 +676,7 @@ fn build_plan_over(
         installed,
         spice_binary,
         binary_superseded,
-        app.as_ref().map(app::Source::generation),
+        app.map(app::Source::generation),
         archiving,
         (
             &mut virtual_directories,
@@ -678,13 +685,65 @@ fn build_plan_over(
         ),
     )?;
 
+    if let Some(symbols) = symbols {
+        symbols::append_operations(
+            repository,
+            installed,
+            symbols,
+            archiving,
+            (
+                &mut virtual_directories,
+                &mut operations,
+                &mut observed_operations,
+            ),
+        )?;
+    }
+
+    Ok((operations, observed_operations))
+}
+
+fn build_plan_over(
+    repository: &Repository,
+    spice_binary: Option<&Path>,
+    installed: Option<&InstallPlan>,
+    binary_superseded: Option<&GeneratedImage>,
+    rollback_record: Option<&FileImage>,
+    rollback_archive: Option<&RollbackArchive>,
+) -> Result<InstallPlan, InstallError> {
+    let app = spice_binary
+        .map(|binary| app::Source::resolve(repository, binary))
+        .transpose()?;
+    let symbols = spice_binary
+        .map(symbols::Source::resolve)
+        .transpose()?
+        .flatten();
+    let compacting = rollback_record.is_some();
+    let archiving = compacting || rollback_archive.is_some();
+    let (operations, observed_operations) = append_planned_operations(
+        repository,
+        installed,
+        (spice_binary, binary_superseded),
+        (app.as_ref(), symbols.as_ref()),
+        archiving,
+    )?;
+
     let record = bind_destination(repository.common_dir(), RECORD_PATH)?;
+    // A plan that stops publishing symbols discards the bundle its
+    // predecessor retained, so the executable and dSYM leave together.
+    let discard_symbols =
+        symbols.is_none() && installed.is_some_and(|plan| symbols::operations(plan).count() > 0);
     let planned_retirements = [
         RETIRED_XTASK_PATH,
         RETIRED_XTASK_GUARD_PATH,
         RETIRED_FOLD_STORE_PATH,
     ]
     .into_iter()
+    .chain(
+        discard_symbols
+            .then_some(symbols::DISCARD_PATHS)
+            .into_iter()
+            .flatten(),
+    )
     .map(|path| retirement(repository, installed, path, archiving))
     .collect::<Result<Vec<_>, _>>()?;
     let (retirements, rollback_retirements): (Vec<_>, Vec<_>) =
@@ -724,9 +783,15 @@ fn build_plan_over(
         retirements,
         rollback_archive,
         hook_activation,
+        symbols: symbols.map(|symbols| symbols.provenance().clone()),
     };
     plan.validate_pristine(repository)?;
     Ok(plan)
+}
+
+/// Paths a current plan discards outright, without a reversal image.
+fn is_discard_path(path: &str) -> bool {
+    path == RETIRED_FOLD_STORE_PATH || symbols::DISCARD_PATHS.contains(&path)
 }
 
 fn current_rollback_archive(
@@ -800,9 +865,8 @@ fn retirement(
     path: &str,
     archiving: bool,
 ) -> Result<(Retirement, Option<FileImage>), InstallError> {
-    if path == RETIRED_FOLD_STORE_PATH {
-        let (bound, observed) =
-            destination_state(repository, Location::CommonGit, RETIRED_FOLD_STORE_PATH)?;
+    if is_discard_path(path) {
+        let (bound, observed) = destination_state(repository, Location::CommonGit, path)?;
         return Ok((
             Retirement {
                 path: path.to_owned(),
@@ -1148,7 +1212,18 @@ fn current_build_differs(
         .map(|binary| app::Source::resolve(repository, binary))
         .transpose()?
         .is_some_and(|app| app.differs_from(plan));
-    Ok(binary_differs || app_differs || plan.fixed_content_differs_from_current_build()?)
+    let symbols_differ = match spice_binary
+        .map(symbols::Source::resolve)
+        .transpose()?
+        .flatten()
+    {
+        Some(symbols) => symbols.differs_from(plan),
+        None => plan.symbols.is_some(),
+    };
+    Ok(binary_differs
+        || app_differs
+        || symbols_differ
+        || plan.fixed_content_differs_from_current_build()?)
 }
 
 fn fixed_asset_bytes(asset: Asset, common_git: &Path) -> Result<Option<Vec<u8>>, InstallError> {
@@ -1176,7 +1251,9 @@ fn fixed_asset_bytes(asset: Asset, common_git: &Path) -> Result<Option<Vec<u8>>,
         | Asset::CanvasResponsive
         | Asset::CanvasStyle
         | Asset::CanvasCurrent
-        | Asset::Binary => return Ok(None),
+        | Asset::Binary
+        | Asset::SymbolsInfo
+        | Asset::SymbolsDwarf => return Ok(None),
     };
     Ok(Some(bytes))
 }

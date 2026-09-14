@@ -78,7 +78,7 @@ impl Fixture {
             &self.linked,
             &["--json", "install", "--package", package],
         ));
-        reply_body(invoke(
+        let receipt: InstallReceipt = reply_body(invoke(
             Path::new(env!("CARGO_BIN_EXE_spice")),
             &self.linked,
             &[
@@ -88,7 +88,13 @@ impl Fixture {
                 package,
                 &format!("--apply={}", preview.digest()),
             ],
-        ))
+        ));
+        // The package install retains the fixture symbols on macOS only.
+        assert_eq!(
+            receipt.plan().symbols().map(|symbols| symbols.uuid()),
+            cfg!(target_os = "macos").then_some(self.package.symbol_uuid()),
+        );
+        receipt
     }
 }
 

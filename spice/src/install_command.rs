@@ -187,6 +187,7 @@ fn failure<B>(error: InstallError) -> Outcome<B> {
         | InstallError::BinaryNotRegular(_)
         | InstallError::BinaryEmpty(_)
         | InstallError::HookPathUnrepresentable { .. }
+        | InstallError::SymbolsRefused { .. }
         | InstallError::ForeignHookPath { .. }
         | InstallError::GitConfigurationDrift { .. }
         | InstallError::BinaryContextChanged
@@ -248,6 +249,7 @@ fn install_refusal_reason(error: &InstallError) -> &'static str {
     match error {
         InstallError::DigestMismatch { .. } => "install::digest-moved",
         InstallError::HookPathUnrepresentable { .. } => "install::hook-path-unrepresentable",
+        InstallError::SymbolsRefused { .. } => "install::symbols-refused",
         InstallError::ForeignHookPath { .. } => "install::foreign-hooks",
         InstallError::GitConfigurationDrift { .. } => "install::hook-configuration-drift",
         InstallError::LegacyRecord { .. } => "install::release-owned-state",
@@ -294,6 +296,10 @@ fn install_refusal_remedy(error: &InstallError) -> String {
         ),
         InstallError::HookPathUnrepresentable { path, .. } => format!(
             "move or recreate the repository at a UTF-8 path with no line separators, then rerun this executable's install preview; the refused Git-common path was {path:?}",
+        ),
+        InstallError::SymbolsRefused { path, .. } => format!(
+            "inspect the package symbol input with `{}`; re-acquire the release package so its executable, payload, and `symbols/spice.dSYM.json` come from one sealed build, then rerun `spice install --package`",
+            inspect_path(path),
         ),
         InstallError::BinaryContextChanged => concat!(
             "the `.spice-install/bin/spice` asset was planned from another executable; preview ",

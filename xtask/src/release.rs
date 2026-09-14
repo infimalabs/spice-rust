@@ -297,6 +297,7 @@ fn stage_with<E: Executor>(
         target_dir: &target_dir,
         programs,
         executor,
+        source: &source,
         symbols: None,
         symbol_artifact: None,
     };
@@ -427,6 +428,7 @@ struct CommandBuilder<'a, E> {
     target_dir: &'a Path,
     programs: &'a Programs,
     executor: &'a E,
+    source: &'a SourceGuard,
     symbols: Option<MacSymbols>,
     symbol_artifact: Option<Vec<u8>>,
 }
@@ -489,6 +491,7 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
             self.symbol_artifact = Some(symbols.capture.encode(
                 &symbols.public.uuid,
                 Digest::compute(Domain::DistArtifact, &native),
+                &self.source.commit,
             )?);
             self.symbols = Some(symbols.public);
         }

@@ -19,7 +19,11 @@ pub(super) fn apply_with_interruption(
     let app = spice_binary
         .map(|binary| app::Source::resolve(repository, binary))
         .transpose()?;
-    let generated = materialize_operations(&record, spice_binary, app.as_ref())?;
+    let symbols = spice_binary
+        .map(symbols::Source::resolve)
+        .transpose()?
+        .flatten();
+    let generated = materialize_operations(&record, spice_binary, app.as_ref(), symbols.as_ref())?;
     if fresh {
         record.plan.validate_pristine(repository)?;
     } else {
@@ -111,6 +115,7 @@ fn materialize_operations(
     record: &InstallRecord,
     spice_binary: Option<&Path>,
     app: Option<&app::Source>,
+    symbols: Option<&symbols::Source>,
 ) -> Result<Vec<FileImage>, InstallError> {
     record
         .plan
@@ -121,6 +126,7 @@ fn materialize_operations(
                 operation,
                 spice_binary,
                 app,
+                symbols,
                 &record.plan.repository.common_git,
             )
         })
@@ -334,7 +340,7 @@ pub(super) fn unapply_with_interruption(
     let mut record = loaded.record;
     if record.version != RECORD_VERSION || record.plan.version != PLAN_VERSION {
         return Err(InstallError::InvalidRecord(format!(
-            "version-{} install from RETIREM-1kSR91Zl must be refreshed to version {RECORD_VERSION} before unapply",
+            "version-{} install from INSTALL-1kSWFBN0 must be refreshed to version {RECORD_VERSION} before unapply",
             record.version,
         )));
     }

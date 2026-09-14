@@ -1,0 +1,450 @@
+//! Authenticated macOS dSYM retention beside the installed executable.
+//!
+//! A package install carries one `MacSymbolArtifact` bound to the exact
+//! executable it ships. The installer republishes that bundle beside the
+//! executable and records its provenance in the same receipt, so the pair
+//! publishes, refreshes, rolls back, and unapplies as one generation.
+
+use std::fs;
+use std::io::{self, Read};
+use std::os::unix::fs::MetadataExt;
+use std::path::Path;
+
+use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
+use wire::manifest::{
+    MAC_SYMBOL_ARTIFACT_VERSION, MacSymbolArtifact, MacSymbolMetadata, ReleaseTarget,
+    git_commit_is_canonical, macho_uuid_is_canonical,
+};
+use wire::{Digest, Domain};
+
+use super::{
+    AppPlanState, Asset, DATA_MODE, GeneratedImage, InstallError, InstallPlan, Location, Operation,
+    Repository, destination_state, operation, reversal_context,
+};
+
+/// Canonical retained dSYM bundle beside the installed executable.
+pub(super) const SYMBOLS_PATH: &str = ".spice-install/bin/spice.dSYM";
+pub(super) const SYMBOLS_INFO_PATH: &str = ".spice-install/bin/spice.dSYM/Contents/Info.plist";
+pub(super) const SYMBOLS_DWARF_PATH: &str =
+    ".spice-install/bin/spice.dSYM/Contents/Resources/DWARF/spice";
+/// Symbol assets in their sole publication order, after the executable.
+pub(super) const ASSETS: [Asset; 2] = [Asset::SymbolsInfo, Asset::SymbolsDwarf];
+/// Paths a plan without symbols discards when its predecessor published them.
+pub(super) const DISCARD_PATHS: [&str; 2] = [SYMBOLS_INFO_PATH, SYMBOLS_DWARF_PATH];
+
+const MH_MAGIC_64: u32 = 0xFEED_FACF;
+const MH_HEADER_64_LENGTH: usize = 32;
+const LC_UUID: u32 = 0x1B;
+const LC_UUID_LENGTH: usize = 24;
+const SHA256_HEX_LENGTH: usize = 64;
+
+/// Provenance of the executable and dSYM one install record retains.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SymbolProvenance {
+    executable_sha256: String,
+    uuid: String,
+    commit: String,
+    dirty: bool,
+    path: String,
+}
+
+impl SymbolProvenance {
+    /// Lowercase hex SHA-256 of the installed executable bytes.
+    #[must_use]
+    pub fn executable_sha256(&self) -> &str {
+        &self.executable_sha256
+    }
+
+    /// Mach-O `LC_UUID` shared by the executable and its dSYM.
+    #[must_use]
+    pub fn uuid(&self) -> &str {
+        &self.uuid
+    }
+
+    /// Full Git commit the executable was linked from.
+    #[must_use]
+    pub fn commit(&self) -> &str {
+        &self.commit
+    }
+
+    /// Whether tracked files differed from that commit when linked.
+    #[must_use]
+    pub const fn dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// Git-common-relative path of the retained dSYM bundle.
+    #[must_use]
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub(super) fn validate(&self) -> Result<(), InstallError> {
+        let sha256_canonical = self.executable_sha256.len() == SHA256_HEX_LENGTH
+            && self
+                .executable_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+        if !sha256_canonical
+            || !macho_uuid_is_canonical(&self.uuid)
+            || !git_commit_is_canonical(&self.commit)
+            || self.path != SYMBOLS_PATH
+        {
+            return Err(InstallError::InvalidRecord(
+                "install symbol provenance is not canonical".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Symbol bundle authenticated against the selected executable.
+pub(super) struct Source {
+    provenance: SymbolProvenance,
+    info: Vec<u8>,
+    dwarf: Vec<u8>,
+}
+
+impl Source {
+    /// Resolve the package symbol artifact bound to `binary`, if any.
+    ///
+    /// Only a package install carries symbols: its payload names the artifact
+    /// for the Darwin target and forbids one for Linux. A build selected from
+    /// anywhere else publishes no symbols, and that absence is not an error.
+    pub(super) fn resolve(binary: &Path) -> Result<Option<Self>, InstallError> {
+        let Some((_, target_root)) = super::app::package_layout(binary) else {
+            return Ok(None);
+        };
+        let payload_path = target_root.join("payload.json");
+        let payload_bytes = fs::read(&payload_path)
+            .map_err(|error| InstallError::io("read appliance payload", &payload_path, error))?;
+        let admitted = proof::admit(&payload_bytes)
+            .map_err(|error| InstallError::InvalidRecord(format!("appliance payload: {error}")))?;
+        let payload = admitted.value();
+        let metadata = match (payload.target, payload.symbols.as_ref()) {
+            (ReleaseTarget::Aarch64AppleDarwin, Some(metadata)) => metadata,
+            (ReleaseTarget::X86_64UnknownLinuxMusl, None) => return Ok(None),
+            (ReleaseTarget::Aarch64AppleDarwin, None) => {
+                return Err(refused(&payload_path, "names no macOS symbol artifact"));
+            }
+            (ReleaseTarget::X86_64UnknownLinuxMusl, Some(_)) => {
+                return Err(refused(&payload_path, "names a symbol artifact for Linux"));
+            }
+        };
+        let binary_bytes = super::read_binary(binary)?;
+        let native = Digest::compute(Domain::DistArtifact, &binary_bytes);
+        if native != payload.native || metadata.executable != native {
+            return Err(refused(binary, "is not the executable the payload binds"));
+        }
+        let artifact_path = target_root.join(&metadata.path);
+        let artifact = read_artifact(&artifact_path, metadata)?;
+        if artifact.executable != native {
+            return Err(refused(
+                &artifact_path,
+                "binds another executable than the payload",
+            ));
+        }
+        let uuid = executable_uuid(&binary_bytes)
+            .ok_or_else(|| refused(binary, "carries no thin 64-bit Mach-O LC_UUID"))?;
+        if artifact.uuid != metadata.uuid || uuid != artifact.uuid {
+            return Err(refused(&artifact_path, "UUID differs from the executable"));
+        }
+        if executable_uuid(&artifact.dwarf).as_deref() != Some(uuid.as_str()) {
+            return Err(refused(
+                &artifact_path,
+                "DWARF UUID differs from the executable",
+            ));
+        }
+        if !artifact.commit_is_canonical()
+            || Digest::compute(Domain::DistSourceCommit, artifact.commit.as_bytes())
+                != payload.source
+        {
+            return Err(refused(
+                &artifact_path,
+                "names another commit than the payload",
+            ));
+        }
+        Ok(Some(Self {
+            provenance: SymbolProvenance {
+                executable_sha256: format!("{:x}", Sha256::digest(&binary_bytes)),
+                uuid,
+                commit: artifact.commit,
+                dirty: artifact.dirty,
+                path: SYMBOLS_PATH.to_owned(),
+            },
+            info: artifact.info,
+            dwarf: artifact.dwarf,
+        }))
+    }
+
+    pub(super) const fn provenance(&self) -> &SymbolProvenance {
+        &self.provenance
+    }
+
+    pub(super) fn bytes(&self, asset: Asset) -> Option<&[u8]> {
+        match asset {
+            Asset::SymbolsInfo => Some(&self.info),
+            Asset::SymbolsDwarf => Some(&self.dwarf),
+            _ => None,
+        }
+    }
+
+    pub(super) fn differs_from(&self, plan: &InstallPlan) -> bool {
+        plan.symbols.as_ref() != Some(&self.provenance)
+            || ASSETS.into_iter().any(|asset| {
+                let expected = self
+                    .bytes(asset)
+                    .map(|bytes| GeneratedImage::new(DATA_MODE, bytes));
+                plan.operations
+                    .iter()
+                    .find(|operation| operation.asset == asset)
+                    .map(|operation| &operation.generated)
+                    != expected.as_ref()
+            })
+    }
+}
+
+/// Append the two symbol operations after the executable operation.
+pub(super) fn append_operations(
+    repository: &Repository,
+    installed: Option<&InstallPlan>,
+    source: &Source,
+    archiving: bool,
+    (directories, operations, observed_operations): AppPlanState<'_>,
+) -> Result<(), InstallError> {
+    for asset in ASSETS {
+        let path = path(asset).expect("symbol assets publish fixed paths");
+        let bytes = source.bytes(asset).expect("symbol assets carry bytes");
+        let (bound, observed) = destination_state(repository, Location::CommonGit, path)?;
+        if archiving {
+            observed_operations.push(observed.as_ref().map(|observed| observed.image.clone()));
+        }
+        let (previous, superseded) =
+            reversal_context(installed, asset, path, observed, None, archiving);
+        operations.push(operation(
+            directories,
+            asset,
+            None,
+            bound,
+            previous,
+            superseded,
+            GeneratedImage::new(DATA_MODE, bytes),
+        )?);
+    }
+    Ok(())
+}
+
+/// The retained bundle path a symbol asset publishes.
+pub(super) fn path(asset: Asset) -> Option<&'static str> {
+    match asset {
+        Asset::SymbolsInfo => Some(SYMBOLS_INFO_PATH),
+        Asset::SymbolsDwarf => Some(SYMBOLS_DWARF_PATH),
+        _ => None,
+    }
+}
+
+/// Symbol operations `plan` publishes, in order.
+pub(super) fn operations(plan: &InstallPlan) -> impl Iterator<Item = &Operation> {
+    plan.operations
+        .iter()
+        .filter(|operation| path(operation.asset).is_some())
+}
+
+fn refused(path: &Path, reason: &'static str) -> InstallError {
+    InstallError::SymbolsRefused {
+        path: path.to_path_buf(),
+        reason,
+    }
+}
+
+/// Whether one regular file stayed bound to the path across the whole read.
+fn settled_in_place(planned: &fs::Metadata, opened: &fs::Metadata, settled: &fs::Metadata) -> bool {
+    let same = |left: &fs::Metadata, right: &fs::Metadata| {
+        left.dev() == right.dev() && left.ino() == right.ino() && left.len() == right.len()
+    };
+    same(planned, opened) && same(opened, settled) && settled.file_type().is_file()
+}
+
+/// Read the artifact through one handle and prove it never moved beneath it.
+fn read_artifact(
+    path: &Path,
+    metadata: &MacSymbolMetadata,
+) -> Result<MacSymbolArtifact, InstallError> {
+    let planned = match fs::symlink_metadata(path) {
+        Ok(planned) => planned,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Err(refused(path, "is absent"));
+        }
+        Err(error) => {
+            return Err(InstallError::io(
+                "inspect appliance symbol artifact",
+                path,
+                error,
+            ));
+        }
+    };
+    if !planned.file_type().is_file() {
+        return Err(refused(path, "is not a regular file"));
+    }
+    let mut file = fs::File::open(path)
+        .map_err(|error| InstallError::io("open appliance symbol artifact", path, error))?;
+    let opened = file
+        .metadata()
+        .map_err(|error| InstallError::io("inspect appliance symbol artifact", path, error))?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|error| InstallError::io("read appliance symbol artifact", path, error))?;
+    let settled = fs::symlink_metadata(path)
+        .map_err(|error| InstallError::io("inspect appliance symbol artifact", path, error))?;
+    if !settled_in_place(&planned, &opened, &settled) {
+        return Err(refused(path, "moved while it was read"));
+    }
+    if opened.mode() & 0o777 != DATA_MODE
+        || metadata.mode != DATA_MODE
+        || bytes.len() as u64 != metadata.bytes
+        || Digest::compute(Domain::DistArtifact, &bytes) != metadata.digest
+    {
+        return Err(refused(path, "differs from the authenticated payload"));
+    }
+    let artifact: MacSymbolArtifact = wire::decode(&bytes)
+        .map_err(|error| InstallError::InvalidRecord(format!("symbol artifact: {error}")))?;
+    if artifact.version != MAC_SYMBOL_ARTIFACT_VERSION
+        || wire::encode(&artifact).ok().as_deref() != Some(bytes.as_slice())
+        || !artifact.uuid_is_canonical()
+        || artifact.info.is_empty()
+        || artifact.dwarf.is_empty()
+    {
+        return Err(refused(path, "is not a canonical current symbol artifact"));
+    }
+    Ok(artifact)
+}
+
+/// `LC_UUID` of a thin little-endian 64-bit Mach-O image, canonically spelled.
+pub(super) fn executable_uuid(bytes: &[u8]) -> Option<String> {
+    let word = |offset: usize| {
+        bytes
+            .get(offset..offset + 4)
+            .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+    };
+    if word(0)? != MH_MAGIC_64 {
+        return None;
+    }
+    let commands = word(16)? as usize;
+    let commands_length = word(20)? as usize;
+    let end = MH_HEADER_64_LENGTH.checked_add(commands_length)?;
+    if end > bytes.len() {
+        return None;
+    }
+    let mut offset = MH_HEADER_64_LENGTH;
+    let mut uuid = None;
+    for _ in 0..commands {
+        let command = word(offset)?;
+        let length = word(offset + 4)? as usize;
+        if length < 8 || offset.checked_add(length)? > end {
+            return None;
+        }
+        if command == LC_UUID {
+            if length != LC_UUID_LENGTH || uuid.is_some() {
+                return None;
+            }
+            uuid = Some(format_uuid(bytes.get(offset + 8..offset + LC_UUID_LENGTH)?));
+        }
+        offset += length;
+    }
+    uuid
+}
+
+fn format_uuid(raw: &[u8]) -> String {
+    let hex = raw
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<String>();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(label: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "spice-install-symbols-{label}-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir(&root).expect("symbol scratch creates");
+        root
+    }
+
+    #[test]
+    fn a_read_settles_only_on_one_unmoved_regular_file() {
+        let root = scratch("settled");
+        let first = root.join("first");
+        let second = root.join("second");
+        fs::write(&first, b"artifact").unwrap();
+        fs::write(&second, b"artifact").unwrap();
+        let planned = fs::symlink_metadata(&first).unwrap();
+        let opened = fs::File::open(&first).unwrap().metadata().unwrap();
+        assert!(settled_in_place(&planned, &opened, &planned));
+        // Another inode of the same length replaced the path mid-read.
+        let swapped = fs::symlink_metadata(&second).unwrap();
+        assert!(!settled_in_place(&planned, &opened, &swapped));
+        assert!(!settled_in_place(&planned, &swapped, &planned));
+        // The same inode grew while it was read.
+        fs::write(&first, b"artifact grew").unwrap();
+        let grown = fs::symlink_metadata(&first).unwrap();
+        assert!(!settled_in_place(&planned, &opened, &grown));
+        // A directory settled at the path is never a regular artifact.
+        let directory = fs::symlink_metadata(&root).unwrap();
+        assert!(!settled_in_place(&directory, &directory, &directory));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn executable_uuid_reads_exactly_one_thin_64_bit_lc_uuid() {
+        let raw: [u8; 16] = [
+            0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89, 0x9A, 0xBC, 0xDE, 0xF0, 0x12, 0x34,
+            0x56, 0x78,
+        ];
+        let mut image = Vec::new();
+        image.extend_from_slice(&MH_MAGIC_64.to_le_bytes());
+        image.extend_from_slice(&[0; 12]);
+        image.extend_from_slice(&2_u32.to_le_bytes());
+        image.extend_from_slice(&(16 + LC_UUID_LENGTH as u32).to_le_bytes());
+        image.extend_from_slice(&[0; 8]);
+        // A non-UUID command precedes the UUID command.
+        image.extend_from_slice(&0x32_u32.to_le_bytes());
+        image.extend_from_slice(&16_u32.to_le_bytes());
+        image.extend_from_slice(&[0; 8]);
+        image.extend_from_slice(&LC_UUID.to_le_bytes());
+        image.extend_from_slice(&(LC_UUID_LENGTH as u32).to_le_bytes());
+        image.extend_from_slice(&raw);
+        assert_eq!(
+            executable_uuid(&image).as_deref(),
+            Some("ABCDEF01-2345-6789-9ABC-DEF012345678")
+        );
+        let mut truncated = image.clone();
+        truncated.truncate(image.len() - 1);
+        assert_eq!(executable_uuid(&truncated), None);
+        let mut fat = image.clone();
+        fat[..4].copy_from_slice(&0xCAFE_BABE_u32.to_le_bytes());
+        assert_eq!(executable_uuid(&fat), None);
+        let mut doubled = image.clone();
+        doubled[16..20].copy_from_slice(&3_u32.to_le_bytes());
+        doubled[20..24].copy_from_slice(&(16 + 2 * LC_UUID_LENGTH as u32).to_le_bytes());
+        doubled.extend_from_slice(&LC_UUID.to_le_bytes());
+        doubled.extend_from_slice(&(LC_UUID_LENGTH as u32).to_le_bytes());
+        doubled.extend_from_slice(&raw);
+        assert_eq!(executable_uuid(&doubled), None);
+        assert_eq!(executable_uuid(b"#!/bin/sh\n"), None);
+    }
+}
