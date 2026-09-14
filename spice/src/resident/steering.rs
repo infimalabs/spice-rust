@@ -420,7 +420,7 @@ pub(super) fn publish_lane_surface(
         environment_fault("canvas::lane-directory-unavailable", &error.to_string())
     })?;
     publish_lane_discovery(paths, operator, lane, capability)?;
-    let seal = steer::Key::for_identity(capability);
+    let seal = steer::Key::for_identity(lane);
     if let Err(error) = steer::inbox::publish(&inbox, lane, &seal, &[]) {
         remove_lane_surface(paths, worktree, lane);
         return Err(environment_fault(
@@ -621,7 +621,7 @@ fn publish_lane_inbox(
     lane: &wire::LaneResidency,
     ledger: &steer::Ledger,
 ) -> CommandResult<()> {
-    let seal = steer::Key::for_identity(lane_capability(lane)?);
+    let seal = steer::Key::for_identity(lane.lane);
     let inbox = paths.inbox_for_worktree(&lane.worktree)?;
     let pending = ledger
         .pending(lane.lane)

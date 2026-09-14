@@ -30,7 +30,9 @@ pub struct Inputs {
     pub executable: String,
     /// Explicit child environment admitted by the resident rim.
     pub environment: Environment,
-    /// Durable lane identity and steering key.
+    /// Durable lane identity. Also the seed for this launch's steering key,
+    /// which the resident derives from the same value the same way -- see
+    /// [`steer::Key::for_identity`].
     pub lane: CanonicalUuid,
     /// Fresh or exact-session continuation.
     pub resume: vendor::Resume,
@@ -127,7 +129,7 @@ fn compose_with_registry(
         vendor::Attribution::Harness
     };
     let steering_key = Some(vendor::SteeringKey {
-        token: inputs.lane.to_string(),
+        token: steer::Key::for_identity(inputs.lane).as_str().to_owned(),
     });
 
     let declared = registry
