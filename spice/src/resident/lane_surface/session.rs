@@ -230,10 +230,17 @@ impl CaptureReporter for DeclarationReporter {
         // The offending declaration is the one named, as in every other arm
         // here and in the second declaration `await_session` refuses: an
         // operator told to emit the record once needs the one that was too
-        // many, not the one already admitted.
-        if state.seen.is_some() {
+        // many, not the one already admitted. A resumed vendor session can
+        // legitimately re-announce the identity it already proved -- that
+        // repeat carries no new authority and is not the operator error this
+        // guards against, so only a second declaration naming a *different*
+        // identity is the duplicate this refuses.
+        if let Some(seen) = state.seen.clone() {
             let identity = declaration.session.as_str().to_owned();
-            return Err(self.reject(&mut state, SessionProofError::Duplicate { identity }));
+            if identity != seen {
+                return Err(self.reject(&mut state, SessionProofError::Duplicate { identity }));
+            }
+            return self.inner.record(record);
         }
         if record.lane != self.lane {
             return Err(self.reject(
