@@ -262,7 +262,11 @@ fn generate_worktree_symbols(
             "executable UUID {executable_uuid} differs from dSYM UUID {dwarf_uuid}"
         )));
     }
-    run_symbols_tool(Command::new("strip").arg("-S").arg(executable))?;
+    // Plain `strip` matches `[profile.dev.package.spice] strip = "symbols"`;
+    // `-S` alone only drops the debug symbol table and left the installed
+    // executable at 149.8M against the ordinary 95.8M shape (measured
+    // directly against this exact debug build).
+    run_symbols_tool(Command::new("strip").arg(executable))?;
     Ok(())
 }
 
