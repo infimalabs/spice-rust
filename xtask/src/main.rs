@@ -14,7 +14,7 @@ type CommandResult = Result<(), Box<dyn std::error::Error>>;
 const USAGE: &str = concat!(
     "usage: spice dev xtask -- <help|verify --package PACKAGE|",
     "gate [--report] ARM|app|tests <--fast --package PACKAGE|--slow <--list|ID...>>|",
-    "install [--host IP] [--port PORT] [--release] [--no-resident] ",
+    "install [--host IP] [--port PORT] [--release] [--symbols] [--no-resident] ",
     "[-- UP-OPTION...]|",
     "build-cache [--dry-run|--apply] [--max-bytes BYTES] ",
     "[--free-space-floor BYTES] [--retain-live-worktrees N]|",
@@ -290,6 +290,7 @@ fn install_request(arguments: &[OsString]) -> Option<xtask::RefreshRequest> {
     while let Some(argument) = arguments.next() {
         match argument.to_str()? {
             "--release" => request.release = true,
+            "--symbols" => request.symbols = true,
             "--no-resident" => request.restart = false,
             "--host" => request.host = Some(arguments.next()?.to_str()?.to_owned()),
             "--port" => request.port = Some(arguments.next()?.to_str()?.parse().ok()?),

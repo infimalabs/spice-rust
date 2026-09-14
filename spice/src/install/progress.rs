@@ -20,7 +20,7 @@ pub(super) fn apply_with_interruption(
         .map(|binary| app::Source::resolve(repository, binary))
         .transpose()?;
     let symbols = spice_binary
-        .map(symbols::Source::resolve)
+        .map(|binary| symbols::Source::resolve(repository, binary))
         .transpose()?
         .flatten();
     let generated = materialize_operations(&record, spice_binary, app.as_ref(), symbols.as_ref())?;

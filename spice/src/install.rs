@@ -724,7 +724,7 @@ fn build_plan_over(
         .map(|binary| app::Source::resolve(repository, binary))
         .transpose()?;
     let symbols = spice_binary
-        .map(symbols::Source::resolve)
+        .map(|binary| symbols::Source::resolve(repository, binary))
         .transpose()?
         .flatten();
     let compacting = rollback_record.is_some();
@@ -1223,7 +1223,7 @@ fn current_build_differs(
         .transpose()?
         .is_some_and(|app| app.differs_from(plan));
     let symbols_differ = match spice_binary
-        .map(symbols::Source::resolve)
+        .map(|binary| symbols::Source::resolve(repository, binary))
         .transpose()?
         .flatten()
     {

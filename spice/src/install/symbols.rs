@@ -8,7 +8,8 @@
 use std::fs;
 use std::io::{self, Read};
 use std::os::unix::fs::MetadataExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -111,14 +112,20 @@ pub(super) struct Source {
 }
 
 impl Source {
-    /// Resolve the package symbol artifact bound to `binary`, if any.
+    /// Resolve the symbols bound to `binary`, if any.
     ///
-    /// Only a package install carries symbols: its payload names the artifact
-    /// for the Darwin target and forbids one for Linux. A build selected from
-    /// anywhere else publishes no symbols, and that absence is not an error.
-    pub(super) fn resolve(binary: &Path) -> Result<Option<Self>, InstallError> {
+    /// A package install carries an authenticated symbol artifact: its
+    /// payload names the artifact for the Darwin target and forbids one for
+    /// Linux. A worktree build carries no payload, so it instead looks beside
+    /// the executable for the sibling dSYM a symbol-generating build writes
+    /// (see [`Self::resolve_worktree`]). A build selected from neither place
+    /// publishes no symbols, and that absence is not an error.
+    pub(super) fn resolve(
+        repository: &Repository,
+        binary: &Path,
+    ) -> Result<Option<Self>, InstallError> {
         let Some((_, target_root)) = super::app::package_layout(binary) else {
-            return Ok(None);
+            return Self::resolve_worktree(repository, binary);
         };
         let payload_path = target_root.join("payload.json");
         let payload_bytes = fs::read(&payload_path)
@@ -179,6 +186,58 @@ impl Source {
             },
             info: artifact.info,
             dwarf: artifact.dwarf,
+        }))
+    }
+
+    /// Resolve a dSYM generated for `binary` directly in a worktree build.
+    ///
+    /// A worktree build carries no sealed payload, so this trusts nothing but
+    /// the files themselves: the dSYM must sit at the fixed sibling path a
+    /// symbol-generating build writes (`<binary>.dSYM`), and its DWARF image
+    /// must declare the exact `LC_UUID` the executable does. Anything else --
+    /// an absent, partial, stale, or foreign dSYM -- publishes no symbols
+    /// rather than refusing the install; only a build that explicitly asked
+    /// for symbols ever writes one at that path, and an ordinary worktree
+    /// install never does.
+    fn resolve_worktree(
+        repository: &Repository,
+        binary: &Path,
+    ) -> Result<Option<Self>, InstallError> {
+        let Some(name) = binary.file_name() else {
+            return Ok(None);
+        };
+        let bundle = worktree_dsym_path(binary);
+        let dwarf_path = bundle.join("Contents/Resources/DWARF").join(name);
+        let info_path = bundle.join("Contents/Info.plist");
+        if !dwarf_path.is_file() || !info_path.is_file() {
+            return Ok(None);
+        }
+        let binary_bytes = super::read_binary(binary)?;
+        let Some(uuid) = executable_uuid(&binary_bytes) else {
+            return Ok(None);
+        };
+        let Ok(dwarf) = fs::read(&dwarf_path) else {
+            return Ok(None);
+        };
+        if executable_uuid(&dwarf).as_deref() != Some(uuid.as_str()) {
+            return Ok(None);
+        }
+        let Ok(info) = fs::read(&info_path) else {
+            return Ok(None);
+        };
+        let Some((commit, dirty)) = worktree_git_state(repository) else {
+            return Ok(None);
+        };
+        Ok(Some(Self {
+            provenance: SymbolProvenance {
+                executable_sha256: format!("{:x}", Sha256::digest(&binary_bytes)),
+                uuid,
+                commit,
+                dirty,
+                path: SYMBOLS_PATH.to_owned(),
+            },
+            info,
+            dwarf,
         }))
     }
 
@@ -259,6 +318,48 @@ fn refused(path: &Path, reason: &'static str) -> InstallError {
     InstallError::SymbolsRefused {
         path: path.to_path_buf(),
         reason,
+    }
+}
+
+/// Sibling dSYM path a worktree symbol build writes beside its executable.
+fn worktree_dsym_path(binary: &Path) -> PathBuf {
+    let mut path = binary.as_os_str().to_owned();
+    path.push(".dSYM");
+    PathBuf::from(path)
+}
+
+/// Read the repository's current commit and whether tracked files differ
+/// from it, or `None` when either read is unavailable or inconclusive.
+///
+/// A worktree symbol bundle is generated and consumed in the same command
+/// invocation, so this is expected to succeed whenever [`Source::resolve`]
+/// finds one; any failure here is treated the same as no dSYM at all rather
+/// than an install refusal.
+fn worktree_git_state(repository: &Repository) -> Option<(String, bool)> {
+    let root = repository.worktree_root();
+    let revision = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "--verify", "HEAD^{commit}"])
+        .output()
+        .ok()?;
+    if !revision.status.success() {
+        return None;
+    }
+    let commit = String::from_utf8(revision.stdout).ok()?.trim().to_owned();
+    if !git_commit_is_canonical(&commit) {
+        return None;
+    }
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["diff", "--quiet", "HEAD", "--"])
+        .status()
+        .ok()?;
+    match status.code() {
+        Some(0) => Some((commit, false)),
+        Some(1) => Some((commit, true)),
+        _ => None,
     }
 }
 
@@ -414,6 +515,111 @@ mod tests {
         ));
         fs::create_dir(&root).expect("symbol scratch creates");
         root
+    }
+
+    /// Minimal thin 64-bit Mach-O bytes carrying exactly one `LC_UUID`.
+    fn macho_with_uuid(uuid: [u8; 16]) -> Vec<u8> {
+        let mut image = Vec::new();
+        image.extend_from_slice(&MH_MAGIC_64.to_le_bytes());
+        image.extend_from_slice(&[0; 12]);
+        image.extend_from_slice(&1_u32.to_le_bytes());
+        image.extend_from_slice(&(LC_UUID_LENGTH as u32).to_le_bytes());
+        image.extend_from_slice(&[0; 8]);
+        image.extend_from_slice(&LC_UUID.to_le_bytes());
+        image.extend_from_slice(&(LC_UUID_LENGTH as u32).to_le_bytes());
+        image.extend_from_slice(&uuid);
+        image
+    }
+
+    fn git(root: &Path, arguments: &[&str]) {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(arguments)
+            .status()
+            .expect("git launches");
+        assert!(status.success(), "git {arguments:?} exited with {status}");
+    }
+
+    #[test]
+    fn resolve_worktree_publishes_a_matching_sibling_dsym_and_ignores_a_mismatched_one() {
+        let root = scratch("worktree");
+        git(&root, &["init", "-q"]);
+        git(
+            &root,
+            &[
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "--allow-empty",
+                "-q",
+                "-m",
+                "seed",
+            ],
+        );
+        let repository = Repository::discover(&root).expect("scratch repository discovers");
+        let binary = root.join("spice");
+        let uuid = [0xAA; 16];
+        fs::write(&binary, macho_with_uuid(uuid)).unwrap();
+
+        // No sibling dSYM yet: an ordinary worktree build publishes nothing.
+        assert!(
+            Source::resolve_worktree(&repository, &binary)
+                .unwrap()
+                .is_none()
+        );
+
+        // A matching sibling dSYM resolves, carrying the repository's HEAD.
+        let dwarf_directory = worktree_dsym_path(&binary).join("Contents/Resources/DWARF");
+        fs::create_dir_all(&dwarf_directory).unwrap();
+        fs::write(dwarf_directory.join("spice"), macho_with_uuid(uuid)).unwrap();
+        fs::write(
+            worktree_dsym_path(&binary).join("Contents/Info.plist"),
+            b"<plist/>",
+        )
+        .unwrap();
+        let source = Source::resolve_worktree(&repository, &binary)
+            .unwrap()
+            .expect("a matching sibling dSYM resolves");
+        assert!(!source.provenance().dirty());
+        assert_eq!(source.provenance().uuid(), format_uuid(&uuid));
+        assert_eq!(source.provenance().path(), SYMBOLS_PATH);
+        assert_eq!(
+            source.bytes(Asset::SymbolsDwarf),
+            Some(macho_with_uuid(uuid)).as_deref()
+        );
+
+        // Dirtying a tracked file is reflected without refusing the install.
+        fs::write(root.join("tracked"), b"content").unwrap();
+        git(&root, &["add", "tracked"]);
+        git(
+            &root,
+            &[
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-q",
+                "-m",
+                "tracked",
+            ],
+        );
+        fs::write(root.join("tracked"), b"changed").unwrap();
+        let dirty = Source::resolve_worktree(&repository, &binary)
+            .unwrap()
+            .expect("a matching sibling dSYM still resolves while dirty");
+        assert!(dirty.provenance().dirty());
+
+        // A dSYM whose DWARF UUID disagrees publishes nothing, not a refusal.
+        fs::write(dwarf_directory.join("spice"), macho_with_uuid([0xBB; 16])).unwrap();
+        assert!(
+            Source::resolve_worktree(&repository, &binary)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

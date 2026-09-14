@@ -37,6 +37,8 @@ pub struct RefreshRequest {
     pub port: Option<u16>,
     /// Build and install the release profile rather than the development profile.
     pub release: bool,
+    /// Generate and retain a dSYM beside the built executable, on macOS.
+    pub symbols: bool,
     /// Restart the resident after the executable is republished.
     pub restart: bool,
     /// Arguments forwarded verbatim to the detached `spice up` launcher.
@@ -87,6 +89,8 @@ pub enum RefreshError {
     App(crate::AppBuildError),
     /// `cargo build` succeeded without naming a `spice` executable.
     BuildOutputSilent,
+    /// Generating the worktree dSYM `--symbols` requested failed.
+    Symbols(String),
     /// The installer refused the refresh.
     #[cfg(not(target_arch = "wasm32"))]
     Install(spice::install::InstallError),
@@ -143,6 +147,7 @@ impl fmt::Display for RefreshError {
             Self::BuildOutputSilent => {
                 write!(formatter, "cargo build named no spice executable")
             }
+            Self::Symbols(detail) => write!(formatter, "symbol generation failed: {detail}"),
             #[cfg(not(target_arch = "wasm32"))]
             Self::Install(error) => write!(formatter, "install refused: {error}"),
             #[cfg(not(target_arch = "wasm32"))]

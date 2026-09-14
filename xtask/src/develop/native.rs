@@ -31,7 +31,7 @@ pub(super) fn perform(
     let repository = Repository::discover(Path::new("."))?;
     writeln!(output, "building canvas app")?;
     crate::app(environment, output)?;
-    let built = build(request.release, output)?;
+    let built = build(request.release, request.symbols, output)?;
     let installed = install::installed_binary(&repository);
     let rollback = park(&repository, &installed)?;
     let before = snapshot_install(&repository, &installed)?;
@@ -190,7 +190,12 @@ pub fn refresh_install(repository: &Repository, binary: &Path) -> Result<Digest,
     Ok(digest)
 }
 /// Build `spice` and answer the executable Cargo reported for it.
-fn build(release: bool, output: &mut impl Write) -> Result<PathBuf, RefreshError> {
+///
+/// `symbols` overrides the profile's own strip setting so the linked
+/// executable keeps its debug information long enough for
+/// [`generate_worktree_symbols`] to capture it, then strips the executable
+/// back down to its ordinary installed shape once the dSYM is retained.
+fn build(release: bool, symbols: bool, output: &mut impl Write) -> Result<PathBuf, RefreshError> {
     writeln!(output, "building spice profile={}", build_profile(release))?;
     let mut command = Command::new("cargo");
     command.args([
@@ -206,6 +211,12 @@ fn build(release: bool, output: &mut impl Write) -> Result<PathBuf, RefreshError
     if release {
         command.arg("--release");
     }
+    if symbols {
+        let profile = if release { "release" } else { "dev" };
+        command
+            .arg("--config")
+            .arg(format!("profile.{profile}.package.spice.strip=false"));
+    }
     let built = command
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -214,11 +225,111 @@ fn build(release: bool, output: &mut impl Write) -> Result<PathBuf, RefreshError
         return Err(RefreshError::Build);
     }
     let rendered = String::from_utf8_lossy(&built.stdout);
-    built_executable(&rendered).ok_or(RefreshError::BuildOutputSilent)
+    let executable = built_executable(&rendered).ok_or(RefreshError::BuildOutputSilent)?;
+    if symbols {
+        generate_worktree_symbols(&executable, output)?;
+    }
+    Ok(executable)
 }
 
 const fn build_profile(release: bool) -> &'static str {
     if release { "release" } else { "development" }
+}
+
+/// Generate a dSYM for `executable` beside it, then strip the executable.
+///
+/// [`spice::install::symbols`] resolves this exact sibling path when no
+/// sealed release package is present, so a plain `--symbols` refresh gets a
+/// verified symbol receipt the same way a packaged release install does,
+/// without a release build or a signed payload.
+#[cfg(target_os = "macos")]
+fn generate_worktree_symbols(
+    executable: &Path,
+    output: &mut impl Write,
+) -> Result<(), RefreshError> {
+    writeln!(output, "generating dSYM for {}", executable.display())?;
+    let bundle = worktree_dsym_path(executable);
+    run_symbols_tool(
+        Command::new("dsymutil")
+            .arg(executable)
+            .arg("-o")
+            .arg(&bundle),
+    )?;
+    let executable_uuid = symbol_uuid(executable)?;
+    let dwarf_uuid = symbol_uuid(&bundle)?;
+    if executable_uuid != dwarf_uuid {
+        return Err(RefreshError::Symbols(format!(
+            "executable UUID {executable_uuid} differs from dSYM UUID {dwarf_uuid}"
+        )));
+    }
+    run_symbols_tool(Command::new("strip").arg("-S").arg(executable))?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn generate_worktree_symbols(
+    _executable: &Path,
+    _output: &mut impl Write,
+) -> Result<(), RefreshError> {
+    Err(RefreshError::Symbols(
+        "dSYM generation is only available on macOS".to_owned(),
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn worktree_dsym_path(executable: &Path) -> PathBuf {
+    let mut path = executable.as_os_str().to_owned();
+    path.push(".dSYM");
+    PathBuf::from(path)
+}
+
+#[cfg(target_os = "macos")]
+fn symbol_uuid(path: &Path) -> Result<String, RefreshError> {
+    let output = Command::new("dwarfdump")
+        .arg("--uuid")
+        .arg(path)
+        .output()
+        .map_err(|error| {
+            RefreshError::Symbols(format!("dwarfdump --uuid {}: {error}", path.display()))
+        })?;
+    if !output.status.success() {
+        return Err(RefreshError::Symbols(format!(
+            "dwarfdump --uuid {} failed: {}",
+            path.display(),
+            String::from_utf8_lossy(&output.stderr).trim(),
+        )));
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let line = text.lines().next().ok_or_else(|| {
+        RefreshError::Symbols(format!(
+            "dwarfdump --uuid {} produced no output",
+            path.display()
+        ))
+    })?;
+    let uuid = line
+        .strip_prefix("UUID: ")
+        .and_then(|rest| rest.split(' ').next())
+        .ok_or_else(|| {
+            RefreshError::Symbols(format!(
+                "dwarfdump --uuid {} is malformed: {line:?}",
+                path.display()
+            ))
+        })?;
+    Ok(uuid.to_owned())
+}
+
+#[cfg(target_os = "macos")]
+fn run_symbols_tool(command: &mut Command) -> Result<(), RefreshError> {
+    let program = command.get_program().to_string_lossy().into_owned();
+    let status = command
+        .status()
+        .map_err(|error| RefreshError::Symbols(format!("{program} failed to start: {error}")))?;
+    if !status.success() {
+        return Err(RefreshError::Symbols(format!(
+            "{program} exited with {status}"
+        )));
+    }
+    Ok(())
 }
 
 /// Read the `spice` executable path out of Cargo's build event stream.
