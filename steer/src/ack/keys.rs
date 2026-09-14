@@ -133,9 +133,9 @@ impl Key {
 
     /// Derive one stable human-sized seal from a durable identity.
     ///
-    /// A lane inbox seal is a capability-derived recognition token, not an
-    /// operator directive key. It must remain stable when the inbox is
-    /// republished, so it deliberately does not use the moment codec above.
+    /// A lane inbox seal is a recognition token, not an operator directive
+    /// key. It must remain stable when the inbox is republished, so it
+    /// deliberately does not use the moment codec above.
     #[must_use]
     pub fn for_identity(identity: CanonicalUuid) -> Self {
         let value = identity.get().as_u128() % u128::from(SPACE);
