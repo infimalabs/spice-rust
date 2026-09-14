@@ -30,7 +30,9 @@ const HANDOFF_FD: i32 = 9;
 const HANDOFF_MAGIC: &[u8] = b"SPICE-RS-DAEMON\0";
 const MAX_HANDOFF_BYTES: usize = 16 * 1024;
 const MAX_BOOTSTRAP_BYTES: u64 = 64 * 1024;
-const ARRIVAL_HORIZON: Duration = Duration::from_secs(30);
+const ARRIVAL_HORIZON: Duration = Duration::from_secs(60);
+/// When an unfinished wait logs a warning rather than refusing outright.
+const ARRIVAL_WARN_HORIZON: Duration = Duration::from_secs(30);
 const PROBE_BOUND: Duration = Duration::from_secs(20);
 const TERMINATION_HORIZON: Duration = Duration::from_secs(5);
 
@@ -263,6 +265,7 @@ impl SpawnedLaunch {
             self.state.canvas(),
             self.baseline.as_deref(),
             self.token.as_deref(),
+            self.state.resident_log(),
             &mut self.parent_handoff,
         );
         match ready {
@@ -326,6 +329,21 @@ fn inherit_handoff(command: &mut ProcessCommand, source: RawFd) {
     }
 }
 
+/// Note an unfinished readiness wait in the resident log, best-effort.
+///
+/// A missed write here must not fail the wait itself: this is an operator
+/// aid for a still-running launch, not a condition the caller can act on.
+#[cfg(unix)]
+fn warn_readiness_pending(log_path: &Path, warn_horizon: Duration, horizon: Duration) {
+    let Ok(mut log) = open_log(log_path) else {
+        return;
+    };
+    let _ = writeln!(
+        log,
+        "resident readiness still pending after {warn_horizon:?}; continuing to wait up to {horizon:?}"
+    );
+}
+
 #[cfg(unix)]
 fn open_log(path: &Path) -> io::Result<File> {
     let file = OpenOptions::new()
@@ -350,10 +368,14 @@ fn wait_for_ready(
     canvas: &Path,
     baseline: Option<&[u8]>,
     token: Option<&str>,
+    log_path: &Path,
     status: &mut UnixStream,
 ) -> Result<canvas::Discovery, Option<Outcome<()>>> {
     let horizon = arrival_horizon(watched);
-    let deadline = Instant::now() + horizon;
+    let started = Instant::now();
+    let deadline = started + horizon;
+    let warn_at = started + horizon.min(ARRIVAL_WARN_HORIZON);
+    let mut warned = false;
     let (sender, receiver) = mpsc::channel();
     wait_for_change(observer, sender.clone());
     wait_for_exit(child.id(), sender.clone());
@@ -369,7 +391,17 @@ fn wait_for_ready(
                 &format!("resident did not become ready within {horizon:?}"),
             )));
         }
-        match receiver.recv_timeout(remaining) {
+        if !warned && Instant::now() >= warn_at {
+            warned = true;
+            warn_readiness_pending(log_path, ARRIVAL_WARN_HORIZON, horizon);
+        }
+        let wait_bound = remaining.min(warn_at.saturating_duration_since(Instant::now()));
+        let wait_bound = if wait_bound.is_zero() {
+            remaining
+        } else {
+            wait_bound
+        };
+        match receiver.recv_timeout(wait_bound) {
             Ok(Signal::Changed) => {
                 let next = DirectObserver::arm(watched).map_err(|error| {
                     Some(environment_fault(
@@ -411,10 +443,10 @@ fn wait_for_ready(
                 )));
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                return Err(Some(environment_fault(
-                    "resident::daemon-readiness-elapsed",
-                    &format!("resident did not become ready within {horizon:?}"),
-                )));
+                // This bound is the warn point, not necessarily the real
+                // deadline: loop back so the top of the loop re-checks
+                // `remaining` and raises the readiness-elapsed refusal only
+                // once the full horizon has actually passed.
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 return Err(Some(environment_fault(
