@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 
 /// Canonical semantic prefix carried by every broadcast steering directive.
 pub const BROADCAST_MARKER: &str = "[BROADCAST]";
+/// Canonical semantic prefix the resident places on every ordinary directive
+/// quoted as acknowledged context inside an agent message presentation.
+pub const ACK_MARKER: &str = "[ACK]";
 
 use crate::{
     Actor, AnyFact, Body, CanonicalUuid, Envelope, FactKind, Fault, FaultClass, Instant, Name,

@@ -322,7 +322,7 @@ fn steering_acknowledgement_renders_key_context_and_agent_prose_once() {
             event(),
         )
         .expect("acknowledgment presents"),
-        "> Keep one tested, visible current path.\n\nLanded in the stream presentation path.",
+        "> [ACK] Keep one tested, visible current path.\n\nLanded in the stream presentation path.",
     );
 }
 
@@ -339,7 +339,7 @@ fn current_header_forms_hide_framing_and_capitalize_response_prose() {
         assert_eq!(
             present_steering_acknowledgements_with_directives(text, &directives, event())
                 .expect("acknowledgment presents"),
-            "> Keep the current path.\n\nApplied.",
+            "> [ACK] Keep the current path.\n\nApplied.",
             "wrong presentation for {text:?}",
         );
     }
@@ -459,9 +459,10 @@ fn distributed_acknowledgements_render_every_context_without_repeating_the_messa
         .expect("distributed acknowledgments present");
     assert_eq!(rendered.matches("The current completion path").count(), 1);
     assert_eq!(rendered.matches("Historical records").count(), 1);
-    assert_eq!(rendered.matches("ACK ").count(), 0);
-    assert!(rendered.contains("> Keep one current completion path."));
-    assert!(rendered.contains("> Do not execute historical records."));
+    assert_eq!(rendered.matches("ACK 1kQwPZt").count(), 0);
+    assert_eq!(rendered.matches(wire::stream::ACK_MARKER).count(), 2);
+    assert!(rendered.contains("> [ACK] Keep one current completion path."));
+    assert!(rendered.contains("> [ACK] Do not execute historical records."));
 }
 
 #[test]
@@ -479,8 +480,8 @@ fn shared_acknowledgement_prose_renders_once_after_every_context() {
         )
         .expect("shared acknowledgment presents"),
         concat!(
-            "> Keep one current completion path.\n\n",
-            "> Do not execute historical records.\n\n",
+            "> [ACK] Keep one current completion path.\n\n",
+            "> [ACK] Do not execute historical records.\n\n",
             "One response covers both directions."
         ),
     );
@@ -493,15 +494,19 @@ fn non_key_text_after_a_recognized_header_remains_response_prose() {
         let text = format!(
             "{marker} 1kQwPZtK nope 1kQwPZtM: Shared prose remains attached to the attempt."
         );
-        let expected = "> Keep the recognized direction visible.\n\n\
-                        Nope 1kQwPZtM: Shared prose remains attached to the attempt.";
+        let context = match marker {
+            "ACK" => "> [ACK] Keep the recognized direction visible.",
+            _ => "> Keep the recognized direction visible.",
+        };
+        let expected =
+            format!("{context}\n\nNope 1kQwPZtM: Shared prose remains attached to the attempt.");
 
         let rendered =
             present_steering_acknowledgements_with_directives(&text, &directives, event())
                 .expect("mixed acknowledgment presents");
         assert_eq!(rendered, expected);
         assert_eq!(rendered.matches("1kQwPZtK").count(), 0);
-        assert!(!rendered.contains(marker));
+        assert!(!rendered.starts_with(marker));
         assert_eq!(rendered.matches("Nope").count(), 1);
         assert_eq!(rendered.matches("1kQwPZtM").count(), 1);
         assert_eq!(rendered.matches("Shared prose").count(), 1);
@@ -521,7 +526,7 @@ fn mixed_acknowledgement_dispositions_keep_their_own_keys_and_contexts() {
             event(),
         )
         .expect("mixed acknowledgments present"),
-        "> Apply the current path.\n\nApplied.\n> Remove the safety check.\n\nUnsafe.",
+        "> [ACK] Apply the current path.\n\nApplied.\n> Remove the safety check.\n\nUnsafe.",
     );
 }
 
@@ -540,9 +545,9 @@ fn inline_packets_render_each_context_and_body_in_source_order() {
         )
         .expect("inline acknowledgments present"),
         concat!(
-            "> Keep the first path.\n\n",
+            "> [ACK] Keep the first path.\n\n",
             "First applied.\n",
-            "> Keep the second path.\n\n",
+            "> [ACK] Keep the second path.\n\n",
             "Second applied."
         ),
     );
@@ -562,7 +567,7 @@ fn operator_reply_quotes_remain_nested_inside_acknowledgement_context() {
             event(),
         )
         .expect("nested acknowledgment presents"),
-        "> > The original assertion remains visible.\n>\n> approved\n\nApplied.",
+        "> [ACK]\n>\n> > The original assertion remains visible.\n>\n> approved\n\nApplied.",
     );
 }
 
@@ -742,7 +747,7 @@ fn historical_key_is_presented_only_at_its_exact_retirement_locus() {
     assert_eq!(
         present_steering_acknowledgements_with_directives(text, &directives, event())
             .expect("retirement locus presents"),
-        "> Keep the original response context.\n\nApplied.",
+        "> [ACK] Keep the original response context.\n\nApplied.",
     );
     let mut later = event();
     later.locus = listen::Locus::new(1, 8, 1);
@@ -930,7 +935,7 @@ fn inline_current_control_and_retained_direction_share_classification() {
     assert_eq!(
         present_steering_acknowledgements_with_directives(text, &directives, event())
             .expect("inline mixed-width acknowledgment presents"),
-        "Before.\n> Keep retained direction readable.\n\nApplied. After.",
+        "Before.\n> [ACK] Keep retained direction readable.\n\nApplied. After.",
     );
     assert_eq!(
         message_badges(text, Some(&directives), event()),
@@ -978,7 +983,7 @@ fn source_aware_retirement_requires_the_original_tape_generation() {
     assert_eq!(
         present_steering_acknowledgements_with_directives(text, &directives, original)
             .expect("original source presents"),
-        "> Keep the original response context.\n\nApplied.",
+        "> [ACK] Keep the original response context.\n\nApplied.",
     );
 
     let mut replacement = event();

@@ -38,41 +38,52 @@ pub(crate) fn render_received_with_badges(
     markdown: &str,
     badges: wire::AgentMessageBadges,
 ) -> RenderedMarkdown {
-    let mut rendered = render_received_with_classifications(
+    render_received_with_classifications(
         markdown,
-        badges.reviews,
-        badges.tastes,
-        badges.broadcasts,
-    );
-    if badges.acknowledgements > 0 {
-        rendered.html = format!(
-            "<span class=\"message-classifiers\">{}</span>{}",
-            acknowledgement_pill(badges.acknowledgements),
-            rendered.html,
-        );
-    }
-    rendered
+        Classifications {
+            reviews: badges.reviews,
+            tastes: badges.tastes,
+            broadcasts: badges.broadcasts,
+            acknowledgements: ordinary_acknowledgements(&badges),
+        },
+    )
 }
 
-fn acknowledgement_pill(count: u32) -> String {
-    format!(
-        "<span class=\"message-ack-pill\" data-message-classification=\"ack\" \
-         aria-label=\"Acknowledgement classification, {count} contexts\">ACK<span \
-         class=\"message-badge-count\">{count}</span></span>"
-    )
+/// Count the acknowledged contexts the resident marks with the plain ACK marker.
+///
+/// Flavored contexts carry their own classification pill as the acknowledgement
+/// mark, so only the remainder may surface an inline ACK pill.
+fn ordinary_acknowledgements(badges: &wire::AgentMessageBadges) -> u32 {
+    badges
+        .acknowledgements
+        .saturating_sub(badges.tastes)
+        .saturating_sub(badges.broadcasts)
+}
+
+/// Authenticated classification counts bounding inline marker replacement.
+#[derive(Clone, Copy, Debug, Default)]
+struct Classifications {
+    reviews: u32,
+    tastes: u32,
+    broadcasts: u32,
+    acknowledgements: u32,
 }
 
 /// Render received text and replace authenticated quoted classification markers inline.
 #[cfg(test)]
 pub(crate) fn render_received_with_tastes(markdown: &str, tastes: u32) -> RenderedMarkdown {
-    render_received_with_classifications(markdown, 0, tastes, 0)
+    render_received_with_classifications(
+        markdown,
+        Classifications {
+            tastes,
+            ..Classifications::default()
+        },
+    )
 }
 
 fn render_received_with_classifications(
     markdown: &str,
-    reviews: u32,
-    tastes: u32,
-    broadcasts: u32,
+    classifications: Classifications,
 ) -> RenderedMarkdown {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
@@ -81,7 +92,7 @@ fn render_received_with_classifications(
         | Options::ENABLE_SMART_PUNCTUATION
         | Options::ENABLE_MATH
         | Options::ENABLE_GFM;
-    let markdown = taste_quotes::normalize(markdown, tastes, options);
+    let markdown = taste_quotes::normalize(markdown, classifications.tastes, options);
     let events = Parser::new_ext(&markdown, options)
         .map(sanitize_markdown_event)
         .collect::<Vec<_>>();
@@ -89,9 +100,7 @@ fn render_received_with_classifications(
     let image_only = markdown_is_image_only(&events);
     let mut code_block = false;
     let mut block_quote_depth = 0usize;
-    let mut remaining_reviews = usize::try_from(reviews).unwrap_or(usize::MAX);
-    let mut remaining_tastes = usize::try_from(tastes).unwrap_or(usize::MAX);
-    let mut remaining_broadcasts = usize::try_from(broadcasts).unwrap_or(usize::MAX);
+    let mut remaining = RemainingClassifications::from(classifications);
     let events = decorate_markdown_images(events, image_only)
         .into_iter()
         .flat_map(|event| {
@@ -109,9 +118,7 @@ fn render_received_with_classifications(
             } else {
                 let events = inline_classification_marker(
                     event,
-                    (block_quote_depth > 0).then_some(&mut remaining_reviews),
-                    (block_quote_depth > 0).then_some(&mut remaining_tastes),
-                    (block_quote_depth > 0).then_some(&mut remaining_broadcasts),
+                    (block_quote_depth > 0).then_some(&mut remaining),
                 );
                 events.into_iter().flat_map(inline_task_chips).collect()
             }
@@ -137,40 +144,72 @@ fn coalesce_text_events(events: Vec<MarkdownEvent<'_>>) -> Vec<MarkdownEvent<'_>
     coalesced
 }
 
+/// Marker replacements still authorized while walking one rendered document.
+#[derive(Debug)]
+struct RemainingClassifications {
+    reviews: usize,
+    tastes: usize,
+    broadcasts: usize,
+    acknowledgements: usize,
+}
+
+impl From<Classifications> for RemainingClassifications {
+    fn from(classifications: Classifications) -> Self {
+        let remaining = |count: u32| usize::try_from(count).unwrap_or(usize::MAX);
+        Self {
+            reviews: remaining(classifications.reviews),
+            tastes: remaining(classifications.tastes),
+            broadcasts: remaining(classifications.broadcasts),
+            acknowledgements: remaining(classifications.acknowledgements),
+        }
+    }
+}
+
+/// Replace one quoted classification marker with its inline pill when a badge
+/// still authorizes it; `remaining` is `None` outside block quotes.
 fn inline_classification_marker<'a>(
     event: MarkdownEvent<'a>,
-    remaining_reviews: Option<&mut usize>,
-    remaining_tastes: Option<&mut usize>,
-    remaining_broadcasts: Option<&mut usize>,
+    remaining: Option<&mut RemainingClassifications>,
 ) -> Vec<MarkdownEvent<'a>> {
     let MarkdownEvent::Text(text) = event else {
         return vec![event];
     };
-    if let Some(remaining) = remaining_reviews.filter(|remaining| **remaining > 0)
-        && let Some(suffix) = marker_suffix(&text, "[REVIEW]")
-    {
-        *remaining -= 1;
-        return vec![
-            MarkdownEvent::InlineHtml(review_pill_html().into()),
-            MarkdownEvent::Text(suffix.into()),
-        ];
-    }
-    if let Some(remaining) = remaining_broadcasts.filter(|remaining| **remaining > 0)
-        && let Some(suffix) = marker_suffix(&text, wire::stream::BROADCAST_MARKER)
-    {
-        *remaining -= 1;
-        return vec![
-            MarkdownEvent::InlineHtml(broadcast_pill_html().into()),
-            MarkdownEvent::Text(suffix.into()),
-        ];
-    }
-    let Some(remaining) = remaining_tastes.filter(|remaining| **remaining > 0) else {
+    let Some(remaining) = remaining else {
         return vec![MarkdownEvent::Text(text)];
     };
+    let plain = [
+        (&mut remaining.reviews, "[REVIEW]", review_pill_html()),
+        (
+            &mut remaining.broadcasts,
+            wire::stream::BROADCAST_MARKER,
+            broadcast_pill_html(),
+        ),
+        (
+            &mut remaining.acknowledgements,
+            wire::stream::ACK_MARKER,
+            ack_pill_html(),
+        ),
+    ];
+    for (count, marker, pill) in plain {
+        if *count == 0 {
+            continue;
+        }
+        let Some(suffix) = marker_suffix(&text, marker) else {
+            continue;
+        };
+        *count -= 1;
+        return vec![
+            MarkdownEvent::InlineHtml(pill.into()),
+            MarkdownEvent::Text(suffix.into()),
+        ];
+    }
+    if remaining.tastes == 0 {
+        return vec![MarkdownEvent::Text(text)];
+    }
     let Some(suffix) = marker_suffix(&text, "[TASTE]") else {
         return vec![MarkdownEvent::Text(text)];
     };
-    *remaining -= 1;
+    remaining.tastes -= 1;
     vec![
         MarkdownEvent::InlineHtml(taste_pill_html().into()),
         MarkdownEvent::Text(taste_guidance_suffix(&suffix).into()),
@@ -185,7 +224,7 @@ fn has_marker_prefix(text: &str, marker: &str) -> bool {
 fn marker_suffix(text: &str, marker: &str) -> Option<String> {
     let suffix = text
         .strip_prefix(marker)
-        .filter(|suffix| suffix.starts_with(char::is_whitespace))?;
+        .filter(|suffix| suffix.is_empty() || suffix.starts_with(char::is_whitespace))?;
     Some(suffix.to_owned())
 }
 
@@ -213,6 +252,11 @@ fn broadcast_pill_html() -> &'static str {
 fn review_pill_html() -> &'static str {
     "<span class=\"message-review-pill\" data-message-classification=\"review\" \
      aria-label=\"Review classification\">REVIEW</span>"
+}
+
+fn ack_pill_html() -> &'static str {
+    "<span class=\"message-ack-pill\" data-message-classification=\"ack\" \
+     aria-label=\"Acknowledgement classification\">ACK</span>"
 }
 
 fn markdown_is_image_only(events: &[MarkdownEvent<'_>]) -> bool {
@@ -959,6 +1003,129 @@ mod tests {
                 .html
                 .contains("[BROADCAST] Remains ordinary quoted prose.")
         );
+    }
+
+    #[test]
+    fn acknowledged_context_markers_nest_an_uncounted_pill_inside_the_quote() {
+        let rendered = render_received_with_badges(
+            "> [ACK] Keep the current path.\n\n\
+             Applied.\n\n\
+             > [ACK] A second marker remains literal.\n\n\
+             [ACK] Ordinary prose remains literal.\n\n\
+             > `[ACK]` remains inline code.\n\n\
+             > ```text\n> [ACK] remains fenced code\n> ```",
+            wire::AgentMessageBadges {
+                acknowledgements: 1,
+                ..wire::AgentMessageBadges::default()
+            },
+        );
+        assert_eq!(
+            rendered.html.matches("class=\"message-ack-pill\"").count(),
+            1,
+        );
+        assert!(!rendered.html.contains("message-classifiers"));
+        assert!(!rendered.html.contains("message-badge-count"));
+        let pill = rendered
+            .html
+            .find("<span class=\"message-ack-pill\"")
+            .expect("ack pill renders");
+        let quote = rendered
+            .html
+            .find("<blockquote>")
+            .expect("quoted context renders");
+        assert!(
+            quote < pill,
+            "the pill nests inside the quote: {}",
+            rendered.html
+        );
+        assert!(rendered.html.contains(
+            "aria-label=\"Acknowledgement classification\">ACK</span> Keep the current path."
+        ));
+        assert!(
+            rendered
+                .html
+                .contains("[ACK] A second marker remains literal.")
+        );
+        assert!(
+            rendered
+                .html
+                .contains("[ACK] Ordinary prose remains literal.")
+        );
+        assert!(rendered.html.contains("<code>[ACK]</code>"));
+        assert!(rendered.html.contains("[ACK] remains fenced code"));
+
+        let unclassified = render_received("> [ACK] Remains ordinary quoted prose.");
+        assert!(!unclassified.html.contains("message-ack-pill"));
+        assert!(
+            unclassified
+                .html
+                .contains("[ACK] Remains ordinary quoted prose.")
+        );
+    }
+
+    #[test]
+    fn bare_acknowledged_context_marker_heads_a_nested_operator_quote() {
+        let rendered = render_received_with_badges(
+            "> [ACK]\n>\n> > The original assertion remains visible.\n>\n> approved\n\nApplied.",
+            wire::AgentMessageBadges {
+                acknowledgements: 1,
+                ..wire::AgentMessageBadges::default()
+            },
+        );
+        assert_eq!(
+            rendered.html.matches("class=\"message-ack-pill\"").count(),
+            1,
+        );
+        assert!(rendered.html.contains("classification\">ACK</span></p>"));
+        assert!(rendered.html.contains(
+            "<blockquote>\n<p>The original assertion remains visible.</p>\n</blockquote>"
+        ));
+        assert!(rendered.html.contains("<p>approved</p>"));
+    }
+
+    #[test]
+    fn flavored_acknowledgements_keep_their_own_pill_as_the_mark() {
+        let rendered = render_received_with_badges(
+            "> [TASTE] polling: Wait for completion.\n\n\
+             > [BROADCAST] Send this to every occupied agent.\n\n\
+             > [ACK] Stray marker stays literal.",
+            wire::AgentMessageBadges {
+                acknowledgements: 2,
+                tastes: 1,
+                broadcasts: 1,
+                reviews: 0,
+            },
+        );
+        assert_eq!(
+            rendered
+                .html
+                .matches("class=\"message-taste-pill\"")
+                .count(),
+            1
+        );
+        assert_eq!(
+            rendered
+                .html
+                .matches("class=\"message-broadcast-pill\"")
+                .count(),
+            1
+        );
+        assert!(!rendered.html.contains("message-ack-pill"));
+        assert!(rendered.html.contains("[ACK] Stray marker stays literal."));
+
+        let mixed = render_received_with_badges(
+            "> [TASTE] polling: Wait for completion.\n\n> [ACK] Keep the current path.",
+            wire::AgentMessageBadges {
+                acknowledgements: 2,
+                tastes: 1,
+                ..wire::AgentMessageBadges::default()
+            },
+        );
+        assert_eq!(
+            mixed.html.matches("class=\"message-taste-pill\"").count(),
+            1
+        );
+        assert_eq!(mixed.html.matches("class=\"message-ack-pill\"").count(), 1);
     }
 
     #[test]
