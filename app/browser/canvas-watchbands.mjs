@@ -155,6 +155,21 @@ async function streamAgentProse(worktree, cards, text, { final = false } = {}) {
   return card;
 }
 
+/// Steer the narrator lane, answer with an ACK packet the resident
+/// authenticates, and return the acknowledged card once its narration cursor
+/// has moved past it. An acked acknowledgement is the second automatic-speech
+/// kind beside a final answer, classified separately at the resident.
+async function streamAcknowledgedAck(page, fixture, narrator, surface, cards, body) {
+  const sent = await reply(fixture, ["steer", narrator.lane, `acknowledge ${crypto.randomUUID()}`]);
+  const card = await streamAgentProse(narrator.worktree, cards, `ACK ${sent.body.key}: ${body}`);
+  const key = await card.getAttribute("data-mosaic-card-key");
+  await waitForPage(page, `the "${body}" packet is authenticated as one ACK`, CONNECT_MS,
+    (key) => document.querySelector(`[data-mosaic-card-key="${key}"]`)?.dataset.messageAckCount
+      === "1", key);
+  await waitForNarrationCursor(surface, key);
+  return card;
+}
+
 async function waitForNarrationCursor(surface, key) {
   await surface.locator(".lane-mosaic-plane").evaluate((plane, expected) => (
     new Promise((resolve, reject) => {
@@ -566,6 +581,19 @@ export async function assertPerOrgWatchbands(
     [],
     "Quiet hands a final answer to neither speechSynthesis nor an audio element",
   );
+  await streamAcknowledgedAck(
+    page,
+    fixture,
+    primaryNarrator,
+    primarySurface,
+    primaryNarrationCards,
+    "quiet acknowledgement",
+  );
+  assert.deepEqual(
+    await page.evaluate(() => window.__speechLog),
+    [],
+    "Quiet hands an acked ACK to neither speechSynthesis nor an audio element",
+  );
   await primarySpeech.fill("1");
   assert.equal(await primarySurface.locator(".organization-speech span").innerText(), "speak");
   const spokenFinal = await streamAgentProse(
@@ -594,6 +622,25 @@ export async function assertPerOrgWatchbands(
   await waitForPage(page, "pagehide releases the message card", TRANSITION_MS,
     (key) => document.querySelector(`[data-mosaic-card-key="${key}"]`)?.dataset.speechActive
       === "false", spokenFinalKey);
+  await page.evaluate(() => { window.__speechLog = []; });
+  await streamAcknowledgedAck(
+    page,
+    fixture,
+    primaryNarrator,
+    primarySurface,
+    primaryNarrationCards,
+    "spoken acknowledgement",
+  );
+  await waitForPage(page, "Speak dispatches the acked ACK it is bound to", TRANSITION_MS,
+    () => window.__speechLog.filter((row) => row.action === "speak").length === 1);
+  assert.deepEqual(
+    await page.evaluate(() => window.__speechLog.map((row) => [row.action, row.text])),
+    [["speak", "spoken acknowledgement"]],
+    "Speak speaks the acked packet body once, so the Quiet ACK negative is bound to a stimulus that speaks",
+  );
+  await settleLatestSystemSpeech(page);
+  await waitForPage(page, "the spoken acknowledgement releases the global head", TRANSITION_MS,
+    () => window.__speechActive === 0);
   await primarySpeech.fill("0");
   assert.equal(await primarySurface.locator(".organization-speech span").innerText(), "quiet");
 
