@@ -265,7 +265,7 @@ fn list_scope_matches(board: &BoardAnswer, task: &BoardTask, options: &TaskListO
 /// Stem scoped, not subscription scoped, and deliberately wider than the
 /// allocation scope in `board::next::selectable`, which states the rule and
 /// why the two must stay apart.
-fn actor_route_matches(board: &BoardAnswer, task: &BoardTask) -> bool {
+pub(super) fn actor_route_matches(board: &BoardAnswer, task: &BoardTask) -> bool {
     let statement = &task.statement.body;
     statement.project == board.actor_route.project
         || task.origin_thread == board.actor_route.origin_thread
@@ -794,27 +794,12 @@ pub(in crate::board_command) fn task_status(
 ) -> Result<String, Outcome<CommandAnswer>> {
     let entries = actor_entries(board)?;
     let environment = board.environment();
-    let routed = board
-        .tasks
-        .iter()
-        .filter(|task| actor_route_matches(board, task))
-        .map(|task| task.statement.body.handle.clone())
-        .collect::<std::collections::BTreeSet<_>>();
-    // The board owns which prerequisites are satisfied. Deciding it again here
-    // is how the same row gets counted ready and blocked at once: `ready` asks
-    // the board through `eligible_entry`, so `blocked` has to ask the board too.
-    let satisfied = board::satisfied_tasks(&entries);
-    let pending_actor = |entry: &&Entry| {
-        routed.contains(entry.handle())
-            && entry.workflow().status == "pending"
-            && entry.workflow().completion.is_none()
-    };
+    let rows = actor_rows(board, &entries);
     let active = |entry: &&Entry| {
         entry
             .claim()
             .is_some_and(|claim| claim.disposition == ClaimDisposition::Active)
     };
-    let rows = entries.iter().filter(pending_actor).collect::<Vec<_>>();
     let claim = rows
         .iter()
         .copied()
@@ -825,26 +810,14 @@ pub(in crate::board_command) fn task_status(
                     .is_some_and(|claim| claim.actor == board.principal)
         })
         .map_or_else(|| "-".to_owned(), |entry| entry.handle().to_string());
-    let active_count = rows.iter().copied().filter(active).count();
     let review = rows
         .iter()
         .copied()
         .filter(|entry| entry.workflow().phase.as_str() == "review" && !active(entry))
         .count();
-    let waiting = rows
-        .iter()
-        .filter(|entry| entry.workflow().deferral.is_some())
-        .count();
-    let blocked = rows
-        .iter()
-        .filter(|entry| {
-            entry
-                .statement()
-                .dependencies
-                .iter()
-                .any(|dependency| !satisfied.contains(dependency))
-        })
-        .count();
+    // The parked split is shared with the empty-drain readout so the two
+    // surfaces cannot disagree on a count.
+    let parked = ParkedCounts::measure(&entries, &rows);
     let (environment_satisfied, environment_blocked, required_schemas, required_trust) =
         environment_status(&rows, &environment);
     let ready = rows
@@ -855,25 +828,9 @@ pub(in crate::board_command) fn task_status(
                 && board::eligible_entry(&entries, entry, &board.principal, &environment)
         })
         .count();
-    let stale = rows
-        .iter()
-        .filter(|entry| {
-            entry
-                .claim()
-                .is_some_and(|claim| claim.disposition == ClaimDisposition::Lapsed)
-        })
-        .count();
-    let oops = entries
-        .iter()
-        .filter(|entry| {
-            entry.project().visibility().hidden_stem() == Some("oops")
-                && entry.workflow().status == "pending"
-                && entry.workflow().completion.is_none()
-        })
-        .count();
     Ok(format!(
         "claim {claim}\nactor {}\nfilter {}\npublic task project depth {}..{} dotted segments\n\
-         active {active_count}\nready {ready}\n\
+         active {active}\nready {ready}\n\
          review {review}\nblocked {blocked}\nwaiting {waiting}\n\
          environment journal-schema required={required_schemas} observed={} \
          trust-grant required={required_trust} \
@@ -884,6 +841,11 @@ pub(in crate::board_command) fn task_status(
         board.project_policy.public_min_depth,
         board.project_policy.public_max_depth,
         board.schema,
+        active = parked.active,
+        blocked = parked.blocked,
+        waiting = parked.waiting,
+        stale = parked.stale,
+        oops = parked.oops,
     ))
 }
 

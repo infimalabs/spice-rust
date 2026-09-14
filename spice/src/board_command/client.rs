@@ -5,17 +5,28 @@ use requirements::environment_requirements;
 
 /// Execute one generated board-family CLI leaf.
 pub(crate) fn run(matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
-    let current = match std::env::current_dir() {
-        Ok(current) => current,
-        Err(error) => return environment_fault("board::cwd-unavailable", &error.to_string()),
-    };
-    let repository = match Repository::discover(current) {
-        Ok(repository) => repository,
-        Err(error) => {
-            return environment_fault("board::repository-unavailable", &error.to_string());
-        }
-    };
-    dispatch_client(&repository, contract, matches)
+    match discover_repository() {
+        Ok(repository) => dispatch_client(&repository, contract, matches),
+        Err(outcome) => outcome,
+    }
+}
+
+/// Execute `task next`, keeping the empty-drain readout beside the outcome.
+pub(crate) fn run_task_next(contract: &Contract) -> TaskNext {
+    match discover_repository() {
+        Ok(repository) => client_next(&repository, contract),
+        Err(outcome) => TaskNext {
+            outcome,
+            drain: None,
+        },
+    }
+}
+
+fn discover_repository() -> Result<Repository, Outcome<CommandAnswer>> {
+    let current = std::env::current_dir()
+        .map_err(|error| environment_fault("board::cwd-unavailable", &error.to_string()))?;
+    Repository::discover(current)
+        .map_err(|error| environment_fault("board::repository-unavailable", &error.to_string()))
 }
 
 fn dispatch_client(
@@ -32,7 +43,7 @@ fn dispatch_client(
         ["task", "list"] => client_list(repository, contract, matches),
         ["task", "status"] => client_status(repository, contract),
         ["task", "show"] => client_show(repository, contract, matches),
-        ["task", "next"] => client_next(repository, contract),
+        ["task", "next"] => client_next(repository, contract).outcome,
         ["task", "recover"] => client_recover(repository, contract, matches),
         ["task", "reclaim"] => client_reclaim(repository, contract, matches),
         ["task", "add"] => client_add(repository, contract, matches),
@@ -74,6 +85,9 @@ fn client_board(
 
 mod read;
 pub(super) use read::*;
+mod drain;
+pub(crate) use drain::{DrainReadout, ParkedCounts, TaskNext};
+pub(super) use drain::{actor_rows, drain_reply};
 mod recovery;
 use recovery::client_recover;
 #[cfg(test)]
@@ -142,8 +156,9 @@ fn client_ledger(
     }
 }
 
-fn client_next(repository: &Repository, contract: &Contract) -> Outcome<CommandAnswer> {
-    retry_task_next(|| {
+fn client_next(repository: &Repository, contract: &Contract) -> TaskNext {
+    let mut drain = None;
+    let outcome = retry_task_next(|| {
         mutate_from_board(repository, contract, |board| {
             let entries = actor_entries(&board)?;
             let subscription = allocation_subscription(&board.residency.body, &board.principal)?;
@@ -157,6 +172,9 @@ fn client_next(repository: &Repository, contract: &Contract) -> Outcome<CommandA
                 &environment,
             )
             .ok_or_else(|| {
+                // The refusal stays typed for every caller; the readout is
+                // measured from this same snapshot for the rim to speak.
+                drain = drain_reply(&board).ok();
                 refusal(
                     "board::allocator-empty",
                     None,
@@ -183,7 +201,23 @@ fn client_next(repository: &Repository, contract: &Contract) -> Outcome<CommandA
                 .expect("typed intent encodes"),
             ))
         })
-    })
+    });
+    // The resident can also drain empty after the client selected a row that
+    // moved under it; that answer arrives without a snapshot, so read one.
+    if drain.is_none() && allocator_empty(&outcome) {
+        drain = current_board(repository)
+            .ok()
+            .and_then(|board| drain_reply(&board).ok());
+    }
+    TaskNext { outcome, drain }
+}
+
+/// Whether an outcome is the typed refusal an exhausted allocator returns.
+pub(crate) fn allocator_empty(outcome: &Outcome<CommandAnswer>) -> bool {
+    matches!(
+        outcome,
+        Outcome::Refusal(refusal) if refusal.reason() == "board::allocator-empty"
+    )
 }
 
 pub(super) const TASK_NEXT_ATTEMPTS: usize = 2;

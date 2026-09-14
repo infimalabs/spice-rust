@@ -1014,6 +1014,10 @@ use edit::*;
 // replacement and keep the complete graph acyclic.
 mod dependencies;
 use dependencies::{dependency_witnesses, todo_task};
+
+// The empty-drain readout a steered lane receives measures the parked board
+// with the same split task status reports, so both are pinned on one board.
+mod drain_readout;
 mod task_creation_flow;
 
 // Withdrawal, its refusals, and what a withdrawn row releases are one
