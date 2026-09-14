@@ -499,7 +499,7 @@ fn horizontal_acknowledgements_publish_live_and_replay_with_stable_context() {
     );
     let record = mixed_acknowledgement_record(lane, author);
     let expected = concat!(
-        "> First direction.\n\n",
+        "> [ACK] First direction.\n\n",
         "Nope 1kQwPZtM: One response.\n",
         "> Second direction.\n\n",
         "Unsafe."
@@ -625,8 +625,15 @@ fn assert_mixed_acknowledgement_message(
     assert_eq!(messages[0].text, expected);
     assert!(!messages[0].text.contains("ACK 1kQwPZtK"));
     assert!(!messages[0].text.contains("NACK 1kQwPZtL"));
-    assert_eq!(messages[0].text.matches("> First direction.").count(), 1);
+    assert_eq!(
+        messages[0].text.matches("> [ACK] First direction.").count(),
+        1
+    );
     assert_eq!(messages[0].text.matches("> Second direction.").count(), 1);
+    assert_eq!(
+        messages[0].text.matches(wire::stream::ACK_MARKER).count(),
+        1
+    );
     assert_eq!(messages[0].text.matches("Nope").count(), 1);
     assert_eq!(messages[0].text.matches("1kQwPZtM").count(), 1);
     assert_eq!(messages[0].text.matches("One response.").count(), 1);

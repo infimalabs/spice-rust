@@ -1,5 +1,6 @@
 //! Durable taste recognition and fallible Canvas views over admitted lane capture.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -724,9 +725,9 @@ fn present_steering_acknowledgements_with_directives(
                         .0
                         .get(&key)
                         .is_some_and(|directive| directive.authored)
-                        && !contexts.iter().any(|known| known == &key)
+                        && !contexts.iter().any(|(known, _)| known == &key)
                     {
-                        contexts.push(key);
+                        contexts.push((key, disposition == wire::Disposition::Acked));
                     }
                 }
                 steer::ack::scan::Outcome::Retired { key, .. } => {
@@ -734,8 +735,8 @@ fn present_steering_acknowledgements_with_directives(
                 }
                 steer::ack::scan::Outcome::Missed { token, miss } => {
                     if let Some(key) = standing.historical_context(&token, miss) {
-                        if !contexts.iter().any(|known| known == &key) {
-                            contexts.push(key);
+                        if !contexts.iter().any(|(known, _)| known == &key) {
+                            contexts.push((key, false));
                         }
                     } else {
                         missed.push(token);
@@ -755,14 +756,17 @@ fn present_steering_acknowledgements_with_directives(
         capitalize_body = false;
         if !contexts.is_empty() {
             start_quote_block(&mut rendered);
-            for (index, key) in contexts.iter().enumerate() {
+            for (index, (key, acked)) in contexts.iter().enumerate() {
                 let directive = directives.0.get(key).ok_or_else(|| {
                     format!("canonical acknowledgment recognition lost directive {key}")
                 })?;
                 if index > 0 {
                     rendered.push_str("\n\n");
                 }
-                append_acknowledgement_quote(&mut rendered, &directive.text);
+                append_acknowledgement_quote(
+                    &mut rendered,
+                    &acknowledged_context_text(directive, *acked),
+                );
             }
             rendered.push_str("\n\n");
         }
@@ -837,6 +841,56 @@ fn acknowledgement_marker(disposition: wire::Disposition) -> Result<&'static str
             "acknowledgment scanner returned nonterminal disposition {disposition:?}"
         )),
     }
+}
+
+/// The quoted context text for one acknowledged directive.
+///
+/// An ordinary directive retired by a positive acknowledgement carries the
+/// canonical ACK marker so Canvas can badge it inline. A taste, broadcast, or
+/// review directive already opens with its own flavor marker, and a declined
+/// or merely historical context earns no badge.
+fn acknowledged_context_text(directive: &PresentationDirective, acked: bool) -> Cow<'_, str> {
+    if !acked || directive.review || directive.taste || has_broadcast_marker(&directive.text) {
+        return Cow::Borrowed(&directive.text);
+    }
+    Cow::Owned(mark_acknowledged_context(&directive.text))
+}
+
+/// Prefix one ordinary acknowledged directive with the canonical ACK marker.
+///
+/// The marker shares the first line when that line reads as paragraph text so
+/// the Canvas pill sits inline with the directive. A first line that opens
+/// another block (a nested operator quote, list, heading, table, fence, rule,
+/// or indented code) keeps its structure beneath a marker paragraph of its own.
+fn mark_acknowledged_context(text: &str) -> String {
+    let marker = wire::stream::ACK_MARKER;
+    if text.is_empty() {
+        return marker.to_owned();
+    }
+    let first = text.split('\n').next().unwrap_or_default();
+    if opens_paragraph_text(first) {
+        format!("{marker} {text}")
+    } else {
+        format!("{marker}\n\n{text}")
+    }
+}
+
+fn opens_paragraph_text(line: &str) -> bool {
+    if line.starts_with("    ") || line.starts_with('\t') {
+        return false;
+    }
+    let line = line.trim_start();
+    let Some(first) = line.chars().next() else {
+        return false;
+    };
+    if first.is_ascii_digit() {
+        let after_digits = line.trim_start_matches(|character: char| character.is_ascii_digit());
+        return !after_digits.starts_with(['.', ')']);
+    }
+    !matches!(
+        first,
+        '>' | '#' | '-' | '+' | '*' | '`' | '~' | '|' | '<' | '_'
+    )
 }
 
 fn append_acknowledgement_quote(rendered: &mut String, directive: &str) {

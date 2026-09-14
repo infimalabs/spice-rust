@@ -663,7 +663,7 @@ async function retainNoActionCard(page, console, activityReplay, lane) {
 }
 
 async function retainFinalCard(page, console, activityReplay, lane) {
-  const text = "Final message color reference";
+  const text = "> [ACK] Acknowledged directive\n\nFinal message color reference";
   const message = await activityReplay.injectClassifiedAgentProse(page, lane, text, {
     acknowledgements: 1,
     tastes: 0,
@@ -684,7 +684,7 @@ async function retainFinalCard(page, console, activityReplay, lane) {
       && candidate.classList.contains("final")
       && [...candidate.querySelectorAll(".message-badge")]
         .map((badge) => badge.textContent).join(",") === "FINAL"
-      && candidate.querySelector(".message-ack-pill")?.textContent === "ACK1";
+      && candidate.querySelector("blockquote > p > .message-ack-pill")?.textContent === "ACK";
   }, message.key);
   return card;
 }
@@ -725,9 +725,6 @@ async function messageStateColors(card) {
     const badgeGeometry = [...article.querySelectorAll(".message-badge, .message-ack-pill")].map((badge) => {
       const bounds = badge.getBoundingClientRect();
       const badgeStyle = getComputedStyle(badge);
-      const count = badge.querySelector(".message-badge-count");
-      const countBounds = count?.getBoundingClientRect();
-      const countStyle = count && getComputedStyle(count);
       return {
         text: badge.textContent,
         display: badgeStyle.display,
@@ -745,22 +742,11 @@ async function messageStateColors(card) {
         right: bounds.right,
         top: bounds.top,
         bottom: bounds.bottom,
-        count: count && {
-          text: count.textContent,
-          clientWidth: count.clientWidth,
-          scrollWidth: count.scrollWidth,
-          height: countBounds.height,
-          left: countBounds.left,
-          right: countBounds.right,
-          top: countBounds.top,
-          bottom: countBounds.bottom,
-          padding: countStyle.padding,
-          fontSize: countStyle.fontSize,
-          fontFamily: countStyle.fontFamily,
-          boxShadow: countStyle.boxShadow,
-        },
+        counts: badge.querySelectorAll(".message-badge-count").length,
       };
     });
+    const ackPill = article.querySelector(".message-ack-pill");
+    const ackQuote = ackPill?.closest("blockquote");
     const result = {
       key: article.dataset.mosaicCardKey,
       classes: [...article.classList],
@@ -804,8 +790,15 @@ async function messageStateColors(card) {
         .map((badge) => badge.textContent),
       badgeBorderWidths: [...article.querySelectorAll(".message-badge, .message-ack-pill")]
         .map((badge) => getComputedStyle(badge).borderWidth),
-      badgeCountShadows: [...article.querySelectorAll(".message-badge-count")]
-        .map((count) => getComputedStyle(count).boxShadow),
+      badgeCounts: article.querySelectorAll(".message-badge-count").length,
+      detachedClassifiers: article.querySelectorAll(".message-classifiers").length,
+      ackQuote: ackQuote && {
+        headsQuote: ackQuote.firstElementChild?.matches("p:has(> .message-ack-pill:first-child)"),
+        borderLeftColor: getComputedStyle(ackQuote).borderLeftColor,
+        accent: color("var(--accent)"),
+        pillColor: getComputedStyle(ackPill).color,
+        bodyText: article.querySelector(".message-body")?.innerText ?? "",
+      },
     };
     probe.remove();
     return result;
@@ -867,7 +860,7 @@ async function captureFinalMessageStates(
   );
   assert.deepEqual(
     final.badgeTexts,
-    ["ACK1", "FINAL"],
+    ["ACK", "FINAL"],
     `${mode} ${viewport.label} keeps inline ACK distinct from footer FINAL`,
   );
   assert.deepEqual(
@@ -876,64 +869,62 @@ async function captureFinalMessageStates(
     `${mode} ${viewport.label} keeps FINAL and ACK borderless inside the card`,
   );
   assert.deepEqual(
-    final.badgeCountShadows,
-    ["none"],
-    `${mode} ${viewport.label} keeps the ACK count free of an inset border`,
+    { counts: final.badgeCounts, detached: final.detachedClassifiers },
+    { counts: 0, detached: 0 },
+    `${mode} ${viewport.label} renders the ACK pill uncounted with no detached header`,
   );
   assert.equal(final.badgeGeometry.length, 2, `${mode} ${viewport.label} measures FINAL and ACK`);
   for (const badge of final.badgeGeometry) {
     assert.deepEqual(
       {
-        display: badge.display,
         minHeight: badge.minHeight,
         padding: badge.padding,
         borderWidth: badge.borderWidth,
         borderRadius: badge.borderRadius,
         fontFamily: badge.fontFamily,
         fontWeight: badge.fontWeight,
+        counts: badge.counts,
       },
       {
-        display: "flex",
         minHeight: "17px",
         padding: "0px 4px",
         borderWidth: "0px",
         borderRadius: "999px",
         fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
         fontWeight: "700",
+        counts: 0,
       },
       `${mode} ${viewport.label} gives ${badge.text} the shared inline-badge geometry`,
     );
   }
   const [ackGeometry, finalGeometry] = final.badgeGeometry;
-  assert.equal(ackGeometry.text, "ACK1", `${mode} ${viewport.label} measures inline ACK first`);
+  assert.equal(ackGeometry.text, "ACK", `${mode} ${viewport.label} measures inline ACK first`);
   assert.equal(finalGeometry.text, "FINAL", `${mode} ${viewport.label} measures footer FINAL second`);
   assert.deepEqual(
+    [ackGeometry.display, finalGeometry.display],
+    ["inline-flex", "flex"],
+    `${mode} ${viewport.label} flows ACK inline with quoted prose and FINAL as a footer item`,
+  );
+  assert.deepEqual(
     {
-      text: ackGeometry.count?.text,
-      padding: ackGeometry.count?.padding,
-      fontSize: ackGeometry.count?.fontSize,
-      fontFamily: ackGeometry.count?.fontFamily,
-      boxShadow: ackGeometry.count?.boxShadow,
+      headsQuote: final.ackQuote?.headsQuote,
+      borderLeftColor: final.ackQuote?.borderLeftColor,
+      pillColor: final.ackQuote?.pillColor,
     },
     {
-      text: "1",
-      padding: "0px 5px",
-      fontSize: "9px",
-      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-      boxShadow: "none",
+      headsQuote: true,
+      borderLeftColor: final.ackQuote?.accent,
+      pillColor: final.ackQuote?.accent,
     },
-    `${mode} ${viewport.label} keeps the attached ACK count legible and borderless`,
+    `${mode} ${viewport.label} nests the ACK pill at the head of its quote on the accent rail`,
+  );
+  assert.doesNotMatch(
+    final.ackQuote?.bodyText ?? "",
+    /\[ACK\]/u,
+    `${mode} ${viewport.label} keeps the authenticated ACK marker presentation-only`,
   );
   assert.ok(
-    ackGeometry.count.left >= ackGeometry.left
-      && ackGeometry.count.right <= ackGeometry.right
-      && ackGeometry.count.top >= ackGeometry.top
-      && ackGeometry.count.bottom <= ackGeometry.bottom,
-    `${mode} ${viewport.label} contains the ACK count inside its badge`,
-  );
-  assert.ok(
-    final.badgeGeometry.every((badge) => badge.scrollWidth <= badge.clientWidth + 1)
-      && ackGeometry.count.scrollWidth <= ackGeometry.count.clientWidth + 1,
+    final.badgeGeometry.every((badge) => badge.scrollWidth <= badge.clientWidth + 1),
     `${mode} ${viewport.label} keeps inline and footer classifier content unclipped`,
   );
   assert.ok(

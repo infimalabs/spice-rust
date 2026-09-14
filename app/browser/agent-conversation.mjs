@@ -425,8 +425,8 @@ async function assertExternalOperatorReplay(page, fixture, console, lane, worktr
         && card.dataset.messageRole === "agent"
         && card.dataset.messageAckCount === "1"
         && card.dataset.messageTasteCount === "0"
-        && [...card.querySelectorAll(".message-ack-pill")]
-          .map((badge) => badge.textContent).join(",") === "ACK1"
+        && [...card.querySelectorAll("blockquote > p > .message-ack-pill")]
+          .map((badge) => badge.textContent).join(",") === "ACK"
     )), { lane, replyText });
   assert.equal(await acknowledgedCard.count(), 1, "acknowledgement renders one assistant card");
   assert.equal(await acknowledgedCard.getAttribute("data-message-role"), "agent");
@@ -435,10 +435,38 @@ async function assertExternalOperatorReplay(page, fixture, console, lane, worktr
   assert.equal(await acknowledgedCard.getAttribute("data-message-review-count"), "0");
   assert.deepEqual(
     await acknowledgedCard.locator(".message-ack-pill").allTextContents(),
-    ["ACK1"],
-    "authenticated acknowledgement evidence renders one counted ACK badge",
+    ["ACK"],
+    "authenticated acknowledgement evidence renders one uncounted inline ACK pill",
+  );
+  assert.equal(
+    await acknowledgedCard.locator(".message-classifiers, .message-ack-pill .message-badge-count").count(),
+    0,
+    "the ACK pill carries no detached header and no count",
   );
   const outerQuote = acknowledgedCard.locator("blockquote").first();
+  assert.equal(
+    await acknowledgedCard.locator(".message-ack-pill").evaluate((element) => {
+      let depth = 0;
+      for (let node = element.parentElement; node; node = node.parentElement) {
+        if (node.tagName === "BLOCKQUOTE") depth += 1;
+      }
+      return depth;
+    }),
+    1,
+    "the ACK pill nests inside the acknowledged context quote like TASTE, REVIEW, and BROADCAST",
+  );
+  assert.equal(
+    await outerQuote.evaluate((quote) => (
+      quote.firstElementChild?.matches("p:has(> .message-ack-pill:first-child)")
+    )),
+    true,
+    "the ACK pill heads the acknowledged quote above the nested operator quote",
+  );
+  assert.doesNotMatch(
+    await acknowledgedCard.locator(".message-body").innerText(),
+    /\[ACK\]/u,
+    "the authenticated ACK marker is presentation-only",
+  );
   assert.equal(
     (await outerQuote.locator("blockquote").innerText()).trim(),
     quotedText,
@@ -477,9 +505,9 @@ async function assertExternalOperatorReplay(page, fixture, console, lane, worktr
   await acknowledgedCard.waitFor({ timeout: CONNECT_MS });
   assert.equal(await acknowledgedCard.count(), 1, "bootstrap restores one acknowledged assistant card");
   assert.deepEqual(
-    await acknowledgedCard.locator(".message-ack-pill").allTextContents(),
-    ["ACK1"],
-    "durable replay restores the typed ACK badge",
+    await acknowledgedCard.locator("blockquote > p > .message-ack-pill").allTextContents(),
+    ["ACK"],
+    "durable replay restores the inline ACK pill inside its quote",
   );
   assert.equal(
     (await acknowledgedCard.locator("blockquote blockquote").innerText()).trim(),
@@ -554,8 +582,8 @@ async function assertInlineTastePills(page, console, lane, activityReplay) {
   );
   assert.deepEqual(
     await card.locator(".message-body .message-ack-pill").allTextContents(),
-    ["ACK2"],
-    "taste flavor and acknowledgement state remain inline",
+    [],
+    "taste pills are the acknowledgement mark; no separate ACK pill renders",
   );
   const body = await card.locator(".message-body").innerText();
   assert.doesNotMatch(body, /\[TASTE\]/, "quoted taste markers are replaced in presentation");
@@ -571,8 +599,8 @@ async function assertInlineTastePills(page, console, lane, activityReplay) {
   );
   assert.deepEqual(
     await card.locator(".message-body .message-ack-pill").allTextContents(),
-    ["ACK2"],
-    "replay preserves taste acknowledgement state",
+    [],
+    "replay adds no separate ACK pill beside the taste pills",
   );
   return { key, replyText };
 }
@@ -595,8 +623,8 @@ async function assertInlineBroadcastPill(page, console, lane, activityReplay) {
   assert.equal(await card.getAttribute("data-message-broadcast-count"), "1");
   assert.deepEqual(
     await card.locator(".message-body .message-ack-pill").allTextContents(),
-    ["ACK1"],
-    "broadcast flavor and acknowledgement state remain inline",
+    [],
+    "the broadcast pill is the acknowledgement mark; no separate ACK pill renders",
   );
   const pill = card.locator(".message-broadcast-pill");
   assert.equal(await pill.innerText(), "BROADCAST");
@@ -637,8 +665,8 @@ async function assertInlineBroadcastPill(page, console, lane, activityReplay) {
   assert.equal(await card.locator(".message-broadcast-pill").count(), 1);
   assert.deepEqual(
     await card.locator(".message-body .message-ack-pill").allTextContents(),
-    ["ACK1"],
-    "replay preserves broadcast flavor and acknowledgement state",
+    [],
+    "replay adds no separate ACK pill beside the broadcast pill",
   );
   return { key, replyText };
 }
@@ -750,8 +778,8 @@ async function assertFlavorAcknowledgementsAfterReload(page, console, activityRe
     assert.equal(await card.locator(`.message-${flavor}-pill`).count(), count);
     assert.deepEqual(
       await card.locator(".message-body .message-ack-pill").allTextContents(),
-      [`ACK${count}`],
-      `reload preserves ${flavor} flavor and acknowledgement state`,
+      [],
+      `reload keeps the ${flavor} pill as the only acknowledgement mark`,
     );
   }
 }

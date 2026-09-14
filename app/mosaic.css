@@ -83,6 +83,10 @@
   border-left-color: var(--accent-1);
   background: color-mix(in srgb, var(--accent-1) 6%, transparent);
 }
+.markdown-body blockquote:has(> p > .message-ack-pill) {
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
 .markdown-body code {
   padding: 0; background: transparent;
   font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -1011,13 +1015,6 @@ html[data-command-modifier-held="true"]
   gap: 6px;
   margin-left: 0;
 }
-.organization-surface .message-classifiers {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px;
-  min-width: 0;
-}
 .organization-surface .message-task-chip,
 .organization-surface .message-ack-pill,
 .organization-surface .message-taste-pill,
@@ -1049,7 +1046,6 @@ html[data-command-modifier-held="true"]
 }
 .organization-surface .message-ack-pill {
   --message-inline-pill-accent: var(--accent);
-  gap: 4px;
 }
 .organization-surface .message-task-chip-label {
   display: block;
@@ -1074,6 +1070,7 @@ html[data-command-modifier-held="true"]
   }
 }
 .organization-surface .markdown-body blockquote .message-task-chip,
+.organization-surface .markdown-body blockquote .message-ack-pill,
 .organization-surface .markdown-body blockquote .message-taste-pill,
 .organization-surface .markdown-body blockquote .message-broadcast-pill,
 .organization-surface .markdown-body blockquote .message-review-pill {
