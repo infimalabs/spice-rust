@@ -989,6 +989,9 @@ use resolution::*;
 // Review diagrams join durable lifecycle facts, rather than current assignment
 // heads, through the same command surface operators use.
 mod review_graph;
+// A review whose reviewer lapsed must reach the next lane; the lapse releases
+// the assignment and the allocator ignores one a lapse left behind.
+mod lapsed_review;
 
 // The closing boundaries the completion and review transactions record.
 // Kept beside the resolution seam because they drive its helpers, and

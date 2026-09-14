@@ -374,7 +374,8 @@ impl Law {
         authority: Authority::Connected,
     };
     /// Exact claim head, lease head, bound lane and occupant, resident epoch,
-    /// and optionally the workflow head when freeing also unassigns review.
+    /// and optionally the workflow head when the release also unassigns
+    /// review. A free and a lapse release the same way, so both carry it.
     pub const FREE: Self = Self {
         required: &[
             WitnessKind::Claim,
@@ -769,8 +770,8 @@ impl CommandKind {
             Self::TaskReview => Law::REVIEW,
             Self::TaskAssign => Law::ASSIGN,
             Self::ClaimWin => Law::WIN,
-            Self::ClaimFree => Law::FREE,
-            Self::ClaimCarry | Self::ClaimRenew | Self::ClaimLapse => Law::POSSESSION,
+            Self::ClaimFree | Self::ClaimLapse => Law::FREE,
+            Self::ClaimCarry | Self::ClaimRenew => Law::POSSESSION,
             _ => self.non_task_law(),
         }
     }

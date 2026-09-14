@@ -316,12 +316,27 @@ fn operational(entry: &Entry, actor: &Actor, completed: &BTreeSet<TaskStamp>) ->
         && workflow
             .assignment
             .as_ref()
-            .is_none_or(|assignment| assignment == actor)
+            .is_none_or(|assignment| assignment == actor || assignment_lapsed(entry, assignment))
         && entry
             .statement()
             .dependencies
             .iter()
             .all(|dependency| completed.contains(dependency))
+}
+
+/// Whether a review assignment died with the claim that carried it.
+///
+/// A review assignment pins the row to one reviewer. When that reviewer's own
+/// claim has lapsed, the pin outlives the possession it came with: nobody
+/// holds the row, yet every other actor is filtered out and the assignee is the
+/// one lane known to have left. Such an assignment is treated as none, so the
+/// next drain-mode lane takes the review over and mints its own assignment. A
+/// freed claim is not a lapse: the reviewer let go on purpose and the release
+/// already cleared the pin, so a pin that survives a free is somebody else's.
+fn assignment_lapsed(entry: &Entry, assignment: &Actor) -> bool {
+    entry.claim().is_some_and(|claim| {
+        claim.disposition == ClaimDisposition::Lapsed && &claim.actor == assignment
+    })
 }
 
 fn operational_without_assignment(entry: &Entry, completed: &BTreeSet<TaskStamp>) -> bool {
