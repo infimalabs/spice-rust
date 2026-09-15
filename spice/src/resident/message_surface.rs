@@ -4,6 +4,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use bus::Bus;
 use lane::occupant::Seats;
@@ -23,6 +24,14 @@ use projection::{publish_agent_event, publish_agent_messages_in, publish_agent_r
 const SESSION_MESSAGE_MEMBER_NAMESPACE: u64 = 1_u64 << 63;
 /// Reserved wire identity for record context that is not a decoded event.
 const TURN_BOUNDARY_EVENT: u32 = u32::MAX;
+/// Historical source bytes one Canvas history request may chain through per
+/// source, and the scan time it may spend doing so.
+///
+/// The tape and preserved-session halves of a merged page each derive their
+/// window count from this one span and their own fixed window, so the two
+/// halves cover the same reach per request and neither outruns the other.
+const HISTORY_REQUEST_BYTES: u64 = 32 * 1024 * 1024;
+const HISTORY_DURATION: Duration = Duration::from_secs(5);
 
 #[cfg(test)]
 pub(super) use backlog::restore_agent_messages;

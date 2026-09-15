@@ -424,26 +424,53 @@ fn reverse_compaction_pages_cross_one_oversized_record_and_a_partial_tail() {
 }
 
 #[test]
-fn reverse_page_refuses_a_record_larger_than_its_hard_byte_allowance() {
-    let scratch = Scratch::new("codex-record-over-hard-limit");
+fn reverse_page_seats_the_cursor_behind_a_terminated_record_larger_than_its_window() {
+    const BOUNDARY: &str =
+        "{\"timestamp\":\"2030-04-12T19:44:09.271Z\",\"type\":\"compacted\",\"payload\":{}}\n";
+    let scratch = Scratch::new("codex-terminated-record-over-window");
     let transcript = scratch.transcript();
-    fs::write(
-        &transcript,
-        codex_assistant_record(0, &"x".repeat(HISTORY_BYTE_BUDGET)),
-    )
-    .expect("oversized record is written");
+    let record = codex_assistant_record(0, &"x".repeat(HISTORY_BYTE_BUDGET));
+    fs::write(&transcript, &record).expect("oversized record is written");
     let mut cursor = cursor(&transcript, listen::Dialect::Codex);
     cursor.initialized = false;
     BOOTSTRAP_BYTES_DECODED.with(|count| count.set(0));
 
-    let error = bootstrap_until_error(&mut cursor, "oversized history record was admitted");
+    let records = bootstrap_until_ready(&mut cursor, "terminated oversized record is skipped");
+
+    assert!(records.is_empty(), "the skipped record yields no boundary");
+    assert_eq!(BOOTSTRAP_BYTES_DECODED.with(Cell::get), 0);
+    assert_eq!(
+        cursor.next,
+        record.len() as u64,
+        "the cursor seats on the delimiter the window reached"
+    );
+    assert_eq!(cursor.prefix_start, cursor.next);
+    append(&transcript, BOUNDARY.as_bytes());
+    let live = scan_until_boundary(&mut cursor, "boundary appended behind the skipped record");
+    assert_eq!(live.len(), 1);
+    assert_eq!(live[0].locus().offset, record.len() as u64);
+}
+
+#[test]
+fn reverse_page_refuses_an_unterminated_record_larger_than_its_window() {
+    let scratch = Scratch::new("codex-open-record-over-window");
+    let transcript = scratch.transcript();
+    let record = codex_assistant_record(0, &"x".repeat(HISTORY_BYTE_BUDGET));
+    let open = record.trim_end_matches('\n');
+    fs::write(&transcript, open).expect("open oversized record is written");
+    let mut cursor = cursor(&transcript, listen::Dialect::Codex);
+    cursor.initialized = false;
+    BOOTSTRAP_BYTES_DECODED.with(|count| count.set(0));
+
+    let error = bootstrap_until_error(&mut cursor, "open oversized record was admitted");
 
     assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    let text = error.to_string();
     assert!(
-        error
-            .to_string()
-            .contains("fixed 262144-byte history allowance")
+        text.contains("runs at least 262144 bytes without a delimiter"),
+        "refusal names the record size it crossed: {text}",
     );
+    assert!(text.contains("fixed 262144-byte history allowance"));
     let exhaustion = error
         .get_ref()
         .and_then(|source| source.downcast_ref::<HistoryExhaustion>())
@@ -453,6 +480,24 @@ fn reverse_page_refuses_a_record_larger_than_its_hard_byte_allowance() {
     assert_eq!(exhaustion.work.passes, HISTORY_PASS_BUDGET);
     assert_eq!(BOOTSTRAP_BYTES_DECODED.with(Cell::get), 0);
     assert_eq!(cursor.next, 0, "no record suffix becomes evidence");
+    assert!(!cursor.initialized);
+    let ScanAttempt::Failed { class, .. } = scan_once_per_source(&mut cursor) else {
+        panic!("the open record latches the refusal");
+    };
+    assert_eq!(class, "history-record-oversized");
+    append(&transcript, b"\n");
+    let records = (0..128)
+        .find_map(|_| match scan_once_per_source(&mut cursor) {
+            ScanAttempt::Complete(records) => cursor.initialized.then_some(records),
+            ScanAttempt::Latched => panic!("a closed record is not the latched source"),
+            ScanAttempt::Failed { error, .. } => panic!("delimiter closes the record: {error}"),
+        })
+        .expect("bounded authentication settles behind the closed record");
+    assert!(
+        records.is_empty(),
+        "the closed record is skipped rather than decoded"
+    );
+    assert_eq!(cursor.next, record.len() as u64);
 }
 
 #[test]

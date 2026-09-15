@@ -116,10 +116,15 @@ const SCAN_BYTE_BUDGET: usize = 256 * 1024;
 const SCAN_RECORD_BUDGET: usize = 128;
 const VALIDATION_BYTE_BUDGET: usize = 256 * 1024;
 const AUTHENTICATION_BYTE_BUDGET: usize = VALIDATION_BYTE_BUDGET * 2;
-const HISTORY_BYTE_BUDGET: usize = 256 * 1024;
+/// Fixed allowances for one reverse history window.
+pub(super) const HISTORY_BYTE_BUDGET: usize = 256 * 1024;
 const HISTORY_RECORD_BUDGET: usize = 128;
 const HISTORY_PASS_BUDGET: u32 = 1;
 const HISTORY_WALL_BUDGET: Duration = Duration::from_millis(50);
+/// Windows one history request may chain, sized from the shared
+/// [`HISTORY_REQUEST_BYTES`] span so this half of a merged page reaches as
+/// far back per request as the tape half does.
+const HISTORY_WINDOW_LIMIT: usize = (HISTORY_REQUEST_BYTES / HISTORY_BYTE_BUDGET as u64) as usize;
 
 struct PrefixValidation {
     start: u64,
@@ -514,7 +519,7 @@ fn bootstrap_codex(cursor: &mut Cursor, visible_limit: usize) -> io::Result<Vec<
         .startup_search
         .clone()
         .map_or_else(|| history_checkpoint(&cursor.path), Ok)?;
-    let page = bootstrap_before(cursor, visible_limit, &checkpoint)?;
+    let page = bootstrap_before(cursor, visible_limit, &checkpoint, HistoryRead::Cursor)?;
     if page.pending_authentication {
         cursor.startup_search = Some(checkpoint);
         return Ok(Vec::new());
@@ -538,7 +543,7 @@ fn advance_codex_startup_search(cursor: &mut Cursor) -> io::Result<Vec<Compactio
         cursor.dialect,
         cursor.author,
     );
-    let page = bootstrap_before(&mut recovery, 0, &checkpoint)?;
+    let page = bootstrap_before(&mut recovery, 0, &checkpoint, HistoryRead::Page)?;
     if page.pending_authentication {
         return Ok(Vec::new());
     }
@@ -563,7 +568,7 @@ fn bootstrap(cursor: &mut Cursor, visible_limit: usize) -> io::Result<Vec<Compac
         .startup_search
         .clone()
         .map_or_else(|| history_checkpoint(&cursor.path), Ok)?;
-    let page = bootstrap_before(cursor, visible_limit, &checkpoint)?;
+    let page = bootstrap_before(cursor, visible_limit, &checkpoint, HistoryRead::Cursor)?;
     if page.pending_authentication {
         cursor.startup_search = Some(checkpoint);
         return Ok(Vec::new());
@@ -589,6 +594,7 @@ pub(super) struct HistoryWork {
 }
 
 impl HistoryWork {
+    /// One window stays inside its fixed allowances.
     pub(super) fn within_limits(self) -> bool {
         self.source_bytes <= HISTORY_BYTE_BUDGET as u64
             && self.decoded_records <= HISTORY_RECORD_BUDGET as u32
@@ -596,16 +602,45 @@ impl HistoryWork {
             && self.elapsed <= HISTORY_WALL_BUDGET
     }
 
+    /// One request chains at most [`HISTORY_WINDOW_LIMIT`] windows, each
+    /// inside its own allowances, and reads no further once
+    /// [`HISTORY_DURATION`] has elapsed.
+    pub(super) fn within_request_limits(self) -> bool {
+        self.source_bytes <= (HISTORY_BYTE_BUDGET * HISTORY_WINDOW_LIMIT) as u64
+            && self.decoded_records <= (HISTORY_RECORD_BUDGET * HISTORY_WINDOW_LIMIT) as u32
+            && self.passes <= HISTORY_PASS_BUDGET * HISTORY_WINDOW_LIMIT as u32
+            && self.elapsed <= HISTORY_DURATION.saturating_add(HISTORY_WALL_BUDGET)
+    }
+
     fn sampled(mut self, started: Instant) -> Self {
         self.elapsed = started.elapsed();
         self
     }
+
+    fn joined(self, other: Self) -> Self {
+        Self {
+            source_bytes: self.source_bytes.saturating_add(other.source_bytes),
+            decoded_records: self.decoded_records.saturating_add(other.decoded_records),
+            passes: self.passes.saturating_add(other.passes),
+            elapsed: self.elapsed.saturating_add(other.elapsed),
+        }
+    }
+}
+
+/// What one reverse window serves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HistoryRead {
+    /// Seat the live cursor on the newest record boundary the window reaches.
+    Cursor,
+    /// Serve older records on demand; the cursor is discarded afterwards.
+    Page,
 }
 
 fn bootstrap_before(
     cursor: &mut Cursor,
     visible_limit: usize,
     checkpoint: &HistoryCheckpoint,
+    read: HistoryRead,
 ) -> io::Result<HistoryPage> {
     let started = Instant::now();
     let authentication = advance_history_authentication(&cursor.path, checkpoint, started)?;
@@ -618,7 +653,7 @@ fn bootstrap_before(
             pending_authentication: true,
         });
     };
-    let Some(source) = read_history_source(&cursor.path, checkpoint, stamp, started)? else {
+    let Some(source) = read_history_source(&cursor.path, checkpoint, stamp, started, read)? else {
         return Ok(HistoryPage {
             records: Vec::new(),
             latest: None,
@@ -628,8 +663,9 @@ fn bootstrap_before(
         });
     };
     let selected = selected_history_start(&source.bytes);
-    let start = source.aligned.saturating_add(selected as u64);
-    prepare_history_cursor(cursor, start);
+    let seat = source.aligned.saturating_add(selected as u64);
+    let start = source.older.saturating_add(selected as u64);
+    prepare_history_cursor(cursor, seat);
     let mut work = source.work;
     let (records, latest) = decode_history_records(
         cursor,
@@ -669,9 +705,24 @@ fn bootstrap_before(
 
 struct HistorySource {
     stamp: FileStamp,
+    /// Offset of the first byte of `bytes`, where the cursor is seated; a
+    /// window skipped as the inside of one long record seats it at the
+    /// boundary the window reached.
     aligned: u64,
+    /// Where the window behind this one ends: the first aligned record, or
+    /// the window start when the whole window lay inside one record.
+    older: u64,
     bytes: Vec<u8>,
     work: HistoryWork,
+}
+
+/// How one reverse window lines up with the record delimiters it holds.
+enum HistoryAlignment {
+    /// `bytes` begins a complete record at this offset.
+    Record(u64),
+    /// The window lies inside one record longer than itself; `terminated`
+    /// says that record ends exactly at the window end.
+    Inside { terminated: bool },
 }
 
 fn read_history_source(
@@ -679,6 +730,7 @@ fn read_history_source(
     checkpoint: &HistoryCheckpoint,
     authenticated: FileStamp,
     started: Instant,
+    read: HistoryRead,
 ) -> io::Result<Option<HistorySource>> {
     let mut file = File::open(path)?;
     let stamp = FileStamp::read(&file)?;
@@ -707,7 +759,20 @@ fn read_history_source(
     if !work.within_limits() {
         return Err(history_budget_exhausted(work));
     }
-    let aligned = align_history_source(&mut bytes, source_start, end, work, started)?;
+    let (aligned, older) = match align_history_source(&mut bytes, source_start, end) {
+        HistoryAlignment::Record(aligned) => (aligned, aligned),
+        // The record is longer than one window, so it is skipped: a page
+        // keeps reading behind it, and a cursor seats on the boundary it
+        // ends at. An open record has no such boundary yet, so a cursor
+        // waits for its delimiter instead of resuming inside it.
+        HistoryAlignment::Inside { terminated: true } => (end, source_start),
+        HistoryAlignment::Inside { terminated: false } if read == HistoryRead::Page => {
+            (source_start, source_start)
+        }
+        HistoryAlignment::Inside { terminated: false } => {
+            return Err(history_record_exceeds_budget(work.sampled(started)));
+        }
+    };
     let complete = bytes
         .iter()
         .rposition(|byte| *byte == b'\n')
@@ -716,30 +781,27 @@ fn read_history_source(
     Ok(Some(HistorySource {
         stamp,
         aligned,
+        older,
         bytes,
         work,
     }))
 }
 
-fn align_history_source(
-    bytes: &mut Vec<u8>,
-    source_start: u64,
-    end: u64,
-    work: HistoryWork,
-    started: Instant,
-) -> io::Result<u64> {
+fn align_history_source(bytes: &mut Vec<u8>, source_start: u64, end: u64) -> HistoryAlignment {
     if source_start == 0 {
-        return Ok(0);
+        return HistoryAlignment::Record(0);
     }
     let Some(newline) = bytes.iter().position(|byte| *byte == b'\n') else {
-        return Err(history_record_exceeds_budget(work.sampled(started)));
+        bytes.clear();
+        return HistoryAlignment::Inside { terminated: false };
     };
     let aligned = source_start.saturating_add(newline as u64 + 1);
     if aligned == end {
-        return Err(history_record_exceeds_budget(work.sampled(started)));
+        bytes.clear();
+        return HistoryAlignment::Inside { terminated: true };
     }
     bytes.drain(..=newline);
-    Ok(aligned)
+    HistoryAlignment::Record(aligned)
 }
 
 fn selected_history_start(bytes: &[u8]) -> usize {
@@ -845,7 +907,8 @@ impl std::fmt::Display for HistoryExhaustion {
         if self.oversized_record {
             return write!(
                 formatter,
-                "preserved session record exceeds the fixed {HISTORY_BYTE_BUDGET}-byte history allowance after {} bytes, {} records, {} passes, and {:?}",
+                "preserved session record runs at least {} bytes without a delimiter, past the fixed {HISTORY_BYTE_BUDGET}-byte history allowance, after {} bytes, {} records, {} passes, and {:?}",
+                self.work.source_bytes,
                 self.work.source_bytes,
                 self.work.decoded_records,
                 self.work.passes,
@@ -903,17 +966,64 @@ pub(super) struct HistoryRequest<'a> {
     pub(super) limit: usize,
 }
 
+impl HistoryScan {
+    /// Join `newer`, the window read immediately after this one, onto it.
+    ///
+    /// `more` stays as this older window judged it: the newer window only
+    /// claimed more because this one had not been read yet.
+    fn extend_newer(mut self, newer: Self) -> Self {
+        debug_assert!(self.start <= newer.start);
+        self.messages.extend(newer.messages);
+        self.work = self.work.joined(newer.work);
+        self.pending_authentication |= newer.pending_authentication;
+        self
+    }
+}
+
+/// Chain older windows behind the request checkpoint until the page holds
+/// `limit` cards or the preserved session begins.
+///
+/// One window is bounded the way the live scan is, so a lane whose
+/// boundaries sit far apart cannot promise a page from one read. The request
+/// keeps reading the way the tape half does, bounded by
+/// [`HISTORY_WINDOW_LIMIT`] windows and [`HISTORY_DURATION`] of scan time; a
+/// page still short keeps `more` and its continuation so the next request
+/// resumes where this one stopped.
 pub(super) fn retained_messages(request: HistoryRequest<'_>) -> CommandResult<HistoryScan> {
     let mut cursor = Cursor::new(
-        request.thread,
-        request.path,
+        request.thread.clone(),
+        request.path.clone(),
         request.worktree.clone(),
         request.dialect,
         request.author,
     );
-    let page = bootstrap_before(&mut cursor, 0, request.end)
+    let mut scan = history_window(&mut cursor, &request, request.end, request.limit)?;
+    let mut reads = 1;
+    while !scan.pending_authentication
+        && scan.messages.len() < request.limit
+        && scan.start > 0
+        && reads < HISTORY_WINDOW_LIMIT
+        && scan.work.elapsed < HISTORY_DURATION
+    {
+        let end = request.end.retreat(scan.start);
+        let remaining = request.limit - scan.messages.len();
+        let older = history_window(&mut cursor, &request, &end, remaining)?;
+        reads += 1;
+        scan = older.extend_newer(scan);
+    }
+    Ok(scan)
+}
+
+/// Read one window ending at `end` and keep its newest `limit` cards.
+fn history_window(
+    cursor: &mut Cursor,
+    request: &HistoryRequest<'_>,
+    end: &HistoryCheckpoint,
+    limit: usize,
+) -> CommandResult<HistoryScan> {
+    let page = bootstrap_before(cursor, 0, end, HistoryRead::Page)
         .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
-    let messages = HistoryMessages::new(request.limit);
+    let messages = HistoryMessages::new(limit);
     let mut state = MessageState {
         previews: CallPreviews::default(),
         observations: request.observations.clone(),
@@ -939,7 +1049,7 @@ pub(super) fn retained_messages(request: HistoryRequest<'_>) -> CommandResult<Hi
     if let Some(before) = request.before {
         messages.retain(|message| message.chronology_key() < before.chronology_key());
     }
-    let start = messages.len().saturating_sub(request.limit);
+    let start = messages.len().saturating_sub(limit);
     let selected = messages.split_off(start);
     Ok(HistoryScan {
         messages: selected,
