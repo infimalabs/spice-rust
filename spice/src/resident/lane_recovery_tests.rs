@@ -2,7 +2,6 @@ use std::fs;
 use std::sync::{Arc, Mutex, mpsc};
 
 use lane::capture::{CaptureFailure, CaptureRecord, CaptureReportError};
-use sill::{Cancellation, Deadlines, Environment, RestartDisposition, Spec, WaitPolicy};
 
 use super::*;
 use crate::resident::lane_surface::{
@@ -604,31 +603,6 @@ fn import_refuses_a_lane_whose_predecessor_still_holds_the_seat() {
     finish(fixture);
 }
 
-/// A spec the seat door will open, for a process that ends on its own at once.
-fn sleeping_spec() -> Spec {
-    Spec {
-        argv: sill::Argv::new("/bin/sleep", ["0"]).expect("fixture argv"),
-        cwd: std::path::PathBuf::from("/"),
-        environment: Environment::new([("PATH", "/usr/bin:/bin")]).expect("fixture environment"),
-        group: sill::ProcessGroup::New,
-        deadlines: Deadlines::new(
-            Duration::from_secs(10),
-            Duration::from_secs(1),
-            Duration::from_secs(1),
-        )
-        .expect("fixture deadlines"),
-        wait: WaitPolicy::new("lane", Cancellation::Never, RestartDisposition::Never)
-            .expect("fixture wait policy"),
-        output: sill::Output::new(
-            sill::StdinPolicy::Null,
-            sill::StreamPolicy::Null,
-            sill::StreamPolicy::Null,
-        ),
-        redaction: sill::Redaction::None,
-        grace: Duration::from_secs(1),
-    }
-}
-
 /// The other door onto the same refusal: a durably vacant row is still refused
 /// while a live occupant sits in that lane, which the row alone cannot show.
 #[test]
@@ -646,17 +620,12 @@ fn import_refuses_a_vacant_row_whose_lane_seat_is_still_live() {
     };
     let mut seats = Seats::new();
     seats
-        .seat(fixture.lane, fixture.successor, sleeping_spec())
-        .expect("the seat door opens");
+        .seat_detached(fixture.lane, fixture.successor, Box::new(SeatedInProcess))
+        .expect("the seat takes the occupant");
     assert_eq!(
         refusal_reason(admit_row(&paths, &seats, &residency, &row, SUCCESSOR)),
         "lane::import-occupied"
     );
-    seats
-        .vacate(fixture.lane)
-        .expect("the seat was occupied")
-        .wait()
-        .expect("the supervised group ends");
     finish(fixture);
 }
 
