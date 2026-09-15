@@ -161,7 +161,7 @@ fn a_seat_whose_failure_notice_was_lost_is_degraded_from_its_published_state() {
 }
 
 /// The handle a resident holds for an occupant whose agent is still running.
-struct SeatedProcess;
+pub(super) struct SeatedProcess;
 
 impl lane::occupant::DetachedProcess for SeatedProcess {
     fn group(&self) -> u32 {
@@ -202,7 +202,7 @@ impl lane::occupant::DetachedProcess for SeatedProcess {
 
 /// Seat the exact handle a resident reads back from published supervisor
 /// state, which is what its own seated handle observes once the agent ends.
-fn seat_published(paths: &RuntimePaths, bus: &Bus, occupant: CanonicalUuid) -> Seats {
+pub(super) fn seat_published(paths: &RuntimePaths, bus: &Bus, occupant: CanonicalUuid) -> Seats {
     let row = residency_row(bus);
     let Some(Adoption::Exited(launch)) = adopt(paths, &row).expect("published state adopts") else {
         panic!("the published exit was not adoptable");
@@ -237,7 +237,7 @@ fn occupied_fixture(occupant: CanonicalUuid) -> (Bus, ProjectPolicy, Projection)
     (bus, projects, projection)
 }
 
-fn occupied_seed(occupant: CanonicalUuid) -> JournalWrite {
+pub(super) fn occupied_seed(occupant: CanonicalUuid) -> JournalWrite {
     let origin = format!("resident:{}", epoch())
         .parse::<Origin>()
         .expect("fixture resident origin");
@@ -258,7 +258,7 @@ fn occupied_seed(occupant: CanonicalUuid) -> JournalWrite {
             vendor: "claude".parse().expect("fixture vendor"),
             occupant: Some(occupant),
             lineage: vec![occupant],
-            capabilities: Vec::new(),
+            capabilities: vec![uuid(9)],
             session: None,
             disposition: "occupied".to_owned(),
         }],
@@ -282,7 +282,7 @@ fn targets(snapshot: &bus::TaskSnapshot, projection: &Projection) -> Vec<Target>
     .expect("lifecycle targets project")
 }
 
-fn residency_row(bus: &Bus) -> LaneResidency {
+pub(super) fn residency_row(bus: &Bus) -> LaneResidency {
     bus.residency_head()
         .expect("residency reads")
         .expect("residency exists")
@@ -291,7 +291,7 @@ fn residency_row(bus: &Bus) -> LaneResidency {
         .clone()
 }
 
-fn fact_kinds(bus: &Bus) -> Vec<wire::FactKind> {
+pub(super) fn fact_kinds(bus: &Bus) -> Vec<wire::FactKind> {
     bus.fact_snapshot()
         .expect("facts read")
         .facts()
@@ -300,7 +300,7 @@ fn fact_kinds(bus: &Bus) -> Vec<wire::FactKind> {
         .collect()
 }
 
-fn session(root: &Path, occupant: CanonicalUuid) -> wire::LaneSession {
+pub(super) fn session(root: &Path, occupant: CanonicalUuid) -> wire::LaneSession {
     wire::LaneSession {
         lane: lane(),
         occupant,
@@ -318,13 +318,13 @@ fn session(root: &Path, occupant: CanonicalUuid) -> wire::LaneSession {
     }
 }
 
-fn fixture_root(tag: &str) -> PathBuf {
+pub(super) fn fixture_root(tag: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("spice-reaped-seat-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&root).expect("fixture root");
     root
 }
 
-fn runtime_paths(root: &Path) -> RuntimePaths {
+pub(super) fn runtime_paths(root: &Path) -> RuntimePaths {
     RuntimePaths {
         worktree: root.to_path_buf(),
         common: root.join("common"),

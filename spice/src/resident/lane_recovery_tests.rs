@@ -1208,6 +1208,7 @@ fn restart_without_a_supervisor_trace_degrades_instead_of_relaunching() {
         &paths,
         fixture.new_epoch,
         &mut seats,
+        &mut Vec::new(),
     )
     .expect("restart reconciliation commits");
 
@@ -1330,6 +1331,7 @@ fn a_sweep_accounts_an_exit_whose_durable_row_outlived_its_seat() {
         &paths,
         fixture.new_epoch,
         &mut seats,
+        &mut Vec::new(),
     )
     .expect("the sweep accounts the recorded exit");
 
@@ -1355,6 +1357,7 @@ fn a_sweep_accounts_an_exit_whose_durable_row_outlived_its_seat() {
         &paths,
         fixture.new_epoch,
         &mut seats,
+        &mut Vec::new(),
     )
     .expect("a settled residency sweeps clean");
     assert_eq!(fact_kinds(&fixture).len(), settled);
@@ -1423,6 +1426,7 @@ fn a_sweep_never_touches_a_lane_the_resident_is_seated_behind() {
         &paths,
         fixture.new_epoch,
         &mut seats,
+        &mut Vec::new(),
     )
     .expect("a seated lane sweeps clean");
 

@@ -1,5 +1,6 @@
 //! Resident-owned lane seating, lifecycle, restart, and recall handlers.
 
+use std::io;
 use std::path::Path;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant as Monotonic};
@@ -205,8 +206,9 @@ pub(super) fn restore_seats(
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &mut Seats,
+    diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
-    reconcile_seats(bus, paths, epoch, seats)
+    reconcile_seats(bus, paths, epoch, seats, diagnostic)
 }
 
 /// Bring every durable occupant this resident is not seated behind back into
@@ -227,6 +229,7 @@ pub(super) fn reconcile_seats(
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &mut Seats,
+    diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     let durable = current_residency(bus, epoch)?.body().lanes.clone();
     for row in durable {
@@ -277,6 +280,7 @@ pub(super) fn reconcile_seats(
                             lane: row.lane,
                             occupant: adopted.occupant,
                         },
+                        diagnostic,
                     )?;
                 }
                 super::supervisor::Adoption::Failed(failure) => {
@@ -974,26 +978,30 @@ fn degrade_occupant(
 }
 
 /// Reap and durably vacate the exact occupant named by a kernel exit event.
+///
+/// An exit that names neither the durable occupant nor the seated one is not
+/// accounted, and the values that decided that are written down: a notice
+/// dropped in silence leaves an occupied row nothing to explain it. The seat
+/// is vacated before the commit, so a commit that loses its lock leaves the
+/// durable row as the only place the occupant still lives; the seat sweep of
+/// the next reconciliation reads that row against the supervisor state and
+/// accounts the same exit from there.
 pub(super) fn occupant_exited(
     bus: &Bus,
     epoch: CanonicalUuid,
     seats: &mut Seats,
     exit: CaptureExit,
+    diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     let observed = current_residency(bus, epoch)?;
-    let Some(row) = observed
+    let row = observed
         .body()
         .lanes
         .iter()
-        .find(|row| row.lane == exit.lane)
-    else {
-        return Ok(());
-    };
-    if row.occupant != Some(exit.occupant)
-        || !seats
-            .occupant(exit.lane)
-            .is_some_and(|occupant| occupant.occupant() == exit.occupant)
-    {
+        .find(|row| row.lane == exit.lane);
+    let seated = seats.occupant(exit.lane).map(Occupant::occupant);
+    if row.is_none_or(|row| row.occupant != Some(exit.occupant)) || seated != Some(exit.occupant) {
+        ending::report_unaccounted_exit(diagnostic, exit, row, seated);
         return Ok(());
     }
     let occupant = seats

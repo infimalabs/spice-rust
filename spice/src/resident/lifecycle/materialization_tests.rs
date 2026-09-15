@@ -13,6 +13,7 @@ use wire::{
 use super::materialization::Projection;
 use super::{Available, Backoff, Resolution, Target, Trigger, project_targets, resolve};
 
+mod deferred_exit;
 mod reaped_seat;
 mod trust_ice;
 
