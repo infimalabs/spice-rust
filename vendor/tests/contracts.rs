@@ -55,6 +55,8 @@ fn claude_carries_every_launch_knob_and_the_system_prompt_it_re_grounds_in() {
             "stream-json",
             "--verbose",
             "--include-partial-messages",
+            "--thinking-display",
+            "summarized",
             "--model",
             "claude-opus-5",
             "--permission-mode",

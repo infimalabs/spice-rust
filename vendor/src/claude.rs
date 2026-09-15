@@ -81,6 +81,12 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
         // per-turn usage reaches the tape only on stream_event.message_delta,
         // so dropping it leaves unmetered assistant snapshots and zero spend.
         OsString::from("--include-partial-messages"),
+        // A print-mode session asks the API to omit thinking text unless the
+        // display is chosen explicitly, so every thinking block arrives as an
+        // empty string and a signature and the lane reads as silent between
+        // its tool calls. Summaries are the only display print mode accepts.
+        OsString::from("--thinking-display"),
+        OsString::from("summarized"),
         OsString::from("--model"),
         OsString::from(launch.model.as_str()),
         OsString::from("--permission-mode"),
