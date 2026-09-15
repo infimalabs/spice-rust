@@ -206,11 +206,35 @@ pub(super) fn restore_seats(
     epoch: CanonicalUuid,
     seats: &mut Seats,
 ) -> CommandResult<()> {
+    reconcile_seats(bus, paths, epoch, seats)
+}
+
+/// Bring every durable occupant this resident is not seated behind back into
+/// agreement with what its own supervisor recorded.
+///
+/// At startup that is every occupied row, since the new resident holds no
+/// seats yet. Afterwards it is a row whose exit could not be accounted when it
+/// happened -- the seat was already vacated when the commit lost its lock, so
+/// the durable row is the only place the occupant still lives -- and the
+/// supervisor's state file says what actually became of it. Re-deriving from
+/// that file is the entire repair: nothing here remembers an attempt, so each
+/// sweep judges the same durable inputs afresh, and a sweep that finds nothing
+/// stale commits nothing. A lane this resident is seated behind is never
+/// touched; the seat is the live authority for it.
+pub(super) fn reconcile_seats(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+) -> CommandResult<()> {
     let durable = current_residency(bus, epoch)?.body().lanes.clone();
     for row in durable {
         let Some(durable_occupant) = row.occupant else {
             continue;
         };
+        if seats.occupied(row.lane) {
+            continue;
+        }
         super::steering::lane_capability(&row)?;
         if super::is_simulated_lane(&row) {
             if row.session.is_some() {
@@ -261,11 +285,11 @@ pub(super) fn restore_seats(
             }
             continue;
         }
-        // No supervisor trace survived this restart: the runtime directory that
-        // would hold it is scratch space, cleared by routine cleanup, a reboot,
-        // or an operator on purpose. Relaunching here cannot distinguish "this
-        // agent legitimately needed to keep running" from "someone shut it down
-        // and wants it left alone" — it always guessed the former, silently
+        // No supervisor trace survived: the runtime directory that would hold
+        // it is scratch space, cleared by routine cleanup, a reboot, or an
+        // operator on purpose. Relaunching here cannot distinguish "this agent
+        // legitimately needed to keep running" from "someone shut it down and
+        // wants it left alone" — it always guessed the former, silently
         // resurrecting a possibly-unwanted occupant on the lane's last known
         // vendor. Treat the missing trace the same as an observed failure: carry
         // forward any claim this occupant held, then degrade to vacant so an
@@ -276,7 +300,7 @@ pub(super) fn restore_seats(
             epoch,
             row.lane,
             durable_occupant,
-            "no supervisor trace survived this restart",
+            "no supervisor trace survived",
         )?;
     }
     Ok(())

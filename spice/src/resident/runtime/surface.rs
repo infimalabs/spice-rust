@@ -549,11 +549,11 @@ async fn drive_surface(
             }
             failure = failures.recv() => {
                 accept_failure(
-                    bus, epoch, seats, command_surface, &mut lifecycle, failure,
+                    bus, epoch, seats, command_surface, &mut lifecycle, diagnostic, failure,
                 )?;
             }
             exit = exits.recv() => accept_exit(
-                bus, epoch, seats, command_surface, &mut lifecycle, exit,
+                bus, epoch, seats, command_surface, &mut lifecycle, diagnostic, exit,
             )?,
             report = supervisor_reports.recv() => accept_supervisor_report(
                 bus, epoch, seats, command_surface, &message_publisher,
@@ -691,6 +691,7 @@ fn accept_supervisor_report(
             seats,
             command_surface,
             lifecycle,
+            diagnostic,
             Some(lane::capture::CaptureExit { lane, occupant }),
         );
     }
@@ -832,6 +833,7 @@ fn accept_failure(
     seats: &mut Seats,
     command_surface: &command_surface::Surface<'_>,
     lifecycle: &mut lifecycle::Runtime,
+    diagnostic: &mut dyn io::Write,
     failure: Option<lane::capture::CaptureFailure>,
 ) -> CommandResult<()> {
     let failure = failure.ok_or_else(|| {
@@ -840,15 +842,18 @@ fn accept_failure(
             "lane capture failure receiver closed",
         )
     })?;
-    if !lane_surface::renewal_requested_exit(bus, epoch, failure.lane, failure.occupant)? {
-        command_surface.observe_lifecycle_death(
-            lifecycle,
-            seats,
-            failure.lane,
-            failure.occupant,
-        )?;
-    }
-    lane_surface::capture_failed(bus, epoch, seats, &failure)
+    let accounted = (|| {
+        if !lane_surface::renewal_requested_exit(bus, epoch, failure.lane, failure.occupant)? {
+            command_surface.observe_lifecycle_death(
+                lifecycle,
+                seats,
+                failure.lane,
+                failure.occupant,
+            )?;
+        }
+        lane_surface::capture_failed(bus, epoch, seats, &failure)
+    })();
+    super::deferral::defer_store_fault(accounted, diagnostic, "capture failure accounting")
 }
 
 fn accept_exit(
@@ -857,6 +862,7 @@ fn accept_exit(
     seats: &mut Seats,
     command_surface: &command_surface::Surface<'_>,
     lifecycle: &mut lifecycle::Runtime,
+    diagnostic: &mut dyn io::Write,
     exit: Option<lane::capture::CaptureExit>,
 ) -> CommandResult<()> {
     let exit = exit.ok_or_else(|| {
@@ -865,10 +871,13 @@ fn accept_exit(
             "lane process exit receiver closed",
         )
     })?;
-    if !lane_surface::renewal_requested_exit(bus, epoch, exit.lane, exit.occupant)? {
-        command_surface.observe_lifecycle_death(lifecycle, seats, exit.lane, exit.occupant)?;
-    }
-    lane_surface::occupant_exited(bus, epoch, seats, exit)
+    let accounted = (|| {
+        if !lane_surface::renewal_requested_exit(bus, epoch, exit.lane, exit.occupant)? {
+            command_surface.observe_lifecycle_death(lifecycle, seats, exit.lane, exit.occupant)?;
+        }
+        lane_surface::occupant_exited(bus, epoch, seats, exit)
+    })();
+    super::deferral::defer_store_fault(accounted, diagnostic, "exit accounting")
 }
 
 fn accept_commit(
@@ -884,13 +893,21 @@ fn accept_commit(
         Ok(commit) => {
             command_surface.refresh_reads()?;
             if !timers.covers(commit) {
-                reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle)?;
+                super::deferral::defer_store_fault(
+                    reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle),
+                    diagnostic,
+                    "lifecycle reconciliation",
+                )?;
             }
             Ok(Some(commit))
         }
         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
             command_surface.refresh_reads()?;
-            reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle)?;
+            super::deferral::defer_store_fault(
+                reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle),
+                diagnostic,
+                "lifecycle reconciliation",
+            )?;
             Ok(None)
         }
         Err(tokio::sync::broadcast::error::RecvError::Closed) => Err(environment_fault(
@@ -941,9 +958,13 @@ fn reconcile_lifecycle(
     timers: &mut timers::Runtime,
     lifecycle: &mut lifecycle::Runtime,
 ) -> CommandResult<()> {
-    reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle)?;
-    reconciliation.settle();
-    Ok(())
+    // A deferred sweep leaves the demand pending, so the next control turn
+    // drives it again instead of a timer having to notice.
+    let swept = reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle);
+    if swept.is_ok() {
+        reconciliation.settle();
+    }
+    super::deferral::defer_store_fault(swept, diagnostic, "lifecycle reconciliation")
 }
 
 fn reconcile_wakes(
@@ -955,6 +976,7 @@ fn reconcile_wakes(
     lifecycle: &mut lifecycle::Runtime,
 ) -> CommandResult<()> {
     timers.synchronize(bus)?;
+    lane_surface::reconcile_seats(bus, command_surface.paths, command_surface.epoch(), seats)?;
     let wake = command_surface.reconcile_lifecycle(lifecycle, seats, diagnostic)?;
     timers.synchronize_wake(wake)
 }

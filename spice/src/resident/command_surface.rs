@@ -308,6 +308,10 @@ impl<'a> Surface<'a> {
         steering::publish_inbox_once(self.bus, self.paths, residency, lane)
     }
 
+    pub(super) const fn epoch(&self) -> CanonicalUuid {
+        self.epoch
+    }
+
     pub(super) fn reconcile_lifecycle(
         &self,
         lifecycle: &mut lifecycle::Runtime,

@@ -27,6 +27,8 @@ use wire::CanonicalUuid;
 
 #[cfg(unix)]
 mod events;
+#[cfg(test)]
+pub(super) mod test_support;
 
 use super::lane_surface::{
     OccupantLaunchRequest, SessionProofError, await_session, occupant_launch,

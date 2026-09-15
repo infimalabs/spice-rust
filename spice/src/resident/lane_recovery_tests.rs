@@ -1294,3 +1294,180 @@ fn restart_without_a_supervisor_trace_degrades_instead_of_relaunching() {
     fixture.bus.verify().expect("degraded restart verifies");
     finish(fixture);
 }
+
+// Runtime reconciliation: an exit whose accounting commit did not land leaves
+// the seat vacated and the durable row still naming the occupant. The next
+// sweep must finish that accounting from the supervisor's own record of the
+// exit, and must never touch a lane the resident is seated behind, whatever
+// that lane's trace says.
+
+fn exited_session(fixture: &Fixture) -> wire::LaneSession {
+    wire::LaneSession {
+        lane: fixture.lane,
+        occupant: fixture.ancestor,
+        worktree: PREDECESSOR.to_owned(),
+        vendor: "claude".parse().expect("fixture vendor"),
+        launch: None,
+        epoch: fixture.old_epoch,
+        stream: "stdout".to_owned(),
+        identity: "exited-session".to_owned(),
+        locus: wire::TapeLocus {
+            member: 0,
+            offset: 0,
+            length: 1,
+        },
+    }
+}
+
+fn residency_row(fixture: &Fixture) -> wire::LaneResidency {
+    fixture
+        .bus
+        .residency_head()
+        .expect("residency reads")
+        .expect("residency exists")
+        .body()
+        .lanes[0]
+        .clone()
+}
+
+fn fact_kinds(fixture: &Fixture) -> Vec<wire::FactKind> {
+    fixture
+        .bus
+        .fact_snapshot()
+        .expect("facts read")
+        .facts()
+        .iter()
+        .map(|fact| fact.fact.kind())
+        .collect()
+}
+
+#[test]
+fn a_sweep_accounts_an_exit_whose_durable_row_outlived_its_seat() {
+    let fixture = fixture();
+    seed(&fixture);
+    reseat(&fixture);
+    let paths = runtime_paths(&fixture, fixture.root.clone());
+    crate::resident::supervisor::test_support::record_exited_for_tests(
+        &paths,
+        fixture.lane,
+        fixture.ancestor,
+        exited_session(&fixture),
+    )
+    .expect("the supervisor's exit record writes");
+    let mut seats = Seats::new();
+
+    crate::resident::lane_surface::reconcile_seats(
+        &fixture.bus,
+        &paths,
+        fixture.new_epoch,
+        &mut seats,
+    )
+    .expect("the sweep accounts the recorded exit");
+
+    assert!(seats.is_empty(), "an exited occupant is not left seated");
+    let row = residency_row(&fixture);
+    assert_eq!(row.occupant, None);
+    assert_eq!(row.disposition, "vacant");
+    let kinds = fact_kinds(&fixture);
+    assert!(
+        kinds.contains(&wire::FactKind::LaneExited),
+        "the exit the supervisor recorded is accounted"
+    );
+    assert!(
+        !kinds.contains(&wire::FactKind::LaneDegraded)
+            && !kinds.contains(&wire::FactKind::LaneStarted),
+        "a recorded exit is neither a failure nor a launch"
+    );
+
+    // A settled residency sweeps clean: nothing stale, nothing committed.
+    let settled = kinds.len();
+    crate::resident::lane_surface::reconcile_seats(
+        &fixture.bus,
+        &paths,
+        fixture.new_epoch,
+        &mut seats,
+    )
+    .expect("a settled residency sweeps clean");
+    assert_eq!(fact_kinds(&fixture).len(), settled);
+    fixture.bus.verify().expect("the accounted exit verifies");
+    finish(fixture);
+}
+
+/// A seat holding a process this resident never reaps, entirely in process.
+struct SeatedInProcess;
+
+impl lane::occupant::DetachedProcess for SeatedInProcess {
+    fn group(&self) -> u32 {
+        i32::MAX.unsigned_abs()
+    }
+
+    fn runtime_remaining(&self) -> Duration {
+        Duration::from_secs(60)
+    }
+
+    fn termination_grace(&self) -> Duration {
+        Duration::ZERO
+    }
+
+    fn reap_bound(&self) -> Duration {
+        Duration::ZERO
+    }
+
+    fn wait_for(
+        self: Box<Self>,
+        _duration: Duration,
+    ) -> Result<lane::occupant::DetachedWait, sill::WaitError> {
+        Ok(lane::occupant::DetachedWait::Running(self))
+    }
+
+    fn terminate(&self) -> Result<(), sill::WaitError> {
+        Ok(())
+    }
+
+    fn kill(&self) -> Result<(), sill::WaitError> {
+        Ok(())
+    }
+
+    fn wait(self: Box<Self>) -> Result<sill::WaitOutcome, sill::WaitError> {
+        panic!("a seated lane is never reaped by the sweep")
+    }
+}
+
+#[test]
+fn a_sweep_never_touches_a_lane_the_resident_is_seated_behind() {
+    let fixture = fixture();
+    seed(&fixture);
+    reseat(&fixture);
+    let paths = runtime_paths(&fixture, fixture.root.clone());
+    assert!(
+        !paths.runtime.exists(),
+        "no trace at all is the strongest case for degrading, and still not enough"
+    );
+    let mut seats = Seats::new();
+    seats
+        .seat_detached(fixture.lane, fixture.ancestor, Box::new(SeatedInProcess))
+        .expect("the seat takes the occupant");
+    let before = fact_kinds(&fixture).len();
+
+    crate::resident::lane_surface::reconcile_seats(
+        &fixture.bus,
+        &paths,
+        fixture.new_epoch,
+        &mut seats,
+    )
+    .expect("a seated lane sweeps clean");
+
+    assert!(
+        seats.occupied(fixture.lane),
+        "the seat is the live authority and stays"
+    );
+    let row = residency_row(&fixture);
+    assert_eq!(row.occupant, Some(fixture.ancestor));
+    assert_eq!(row.disposition, "occupied");
+    assert_eq!(
+        fact_kinds(&fixture).len(),
+        before,
+        "nothing is committed for a seated lane"
+    );
+    finish(fixture);
+}

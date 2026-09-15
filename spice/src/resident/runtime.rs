@@ -977,6 +977,7 @@ pub(super) fn latest_surface_digest(bus: &Bus) -> CommandResult<Option<wire::Dig
         .cloned())
 }
 
+mod deferral;
 mod surface;
 #[cfg(test)]
 pub(super) use surface::announce_canvas;
