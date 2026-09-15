@@ -653,6 +653,31 @@ mod message_retention_tests {
     }
 
     #[test]
+    fn reasoning_presence_is_a_thinking_activity_like_a_tool_moment() {
+        let lane = "018f82d4-6f59-7d06-92e3-bce9131163e5"
+            .parse()
+            .expect("lane");
+        let mut narration = message(lane, 7);
+        narration.activity = AgentActivityKind::Reasoning;
+        narration.text = "Checking the gate selection first.".to_owned();
+        let activity = LaneActivity::from_message(&narration);
+        assert_eq!(activity.class(), "reasoning");
+        assert_eq!(activity.title(), "thinking");
+        assert_eq!(activity.detail(), "Checking the gate selection first.");
+
+        let mut wordless = narration.clone();
+        wordless.text = String::new();
+        let activity = LaneActivity::from_message(&wordless);
+        assert_eq!(activity.title(), "thinking");
+        assert!(activity.detail().is_empty());
+        let tool = LaneActivity::from_message(&AgentMessage {
+            activity: AgentActivityKind::Tool,
+            ..narration
+        });
+        assert_eq!((tool.class(), tool.title()), ("tool", "tool"));
+    }
+
+    #[test]
     fn browser_retention_uses_the_same_compaction_floor_as_the_snapshot() {
         let busy_lane = "018f82d4-6f59-7d06-92e3-bce9131163e5"
             .parse()

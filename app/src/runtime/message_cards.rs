@@ -46,7 +46,7 @@ fn card_kind(message: &AgentMessage) -> Option<MessageCardKind> {
     match message.activity {
         AgentActivityKind::Prose => Some(MessageCardKind::Prose),
         AgentActivityKind::Tool if !message.media.is_empty() => Some(MessageCardKind::ToolMedia),
-        AgentActivityKind::Tool => None,
+        AgentActivityKind::Tool | AgentActivityKind::Reasoning => None,
         AgentActivityKind::Turn => Some(MessageCardKind::Turn),
         AgentActivityKind::Compaction => Some(MessageCardKind::Compaction),
     }
@@ -243,6 +243,7 @@ mod tests {
     #[test]
     fn tool_activity_requires_owning_media_to_become_a_card() {
         assert_eq!(card_kind(&message(1, AgentActivityKind::Tool)), None);
+        assert_eq!(card_kind(&message(4, AgentActivityKind::Reasoning)), None);
         assert_eq!(
             card_kind(&message(2, AgentActivityKind::Turn)),
             Some(MessageCardKind::Turn)

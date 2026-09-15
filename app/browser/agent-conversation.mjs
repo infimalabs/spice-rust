@@ -307,7 +307,7 @@ export async function seatAgentOrg(
   assert.ok(seated.every((lane) => lane.life === "steer"), "the organization shares one lifetime");
   assert.equal(
     await console.locator(".organization-detail-card").first().getAttribute("title"),
-    `Claude vendor; model: claude-opus-5; effort: high; thread: ${seated[0].occupant}; `
+    `Claude vendor; model: claude-opus-5; effort: xhigh; thread: ${seated[0].occupant}; `
       + "session: 018f7777-7777-7444-8888-999999999999",
     "the agent card tooltip carries the admitted launch and session identity",
   );

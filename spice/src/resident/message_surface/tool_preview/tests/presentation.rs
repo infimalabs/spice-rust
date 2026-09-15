@@ -151,6 +151,7 @@ fn completed_codex_tool_publishes_its_operation_before_the_outcome() {
 }
 
 mod file_change;
+mod reasoning;
 
 #[test]
 fn successful_codex_cli_turn_promotes_only_its_latest_agent_message() {

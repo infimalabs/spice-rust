@@ -313,13 +313,17 @@ fn ticker(
     } else {
         class
     };
-    let source = if activity.detail().is_empty() {
+    let source = if activity.detail().is_empty() && class == "tool" {
         visible_prefix
     } else {
         activity.detail()
     };
     let (prefix, detail) = watchband::ticker_chunks(visible_prefix, source, TICKER_BUDGET);
-    let separator = if class == "tool" { "" } else { ":" };
+    let separator = if class == "tool" || detail.is_empty() {
+        ""
+    } else {
+        ":"
+    };
     let line = if detail.is_empty() {
         format!("{prefix}{separator}")
     } else {

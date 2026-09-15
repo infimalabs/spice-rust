@@ -519,7 +519,9 @@ pub(crate) const fn agent_card_kind(activity: wire::AgentActivityKind) -> &'stat
     match activity {
         wire::AgentActivityKind::Turn => "turn",
         wire::AgentActivityKind::Compaction => "compaction",
-        wire::AgentActivityKind::Prose | wire::AgentActivityKind::Tool => "agent-message",
+        wire::AgentActivityKind::Prose
+        | wire::AgentActivityKind::Tool
+        | wire::AgentActivityKind::Reasoning => "agent-message",
     }
 }
 
@@ -528,6 +530,7 @@ pub(crate) const fn agent_activity_name(activity: wire::AgentActivityKind) -> &'
     match activity {
         wire::AgentActivityKind::Prose => "prose",
         wire::AgentActivityKind::Tool => "tool",
+        wire::AgentActivityKind::Reasoning => "reasoning",
         wire::AgentActivityKind::Turn => "turn",
         wire::AgentActivityKind::Compaction => "compaction",
     }
@@ -538,7 +541,9 @@ pub(crate) const fn agent_boundary_label(activity: wire::AgentActivityKind) -> &
     match activity {
         wire::AgentActivityKind::Turn => "started a new turn",
         wire::AgentActivityKind::Compaction => "compacted context",
-        wire::AgentActivityKind::Prose | wire::AgentActivityKind::Tool => {
+        wire::AgentActivityKind::Prose
+        | wire::AgentActivityKind::Tool
+        | wire::AgentActivityKind::Reasoning => {
             panic!("only boundary activities have boundary labels")
         }
     }

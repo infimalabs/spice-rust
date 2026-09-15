@@ -298,6 +298,7 @@ fn agent_message_presentation<'a>(
         wire::AgentActivityKind::Tool => {
             format!("Tool result from {attribution}: {}", message.text)
         }
+        wire::AgentActivityKind::Reasoning => format!("Thinking from {attribution}"),
         wire::AgentActivityKind::Prose => format!("Agent message from {attribution}"),
     };
     let unlinked_media = message

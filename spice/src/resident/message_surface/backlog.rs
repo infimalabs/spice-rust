@@ -11,22 +11,46 @@ use super::*;
 mod history;
 #[cfg(test)]
 mod tests;
-use history::HistorySources;
+use history::{HistorySources, history_newest, history_tail, history_tail_error};
 
-/// Fixed newest-record window for one startup or historical tape read.
-const INITIAL_WINDOW_BYTES: u64 = 32 * 1024;
+/// Fixed newest-record window for one startup tape read.
+///
+/// Startup seeds every current lane before discovery is published, so each
+/// lane reads one window and the pageable history below fills the rest.
+const STARTUP_WINDOW_BYTES: u64 = 1024 * 1024;
+/// Newest-record window for one historical tape read.
+///
+/// The predecessor read 8 MiB reverse windows and kept reading older ones
+/// until the page held its visible cards; a tool-heavy lane can run for
+/// megabytes without one, so a smaller window served pages of nothing.
+const HISTORY_WINDOW_BYTES: u64 = 8 * 1024 * 1024;
 const TAIL_BOUNDARY_BYTES: u64 = 256 * 1024;
-const TAIL_SOURCE_BYTES: u64 = INITIAL_WINDOW_BYTES + TAIL_BOUNDARY_BYTES;
-const TAIL_RECORD_LIMIT: usize = 32 * 1024;
-const TAIL_PASS_LIMIT: usize = 64;
-const TAIL_DURATION: Duration = Duration::from_secs(1);
+const STARTUP_SOURCE_BYTES: u64 = STARTUP_WINDOW_BYTES + TAIL_BOUNDARY_BYTES;
+const HISTORY_SOURCE_BYTES: u64 = HISTORY_WINDOW_BYTES + TAIL_BOUNDARY_BYTES;
+const TAIL_RECORD_LIMIT: usize = 256 * 1024;
+const TAIL_PASS_LIMIT: usize = 256;
+const TAIL_DURATION: Duration = Duration::from_secs(5);
+/// Historical windows chained toward one requested page.
+///
+/// A page served short keeps its continuation, so the client asks again from
+/// where this request stopped rather than rescanning.
+const HISTORY_READ_LIMIT: usize = 4;
+const HISTORY_DURATION: Duration = Duration::from_secs(5);
 const STARTUP_LANE_READ_LIMIT: usize = 8;
-const STARTUP_SOURCE_BYTE_LIMIT: u64 = TAIL_SOURCE_BYTES * STARTUP_LANE_READ_LIMIT as u64;
+const STARTUP_SOURCE_BYTE_LIMIT: u64 = STARTUP_SOURCE_BYTES * STARTUP_LANE_READ_LIMIT as u64;
 
-fn tail_budget() -> listen::TailBudget {
+fn startup_budget() -> listen::TailBudget {
+    tail_budget(STARTUP_WINDOW_BYTES, STARTUP_SOURCE_BYTES)
+}
+
+fn history_budget() -> listen::TailBudget {
+    tail_budget(HISTORY_WINDOW_BYTES, HISTORY_SOURCE_BYTES)
+}
+
+fn tail_budget(window_bytes: u64, source_bytes: u64) -> listen::TailBudget {
     listen::TailBudget::new(
-        INITIAL_WINDOW_BYTES,
-        TAIL_SOURCE_BYTES,
+        window_bytes,
+        source_bytes,
         TAIL_RECORD_LIMIT,
         TAIL_PASS_LIMIT,
         TAIL_DURATION,
@@ -149,7 +173,7 @@ struct StartupWork {
 impl StartupWork {
     fn admits_lane(self) -> bool {
         self.lanes < STARTUP_LANE_READ_LIMIT
-            && self.source_bytes.saturating_add(TAIL_SOURCE_BYTES) <= STARTUP_SOURCE_BYTE_LIMIT
+            && self.source_bytes.saturating_add(STARTUP_SOURCE_BYTES) <= STARTUP_SOURCE_BYTE_LIMIT
     }
 
     fn begin_lane(&mut self) {
@@ -376,10 +400,11 @@ impl DurableHistory {
             return Ok(None);
         }
         let tape = if source.tape.is_dir() {
-            Some(match continuation.tape.as_ref() {
+            let newest = match continuation.tape.as_ref() {
                 Some(end) => self.tape_messages(lane, source, before, end, limit)?,
                 None => self.initial_tape_messages(lane, source, before, limit)?,
-            })
+            };
+            Some(self.fill_tape_messages(lane, source, before, limit, newest)?)
         } else if source.source.is_some() {
             return Err("the transcript source disappeared after Canvas bootstrap".to_owned());
         } else {
@@ -468,13 +493,7 @@ impl DurableHistory {
         end: &listen::Checkpoint,
         limit: usize,
     ) -> Result<TapeHistoryScan, String> {
-        let tail = history_tail(&source.tape, source.dialect, end).map_err(|error| {
-            if matches!(error, listen::ScanError::SourceChanged { .. }) {
-                "the transcript source changed after Canvas bootstrap".to_owned()
-            } else {
-                error.to_string()
-            }
-        })?;
+        let tail = history_tail(&source.tape, source.dialect, end).map_err(history_tail_error)?;
         self.collect_tape_messages(lane, source, before, limit, tail)
     }
 
@@ -485,7 +504,8 @@ impl DurableHistory {
         before: Option<&wire::AgentMessage>,
         limit: usize,
     ) -> Result<TapeHistoryScan, String> {
-        let tail = tail_backlog(&source.tape, source.dialect).map_err(|error| error.to_string())?;
+        let tail =
+            history_newest(&source.tape, source.dialect).map_err(|error| error.to_string())?;
         self.collect_tape_messages(lane, source, before, limit, tail)
     }
 
@@ -499,7 +519,6 @@ impl DurableHistory {
     ) -> Result<TapeHistoryScan, String> {
         let source_start = tail.start;
         let end = tail.scan.checkpoint.clone();
-        #[cfg(test)]
         let work = tail.work;
         let messages = CollectedMessages::new(limit);
         let mut reader = BacklogReader {
@@ -544,18 +563,20 @@ impl DurableHistory {
                 || source_start.next != listen::Position::start(),
             start: source_start,
             end,
-            #[cfg(test)]
             work,
         })
     }
 }
 
+/// Visible cards one history request collected from the tape.
+///
+/// `start` is the oldest boundary any chained window reached and `end` the
+/// newest, while `work` sums every window read for the request.
 struct TapeHistoryScan {
     messages: Vec<wire::AgentMessage>,
     more: bool,
     start: listen::Checkpoint,
     end: listen::Checkpoint,
-    #[cfg(test)]
     work: listen::TailWork,
 }
 
@@ -563,13 +584,9 @@ fn tape_continuation(
     scan: &TapeHistoryScan,
     before: Option<&wire::AgentMessage>,
 ) -> listen::Checkpoint {
-    #[cfg(test)]
-    {
-        debug_assert!(scan.work.source_bytes <= TAIL_SOURCE_BYTES);
-        debug_assert!(scan.work.records <= TAIL_RECORD_LIMIT);
-        debug_assert!(scan.work.passes <= TAIL_PASS_LIMIT);
-        debug_assert!(scan.work.duration <= TAIL_DURATION);
-    }
+    debug_assert!(scan.work.source_bytes <= HISTORY_SOURCE_BYTES * HISTORY_READ_LIMIT as u64);
+    debug_assert!(scan.work.records <= TAIL_RECORD_LIMIT * HISTORY_READ_LIMIT);
+    debug_assert!(scan.work.passes <= TAIL_PASS_LIMIT * HISTORY_READ_LIMIT);
     let end = scan.end.clone();
     if scan.messages.is_empty() {
         return scan.start.clone();
@@ -954,22 +971,9 @@ fn tail_backlog(
     tape: &Path,
     dialect: listen::Dialect,
 ) -> Result<listen::TailScan, listen::ScanError> {
-    listen::scan_tail(tape, dialect, tail_budget())
-}
-
-fn history_tail(
-    tape: &Path,
-    dialect: listen::Dialect,
-    before: &listen::Checkpoint,
-) -> Result<listen::TailScan, listen::ScanError> {
-    listen::scan_before(tape, dialect, before, tail_budget())
+    listen::scan_tail(tape, dialect, startup_budget())
 }
 
 fn visible_message(message: &wire::AgentMessage) -> bool {
-    matches!(
-        message.activity,
-        wire::AgentActivityKind::Prose
-            | wire::AgentActivityKind::Turn
-            | wire::AgentActivityKind::Compaction
-    ) || !message.media.is_empty()
+    message.activity.is_visible() || !message.media.is_empty()
 }
