@@ -22,7 +22,7 @@ fn resident_restart_rebuilds_from_zero_with_fixed_work_and_no_partial_rows() {
 
     let restarted = history_checkpoint(&transcript).expect("replacement resident captures source");
     let mut cursor = cursor(&transcript, listen::Dialect::Claude);
-    let restarted_first = bootstrap_before(&mut cursor, 1, &restarted)
+    let restarted_first = bootstrap_before(&mut cursor, 1, &restarted, HistoryRead::Cursor)
         .expect("replacement resident advances one bounded slice");
     assert!(restarted_first.pending_authentication);
     assert!(restarted_first.records.is_empty());
@@ -33,7 +33,7 @@ fn resident_restart_rebuilds_from_zero_with_fixed_work_and_no_partial_rows() {
 
     let mut page = restarted_first;
     for _ in 0..4 {
-        page = bootstrap_before(&mut cursor, 1, &restarted)
+        page = bootstrap_before(&mut cursor, 1, &restarted, HistoryRead::Cursor)
             .expect("replacement resident resumes bounded authentication");
         assert!(page.work.within_limits());
         if !page.pending_authentication {
@@ -185,7 +185,7 @@ fn rows_are_discarded_when_source_moves_during_page_read() {
     });
     let mut cursor = cursor(&transcript, listen::Dialect::Claude);
 
-    let page = bootstrap_before(&mut cursor, 1, &checkpoint)
+    let page = bootstrap_before(&mut cursor, 1, &checkpoint, HistoryRead::Cursor)
         .expect("moving page is discarded before publication");
 
     assert!(page.pending_authentication);

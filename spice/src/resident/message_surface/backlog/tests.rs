@@ -716,3 +716,129 @@ fn merged_history_pages_retreat_both_sources_without_gaps_or_rescans() {
     assert_replaced_session_is_refused(&fixture, &initial_before);
     fs::remove_dir_all(&fixture.root).expect("merged fixture cleanup");
 }
+
+/// Season a preserved Codex session whose newest `groups` compactions each sit
+/// behind five near 1.9 KiB assistant records, so a page of compaction cards
+/// spans more source bytes than one history window.
+fn season_session_horizon(root: &Path, groups: usize) -> (DurableHistory, CanonicalUuid) {
+    let session_path = root.join("rollout.jsonl");
+    fs::create_dir_all(root).expect("session horizon fixture root exists");
+    let filler = "x".repeat(1_800);
+    let mut group_contents = Vec::new();
+    for group in 0..groups {
+        let mut contents = String::new();
+        for slot in 0..5 {
+            let timestamp = timestamp(group * 6 + slot);
+            contents.push_str(&format!(
+                "{{\"timestamp\":\"{timestamp}\",\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{{\"type\":\"output_text\",\"text\":\"message {group} {slot} {filler}\"}}]}}}}\n"
+            ));
+        }
+        let timestamp = timestamp(group * 6 + 5);
+        contents.push_str(&format!(
+            "{{\"timestamp\":\"{timestamp}\",\"type\":\"compacted\",\"payload\":{{}}}}\n"
+        ));
+        group_contents.push(contents);
+    }
+    let newest_page: usize = group_contents
+        .iter()
+        .rev()
+        .take(canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT)
+        .map(String::len)
+        .sum();
+    assert!(
+        newest_page > session_compaction::HISTORY_BYTE_BUDGET,
+        "one page of compactions outgrows one history window: {newest_page} bytes",
+    );
+    fs::write(&session_path, group_contents.concat()).expect("preserved session is durable");
+
+    let lane: CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163e5"
+        .parse()
+        .expect("fixture lane");
+    let author: CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163ef"
+        .parse()
+        .expect("fixture author");
+    let session_source = session_compaction::history_checkpoint(&session_path)
+        .expect("preserved session checkpoint reads");
+    let history = DurableHistory {
+        lanes: BTreeMap::from([(
+            lane,
+            DurableLane {
+                tape: root.join("tape"),
+                worktree: root.join("worktree"),
+                dialect: listen::Dialect::Codex,
+                author,
+                source: None,
+                session: Some(DurableSession {
+                    path: session_path,
+                    worktree: root.join("worktree"),
+                    dialect: listen::Dialect::Codex,
+                    thread: "018f7777-7777-7444-8888-999999999999".to_owned(),
+                    source: session_source,
+                }),
+            },
+        )]),
+        continuations: Mutex::new(HashMap::new()),
+        observations: MessageObservations::default(),
+        steering: PresentationDirectives::default(),
+        worktrees: SessionWorktrees::default(),
+    };
+    (history, lane)
+}
+
+#[test]
+fn session_history_chains_windows_until_one_request_fills_its_page() {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "spice-backlog-session-horizon-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed),
+    ));
+    let (history, lane) = season_session_horizon(&root, 60);
+
+    let page = (0..128)
+        .find_map(|_| {
+            let page = canvas::stream::MessageHistoryProvider::history(
+                &history,
+                lane,
+                None,
+                canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT,
+            )
+            .expect("session history reads")
+            .expect("fixture lane is owned");
+            if page.messages.is_empty() {
+                assert!(page.more, "pending authentication keeps history open");
+                return None;
+            }
+            Some(page)
+        })
+        .expect("session authentication settles before the page is served");
+
+    assert_eq!(
+        page.messages.len(),
+        canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT,
+        "one request chains older windows until the page limit is met",
+    );
+    assert!(page.more, "older compactions remain behind the page");
+    assert!(
+        page.messages
+            .iter()
+            .all(|message| message.activity == wire::AgentActivityKind::Compaction),
+        "the preserved session serves only compaction cards",
+    );
+    assert!(
+        page.messages
+            .windows(2)
+            .all(|pair| pair[0].chronology_key() < pair[1].chronology_key()),
+        "chained windows keep strict source chronology",
+    );
+    let newest = timestamp(59 * 6 + 5)
+        .parse()
+        .expect("newest fixture instant");
+    assert!(
+        page.messages
+            .last()
+            .is_some_and(|message| message.authored == newest),
+        "the page ends at the newest compaction",
+    );
+    fs::remove_dir_all(&root).expect("session horizon fixture cleanup");
+}

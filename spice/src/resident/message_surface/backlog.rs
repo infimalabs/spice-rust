@@ -30,12 +30,12 @@ const HISTORY_SOURCE_BYTES: u64 = HISTORY_WINDOW_BYTES + TAIL_BOUNDARY_BYTES;
 const TAIL_RECORD_LIMIT: usize = 256 * 1024;
 const TAIL_PASS_LIMIT: usize = 256;
 const TAIL_DURATION: Duration = Duration::from_secs(5);
-/// Historical windows chained toward one requested page.
+/// Historical windows chained toward one requested page, sized from the
+/// shared [`HISTORY_REQUEST_BYTES`] span.
 ///
 /// A page served short keeps its continuation, so the client asks again from
 /// where this request stopped rather than rescanning.
-const HISTORY_READ_LIMIT: usize = 4;
-const HISTORY_DURATION: Duration = Duration::from_secs(5);
+const HISTORY_READ_LIMIT: usize = (HISTORY_REQUEST_BYTES / HISTORY_WINDOW_BYTES) as usize;
 const STARTUP_LANE_READ_LIMIT: usize = 8;
 const STARTUP_SOURCE_BYTE_LIMIT: u64 = STARTUP_SOURCE_BYTES * STARTUP_LANE_READ_LIMIT as u64;
 
@@ -615,7 +615,7 @@ fn session_continuation(
     end: Option<&session_compaction::HistoryCheckpoint>,
     before: Option<&wire::AgentMessage>,
 ) -> Option<session_compaction::HistoryCheckpoint> {
-    debug_assert!(scan.work.within_limits());
+    debug_assert!(scan.work.within_request_limits());
     let end = end?;
     if scan.messages.is_empty() {
         return Some(end.retreat(scan.start));
