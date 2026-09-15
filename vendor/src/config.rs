@@ -89,8 +89,8 @@ fn admitted_string<'de, D: Deserializer<'de>>(
 enum ClaudeEffort {
     Low,
     Medium,
-    #[default]
     High,
+    #[default]
     Xhigh,
     Max,
 }
@@ -123,7 +123,7 @@ impl Default for ClaudeConfig {
         Self {
             binary: Binary::new("claude"),
             model: LaunchValue::new(DEFAULT_CLAUDE_MODEL),
-            effort: ClaudeEffort::High,
+            effort: ClaudeEffort::Xhigh,
             auto_compact_window_tokens: DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW_TOKENS,
         }
     }
