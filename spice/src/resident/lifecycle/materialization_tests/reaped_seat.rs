@@ -238,6 +238,12 @@ fn occupied_fixture(occupant: CanonicalUuid) -> (Bus, ProjectPolicy, Projection)
 }
 
 pub(super) fn occupied_seed(occupant: CanonicalUuid) -> JournalWrite {
+    occupied_seed_at(occupant, "/fixture")
+}
+
+/// Seat the fixture lane on `worktree`, which names a repository when the
+/// scenario publishes the lane inbox and any path at all when it does not.
+pub(super) fn occupied_seed_at(occupant: CanonicalUuid, worktree: &str) -> JournalWrite {
     let origin = format!("resident:{}", epoch())
         .parse::<Origin>()
         .expect("fixture resident origin");
@@ -245,6 +251,7 @@ pub(super) fn occupied_seed(occupant: CanonicalUuid) -> JournalWrite {
     let seated = write
         .fact(body::UpSeated { epoch: epoch() }, FactCause::Root)
         .expect("resident fact builds");
+    let worktree = worktree.to_owned();
     write.residency_head(seated, move |_| ResidencyHead {
         epoch: epoch(),
         state: ResidentState::Seated,
@@ -253,7 +260,7 @@ pub(super) fn occupied_seed(occupant: CanonicalUuid) -> JournalWrite {
             lane: lane(),
             lineage_id: lane(),
             name: None,
-            worktree: "/fixture".to_owned(),
+            worktree,
             life: "drive".to_owned(),
             vendor: "claude".parse().expect("fixture vendor"),
             occupant: Some(occupant),

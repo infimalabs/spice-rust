@@ -872,8 +872,16 @@ fn accept_exit(
         )
     })?;
     let config = &command_surface.config.lane;
-    let accounted =
-        super::reap::account_exit(bus, epoch, seats, lifecycle, config, exit, diagnostic);
+    let accounted = super::reap::account_exit(
+        bus,
+        command_surface.paths,
+        epoch,
+        seats,
+        lifecycle,
+        config,
+        exit,
+        diagnostic,
+    );
     super::deferral::defer_store_fault(accounted, diagnostic, "exit accounting")
 }
 

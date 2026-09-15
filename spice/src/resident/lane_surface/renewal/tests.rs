@@ -216,6 +216,7 @@ fn predecessor_exit_advances_handoff_and_retires_its_control_before_successor_la
 
     occupant_exited(
         &bus,
+        &fixture.paths,
         fixture.epoch,
         &mut seats,
         lane::capture::CaptureExit {

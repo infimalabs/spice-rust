@@ -7,12 +7,18 @@ pub(super) struct TranscriptRecognition {
     pub(super) outcome: ScanOutcome,
 }
 
+/// Find the latest assistant prose recognizing `token`, newest record first.
+///
+/// A requested `disposition` must match the marker the transcript carries;
+/// `None` accepts whichever terminal marker the transcript shows, which is
+/// how the exit sweep reads an answer nobody has yet claimed on the command
+/// line.
 pub(super) fn transcript_recognition(
     paths: &RuntimePaths,
     lane: CanonicalUuid,
     vendor: &wire::Name,
     token: &str,
-    disposition: Disposition,
+    disposition: Option<Disposition>,
     standing: &impl steer::Standing,
 ) -> Result<TranscriptRecognition, Outcome<CommandAnswer>> {
     let path = paths.tape.join(lane.to_string()).join(vendor.as_str());
@@ -105,7 +111,7 @@ fn scan_record(
     bytes: &[u8],
     locus: tape::Locus,
     token: &str,
-    disposition: Disposition,
+    disposition: Option<Disposition>,
     standing: &impl steer::Standing,
 ) -> Result<Option<RecordRecognition>, Outcome<CommandAnswer>> {
     let registry = spice::extension::registry().map_err(|error| {
@@ -127,12 +133,13 @@ fn scan_record(
                     disposition: observed,
                     ..
                 } = &recognition.outcome
-                    && *observed != disposition
+                    && let Some(requested) = disposition
+                    && *observed != requested
                 {
                     return Err(refusal(
                         "steer::transcript-disposition-mismatch",
-                        Some(format!("{:?}", disposition).to_lowercase()),
-                        Some(format!("{:?}", observed).to_lowercase()),
+                        Some(format!("{requested:?}").to_lowercase()),
+                        Some(format!("{observed:?}").to_lowercase()),
                         "make the ack command disposition match the latest transcript marker",
                     ));
                 }
