@@ -152,6 +152,7 @@ pub fn settings_json(hook: &SteeringHook, attribution: Attribution) -> String {
                 session_url: false,
             }),
         },
+        auto_memory_enabled: false,
         hooks: BTreeMap::from([(
             POST_TOOL_HOOK_EVENT,
             vec![HookGroup {
@@ -245,6 +246,11 @@ pub fn launch(
 struct Settings<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     attribution: Option<AttributionSettings>,
+    /// Spice owns what an agent remembers between turns; Claude's own
+    /// auto-memory would read and write a per-project directory outside
+    /// that authority, so every lane launch switches it off.
+    #[serde(rename = "autoMemoryEnabled")]
+    auto_memory_enabled: bool,
     hooks: BTreeMap<&'a str, Vec<HookGroup<'a>>>,
     permissions: Permissions<'a>,
 }
