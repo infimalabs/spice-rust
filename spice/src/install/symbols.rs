@@ -531,34 +531,12 @@ mod tests {
         image
     }
 
-    fn git(root: &Path, arguments: &[&str]) {
-        let status = Command::new("git")
-            .arg("-C")
-            .arg(root)
-            .args(arguments)
-            .status()
-            .expect("git launches");
-        assert!(status.success(), "git {arguments:?} exited with {status}");
-    }
-
     #[test]
     fn resolve_worktree_publishes_a_matching_sibling_dsym_and_ignores_a_mismatched_one() {
         let root = scratch("worktree");
-        git(&root, &["init", "-q"]);
-        git(
-            &root,
-            &[
-                "-c",
-                "user.name=test",
-                "-c",
-                "user.email=test@example.com",
-                "commit",
-                "--allow-empty",
-                "-q",
-                "-m",
-                "seed",
-            ],
-        );
+        crate::test_repository::initialize(&root);
+        crate::test_repository::stage(&root, &[]);
+        crate::test_repository::commit(&root, "seed");
         let repository = Repository::discover(&root).expect("scratch repository discovers");
         let binary = root.join("spice");
         let uuid = [0xAA; 16];
@@ -593,20 +571,8 @@ mod tests {
 
         // Dirtying a tracked file is reflected without refusing the install.
         fs::write(root.join("tracked"), b"content").unwrap();
-        git(&root, &["add", "tracked"]);
-        git(
-            &root,
-            &[
-                "-c",
-                "user.name=test",
-                "-c",
-                "user.email=test@example.com",
-                "commit",
-                "-q",
-                "-m",
-                "tracked",
-            ],
-        );
+        crate::test_repository::stage(&root, &["tracked"]);
+        crate::test_repository::commit(&root, "tracked");
         fs::write(root.join("tracked"), b"changed").unwrap();
         let dirty = Source::resolve_worktree(&repository, &binary)
             .unwrap()

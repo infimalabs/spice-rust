@@ -38,6 +38,7 @@ pub struct RefreshRequest {
     /// Build and install the release profile rather than the development profile.
     pub release: bool,
     /// Generate and retain a dSYM beside the built executable, on macOS.
+    /// The CLI defaults this on; `--no-symbols` clears it.
     pub symbols: bool,
     /// Restart the resident after the executable is republished.
     pub restart: bool,
@@ -89,7 +90,7 @@ pub enum RefreshError {
     App(crate::AppBuildError),
     /// `cargo build` succeeded without naming a `spice` executable.
     BuildOutputSilent,
-    /// Generating the worktree dSYM `--symbols` requested failed.
+    /// Generating the worktree dSYM failed and was not suppressed by `--no-symbols`.
     Symbols(String),
     /// The installer refused the refresh.
     #[cfg(not(target_arch = "wasm32"))]

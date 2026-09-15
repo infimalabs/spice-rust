@@ -239,9 +239,9 @@ const fn build_profile(release: bool) -> &'static str {
 /// Generate a dSYM for `executable` beside it, then strip the executable.
 ///
 /// [`spice::install::symbols`] resolves this exact sibling path when no
-/// sealed release package is present, so a plain `--symbols` refresh gets a
-/// verified symbol receipt the same way a packaged release install does,
-/// without a release build or a signed payload.
+/// sealed release package is present, so an ordinary refresh gets a verified
+/// symbol receipt the same way a packaged release install does, without a
+/// release build or a signed payload, unless `--no-symbols` suppressed it.
 #[cfg(target_os = "macos")]
 fn generate_worktree_symbols(
     executable: &Path,
