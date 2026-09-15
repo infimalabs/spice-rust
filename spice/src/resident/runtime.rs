@@ -978,6 +978,7 @@ pub(super) fn latest_surface_digest(bus: &Bus) -> CommandResult<Option<wire::Dig
 }
 
 mod deferral;
+pub(super) mod reap;
 mod surface;
 #[cfg(test)]
 pub(super) use surface::announce_canvas;

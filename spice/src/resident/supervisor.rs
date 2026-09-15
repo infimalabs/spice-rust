@@ -25,6 +25,7 @@ use sill::{WaitError, WaitOutcome};
 use spice::repository::Repository;
 use wire::CanonicalUuid;
 
+pub(super) mod ending;
 #[cfg(unix)]
 mod events;
 #[cfg(test)]
@@ -343,38 +344,22 @@ pub(super) fn adopt(
     let Some(occupant) = row.occupant else {
         return Ok(None);
     };
-    let path = supervisor_directory(paths, row.lane, occupant).join("state.json");
-    let state = match read_state(&path) {
-        Ok(state) => state,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(environment_fault(
-                "lane::supervisor-state-unavailable",
-                &error.to_string(),
-            ));
-        }
+    let Some((path, state)) = ending::durable_state(paths, row.lane, occupant)? else {
+        return Ok(None);
     };
-    if !matches_state(&state, row.lane, occupant) {
-        return Err(store_fault(
-            "lane::supervisor-state-mismatched",
-            "detached supervisor state names another lane or occupant",
-        ));
-    }
     match state.phase {
         Phase::Running if process_exists(state.supervisor)? => {
             state_launch(path, state).map(Adoption::Running).map(Some)
         }
         Phase::Running => Ok(Some(Adoption::Failed(
-            "detached supervisor disappeared while its agent was running".to_owned(),
+            ending::SUPERVISOR_DISAPPEARED.to_owned(),
         ))),
         Phase::Exited => state_launch(path, state).map(Adoption::Exited).map(Some),
-        Phase::Failed => {
-            Ok(Some(Adoption::Failed(state.failure.unwrap_or_else(|| {
-                "detached supervisor failed without detail".to_owned()
-            }))))
-        }
+        Phase::Failed => Ok(Some(Adoption::Failed(ending::failure_detail(
+            state.failure,
+        )))),
         Phase::Starting => Ok(Some(Adoption::Failed(
-            "detached supervisor did not finish starting".to_owned(),
+            ending::DID_NOT_FINISH_STARTING.to_owned(),
         ))),
     }
 }

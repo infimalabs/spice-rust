@@ -701,16 +701,16 @@ fn accept_supervisor_report(
         failure,
     } = notice
     {
-        if !lane_surface::renewal_requested_exit(bus, epoch, lane, occupant)? {
-            command_surface.observe_lifecycle_death(lifecycle, seats, lane, occupant)?;
-        }
-        if seats
-            .occupant(lane)
-            .is_some_and(|sitting| sitting.occupant() == occupant)
-        {
-            let _detached = seats.vacate(lane);
-        }
-        return lane_surface::supervisor_failed(bus, epoch, lane, occupant, &failure);
+        return super::reap::account_failure(
+            bus,
+            epoch,
+            seats,
+            lifecycle,
+            &command_surface.config.lane,
+            lane,
+            occupant,
+            &failure,
+        );
     }
     let residency = current_residency(bus, epoch)?;
     let Some(record) = capture::materialize(command_surface.paths, residency.body(), notice)?
@@ -871,12 +871,8 @@ fn accept_exit(
             "lane process exit receiver closed",
         )
     })?;
-    let accounted = (|| {
-        if !lane_surface::renewal_requested_exit(bus, epoch, exit.lane, exit.occupant)? {
-            command_surface.observe_lifecycle_death(lifecycle, seats, exit.lane, exit.occupant)?;
-        }
-        lane_surface::occupant_exited(bus, epoch, seats, exit)
-    })();
+    let config = &command_surface.config.lane;
+    let accounted = super::reap::account_exit(bus, epoch, seats, lifecycle, config, exit);
     super::deferral::defer_store_fault(accounted, diagnostic, "exit accounting")
 }
 
@@ -976,6 +972,7 @@ fn reconcile_wakes(
     lifecycle: &mut lifecycle::Runtime,
 ) -> CommandResult<()> {
     timers.synchronize(bus)?;
+    super::reap::reap_ended_seats(bus, command_surface, seats, lifecycle, diagnostic)?;
     lane_surface::reconcile_seats(bus, command_surface.paths, command_surface.epoch(), seats)?;
     let wake = command_surface.reconcile_lifecycle(lifecycle, seats, diagnostic)?;
     timers.synchronize_wake(wake)

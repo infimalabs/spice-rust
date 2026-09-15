@@ -219,8 +219,9 @@ pub(super) fn restore_seats(
 /// supervisor's state file says what actually became of it. Re-deriving from
 /// that file is the entire repair: nothing here remembers an attempt, so each
 /// sweep judges the same durable inputs afresh, and a sweep that finds nothing
-/// stale commits nothing. A lane this resident is seated behind is never
-/// touched; the seat is the live authority for it.
+/// stale commits nothing. A lane this resident is seated behind is left to the
+/// seat sweep in the runtime, which judges it against the same supervisor
+/// state; here the seat is the live authority for it.
 pub(super) fn reconcile_seats(
     bus: &Bus,
     paths: &RuntimePaths,
