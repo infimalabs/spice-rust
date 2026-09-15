@@ -90,10 +90,15 @@ pub struct Journal {
 
 /// A capability-distinct, read-only view of finalized authority.
 ///
-/// Opening this handle never creates, migrates, or repairs a database. SQLite
-/// admits the file read-only, and `query_only` independently refuses writes on
-/// the connection, so callers that only need schema and cursor identity cannot
-/// accidentally cross the resident's sole-writer boundary.
+/// Opening this handle never creates, migrates, or repairs a database:
+/// `query_only` refuses every write on the connection, so callers that only
+/// need schema and cursor identity cannot accidentally cross the resident's
+/// sole-writer boundary. The file itself is admitted read-write, without
+/// creation, for one reason: a write-ahead-log authority keeps its log and
+/// index beside itself, and only a connection SQLite considers writable may
+/// fold an empty log back in and retire both when it closes last. A handle
+/// admitted read-only would leave that pair behind after every probe, which
+/// restore would then have to refuse as an unresolved sidecar.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub struct JournalReader {
@@ -247,6 +252,7 @@ impl Journal {
         connection
             .busy_timeout(BUSY_TIMEOUT)
             .map_err(OpenError::Sqlite)?;
+        admit_write_ahead_log(&connection)?;
         connection
             .execute_batch("PRAGMA foreign_keys = ON; PRAGMA trusted_schema = OFF;")
             .map_err(OpenError::Sqlite)?;
@@ -290,7 +296,7 @@ impl Journal {
     /// reads to a version this build does not otherwise admit.
     pub fn inspect_stored_schema(path: impl AsRef<Path>) -> Result<u32, OpenError> {
         let path = path.as_ref();
-        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)
             .map_err(|source| OpenError::Open {
                 path: path.to_path_buf(),
                 source,
@@ -311,6 +317,7 @@ impl Journal {
         connection
             .busy_timeout(BUSY_TIMEOUT)
             .map_err(OpenError::Sqlite)?;
+        admit_write_ahead_log(&connection)?;
         connection
             .execute_batch("PRAGMA foreign_keys = ON; PRAGMA trusted_schema = OFF;")
             .map_err(OpenError::Sqlite)?;
@@ -320,6 +327,57 @@ impl Journal {
             migration,
         })
     }
+}
+
+/// Spell `path` as the `file:` URI that marks it immutable to SQLite.
+///
+/// Only the three bytes SQLite's URI parser reads as structure are escaped;
+/// everything else in a path passes through unchanged.
+#[cfg(not(target_arch = "wasm32"))]
+fn immutable_uri(path: &Path) -> Option<String> {
+    let mut uri = String::from("file:");
+    for byte in path.to_str()?.bytes() {
+        match byte {
+            b'%' => uri.push_str("%25"),
+            b'?' => uri.push_str("%3F"),
+            b'#' => uri.push_str("%23"),
+            other => uri.push(char::from(other)),
+        }
+    }
+    uri.push_str("?immutable=1");
+    Some(uri)
+}
+
+/// Keep a file-backed authority in write-ahead-log mode.
+///
+/// Under SQLite's default rollback journal a writer's exclusive lock stalls
+/// every reader in every other process for the whole write, and a reader that
+/// then needs to write is refused outright rather than waiting, since SQLite
+/// cannot let it upgrade behind the holder. The resident holds its one writer
+/// open for its whole life while every `spice` command in every lane opens a
+/// reader against the same file, so that shape is the ordinary case here, not
+/// the exception. Write-ahead logging lets readers proceed against their own
+/// snapshot while the writer commits, leaving only writer-against-writer
+/// contention for [`BUSY_TIMEOUT`] to absorb.
+///
+/// The mode is persistent in the file, so this is idempotent after the first
+/// writer sets it. An in-memory or temporary database has no file to log
+/// against and stays on its own journal.
+#[cfg(not(target_arch = "wasm32"))]
+fn admit_write_ahead_log(connection: &Connection) -> Result<(), OpenError> {
+    let file_backed = connection.path().is_some_and(|path| !path.is_empty());
+    if !file_backed {
+        return Ok(());
+    }
+    let found = connection
+        .query_row("PRAGMA journal_mode = WAL", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(OpenError::Sqlite)?;
+    if found != "wal" {
+        return Err(OpenError::JournalMode { found });
+    }
+    Ok(())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -333,11 +391,43 @@ impl JournalReader {
     /// or belongs to another release.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, OpenError> {
         let path = path.as_ref();
-        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)
             .map_err(|source| OpenError::Open {
                 path: path.to_path_buf(),
                 source,
             })?;
+        Self::from_connection(connection)
+    }
+
+    /// Opens one captured generation that nothing can be writing to.
+    ///
+    /// A captured authority is a private regular file sealed against every
+    /// writer, so SQLite is told it is immutable: it takes no locks and asks
+    /// for none of the write-ahead-log siblings a live authority keeps beside
+    /// itself, which is what lets a sealed, read-only capture directory be
+    /// verified at all. That same promise is why this must never open a live
+    /// authority -- an immutable open reads only the main file, so commits
+    /// still waiting in a live log would be invisible to it. Live reads go
+    /// through [`Self::open`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the SQLite open failure when the file is absent, unreadable, or
+    /// not spellable as a URI, or the existing schema-admission refusal.
+    pub fn open_immutable(path: impl AsRef<Path>) -> Result<Self, OpenError> {
+        let path = path.as_ref();
+        let uri = immutable_uri(path).ok_or_else(|| OpenError::Open {
+            path: path.to_path_buf(),
+            source: rusqlite::Error::InvalidPath(path.to_path_buf()),
+        })?;
+        let connection = Connection::open_with_flags(
+            uri,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+        )
+        .map_err(|source| OpenError::Open {
+            path: path.to_path_buf(),
+            source,
+        })?;
         Self::from_connection(connection)
     }
 

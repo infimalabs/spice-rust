@@ -737,6 +737,21 @@ fn refuse_sidecars(destination: &Path) -> Result<(), Failure> {
                     format!("{}: {error}", path.display()),
                 ));
             }
+            // A write-ahead log with no frames, and the shared-memory index
+            // beside it, are what a strictly read-only opener leaves behind
+            // when it was the last connection: it cannot fold the log back
+            // into the authority on close. That index still remembers the
+            // page count of the authority it indexed, which a replaced
+            // authority would inherit, so it is retired the way SQLite
+            // retires it -- by a writer closing last -- not by restore.
+            Ok(metadata) if suffix == "-shm" || (suffix == "-wal" && metadata.len() == 0) => {
+                return Err(refusal(
+                    "restore::sidecar-residual",
+                    "no SQLite sidecars left behind by an earlier reader",
+                    path.display().to_string(),
+                    "open and close the resident once (spice up, spice down) so SQLite retires the sidecar, then apply restore",
+                ));
+            }
             Ok(_) => {
                 return Err(refusal(
                     "restore::authority-active",

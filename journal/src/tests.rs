@@ -44,6 +44,7 @@ mod task_creator_scope_migration;
 mod topology_revision_migration;
 mod transcript;
 mod vocabulary_migration;
+mod wal;
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
@@ -204,13 +205,6 @@ fn reader_verification_keeps_every_plane_on_the_snapshot_before_a_concurrent_com
     let scratch = Scratch::new();
     let path = scratch.path().join("authority.sqlite3");
     let mut writer = authority_file_fixture(&path);
-    let journal_mode = writer
-        .connection
-        .query_row("PRAGMA journal_mode = WAL", [], |row| {
-            row.get::<_, String>(0)
-        })
-        .expect("enable concurrent reader and writer fixture");
-    assert_eq!(journal_mode, "wal");
     let reader = JournalReader::open(&path).expect("open immutable verification reader");
     let reader_changes = reader.connection.total_changes();
     let mut committed = false;

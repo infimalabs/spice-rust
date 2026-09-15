@@ -115,7 +115,7 @@ impl RestoreCapture {
 
     /// Task identities absent from the captured authority.
     pub fn missing_tasks(&self, tasks: &[TaskStamp]) -> Result<Vec<TaskStamp>, BackupVerifyError> {
-        let reader = JournalReader::open(&self.authority().captured)
+        let reader = JournalReader::open_immutable(&self.authority().captured)
             .map_err(BackupVerifyError::Authority)?;
         reader
             .read(|read| {
@@ -711,7 +711,7 @@ fn verify_authority(
     authority: &Path,
     manifest_schema: u32,
 ) -> Result<crate::Verification, BackupVerifyError> {
-    let reader = JournalReader::open(authority).map_err(BackupVerifyError::Authority)?;
+    let reader = JournalReader::open_immutable(authority).map_err(BackupVerifyError::Authority)?;
     let schema = reader
         .schema_version()
         .map_err(BackupVerifyError::Authority)?;

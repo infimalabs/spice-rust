@@ -357,6 +357,10 @@ pub enum OpenError {
     InvalidCursor {
         found: i64,
     },
+    /// The on-disk authority would not enter write-ahead-log mode.
+    JournalMode {
+        found: String,
+    },
 }
 
 impl fmt::Display for OpenError {
@@ -377,6 +381,12 @@ impl fmt::Display for OpenError {
                     "journal cursor must be a positive position, found {found}"
                 )
             }
+            Self::JournalMode { found } => {
+                write!(
+                    formatter,
+                    "journal authority must run in write-ahead-log mode, found {found:?}"
+                )
+            }
         }
     }
 }
@@ -387,7 +397,7 @@ impl Error for OpenError {
             Self::Open { source, .. } => Some(source),
             Self::Sqlite(error) => Some(error),
             Self::Migration(error) => Some(error),
-            Self::InvalidCursor { .. } => None,
+            Self::InvalidCursor { .. } | Self::JournalMode { .. } => None,
         }
     }
 }
