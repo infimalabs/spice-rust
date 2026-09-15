@@ -222,6 +222,7 @@ fn predecessor_exit_advances_handoff_and_retires_its_control_before_successor_la
             lane: fixture.lane,
             occupant: fixture.occupant,
         },
+        &mut Vec::new(),
     )
     .expect("predecessor exit commits handoff");
     let pending = current_residency(&bus, fixture.epoch).expect("pending handoff reads");

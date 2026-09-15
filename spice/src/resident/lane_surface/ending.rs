@@ -254,6 +254,36 @@ pub(super) fn ending_fact(
     Ok(fact)
 }
 
+/// Write down an exit notice the resident did not account, and why.
+///
+/// A notice is refused when the durable row and the seat do not both name
+/// the exiting occupant: the row moved on, the seat holds a successor, or the
+/// lane is not in residency at all. Those are the only values that decided
+/// the refusal, so the line carries all of them; without it a notice that
+/// missed leaves an occupied row with nothing in the log to explain why.
+pub(super) fn report_unaccounted_exit(
+    diagnostic: &mut dyn io::Write,
+    exit: CaptureExit,
+    row: Option<&wire::LaneResidency>,
+    seated: Option<CanonicalUuid>,
+) {
+    let durable = row.map_or_else(
+        || "no durable row".to_owned(),
+        |row| format!("durable row holds {}", named(row.occupant)),
+    );
+    let _ = writeln!(
+        diagnostic,
+        "lane {} exit of occupant {} not accounted: {durable}, seat holds {}",
+        exit.lane,
+        exit.occupant,
+        named(seated),
+    );
+}
+
+fn named(occupant: Option<CanonicalUuid>) -> String {
+    occupant.map_or_else(|| "none".to_owned(), |occupant| occupant.to_string())
+}
+
 /// The status of an occupant that was already gone before this resident acted.
 ///
 /// This is the one place a missing code still becomes a number, and it is the

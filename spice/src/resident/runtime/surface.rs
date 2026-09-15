@@ -187,7 +187,7 @@ pub(super) async fn run_surface(
     } = started;
     let channels = capture::channels();
     let supervisor_reports = capture::SupervisorReports::bind(paths)?;
-    lane_surface::restore_seats(bus, paths, epoch, seats)?;
+    lane_surface::restore_seats(bus, paths, epoch, seats, progress)?;
     ingest_transcripts(bus, paths, None, progress)?;
     let mut message_startup = launch_message_startup(bus, paths, epoch, &message_publisher)?;
     let reads = read_materializations::CurrentReads::start(bus, paths, &config.consent)
@@ -872,7 +872,8 @@ fn accept_exit(
         )
     })?;
     let config = &command_surface.config.lane;
-    let accounted = super::reap::account_exit(bus, epoch, seats, lifecycle, config, exit);
+    let accounted =
+        super::reap::account_exit(bus, epoch, seats, lifecycle, config, exit, diagnostic);
     super::deferral::defer_store_fault(accounted, diagnostic, "exit accounting")
 }
 
@@ -973,7 +974,8 @@ fn reconcile_wakes(
 ) -> CommandResult<()> {
     timers.synchronize(bus)?;
     super::reap::reap_ended_seats(bus, command_surface, seats, lifecycle, diagnostic)?;
-    lane_surface::reconcile_seats(bus, command_surface.paths, command_surface.epoch(), seats)?;
+    let (paths, epoch) = (command_surface.paths, command_surface.epoch());
+    lane_surface::reconcile_seats(bus, paths, epoch, seats, diagnostic)?;
     let wake = command_surface.reconcile_lifecycle(lifecycle, seats, diagnostic)?;
     timers.synchronize_wake(wake)
 }

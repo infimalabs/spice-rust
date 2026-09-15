@@ -15,18 +15,19 @@ use super::*;
 ///
 /// The supervisor notice and the seat sweep both land here, so an exit is
 /// accounted the same way whichever of them reports it first.
-pub(super) fn account_exit(
+pub(in crate::resident) fn account_exit(
     bus: &Bus,
     epoch: CanonicalUuid,
     seats: &mut Seats,
     lifecycle: &mut lifecycle::Runtime,
     config: &lane::Config,
     exit: lane::capture::CaptureExit,
+    diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     if !lane_surface::renewal_requested_exit(bus, epoch, exit.lane, exit.occupant)? {
         lifecycle.observe_death(bus, epoch, seats, exit.lane, exit.occupant, config)?;
     }
-    lane_surface::occupant_exited(bus, epoch, seats, exit)
+    lane_surface::occupant_exited(bus, epoch, seats, exit, diagnostic)
 }
 
 /// Account one supervisor failure the way its own notice would have.
@@ -118,6 +119,7 @@ pub(in crate::resident) fn sweep_seats(
                 lifecycle,
                 config,
                 lane::capture::CaptureExit { lane, occupant },
+                diagnostic,
             ),
             supervisor::ending::PublishedEnding::Failed(failure) => account_failure(
                 bus, epoch, seats, lifecycle, config, lane, occupant, &failure,
