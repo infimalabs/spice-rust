@@ -379,10 +379,10 @@ fn kernel_exit_event_vacates_and_records_only_the_exact_occupant() {
 
     let exit = lane::capture::CaptureExit { lane, occupant };
     let mut diagnostic = Vec::new();
-    super::lane_surface::occupant_exited(&bus, epoch, &mut seats, exit, &mut diagnostic)
+    super::lane_surface::occupant_exited(&bus, &paths, epoch, &mut seats, exit, &mut diagnostic)
         .expect("exit event commits");
     assert!(diagnostic.is_empty(), "an accounted exit writes nothing");
-    super::lane_surface::occupant_exited(&bus, epoch, &mut seats, exit, &mut diagnostic)
+    super::lane_surface::occupant_exited(&bus, &paths, epoch, &mut seats, exit, &mut diagnostic)
         .expect("stale duplicate exit is inert");
     assert_eq!(
         String::from_utf8(diagnostic).expect("diagnostic is text"),

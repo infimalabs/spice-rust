@@ -15,8 +15,13 @@ use super::*;
 ///
 /// The supervisor notice and the seat sweep both land here, so an exit is
 /// accounted the same way whichever of them reports it first.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one exit crosses renewal, lifecycle, residency, and steering"
+)]
 pub(in crate::resident) fn account_exit(
     bus: &Bus,
+    paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &mut Seats,
     lifecycle: &mut lifecycle::Runtime,
@@ -27,7 +32,7 @@ pub(in crate::resident) fn account_exit(
     if !lane_surface::renewal_requested_exit(bus, epoch, exit.lane, exit.occupant)? {
         lifecycle.observe_death(bus, epoch, seats, exit.lane, exit.occupant, config)?;
     }
-    lane_surface::occupant_exited(bus, epoch, seats, exit, diagnostic)
+    lane_surface::occupant_exited(bus, paths, epoch, seats, exit, diagnostic)
 }
 
 /// Account one supervisor failure the way its own notice would have.
@@ -114,6 +119,7 @@ pub(in crate::resident) fn sweep_seats(
         let accounted = match ending {
             supervisor::ending::PublishedEnding::Exited => account_exit(
                 bus,
+                paths,
                 epoch,
                 seats,
                 lifecycle,

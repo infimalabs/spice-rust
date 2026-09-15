@@ -541,7 +541,7 @@ pub(in crate::resident) fn dispose(
         *actor_lane,
         vendor,
         &dispose.token,
-        dispose.disposition,
+        Some(dispose.disposition),
         &standing,
     ) {
         Ok(recognition) => recognition,
@@ -643,7 +643,7 @@ fn record_disposition(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn append_disposition(
+pub(super) fn append_disposition(
     proposal: &mut JournalWrite,
     directive: &journal::JournalHead<wire::SteeringHead>,
     key: &steer::Key,

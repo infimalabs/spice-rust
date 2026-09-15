@@ -14,6 +14,7 @@ use super::materialization::Projection;
 use super::{Available, Backoff, Resolution, Target, Trigger, project_targets, resolve};
 
 mod deferred_exit;
+mod exit_disposal;
 mod reaped_seat;
 mod trust_ice;
 

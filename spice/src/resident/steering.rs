@@ -23,12 +23,14 @@ use super::{
     store_fault, typed_outcome, typed_protocol_fault, typed_store_fault, write,
 };
 
+mod exit;
 mod preview;
 #[cfg(test)]
 mod tests;
 mod transcript;
 mod transitions;
 
+pub(super) use exit::dispose_at_exit;
 use preview::directive_preview;
 use transcript::transcript_recognition;
 use transitions::evidence_refusal;

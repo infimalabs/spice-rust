@@ -20,6 +20,8 @@ const WITHHOLD_FACTS: &str = "CREATE TRIGGER withhold_facts BEFORE INSERT ON fac
 
 #[test]
 fn an_exit_naming_neither_the_durable_row_nor_the_seat_is_written_down_with_both() {
+    let root = fixture_root("mismatch");
+    let paths = runtime_paths(&root);
     let durable = uuid(3);
     let seated = uuid(4);
     let exiting = uuid(5);
@@ -36,6 +38,7 @@ fn an_exit_naming_neither_the_durable_row_nor_the_seat_is_written_down_with_both
 
     lane_surface::occupant_exited(
         &bus,
+        &paths,
         epoch(),
         &mut seats,
         CaptureExit {
@@ -62,6 +65,7 @@ fn an_exit_naming_neither_the_durable_row_nor_the_seat_is_written_down_with_both
         "a refused notice journals nothing"
     );
     bus.shutdown().expect("mismatch fixture stops");
+    std::fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
 #[test]
@@ -93,6 +97,7 @@ fn an_exit_whose_commit_hit_a_store_fault_is_accounted_by_the_next_seat_sweep() 
     };
     let outcome = account_exit(
         &bus,
+        &paths,
         epoch(),
         &mut seats,
         &mut lifecycle,

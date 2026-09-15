@@ -274,6 +274,7 @@ pub(super) fn reconcile_seats(
                     }
                     occupant_exited(
                         bus,
+                        paths,
                         epoch,
                         seats,
                         CaptureExit {
@@ -988,6 +989,7 @@ fn degrade_occupant(
 /// accounts the same exit from there.
 pub(super) fn occupant_exited(
     bus: &Bus,
+    paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &mut Seats,
     exit: CaptureExit,
@@ -1000,10 +1002,15 @@ pub(super) fn occupant_exited(
         .iter()
         .find(|row| row.lane == exit.lane);
     let seated = seats.occupant(exit.lane).map(Occupant::occupant);
-    if row.is_none_or(|row| row.occupant != Some(exit.occupant)) || seated != Some(exit.occupant) {
-        ending::report_unaccounted_exit(diagnostic, exit, row, seated);
-        return Ok(());
-    }
+    let vendor = match row {
+        Some(row) if row.occupant == Some(exit.occupant) && seated == Some(exit.occupant) => {
+            row.vendor.clone()
+        }
+        _ => {
+            ending::report_unaccounted_exit(diagnostic, exit, row, seated);
+            return Ok(());
+        }
+    };
     let occupant = seats
         .vacate(exit.lane)
         .expect("the exact supervised exit remains seated");
@@ -1028,7 +1035,12 @@ pub(super) fn occupant_exited(
     )?;
     let fact = renewal::advance_exit(&mut write, &mut next, exit.lane, exit.occupant, fact)?;
     write.residency_head(fact, move |_| next);
-    commit(bus, write).map(|_| ())
+    commit(bus, write)?;
+    // The transcript is complete once the exit is accounted, so an answer the
+    // occupant left in its final prose is journaled here rather than waiting
+    // for a successor to cite it.
+    super::steering::dispose_at_exit(bus, paths, epoch, exit.lane, &vendor, diagnostic);
+    Ok(())
 }
 
 pub(super) fn renewal_requested_exit(
