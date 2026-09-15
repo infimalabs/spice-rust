@@ -821,19 +821,10 @@ async fn route_stream(
             ))),
         },
         wire::StreamRequest::Thread { .. } => source.thread(accepted, &request),
-        wire::StreamRequest::MessageHistory { .. } => source.message_history(accepted, &request),
-        // Admitted like every other request, so a probe from a replaced
-        // generation is told so rather than being reassured by a Pong. The
-        // client only needs *an* answer to prove the socket still carries
-        // traffic, so a refusal serves that purpose as well as a Pong does.
-        wire::StreamRequest::Ping { id, .. } => request
-            .admit(state.epoch)
-            .map(|()| wire::StreamFrame::Pong {
-                v: wire::WireVersion::CURRENT,
-                id: *id,
-                epoch: state.epoch,
-            })
-            .map_err(crate::stream::Failure::admission),
+        wire::StreamRequest::MessageHistory { .. } => {
+            message_history_off_runtime(source, accepted, &request).await
+        }
+        wire::StreamRequest::Ping { id, .. } => pong(state.epoch, &request, *id),
     };
     if !state.capabilities.matches(capability, &accepted.actor) {
         send_replaced(socket, state.epoch, Some(request.id())).await;
@@ -853,6 +844,53 @@ async fn route_stream(
             SessionFlow::Continue
         }
     }
+}
+
+/// Answer a stream-level ping once the request is admitted.
+///
+/// Admitted like every other request, so a probe from a replaced generation is
+/// told so rather than being reassured by a Pong. The client only needs *an*
+/// answer to prove the socket still carries traffic, so a refusal serves that
+/// purpose as well as a Pong does.
+fn pong(
+    epoch: wire::CanonicalUuid,
+    request: &wire::StreamRequest,
+    id: wire::CanonicalUuid,
+) -> Result<wire::StreamFrame, crate::stream::Failure> {
+    request
+        .admit(epoch)
+        .map(|()| wire::StreamFrame::Pong {
+            v: wire::WireVersion::CURRENT,
+            id,
+            epoch,
+        })
+        .map_err(crate::stream::Failure::admission)
+}
+
+/// Answer one history request from the blocking pool, not the runtime thread.
+///
+/// The provider behind [`crate::stream::Source::message_history`] may chain
+/// several multi-megabyte tape windows and hold its thread for seconds. The
+/// surface runtime is one thread shared by every socket, live publication,
+/// and the resident loop, so the read leaves it and the answer returns through
+/// the join. Requests on this one socket still run one at a time.
+async fn message_history_off_runtime(
+    source: &crate::stream::Source,
+    accepted: &wire::Accepted,
+    request: &wire::StreamRequest,
+) -> Result<wire::StreamFrame, crate::stream::Failure> {
+    let source = source.clone();
+    let accepted = accepted.clone();
+    let request = request.clone();
+    tokio::task::spawn_blocking(move || source.message_history(&accepted, &request))
+        .await
+        .unwrap_or_else(|error| {
+            Err(crate::stream::Failure::Fault(wire::Fault {
+                class: wire::FaultClass::Environment,
+                reason: "stream::message-history-abandoned".to_owned(),
+                detail: error.to_string(),
+            }))
+        })
 }
 
 async fn send_replaced(
