@@ -715,52 +715,6 @@ mod tests {
         bus
     }
 
-    #[test]
-    fn retained_tool_status_does_not_consume_visible_lane_capacity() {
-        let bus = fixture(1);
-        let source = Source::new(bus.reader(), epoch(), 10);
-        let publisher = source.message_publisher();
-        for offset in 0..MESSAGE_CAPACITY {
-            publisher
-                .publish(message(0xe5, u64::try_from(offset).expect("offset fits")))
-                .expect("visible backlog publishes");
-        }
-        for offset in [10_000, 10_001] {
-            let mut status = message(0xe5, offset);
-            status.activity = wire::AgentActivityKind::Tool;
-            publisher.publish(status).expect("tool status publishes");
-        }
-
-        let (_, frames) = source
-            .begin(
-                &accepted(Actor::Operator),
-                &request(0xc4, vec![ViewSubject::Messages], None),
-            )
-            .expect("message subscription begins");
-        let StreamFrame::Messages { messages, more, .. } = &frames[0] else {
-            panic!("expected retained message snapshot")
-        };
-        assert_eq!(
-            messages
-                .iter()
-                .filter(|message| message.activity.is_prose())
-                .count(),
-            INITIAL_MESSAGE_LIMIT,
-        );
-        assert_eq!(more.len(), 1);
-        assert_eq!(
-            messages
-                .iter()
-                .filter(|message| !message.activity.is_prose())
-                .count(),
-            1,
-            "only the latest non-card status is retained",
-        );
-        assert_eq!(messages.last().expect("latest status").locus.offset, 10_001);
-        drop(source);
-        bus.shutdown().expect("bus shuts down");
-    }
-
     fn commit_notes(bus: &Bus, notes: usize, trust: bool) -> JournalCommit {
         let mut write = JournalWrite::new(
             Actor::Operator,

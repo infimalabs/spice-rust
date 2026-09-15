@@ -459,12 +459,7 @@ fn revise_final_message(
 
 /// Whether one activity consumes a lane's visible-card retention budget.
 fn visible_message(message: &AgentMessage) -> bool {
-    matches!(
-        message.activity,
-        wire::AgentActivityKind::Prose
-            | wire::AgentActivityKind::Turn
-            | wire::AgentActivityKind::Compaction
-    ) || !message.media.is_empty()
+    message.activity.is_visible() || !message.media.is_empty()
 }
 
 fn trim_visible_lane(

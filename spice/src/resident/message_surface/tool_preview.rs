@@ -399,7 +399,7 @@ fn joined(items: &[Value]) -> String {
 }
 
 /// Collapse a preview onto one bounded line.
-fn flatten(text: &str) -> String {
+pub(super) fn flatten(text: &str) -> String {
     let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if flat.chars().count() <= MAX_CHARS {
         return flat;

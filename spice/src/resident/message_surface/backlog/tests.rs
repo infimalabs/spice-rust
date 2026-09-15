@@ -4,7 +4,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
 
-const SPARSE_TOOL_RECORDS: usize = 400;
+/// Tool records outgrowing one startup window at near 1.9 KiB each.
+const SPARSE_TOOL_RECORDS: usize = 640;
+/// Tool records outgrowing one history window at near 1.9 KiB each.
+const SPARSE_HORIZON_RECORDS: usize = 4_600;
 
 fn visible_cards(scan: &listen::Scan) -> usize {
     scan.records
@@ -42,7 +45,7 @@ fn startup_work_caps_lane_reads_and_total_source_bytes() {
         assert!(aggregate.admits_lane());
         aggregate.begin_lane();
         aggregate.add(listen::TailWork {
-            source_bytes: TAIL_SOURCE_BYTES,
+            source_bytes: STARTUP_SOURCE_BYTES,
             records: 1,
             passes: 1,
             duration: Duration::from_millis(1),
@@ -441,21 +444,19 @@ fn assert_replaced_session_is_refused(
     );
 }
 
-#[test]
-fn visible_card_target_stops_a_season_tail_before_byte_zero() {
+/// Write a Codex season of `messages` visible agent messages followed by
+/// `tools` tool calls without a visible card, each record near 1.9 KiB.
+fn season_tape(tag: &str, messages: usize, tools: usize) -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
-        "spice-backlog-tail-{}-{}",
+        "spice-backlog-{tag}-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed),
     ));
     let tape = tape::Tape::open(&root).expect("season tape opens");
-    // Three hundred records exceed the first 32 KiB window, while more than
-    // one initial page fits inside it. Cold replay must stop there rather than
-    // expanding until the complete retained history is materialized.
     let filler = "x".repeat(1_800);
     let mut season = Vec::new();
-    for index in 0..300 {
+    for index in 0..messages {
         season.extend_from_slice(
             format!(
                 "{{\"type\":\"item.completed\",\"item\":{{\"id\":\"item-{index}\",\"type\":\"agent_message\",\"text\":\"{index} {filler}\"}}}}\n"
@@ -463,18 +464,64 @@ fn visible_card_target_stops_a_season_tail_before_byte_zero() {
             .as_bytes(),
         );
     }
+    for index in 0..tools {
+        season.extend_from_slice(
+            format!(
+                "{{\"type\":\"item.started\",\"item\":{{\"id\":\"call-{index}\",\"type\":\"command_execution\",\"command\":\"echo {filler}\",\"aggregated_output\":\"\",\"exit_code\":null,\"status\":\"in_progress\"}}}}\n"
+            )
+            .as_bytes(),
+        );
+    }
     tape.tee(&season).expect("season is durable");
+    root
+}
+
+fn season_history(root: &Path) -> (DurableHistory, CanonicalUuid, listen::Checkpoint) {
+    let lane: CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163e5"
+        .parse()
+        .expect("fixture lane");
+    let author: CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163ef"
+        .parse()
+        .expect("fixture author");
+    let source_end = listen::scan(root, listen::Dialect::Codex, None)
+        .expect("season endpoint reads")
+        .checkpoint;
+    let history = DurableHistory {
+        lanes: BTreeMap::from([(
+            lane,
+            DurableLane {
+                tape: root.to_path_buf(),
+                worktree: root.join("worktree"),
+                dialect: listen::Dialect::Codex,
+                author,
+                source: Some(source_end.clone()),
+                session: None,
+            },
+        )]),
+        continuations: Mutex::new(HashMap::new()),
+        observations: MessageObservations::default(),
+        steering: PresentationDirectives::default(),
+        worktrees: SessionWorktrees::default(),
+    };
+    (history, lane, source_end)
+}
+
+#[test]
+fn startup_tail_reads_one_fixed_window_before_byte_zero() {
+    // Eight hundred records exceed the 1 MiB startup window, while many
+    // initial pages fit inside it. Cold replay reads that one window and
+    // leaves the rest to pageable history.
+    const DENSE_LANE_MESSAGES: usize = 800;
+    let root = season_tape("tail", DENSE_LANE_MESSAGES, 0);
 
     let tail = tail_backlog(&root, listen::Dialect::Codex).expect("season tail scans");
     assert!(
-        visible_cards(&tail.scan) > 0,
-        "the fixed tail publishes the visible cards it reaches",
+        visible_cards(&tail.scan) > canvas::stream::INITIAL_MESSAGE_LIMIT,
+        "one startup window carries more than the initial page of a dense lane",
     );
-    assert!(
-        visible_cards(&tail.scan) <= canvas::stream::INITIAL_MESSAGE_LIMIT,
-        "cold replay does not expand until it fills the visible page",
-    );
-    assert!(tail.work.source_bytes <= TAIL_SOURCE_BYTES);
+    assert!(visible_cards(&tail.scan) < DENSE_LANE_MESSAGES);
+    assert!(tail.work.source_bytes <= STARTUP_SOURCE_BYTES);
+    assert!(tail.work.source_bytes > STARTUP_WINDOW_BYTES);
     assert_eq!(tail.work.records, tail.scan.records.len());
     assert!(tail.work.passes <= TAIL_PASS_LIMIT);
     let first_offset = tail
@@ -488,55 +535,27 @@ fn visible_card_target_stops_a_season_tail_before_byte_zero() {
         .and_then(|event| event.spans.first())
         .map(|span| span.offset)
         .expect("tail has a first sourced event");
-    assert!(
-        first_offset > 0,
-        "the visible-card target is reached without scanning byte zero",
-    );
+    assert!(first_offset > 0, "startup does not scan back to byte zero");
 
     fs::remove_dir_all(root).expect("season fixture cleanup");
 }
 
 #[test]
 fn tool_only_tail_stops_at_one_fixed_read_with_a_backward_cursor() {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "spice-backlog-sparse-tail-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed),
-    ));
-    let tape = tape::Tape::open(&root).expect("sparse tape opens");
-    let filler = "x".repeat(1_800);
-    let mut season = Vec::new();
-    for index in 0..30 {
-        season.extend_from_slice(
-            format!(
-                "{{\"type\":\"item.completed\",\"item\":{{\"id\":\"item-{index}\",\"type\":\"agent_message\",\"text\":\"{index} {filler}\"}}}}\n"
-            )
-            .as_bytes(),
-        );
-    }
-    for index in 0..SPARSE_TOOL_RECORDS {
-        season.extend_from_slice(
-            format!(
-                "{{\"type\":\"item.started\",\"item\":{{\"id\":\"call-{index}\",\"type\":\"command_execution\",\"command\":\"echo {filler}\",\"aggregated_output\":\"\",\"exit_code\":null,\"status\":\"in_progress\"}}}}\n"
-            )
-            .as_bytes(),
-        );
-    }
-    tape.tee(&season).expect("sparse season is durable");
+    let root = season_tape("sparse-tail", 30, SPARSE_TOOL_RECORDS);
 
     let tail = tail_backlog(&root, listen::Dialect::Codex).expect("sparse tail scans");
     assert_eq!(
         visible_cards(&tail.scan),
         0,
-        "one fixed tail need not cross sparse tools to fill a visible-card target",
+        "one startup window need not cross sparse tools to reach a visible card",
     );
     assert!(
         tail.scan.records.len() < SPARSE_TOOL_RECORDS,
         "the scanner does not cross the complete sparse tool tail",
     );
     assert!(tail.start.next > listen::Position::start());
-    assert!(tail.work.source_bytes <= TAIL_SOURCE_BYTES);
+    assert!(tail.work.source_bytes <= STARTUP_SOURCE_BYTES);
     assert_eq!(tail.work.records, tail.scan.records.len());
     assert!(tail.work.passes <= TAIL_PASS_LIMIT);
 
@@ -544,86 +563,100 @@ fn tool_only_tail_stops_at_one_fixed_read_with_a_backward_cursor() {
 }
 
 #[test]
-fn historical_page_stops_before_crossing_a_sparse_tool_horizon() {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
-        "spice-backlog-sparse-history-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed),
-    ));
-    let tape = tape::Tape::open(&root).expect("sparse history tape opens");
-    let filler = "x".repeat(1_800);
-    let mut season = Vec::new();
-    for index in 0..300 {
-        season.extend_from_slice(
-            format!(
-                "{{\"type\":\"item.completed\",\"item\":{{\"id\":\"item-{index}\",\"type\":\"agent_message\",\"text\":\"{index} {filler}\"}}}}\n"
-            )
-            .as_bytes(),
-        );
-    }
-    for index in 0..SPARSE_TOOL_RECORDS {
-        season.extend_from_slice(
-            format!(
-                "{{\"type\":\"item.started\",\"item\":{{\"id\":\"call-{index}\",\"type\":\"command_execution\",\"command\":\"echo {filler}\",\"aggregated_output\":\"\",\"exit_code\":null,\"status\":\"in_progress\"}}}}\n"
-            )
-            .as_bytes(),
-        );
-    }
-    tape.tee(&season).expect("sparse history is durable");
-    let end = listen::scan(&root, listen::Dialect::Codex, None)
-        .expect("sparse history endpoint reads")
-        .checkpoint;
+fn historical_page_wades_through_a_sparse_tool_horizon_to_fill_the_page() {
+    // The tool horizon outgrows one history window, so the first window
+    // carries no visible card and the request must chain an older one.
+    let root = season_tape("sparse-history", 300, SPARSE_HORIZON_RECORDS);
+    let (history, lane, source_end) = season_history(&root);
+    let source = history.lanes.get(&lane).expect("season lane");
+    let limit = canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT;
 
-    let tail =
-        history_tail(&root, listen::Dialect::Codex, &end).expect("sparse history page scans");
-    assert!(
-        tail.start.next > listen::Position::start(),
-        "the historical page stops before byte zero",
-    );
-    assert!(
-        tail.scan.records.len() < SPARSE_TOOL_RECORDS,
-        "one page does not traverse the complete non-visible tool horizon",
-    );
-    assert!(
-        visible_cards(&tail.scan) < canvas::stream::MESSAGE_CAPACITY,
-        "the source scan does not reconstruct the full retained horizon",
-    );
+    let newest = history
+        .tape_messages(lane, source, None, &source_end, limit)
+        .expect("newest history window reads");
+    assert!(newest.messages.is_empty(), "one window holds only tools");
+    assert!(newest.more);
+    assert!(newest.start.next > listen::Position::start());
+    assert!(newest.work.records < SPARSE_HORIZON_RECORDS);
+    let newest_start = newest.start.next;
+    let newest_end = newest.end.clone();
 
-    let lane: CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163e5"
-        .parse()
-        .expect("fixture lane");
-    let author: CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163ef"
-        .parse()
-        .expect("fixture author");
-    let messages = CollectedMessages::new(canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT);
-    let mut reader = BacklogReader::default();
-    let mut diagnostic = Vec::new();
-    let work = tail.work;
-    publish_scan(
-        tail.scan,
-        lane,
-        author,
-        Path::new("/fixture-worktree"),
-        &messages,
-        &mut reader,
-        &mut diagnostic,
-    )
-    .expect("sparse history materializes");
-    assert!(diagnostic.is_empty());
+    let filled = history
+        .fill_tape_messages(lane, source, None, limit, newest)
+        .expect("history fills across windows");
+    assert_eq!(
+        filled.messages.len(),
+        limit,
+        "the page reaches its visible target"
+    );
+    assert!(filled.more, "older messages remain behind the page");
     assert!(
-        messages
-            .inner
-            .into_inner()
-            .expect("history lock")
+        filled.start.next < newest_start,
+        "the request read older windows"
+    );
+    assert_eq!(filled.end, newest_end);
+    assert!(filled.work.source_bytes > HISTORY_SOURCE_BYTES);
+    assert!(filled.work.source_bytes <= HISTORY_SOURCE_BYTES * HISTORY_READ_LIMIT as u64);
+    assert!(filled.work.records > SPARSE_HORIZON_RECORDS);
+    assert!(filled.messages[0].text.starts_with("250 "));
+    assert!(filled.messages[limit - 1].text.starts_with("299 "));
+    assert!(
+        filled
             .messages
-            .is_empty()
+            .windows(2)
+            .all(|pair| pair[0].chronology_key() < pair[1].chronology_key()),
     );
-    assert!(work.source_bytes <= TAIL_SOURCE_BYTES);
-    assert!(work.records < SPARSE_TOOL_RECORDS);
-    assert!(work.passes <= TAIL_PASS_LIMIT);
+
+    let page = canvas::stream::MessageHistoryProvider::history(&history, lane, None, limit)
+        .expect("served history reads")
+        .expect("season lane is owned");
+    assert_eq!(page.messages.len(), limit);
+    assert!(page.more);
+    let oldest = page.messages[0].clone();
+    let continuation = history
+        .continuations
+        .lock()
+        .expect("continuation lock")
+        .get(&(lane, Some(oldest.locus)))
+        .cloned()
+        .expect("the served page keeps its continuation");
+    assert_eq!(
+        continuation.tape.expect("tape continuation").next.offset,
+        oldest.locus.offset,
+        "the next request resumes at the oldest served card, not behind the horizon",
+    );
+    let older =
+        canvas::stream::MessageHistoryProvider::history(&history, lane, Some(&oldest), limit)
+            .expect("older history reads")
+            .expect("season lane is owned");
+    assert_eq!(older.messages.len(), limit);
+    assert!(older.messages[0].text.starts_with("200 "));
 
     fs::remove_dir_all(root).expect("sparse history fixture cleanup");
+}
+
+#[test]
+fn history_request_stops_at_the_tape_start_without_a_visible_card() {
+    let root = season_tape("tool-only-history", 0, SPARSE_TOOL_RECORDS);
+    let (history, lane, source_end) = season_history(&root);
+    let source = history.lanes.get(&lane).expect("season lane");
+    let limit = canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT;
+
+    let newest = history
+        .tape_messages(lane, source, None, &source_end, limit)
+        .expect("newest history window reads");
+    let filled = history
+        .fill_tape_messages(lane, source, None, limit, newest)
+        .expect("history reaches the tape start");
+    assert!(filled.messages.is_empty());
+    assert!(
+        !filled.more,
+        "a tape with no visible card is exhausted, not pending"
+    );
+    assert_eq!(filled.start.next, listen::Position::start());
+    assert_eq!(filled.work.records, SPARSE_TOOL_RECORDS);
+
+    fs::remove_dir_all(root).expect("tool-only history fixture cleanup");
 }
 
 #[test]
@@ -641,7 +674,11 @@ fn merged_history_pages_retreat_both_sources_without_gaps_or_rescans() {
             .iter()
             .all(|length| *length <= canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT),
     );
-    assert_eq!(restored.len(), 126);
+    assert_eq!(
+        restored.len(),
+        140 - canvas::stream::INITIAL_MESSAGE_LIMIT + 3,
+        "every message before the initial page and every compaction is restored",
+    );
     assert_eq!(
         restored
             .iter()
@@ -668,7 +705,7 @@ fn merged_history_pages_retreat_both_sources_without_gaps_or_rescans() {
         .iter()
         .filter(|message| message.activity == wire::AgentActivityKind::Prose)
         .collect::<Vec<_>>();
-    assert_eq!(prose.len(), 123);
+    assert_eq!(prose.len(), 140 - canvas::stream::INITIAL_MESSAGE_LIMIT);
     for (index, message) in prose.into_iter().enumerate() {
         assert!(
             message.text.starts_with(&format!("message {index} ")),

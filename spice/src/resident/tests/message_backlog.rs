@@ -271,8 +271,8 @@ fn each_resident_generation_restores_a_bounded_tail_then_the_same_complete_compa
         assert_eq!(*limit as usize, canvas::stream::MESSAGE_CAPACITY);
         assert_eq!(
             messages.len(),
-            18,
-            "startup reads exactly one fixed tail window"
+            canvas::stream::INITIAL_MESSAGE_LIMIT,
+            "one fixed startup window fills the whole initial page"
         );
         assert_bootstrap(more, empty_lane);
         let window = complete_message_history(&source, &accepted, epoch, lane, messages);

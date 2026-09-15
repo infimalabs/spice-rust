@@ -273,6 +273,18 @@ fn project_agent_event(
                 media,
             )
         }
+        listen::Event::Reasoning(listen::Reasoning {
+            content: listen::ReasoningContent::Plain(parts),
+            locus,
+        }) => (
+            AgentActivityKind::Reasoning,
+            false,
+            *locus,
+            reasoning_preview(parts),
+            wire::AgentMessageBadges::default(),
+            None,
+            Vec::new(),
+        ),
         listen::Event::Compaction(compaction) => (
             AgentActivityKind::Compaction,
             false,
@@ -314,24 +326,47 @@ fn project_agent_event(
         unavailable_tool_terminals: unavailable_tool_terminals.to_vec(),
         media,
     };
-    let terminal = if published.activity == AgentActivityKind::Prose && !published.final_answer {
-        let listen::Event::Prose(prose) = decoded else {
-            unreachable!("only assistant prose projects a prose card")
-        };
-        let mut terminal_prose = prose.clone();
-        terminal_prose.phase = Some("final_answer".to_owned());
-        let mut terminal = published.clone();
-        terminal.final_answer = true;
-        terminal.automatic_speech =
-            automatic_speech::classify(&terminal_prose, steering, presentation_event(prose.locus));
-        Some(terminal)
-    } else {
-        None
-    };
+    let terminal = terminal_prose_card(&published, decoded, steering, presentation_event);
     Ok(Some(ProjectedMessage {
         published,
         terminal,
     }))
+}
+
+/// The final-answer twin a mid-turn prose card carries for the turn end.
+///
+/// Only assistant prose short of its final answer has one; the twin repeats
+/// the card with the final-answer phase so its automatic speech is classified
+/// the way the terminal record will be.
+fn terminal_prose_card(
+    published: &wire::AgentMessage,
+    decoded: &listen::Event,
+    steering: Option<&PresentationDirectives>,
+    presentation_event: impl FnOnce(listen::Locus) -> PresentationEvent,
+) -> Option<wire::AgentMessage> {
+    if published.activity != AgentActivityKind::Prose || published.final_answer {
+        return None;
+    }
+    let listen::Event::Prose(prose) = decoded else {
+        unreachable!("only assistant prose projects a prose card")
+    };
+    let mut terminal_prose = prose.clone();
+    terminal_prose.phase = Some("final_answer".to_owned());
+    let mut terminal = published.clone();
+    terminal.final_answer = true;
+    terminal.automatic_speech =
+        automatic_speech::classify(&terminal_prose, steering, presentation_event(prose.locus));
+    Some(terminal)
+}
+
+/// Strip preview for one reasoning event.
+///
+/// The narration is flattened to one bounded line the way a tool preview is.
+/// A thinking block the vendor redacted to its signature previews as empty
+/// text, so the strip still shows the lane thinking without inventing words;
+/// opaque reasoning never reaches here because it carries no text at all.
+fn reasoning_preview(parts: &[String]) -> String {
+    tool_preview::flatten(&parts.join(" "))
 }
 
 fn parse_agent_message_authored(

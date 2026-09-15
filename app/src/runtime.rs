@@ -376,6 +376,7 @@ impl LaneActivity {
         let (class, title) = match message.activity {
             AgentActivityKind::Prose => ("prose", "assistant"),
             AgentActivityKind::Tool => ("tool", "tool"),
+            AgentActivityKind::Reasoning => ("reasoning", "thinking"),
             AgentActivityKind::Turn => ("turn", "new turn"),
             AgentActivityKind::Compaction => ("compaction", "compaction"),
         };

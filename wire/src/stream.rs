@@ -67,6 +67,14 @@ pub enum AgentActivityKind {
     Prose,
     /// A tool call, update, or result rendered in the lane status strip.
     Tool,
+    /// Vendor-visible reasoning rendered in the lane status strip.
+    ///
+    /// Claude Code emits mid-turn narration as thinking blocks and Codex
+    /// emits reasoning summaries. Like a tool moment it is lane presence,
+    /// not a conversation card: never a final answer, an acknowledgement,
+    /// nor an automatic speech candidate, and it consumes no visible-card
+    /// retention.
+    Reasoning,
     /// A new agent turn rendered as a full-width stream divider.
     Turn,
     /// Context compaction boundary rendered as a full-width stream divider.
@@ -129,6 +137,15 @@ impl AgentActivityKind {
     #[must_use]
     pub const fn is_prose(&self) -> bool {
         matches!(self, Self::Prose)
+    }
+
+    /// Whether this activity is a conversation card on its own.
+    ///
+    /// Presence activities (tool moments and reasoning) only become cards when
+    /// they carry media, which callers check separately.
+    #[must_use]
+    pub const fn is_visible(self) -> bool {
+        matches!(self, Self::Prose | Self::Turn | Self::Compaction)
     }
 
     /// Whether this activity separates adjacent transcript epochs in the UI.
@@ -330,6 +347,24 @@ mod message_retention_tests {
         assert!(AgentActivityKind::Turn.is_boundary());
         assert!(AgentActivityKind::Compaction.is_boundary());
         assert!(!AgentActivityKind::Prose.is_boundary());
+        assert!(!AgentActivityKind::Reasoning.is_boundary());
+    }
+
+    #[test]
+    fn reasoning_is_a_presence_activity_spelled_on_the_wire() {
+        assert!(!AgentActivityKind::Reasoning.is_visible());
+        assert!(!AgentActivityKind::Reasoning.is_prose());
+        assert!(!AgentActivityKind::Tool.is_visible());
+        assert!(AgentActivityKind::Prose.is_visible());
+        assert!(AgentActivityKind::Turn.is_visible());
+        assert!(AgentActivityKind::Compaction.is_visible());
+        let mut message = message(7);
+        message.activity = AgentActivityKind::Reasoning;
+        let encoded = serde_json::to_string(&message).expect("reasoning message encodes");
+        assert!(encoded.contains("\"activity\":\"reasoning\""), "{encoded}");
+        let decoded: AgentMessage =
+            serde_json::from_str(&encoded).expect("reasoning message decodes");
+        assert_eq!(decoded.activity, AgentActivityKind::Reasoning);
     }
 
     #[test]
