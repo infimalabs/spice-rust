@@ -11,6 +11,10 @@ use super::{CommandResult, RuntimePaths, commit, committed_reply, store_fault, w
 /// long-lived agent process groups and their transcript tapes, so stopping the
 /// resident must neither wait for them nor signal them. The next resident
 /// generation adopts the same supervisors from the occupied durable rows.
+///
+/// The guarded commit is the proof that the dark fact is sound. Auditing the
+/// whole journal here would grow with the journal, and `spice journal verify`
+/// already owns that audit.
 pub(super) fn drive_shutdown(
     bus: &Bus,
     _paths: &RuntimePaths,
@@ -46,9 +50,6 @@ pub(super) fn drive_shutdown(
         Ok(committed) => committed,
         Err(outcome) => return outcome,
     };
-    if let Err(error) = bus.verify() {
-        return store_fault("resident::final-dark-invalid", &error.to_string());
-    }
     seats.release_all();
     committed_reply(committed.first(), committed.last())
 }
