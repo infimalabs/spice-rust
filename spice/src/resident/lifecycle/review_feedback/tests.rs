@@ -116,6 +116,60 @@ fn a_clean_review_creates_no_feedback() {
 }
 
 #[test]
+fn every_finding_after_the_cursor_is_answered_from_one_fold_of_the_history() {
+    let fixture = AdvisoryRtkFixture::new();
+    let authority = fixture.root.join("twice-authority.sqlite3");
+    let (bus, task) = reviewed_fixture(&fixture, &authority, true, wire::body::Verdict::Finding);
+    // The author takes the task back, completes it again, and is reviewed again.
+    claim_review(&bus, fixture.epoch, &task, fixture.lane, fixture.occupant);
+    complete_author_phase(&bus, &task);
+    claim_review(&bus, fixture.epoch, &task, uuid(20), uuid(21));
+    complete_review(&bus, &task, uuid(20), wire::body::Verdict::Finding);
+    let snapshot = bus.task_snapshot().expect("twice-reviewed snapshot reads");
+    let first = snapshot
+        .facts()
+        .iter()
+        .find(|envelope| envelope.fact.kind() == wire::FactKind::TaskReviewed)
+        .map(|envelope| envelope.seq)
+        .expect("the first review");
+    let pending = |bus: &Bus| {
+        steer::Ledger::from_snapshot(&bus.fact_snapshot().expect("feedback facts read"))
+            .expect("feedback steering replays")
+            .pending(fixture.lane)
+            .len()
+    };
+
+    // Only the finding past the cursor is judged.
+    assert!(
+        reconcile(
+            &bus,
+            &fixture.paths,
+            fixture.epoch,
+            &snapshot,
+            Some(first),
+            Duration::from_secs(3_600),
+        )
+        .expect("the later finding reconciles")
+    );
+    assert_eq!(pending(&bus), 1);
+
+    // From the start, the earlier finding is judged by its own phase's authors.
+    assert!(
+        reconcile(
+            &bus,
+            &fixture.paths,
+            fixture.epoch,
+            &snapshot,
+            None,
+            Duration::from_secs(3_600),
+        )
+        .expect("the earlier finding reconciles")
+    );
+    assert_eq!(pending(&bus), 2);
+    bus.shutdown().expect("twice-reviewed bus stops");
+}
+
+#[test]
 fn feedback_text_preserves_the_predecessor_frame_and_exact_review_prose() {
     assert_eq!(
         feedback_text(
