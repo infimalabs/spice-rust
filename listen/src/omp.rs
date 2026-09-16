@@ -68,6 +68,16 @@ const SILENT: &[&str] = &[
     "ttsr_injection",
 ];
 
+/// Partials the frame that ends them restates whole: every `message_update`
+/// carries the message so far and `message_end` the finished message, every
+/// `tool_execution_update` the partial result and `tool_execution_end` the
+/// whole of it.
+const RESTATED: &[&str] = &["message_update", "tool_execution_update"];
+
+pub(crate) fn restated(kind: &str) -> bool {
+    RESTATED.contains(&kind)
+}
+
 pub(crate) fn decode(record: &Object, locus: Locus) -> Events {
     match string(record, "type")? {
         "message_end" | "message" => message(object(record, "message")?, locus),

@@ -136,6 +136,23 @@ pub fn decode(dialect: Dialect, bytes: &[u8], locus: Locus) -> Result<Decoded, L
     Ok(decode_value(dialect, parse(bytes), locus))
 }
 
+/// Whether one record is a partial the same stream restates whole later.
+///
+/// A capture that keeps every record may leave such a record out: nothing is
+/// decoded from the partial itself, and what it carries arrives again,
+/// complete, in the frame that ends it. A record that does not parse is
+/// never restated.
+#[must_use]
+pub fn restated(dialect: Dialect, bytes: &[u8]) -> bool {
+    #[derive(serde::Deserialize)]
+    struct Kind {
+        #[serde(rename = "type")]
+        kind: String,
+    }
+    dialect == Dialect::Omp
+        && serde_json::from_slice::<Kind>(bytes).is_ok_and(|record| omp::restated(&record.kind))
+}
+
 /// Decode one record using an explicit dialect or its uniquely owned envelope.
 ///
 /// The JSON value is parsed exactly once. When `expected` is present, an

@@ -133,6 +133,12 @@ struct LaneObserver {
 impl RecordObserver for LaneObserver {
     fn observe(&self, observed: ObservedRecord<'_>) -> Result<(), ObserveError> {
         let bytes = observed.bytes();
+        if self.record.restated(self.record.stream(), bytes) {
+            // What this partial carries arrives again, whole, in the frame
+            // that ends it; keeping every partial grows the tape by the
+            // square of what the occupant said.
+            return Ok(());
+        }
         let locus = self
             .tape
             .tee(bytes)
@@ -293,6 +299,72 @@ mod tests {
             *reports.exits.lock().expect("exits lock"),
             vec![CaptureExit { lane, occupant }],
         );
+        drop(records);
+        fs::remove_dir_all(root).expect("capture fixture cleanup");
+    }
+
+    #[test]
+    fn a_partial_the_stream_restates_whole_is_left_off_the_tape() {
+        let lane = uuid(5);
+        let occupant = uuid(6);
+        let root = std::env::temp_dir().join(format!(
+            "lane-capture-{lane}-{}-restated",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("capture fixture root");
+        let tape = Tape::open(root.join("tape")).expect("capture tape opens");
+        let mut launch = launch();
+        launch.fast_mode = None;
+        launch.model_context_window = None;
+        let record =
+            vendor::omp::record("/bin/sh", &launch).expect("fixture vendor record contract");
+        let reports = Arc::new(Reports::default());
+        let reporter: Arc<dyn CaptureReporter> = reports.clone();
+        let observation = observation(lane, occupant, record, tape.clone(), 1024, 4, reporter)
+            .expect("capture observation");
+        let partial = concat!(
+            r#"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","#,
+            r#""contentIndex":0,"delta":"wor","partial":{"role":"assistant","content":"#,
+            r#"[{"type":"text","text":"wor"}]}},"message":{"role":"assistant","content":"#,
+            r#"[{"type":"text","text":"wor"}]}}"#,
+            "
+",
+        )
+        .as_bytes();
+        let whole = concat!(
+            r#"{"type":"message_end","message":{"role":"assistant","content":"#,
+            r#"[{"type":"text","text":"working"}],"usage":{"input":1,"output":1,"#,
+            r#""cacheRead":0,"cacheWrite":0},"stopReason":"stop"}}"#,
+            "
+",
+        )
+        .as_bytes();
+        let mut command = Vec::new();
+        command.extend_from_slice(b"printf '");
+        command.extend_from_slice(partial);
+        command.extend_from_slice(whole);
+        command.extend_from_slice(b"'");
+        let spec = fixture_spec(String::from_utf8(command).expect("ASCII fixture"));
+        let outcome = spawn_observed(spec, observation)
+            .expect("capture child launches")
+            .wait()
+            .expect("capture child reaps");
+        assert!(outcome.completion().status().success());
+        assert!(outcome.outputs_drained());
+
+        let records = reports.records.lock().expect("record reports lock");
+        assert_eq!(
+            records.len(),
+            1,
+            "the partial is neither taped nor reported"
+        );
+        assert_eq!(records[0].boundary, RecordBoundary::Complete);
+        assert_eq!(
+            records[0].locus.offset, 0,
+            "the whole record opens the tape"
+        );
+        assert_eq!(tape.read(records[0].locus).expect("whole locus"), whole);
+        assert!(matches!(records[0].decoded, Decoded::Events { .. }));
         drop(records);
         fs::remove_dir_all(root).expect("capture fixture cleanup");
     }

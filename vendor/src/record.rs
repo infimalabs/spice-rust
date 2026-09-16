@@ -226,6 +226,13 @@ impl Record {
         listen::decode(self.dialect, bytes, locus).map(Some)
     }
 
+    /// Whether one record of the selected stream is a partial that stream
+    /// restates whole later, so the capture may leave it off the tape.
+    #[must_use]
+    pub fn restated(&self, stream: RecordStream, bytes: &[u8]) -> bool {
+        stream == self.stream && listen::restated(self.dialect, bytes)
+    }
+
     /// Admit the session declaration carried by one decoded selected record.
     ///
     /// Diagnostic streams and records of every other event kind return no

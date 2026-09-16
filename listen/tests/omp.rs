@@ -7,7 +7,7 @@
 
 use listen::{
     Decoded, Dialect, Event, EventKind, Locus, ProseRole, ToolMoment, ToolResult, TurnMoment,
-    decode, decode_record,
+    decode, decode_record, restated,
 };
 
 const SESSION: &[u8] = br#"{"id":"spice-state","type":"response","command":"get_state","success":true,"data":{"model":{"id":"claude-opus-5","contextWindow":1000000},"sessionId":"01a0a807-666f-7524-be0d-2ee476b6c15c","sessionFile":"/tmp/sessions/x.jsonl","isStreaming":false}}"#;
@@ -16,6 +16,9 @@ const REASONING: &[u8] = br#"{"type":"message_end","message":{"role":"assistant"
 const TOOL: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"toolCall","id":"call_1","name":"bash","arguments":{"command":"cargo test"},"partialArgs":"{}"}],"usage":{"input":120,"output":14,"cacheRead":0,"cacheWrite":0},"stopReason":"toolUse"}}"#;
 const TOOL_RESULT: &[u8] = br#"{"type":"message_end","message":{"role":"toolResult","toolCallId":"call_1","toolName":"bash","content":[{"type":"text","text":"ok"}],"details":{"exitCode":0},"isError":false,"timestamp":1789525455120}}"#;
 const OPERATOR: &[u8] = br#"{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"please run it"}],"attribution":"user","timestamp":1789525452570}}"#;
+const PARTIAL: &[u8] = br#"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"do","partial":{"role":"assistant","content":[{"type":"text","text":"do"}]}},"message":{"role":"assistant","content":[{"type":"text","text":"do"}]}}"#;
+const TOOL_PARTIAL: &[u8] = br#"{"type":"tool_execution_update","toolCallId":"call_1","toolName":"bash","partialResult":{"content":[{"type":"text","text":"o"}]}}"#;
+const TOOL_END: &[u8] = br#"{"type":"tool_execution_end","toolCallId":"call_1","toolName":"bash","result":{"content":[{"type":"text","text":"ok"}]},"isError":false}"#;
 const COMPACTION: &[u8] = br#"{"type":"auto_compaction_end","action":"context-full","result":{"summary":"so far","firstKeptEntryId":"e1","tokensBefore":900000},"aborted":false,"willRetry":false}"#;
 const FAILURE: &[u8] = br#"{"id":"spice-prompt","type":"response","command":"prompt","success":false,"error":"Agent is already processing"}"#;
 const TRANSCRIPT_SESSION: &[u8] = br#"{"type":"session","version":3,"id":"01a0a807-666f-7524-be0d-2ee476b6c15c","timestamp":"2026-09-16T02:24:12.399Z","cwd":"/work/tree"}"#;
@@ -225,5 +228,26 @@ fn session_file_bookkeeping_is_owned_ambiently_and_says_nothing() {
     );
     assert!(
         matches!(compaction.events(), [Event::Compaction(record)] if record.summary.as_deref() == Some("so far"))
+    );
+}
+
+#[test]
+fn partials_are_restated_by_the_frames_that_end_them_and_decode_to_nothing() {
+    for partial in [PARTIAL, TOOL_PARTIAL] {
+        assert!(restated(Dialect::Omp, partial));
+        assert!(
+            !restated(Dialect::Claude, partial),
+            "restatement is omp's own"
+        );
+        let decoded = decode(Dialect::Omp, partial, locus(partial)).expect("locus matches");
+        assert!(decoded.events().is_empty(), "{decoded:?}");
+        assert!(!matches!(decoded, Decoded::Residue(_)), "{decoded:?}");
+    }
+    for whole in [PROSE, TOOL_END, SESSION, COMPACTION] {
+        assert!(!restated(Dialect::Omp, whole));
+    }
+    assert!(
+        !restated(Dialect::Omp, b"{\"type\":\"message_update\""),
+        "a torn record is kept"
     );
 }
