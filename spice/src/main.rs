@@ -586,11 +586,11 @@ fn target_unsupported(path: &[&str]) -> Option<Fault> {
     })
 }
 
-fn not_landed(contract: &cli::Contract) -> Outcome<()> {
+fn not_landed<B>(contract: &cli::Contract) -> Outcome<B> {
     not_landed_from(contract.path, cli::landing(contract.path))
 }
 
-fn not_landed_from(path: &[&str], landing: cli::Landing) -> Outcome<()> {
+fn not_landed_from<B>(path: &[&str], landing: cli::Landing) -> Outcome<B> {
     match landing {
         cli::Landing::Landed => Outcome::Fault(Fault {
             class: FaultClass::Protocol,

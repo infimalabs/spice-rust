@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn landing_terminal_distinguishes_owned_and_unaccounted_paths() {
-        let Outcome::Refusal(owned) = not_landed_from(
+        let Outcome::Refusal(owned) = not_landed_from::<()>(
             &["fixture", "owned"],
             cli::Landing::GapOwned("FIXTURE-owner01"),
         ) else {
@@ -170,7 +170,7 @@ mod tests {
         assert_eq!(diagnostic.observed(), Some("fixture owned"));
 
         let Outcome::Fault(unaccounted) =
-            not_landed_from(&["fixture", "unknown"], cli::Landing::Unaccounted)
+            not_landed_from::<()>(&["fixture", "unknown"], cli::Landing::Unaccounted)
         else {
             panic!("an unaccounted path must fault");
         };

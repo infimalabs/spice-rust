@@ -670,15 +670,22 @@ pub(super) fn settle_surface(
     }
 }
 
-pub(crate) fn down(contract: &crate::cli::Contract) -> Outcome<()> {
+/// Stop the resident serving the current directory and answer with the
+/// state it moved from and the dark it reached.
+pub(crate) fn down(contract: &crate::cli::Contract) -> Outcome<StateAnswer> {
     let current = match std::env::current_dir() {
         Ok(current) => current,
-        Err(error) => return environment_fault("resident::cwd-unavailable", &error.to_string()),
+        Err(error) => {
+            return typed_outcome(environment_fault(
+                "resident::cwd-unavailable",
+                &error.to_string(),
+            ));
+        }
     };
     down_from(&current, contract)
 }
 
-pub(crate) fn down_from(current: &Path, contract: &crate::cli::Contract) -> Outcome<()> {
+pub(crate) fn down_from(current: &Path, contract: &crate::cli::Contract) -> Outcome<StateAnswer> {
     down_from_with(current, contract, crate::command_client::execute)
 }
 
@@ -687,7 +694,10 @@ pub(crate) fn down_from(current: &Path, contract: &crate::cli::Contract) -> Outc
 /// lanes: the demo drives a scratch root that publishes only an operator
 /// canvas, so honoring the ambient seat would dial a discovery path the
 /// scratch root cannot publish and strand the resident it launched.
-pub(crate) fn down_from_operator(current: &Path, contract: &crate::cli::Contract) -> Outcome<()> {
+pub(crate) fn down_from_operator(
+    current: &Path,
+    contract: &crate::cli::Contract,
+) -> Outcome<StateAnswer> {
     down_from_with(current, contract, crate::command_client::execute_operator)
 }
 
@@ -699,14 +709,19 @@ fn down_from_with(
         &crate::cli::Contract,
         crate::command_client::SelectedCommand<'_>,
     ) -> Outcome<CommandAnswer>,
-) -> Outcome<()> {
+) -> Outcome<StateAnswer> {
     let repository = match Repository::discover(current) {
         Ok(repository) => repository,
-        Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
+        Err(error) => {
+            return typed_outcome(environment_fault(
+                "resident::git-unavailable",
+                &error.to_string(),
+            ));
+        }
     };
     let paths = match ResidentClientPaths::from_repository(&repository) {
         Ok(paths) => paths,
-        Err(outcome) => return outcome,
+        Err(outcome) => return typed_outcome(outcome),
     };
     let outcome = execute(
         &paths.canvas,
@@ -717,7 +732,7 @@ fn down_from_with(
     if matches!(outcome, Outcome::Reply(_))
         && let Err(release) = wait_for_release(&paths)
     {
-        return release;
+        return typed_outcome(release);
     }
     outcome
 }

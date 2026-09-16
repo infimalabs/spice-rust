@@ -402,7 +402,7 @@ pub(super) fn commit_failure(error: journal::CommitError) -> Outcome<DemoAnswer>
     environment_fault("demo::journal-write-failed", error.to_string())
 }
 
-pub(super) fn rebody(outcome: Outcome<()>) -> Outcome<DemoAnswer> {
+pub(super) fn rebody<B>(outcome: Outcome<B>) -> Outcome<DemoAnswer> {
     match outcome {
         Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
         Outcome::Fault(fault) => Outcome::Fault(fault),

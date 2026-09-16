@@ -363,15 +363,20 @@ pub(super) fn commit(bus: &Bus, write: JournalWrite) -> CommandResult<JournalCom
     }
 }
 
-pub(super) fn decode_dark_outcome(outcome: Outcome<CommandAnswer>) -> Outcome<()> {
+/// Keep the resident's own account of the stop: the state it held when the
+/// command arrived and the dark it ended in, at the journal position that
+/// committed it.
+pub(super) fn decode_dark_outcome(outcome: Outcome<CommandAnswer>) -> Outcome<StateAnswer> {
     match outcome {
         Outcome::Reply(reply) => match reply.body {
-            CommandAnswer::State(StateAnswer {
-                to: ResidentState::Dark,
-                ..
-            }) => Outcome::Reply(Reply {
+            CommandAnswer::State(
+                answer @ StateAnswer {
+                    to: ResidentState::Dark,
+                    ..
+                },
+            ) => Outcome::Reply(Reply {
                 position: reply.position,
-                body: (),
+                body: answer,
             }),
             answer => protocol_fault(
                 "down::answer-shape",
@@ -427,7 +432,7 @@ pub(super) fn new_uuid() -> CanonicalUuid {
     CanonicalUuid::new(uuid::Uuid::new_v4())
 }
 
-fn protocol_fault(reason: &str, detail: &str) -> Outcome<()> {
+fn protocol_fault<B>(reason: &str, detail: &str) -> Outcome<B> {
     fault(FaultClass::Protocol, reason, detail)
 }
 
@@ -443,7 +448,7 @@ pub(super) fn typed_store_fault(reason: &str, detail: &str) -> Outcome<CommandAn
     fault(FaultClass::Store, reason, detail)
 }
 
-pub(super) fn typed_outcome(outcome: Outcome<()>) -> Outcome<CommandAnswer> {
+pub(super) fn typed_outcome<B>(outcome: Outcome<()>) -> Outcome<B> {
     match outcome {
         Outcome::Reply(_) => unreachable!("unit command failures never carry replies"),
         Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
@@ -466,6 +471,42 @@ fn fault<B>(class: FaultClass, reason: &str, detail: &str) -> Outcome<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_stop_answers_with_the_transition_the_resident_made() {
+        let position = ReplyPosition::Committed(SeqRange {
+            first: seq(7),
+            last: seq(9),
+        });
+        let dark = decode_dark_outcome(Outcome::Reply(Reply {
+            position: position.clone(),
+            body: CommandAnswer::State(StateAnswer {
+                from: ResidentState::Seated,
+                to: ResidentState::Dark,
+            }),
+        }));
+        assert_eq!(
+            dark,
+            Outcome::Reply(Reply {
+                position,
+                body: StateAnswer {
+                    from: ResidentState::Seated,
+                    to: ResidentState::Dark,
+                },
+            })
+        );
+
+        let Outcome::Fault(fault) = decode_dark_outcome(Outcome::Reply(Reply {
+            position: ReplyPosition::Direct {},
+            body: CommandAnswer::State(StateAnswer {
+                from: ResidentState::Seated,
+                to: ResidentState::Quiescing,
+            }),
+        })) else {
+            panic!("a stop that did not reach dark is a protocol fault");
+        };
+        assert_eq!(fault.reason, "down::answer-shape");
+    }
 
     #[test]
     fn a_migrated_command_cannot_enter_the_current_publication_door() {

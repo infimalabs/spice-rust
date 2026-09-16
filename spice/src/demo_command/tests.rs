@@ -8,7 +8,10 @@ use tungstenite::client::IntoClientRequest as _;
 use tungstenite::http::header::ORIGIN;
 use tungstenite::{Message, WebSocket};
 use wire::intent::{BoardAnswer, BoardRead, CommandAnswer, LaneAnswer, LaneRead};
-use wire::{Command, CommandKind, Response, StreamFrame, StreamRequest, ViewSubject, WireVersion};
+use wire::{
+    Command, CommandKind, ResidentState, Response, StreamFrame, StreamRequest, ViewSubject,
+    WireVersion,
+};
 
 use super::*;
 
@@ -277,13 +280,17 @@ fn native_canvas_stream_begins_live_and_reads_seeded_lane_task() {
         let discovery = read_discovery(&discovery_path);
         assert_eq!(endpoint, discovery.endpoint);
         assert_browser_seed(&discovery);
-        assert!(matches!(
-            crate::resident::down_from_operator(
-                &root_for_down,
-                crate::cli::contract(&["down"]).expect("down contract"),
-            ),
-            Outcome::Reply(_)
-        ));
+        let Outcome::Reply(stopped) = crate::resident::down_from_operator(
+            &root_for_down,
+            crate::cli::contract(&["down"]).expect("down contract"),
+        ) else {
+            panic!("the demo resident stops on request");
+        };
+        assert_eq!(
+            (stopped.body.from, stopped.body.to),
+            (ResidentState::Seated, ResidentState::Dark),
+            "down answers with the transition it made"
+        );
         Ok(())
     });
     let Outcome::Reply(answer) = outcome else {
@@ -448,13 +455,17 @@ fn clean_automatic_service_removes_only_its_demo_root() {
         .expect("automatic cleanup seed succeeds");
     let root_for_down = fs::canonicalize(&root).unwrap();
     let outcome = canvas_environment_with(environment, true, false, true, false, |_endpoint| {
-        assert!(matches!(
-            crate::resident::down_from_operator(
-                &root_for_down,
-                crate::cli::contract(&["down"]).expect("down contract"),
-            ),
-            Outcome::Reply(_)
-        ));
+        let Outcome::Reply(stopped) = crate::resident::down_from_operator(
+            &root_for_down,
+            crate::cli::contract(&["down"]).expect("down contract"),
+        ) else {
+            panic!("the demo resident stops on request");
+        };
+        assert_eq!(
+            (stopped.body.from, stopped.body.to),
+            (ResidentState::Seated, ResidentState::Dark),
+            "down answers with the transition it made"
+        );
         Ok(())
     });
     let Outcome::Reply(answer) = outcome else {
