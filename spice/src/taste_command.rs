@@ -499,14 +499,8 @@ fn snapshot<B>(
             error.to_string(),
         )
     })?;
-    let (residency, facts) = reader
-        .read(|read| {
-            let residency = read.residency_head()?;
-            let facts = read
-                .fact_snapshot()
-                .map_err(|error| journal::GuardError::Invalid(error.to_string()))?;
-            Ok((residency, facts))
-        })
+    let (residency, cursor, facts) = reader
+        .read(|read| Ok((read.residency_head()?, read.cursor()?, report_facts(read)?)))
         .map_err(|error| {
             fault(
                 FaultClass::Store,
@@ -529,7 +523,7 @@ fn snapshot<B>(
             "reconnect through the current resident discovery and retry",
         ));
     }
-    let Some(cursor) = facts.horizon() else {
+    let Some(cursor) = cursor else {
         return Err(fault(
             FaultClass::Store,
             "taste::cursor-missing",
@@ -540,7 +534,7 @@ fn snapshot<B>(
     // One snapshot answers the whole view: steering standing, lane seating, and
     // reminders are all read from these same facts, so no two parts of the row
     // can describe different moments.
-    let ledger = steer::Ledger::from_snapshot(&facts).map_err(|error| {
+    let ledger = steer::Ledger::from_facts(&facts).map_err(|error| {
         fault(
             FaultClass::Store,
             "taste::steering-invalid",
@@ -593,9 +587,41 @@ fn snapshot<B>(
     ))
 }
 
-fn collect_judgments(snapshot: &journal::FactSnapshot) -> BTreeMap<String, Vec<TasteJudgment>> {
+/// The kinds the report reads: steering authority, every judgment
+/// spelling, and lane seating.
+fn report_kinds() -> Vec<wire::FactKind> {
+    let mut kinds = wire::FactKind::STEERING_AUTHORITY.to_vec();
+    kinds.extend([
+        wire::FactKind::TasteConfirmed,
+        wire::FactKind::TasteCleared,
+        wire::FactKind::LaneSeated,
+    ]);
+    kinds
+}
+
+/// Every report fact inside one guarded read, paged to its end, rather than
+/// the whole journal those facts sit in.
+fn report_facts(
+    read: &journal::JournalRead<'_>,
+) -> Result<Vec<wire::Envelope<wire::AnyFact>>, journal::GuardError> {
+    let kinds = report_kinds();
+    let mut facts = Vec::new();
+    let mut after = None;
+    loop {
+        let page = read.selected_fact_page(&kinds, after, journal::FactReadBudget::RETAINED)?;
+        facts.extend(page.rows);
+        let Some(continuation) = page.continuation else {
+            return Ok(facts);
+        };
+        after = Some(continuation);
+    }
+}
+
+fn collect_judgments(
+    facts: &[wire::Envelope<wire::AnyFact>],
+) -> BTreeMap<String, Vec<TasteJudgment>> {
     let mut judgments = BTreeMap::<String, Vec<TasteJudgment>>::new();
-    for envelope in snapshot.facts() {
+    for envelope in facts {
         let (taste, judgment) = if let Some(body) = envelope.fact.read::<TasteConfirmed>() {
             (
                 body.taste,
@@ -656,12 +682,12 @@ fn historical_judgment(
 
 /// Every reminder in the snapshot, grouped by taste and newest first.
 fn collect_fires(
-    snapshot: &journal::FactSnapshot,
+    facts: &[wire::Envelope<wire::AnyFact>],
     ledger: &steer::Ledger,
     seating: &BTreeMap<CanonicalUuid, Name>,
 ) -> Result<BTreeMap<String, Vec<TasteFire>>, EvidenceError> {
     let mut fires = BTreeMap::<String, Vec<TasteFire>>::new();
-    for envelope in snapshot.facts() {
+    for envelope in facts {
         let evidence = if let Some(body) = envelope.fact.read::<TasteReminded>() {
             FireEvidence {
                 taste: body.taste,
@@ -731,9 +757,9 @@ fn collect_fires(
 /// lane the stream never seated has no vendor at all, and the report refuses
 /// rather than inventing a bucket that sums with a real one — a refusal the
 /// fire join raises, since absence is only knowable once a reminder names it.
-fn lane_seating(snapshot: &journal::FactSnapshot) -> BTreeMap<CanonicalUuid, Name> {
+fn lane_seating(facts: &[wire::Envelope<wire::AnyFact>]) -> BTreeMap<CanonicalUuid, Name> {
     let mut seating = BTreeMap::<CanonicalUuid, Name>::new();
-    for envelope in snapshot.facts() {
+    for envelope in facts {
         if let Some(body) = envelope.fact.read::<LaneSeated>() {
             seating.insert(body.lane, body.vendor);
         }

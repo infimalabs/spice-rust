@@ -134,13 +134,13 @@ fn steering_attachments(
             &format!("cannot inspect steering origin {key}: {error}"),
         )
     })?;
-    let snapshot = reader.fact_snapshot().map_err(|error| {
+    let snapshot = reader.steering_snapshot().map_err(|error| {
         store_fault(
             "task::steering-snapshot-unreadable",
             &format!("cannot inspect steering origin {key}: {error}"),
         )
     })?;
-    let ledger = steer::Ledger::from_snapshot(&snapshot).map_err(|error| {
+    let ledger = steer::Ledger::from_facts(snapshot.facts()).map_err(|error| {
         store_fault(
             "task::steering-ledger-invalid",
             &format!("cannot inspect steering origin {key}: {error}"),

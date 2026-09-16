@@ -101,6 +101,12 @@ impl JournalReader {
     pub fn fact_snapshot(&self) -> Result<FactSnapshot, SnapshotError> {
         read_snapshot(&self.connection)
     }
+
+    /// Reads only facts capable of changing the bounded steering authority,
+    /// exactly as the writer's [`Journal::steering_snapshot`] does.
+    pub fn steering_snapshot(&self) -> Result<SteeringSnapshot, SnapshotError> {
+        read_steering_snapshot(&self.connection)
+    }
 }
 
 pub(crate) fn read_snapshot(connection: &Connection) -> Result<FactSnapshot, SnapshotError> {
