@@ -11,7 +11,8 @@ use tape::Locus;
 
 use crate::{
     Compaction, Event, Events, Failure, Object, Prose, ProseRole, Reasoning, ReasoningContent,
-    ResidueKind, SessionDeclaration, Tool, ToolMoment, ToolOutcome, ToolResult, Usage, array,
+    ResidueKind, SessionDeclaration, Tool, ToolMoment, ToolOutcome, ToolResult, TurnMoment, Usage,
+    array,
     media::{self, OwnedContent},
     object, optional_boolean, optional_string, optional_unsigned, required, string,
 };
@@ -76,6 +77,30 @@ const RESTATED: &[&str] = &["message_update", "tool_execution_update"];
 
 pub(crate) fn restated(kind: &str) -> bool {
     RESTATED.contains(&kind)
+}
+
+/// The turn moment one session-file message marks.
+///
+/// The session file carries no lifecycle frames, so the operator prompt
+/// opens a turn and the assistant message that stops closes it. A steer is
+/// interjected inside the turn it addresses, and an assistant message that
+/// stops for a tool call is still mid-turn.
+pub(crate) fn session_turn(message: Option<&Object>) -> Option<TurnMoment> {
+    let message = message?;
+    let field = |key: &str| message.get(key).and_then(Value::as_str);
+    match field("role")? {
+        "user" if message.get("steering").and_then(Value::as_bool) != Some(true) => {
+            Some(TurnMoment::Started)
+        }
+        "assistant"
+            if field("stopReason").is_some_and(|reason| {
+                matches!(reason, "stop" | "length" | "error" | "aborted")
+            }) =>
+        {
+            Some(TurnMoment::Completed)
+        }
+        _ => None,
+    }
 }
 
 pub(crate) fn decode(record: &Object, locus: Locus) -> Events {

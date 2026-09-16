@@ -197,6 +197,40 @@ fn the_session_file_reads_under_the_same_dialect() {
     );
 }
 
+/// A session-file message marks the turn its lifecycle frames would have.
+#[test]
+fn session_file_messages_mark_the_turns_their_frames_are_absent_for() {
+    let turn = |bytes: &[u8]| decoded(bytes).context().and_then(|context| context.turn);
+    assert_eq!(
+        turn(br#"{"type":"message","id":"u1","parentId":null,"timestamp":"2026-09-16T02:24:20.000Z","message":{"role":"user","content":[{"type":"text","text":"second thing"}],"timestamp":1789546460000}}"#),
+        Some(TurnMoment::Started)
+    );
+    assert_eq!(
+        turn(br#"{"type":"message","id":"s1","parentId":"u1","timestamp":"2026-09-16T02:24:21.000Z","message":{"role":"user","content":[{"type":"text","text":"stop"}],"steering":true,"attribution":"user","timestamp":1789546461000}}"#),
+        None,
+        "a steer lands inside the turn it addresses"
+    );
+    assert_eq!(
+        turn(br#"{"type":"message","id":"a1","parentId":"s1","timestamp":"2026-09-16T02:24:22.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"c1","name":"bash","arguments":{"command":"true"}}],"usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0},"stopReason":"toolUse"}}"#),
+        None,
+        "stopping for a tool call is mid-turn"
+    );
+    assert_eq!(
+        turn(br#"{"type":"message","id":"r1","parentId":"a1","timestamp":"2026-09-16T02:24:23.000Z","message":{"role":"toolResult","toolCallId":"c1","toolName":"bash","content":[{"type":"text","text":""}],"isError":false,"timestamp":1789546463000}}"#),
+        None
+    );
+    assert_eq!(turn(TRANSCRIPT_MESSAGE), Some(TurnMoment::Completed));
+    assert_eq!(
+        turn(br#"{"type":"message","id":"x1","parentId":"r1","timestamp":"2026-09-16T02:24:24.000Z","message":{"role":"assistant","content":[],"stopReason":"aborted"}}"#),
+        Some(TurnMoment::Completed)
+    );
+    // On the wire the lifecycle frames speak and the restated message stays silent.
+    assert_eq!(
+        turn(br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"stopReason":"stop"}}"#),
+        None
+    );
+}
+
 /// Session-file entries omp writes beside its messages: the fixed-width title
 /// slot at the top of every file and the bookkeeping it appends as it runs.
 const SESSION_FILE_BOOKKEEPING: &[&[u8]] = &[

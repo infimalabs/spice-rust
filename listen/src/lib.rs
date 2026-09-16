@@ -365,6 +365,7 @@ fn record_context(dialect: Dialect, record: &Object) -> Result<RecordContext, Re
         Dialect::Omp => match top {
             "agent_start" => Some(TurnMoment::Started),
             "agent_end" => Some(TurnMoment::Completed),
+            "message" => omp::session_turn(message),
             _ => None,
         },
     };

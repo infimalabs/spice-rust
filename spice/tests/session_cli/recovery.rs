@@ -577,6 +577,7 @@ fn briefing_counts_omp_shell_calls_and_file_edits() {
     let recall = reply_forms(&strings(&["session", "briefing", &file]), &[], "recall");
     let turn = &recall["window"]["turns"][0];
     assert_eq!(turn["vendor"], "omp");
+    assert_eq!(turn["completed"], true, "{turn}");
     assert_eq!(turn["commands"], 1, "{turn}");
     assert_eq!(turn["patches"], 1, "{turn}");
     assert_eq!(turn["touched_paths"], json!(["spice/src/session.rs"]));
