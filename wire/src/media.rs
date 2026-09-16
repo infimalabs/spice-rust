@@ -384,10 +384,9 @@ impl Media {
                 maximum: MAX_MEDIA_BYTES,
             });
         }
+        // The standard engine requires canonical padding and refuses nonzero
+        // trailing bits, so a payload that decodes has exactly one spelling.
         let bytes = STANDARD.decode(payload).map_err(|_| MediaError::Base64)?;
-        if STANDARD.encode(&bytes) != payload {
-            return Err(MediaError::Base64);
-        }
         if bytes.is_empty() || bytes.len() > MAX_MEDIA_BYTES {
             return Err(MediaError::Size {
                 observed: bytes.len(),
@@ -858,10 +857,18 @@ mod tests {
             Media::admit("capture.png", "image/png", "not-a-data-url").unwrap_err(),
             MediaError::DataUrl,
         );
-        assert_eq!(
-            Media::admit("capture.png", "image/png", "data:image/png;base64,%%%",).unwrap_err(),
-            MediaError::Base64,
-        );
+        for spelling in ["%%%", "aGVsbG8", "aGVsbG9="] {
+            assert_eq!(
+                Media::admit(
+                    "capture.png",
+                    "image/png",
+                    &format!("data:image/png;base64,{spelling}"),
+                )
+                .unwrap_err(),
+                MediaError::Base64,
+                "{spelling}: invalid, unpadded, and nonzero-trailing-bit spellings refuse alike",
+            );
+        }
         assert_eq!(
             Media::admit(
                 "capture.txt",
