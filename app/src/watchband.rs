@@ -208,6 +208,7 @@ pub fn composer_vendor_icon_class(vendor: &str) -> Option<&'static str> {
     match vendor {
         "claude" => Some("composer-vendor-icon--claude"),
         "codex" | "openai" => Some("composer-vendor-icon--openai"),
+        "omp" => Some("composer-vendor-icon--omp"),
         _ => None,
     }
 }
@@ -861,7 +862,7 @@ mod tests {
 
     #[test]
     fn composer_icons_admit_only_known_vendor_identities() {
-        for vendor in ["claude", "codex", "openai"] {
+        for vendor in ["claude", "codex", "openai", "omp"] {
             assert!(composer_vendor_icon_class(vendor).is_some(), "{vendor}");
         }
         for vendor in ["", "agent", "gemini", "Claude", "open-ai"] {
