@@ -88,29 +88,47 @@ fn cover_message_badges(covered: &mut BTreeSet<String>) {
         tastes: 0,
         broadcasts: 0,
         reviews: 0,
+        pending: 0,
     };
     let tastes = AgentMessageBadges {
         acknowledgements: 0,
         tastes: 1,
         broadcasts: 0,
         reviews: 0,
+        pending: 0,
     };
     let broadcasts = AgentMessageBadges {
         acknowledgements: 0,
         tastes: 0,
         broadcasts: 1,
         reviews: 0,
+        pending: 0,
     };
     let reviews = AgentMessageBadges {
         acknowledgements: 0,
         tastes: 0,
         broadcasts: 0,
         reviews: 1,
+        pending: 0,
+    };
+    let pending = AgentMessageBadges {
+        acknowledgements: 0,
+        tastes: 0,
+        broadcasts: 0,
+        reviews: 0,
+        pending: 1,
     };
     law(
         covered,
         "AgentMessageBadges",
-        &[empty, acknowledgements, tastes, broadcasts, reviews],
+        &[
+            empty,
+            acknowledgements,
+            tastes,
+            broadcasts,
+            reviews,
+            pending,
+        ],
     );
     law(
         covered,
@@ -858,6 +876,7 @@ fn cover_stream_frames(covered: &mut BTreeSet<String>) {
                     tastes: 0,
                     broadcasts: 0,
                     reviews: 0,
+                    pending: 0,
                 },
                 automatic_speech: None,
                 unavailable_tool_terminals: Vec::new(),

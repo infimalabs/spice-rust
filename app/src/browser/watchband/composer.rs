@@ -224,6 +224,7 @@ fn render_agent_message_card(
             data-message-taste-count={badges.tastes.to_string()}
             data-message-broadcast-count={badges.broadcasts.to_string()}
             data-message-review-count={badges.reviews.to_string()}
+            data-message-pending-count={badges.pending.to_string()}
             data-message-final={message.final_answer.to_string()}
             data-speech-active={correspondent.speaking.to_string()}
             data-producer-target-id={quote_lane.to_string()}

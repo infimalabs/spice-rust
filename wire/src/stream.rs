@@ -14,6 +14,11 @@ pub const BROADCAST_MARKER: &str = "[BROADCAST]";
 /// Canonical semantic prefix the resident places on every ordinary directive
 /// quoted as acknowledged context inside an agent message presentation.
 pub const ACK_MARKER: &str = "[ACK]";
+/// Canonical semantic prefix the resident places on an ordinary directive an
+/// agent acknowledged in prose while the journal still holds its key pending.
+/// The plain ACK marker replaces it once the key retires through steer::acked,
+/// so a spoken acknowledgment never reads as credit before the journal grants it.
+pub const ACK_PENDING_MARKER: &str = "[ACK PENDING]";
 
 use crate::{
     Actor, AnyFact, Body, CanonicalUuid, Envelope, FactKind, Fault, FaultClass, Instant, Name,
@@ -97,6 +102,9 @@ pub enum AutomaticSpeechKind {
 /// renders them directly and never parses message prose to infer protocol state.
 /// `acknowledgements` counts positive ordinary, taste, and broadcast
 /// acknowledgements; taste and broadcast are overlapping semantic flavors.
+/// An ordinary acknowledgement spoken while the journal still holds its key
+/// pending counts under `pending` instead, and moves to `acknowledgements`
+/// only when the key retires; flavored directives keep their flavor throughout.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentMessageBadges {
@@ -112,13 +120,21 @@ pub struct AgentMessageBadges {
     /// Positively acknowledged peer-review feedback directives.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub reviews: u32,
+    /// Ordinary directives acknowledged in prose whose key the journal still
+    /// holds pending, awaiting retirement before they read as acknowledged.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub pending: u32,
 }
 
 impl AgentMessageBadges {
     /// Whether this message earned no semantic badge.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.acknowledgements == 0 && self.tastes == 0 && self.broadcasts == 0 && self.reviews == 0
+        self.acknowledgements == 0
+            && self.tastes == 0
+            && self.broadcasts == 0
+            && self.reviews == 0
+            && self.pending == 0
     }
 }
 

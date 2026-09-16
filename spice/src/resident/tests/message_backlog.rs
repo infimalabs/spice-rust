@@ -497,8 +497,21 @@ fn horizontal_acknowledgements_publish_live_and_replay_with_stable_context() {
         "1kQwPZtL",
         "Second direction.",
     );
-    let record = mixed_acknowledgement_record(lane, author);
-    let expected = concat!(
+    // The live record names the bytes the tape holds, so the one locus a
+    // retirement records governs the live card and every replay alike.
+    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("codex"))
+        .expect("the backlog tape opens");
+    let locus = tape
+        .tee(CODEX_DISTRIBUTED_ACK)
+        .expect("distributed acknowledgements are captured");
+    let record = mixed_acknowledgement_record(lane, author, locus);
+    let pending = concat!(
+        "> [ACK PENDING] First direction.\n\n",
+        "Nope 1kQwPZtM: One response.\n",
+        "> Second direction.\n\n",
+        "Unsafe."
+    );
+    let acknowledged = concat!(
         "> [ACK] First direction.\n\n",
         "Nope 1kQwPZtM: One response.\n",
         "> Second direction.\n\n",
@@ -510,28 +523,58 @@ fn horizontal_acknowledgements_publish_live_and_replay_with_stable_context() {
     let steering = message_surface::steering_ledger(&bus, &record)
         .expect("live steering context reads")
         .expect("canonical horizontal acknowledgement requests context");
-    message_surface::publish_agent_messages(
-        &publisher,
-        &record,
-        &mut MessageState::default(),
-        Some(&steering),
-    )
-    .expect("mixed acknowledgements publish live");
-    assert_mixed_acknowledgement_message(&live, epoch, test_uuid(30), expected);
+    let mut state = MessageState::default();
+    message_surface::publish_agent_messages(&publisher, &record, &mut state, Some(&steering))
+        .expect("mixed acknowledgements publish live");
+    assert_mixed_acknowledgement_message(
+        &live,
+        epoch,
+        test_uuid(30),
+        pending,
+        wire::stream::ACK_PENDING_MARKER,
+    );
+    restore_mixed_acknowledgement_message(
+        &bus,
+        &paths,
+        epoch,
+        test_uuid(31),
+        pending,
+        wire::stream::ACK_PENDING_MARKER,
+    );
+
+    // Nothing retires before the journal says so: a settle with the key
+    // still pending leaves the card as spoken.
+    message_surface::settle_pending_presentations(&bus, &publisher, &mut state)
+        .expect("a pending key settles nothing");
+    assert_mixed_acknowledgement_message(
+        &live,
+        epoch,
+        test_uuid(32),
+        pending,
+        wire::stream::ACK_PENDING_MARKER,
+    );
+
+    // steer::acked lands for the acknowledged key: the live card and every
+    // replay now read the acknowledged state from the journal disposition.
+    retire_steering(&bus, epoch, lane, test_uuid(28), "1kQwPZtK", locus);
+    message_surface::settle_pending_presentations(&bus, &publisher, &mut state)
+        .expect("a retired key re-presents its card");
+    assert_mixed_acknowledgement_message(
+        &live,
+        epoch,
+        test_uuid(33),
+        acknowledged,
+        wire::stream::ACK_MARKER,
+    );
     drop(live);
-
-    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("codex"))
-        .expect("the backlog tape opens");
-    tape.tee(CODEX_DISTRIBUTED_ACK)
-        .expect("distributed acknowledgements are captured");
-
     for generation in 0..2 {
         restore_mixed_acknowledgement_message(
             &bus,
             &paths,
             epoch,
-            test_uuid(31 + generation),
-            expected,
+            test_uuid(34 + generation),
+            acknowledged,
+            wire::stream::ACK_MARKER,
         );
     }
 
@@ -542,8 +585,8 @@ fn horizontal_acknowledgements_publish_live_and_replay_with_stable_context() {
 fn mixed_acknowledgement_record(
     lane: CanonicalUuid,
     author: CanonicalUuid,
+    locus: listen::Locus,
 ) -> lane::capture::CaptureRecord {
-    let locus = listen::Locus::new(1, 0, 1);
     lane::capture::CaptureRecord {
         lane,
         occupant: author,
@@ -577,6 +620,7 @@ fn restore_mixed_acknowledgement_message(
     epoch: CanonicalUuid,
     request: CanonicalUuid,
     expected: &str,
+    marker: &str,
 ) {
     let source = canvas::stream::Source::new(bus.reader(), epoch, 8);
     let publisher = source.message_publisher();
@@ -594,7 +638,7 @@ fn restore_mixed_acknowledgement_message(
     )
     .expect("mixed acknowledgements restore");
     assert!(diagnostic.is_empty());
-    assert_mixed_acknowledgement_message(&source, epoch, request, expected);
+    assert_mixed_acknowledgement_message(&source, epoch, request, expected, marker);
 }
 
 fn assert_mixed_acknowledgement_message(
@@ -602,6 +646,7 @@ fn assert_mixed_acknowledgement_message(
     epoch: CanonicalUuid,
     request: CanonicalUuid,
     expected: &str,
+    marker: &str,
 ) {
     let accepted = wire::Accepted {
         wire: wire::WireVersion::CURRENT,
@@ -626,18 +671,70 @@ fn assert_mixed_acknowledgement_message(
     assert!(!messages[0].text.contains("ACK 1kQwPZtK"));
     assert!(!messages[0].text.contains("NACK 1kQwPZtL"));
     assert_eq!(
-        messages[0].text.matches("> [ACK] First direction.").count(),
+        messages[0]
+            .text
+            .matches(&format!("> {marker} First direction."))
+            .count(),
         1
     );
     assert_eq!(messages[0].text.matches("> Second direction.").count(), 1);
+    assert_eq!(messages[0].text.matches("[ACK").count(), 1);
     assert_eq!(
-        messages[0].text.matches(wire::stream::ACK_MARKER).count(),
-        1
+        messages[0].badges,
+        wire::AgentMessageBadges {
+            acknowledgements: u32::from(marker == wire::stream::ACK_MARKER),
+            pending: u32::from(marker == wire::stream::ACK_PENDING_MARKER),
+            ..wire::AgentMessageBadges::default()
+        },
+        "the badge counts agree with the card text"
     );
     assert_eq!(messages[0].text.matches("Nope").count(), 1);
     assert_eq!(messages[0].text.matches("1kQwPZtM").count(), 1);
     assert_eq!(messages[0].text.matches("One response.").count(), 1);
     assert_eq!(messages[0].text.matches("Unsafe.").count(), 1);
+}
+
+/// Retire `key` the way spice ack does: steer::acked names the transcript
+/// locus of the acknowledgement, and the head moves to the acked disposition.
+fn retire_steering(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    directive: CanonicalUuid,
+    key: &str,
+    locus: listen::Locus,
+) {
+    let at = wire::Instant::new(jiff::Timestamp::now()).expect("retirement instant");
+    let origin = format!("resident:{epoch}")
+        .parse::<wire::Origin>()
+        .expect("retirement origin");
+    let current = bus
+        .read(move |read| read.steering_head(directive))
+        .expect("steering head reads")
+        .expect("the seeded directive has a head");
+    let body = wire::body::SteerAcked {
+        directive,
+        key: key.to_owned(),
+        lane,
+        epoch,
+        locus: wire::body::TranscriptLocus {
+            source: None,
+            member: locus.member,
+            offset: locus.offset,
+            length: locus.length,
+            event: 0,
+            line: 1,
+            column: 5,
+        },
+    };
+    let mut write = JournalWrite::new(Actor::Lane(lane), origin, at, Producer::AckScanner);
+    let acked = write
+        .fact(body.clone(), FactCause::Root)
+        .expect("retirement fact builds");
+    let next = steer::Ledger::transition_head(current.body(), steer::Steering::Acked(&body), at)
+        .expect("retirement head builds");
+    write.steering_head(acked, move |_| next);
+    assert!(matches!(bus.commit(write), Ok(CommitOutcome::Committed(_))));
 }
 
 fn seed_steering(

@@ -693,8 +693,6 @@ mod history;
 
 fn observed_state(lane: CanonicalUuid) -> MessageState {
     MessageState {
-        previews: CallPreviews::default(),
-        prose: BTreeMap::new(),
         observations: MessageObservations(vec![MessageObservation {
             lane,
             source: uuid("018f82d4-6f59-7d06-92e3-bce9131163bb"),
@@ -708,6 +706,7 @@ fn observed_state(lane: CanonicalUuid) -> MessageState {
             },
             at: observation_instant(),
         }]),
+        ..MessageState::default()
     }
 }
 

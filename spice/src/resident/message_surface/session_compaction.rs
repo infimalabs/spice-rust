@@ -1025,9 +1025,8 @@ fn history_window(
         .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
     let messages = HistoryMessages::new(limit);
     let mut state = MessageState {
-        previews: CallPreviews::default(),
         observations: request.observations.clone(),
-        prose: BTreeMap::new(),
+        ..MessageState::default()
     };
     for record in page.records {
         publish(

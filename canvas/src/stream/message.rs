@@ -396,6 +396,34 @@ impl MessagePublisher {
         let _ = self.feed.updates.send(message);
         Ok(true)
     }
+
+    /// Present one retained prose message again from later journal evidence.
+    ///
+    /// The durable locus remains immutable. A card that spoke an
+    /// acknowledgement before the journal retired its key is presented again
+    /// once the retirement lands, so only `text` and `badges` move; the final
+    /// state and speech the card already earned stay. A card retention no
+    /// longer holds, or one already presented this way, answers false.
+    pub fn revise_presentation(
+        &self,
+        lane: wire::CanonicalUuid,
+        locus: wire::MessageLocus,
+        text: String,
+        badges: wire::AgentMessageBadges,
+    ) -> Result<bool, MessagePublishError> {
+        let mut retained = self
+            .feed
+            .retained
+            .lock()
+            .map_err(|_| MessagePublishError::Unavailable)?;
+        let Some(revised) = revise_presented_message(&mut retained, lane, locus, text, badges)?
+        else {
+            return Ok(false);
+        };
+        drop(retained);
+        let _ = self.feed.updates.send(revised);
+        Ok(true)
+    }
 }
 
 fn retain_message(
@@ -455,6 +483,30 @@ fn revise_final_message(
     }
     retained[index] = message.clone();
     Ok(true)
+}
+
+fn revise_presented_message(
+    retained: &mut VecDeque<AgentMessage>,
+    lane: wire::CanonicalUuid,
+    locus: wire::MessageLocus,
+    text: String,
+    badges: wire::AgentMessageBadges,
+) -> Result<Option<AgentMessage>, MessagePublishError> {
+    let Some(existing) = retained
+        .iter_mut()
+        .find(|existing| existing.lane == lane && existing.locus == locus)
+    else {
+        return Ok(None);
+    };
+    if existing.activity != wire::AgentActivityKind::Prose {
+        return Err(MessagePublishError::IdentityConflict);
+    }
+    if existing.text == text && existing.badges == badges {
+        return Ok(None);
+    }
+    existing.text = text;
+    existing.badges = badges;
+    Ok(Some(existing.clone()))
 }
 
 /// Whether one activity consumes a lane's visible-card retention budget.

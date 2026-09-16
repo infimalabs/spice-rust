@@ -1,6 +1,5 @@
 //! Durable taste recognition and fallible Canvas views over admitted lane capture.
 
-use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -12,11 +11,15 @@ use wire::{AgentActivityKind, CanonicalUuid, Outcome};
 
 use super::{CommandResult, RuntimePaths, lane_surface, store_fault, taste_surface};
 
+mod acknowledgement;
 mod automatic_speech;
 mod backlog;
+mod pending;
 mod projection;
 mod session_compaction;
 mod tool_preview;
+use acknowledgement::{ContextState, present_steering_acknowledgements_with_directives};
+pub(in crate::resident) use pending::settle_pending_presentations;
 #[cfg(test)]
 pub(super) use projection::publish_agent_messages;
 use projection::{publish_agent_event, publish_agent_messages_in, publish_agent_record};
@@ -81,6 +84,7 @@ pub(in crate::resident) struct MessageState {
     previews: CallPreviews,
     observations: MessageObservations,
     prose: BTreeMap<CanonicalUuid, ProseState>,
+    pending: pending::PendingPresentations,
 }
 
 #[derive(Debug)]
@@ -333,6 +337,8 @@ struct AgentEvent<'a> {
 struct ProjectedMessage {
     published: wire::AgentMessage,
     terminal: Option<wire::AgentMessage>,
+    /// The keys this prose acknowledged before the journal retired them.
+    pending: Option<pending::PendingPresentation>,
 }
 
 pub(super) fn steering_ledger(
@@ -555,8 +561,41 @@ fn message_badges(
         return wire::AgentMessageBadges::default();
     };
     let standing = EventDirectives { directives, event };
+    let acknowledged = positively_acknowledged_keys(text, &standing);
+    let count = |select: &dyn Fn(&PresentationDirective) -> bool| {
+        let matched = acknowledged
+            .iter()
+            .filter(|key| directives.0.get(*key).is_some_and(select))
+            .count();
+        u32::try_from(matched).unwrap_or(u32::MAX)
+    };
+    let tastes = count(&|directive| directive.taste);
+    let broadcasts = count(&|directive| !directive.taste && has_broadcast_marker(&directive.text));
+    let reviews = count(&|directive| directive.review);
+    // A spoken acknowledgement the journal still holds pending is not credit
+    // yet; it counts apart until steer::acked retires the key.
+    let pending = count(&|directive| {
+        is_ordinary(directive) && directive.disposition == wire::Disposition::Live
+    });
+    wire::AgentMessageBadges {
+        acknowledgements: u32::try_from(acknowledged.len())
+            .unwrap_or(u32::MAX)
+            .saturating_sub(reviews)
+            .saturating_sub(pending),
+        tastes,
+        broadcasts,
+        reviews,
+        pending,
+    }
+}
+
+/// Every key this prose positively acknowledges with authority over this event.
+fn positively_acknowledged_keys(
+    text: &str,
+    standing: &EventDirectives<'_>,
+) -> BTreeSet<steer::Key> {
     let mut acknowledged = BTreeSet::new();
-    for packet in steer::ack::scan::scan_acknowledgements(text, &standing) {
+    for packet in steer::ack::scan::scan_acknowledgements(text, standing) {
         for recognition in packet.recognitions {
             let steer::ack::scan::Outcome::Retired { key, disposition } = recognition.outcome
             else {
@@ -569,40 +608,13 @@ fn message_badges(
             }
         }
     }
-    let tastes = acknowledged
-        .iter()
-        .filter(|key| {
-            directives
-                .0
-                .get(*key)
-                .is_some_and(|directive| directive.taste)
-        })
-        .count();
-    let broadcasts = acknowledged
-        .iter()
-        .filter(|key| {
-            directives
-                .0
-                .get(*key)
-                .is_some_and(|directive| !directive.taste && has_broadcast_marker(&directive.text))
-        })
-        .count();
-    let reviews = acknowledged
-        .iter()
-        .filter(|key| {
-            directives
-                .0
-                .get(*key)
-                .is_some_and(|directive| directive.review)
-        })
-        .count();
-    wire::AgentMessageBadges {
-        acknowledgements: u32::try_from(acknowledged.len().saturating_sub(reviews))
-            .unwrap_or(u32::MAX),
-        tastes: u32::try_from(tastes).unwrap_or(u32::MAX),
-        broadcasts: u32::try_from(broadcasts).unwrap_or(u32::MAX),
-        reviews: u32::try_from(reviews).unwrap_or(u32::MAX),
-    }
+    acknowledged
+}
+
+/// Whether a directive carries no flavor marker of its own, so its
+/// acknowledgement state is the only inline mark Canvas can show for it.
+fn is_ordinary(directive: &PresentationDirective) -> bool {
+    !directive.taste && !directive.review && !has_broadcast_marker(&directive.text)
 }
 
 fn has_broadcast_marker(text: &str) -> bool {
@@ -647,12 +659,33 @@ impl EventDirectives<'_> {
         disposition: wire::Disposition,
         locus: steer::ack::scan::Locus,
     ) -> bool {
-        self.recognizes(key, disposition, locus)
-            && self
-                .directives
-                .0
-                .get(key)
-                .is_some_and(|directive| directive.authored)
+        self.recognizes(key, disposition, locus) && self.authored(key)
+    }
+
+    fn authored(&self, key: &steer::Key) -> bool {
+        self.directives
+            .0
+            .get(key)
+            .is_some_and(|directive| directive.authored)
+    }
+
+    /// Whether the journal still holds `key` pending, so an acknowledgement
+    /// spoken here awaits the steer::acked fact before it reads as credit.
+    fn pending(&self, key: &steer::Key) -> bool {
+        self.directives
+            .0
+            .get(key)
+            .is_some_and(|directive| directive.disposition == wire::Disposition::Live)
+    }
+
+    fn context_state(&self, key: &steer::Key, disposition: wire::Disposition) -> ContextState {
+        if disposition != wire::Disposition::Acked {
+            ContextState::Unmarked
+        } else if self.pending(key) {
+            ContextState::Pending
+        } else {
+            ContextState::Acknowledged
+        }
     }
 
     fn historical_context(&self, token: &str, miss: steer::ack::scan::Miss) -> Option<steer::Key> {
@@ -702,215 +735,4 @@ fn retirement_matches(
     retirement_record_matches(retirement, event)
         && retirement.line as usize == locus.line
         && retirement.column as usize == locus.column
-}
-
-fn present_steering_acknowledgements_with_directives(
-    text: &str,
-    directives: &PresentationDirectives,
-    event: PresentationEvent,
-) -> Result<String, String> {
-    let standing = EventDirectives { directives, event };
-    let mut rendered = String::new();
-    let mut cursor = 0;
-    let mut changed = false;
-    let mut capitalize_body = false;
-    for acknowledgement in steer::ack::scan::scan_acknowledgements(text, &standing) {
-        let separator = acknowledgement.separator;
-        let mut recognized = Vec::new();
-        let mut contexts = Vec::new();
-        let mut missed = Vec::new();
-        for recognition in acknowledgement.recognitions {
-            match recognition.outcome {
-                steer::ack::scan::Outcome::Retired { key, disposition }
-                    if standing.recognizes(&key, disposition, recognition.locus) =>
-                {
-                    if !recognized
-                        .iter()
-                        .any(|known| known == &(key.clone(), disposition))
-                    {
-                        recognized.push((key.clone(), disposition));
-                    }
-                    if directives
-                        .0
-                        .get(&key)
-                        .is_some_and(|directive| directive.authored)
-                        && !contexts.iter().any(|(known, _)| known == &key)
-                    {
-                        contexts.push((key, disposition == wire::Disposition::Acked));
-                    }
-                }
-                steer::ack::scan::Outcome::Retired { key, .. } => {
-                    missed.push(key.to_string());
-                }
-                steer::ack::scan::Outcome::Missed { token, miss } => {
-                    if let Some(key) = standing.historical_context(&token, miss) {
-                        if !contexts.iter().any(|(known, _)| known == &key) {
-                            contexts.push((key, false));
-                        }
-                    } else {
-                        missed.push(token);
-                    }
-                }
-            }
-        }
-        // Historical keys add display context only when this packet also
-        // carries a retirement authenticated to the current event.
-        if recognized.is_empty() {
-            continue;
-        }
-        let source = text
-            .get(cursor..acknowledgement.start)
-            .ok_or_else(|| "acknowledgment header crossed a non-character boundary".to_owned())?;
-        append_presented_source(&mut rendered, source, capitalize_body);
-        capitalize_body = false;
-        if !contexts.is_empty() {
-            start_quote_block(&mut rendered);
-            for (index, (key, acked)) in contexts.iter().enumerate() {
-                let directive = directives.0.get(key).ok_or_else(|| {
-                    format!("canonical acknowledgment recognition lost directive {key}")
-                })?;
-                if index > 0 {
-                    rendered.push_str("\n\n");
-                }
-                append_acknowledgement_quote(
-                    &mut rendered,
-                    &acknowledged_context_text(directive, *acked),
-                );
-            }
-            rendered.push_str("\n\n");
-        }
-        cursor = acknowledgement.end;
-        if missed.is_empty() {
-            cursor = skip_horizontal_space(text, cursor);
-            capitalize_body = true;
-        } else {
-            rendered.push_str(acknowledgement_marker(recognized[0].1)?);
-            for token in missed {
-                rendered.push(' ');
-                rendered.push_str(&token);
-            }
-            if let Some(separator) = separator {
-                rendered.push(separator);
-            }
-        }
-        changed = true;
-    }
-
-    if !changed {
-        return Ok(text.to_owned());
-    }
-    let source = text
-        .get(cursor..)
-        .ok_or_else(|| "acknowledgment body crossed a non-character boundary".to_owned())?;
-    append_presented_source(&mut rendered, source, capitalize_body);
-    Ok(rendered)
-}
-
-fn append_presented_source(rendered: &mut String, source: &str, capitalize: bool) {
-    if !capitalize {
-        rendered.push_str(source);
-        return;
-    }
-    let mut characters = source.chars();
-    let Some(first) = characters.next() else {
-        return;
-    };
-    rendered.extend(first.to_uppercase());
-    rendered.push_str(characters.as_str());
-}
-
-fn start_quote_block(rendered: &mut String) {
-    while rendered.ends_with([' ', '\t']) {
-        rendered.pop();
-    }
-    if !rendered.is_empty() && !rendered.ends_with('\n') {
-        rendered.push('\n');
-    }
-}
-
-fn skip_horizontal_space(text: &str, mut cursor: usize) -> usize {
-    while text
-        .as_bytes()
-        .get(cursor)
-        .is_some_and(|byte| matches!(byte, b' ' | b'\t'))
-    {
-        cursor += 1;
-    }
-    cursor
-}
-
-fn acknowledgement_marker(disposition: wire::Disposition) -> Result<&'static str, String> {
-    match disposition {
-        wire::Disposition::Acked => Ok("ACK"),
-        wire::Disposition::Declined => Ok("NACK"),
-        wire::Disposition::Live
-        | wire::Disposition::Lapsed
-        | wire::Disposition::DeadLettered
-        | wire::Disposition::Canceled => Err(format!(
-            "acknowledgment scanner returned nonterminal disposition {disposition:?}"
-        )),
-    }
-}
-
-/// The quoted context text for one acknowledged directive.
-///
-/// An ordinary directive retired by a positive acknowledgement carries the
-/// canonical ACK marker so Canvas can badge it inline. A taste, broadcast, or
-/// review directive already opens with its own flavor marker, and a declined
-/// or merely historical context earns no badge.
-fn acknowledged_context_text(directive: &PresentationDirective, acked: bool) -> Cow<'_, str> {
-    if !acked || directive.review || directive.taste || has_broadcast_marker(&directive.text) {
-        return Cow::Borrowed(&directive.text);
-    }
-    Cow::Owned(mark_acknowledged_context(&directive.text))
-}
-
-/// Prefix one ordinary acknowledged directive with the canonical ACK marker.
-///
-/// The marker shares the first line when that line reads as paragraph text so
-/// the Canvas pill sits inline with the directive. A first line that opens
-/// another block (a nested operator quote, list, heading, table, fence, rule,
-/// or indented code) keeps its structure beneath a marker paragraph of its own.
-fn mark_acknowledged_context(text: &str) -> String {
-    let marker = wire::stream::ACK_MARKER;
-    if text.is_empty() {
-        return marker.to_owned();
-    }
-    let first = text.split('\n').next().unwrap_or_default();
-    if opens_paragraph_text(first) {
-        format!("{marker} {text}")
-    } else {
-        format!("{marker}\n\n{text}")
-    }
-}
-
-fn opens_paragraph_text(line: &str) -> bool {
-    if line.starts_with("    ") || line.starts_with('\t') {
-        return false;
-    }
-    let line = line.trim_start();
-    let Some(first) = line.chars().next() else {
-        return false;
-    };
-    if first.is_ascii_digit() {
-        let after_digits = line.trim_start_matches(|character: char| character.is_ascii_digit());
-        return !after_digits.starts_with(['.', ')']);
-    }
-    !matches!(
-        first,
-        '>' | '#' | '-' | '+' | '*' | '`' | '~' | '|' | '<' | '_'
-    )
-}
-
-fn append_acknowledgement_quote(rendered: &mut String, directive: &str) {
-    for (index, line) in directive.split('\n').enumerate() {
-        if index > 0 {
-            rendered.push('\n');
-        }
-        rendered.push('>');
-        if !line.is_empty() {
-            rendered.push(' ');
-        }
-        rendered.push_str(line);
-    }
 }
