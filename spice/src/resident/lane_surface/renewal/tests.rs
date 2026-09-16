@@ -656,6 +656,8 @@ fn seeded(fixture: &AdvisoryRtkFixture, renewal: Option<wire::LaneRenewalRecord>
             worktree,
             life: "drive".to_owned(),
             vendor,
+            model: None,
+            effort: None,
             occupant: occupied.then_some(occupant),
             lineage: vec![occupant],
             capabilities: vec![capability],

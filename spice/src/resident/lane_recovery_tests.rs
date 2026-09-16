@@ -79,6 +79,8 @@ fn occupied_row(fixture: &Fixture) -> wire::LaneResidency {
         worktree: PREDECESSOR.into(),
         life: "drive".into(),
         vendor: "claude".parse().expect("fixture vendor"),
+        model: None,
+        effort: None,
         occupant: Some(fixture.ancestor),
         lineage: vec![fixture.ancestor],
         capabilities: vec![uuid(6)],

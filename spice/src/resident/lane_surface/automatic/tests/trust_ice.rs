@@ -75,6 +75,8 @@ fn admitted_thaw(
             occupant: fixture.occupant,
             resume: admitted.resume.clone(),
             fast_mode: admitted.fast_mode,
+            model: admitted.row.model.as_deref(),
+            effort: admitted.row.effort.as_deref(),
         },
         Arc::clone(&runtime.capture),
     )

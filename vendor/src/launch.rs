@@ -3,6 +3,7 @@
 use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 use sill::SpecError;
@@ -56,6 +57,38 @@ impl Effort {
         }
     }
 }
+
+impl FromStr for Effort {
+    type Err = EffortError;
+
+    fn from_str(spelling: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|effort| effort.as_str() == spelling)
+            .ok_or(EffortError)
+    }
+}
+
+/// A spelling outside the closed effort vocabulary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EffortError;
+
+impl fmt::Display for EffortError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "effort must be one of ")?;
+        let mut spellings = Effort::ALL.iter().map(|effort| effort.as_str());
+        if let Some(first) = spellings.next() {
+            formatter.write_str(first)?;
+        }
+        for spelling in spellings {
+            write!(formatter, ", {spelling}")?;
+        }
+        Ok(())
+    }
+}
+
+impl Error for EffortError {}
 
 /// Whether Claude may stamp its own authorship onto the commits it makes.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -222,5 +255,23 @@ impl Error for ContractError {
 impl From<SpecError> for ContractError {
     fn from(error: SpecError) -> Self {
         Self::Spec(error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_effort_parses_from_its_own_spelling_and_nothing_else_does() {
+        for effort in Effort::ALL {
+            assert_eq!(effort.as_str().parse::<Effort>(), Ok(*effort));
+        }
+        assert_eq!("ultra".parse::<Effort>(), Err(EffortError));
+        assert_eq!("High".parse::<Effort>(), Err(EffortError));
+        assert_eq!(
+            EffortError.to_string(),
+            "effort must be one of low, medium, high, xhigh, max"
+        );
     }
 }

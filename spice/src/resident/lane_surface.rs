@@ -569,6 +569,28 @@ fn admit_seat(
             "select one closed lane life",
         ));
     }
+    if request
+        .model
+        .as_ref()
+        .is_some_and(|model| model.is_empty() || model.trim() != model || model.contains('\0'))
+    {
+        return Err(lane_refusal(
+            "lane::model-invalid",
+            Some("one nonblank model spelling without surrounding whitespace".to_owned()),
+            request.model.clone(),
+            "trim the model spelling or leave it to the vendor configuration",
+        ));
+    }
+    if let Some(effort) = &request.effort
+        && effort.parse::<vendor::Effort>().is_err()
+    {
+        return Err(lane_refusal(
+            "lane::effort-invalid",
+            Some(closed_efforts()),
+            Some(effort.clone()),
+            "select one closed effort or leave it to the vendor configuration",
+        ));
+    }
     if request.resume.is_some() {
         return Err(lane_refusal(
             "lane::resume-requires-wake",
@@ -615,6 +637,15 @@ fn admit_seat(
     }
     validate_worktree(paths, &request.worktree).map_err(typed_outcome)?;
     Ok((observed, topology_revision))
+}
+
+/// The closed effort vocabulary, spelled as a refusal expects it.
+fn closed_efforts() -> String {
+    vendor::Effort::ALL
+        .iter()
+        .map(|effort| effort.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 struct ProvenOccupant {

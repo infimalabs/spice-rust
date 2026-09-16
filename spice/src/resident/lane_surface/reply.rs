@@ -60,12 +60,14 @@ fn answer_at(
                     .session
                     .as_ref()
                     .and_then(|session| session.launch.as_ref())
-                    .map(|launch| launch.model.clone()),
+                    .map(|launch| launch.model.clone())
+                    .or_else(|| row.model.clone()),
                 effort: row
                     .session
                     .as_ref()
                     .and_then(|session| session.launch.as_ref())
-                    .map(|launch| launch.effort.clone()),
+                    .map(|launch| launch.effort.clone())
+                    .or_else(|| row.effort.clone()),
                 git: row
                     .session
                     .as_ref()
@@ -527,6 +529,8 @@ mod tests {
             worktree: "/worktrees/main-a".to_owned(),
             life: "drive".to_owned(),
             vendor: "claude".parse().expect("fixture vendor"),
+            model: None,
+            effort: None,
             occupant: Some(uuid(2)),
             lineage: vec![uuid(2)],
             capabilities: vec![uuid(3)],

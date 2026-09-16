@@ -25,6 +25,8 @@ fn file_change_summary_keeps_the_session_worktree_when_the_lane_row_moves() {
             worktree: "/workspace".to_owned(),
             life: "drive".to_owned(),
             vendor: "codex".parse().expect("fixture vendor"),
+            model: None,
+            effort: None,
             occupant: Some(record.occupant),
             lineage: vec![record.occupant],
             capabilities: Vec::new(),

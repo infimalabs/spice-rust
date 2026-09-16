@@ -333,6 +333,8 @@ async fn send_topology_as(
                     worktree,
                     life,
                     vendor,
+                    model: None,
+                    effort: None,
                     resume: None,
                 },
             )
@@ -911,6 +913,10 @@ struct BorrowedLaneSeat<'a> {
     worktree: &'a str,
     life: &'a str,
     vendor: &'a wire::Name,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effort: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     resume: Option<&'a str>,
 }

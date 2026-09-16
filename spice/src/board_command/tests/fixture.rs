@@ -53,6 +53,8 @@ pub(super) fn fixture(name: &str, lane_count: usize) -> (PathBuf, Bus, Canonical
             worktree: "/fixture".to_owned(),
             life: "drive".to_owned(),
             vendor: "claude".parse().expect("fixture vendor"),
+            model: None,
+            effort: None,
             occupant: Some(seat.occupant),
             lineage: vec![seat.occupant],
             capabilities: vec![uuid(number * 100 + index as u64 + 50)],

@@ -38,6 +38,10 @@ pub struct Inputs {
     pub resume: vendor::Resume,
     /// Authoritative global fast-mode value for vendors that support it.
     pub fast_mode: bool,
+    /// Model this lane selected over the vendor's configured model.
+    pub model: Option<String>,
+    /// Effort this lane selected over the vendor's configured effort.
+    pub effort: Option<vendor::Effort>,
 }
 
 /// Complete deterministic inputs to vendor rendering and the process door.
@@ -159,8 +163,8 @@ fn compose_with_registry(
         launch: vendor::Launch {
             cwd: inputs.worktree,
             prompt: inputs.prompt,
-            model: configured.model.to_owned(),
-            effort: configured.effort,
+            model: inputs.model.unwrap_or_else(|| configured.model.to_owned()),
+            effort: inputs.effort.unwrap_or(configured.effort),
             personality: configured.personality.map(str::to_owned),
             fast_mode: configured.fast_mode.map(|_| inputs.fast_mode),
             model_context_window: configured.model_context_window,
@@ -271,6 +275,8 @@ mod tests {
                 lane: LANE.parse().expect("fixture lane"),
                 resume: vendor::Resume::Fresh,
                 fast_mode: false,
+                model: None,
+                effort: None,
             },
             &registry,
         )
@@ -282,5 +288,37 @@ mod tests {
             plan.record().expect("third declaration renders").dialect(),
             listen::Dialect::Codex
         );
+    }
+
+    #[test]
+    fn a_lane_selection_governs_over_the_configured_model_and_effort() {
+        let registry = crate::extension::Registry::discover(FIXTURE_DECLARATIONS)
+            .expect("third declaration is coherent");
+        let inputs = |model: Option<&str>, effort| Inputs {
+            worktree: PathBuf::from("/work/tree"),
+            vendor: "fixture".parse().expect("fixture vendor name"),
+            prompt: "[$spice](.agents/skills/spice/SKILL.md)".to_owned(),
+            executable: "spice".to_owned(),
+            environment: Environment::empty(),
+            lane: LANE.parse().expect("fixture lane"),
+            resume: vendor::Resume::Fresh,
+            fast_mode: false,
+            model: model.map(str::to_owned),
+            effort,
+        };
+        let root = Root::default();
+        let configured = compose_with_registry(&root, inputs(None, None), &registry)
+            .expect("configured launch composes");
+        assert_eq!(configured.launch().model, vendor::DEFAULT_CODEX_MODEL);
+        assert_eq!(configured.launch().effort, root.vendor().codex().effort());
+
+        let selected = compose_with_registry(
+            &root,
+            inputs(Some("gpt-5.5"), Some(vendor::Effort::Low)),
+            &registry,
+        )
+        .expect("selected launch composes");
+        assert_eq!(selected.launch().model, "gpt-5.5");
+        assert_eq!(selected.launch().effort, vendor::Effort::Low);
     }
 }

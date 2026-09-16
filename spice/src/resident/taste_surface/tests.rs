@@ -85,6 +85,8 @@ impl Fixture {
                     worktree: worktree.clone(),
                     life: "drive".to_owned(),
                     vendor: vendor.clone(),
+                    model: None,
+                    effort: None,
                 },
                 FactCause::Existing(observed.position()),
             )
@@ -112,6 +114,8 @@ impl Fixture {
                 worktree: head_worktree,
                 life: "drive".to_owned(),
                 vendor,
+                model: None,
+                effort: None,
                 occupant: Some(occupant),
                 lineage: vec![occupant],
                 capabilities: vec![capability],

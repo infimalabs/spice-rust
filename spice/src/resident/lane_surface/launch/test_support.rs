@@ -116,6 +116,8 @@ impl AdvisoryRtkFixture {
             occupant: self.occupant,
             resume,
             fast_mode: false,
+            model: None,
+            effort: None,
         }
     }
 

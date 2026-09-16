@@ -28,6 +28,22 @@ pub struct LaneSeated {
     pub life: String,
     /// Vendor selected for occupants of this seat.
     pub vendor: Name,
+    /// Model spelling selected for this seat, absent when the vendor's
+    /// configured model governs.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub model: Option<String>,
+    /// Effort spelling selected for this seat, absent when the vendor's
+    /// configured effort governs.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub effort: Option<String>,
 }
 
 /// One Canvas lineage adopted a task-allocation lifetime.

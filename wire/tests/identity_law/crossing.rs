@@ -658,6 +658,8 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
         worktree: "/worktrees/lane-a".to_owned(),
         life: "drive".to_owned(),
         vendor: "claude".parse().expect("fixture vendor"),
+        model: None,
+        effort: None,
         occupant: Some(second_uuid),
         lineage: vec![first_uuid],
         capabilities: vec![second_uuid],
@@ -685,6 +687,8 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
         worktree: "/worktrees/lane-b".to_owned(),
         life: "steer".to_owned(),
         vendor: "codex".parse().expect("fixture vendor"),
+        model: None,
+        effort: None,
         occupant: None,
         lineage: Vec::new(),
         capabilities: Vec::new(),
@@ -1196,6 +1200,8 @@ fn stream_lane_seated(position: u64, cause: Option<u64>) -> StreamFact {
             worktree: "/tmp/lane".to_owned(),
             life: "drive".to_owned(),
             vendor: "claude".parse().expect("vendor"),
+            model: None,
+            effort: None,
         }),
     };
     let opaque: Envelope<AnyFact> =

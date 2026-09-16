@@ -947,6 +947,8 @@ fn seated(vendor: &str) -> LaneSeated {
         worktree: "/worktrees/lane-a".to_owned(),
         life: "drive".to_owned(),
         vendor: vendor.parse().expect("fixture vendor"),
+        model: None,
+        effort: None,
     }
 }
 

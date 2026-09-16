@@ -614,6 +614,22 @@ pub struct LaneResidency {
     pub life: String,
     /// Vendor selected for each occupant in this lane.
     pub vendor: crate::Name,
+    /// Model spelling selected for this seat, absent when the vendor's
+    /// configured model governs.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub model: Option<String>,
+    /// Effort spelling selected for this seat, absent when the vendor's
+    /// configured effort governs.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub effort: Option<String>,
     /// Current occupant, absent between seats.
     #[serde(
         default,

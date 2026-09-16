@@ -124,6 +124,8 @@ impl Seat {
             worktree: self.worktree.clone(),
             life: self.life.clone(),
             vendor: self.vendor.clone(),
+            model: None,
+            effort: None,
             occupant: self.occupant,
             lineage: self.lineage.clone(),
             capabilities: vec![self.capability],
@@ -717,6 +719,8 @@ mod tests {
             worktree: "/worktrees/lane-a".to_owned(),
             life: "drive".to_owned(),
             vendor: "claude".parse().expect("fixture vendor"),
+            model: None,
+            effort: None,
         }
     }
 

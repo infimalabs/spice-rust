@@ -263,6 +263,8 @@ pub(super) fn occupied_seed_at(occupant: CanonicalUuid, worktree: &str) -> Journ
             worktree,
             life: "drive".to_owned(),
             vendor: "claude".parse().expect("fixture vendor"),
+            model: None,
+            effort: None,
             occupant: Some(occupant),
             lineage: vec![occupant],
             capabilities: vec![uuid(9)],

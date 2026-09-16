@@ -85,6 +85,8 @@ fn install_residency(journal: &mut Journal, repository: &Repository, authority: 
             worktree,
             life: "drive".to_owned(),
             vendor: "codex".parse().expect("verify fixture vendor"),
+            model: None,
+            effort: None,
             occupant: Some(occupant),
             lineage: vec![occupant],
             capabilities: Vec::new(),

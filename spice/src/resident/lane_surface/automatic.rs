@@ -54,6 +54,8 @@ pub(super) fn wake(
             occupant,
             resume,
             fast_mode,
+            model: row.model.as_deref(),
+            effort: row.effort.as_deref(),
         },
         Arc::clone(&runtime.capture),
     ) {
@@ -221,6 +223,8 @@ fn wake_automatic_with(
             occupant: request.occupant,
             resume: admitted.resume,
             fast_mode: admitted.fast_mode,
+            model: admitted.row.model.as_deref(),
+            effort: admitted.row.effort.as_deref(),
         },
         Arc::clone(&runtime.capture),
     ) {

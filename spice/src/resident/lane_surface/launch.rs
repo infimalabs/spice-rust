@@ -31,6 +31,20 @@ pub(in crate::resident) struct OccupantLaunchRequest<'a> {
     pub(in crate::resident) occupant: CanonicalUuid,
     pub(in crate::resident) resume: vendor::Resume,
     pub(in crate::resident) fast_mode: bool,
+    /// Model spelling this seat selected, or the vendor's configured model.
+    pub(in crate::resident) model: Option<&'a str>,
+    /// Effort spelling this seat selected, or the vendor's configured effort.
+    pub(in crate::resident) effort: Option<&'a str>,
+}
+
+/// What one launch selects beyond the repository it runs in.
+struct Selection<'a> {
+    vendor: &'a wire::Name,
+    lane: CanonicalUuid,
+    resume: vendor::Resume,
+    fast_mode: bool,
+    model: Option<&'a str>,
+    effort: Option<vendor::Effort>,
 }
 
 pub(in crate::resident) fn occupant_launch(
@@ -46,7 +60,15 @@ pub(in crate::resident) fn occupant_launch(
         occupant,
         resume,
         fast_mode,
+        model,
+        effort,
     } = request;
+    let effort = effort
+        .map(str::parse)
+        .transpose()
+        .map_err(|error: vendor::EffortError| {
+            store_fault("lane::effort-invalid", &error.to_string())
+        })?;
     let repository = launch_repository(paths, worktree)?;
     // Run ahead of configuration load so the launch reads the advanced tree.
     // Keep this call at the live seam: `xtask/tests/git_boundaries.rs` proves
@@ -55,7 +77,15 @@ pub(in crate::resident) fn occupant_launch(
     let resolved = spice::config::load_repository(&repository, &[])
         .map_err(|error| configuration_refusal(&error))?;
     let resume = pin_session(&repository, name, resume)?;
-    let (plan, rtk) = launch_plan(paths, &repository, &resolved, name, lane, resume, fast_mode)?;
+    let selection = Selection {
+        vendor: name,
+        lane,
+        resume,
+        fast_mode,
+        model,
+        effort,
+    };
+    let (plan, rtk) = launch_plan(paths, &repository, &resolved, selection)?;
     let model = plan.launch().model.clone();
     let effort = plan.launch().effort.as_str().to_owned();
     let record = plan
@@ -155,11 +185,16 @@ fn launch_plan(
     paths: &RuntimePaths,
     repository: &Repository,
     resolved: &spice::config::Resolved,
-    name: &wire::Name,
-    lane: CanonicalUuid,
-    resume: vendor::Resume,
-    fast_mode: bool,
+    selection: Selection<'_>,
 ) -> CommandResult<(spice::agent_launch::Plan, wire::body::RtkHealth)> {
+    let Selection {
+        vendor: name,
+        lane,
+        resume,
+        fast_mode,
+        model,
+        effort,
+    } = selection;
     let skill = required_skill(repository)?;
     let wrapper = resolved
         .root()
@@ -214,6 +249,8 @@ fn launch_plan(
             lane,
             resume,
             fast_mode,
+            model: model.map(str::to_owned),
+            effort,
         },
     )
     .map_err(|error| match error {

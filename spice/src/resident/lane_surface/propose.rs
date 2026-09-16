@@ -46,6 +46,8 @@ pub(super) fn propose_seat(
         worktree: request.worktree.clone(),
         life: request.life.clone(),
         vendor: request.vendor.clone(),
+        model: request.model.clone(),
+        effort: request.effort.clone(),
         occupant: None,
         lineage: Vec::new(),
         capabilities: vec![capability],
@@ -69,6 +71,8 @@ pub(super) fn propose_seat(
                 worktree: request.worktree.clone(),
                 life: request.life.clone(),
                 vendor: request.vendor.clone(),
+                model: request.model.clone(),
+                effort: request.effort.clone(),
             },
             FactCause::Existing(observed.position()),
         )

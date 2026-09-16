@@ -80,6 +80,8 @@ fn row(fixture: &Fixture) -> wire::LaneResidency {
         worktree: WORKTREE.into(),
         life: "drive".into(),
         vendor: "claude".parse().expect("fixture vendor"),
+        model: None,
+        effort: None,
         occupant: Some(fixture.occupant),
         lineage: vec![fixture.occupant],
         capabilities: Vec::new(),

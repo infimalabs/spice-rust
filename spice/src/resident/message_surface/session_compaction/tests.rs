@@ -772,6 +772,8 @@ fn session_residency_for(
             worktree: "/tmp/session-compaction".to_owned(),
             life: "drive".to_owned(),
             vendor: vendor.parse().expect("fixture vendor"),
+            model: None,
+            effort: None,
             occupant: Some(author),
             lineage: vec![author],
             capabilities: Vec::new(),

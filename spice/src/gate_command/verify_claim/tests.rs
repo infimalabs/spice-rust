@@ -93,6 +93,8 @@ impl Fixture {
                 worktree: WORKTREE.to_owned(),
                 life: "drive".to_owned(),
                 vendor: "codex".parse().expect("fixture vendor"),
+                model: None,
+                effort: None,
                 occupant: Some(occupant),
                 lineage: vec![occupant],
                 capabilities: Vec::new(),

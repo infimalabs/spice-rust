@@ -105,6 +105,8 @@ fn zero_config_repository_without_a_lock_composes_default_codex() {
         occupant: fixture.occupant,
         resume: vendor::Resume::Fresh,
         fast_mode: false,
+        model: None,
+        effort: None,
     };
 
     occupant_launch(&fixture.paths, request, fixture.reporter())

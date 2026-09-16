@@ -162,6 +162,11 @@ fn lane_seat_body(
         worktree,
         life,
         vendor,
+        model: matches
+            .get_one::<String>("model")
+            .map(|model| model.trim().to_owned())
+            .filter(|model| !model.is_empty()),
+        effort: matches.get_one::<String>("effort").cloned(),
         resume: None,
     }
 }
@@ -367,7 +372,17 @@ mod tests {
     #[test]
     fn lane_add_body_does_not_read_removed_resume_argument() {
         let matches = crate::cli::command()
-            .try_get_matches_from(["spice", "lane", "add", "--name", " reviewer "])
+            .try_get_matches_from([
+                "spice",
+                "lane",
+                "add",
+                "--name",
+                " reviewer ",
+                "--model",
+                " gpt-5.5 ",
+                "--effort",
+                "low",
+            ])
             .expect("lane add parses without resume");
         let (_, lane_matches) = matches.subcommand().expect("lane subcommand exists");
         let (_, add_matches) = lane_matches
@@ -392,7 +407,17 @@ mod tests {
         assert_eq!(body.worktree, "/tmp/spice-lane");
         assert_eq!(body.life, "drive");
         assert_eq!(body.vendor.as_str(), "codex");
+        assert_eq!(body.model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(body.effort.as_deref(), Some("low"));
         assert_eq!(body.resume, None);
+    }
+
+    #[test]
+    fn lane_add_rejects_an_effort_outside_the_closed_vocabulary() {
+        let error = crate::cli::command()
+            .try_get_matches_from(["spice", "lane", "add", "--effort", "ultra"])
+            .expect_err("an unknown effort is refused by the generated parser");
+        assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
     }
 
     #[test]

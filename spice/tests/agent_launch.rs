@@ -31,6 +31,8 @@ fn inputs(vendor: &str, environment: Environment, resume: Resume) -> Inputs {
         lane: lane(),
         resume,
         fast_mode: true,
+        model: None,
+        effort: None,
     }
 }
 

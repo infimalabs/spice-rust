@@ -416,6 +416,8 @@ fn seed_vacant_org_members(
             worktree: root.clone(),
             life: "drive".to_owned(),
             vendor: vendor.clone(),
+            model: None,
+            effort: None,
             occupant: None,
             lineage: Vec::new(),
             capabilities: vec![capability],

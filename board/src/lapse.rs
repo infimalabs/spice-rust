@@ -667,6 +667,8 @@ mod tests {
                 worktree: "/worktrees/lane-a".to_owned(),
                 life: "drive".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),
+                model: None,
+                effort: None,
                 occupant: Some(uuid(21)),
                 lineage: Vec::new(),
                 capabilities: Vec::new(),

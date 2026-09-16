@@ -735,6 +735,8 @@ fn stream_fact_body(fact: &AnyFact) -> serde_json::Map<String, serde_json::Value
         worktree,
         life,
         vendor,
+        model,
+        effort,
     } = durable;
     let visible = StreamLaneSeated {
         lane,
@@ -743,6 +745,8 @@ fn stream_fact_body(fact: &AnyFact) -> serde_json::Map<String, serde_json::Value
         worktree,
         life,
         vendor,
+        model,
+        effort,
     };
     let serde_json::Value::Object(body) =
         serde_json::to_value(visible).expect("stream lane::seated body encodes")
@@ -800,6 +804,18 @@ struct StreamLaneSeated {
     worktree: String,
     life: String,
     vendor: Name,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    model: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    effort: Option<String>,
 }
 
 fn validate_exact_body<T>(

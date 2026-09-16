@@ -799,6 +799,8 @@ fn seat_backlog_residency(
                 worktree: worktree.clone(),
                 life: "steer".to_owned(),
                 vendor: "codex".parse().expect("fixture vendor"),
+                model: None,
+                effort: None,
                 occupant: None,
                 lineage: vec![author],
                 capabilities: Vec::new(),

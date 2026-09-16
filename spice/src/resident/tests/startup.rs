@@ -494,9 +494,29 @@ fn lane_add_seats_a_vacant_lane_without_starting_an_occupant() {
         worktree: repository.worktree_root().display().to_string(),
         life: "drive".to_owned(),
         vendor: "claude".parse().expect("fixture vendor"),
+        model: Some("claude-sonnet-5".to_owned()),
+        effort: Some("low".to_owned()),
         resume: None,
     };
     let command = admitted_lane_seat(epoch, &body);
+    for (model, effort, reason) in [
+        (Some(" claude-sonnet-5"), None, "lane::model-invalid"),
+        (None, Some("ultra"), "lane::effort-invalid"),
+    ] {
+        let refused = wire::intent::LaneSeat {
+            model: model.map(str::to_owned),
+            effort: effort.map(str::to_owned),
+            ..body.clone()
+        };
+        let command = admitted_lane_seat(epoch, &refused);
+        let answer = lane_surface::seat(
+            &bus, &paths, epoch, &mut seats, &runtime, &command, &refused,
+        );
+        let Outcome::Refusal(refusal) = answer else {
+            panic!("a selection outside the launch vocabulary must be refused: {answer:?}");
+        };
+        assert_eq!(refusal.reason(), reason);
+    }
 
     let answer = lane_surface::seat(&bus, &paths, epoch, &mut seats, &runtime, &command, &body);
 
@@ -513,13 +533,13 @@ fn lane_add_seats_a_vacant_lane_without_starting_an_occupant() {
     assert_eq!(change.git, None);
     assert!(seats.is_empty(), "lane add must not supervise a process");
     let snapshot = bus.fact_snapshot().expect("facts read");
-    assert!(
-        snapshot
-            .facts()
-            .iter()
-            .any(|fact| fact.fact.kind() == wire::FactKind::LaneSeated),
-        "lane add still records the durable lane seat"
-    );
+    let seated = snapshot
+        .facts()
+        .iter()
+        .find_map(|fact| fact.fact.read::<wire::body::LaneSeated>())
+        .expect("lane add still records the durable lane seat");
+    assert_eq!(seated.model.as_deref(), Some("claude-sonnet-5"));
+    assert_eq!(seated.effort.as_deref(), Some("low"));
     assert!(
         !snapshot
             .facts()
@@ -548,6 +568,8 @@ fn lane_add_seats_a_vacant_lane_without_starting_an_occupant() {
     assert_eq!(row.lineage, Vec::<CanonicalUuid>::new());
     assert_eq!(row.disposition, "vacant");
     assert_eq!(row.capabilities.len(), 1);
+    assert_eq!(row.model.as_deref(), Some("claude-sonnet-5"));
+    assert_eq!(row.effort.as_deref(), Some("low"));
     bus.shutdown().expect("fixture bus stops");
     fs::remove_dir_all(root).expect("fixture cleanup");
 }

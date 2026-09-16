@@ -744,6 +744,8 @@ fn seed_lanes(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
                     vendor: crate::resident::SIMULATED_VENDOR
                         .parse()
                         .expect("simulated demo vendor is valid"),
+                    model: None,
+                    effort: None,
                 },
                 cause,
             )
@@ -780,6 +782,8 @@ fn seed_lanes(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
                     vendor: crate::resident::SIMULATED_VENDOR
                         .parse()
                         .expect("simulated demo vendor is valid"),
+                    model: None,
+                    effort: None,
                     occupant: Some(uuid(seed.occupant)),
                     lineage: vec![uuid(seed.occupant)],
                     capabilities: vec![uuid(seed.capability)],

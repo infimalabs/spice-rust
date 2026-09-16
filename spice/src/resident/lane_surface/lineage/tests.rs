@@ -14,6 +14,8 @@ fn lane(lane: u8, lineage: u8) -> wire::LaneResidency {
         worktree: format!("/fleet/main-{lane}"),
         life: "drive".to_owned(),
         vendor: "claude".parse().expect("fixture vendor"),
+        model: None,
+        effort: None,
         occupant: None,
         lineage: Vec::new(),
         capabilities: Vec::new(),

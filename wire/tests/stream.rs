@@ -133,6 +133,8 @@ fn lane_seated_stream_fact_is_strict_and_credential_free() {
             worktree: "/tmp/lane".to_owned(),
             life: "drive".to_owned(),
             vendor: "claude".parse().expect("vendor"),
+            model: None,
+            effort: None,
         }),
     };
     let durable = wire::encode(&typed).expect("durable fact encodes");

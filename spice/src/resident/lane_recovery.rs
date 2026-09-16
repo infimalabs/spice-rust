@@ -223,6 +223,8 @@ fn launch_import(
             occupant,
             resume: context.resume.clone(),
             fast_mode: super::settings_surface::fast_mode(bus)?,
+            model: context.row.model.as_deref(),
+            effort: context.row.effort.as_deref(),
         },
         Arc::clone(&runtime.capture),
     )?;

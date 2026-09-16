@@ -93,6 +93,10 @@ struct Request {
     occupant: CanonicalUuid,
     resume: Option<String>,
     fast_mode: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    effort: Option<String>,
     state: PathBuf,
 }
 
@@ -298,6 +302,8 @@ fn launch_unix(paths: &RuntimePaths, request: OccupantLaunchRequest<'_>) -> Comm
         occupant: request.occupant,
         resume: request.resume.session_id().map(str::to_owned),
         fast_mode: request.fast_mode,
+        model: request.model.map(str::to_owned),
+        effort: request.effort.map(str::to_owned),
         state: state.clone(),
     };
     publish_json(&request_path, &encoded).map_err(|error| {
@@ -574,6 +580,8 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
             occupant: request.occupant,
             resume,
             fast_mode: request.fast_mode,
+            model: request.model.as_deref(),
+            effort: request.effort.as_deref(),
         },
         capture_reporter,
     )
@@ -1130,6 +1138,8 @@ mod tests {
             worktree: root.to_string_lossy().into_owned(),
             life: "drive".to_owned(),
             vendor: "codex".parse().expect("fixture vendor"),
+            model: None,
+            effort: None,
             occupant: Some(occupant),
             lineage: vec![occupant],
             capabilities: vec![uuid(4)],
@@ -1365,6 +1375,8 @@ mod tests {
                 occupant: uuid(2),
                 resume: None,
                 fast_mode: false,
+                model: None,
+                effort: None,
                 state: state_path.clone(),
             },
         )
