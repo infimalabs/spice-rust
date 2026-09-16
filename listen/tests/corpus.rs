@@ -1375,7 +1375,7 @@ fn automatic_ownership_refuses_disagreement_without_a_fallback() {
     ));
 
     let unknown = b"{\"type\":\"mystery\"}";
-    for dialect in [Dialect::Codex, Dialect::Claude] {
+    for dialect in [Dialect::Codex, Dialect::Claude, Dialect::Omp] {
         let residue = decode_record(Some(dialect), unknown, locus(unknown))
             .expect("an explicit owner accounts unknown bytes")
             .decoded;

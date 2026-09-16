@@ -13,6 +13,7 @@ mod codex;
 pub mod config;
 mod event;
 mod media;
+mod omp;
 mod residue;
 mod stream;
 mod surface;
@@ -49,6 +50,8 @@ pub enum Dialect {
     Claude,
     /// Codex rollout JSONL records.
     Codex,
+    /// oh-my-pi RPC frames and session JSONL records.
+    Omp,
 }
 
 impl Dialect {
@@ -58,6 +61,7 @@ impl Dialect {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
+            Self::Omp => "omp",
         }
     }
 }
@@ -228,6 +232,7 @@ fn decode_value(dialect: Dialect, parsed: Result<Value, ResidueKind>, locus: Loc
     let decoded = match dialect {
         Dialect::Claude => claude::decode(&object, locus),
         Dialect::Codex => codex::decode(&object, locus),
+        Dialect::Omp => omp::decode(&object, locus),
     };
     match decoded {
         Ok(events) => Decoded::Events { context, events },
@@ -243,6 +248,25 @@ fn detect_dialect(object: &Object) -> Option<Dialect> {
         "thread.started" | "item.started" | "item.updated" | "item.completed"
         | "turn.completed" | "turn.failed" | "session_meta" | "event_msg" | "response_item"
         | "compacted" | "turn_context" | "world_state" => Some(Dialect::Codex),
+        "ready"
+        | "agent_start"
+        | "agent_end"
+        | "turn_start"
+        | "turn_end"
+        | "message_start"
+        | "message_update"
+        | "message_end"
+        | "tool_execution_start"
+        | "tool_execution_end"
+        | "auto_compaction_start"
+        | "auto_compaction_end"
+        | "extension_ui_request"
+        | "available_commands_update"
+        | "rpc_frame_error"
+        | "rpc_chunk"
+        | "session"
+        | "model_change"
+        | "thinking_level_change" => Some(Dialect::Omp),
         _ => None,
     }
 }
@@ -266,6 +290,7 @@ fn record_context(dialect: Dialect, record: &Object) -> Result<RecordContext, Re
                     .and_then(Value::as_str)
             }),
         Dialect::Claude => record.get("promptId").and_then(Value::as_str),
+        Dialect::Omp => None,
     }
     .map(str::to_owned);
     let top = record.get("type").and_then(Value::as_str).unwrap_or("");
@@ -306,6 +331,11 @@ fn record_context(dialect: Dialect, record: &Object) -> Result<RecordContext, Re
             }
             _ => None,
         },
+        Dialect::Omp => match top {
+            "agent_start" => Some(TurnMoment::Started),
+            "agent_end" => Some(TurnMoment::Completed),
+            _ => None,
+        },
     };
     let model_context_window = match dialect {
         Dialect::Codex => payload
@@ -319,6 +349,12 @@ fn record_context(dialect: Dialect, record: &Object) -> Result<RecordContext, Re
         Dialect::Claude => message
             .and_then(|message| message.get("model_context_window"))
             .or_else(|| record.get("model_context_window")),
+        Dialect::Omp => record
+            .get("data")
+            .and_then(Value::as_object)
+            .and_then(|data| data.get("model"))
+            .and_then(Value::as_object)
+            .and_then(|model| model.get("contextWindow")),
     }
     .map(|value| {
         value.as_u64().ok_or(ResidueKind::Malformed {

@@ -91,6 +91,59 @@ fn one_bounded_stdin_write_is_closed_before_event_driven_completion() {
     );
 }
 
+/// A command-driven child keeps its input open for as long as it runs.
+///
+/// The single-use request writer closes standard input behind one payload.
+/// A child that reads commands for its whole lifetime needs the pipe handed
+/// out whole instead, so the caller writes as many lines as the conversation
+/// takes and the child reads end of input exactly when that writer drops.
+#[test]
+fn a_taken_stdin_carries_many_writes_and_closes_when_its_owner_drops() {
+    let mut spec = test_spec(
+        "/bin/sh",
+        [
+            "-c",
+            "while IFS= read -r line; do printf 'got:%s;' \"$line\"; done",
+        ],
+        Environment::empty(),
+        Cancellation::Never,
+        Duration::from_secs(2),
+        StreamPolicy::Capture { limit: 64 },
+    );
+    spec.output = Output::new(
+        StdinPolicy::Pipe,
+        StreamPolicy::Capture { limit: 64 },
+        StreamPolicy::Capture { limit: 64 },
+    );
+    let mut running = spawn(spec).expect("piped-input child launches");
+
+    let mut input = running.take_stdin().expect("stdin is handed out whole");
+    assert_eq!(
+        running
+            .take_stdin()
+            .expect_err("a taken stdin is not handed out twice")
+            .kind(),
+        io::ErrorKind::BrokenPipe
+    );
+    assert_eq!(
+        running
+            .write_stdin(b"late request")
+            .expect_err("a taken stdin refuses the single-use writer")
+            .kind(),
+        io::ErrorKind::BrokenPipe
+    );
+    input.write_all(b"first\n").expect("first line writes");
+    input.write_all(b"second\n").expect("second line writes");
+    drop(input);
+    let outcome = running.wait().expect("child completes after input EOF");
+
+    assert!(matches!(outcome.completion(), Completion::Exited(status) if status.success()));
+    assert_eq!(
+        outcome.stdout().expect("stdout captured").bytes(),
+        b"got:first;got:second;"
+    );
+}
+
 #[test]
 fn a_child_that_never_reads_stdin_cannot_pin_cleanup() {
     let mut spec = test_spec(

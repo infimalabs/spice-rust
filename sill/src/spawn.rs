@@ -500,6 +500,31 @@ impl Running {
         Ok(())
     }
 
+    /// Hand the caller the child's standard input for the whole process lifetime.
+    ///
+    /// [`Self::write_stdin`] closes standard input behind one declared request.
+    /// A child driven by a command protocol keeps its input open for as long as
+    /// it runs, so this hands the pipe out whole: the caller owns every write
+    /// and the close, and dropping the returned writer is the end of input the
+    /// child reads.
+    ///
+    /// # Errors
+    ///
+    /// Returns `BrokenPipe` when the spec did not pipe standard input, and
+    /// `AlreadyExists` when a request or an earlier take already owns it.
+    pub fn take_stdin(&mut self) -> io::Result<ChildStdin> {
+        if self.stdin.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "child stdin already owns a request",
+            ));
+        }
+        self.child
+            .as_mut()
+            .and_then(|child| child.stdin.take())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "child stdin is not piped"))
+    }
+
     pub fn wait_for(mut self, duration: Duration) -> Result<WaitStep, WaitError> {
         let started = Instant::now();
         loop {
@@ -903,6 +928,13 @@ impl Running {
     }
 
     pub fn write_stdin(&mut self, _bytes: &[u8]) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "process input requires a native release target",
+        ))
+    }
+
+    pub fn take_stdin(&mut self) -> io::Result<std::process::ChildStdin> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "process input requires a native release target",
