@@ -179,7 +179,7 @@ fn apply_command_response(
             lineage,
             lane,
             requested,
-        } => apply_lane_renewal_response(session, lineage, lane, requested, bytes)?,
+        } => apply_lane_renewal_response(session, handles, lineage, lane, requested, bytes)?,
         PendingKind::Inbox { covered } => CommandApplication::ordinary(apply_inbox_response(
             session, handles, runtime, &covered, bytes,
         )?),
@@ -300,8 +300,13 @@ fn apply_lane_response(
     Ok((refresh, applied))
 }
 
+/// Prefix of every renewal refusal shown in the lane composer, so a later
+/// success clears only the issue this family raised.
+const RENEWAL_ISSUE: &str = "Could not renew this agent";
+
 fn apply_lane_renewal_response(
     session: &Session,
+    handles: &SurfaceHandles,
     lineage: CanonicalUuid,
     lane: CanonicalUuid,
     requested: bool,
@@ -309,17 +314,38 @@ fn apply_lane_renewal_response(
 ) -> Result<CommandApplication, String> {
     let admitted: crate::Admitted<Response<wire::intent::LaneRenewalAnswer>> =
         admit_response(session, bytes)?;
-    if let wire::Outcome::Reply(reply) = &admitted.get().outcome {
-        if reply.body.lineage_id != lineage || reply.body.lane != lane {
-            return Err(format!(
-                "agent renewal response named {}/{}; expected {lineage}/{lane}",
-                reply.body.lineage_id, reply.body.lane,
-            ));
+    match &admitted.get().outcome {
+        wire::Outcome::Reply(reply) => {
+            if reply.body.lineage_id != lineage || reply.body.lane != lane {
+                return Err(format!(
+                    "agent renewal response named {}/{}; expected {lineage}/{lane}",
+                    reply.body.lineage_id, reply.body.lane,
+                ));
+            }
+            if requested != reply.body.renewal.is_some() {
+                return Err(format!(
+                    "agent renewal response for {lineage}/{lane} did not settle requested={requested}",
+                ));
+            }
+            handles
+                .composer_drafts
+                .dispatch(ComposerAction::ClearIssue {
+                    lane: lane.to_string(),
+                    quote: None,
+                    family: RENEWAL_ISSUE,
+                });
         }
-        if requested != reply.body.renewal.is_some() {
-            return Err(format!(
-                "agent renewal response for {lineage}/{lane} did not settle requested={requested}",
-            ));
+        outcome => {
+            // The control itself only knows durable lane state, so the refusal
+            // of this one attempt lands beside it as the lane composer issue,
+            // exactly where a refused wake already reports.
+            let issue = outcome_issue(RENEWAL_ISSUE, outcome)
+                .expect("the refused or faulted renewal outcome has an issue");
+            handles.composer_drafts.dispatch(ComposerAction::SetIssue {
+                lane: lane.to_string(),
+                quote: None,
+                issue,
+            });
         }
     }
     Ok(CommandApplication::ordinary(true))

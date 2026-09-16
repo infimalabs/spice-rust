@@ -7,6 +7,7 @@ import {
   reply,
   waitForPageFunction as waitForPage,
 } from "./canvas-fixture.mjs";
+import { assertBlockedRenewalControl } from "./renewal-refusal.mjs";
 
 const WAKE_MS = 15_000;
 
@@ -187,6 +188,7 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
   await ticker.waitFor({ timeout: WAKE_MS });
   await assertVacantLayout("desktop vacant composer");
   await assertStatusEmphasis(true, "desktop vacant status");
+  await assertBlockedRenewalControl(lane, seeded.agentName);
   const viewport = page.viewportSize();
   assert.ok(viewport, "the vacant composer fixture has a viewport to restore");
   try {

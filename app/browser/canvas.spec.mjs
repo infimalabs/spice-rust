@@ -29,6 +29,7 @@ import {
 } from "./composer-shards.mjs";
 import { assertCompleteComposerSubmission } from "./composer-submission.mjs";
 import { assertComposerRecovery } from "./composer-recovery.mjs";
+import { assertRenewalRefusalReason } from "./renewal-refusal.mjs";
 import { assertVacantWakeSubmission } from "./vacant-wake-submission.mjs";
 import {
   assertAgentSpacingRejectsFallbackOnlyMarkup,
@@ -848,6 +849,12 @@ try {
             lightPage,
             renewedOrg.locator(".organization-surface").first(),
             fixture,
+          )
+        ));
+        await run.phase("renewal-refusal", () => (
+          assertRenewalRefusalReason(
+            lightPage,
+            renewedOrg.locator(".organization-surface").first(),
           )
         ));
         lightMonitor.assertClean();
