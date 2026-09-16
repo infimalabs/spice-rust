@@ -101,6 +101,7 @@ pub struct Record {
     dialect: Dialect,
     stream: RecordStream,
     resume: Resume,
+    opening: Option<Vec<u8>>,
 }
 
 impl Record {
@@ -120,7 +121,17 @@ impl Record {
             dialect,
             stream,
             resume,
+            opening: None,
         })
+    }
+
+    /// State the bytes a supervisor writes to the child's stdin once it exists.
+    ///
+    /// A vendor driven over a command stream, rather than by its arguments,
+    /// opens the conversation this way; the door keeps stdin piped for it.
+    pub(crate) fn with_opening(mut self, opening: impl Into<Vec<u8>>) -> Self {
+        self.opening = Some(opening.into());
+        self
     }
 
     /// Configured executable.
@@ -153,10 +164,25 @@ impl Record {
         &self.resume
     }
 
+    /// Bytes written to the child's stdin as soon as it exists, when the
+    /// vendor is driven over a command stream rather than by its arguments.
+    #[must_use]
+    pub fn opening(&self) -> Option<&[u8]> {
+        self.opening.as_deref()
+    }
+
     /// Build the sole process-door specification for this record contract.
+    ///
+    /// Stdin stays closed unless the vendor opens a command stream, in which
+    /// case the door pipes it and the supervisor writes [`Self::opening`].
     #[must_use]
     pub fn spec(&self, process: &Process) -> Spec {
-        process.spec(self.argv.clone())
+        let stdin = if self.opening.is_some() {
+            StdinPolicy::Pipe
+        } else {
+            StdinPolicy::Null
+        };
+        process.spec(self.argv.clone(), stdin)
     }
 
     /// Decode one selected-stream record already committed to tape.
@@ -254,7 +280,7 @@ impl Process {
         &self.cwd
     }
 
-    fn spec(&self, argv: Argv) -> Spec {
+    fn spec(&self, argv: Argv, stdin: StdinPolicy) -> Spec {
         Spec {
             argv,
             cwd: self.cwd.clone(),
@@ -263,7 +289,7 @@ impl Process {
             deadlines: self.deadlines,
             wait: self.wait.clone(),
             output: Output::new(
-                StdinPolicy::Null,
+                stdin,
                 StreamPolicy::Capture {
                     limit: self.capture_limit,
                 },

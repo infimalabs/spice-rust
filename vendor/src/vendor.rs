@@ -12,7 +12,7 @@ use listen::{Decoded, Dialect, Locus, LocusLengthError};
 
 use crate::{
     ContractError, Effort, Launch, Record, SessionDeclaration, SessionId, SessionIdError, claude,
-    codex,
+    codex, omp,
 };
 
 /// Environment and filesystem vocabulary used to find native transcripts.
@@ -311,12 +311,43 @@ pub const CLAUDE: Vendor = Vendor {
     render: claude_record,
 };
 
+/// Built-in oh-my-pi extension value.
+///
+/// omp exports no session variable into the tools it runs, so the thread
+/// environment name is empty and never matches; the session identity reaches
+/// the lane through the `get_state` reply the supervisor requests at launch.
+pub const OMP: Vendor = Vendor {
+    name: "omp",
+    label: "oh-my-pi",
+    dialect: Dialect::Omp,
+    thread_id_environment: "",
+    transcript: TranscriptLayout {
+        home_environment: "PI_CODING_AGENT_DIR",
+        default_home: ".omp/agent",
+        sessions_directory: "sessions",
+        state_index: None,
+    },
+    stdout: StdoutContract {
+        assistant: "",
+        sections: &[],
+        compaction: "",
+        activity: &[],
+        format: StdoutFormat::JsonLines,
+    },
+    envelope: ToolEnvelope::Direct,
+    render: omp_record,
+};
+
 fn codex_record(binary: OsString, launch: &Launch) -> Result<Record, ContractError> {
     codex::record(binary, launch)
 }
 
 fn claude_record(binary: OsString, launch: &Launch) -> Result<Record, ContractError> {
     claude::record(binary, launch)
+}
+
+fn omp_record(binary: OsString, launch: &Launch) -> Result<Record, ContractError> {
+    omp::record(binary, launch)
 }
 
 fn rewrite_claude_eval(
@@ -481,8 +512,17 @@ mod tests {
             })
         );
         assert_eq!(CLAUDE.transcript_layout().sessions_directory, "projects");
+        assert_eq!(OMP.stdout().format, StdoutFormat::JsonLines);
+        assert_eq!(OMP.tool_envelope(), ToolEnvelope::Direct);
+        assert_eq!(OMP.dialect(), Dialect::Omp);
+        assert_eq!(OMP.thread_id_environment(), "");
+        assert_eq!(OMP.transcript_layout().default_home, ".omp/agent");
         assert_eq!(
             CODEX.neutral_launch_prompt(Path::new(".agents/skills/spice/SKILL.md")),
+            CLAUDE.neutral_launch_prompt(Path::new(".agents/skills/spice/SKILL.md")),
+        );
+        assert_eq!(
+            OMP.neutral_launch_prompt(Path::new(".agents/skills/spice/SKILL.md")),
             CLAUDE.neutral_launch_prompt(Path::new(".agents/skills/spice/SKILL.md")),
         );
     }

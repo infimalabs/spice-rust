@@ -592,6 +592,9 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "vendor.codex.model_context_window",
     "vendor.codex.personality",
     "vendor.codex.fast_mode",
+    "vendor.omp.binary",
+    "vendor.omp.model",
+    "vendor.omp.effort",
     "listen.window",
     "lock.busy",
     "lock.taken",
@@ -721,6 +724,8 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
             "vendor.claude.effort",
             "vendor.codex.model",
             "vendor.codex.effort",
+            "vendor.omp.model",
+            "vendor.omp.effort",
         ]
     );
 

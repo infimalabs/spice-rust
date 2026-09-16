@@ -12,6 +12,7 @@ pub mod claude;
 pub mod codex;
 pub mod config;
 pub mod launch;
+pub mod omp;
 mod record;
 mod vendor;
 
@@ -19,7 +20,7 @@ pub use acp::{PermissionRequestError, permission_request};
 pub use config::{
     Binary, ClaudeConfig, CodexConfig, Config, DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW_TOKENS,
     DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_CODEX_MODEL_CONTEXT_WINDOW,
-    codex_auto_compact_token_limit,
+    DEFAULT_OMP_MODEL, OmpConfig, codex_auto_compact_token_limit,
 };
 pub use launch::{
     Attribution, ContractError, Effort, Launch, McpServer, POST_TOOL_HOOK_EVENT,
@@ -31,6 +32,6 @@ pub use record::{
     SessionId, SessionIdError,
 };
 pub use vendor::{
-    CLAUDE, CODEX, LaunchValues, StdoutContract, StdoutFormat, ToolEnvelope, TranscriptIndex,
+    CLAUDE, CODEX, LaunchValues, OMP, StdoutContract, StdoutFormat, ToolEnvelope, TranscriptIndex,
     TranscriptLayout, Vendor,
 };

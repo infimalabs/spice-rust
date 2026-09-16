@@ -1,4 +1,4 @@
-//! Pure admission of the two landed vendor launch configurations.
+//! Pure admission of the landed vendor launch configurations.
 
 use serde::de::{Deserializer, Error as _};
 use serde::ser::Serializer;
@@ -16,6 +16,8 @@ pub const DEFAULT_CODEX_MODEL: &str = "gpt-5.6-sol";
 pub const DEFAULT_CODEX_MODEL_CONTEXT_WINDOW: u64 = 1_050_000;
 /// Claude's compiled auto-compaction window.
 pub const DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW_TOKENS: u64 = 200_000;
+/// oh-my-pi's compiled model selection, matched fuzzily by omp itself.
+pub const DEFAULT_OMP_MODEL: &str = "claude-opus-5";
 
 /// A configured executable spelling.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -229,12 +231,52 @@ impl CodexConfig {
     }
 }
 
+/// Values the current oh-my-pi RPC launch dialect can honor.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OmpConfig {
+    binary: Binary,
+    model: LaunchValue,
+    effort: ClaudeEffort,
+}
+
+impl Default for OmpConfig {
+    fn default() -> Self {
+        Self {
+            binary: Binary::new("omp"),
+            model: LaunchValue::new(DEFAULT_OMP_MODEL),
+            effort: ClaudeEffort::Xhigh,
+        }
+    }
+}
+
+impl OmpConfig {
+    /// Executable selected for oh-my-pi.
+    #[must_use]
+    pub const fn binary(&self) -> &Binary {
+        &self.binary
+    }
+
+    /// Model spelling handed to omp, which resolves it against its own list.
+    #[must_use]
+    pub fn model(&self) -> &str {
+        self.model.as_str()
+    }
+
+    /// Thinking level omp is launched with.
+    #[must_use]
+    pub const fn effort(&self) -> Effort {
+        self.effort.launch()
+    }
+}
+
 /// The closed set of vendor configurations with landed Rust renderers.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     claude: ClaudeConfig,
     codex: CodexConfig,
+    omp: OmpConfig,
 }
 
 impl Config {
@@ -248,6 +290,12 @@ impl Config {
     #[must_use]
     pub const fn codex(&self) -> &CodexConfig {
         &self.codex
+    }
+
+    /// Admitted oh-my-pi launch values.
+    #[must_use]
+    pub const fn omp(&self) -> &OmpConfig {
+        &self.omp
     }
 }
 

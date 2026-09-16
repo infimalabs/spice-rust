@@ -15,6 +15,12 @@ pub(in crate::resident) struct OccupantLaunch {
     pub(in crate::resident) observation: Observation,
     pub(in crate::resident) session: SessionProof,
     pub(in crate::resident) git: String,
+    /// Request bytes a command-driven vendor reads first, or nothing for a
+    /// vendor driven entirely by its arguments.
+    pub(in crate::resident) opening: Option<Vec<u8>>,
+    /// This lane's rendered steering inbox, interjected into a command-driven
+    /// vendor whenever the resident republishes it.
+    pub(in crate::resident) inbox: PathBuf,
 }
 
 pub(in crate::resident) struct OccupantLaunchRequest<'a> {
@@ -58,6 +64,8 @@ pub(in crate::resident) fn occupant_launch(
     let spec = record.spec(&process);
     let stream = record.stream();
     let expected = record.resume().session_id().map(str::to_owned);
+    let opening = record.opening().map(<[u8]>::to_vec);
+    let inbox = steer::inbox::path(&paths.inbox_for_repository(&repository)?, lane);
     let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join(name.as_str()))
         .map_err(|error| store_fault("lane::capture-tape-unavailable", &error.to_string()))?;
     let (session_reply, session) = mpsc::sync_channel(4);
@@ -101,6 +109,8 @@ pub(in crate::resident) fn occupant_launch(
             horizon,
         },
         git,
+        opening,
+        inbox,
     })
 }
 

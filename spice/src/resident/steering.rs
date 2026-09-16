@@ -637,6 +637,7 @@ fn publish_lane_inbox(
     steer::inbox::publish(&inbox, lane.lane, &seal, &pending)
         .map_err(|error| environment_fault("steer::inbox-unwritable", &error.to_string()))?;
     remove_legacy_inbox(&paths.legacy_inbox, &inbox, lane.lane);
+    super::supervisor::command::kick(paths, lane.lane);
     Ok(())
 }
 

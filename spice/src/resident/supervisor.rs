@@ -16,18 +16,18 @@ use std::thread;
 use std::time::Instant as Monotonic;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use lane::capture::{
-    CaptureExit, CaptureFailure, CaptureRecord, CaptureReportError, CaptureReporter,
-};
+use lane::capture::CaptureReporter;
 use lane::occupant::{DetachedProcess, DetachedWait};
 use serde::{Deserialize, Serialize};
 use sill::{WaitError, WaitOutcome};
 use spice::repository::Repository;
 use wire::CanonicalUuid;
 
+pub(super) mod command;
 pub(super) mod ending;
 #[cfg(unix)]
 mod events;
+mod reporter;
 #[cfg(test)]
 pub(super) mod test_support;
 
@@ -39,6 +39,7 @@ use super::{CommandResult, RuntimePaths, environment_fault, store_fault};
 use events::StateEvents;
 #[cfg(all(unix, not(test)))]
 use events::StateSignal;
+use reporter::DurableReporter;
 
 #[cfg(all(unix, not(test)))]
 use std::os::unix::fs::OpenOptionsExt as _;
@@ -580,11 +581,22 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
     let git = launch.git;
     let proof = launch.session;
     let started_millis = now_millis()?;
-    let running = sill::spawn_observed(launch.spec, launch.observation)?;
+    let mut running = sill::spawn_observed(launch.spec, launch.observation)?;
     let group = running.id();
     let runtime = running.spec().deadlines.runtime();
     let grace = running.spec().grace;
     let reap = running.spec().deadlines.reap();
+    let _door = launch
+        .opening
+        .map(|opening| {
+            let driver = command::Driver::new(running.take_stdin()?, launch.inbox);
+            reporter.drive(Arc::clone(&driver));
+            driver.open(&opening)?;
+            let door = command::listen_for_kicks(&paths, request.lane, Arc::clone(&driver))?;
+            driver.deliver_inbox();
+            Ok::<_, io::Error>(door)
+        })
+        .transpose()?;
     let session = await_session(proof).map_err(session_error)?;
     state.phase = Phase::Running;
     state.group = Some(group);
@@ -631,77 +643,6 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
         occupant: request.occupant,
     });
     Ok(())
-}
-
-struct DurableReporter {
-    #[cfg(unix)]
-    socket: std::os::unix::net::UnixDatagram,
-    path: PathBuf,
-}
-
-impl DurableReporter {
-    fn new(paths: &RuntimePaths) -> io::Result<Self> {
-        #[cfg(not(unix))]
-        {
-            Ok(Self {
-                path: capture_path(paths),
-            })
-        }
-        #[cfg(unix)]
-        {
-            Ok(Self {
-                socket: std::os::unix::net::UnixDatagram::unbound()?,
-                path: capture_path(paths),
-            })
-        }
-    }
-
-    fn send(&self, notice: &Notice) {
-        let Ok(bytes) = serde_json::to_vec(notice) else {
-            return;
-        };
-        #[cfg(unix)]
-        let _sent = self.socket.send_to(&bytes, &self.path);
-        #[cfg(not(unix))]
-        let _ = (&bytes, &self.path);
-    }
-}
-
-impl CaptureReporter for DurableReporter {
-    fn record(&self, record: CaptureRecord) -> Result<(), CaptureReportError> {
-        // The lane observer committed the bytes to tape before this callback.
-        // Resident notification is best effort; durability never depends on a
-        // resident generation being present.
-        self.send(&Notice::Record {
-            lane: record.lane,
-            occupant: record.occupant,
-            stream: match record.stream {
-                vendor::RecordStream::Stdout => "stdout",
-                vendor::RecordStream::Stderr => "stderr",
-            }
-            .to_owned(),
-            boundary: match record.boundary {
-                sill::RecordBoundary::Complete => "complete",
-                sill::RecordBoundary::Terminal => "terminal",
-                sill::RecordBoundary::Truncated => "truncated",
-            }
-            .to_owned(),
-            locus: wire::TapeLocus {
-                member: record.locus.member,
-                offset: record.locus.offset,
-                length: record.locus.length,
-            },
-        });
-        Ok(())
-    }
-
-    fn failed(&self, _failure: CaptureFailure) {}
-
-    fn exited(&self, _exit: CaptureExit) {
-        // SILL reports capture completion before `Running::wait` publishes the
-        // exact exit status. `run_agent` emits this notice only after the final
-        // supervisor state is durable, so a resident never blocks on the race.
-    }
 }
 
 struct Handle {

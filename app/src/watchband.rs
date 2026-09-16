@@ -177,6 +177,7 @@ pub fn standing_title(standing: &Standing) -> String {
     let vendor = match standing.vendor.as_str() {
         "claude" => "Claude vendor",
         "codex" => "Codex vendor",
+        "omp" => "oh-my-pi vendor",
         "openai" => "OpenAI vendor",
         _ => "Agent vendor",
     };

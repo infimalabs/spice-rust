@@ -153,6 +153,9 @@ pub const CODEX: Vendor = Vendor::new(&vendor::CODEX, codex_configuration, 0);
 /// Current Claude declaration.
 pub const CLAUDE: Vendor = Vendor::new(&vendor::CLAUDE, claude_configuration, 1);
 
+/// Current oh-my-pi declaration.
+pub const OMP: Vendor = Vendor::new(&vendor::OMP, omp_configuration, 2);
+
 /// Typed payload of one extension declaration.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Value {
@@ -201,6 +204,12 @@ pub const DECLARATIONS: &[Declaration] = &[
         name: "claude",
         provider: "vendor",
         value: Value::Vendor(&CLAUDE),
+    },
+    Declaration {
+        namespace: Namespace::Vendor,
+        name: "omp",
+        provider: "vendor",
+        value: Value::Vendor(&OMP),
     },
     Declaration {
         namespace: Namespace::Wrapper,
@@ -494,12 +503,25 @@ fn claude_configuration(root: &crate::config::Root) -> vendor::LaunchValues<'_> 
     }
 }
 
+fn omp_configuration(root: &crate::config::Root) -> vendor::LaunchValues<'_> {
+    let configured = root.vendor().omp();
+    vendor::LaunchValues {
+        binary: configured.binary().as_str(),
+        model: configured.model(),
+        effort: configured.effort(),
+        personality: None,
+        fast_mode: None,
+        model_context_window: None,
+        auto_compact_window_tokens: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const FIXTURE_DIALECT: vendor::Vendor = vendor::Vendor::named("fixture", &vendor::CODEX);
-    const FIXTURE_VENDOR: Vendor = Vendor::new(&FIXTURE_DIALECT, codex_configuration, 2);
+    const FIXTURE_VENDOR: Vendor = Vendor::new(&FIXTURE_DIALECT, codex_configuration, 3);
 
     #[test]
     fn compiled_namespaces_are_complete_sorted_and_coherent() {
@@ -513,6 +535,7 @@ mod tests {
             [
                 ("spice.vendors", "claude"),
                 ("spice.vendors", "codex"),
+                ("spice.vendors", "omp"),
                 ("spice.wrappers", "shell"),
                 ("spice.gates", "core"),
                 ("spice.gates", "hygiene"),
@@ -525,7 +548,7 @@ mod tests {
                 .into_iter()
                 .map(|vendor| vendor.session_gate().identity())
                 .collect::<Vec<_>>(),
-            ["codex", "claude"],
+            ["codex", "claude", "omp"],
         );
     }
 
@@ -592,7 +615,7 @@ mod tests {
         assert_eq!(fixture.dialect(), listen::Dialect::Codex);
         assert_eq!(fixture.session_gate().identity(), "fixture");
         assert_eq!(fixture.session_gate().dialect(), listen::Dialect::Codex);
-        assert_eq!(fixture.session_gate().ambient_precedence(), 2);
+        assert_eq!(fixture.session_gate().ambient_precedence(), 3);
         assert_eq!(fixture.stdout(), vendor::CODEX.stdout());
         assert_eq!(fixture.tool_envelope(), vendor::ToolEnvelope::Direct);
         assert_eq!(

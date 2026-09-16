@@ -133,7 +133,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert!(missing.root().policy().test_engines().is_empty());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 58);
+    assert_eq!(missing.provenance().len(), 61);
     assert!(
         missing
             .provenance()
@@ -796,6 +796,11 @@ effort = "max"
 model_context_window = 1234567
 personality = "pragmatic"
 fast_mode = true
+
+[vendor.omp]
+binary = "/opt/omp"
+model = "omp-current"
+effort = "max"
 
 [listen]
 window = "2m"

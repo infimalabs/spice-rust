@@ -727,6 +727,27 @@ configuration_registry! {
         class: Policy,
         flag: None,
     }
+    fixed "vendor.omp.binary" {
+        kind: String,
+        builtin: Some(Builtin::String("omp")),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "vendor.omp.model" {
+        kind: String,
+        builtin: Some(Builtin::String(vendor::DEFAULT_OMP_MODEL)),
+        layers: TRACKED_WORKTREE,
+        class: WorktreeLocal,
+        flag: None,
+    }
+    fixed "vendor.omp.effort" {
+        kind: String,
+        builtin: Some(Builtin::String("xhigh")),
+        layers: TRACKED_WORKTREE,
+        class: WorktreeLocal,
+        flag: None,
+    }
     fixed "listen.window" {
         kind: Duration,
         builtin: Some(Builtin::String("90s")),
