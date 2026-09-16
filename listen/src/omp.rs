@@ -59,6 +59,13 @@ const SILENT: &[&str] = &[
     "custom_message",
     "branch_summary",
     "label",
+    "credential_pin",
+    "session_init",
+    "mode_change",
+    "model_usage",
+    "reset_boundary",
+    "service_tier_change",
+    "ttsr_injection",
 ];
 
 pub(crate) fn decode(record: &Object, locus: Locus) -> Events {

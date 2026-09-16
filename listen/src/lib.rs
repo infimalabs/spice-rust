@@ -266,7 +266,21 @@ fn detect_dialect(object: &Object) -> Option<Dialect> {
         | "rpc_chunk"
         | "session"
         | "model_change"
-        | "thinking_level_change" => Some(Dialect::Omp),
+        | "thinking_level_change"
+        | "notice"
+        | "title"
+        | "compaction"
+        | "credential_pin"
+        | "custom"
+        | "custom_message"
+        | "branch_summary"
+        | "label"
+        | "session_init"
+        | "mode_change"
+        | "model_usage"
+        | "reset_boundary"
+        | "service_tier_change"
+        | "ttsr_injection" => Some(Dialect::Omp),
         _ => None,
     }
 }

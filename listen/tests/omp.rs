@@ -193,3 +193,37 @@ fn the_session_file_reads_under_the_same_dialect() {
         Some("2026-09-16T02:24:25.341Z".to_owned())
     );
 }
+
+/// Session-file entries omp writes beside its messages: the fixed-width title
+/// slot at the top of every file and the bookkeeping it appends as it runs.
+const SESSION_FILE_BOOKKEEPING: &[&[u8]] = &[
+    br#"{"type":"title","v":1,"title":"","updatedAt":"2026-09-16T06:43:21.805Z","pad":"   "}"#,
+    br#"{"type":"credential_pin","id":"c1","parentId":null,"timestamp":"2026-09-16T06:43:22.000Z","provider":"anthropic","hash":"deadbeef"}"#,
+    br#"{"type":"model_change","id":"m1","parentId":"c1","timestamp":"2026-09-16T06:43:22.100Z","provider":"anthropic","modelId":"claude-opus-5"}"#,
+    br#"{"type":"thinking_level_change","id":"t1","parentId":"m1","timestamp":"2026-09-16T06:43:22.200Z","thinkingLevel":"high"}"#,
+    br#"{"type":"custom","id":"x1","parentId":"t1","timestamp":"2026-09-16T06:43:22.300Z","customType":"spice","data":{}}"#,
+    br#"{"type":"label","id":"l1","parentId":"x1","timestamp":"2026-09-16T06:43:22.400Z","targetId":"x1","label":"here"}"#,
+    br#"{"type":"session_init","id":"i1","parentId":null,"timestamp":"2026-09-16T06:43:22.500Z","systemPrompt":"","tools":[]}"#,
+    br#"{"type":"mode_change","id":"d1","parentId":"i1","timestamp":"2026-09-16T06:43:22.600Z","mode":"build"}"#,
+];
+
+#[test]
+fn session_file_bookkeeping_is_owned_ambiently_and_says_nothing() {
+    for bytes in SESSION_FILE_BOOKKEEPING {
+        let detected = decode_record(None, bytes, locus(bytes)).expect("omp owns its own file");
+        assert_eq!(detected.dialect, Dialect::Omp, "{bytes:?}");
+        assert!(
+            !matches!(detected.decoded, Decoded::Residue(_))
+                && detected.decoded.events().is_empty(),
+            "bookkeeping is neither residue nor typed: {:?}",
+            detected.decoded
+        );
+    }
+    // The session's own compaction record types the same event the RPC frame does.
+    let compaction = decoded(
+        br#"{"type":"compaction","id":"k1","parentId":"d1","timestamp":"2026-09-16T06:43:23.000Z","summary":"so far","firstKeptEntryId":"e1","tokensBefore":900000}"#,
+    );
+    assert!(
+        matches!(compaction.events(), [Event::Compaction(record)] if record.summary.as_deref() == Some("so far"))
+    );
+}
