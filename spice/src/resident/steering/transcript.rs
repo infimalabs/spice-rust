@@ -125,6 +125,12 @@ fn scan_record(
             let listen::Event::Prose(prose) = event else {
                 continue;
             };
+            // Only the occupant answers for the lane. Operator input reaches
+            // the same tape as user records, and a continuation summary or a
+            // restated inbox spells the header without anyone having said it.
+            if prose.role != listen::ProseRole::Assistant {
+                continue;
+            }
             for recognition in steer::scan(&prose.text, standing).into_iter().rev() {
                 if recognition_token(&recognition.outcome) != token {
                     continue;

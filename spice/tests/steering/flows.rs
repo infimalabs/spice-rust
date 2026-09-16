@@ -164,6 +164,78 @@ fn same_message_tool_call_cannot_ack(
     }
 }
 
+/// An operator record carrying the header is not the occupant answering.
+///
+/// Operator input reaches the same tape as user records, and a continuation
+/// summary or a restated inbox can spell a placed header there. Only assistant
+/// prose is the lane speaking, so neither disposition the operator record
+/// names is credited, and the key stays live until the occupant says it.
+fn operator_record_cannot_ack(fixture: &Fixture, lane: wire::CanonicalUuid) -> ExpectedRecognition {
+    let lane_id = lane.to_string();
+    let sent = text_directive(&invoke(
+        fixture,
+        &["steer", &lane_id, "answer in your own words"],
+        false,
+    ));
+    let epoch = lane_epoch(fixture, lane);
+    record_operator_prose(
+        fixture,
+        lane,
+        &format!(
+            "NACK {}: restated by the operator, not spoken by the lane",
+            sent.key
+        ),
+    );
+    let declined = invoke_as_lane(fixture, &lane_id, &["ack", &sent.key, "--decline"], false);
+    assert_text_refusal(&declined, "steer::transcript-evidence-absent");
+    let refused = invoke_as_lane(fixture, &lane_id, &["ack", &sent.key], false);
+    assert_text_refusal(&refused, "steer::transcript-evidence-absent");
+    let inbox = text_inbox(&invoke(fixture, &["inbox", &lane_id], false));
+    assert!(
+        inbox.lanes[0]
+            .pending
+            .iter()
+            .any(|pending| pending.directive == sent.directive),
+        "an operator record naming the header retired a directive the lane never answered"
+    );
+    let locus = record_reply(
+        fixture,
+        lane,
+        &format!("ACK {}: spoken by the lane itself", sent.key),
+        &sent.key,
+    );
+    let acknowledged = text_directive(&invoke_as_lane(
+        fixture,
+        &lane_id,
+        &["ack", &sent.key],
+        false,
+    ));
+    assert_eq!(acknowledged.directive, sent.directive);
+    assert_eq!(acknowledged.disposition, wire::Disposition::Acked);
+    ExpectedRecognition {
+        directive: sent.directive,
+        key: sent.key,
+        epoch,
+        disposition: wire::Disposition::Acked,
+        locus,
+    }
+}
+
+/// Capture operator text as one user record on the lane tape.
+fn record_operator_prose(fixture: &Fixture, lane: wire::CanonicalUuid, text: &str) {
+    let record = serde_json::json!({
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [{ "type": "text", "text": text }]
+        }
+    });
+    let mut bytes = wire::encode(&record).expect("operator transcript record encodes");
+    bytes.push(b'\n');
+    let tape = tape::Tape::open(fixture.tape(lane)).expect("lane tape opens");
+    tape.tee(&bytes).expect("operator record reaches tape");
+}
+
 /// Capture the ack command as the only record of one assistant message, with
 /// the header spelled inside its tool input and nowhere else.
 fn record_tool_call(fixture: &Fixture, lane: wire::CanonicalUuid, key: &str) {
@@ -221,10 +293,10 @@ fn verify_authority(
             .filter(|fact| fact.fact.kind() == kind)
             .count()
     };
-    assert_eq!(count(FactKind::SteerSent), 7);
+    assert_eq!(count(FactKind::SteerSent), 8);
     assert_eq!(
         count(FactKind::SteerAcked),
-        2 + usize::from(race == wire::Disposition::Acked)
+        3 + usize::from(race == wire::Disposition::Acked)
     );
     assert_eq!(count(FactKind::SteerDeclined), 1);
     assert_eq!(
@@ -700,8 +772,9 @@ fn steering_commands_preserve_principals_races_and_restart_state() {
     cancellation_path(&fixture, lanes.target);
     direct_input_cannot_ack(&fixture, lanes.target);
     let spoken = same_message_tool_call_cannot_ack(&fixture, lanes.target);
+    let occupant_spoken = operator_record_cannot_ack(&fixture, lanes.target);
     rendering_failure_path(&fixture, resident, lanes.target, &historical_key);
-    let mut expected = vec![acknowledged, declined, spoken];
+    let mut expected = vec![acknowledged, declined, spoken, occupant_spoken];
     expected.extend(raced);
     verify_authority(&fixture, lanes.target, race, &expected);
 }
