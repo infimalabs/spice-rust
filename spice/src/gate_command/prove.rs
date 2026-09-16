@@ -702,8 +702,20 @@ fn normalized_action_environment(values: &[(OsString, OsString)]) -> Vec<(OsStri
     normalized
 }
 
+/// The search path as lookup sees it: a repeated entry never resolves
+/// anything its first occurrence did not, so a shell that prepended a prefix
+/// twice describes the same toolchain as one that prepended it once.
 fn normalized_search_path(value: &OsStr) -> OsString {
-    let retained = std::env::split_paths(value).filter(|path| !codex_launcher_path(path));
+    let mut seen = Vec::new();
+    let retained = std::env::split_paths(value)
+        .filter(|path| !codex_launcher_path(path))
+        .filter(|path| {
+            if seen.contains(path) {
+                return false;
+            }
+            seen.push(path.clone());
+            true
+        });
     std::env::join_paths(retained).unwrap_or_else(|_| value.to_owned())
 }
 

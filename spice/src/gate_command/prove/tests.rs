@@ -369,6 +369,24 @@ fn codex_launcher_paths_do_not_partition_environment_identity() {
     assert_ne!(first, normalized(&["/different-toolchain/bin", "/usr/bin"]),);
 }
 
+#[test]
+fn a_repeated_search_path_entry_does_not_partition_environment_identity() {
+    let normalized =
+        |path| normalized_action_environment(&[(OsString::from("PATH"), search_path(path))]);
+    let once = normalized(&["/install/bin", "/toolchain/bin", "/usr/bin"]);
+    let twice = normalized(&["/install/bin", "/toolchain/bin", "/install/bin", "/usr/bin"]);
+
+    assert_eq!(once, twice);
+    assert_eq!(
+        once[0].1,
+        search_path(&["/install/bin", "/toolchain/bin", "/usr/bin"])
+    );
+    assert_ne!(
+        once,
+        normalized(&["/toolchain/bin", "/install/bin", "/usr/bin"])
+    );
+}
+
 fn search_path(paths: &[&str]) -> OsString {
     std::env::join_paths(paths.iter().map(Path::new)).expect("fixture PATH composes")
 }
