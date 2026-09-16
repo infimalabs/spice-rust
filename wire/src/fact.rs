@@ -415,6 +415,19 @@ pub(crate) fn decode_registered_body<F: Body>(
     }
 }
 
+/// Read a body already validated by [`decode_registered_body`] back through
+/// its registered DTO, borrowing the fields as they stand.
+///
+/// Construction proved these exact fields round-trip through `F`, so this
+/// repeats only the decode: no field is cloned and nothing is re-serialized.
+pub(crate) fn read_registered_body<F: Body>(
+    body: &serde_json::Map<String, serde_json::Value>,
+) -> Result<F, serde_json::Error> {
+    F::deserialize(serde::de::value::MapDeserializer::new(
+        body.iter().map(|(field, value)| (field.as_str(), value)),
+    ))
+}
+
 impl<F: Body> Serialize for Fact<F> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut fields = match serde_json::to_value(&self.body).map_err(S::Error::custom)? {
@@ -534,7 +547,7 @@ impl AnyFact {
             return None;
         }
         Some(
-            decode_registered_body(&self.body)
+            read_registered_body(&self.body)
                 .expect("a body validated on decode reads back through its registered DTO"),
         )
     }

@@ -692,7 +692,7 @@ impl StreamFact {
             return None;
         }
         Some(
-            crate::fact::decode_registered_body(self.body())
+            crate::fact::read_registered_body(self.body())
                 .expect("a stream body validated on decode reads through its registered DTO"),
         )
     }
