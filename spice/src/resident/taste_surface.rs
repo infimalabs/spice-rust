@@ -80,9 +80,9 @@ impl steer::Standing for TasteDirectiveProvenance {
 }
 
 impl TasteDirectiveProvenance {
-    fn from_snapshot(snapshot: &journal::FactSnapshot) -> CommandResult<Self> {
+    fn from_facts(facts: &bus::TaskFacts) -> CommandResult<Self> {
         let mut provenance = Self::default();
-        for envelope in snapshot.facts() {
+        for envelope in facts.iter() {
             let key = if let Some(body) = envelope.fact.read::<wire::body::TasteReminded>() {
                 Some(body.key)
             } else if let Some(body) = envelope.fact.read::<TasteJudged>() {
@@ -389,9 +389,9 @@ fn taste_directive_provenance(
         return Ok(TasteDirectiveProvenance::default());
     }
     let snapshot = bus
-        .fact_snapshot()
+        .task_snapshot()
         .map_err(|error| store_fault("taste::journal-unreadable", &error.to_string()))?;
-    TasteDirectiveProvenance::from_snapshot(&snapshot)
+    TasteDirectiveProvenance::from_facts(snapshot.facts())
 }
 
 fn applicability_context(
@@ -455,13 +455,14 @@ where
         let observed = current_residency(bus, epoch)?;
         require_current_occupant(observed.body(), record.lane, record.occupant)?;
         let snapshot = bus
-            .fact_snapshot()
+            .task_snapshot()
             .map_err(|error| store_fault("taste::journal-unreadable", &error.to_string()))?;
-        let anchor = context_anchor(&snapshot, record.lane, record.occupant)
+        let context = Context::current(snapshot.facts(), record.lane, record.occupant)
             .map_err(|detail| store_fault("taste::epoch-missing", &detail))?;
-        let origin = context_anchor_origin(&snapshot, anchor)
+        let anchor = context.anchor;
+        let origin = context_anchor_origin(snapshot.facts(), anchor)
             .map_err(|detail| store_fault("taste::epoch-missing", &detail))?;
-        let unsuppressed = unsuppressed_candidates(&candidates, &snapshot, anchor);
+        let unsuppressed = context.admitted(&candidates);
         if unsuppressed.is_empty() {
             return Ok(());
         }
@@ -528,21 +529,6 @@ fn one_candidate_per_warning(candidates: Vec<Candidate>) -> Vec<Candidate> {
     candidates
         .into_iter()
         .filter(|candidate| warnings.insert(candidate.taste.clone()))
-        .collect()
-}
-
-fn unsuppressed_candidates(
-    candidates: &[Candidate],
-    snapshot: &journal::FactSnapshot,
-    anchor: Seq,
-) -> Vec<Candidate> {
-    candidates
-        .iter()
-        .filter(|candidate| {
-            !was_judged(snapshot, &candidate.content, &candidate.bag, anchor)
-                && !warning_issued(snapshot, &candidate.taste, anchor)
-        })
-        .cloned()
         .collect()
 }
 
@@ -736,18 +722,18 @@ fn prepare_judgment(
     }
     require_current_occupant(observed.body(), record.lane, record.occupant)?;
     let snapshot = bus
-        .fact_snapshot()
+        .task_snapshot()
         .map_err(|error| store_fault("taste::journal-unreadable", &error.to_string()))?;
-    let anchor = context_anchor(&snapshot, record.lane, record.occupant)
+    let context = Context::current(snapshot.facts(), record.lane, record.occupant)
         .map_err(|detail| store_fault("taste::epoch-missing", &detail))?;
-    let candidates = unsuppressed_candidates(&candidates, &snapshot, anchor);
+    let candidates = context.admitted(&candidates);
     if candidates.is_empty() {
         return Ok(None);
     }
     Ok(Some(PreparedJudgment {
         lane: record.lane,
         occupant: record.occupant,
-        anchor,
+        anchor: context.anchor,
         bag: taste::bag_identity(bag),
         candidates,
     }))
@@ -776,35 +762,25 @@ pub(super) fn complete_judgment(
             return Ok(());
         }
         let snapshot = bus
-            .fact_snapshot()
+            .task_snapshot()
             .map_err(|error| store_fault("taste::journal-unreadable", &error.to_string()))?;
-        let current_anchor = context_anchor(
-            &snapshot,
+        let context = Context::current(
+            snapshot.facts(),
             completed.prepared.lane,
             completed.prepared.occupant,
         )
         .map_err(|detail| store_fault("taste::epoch-missing", &detail))?;
-        if current_anchor != completed.prepared.anchor {
+        if context.anchor != completed.prepared.anchor {
             return Ok(());
         }
-        let origin = context_anchor_origin(&snapshot, current_anchor)
+        let origin = context_anchor_origin(snapshot.facts(), context.anchor)
             .map_err(|detail| store_fault("taste::epoch-missing", &detail))?;
         let decisions = completed
             .decisions
             .iter()
             .filter(|decided| {
                 decided.candidate.bag == completed.prepared.bag
-                    && !was_judged(
-                        &snapshot,
-                        &decided.candidate.content,
-                        &decided.candidate.bag,
-                        completed.prepared.anchor,
-                    )
-                    && !warning_issued(
-                        &snapshot,
-                        &decided.candidate.taste,
-                        completed.prepared.anchor,
-                    )
+                    && context.admits(&decided.candidate)
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -1127,22 +1103,9 @@ fn reminder_guard(
             return Err(GuardError::refused("taste::occupant-moved"));
         }
 
-        let snapshot = read
-            .fact_snapshot()
-            .map_err(|error| GuardError::Invalid(error.to_string()))?;
-        let current = context_anchor(&snapshot, lane, occupant).map_err(GuardError::Invalid)?;
-        if current != anchor {
-            return Err(GuardError::refused("taste::epoch-moved"));
-        }
+        let context = guarded_context(read, anchor, lane, occupant)?;
         for opening in &openings {
-            if warning_issued(&snapshot, &opening.candidate.taste, anchor)
-                || was_judged(
-                    &snapshot,
-                    &opening.candidate.content,
-                    &opening.candidate.bag,
-                    anchor,
-                )
-            {
+            if !context.admits(&opening.candidate) {
                 return Err(GuardError::refused("taste::reminder-recorded"));
             }
             if read.steering_head(opening.directive)?.is_some()
@@ -1176,21 +1139,9 @@ fn judgment_guard(
         {
             return Err(GuardError::refused("taste::occupant-moved"));
         }
-        let snapshot = read
-            .fact_snapshot()
-            .map_err(|error| GuardError::Invalid(error.to_string()))?;
-        let current = context_anchor(&snapshot, lane, occupant).map_err(GuardError::Invalid)?;
-        if current != anchor {
-            return Err(GuardError::refused("taste::epoch-moved"));
-        }
+        let context = guarded_context(read, anchor, lane, occupant)?;
         for decided in &decisions {
-            if was_judged(
-                &snapshot,
-                &decided.candidate.content,
-                &decided.candidate.bag,
-                anchor,
-            ) || warning_issued(&snapshot, &decided.candidate.taste, anchor)
-            {
+            if !context.admits(&decided.candidate) {
                 return Err(GuardError::refused("taste::judgment-recorded"));
             }
         }
@@ -1205,37 +1156,161 @@ fn judgment_guard(
     })
 }
 
-pub(super) fn context_anchor(
-    snapshot: &journal::FactSnapshot,
-    lane: CanonicalUuid,
-    occupant: CanonicalUuid,
-) -> Result<Seq, String> {
-    context_anchor_from(snapshot.facts().iter().rev(), lane, occupant)
+/// The kinds that open an occupant's context or answer under it.
+const CONTEXT_KINDS: [wire::FactKind; 5] = [
+    wire::FactKind::LaneStarted,
+    wire::FactKind::LaneRenewed,
+    wire::FactKind::LaneCompacted,
+    wire::FactKind::TasteJudged,
+    wire::FactKind::TasteReminded,
+];
+
+/// One occupant's context: the fact that opened it and what has been judged
+/// or warned about under it since.
+///
+/// Every answer under an anchor is appended after it, so the whole context
+/// is one forward walk from the anchor. No candidate costs a scan of the
+/// history before it, however long the lane has run.
+struct Context {
+    anchor: Seq,
+    /// Judged content digests, each with the bags it was judged under.
+    judged: BTreeMap<Digest, BTreeSet<Digest>>,
+    /// Tastes already reminded about or confirmed.
+    warned: BTreeSet<String>,
 }
 
+impl Context {
+    /// The occupant's current context in the shared task history.
+    fn current(
+        facts: &bus::TaskFacts,
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+    ) -> Result<Self, String> {
+        let anchor = context_anchor_from(facts.iter().rev(), lane, occupant)?;
+        Self::since(anchor, lane, occupant, facts.after(Some(anchor)))
+    }
+
+    /// The context `anchor` opened, folded from the facts after it.
+    ///
+    /// # Errors
+    ///
+    /// Names the later fact that opened a newer context for the occupant.
+    fn since<'a>(
+        anchor: Seq,
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
+    ) -> Result<Self, String> {
+        let mut context = Self {
+            anchor,
+            judged: BTreeMap::new(),
+            warned: BTreeSet::new(),
+        };
+        for envelope in facts {
+            if let Some(body) = envelope.fact.read::<TasteJudged>() {
+                if body.compaction != anchor.get() {
+                    continue;
+                }
+                if matches!(body.decision, TasteDecision::Confirmed { .. }) {
+                    context.warned.insert(body.taste);
+                }
+                context
+                    .judged
+                    .entry(body.content)
+                    .or_default()
+                    .insert(body.bag);
+            } else if let Some(body) = envelope.fact.read::<wire::body::TasteReminded>() {
+                if body.compaction == anchor.get() {
+                    context.warned.insert(body.taste);
+                }
+            } else if opens_context(envelope, lane, occupant) {
+                return Err(format!(
+                    "lane {lane} occupant {occupant} opened a newer context at {}",
+                    envelope.seq
+                ));
+            }
+        }
+        Ok(context)
+    }
+
+    /// Whether nothing under this context has answered the candidate yet.
+    fn admits(&self, candidate: &Candidate) -> bool {
+        !self.warned.contains(&candidate.taste)
+            && !self
+                .judged
+                .get(&candidate.content)
+                .is_some_and(|bags| bags.contains(&candidate.bag))
+    }
+
+    /// The candidates nothing under this context has answered yet.
+    fn admitted(&self, candidates: &[Candidate]) -> Vec<Candidate> {
+        candidates
+            .iter()
+            .filter(|candidate| self.admits(candidate))
+            .cloned()
+            .collect()
+    }
+}
+
+/// The context `anchor` opened, read inside one guarded transaction.
+///
+/// The guard reads only the context kinds after the anchor rather than the
+/// whole journal, and refuses when the occupant has since opened a newer
+/// context, exactly as it would have found a different current anchor.
+fn guarded_context(
+    read: &journal::JournalRead<'_>,
+    anchor: Seq,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+) -> Result<Context, GuardError> {
+    let page = read.selected_fact_page(
+        &CONTEXT_KINDS,
+        Some(anchor),
+        journal::FactReadBudget::RETAINED,
+    )?;
+    if let Some(continuation) = page.continuation {
+        return Err(GuardError::refused(format!(
+            "taste context guard requires continuation after {continuation}"
+        )));
+    }
+    Context::since(anchor, lane, occupant, &page.rows)
+        .map_err(|_| GuardError::refused("taste::epoch-moved"))
+}
+
+/// The newest fact opening a context for the occupant, searched in the order
+/// given: callers hand the history newest-first.
 pub(super) fn context_anchor_from<'a>(
     facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
 ) -> Result<Seq, String> {
-    for envelope in facts {
-        let fact = &envelope.fact;
-        let matches = if let Some(body) = fact.read::<wire::body::LaneCompacted>() {
-            body.lane == lane && body.occupant == occupant
-        } else if let Some(body) = fact.read::<wire::body::LaneRenewed>() {
-            body.lane == lane && body.occupant == occupant
-        } else if let Some(body) = fact.read::<wire::body::LaneStarted>() {
-            body.lane == lane && body.occupant == occupant
-        } else {
-            false
-        };
-        if matches {
-            return Ok(envelope.seq);
-        }
-    }
-    Err(format!(
-        "lane {lane} occupant {occupant} has no start, renewal, or compaction fact"
-    ))
+    facts
+        .into_iter()
+        .find(|envelope| opens_context(envelope, lane, occupant))
+        .map(|envelope| envelope.seq)
+        .ok_or_else(|| {
+            format!("lane {lane} occupant {occupant} has no start, renewal, or compaction fact")
+        })
+}
+
+/// Whether one fact opens a context for the occupant: its start, a renewal,
+/// or a compaction.
+fn opens_context(
+    envelope: &wire::Envelope<wire::AnyFact>,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+) -> bool {
+    let fact = &envelope.fact;
+    let opened = if let Some(body) = fact.read::<wire::body::LaneCompacted>() {
+        (body.lane, body.occupant)
+    } else if let Some(body) = fact.read::<wire::body::LaneRenewed>() {
+        (body.lane, body.occupant)
+    } else if let Some(body) = fact.read::<wire::body::LaneStarted>() {
+        (body.lane, body.occupant)
+    } else {
+        return false;
+    };
+    opened == (lane, occupant)
 }
 
 /// Origin of the fact opening one context epoch.
@@ -1244,43 +1319,11 @@ pub(super) fn context_anchor_from<'a>(
 /// its predecessor. New taste facts extend that same causal chain until a lane
 /// renewal or compaction opens a new context, so their write origin belongs to
 /// the anchor rather than necessarily to the current resident epoch.
-fn context_anchor_origin(
-    snapshot: &journal::FactSnapshot,
-    anchor: Seq,
-) -> Result<wire::Origin, String> {
-    snapshot
-        .facts()
-        .binary_search_by_key(&anchor, |envelope| envelope.seq)
-        .map(|index| snapshot.facts()[index].origin.clone())
-        .map_err(|_| format!("context anchor {anchor} is absent from its fact snapshot"))
-}
-
-fn warning_issued(snapshot: &journal::FactSnapshot, taste: &str, anchor: Seq) -> bool {
-    snapshot.facts().iter().any(|envelope| {
-        let reminded = envelope
-            .fact
-            .read::<wire::body::TasteReminded>()
-            .is_some_and(|body| body.taste == taste && body.compaction == anchor.get());
-        let confirmed = envelope.fact.read::<TasteJudged>().is_some_and(|body| {
-            body.taste == taste
-                && body.compaction == anchor.get()
-                && matches!(body.decision, TasteDecision::Confirmed { .. })
-        });
-        reminded || confirmed
-    })
-}
-
-fn was_judged(
-    snapshot: &journal::FactSnapshot,
-    content: &Digest,
-    bag: &Digest,
-    anchor: Seq,
-) -> bool {
-    snapshot.facts().iter().any(|envelope| {
-        envelope.fact.read::<TasteJudged>().is_some_and(|body| {
-            &body.content == content && &body.bag == bag && body.compaction == anchor.get()
-        })
-    })
+fn context_anchor_origin(facts: &bus::TaskFacts, anchor: Seq) -> Result<wire::Origin, String> {
+    facts
+        .at(anchor)
+        .map(|envelope| envelope.origin.clone())
+        .ok_or_else(|| format!("context anchor {anchor} is absent from its fact snapshot"))
 }
 
 #[cfg(test)]

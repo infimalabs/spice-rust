@@ -284,25 +284,22 @@ fn replay_task_completion(
     operation: wire::CanonicalUuid,
 ) -> Result<Option<Outcome<CommandAnswer>>, Outcome<CommandAnswer>> {
     let snapshot = bus
-        .fact_snapshot()
+        .task_snapshot()
         .map_err(|error| store_fault("task::completion-replay-unavailable", &error.to_string()))?;
     let facts = snapshot.facts();
-    let terminal = facts
-        .iter()
-        .enumerate()
-        .rev()
-        .find_map(|(index, envelope)| {
-            let completed = envelope.fact.read::<body::TaskDone>()?;
-            let terminal = completed.terminal?;
-            (envelope.actor == *command.actor()
-                && completed.task == *entry.born()
-                && completed.validation == done.validation
-                && terminal.operation == operation)
-                .then_some((index, envelope.seq, terminal))
-        });
-    Ok(terminal.map(|(index, first, terminal)| {
+    let terminal = facts.iter().rev().find_map(|envelope| {
+        let completed = envelope.fact.read::<body::TaskDone>()?;
+        let terminal = completed.terminal?;
+        (envelope.actor == *command.actor()
+            && completed.task == *entry.born()
+            && completed.validation == done.validation
+            && terminal.operation == operation)
+            .then_some((envelope.seq, terminal))
+    });
+    Ok(terminal.map(|(first, terminal)| {
         let last = facts
-            .get(index + 1)
+            .after(Some(first))
+            .next()
             .and_then(|following| {
                 let phased = following.fact.read::<body::TaskPhased>()?;
                 (following.cause == Some(first) && phased.task == *entry.born())
@@ -1050,8 +1047,8 @@ fn repeated_doc_apply(
     apply: &DocApply,
     touched: &[TaskHandle],
 ) -> Option<Outcome<CommandAnswer>> {
-    let facts = bus.fact_snapshot().ok()?;
-    let existing = facts.facts().iter().find(|envelope| {
+    let snapshot = bus.task_snapshot().ok()?;
+    let existing = snapshot.facts().iter().find(|envelope| {
         envelope.fact.kind() == wire::FactKind::DocApplied
             && envelope
                 .fact

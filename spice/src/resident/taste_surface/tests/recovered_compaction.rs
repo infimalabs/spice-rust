@@ -88,8 +88,12 @@ fn recovered_session_compaction_is_exact_durable_and_restart_idempotent() {
     assert_eq!(compacted[0].1.offset, locus.offset);
     assert_eq!(compacted[0].1.length, locus.length);
     assert_eq!(
-        context_anchor(&snapshot, fixture.lane, fixture.occupant)
-            .expect("recovered boundary is the context anchor"),
+        context_anchor_from(
+            snapshot.facts().iter().rev(),
+            fixture.lane,
+            fixture.occupant
+        )
+        .expect("recovered boundary is the context anchor"),
         compacted[0].0,
     );
     fixture.recognize(
