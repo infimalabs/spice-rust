@@ -182,6 +182,21 @@ impl<'de> Deserialize<'de> for Actor {
 
 /// Root attribution carried through the work.
 ///
+/// An origin names the root of a causal chain, never the principal writing
+/// one link of it. The fact that opens a chain mints its origin; every fact
+/// descending from it through `cause` repeats that origin unchanged, however
+/// many principals or resident generations the chain crosses. The journal
+/// holds this as law rather than convention: the commit door refuses a cause
+/// that crosses an origin boundary, and its thread index names one origin per
+/// root. A `steer::sent` roots its chain at the resident that admitted it, so
+/// the `steer::canceled`, `steer::escalated`, `steer::acked`, and
+/// `steer::declined` facts that advance or retire the directive carry that same
+/// `resident:<epoch>` even when a later generation writes them. Who wrote a
+/// link is read from the envelope `actor` and `cause`, and from the body
+/// `epoch` where a lane authenticated the fact. A fact with no live directive
+/// to descend from, such as a `steer::missed`, opens a chain of its own at the
+/// writing resident.
+///
 /// WIRE names ACK keys, task handles, lane ids, and repository revisions as
 /// examples rather than a closed set, so the shape law is the one thing
 /// enforced here: a non-empty class, a colon, and a non-empty value.
@@ -256,7 +271,8 @@ pub struct Envelope<T> {
     pub at: Instant,
     /// Principal that caused the append.
     pub actor: Actor,
-    /// Root attribution carried through the work.
+    /// Root attribution carried through the work: the origin of the chain root
+    /// this fact descends from, not the writer of this link.
     pub origin: Origin,
     /// Position of the immediately provoking fact; absent at a chain root.
     #[serde(

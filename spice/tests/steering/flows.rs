@@ -154,12 +154,7 @@ fn verify_authority(
         count(FactKind::SteerCanceled),
         3 + usize::from(race == wire::Disposition::Canceled)
     );
-    assert!(snapshot.facts().iter().all(|fact| {
-        !matches!(
-            fact.fact.kind(),
-            FactKind::SteerAcked | FactKind::SteerDeclined
-        ) || matches!(fact.actor, Actor::Lane(named) if named == lane)
-    }));
+    verify_derived_attribution(&snapshot, lane);
     let mut observed = Vec::new();
     for envelope in snapshot.facts() {
         if let Some(body) = envelope.fact.read::<wire::body::SteerAcked>() {
@@ -220,6 +215,44 @@ fn verify_authority(
     );
     for body in &missed {
         assert_transcript_locus(fixture, lane, body.locus, &body.key);
+    }
+}
+
+/// Who wrote each derived steering fact, and what it descends from.
+///
+/// Lane-authenticated recognitions name the lane as actor. Origin names the
+/// chain root, not the writer: every derived steering fact cites its
+/// steer::sent as cause and repeats the origin that fact minted. The directive
+/// canceled after the restart in rendering_failure_path is what separates this
+/// from the epoch of the resident writing the link.
+fn verify_derived_attribution(snapshot: &journal::FactSnapshot, lane: wire::CanonicalUuid) {
+    assert!(snapshot.facts().iter().all(|fact| {
+        !matches!(
+            fact.fact.kind(),
+            FactKind::SteerAcked | FactKind::SteerDeclined
+        ) || matches!(fact.actor, Actor::Lane(named) if named == lane)
+    }));
+    let by_seq = snapshot
+        .facts()
+        .iter()
+        .map(|fact| (fact.seq, fact))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for fact in snapshot.facts() {
+        if !matches!(
+            fact.fact.kind(),
+            FactKind::SteerAcked
+                | FactKind::SteerDeclined
+                | FactKind::SteerCanceled
+                | FactKind::SteerEscalated
+        ) {
+            continue;
+        }
+        let cause = fact
+            .cause
+            .expect("derived steering fact cites its directive");
+        let root = by_seq[&cause];
+        assert_eq!(root.fact.kind(), FactKind::SteerSent, "{fact:#?}");
+        assert_eq!(fact.origin, root.origin, "{fact:#?}");
     }
 }
 
