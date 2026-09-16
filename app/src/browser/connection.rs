@@ -318,6 +318,8 @@ async fn send_topology_as(
             worktree,
             life,
             vendor,
+            model,
+            effort,
         } => {
             send_untracked_as(
                 principal,
@@ -333,8 +335,8 @@ async fn send_topology_as(
                     worktree,
                     life,
                     vendor,
-                    model: None,
-                    effort: None,
+                    model: model.as_deref(),
+                    effort: effort.as_deref(),
                     resume: None,
                 },
             )

@@ -7,11 +7,7 @@ mod lineage_menu;
 
 #[derive(Clone)]
 pub(super) struct AgentControls {
-    pub(super) seat_name: UseStateHandle<String>,
-    pub(super) seat_worktree: UseStateHandle<String>,
-    pub(super) seat_vendor: UseStateHandle<String>,
-    pub(super) seat_life: UseStateHandle<String>,
-    pub(super) seat_notice: UseStateHandle<Notice>,
+    pub(super) seat: SeatDraft,
     pub(super) submit_seat: Callback<SubmitEvent>,
     /// Admit manual speech to the one browser-global playback queue.
     pub(super) speak: Callback<SpeechRequest>,
@@ -177,12 +173,25 @@ pub(super) const fn axis_label(axis: Axis) -> &'static str {
     CanvasDestination::for_axis(axis).label()
 }
 
+/// The seat form's fields as the operator has written them so far.
+#[derive(Clone)]
+pub(super) struct SeatDraft {
+    pub(super) name: UseStateHandle<String>,
+    pub(super) worktree: UseStateHandle<String>,
+    pub(super) vendor: UseStateHandle<String>,
+    pub(super) life: UseStateHandle<String>,
+    pub(super) model: UseStateHandle<String>,
+    pub(super) effort: UseStateHandle<String>,
+    pub(super) notice: UseStateHandle<Notice>,
+}
+
 pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &AgentControls) -> Html {
     let can_seat = runtime.is_some_and(|runtime| runtime.offers(CommandKind::LaneSeat));
+    let draft = &controls.seat;
     let ready = can_seat
-        && !controls.seat_worktree.trim().is_empty()
-        && !controls.seat_vendor.trim().is_empty()
-        && !controls.seat_life.trim().is_empty();
+        && !draft.worktree.trim().is_empty()
+        && !draft.vendor.trim().is_empty()
+        && !draft.life.trim().is_empty();
     html! {
         <aside class="seat-panel">
             <div class="seat-panel-heading">
@@ -193,24 +202,36 @@ pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &Agen
             <form class="seat-form" onsubmit={controls.submit_seat.clone()}>
                 <label for="seat-name">{"Name"}</label>
                 <input id="seat-name" type="text" placeholder="Ava"
-                    value={(*controls.seat_name).clone()}
-                    oninput={state_from_input(controls.seat_name.clone())} />
+                    value={(*draft.name).clone()}
+                    oninput={state_from_input(draft.name.clone())} />
                 <label for="seat-worktree">{"Worktree"}</label>
                 <input id="seat-worktree" type="text" placeholder="/absolute/path/to/worktree"
-                    value={(*controls.seat_worktree).clone()}
-                    oninput={state_from_input(controls.seat_worktree.clone())} />
+                    value={(*draft.worktree).clone()}
+                    oninput={state_from_input(draft.worktree.clone())} />
                 <label for="seat-vendor">{"Vendor"}</label>
-                <input id="seat-vendor" type="text" value={(*controls.seat_vendor).clone()}
-                    oninput={state_from_input(controls.seat_vendor.clone())} />
+                <input id="seat-vendor" type="text" value={(*draft.vendor).clone()}
+                    oninput={state_from_input(draft.vendor.clone())} />
                 <label for="seat-life">{"Life"}</label>
                 <input id="seat-life" type="text" list="lane-lives"
-                    value={(*controls.seat_life).clone()}
-                    oninput={state_from_input(controls.seat_life.clone())} />
+                    value={(*draft.life).clone()}
+                    oninput={state_from_input(draft.life.clone())} />
                 <datalist id="lane-lives">
                     <option value="steer" /><option value="drive" /><option value="drain" />
                 </datalist>
+                <label for="seat-model">{"Model"}</label>
+                <input id="seat-model" type="text" placeholder="vendor default"
+                    value={(*draft.model).clone()}
+                    oninput={state_from_input(draft.model.clone())} />
+                <label for="seat-effort">{"Effort"}</label>
+                <input id="seat-effort" type="text" list="lane-efforts" placeholder="vendor default"
+                    value={(*draft.effort).clone()}
+                    oninput={state_from_input(draft.effort.clone())} />
+                <datalist id="lane-efforts">
+                    <option value="low" /><option value="medium" /><option value="high" />
+                    <option value="xhigh" /><option value="max" />
+                </datalist>
                 <button type="submit" disabled={!ready}>{"Seat agent"}</button>
-                {render_notice(&controls.seat_notice)}
+                {render_notice(&draft.notice)}
             </form>
         </aside>
     }

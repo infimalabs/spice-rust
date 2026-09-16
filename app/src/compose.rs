@@ -62,6 +62,34 @@ pub struct Seat {
     pub vendor: wire::Name,
 }
 
+/// The model and effort a seat selects for its occupant, each absent when
+/// the vendor's configured value governs.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Selection {
+    /// Model spelling handed to the vendor as written.
+    pub model: Option<String>,
+    /// Effort spelling, folded to the lower-case word the closed vocabulary
+    /// spells; the resident refuses one outside it.
+    pub effort: Option<String>,
+}
+
+/// Compose a seat's model and effort selection from its two optional fields.
+///
+/// Neither field can refuse: a blank one leaves that value to the vendor
+/// configuration, and an effort outside the closed vocabulary is refused by
+/// the resident, which is the one place that vocabulary is spelled.
+#[must_use]
+pub fn selection(model: &str, effort: &str) -> Selection {
+    let present = |written: &str| match written.trim() {
+        "" => None,
+        written => Some(written.to_owned()),
+    };
+    Selection {
+        model: present(model),
+        effort: present(effort).map(|effort| effort.to_ascii_lowercase()),
+    }
+}
+
 /// One accepted task observation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Note {

@@ -820,26 +820,18 @@ fn use_agent_controls(
     surface: UseStateHandle<SurfaceData>,
     speech: AgentSpeechControls,
 ) -> view::AgentControls {
-    let seat_name = use_state(String::new);
-    let seat_worktree = use_state(String::new);
-    let seat_vendor = use_state(|| "codex".to_owned());
-    let seat_life = use_state(|| "steer".to_owned());
-    let seat_notice = use_state(Notice::none);
+    let seat = view::SeatDraft {
+        name: use_state(String::new),
+        worktree: use_state(String::new),
+        vendor: use_state(|| "codex".to_owned()),
+        life: use_state(|| "steer".to_owned()),
+        model: use_state(String::new),
+        effort: use_state(String::new),
+        notice: use_state(Notice::none),
+    };
     view::AgentControls {
-        submit_seat: seat_submit(
-            sender,
-            surface,
-            seat_name.clone(),
-            seat_worktree.clone(),
-            seat_vendor.clone(),
-            seat_life.clone(),
-            seat_notice.clone(),
-        ),
-        seat_name,
-        seat_worktree,
-        seat_vendor,
-        seat_life,
-        seat_notice,
+        submit_seat: seat_submit(sender, surface, seat.clone()),
+        seat,
         speak: speech.speak,
         narrate: speech.narrate,
         suppress_automatic_speech: speech.suppress_automatic,
@@ -850,11 +842,7 @@ fn use_agent_controls(
 fn seat_submit(
     sender: SenderHandle,
     surface: UseStateHandle<SurfaceData>,
-    name: UseStateHandle<String>,
-    worktree: UseStateHandle<String>,
-    vendor: UseStateHandle<String>,
-    life: UseStateHandle<String>,
-    notice: UseStateHandle<Notice>,
+    draft: view::SeatDraft,
 ) -> Callback<SubmitEvent> {
     Callback::from(move |event: SubmitEvent| {
         event.prevent_default();
@@ -866,11 +854,12 @@ fn seat_submit(
         else {
             return;
         };
-        match compose::seat(&name, &worktree, &vendor, &life) {
+        match compose::seat(&draft.name, &draft.worktree, &draft.vendor, &draft.life) {
             Ok(seat) => {
                 let Ok(lane) = random_uuid() else {
                     return;
                 };
+                let selection = compose::selection(&draft.model, &draft.effort);
                 if admit_action(
                     &sender,
                     ClientAction::Seat {
@@ -880,12 +869,14 @@ fn seat_submit(
                         worktree: seat.worktree,
                         life: seat.life,
                         vendor: seat.vendor,
+                        model: selection.model,
+                        effort: selection.effort,
                     },
                 ) {
-                    notice.set(Notice::none());
+                    draft.notice.set(Notice::none());
                 }
             }
-            Err(refusal) => notice.set(refusal.into()),
+            Err(refusal) => draft.notice.set(refusal.into()),
         }
     })
 }

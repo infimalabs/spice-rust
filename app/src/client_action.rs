@@ -20,6 +20,8 @@ pub(crate) enum ClientAction {
         worktree: String,
         life: String,
         vendor: wire::Name,
+        model: Option<String>,
+        effort: Option<String>,
     },
     ArrangeLane {
         topology_revision: u64,

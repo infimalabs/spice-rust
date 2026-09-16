@@ -128,6 +128,21 @@ fn refusals_arrive_in_the_order_the_form_lists_its_fields() {
     assert_eq!(named(WORKTREE, VENDOR, ""), "Life");
 }
 
+/// The selection fields never refuse: blank leaves the vendor's own value in
+/// force, and the effort is folded the way the vendor field is, while the
+/// model is handed on as written because the vendor resolves it.
+#[test]
+fn a_seat_selection_is_absent_when_blank_and_folded_when_written() {
+    assert_eq!(compose::selection("", "  "), compose::Selection::default());
+    assert_eq!(
+        compose::selection(" gpt-5.5 ", " Low\n"),
+        compose::Selection {
+            model: Some("gpt-5.5".to_owned()),
+            effort: Some("low".to_owned()),
+        }
+    );
+}
+
 #[test]
 fn steering_a_seated_lane_returns_the_seat_beside_the_trimmed_message() {
     let (seat, text) =
