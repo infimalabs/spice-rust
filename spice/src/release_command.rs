@@ -294,13 +294,13 @@ fn prepare(matches: &ArgMatches) -> Result<Prepared, Box<Outcome<ReleasePlan>>> 
             &error.to_string(),
         ))
     })?;
-    let snapshot = reader.fact_snapshot().map_err(|error| {
+    let facts = reader.read(observed_facts).map_err(|error| {
         Box::new(environment::<ReleasePlan>(
             "release::journal-unreadable",
             &error.to_string(),
         ))
     })?;
-    let state = observe(&snapshot, &release)
+    let state = observe(&facts, &release)
         .map_err(|error| Box::new(refusal::<ReleasePlan>("release::evidence-refused", &error)))?;
     Ok(Prepared {
         release,
@@ -834,14 +834,35 @@ fn git_line(root: &Path, arguments: &[&str]) -> Result<String, String> {
     Ok(output)
 }
 
-pub(crate) fn observe(
-    snapshot: &journal::FactSnapshot,
+/// The kinds a release observation reads: the proof sealing a manifest and
+/// the publication naming it.
+pub(crate) const OBSERVED_KINDS: [wire::FactKind; 2] = [
+    wire::FactKind::ProofSealed,
+    wire::FactKind::ReleasePublished,
+];
+
+/// Every observed fact inside one guarded read, rather than the whole
+/// journal those few facts sit in.
+pub(crate) fn observed_facts(
+    read: &journal::JournalRead<'_>,
+) -> Result<Vec<wire::Envelope<wire::AnyFact>>, journal::GuardError> {
+    let page = read.selected_fact_page(&OBSERVED_KINDS, None, journal::FactReadBudget::RETAINED)?;
+    if let Some(continuation) = page.continuation {
+        return Err(journal::GuardError::refused(format!(
+            "release observation requires continuation after {continuation}"
+        )));
+    }
+    Ok(page.rows)
+}
+
+pub(crate) fn observe<'a>(
+    facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
     release: &AdmittedRelease,
 ) -> Result<PublicationState, ObservationError> {
     let mut proof = None;
     let mut published = None;
     let expected = release.fact();
-    for envelope in snapshot.facts() {
+    for envelope in facts {
         if let Some(body) = envelope.fact.read::<ProofSealed>() {
             if body.manifest == *release.manifest() {
                 proof = Some(envelope.seq);

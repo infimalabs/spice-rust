@@ -60,9 +60,9 @@ fn admit_recognition(
         .map_err(|error| release_refusal("proof::source-refused", &error))?;
     require_current_source(&published.manifest.source, &source)?;
     let snapshot = bus
-        .fact_snapshot()
+        .task_snapshot()
         .map_err(|error| typed_store_fault("proof::journal-unreadable", &error.to_string()))?;
-    let head = snapshot.horizon().ok_or_else(|| {
+    let head = snapshot.cursor().ok_or_else(|| {
         release_refusal(
             "proof::observation-absent",
             "proof recognition requires one current journal head",

@@ -41,8 +41,7 @@ pub(super) fn dispatch_release_publish(
     let origin = prepared
         .snapshot
         .facts()
-        .iter()
-        .find(|fact| fact.seq == proof)
+        .at(proof)
         .map(|fact| fact.origin.clone())
         .expect("observed proof position belongs to the same canonical snapshot");
     let proposal = match propose_release_publish(
@@ -71,7 +70,7 @@ pub(super) fn dispatch_release_publish(
 
 struct PreparedReleasePublish {
     release: crate::release_command::AdmittedRelease,
-    snapshot: journal::FactSnapshot,
+    snapshot: bus::TaskSnapshot,
     state: crate::release_command::PublicationState,
 }
 
@@ -103,9 +102,9 @@ fn prepare_release_publish(
         )));
     }
     let snapshot = bus
-        .fact_snapshot()
+        .task_snapshot()
         .map_err(|error| typed_store_fault("release::journal-unreadable", &error.to_string()))?;
-    let state = crate::release_command::observe(&snapshot, &release)
+    let state = crate::release_command::observe(snapshot.facts().iter(), &release)
         .map_err(|error| release_refusal("release::evidence-refused", &error.to_string()))?;
     if !release_witnesses_match(command.expected(), &release, state) {
         return Err(Outcome::Refusal(Refusal::bare(
@@ -169,10 +168,8 @@ fn propose_release_publish(
         if current != guarded_release {
             return Err(GuardError::refused("release::manifest-moved"));
         }
-        let snapshot = read
-            .fact_snapshot()
-            .map_err(|error| GuardError::Invalid(error.to_string()))?;
-        let current = crate::release_command::observe(&snapshot, &current)
+        let facts = crate::release_command::observed_facts(read)?;
+        let current = crate::release_command::observe(&facts, &current)
             .map_err(|error| GuardError::Invalid(error.to_string()))?;
         if current != state {
             return Err(GuardError::refused("release::observation-moved"));
