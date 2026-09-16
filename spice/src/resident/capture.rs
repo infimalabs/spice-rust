@@ -32,7 +32,15 @@ const NOTICE_BATCH: usize = 1024;
 /// event loop yields at all, not only when the loop reaches the notice arm.
 /// Everything read waits in an unbounded in-process queue until the loop takes
 /// a batch, so a burst that arrives during one journal commit is never lost.
+///
+/// A seat sweep judges a supervisor by whether its process is gone, and a
+/// supervisor sends its ending notice and exits right after, so at the moment
+/// a sweep could speak for it that notice is in the kernel queue or already
+/// drained. [`Self::pull`] empties both queues without a scheduler turn, so a
+/// sweep that runs first still accounts the ending from its notice.
 pub(super) struct SupervisorReports {
+    #[cfg(unix)]
+    socket: Arc<tokio::net::UnixDatagram>,
     notices: mpsc::UnboundedReceiver<io::Result<Notice>>,
     drain: tokio::task::JoinHandle<()>,
     path: PathBuf,
@@ -91,14 +99,56 @@ impl SupervisorReports {
             fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).map_err(|error| {
                 super::environment_fault("lane::supervisor-capture-unavailable", &error.to_string())
             })?;
+            let socket = Arc::new(socket);
             let (sender, notices) = mpsc::unbounded_channel();
-            let drain = tokio::spawn(drain_notices(socket, sender));
+            let drain = tokio::spawn(drain_notices(Arc::clone(&socket), sender));
             Ok(Self {
+                socket,
                 notices,
                 drain,
                 path,
             })
         }
+    }
+
+    /// Everything waiting in the in-process queue and behind it in the kernel
+    /// queue, in arrival order, without waiting on the drain task.
+    ///
+    /// The kernel queue is read through the descriptor itself: the runtime's
+    /// own non-blocking read answers from readiness its I/O driver last
+    /// recorded, which is exactly the scheduler turn this read must not wait
+    /// for. The drain task keeps reading after this; a datagram is taken by
+    /// exactly one reader, so nothing crosses twice.
+    pub(super) fn pull(&mut self) -> Vec<io::Result<Notice>> {
+        let mut notices = Vec::new();
+        while let Ok(notice) = self.notices.try_recv() {
+            notices.push(notice);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd as _;
+
+            let mut buffer = vec![0_u8; NOTICE_BYTES];
+            let socket = self.socket.as_raw_fd();
+            loop {
+                // SAFETY: the descriptor is open and non-blocking for as long
+                // as `self.socket` lives, and the write is bounded by the
+                // buffer's own length.
+                let received =
+                    unsafe { libc::recv(socket, buffer.as_mut_ptr().cast(), buffer.len(), 0) };
+                match usize::try_from(received) {
+                    Ok(received) => notices.push(decode(&buffer[..received])),
+                    Err(_) => {
+                        let error = io::Error::last_os_error();
+                        if error.kind() != io::ErrorKind::WouldBlock {
+                            notices.push(Err(error));
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        coalesce(notices)
     }
 
     /// The next notice, once one has been read off the socket.
@@ -140,20 +190,24 @@ impl Drop for SupervisorReports {
 
 /// Read datagrams for as long as the resident loop keeps its receiver.
 async fn drain_notices(
-    socket: tokio::net::UnixDatagram,
+    socket: Arc<tokio::net::UnixDatagram>,
     notices: mpsc::UnboundedSender<io::Result<Notice>>,
 ) {
     let mut buffer = vec![0_u8; NOTICE_BYTES];
     loop {
         let notice = match socket.recv(&mut buffer).await {
-            Ok(received) => serde_json::from_slice(&buffer[..received])
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error)),
+            Ok(received) => decode(&buffer[..received]),
             Err(error) => Err(error),
         };
         if notices.send(notice).is_err() {
             return;
         }
     }
+}
+
+fn decode(datagram: &[u8]) -> io::Result<Notice> {
+    serde_json::from_slice(datagram)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
 /// Keep only the last record notice per occupant, and every other notice.

@@ -499,8 +499,9 @@ async fn drive_surface(
     loop {
         tokio::select! {
             // Notices already read off the supervisor door come before any
-            // arm that reconciles, so a seat sweep never speaks for an
-            // ending whose notice is waiting in the queue.
+            // arm that reconciles, and the arms that reconcile pull the door
+            // first, so a seat sweep never speaks for an ending whose notice
+            // is waiting in either queue.
             biased;
             report = supervisor_reports.recv() => accept_supervisor_reports(
                 bus, epoch, seats, command_surface, &message_publisher,
@@ -511,6 +512,11 @@ async fn drive_surface(
                 &mut control, &inbox_projections, lifecycle_reconciliation.control_enabled(),
             ) => match turn {
                 ControlProjectionTurn::Control => {
+                    accept_supervisor_reports(
+                        bus, epoch, seats, command_surface, &message_publisher,
+                        taste_submitter.as_deref_mut(), &mut lifecycle,
+                        supervisor_reports.pull(), &mut message_state, diagnostic,
+                    )?;
                     reconcile_for_control(
                         &mut lifecycle_reconciliation, bus, command_surface, seats, diagnostic,
                         &mut timers, &mut lifecycle,
@@ -527,20 +533,11 @@ async fn drive_surface(
                     project_owed_inbox(command_surface, &mut inbox_projections).await?;
                 }
             },
-            record = records.recv() => {
-                let lane = record.as_ref().map(|record| record.lane);
-                let residency = current_residency(bus, epoch)?;
-                if let Some(lane) = lane {
-                    session_compactions.synchronize(
-                        bus, epoch, (residency.body(), lane), &message_publisher,
-                        &mut message_state, diagnostic,
-                    )?;
-                }
-                accept_record(
-                    bus, epoch, seats, command_surface, &message_publisher,
-                    taste_submitter.as_deref_mut(), record, &mut message_state, diagnostic,
-                )?;
-            }
+            record = records.recv() => accept_record_turn(
+                bus, epoch, seats, command_surface, &message_publisher,
+                taste_submitter.as_deref_mut(), &mut session_compactions, record,
+                &mut message_state, diagnostic,
+            )?,
             completed = receive_judgment(&mut taste_completions) => accept_judgment(
                 bus, epoch, command_surface, taste_submitter.as_deref_mut(), completed?,
             )?,
@@ -552,18 +549,12 @@ async fn drive_surface(
             exit = exits.recv() => accept_exit(
                 bus, epoch, seats, command_surface, &mut lifecycle, diagnostic, exit,
             )?,
-            timer = timers.recv() => {
-                let timer = timer.ok_or_else(|| environment_fault(
-                    "bus::timer-events-closed",
-                    "the production timer event stream closed while the resident was live",
-                ))?;
-                let fired = timers.consume(bus, timer)?;
-                accept_timer_fired(bus, command_surface, &mut lifecycle, fired)?;
-                reconcile_lifecycle(
-                    &mut lifecycle_reconciliation,
-                    bus, command_surface, seats, diagnostic, &mut timers, &mut lifecycle,
-                )?;
-            }
+            timer = timers.recv() => accept_timer_turn(
+                bus, epoch, seats, command_surface, &message_publisher,
+                taste_submitter.as_deref_mut(), &mut lifecycle, &mut supervisor_reports,
+                &mut message_state, diagnostic, &mut timers, &mut lifecycle_reconciliation,
+                timer,
+            )?,
             committed = timer_commits.recv() => {
                 match accept_commit(
                     bus, command_surface, seats, diagnostic, &mut timers,
@@ -698,6 +689,99 @@ fn accept_supervisor_reports(
         )?;
     }
     Ok(())
+}
+
+/// Fold one captured record into its session's compaction state, then present it.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one record crosses the same live capture surfaces as a batch of notices"
+)]
+fn accept_record_turn(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+    command_surface: &command_surface::Surface<'_>,
+    message_publisher: &canvas::stream::MessagePublisher,
+    taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
+    session_compactions: &mut message_surface::SessionCompactions,
+    record: Option<lane::capture::CaptureRecord>,
+    message_state: &mut message_surface::MessageState,
+    diagnostic: &mut dyn io::Write,
+) -> CommandResult<()> {
+    if let Some(lane) = record.as_ref().map(|record| record.lane) {
+        let residency = current_residency(bus, epoch)?;
+        session_compactions.synchronize(
+            bus,
+            epoch,
+            (residency.body(), lane),
+            message_publisher,
+            message_state,
+            diagnostic,
+        )?;
+    }
+    accept_record(
+        bus,
+        epoch,
+        seats,
+        command_surface,
+        message_publisher,
+        taste_judge,
+        record,
+        message_state,
+        diagnostic,
+    )
+}
+
+/// Consume one fired timer, then pull the supervisor door before the sweep
+/// the reconcile performs, so no seat is judged ahead of its own notice.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a timer turn crosses the capture surfaces and the lifecycle it reconciles"
+)]
+fn accept_timer_turn(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+    command_surface: &command_surface::Surface<'_>,
+    message_publisher: &canvas::stream::MessagePublisher,
+    taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
+    lifecycle: &mut lifecycle::Runtime,
+    supervisor_reports: &mut capture::SupervisorReports,
+    message_state: &mut message_surface::MessageState,
+    diagnostic: &mut dyn io::Write,
+    timers: &mut timers::Runtime,
+    reconciliation: &mut lifecycle::Reconciliation,
+    timer: Option<bus::timer::TimerEvent>,
+) -> CommandResult<()> {
+    let timer = timer.ok_or_else(|| {
+        environment_fault(
+            "bus::timer-events-closed",
+            "the production timer event stream closed while the resident was live",
+        )
+    })?;
+    let fired = timers.consume(bus, timer)?;
+    accept_timer_fired(bus, command_surface, lifecycle, fired)?;
+    accept_supervisor_reports(
+        bus,
+        epoch,
+        seats,
+        command_surface,
+        message_publisher,
+        taste_judge,
+        lifecycle,
+        supervisor_reports.pull(),
+        message_state,
+        diagnostic,
+    )?;
+    reconcile_lifecycle(
+        reconciliation,
+        bus,
+        command_surface,
+        seats,
+        diagnostic,
+        timers,
+        lifecycle,
+    )
 }
 
 #[allow(

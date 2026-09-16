@@ -479,7 +479,7 @@ mod tests {
             last: seq(9),
         });
         let dark = decode_dark_outcome(Outcome::Reply(Reply {
-            position: position.clone(),
+            position,
             body: CommandAnswer::State(StateAnswer {
                 from: ResidentState::Seated,
                 to: ResidentState::Dark,
