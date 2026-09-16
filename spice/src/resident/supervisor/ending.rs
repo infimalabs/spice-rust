@@ -68,9 +68,11 @@ pub(super) fn failure_detail(failure: Option<String>) -> String {
 /// Judge whether a seated occupant already ended, by its supervisor state.
 ///
 /// This reads the record a restart adopts from without arming an observer,
-/// so a lane that is still live costs one file read and nothing else. A
-/// starting or running supervisor is left to its notice; a running record
-/// whose supervisor process is gone is the same failure adoption reports.
+/// so a lane that is still live costs one file read and one liveness probe.
+/// A supervisor that is still alive is left to its notice whatever it has
+/// published, because it sends that notice the moment its record lands and
+/// exits right after; the sweep speaks only for one that is gone. A running
+/// record whose supervisor is gone is the same failure adoption reports.
 pub(in crate::resident) fn published_ending(
     paths: &RuntimePaths,
     lane: CanonicalUuid,
@@ -79,13 +81,15 @@ pub(in crate::resident) fn published_ending(
     let Some((_, state)) = durable_state(paths, lane, occupant)? else {
         return Ok(None);
     };
+    if matches!(state.phase, Phase::Starting) || process_exists(state.supervisor)? {
+        return Ok(None);
+    }
     let ending = match state.phase {
         Phase::Exited => PublishedEnding::Exited,
         Phase::Failed => PublishedEnding::Failed(failure_detail(state.failure)),
-        Phase::Running if !process_exists(state.supervisor)? => {
+        Phase::Running | Phase::Starting => {
             PublishedEnding::Failed(SUPERVISOR_DISAPPEARED.to_owned())
         }
-        Phase::Running | Phase::Starting => return Ok(None),
     };
     Ok(Some(ending))
 }
@@ -96,7 +100,9 @@ mod tests {
     use std::path::Path;
 
     use super::super::test_support::record_exited_for_tests;
-    use super::super::{CompletionField, STATE_VERSION, now_millis, publish_json};
+    use super::super::{
+        CompletionField, PersistedCompletion, STATE_VERSION, now_millis, publish_json,
+    };
     use super::*;
 
     fn uuid(last: u8) -> CanonicalUuid {
@@ -178,7 +184,7 @@ mod tests {
     }
 
     #[test]
-    fn an_absent_record_and_a_live_running_supervisor_are_left_to_their_notice() {
+    fn an_absent_record_and_a_live_supervisor_are_left_to_their_notice() {
         let root = fixture_root("live");
         let paths = paths(&root);
         let (lane, occupant) = (uuid(1), uuid(2));
@@ -196,13 +202,24 @@ mod tests {
             None
         );
 
-        let mut starting = live;
+        // Whatever a live supervisor has published, its notice is on the way.
+        let mut starting = live.clone();
         starting.phase = Phase::Starting;
-        publish_json(&directory.join("state.json"), &starting).expect("starting state publishes");
-        assert_eq!(
-            published_ending(&paths, lane, occupant).expect("starting state reads"),
-            None
-        );
+        let mut exited = live.clone();
+        exited.phase = Phase::Exited;
+        exited.completion = CompletionField::some(PersistedCompletion::Exited { status_raw: 0 });
+        let mut failed = live;
+        failed.phase = Phase::Failed;
+        failed.failure = Some("agent refused to start".to_owned());
+        for published in [starting, exited, failed] {
+            publish_json(&directory.join("state.json"), &published).expect("state publishes");
+            assert_eq!(
+                published_ending(&paths, lane, occupant).expect("live state reads"),
+                None,
+                "{:?}",
+                published.phase
+            );
+        }
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 
@@ -219,7 +236,7 @@ mod tests {
         );
 
         let directory = supervisor_directory(&paths, lane, occupant);
-        let mut failed = running_state(&root, lane, occupant, std::process::id());
+        let mut failed = running_state(&root, lane, occupant, i32::MAX.unsigned_abs());
         failed.phase = Phase::Failed;
         failed.failure = Some("agent refused to start".to_owned());
         publish_json(&directory.join("state.json"), &failed).expect("failed state publishes");

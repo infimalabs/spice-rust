@@ -44,7 +44,9 @@ fn ended_state(
 ) -> io::Result<State> {
     Ok(State {
         version: STATE_VERSION,
-        supervisor: std::process::id(),
+        // No process can carry the largest positive pid, so the record reads
+        // as one whose supervisor sent its notice and is gone.
+        supervisor: i32::MAX.unsigned_abs(),
         worktree: session.worktree.clone(),
         vendor: session.vendor.as_str().to_owned(),
         lane,
