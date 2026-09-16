@@ -51,7 +51,7 @@ rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"
 signal-hook = "0.3.18"
 tokio = { version = "1.53.1", features = ["macros", "net", "rt", "sync"] }
 tungstenite = "0.29.0"
-uuid = { version = "1.24.0", features = ["v4"] }
+uuid = { version = "1.24.0", features = ["v4", "v7"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.189"

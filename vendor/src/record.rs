@@ -102,6 +102,7 @@ pub struct Record {
     stream: RecordStream,
     resume: Resume,
     opening: Option<Vec<u8>>,
+    environment: Vec<(OsString, OsString)>,
 }
 
 impl Record {
@@ -122,6 +123,7 @@ impl Record {
             stream,
             resume,
             opening: None,
+            environment: Vec::new(),
         })
     }
 
@@ -132,6 +134,24 @@ impl Record {
     pub(crate) fn with_opening(mut self, opening: impl Into<Vec<u8>>) -> Self {
         self.opening = Some(opening.into());
         self
+    }
+
+    /// State the variables the vendor contract itself adds to the child.
+    ///
+    /// A vendor that exports nothing of its own to the tools it runs has the
+    /// lane carry its session identity this way.
+    pub(crate) fn with_environment(
+        mut self,
+        entries: impl IntoIterator<Item = (OsString, OsString)>,
+    ) -> Self {
+        self.environment = entries.into_iter().collect();
+        self
+    }
+
+    /// Variables the vendor contract adds to the child environment.
+    #[must_use]
+    pub fn environment(&self) -> &[(OsString, OsString)] {
+        &self.environment
     }
 
     /// Configured executable.

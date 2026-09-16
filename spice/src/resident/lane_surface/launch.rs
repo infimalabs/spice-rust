@@ -2,7 +2,7 @@
 
 use std::ffi::OsString;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use sill::{
     Cancellation, Deadlines, Environment, Observation, RestartDisposition, Spec, WaitPolicy,
@@ -54,13 +54,22 @@ pub(in crate::resident) fn occupant_launch(
     let git = spice::task_git::advance_at_launch(&repository).to_string();
     let resolved = spice::config::load_repository(&repository, &[])
         .map_err(|error| configuration_refusal(&error))?;
+    let resume = pin_session(&repository, name, resume)?;
     let (plan, rtk) = launch_plan(paths, &repository, &resolved, name, lane, resume, fast_mode)?;
     let model = plan.launch().model.clone();
     let effort = plan.launch().effort.as_str().to_owned();
     let record = plan
         .record()
         .map_err(|error| store_fault("lane::launch-invalid", &error.to_string()))?;
-    let process = launch_process(&repository, &resolved, plan.environment().clone(), lane)?;
+    let environment = Environment::new(
+        plan.environment()
+            .entries()
+            .iter()
+            .chain(record.environment())
+            .cloned(),
+    )
+    .map_err(|error| store_fault("lane::environment-invalid", &error.to_string()))?;
+    let process = launch_process(&repository, &resolved, environment, lane)?;
     let spec = record.spec(&process);
     let stream = record.stream();
     let expected = record.resume().session_id().map(str::to_owned);
@@ -678,6 +687,69 @@ mod shell_path_tests {
             ]
         );
     }
+}
+
+/// Pin a fresh oh-my-pi session before launch so its identity is known.
+///
+/// omp names a session only once it starts and exports nothing to its tools,
+/// so the lane mints the identity, writes the session file omp resumes, and
+/// launches by that identity. Every other vendor, and every launch that
+/// already resumes a session, passes through untouched.
+fn pin_session(
+    repository: &Repository,
+    name: &wire::Name,
+    resume: vendor::Resume,
+) -> CommandResult<vendor::Resume> {
+    if name.as_str() != vendor::OMP.name() || resume.session_id().is_some() {
+        return Ok(resume);
+    }
+    let home = crate::bootstrap_environment("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            store_fault(
+                "lane::session-home-unavailable",
+                "the supervised environment has no HOME to keep oh-my-pi sessions beneath",
+            )
+        })?;
+    let temp =
+        crate::bootstrap_environment("TMPDIR").map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);
+    let layout = vendor::OMP.transcript_layout();
+    let sessions = home
+        .join(layout.default_home)
+        .join(layout.sessions_directory);
+    let identity = CanonicalUuid::new(uuid::Uuid::now_v7()).to_string();
+    let (path, contents) = vendor::omp::session_file(
+        &sessions,
+        &canonical(&home),
+        &canonical(&temp),
+        &canonical(repository.worktree_root()),
+        &identity,
+        &session_stamp(jiff::Timestamp::now()),
+    );
+    fs::create_dir_all(path.parent().expect("a session file has a directory"))
+        .and_then(|()| fs::write(&path, contents))
+        .map_err(|error| {
+            store_fault(
+                "lane::session-file-unavailable",
+                &format!(
+                    "oh-my-pi session {} cannot be written: {error}",
+                    path.display()
+                ),
+            )
+        })?;
+    vendor::SessionId::new(identity)
+        .map(vendor::Resume::Session)
+        .map_err(|error| store_fault("lane::session-invalid", &error.to_string()))
+}
+
+/// The path as omp sees it: resolved through symlinks when that is possible.
+fn canonical(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// The instant in omp's millisecond ISO-8601 spelling.
+fn session_stamp(now: jiff::Timestamp) -> String {
+    now.strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
 }
 
 /// Bind occupant lifetime, wait policy, and capture bounds for this launch.

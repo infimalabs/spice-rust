@@ -87,7 +87,7 @@ fn resolve_thread_from_registry(
         "session::thread-unresolved",
         Some(value.to_owned()),
         &format!(
-            "restore the owning Codex state index or Claude project transcript, then retry; {}",
+            "restore the owning vendor session record, then retry; {}",
             failures.join("; ")
         ),
     ))

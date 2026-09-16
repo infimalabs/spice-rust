@@ -237,3 +237,11 @@ fn launch_skill_comes_only_from_initialized_git_common_state() {
     }
     fs::remove_dir_all(&root).expect("fixture removes");
 }
+
+#[test]
+fn the_session_stamp_is_omp_s_millisecond_iso_spelling() {
+    let now: jiff::Timestamp = "2026-09-16T06:43:21.805123Z".parse().expect("an instant");
+    assert_eq!(session_stamp(now), "2026-09-16T06:43:21.805Z");
+    let whole: jiff::Timestamp = "2026-09-16T06:43:21Z".parse().expect("an instant");
+    assert_eq!(session_stamp(whole), "2026-09-16T06:43:21.000Z");
+}

@@ -279,6 +279,8 @@ fn public_thread_refusal_preserves_an_incomplete_claude_search_before_codex() {
         .to_string();
     let codex_home = scratch.path().join("codex-home");
     fs::create_dir_all(codex_home.join("sessions")).expect("empty Codex session storage exists");
+    let omp_home = scratch.path().join("omp-home");
+    fs::create_dir_all(omp_home.join("sessions")).expect("empty omp session storage exists");
     let spoken = invoke(
         &strings(&["--json", "session", "thread", CLAUDE_THREAD_DASHED]),
         &[
@@ -287,6 +289,10 @@ fn public_thread_refusal_preserves_an_incomplete_claude_search_before_codex() {
                 claude_home.to_string_lossy().into_owned(),
             ),
             ("CODEX_HOME", codex_home.to_string_lossy().into_owned()),
+            (
+                "PI_CODING_AGENT_DIR",
+                omp_home.to_string_lossy().into_owned(),
+            ),
             ("SPICE_AGENT_VENDOR", "claude".to_owned()), // env-policy: allow
         ],
     );
@@ -323,13 +329,17 @@ fn public_thread_refusal_preserves_an_incomplete_claude_search_before_codex() {
         "missing Codex state database {}",
         codex_home.join("state_5.sqlite").display()
     );
+    let omp_failure = format!(
+        "omp thread {CLAUDE_THREAD_DASHED} is absent beneath {}",
+        omp_home.join("sessions").display()
+    );
     assert_eq!(
         remedy,
         format!(
-            "restore the owning Codex state index or Claude project transcript, then retry; \
-             {claude_failure}; {codex_failure}"
+            "restore the owning vendor session record, then retry; \
+             {claude_failure}; {codex_failure}; {omp_failure}"
         ),
-        "selected Claude failure precedes the prepared Codex failure"
+        "selected Claude failure precedes the prepared Codex and omp failures"
     );
     let former_absence = format!(
         "Claude thread {CLAUDE_THREAD} is absent beneath {}",

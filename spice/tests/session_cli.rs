@@ -80,6 +80,8 @@ fn invoke_in(
         .env_remove("CLAUDE_CODE_SESSION_ID") // env-policy: allow
         .env_remove("CODEX_HOME")
         .env_remove("CLAUDE_CONFIG_DIR")
+        .env_remove("PI_CODING_AGENT_DIR")
+        .env_remove(vendor::omp::SESSION_ENVIRONMENT)
         .env_remove("SPICE_AGENT_VENDOR") // env-policy: allow
         .env_remove(spice::agent_launch::SPICE_RS_LANE)
         .env_remove(steer::hook::INBOX);

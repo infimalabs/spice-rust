@@ -1,7 +1,8 @@
 //! oh-my-pi's RPC launch contract: the argument vector, the piped stdin it
 //! opens, and the steering anchor its system prompt carries.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
+use std::path::Path;
 use std::time::Duration;
 
 use listen::{Dialect, EventKind, Locus};
@@ -18,6 +19,8 @@ const SESSION: &[u8] = br#"{"id":"spice-state","type":"response","command":"get_
 const PROSE: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"input":7,"output":2,"cacheRead":5,"cacheWrite":3},"stopReason":"stop"}}"#;
 
 const STEERING_TOKEN: &str = "1kJHh5bb";
+/// Width of the title slot omp rewrites in place at the top of a session file.
+const TITLE_SLOT_BYTES: usize = 256;
 const MODEL: &str = "claude-opus-5";
 
 fn fixture(resume: Resume) -> Launch {
@@ -91,6 +94,10 @@ fn omp_carries_every_launch_knob_and_opens_the_conversation_over_a_piped_stdin()
     assert_eq!(record.dialect(), Dialect::Omp);
     assert_eq!(record.stream(), RecordStream::Stdout);
     assert_eq!(record.resume().session_id(), None);
+    assert!(
+        record.environment().is_empty(),
+        "a fresh launch pins nothing"
+    );
 
     let spec = record.spec(&process());
     assert_eq!(spec.argv.program(), record.binary());
@@ -136,6 +143,15 @@ fn omp_resumes_by_the_exact_session_and_the_vendor_value_renders_the_same_record
         record.resume().session_id(),
         Some("01a0a807-666f-7524-be0d-2ee476b6c15c")
     );
+    assert_eq!(
+        record.environment(),
+        [(
+            OsString::from(omp::SESSION_ENVIRONMENT),
+            OsString::from("01a0a807-666f-7524-be0d-2ee476b6c15c"),
+        )],
+        "the identity rides the child environment because omp exports none"
+    );
+    assert_eq!(OMP.thread_id_environment(), omp::SESSION_ENVIRONMENT);
     assert_eq!(
         OMP.record("/opt/omp", &launch)
             .expect("vendor value renders"),
@@ -231,4 +247,77 @@ fn the_state_reply_declares_the_session_and_content_rides_the_selected_stream() 
             .expect("diagnostics are not decoded"),
         None
     );
+}
+
+#[test]
+fn a_pinned_session_lands_where_omp_keeps_this_worktree_and_reads_back_as_its_own() {
+    let at = "2026-09-16T06:43:21.805Z";
+    let identity = "01a0a8f4-aa4d-7581-a92c-d7ddf0405263";
+    let sessions = Path::new("/home/lane/.omp/agent/sessions");
+    let home = Path::new("/home/lane");
+    let temp = Path::new("/private/tmp");
+    let (path, contents) = omp::session_file(
+        sessions,
+        home,
+        temp,
+        Path::new("/home/lane/devel/tree"),
+        identity,
+        at,
+    );
+    assert_eq!(
+        path,
+        sessions
+            .join("-devel-tree")
+            .join(format!("2026-09-16T06-43-21-805Z_{identity}.jsonl"))
+    );
+    let (slot, header) = contents.split_once('\n').expect("a slot, then the header");
+    assert_eq!(
+        slot.len() + 1,
+        TITLE_SLOT_BYTES,
+        "the title slot keeps omp's fixed width"
+    );
+    let slot: serde_json::Value = serde_json::from_str(slot).expect("the slot is JSON");
+    assert_eq!(slot["type"], "title");
+    assert_eq!(slot["title"], "");
+    assert_eq!(slot["updatedAt"], at);
+    let header: serde_json::Value = serde_json::from_str(header).expect("the header is JSON");
+    assert_eq!(header["type"], "session");
+    assert_eq!(header["version"], 3);
+    assert_eq!(header["id"], identity);
+    assert_eq!(header["timestamp"], at);
+    assert_eq!(header["cwd"], "/home/lane/devel/tree");
+    assert!(contents.ends_with('\n'));
+
+    // The file already reads as omp's own: the slot is silent, the header declares.
+    let lines: Vec<_> = contents.lines().collect();
+    let slot = listen::decode(
+        Dialect::Omp,
+        lines[0].as_bytes(),
+        Locus::new(1, 0, lines[0].len() as u64),
+    )
+    .expect("locus");
+    assert!(slot.events().is_empty() && !matches!(slot, listen::Decoded::Residue(_)));
+    let header = listen::decode(
+        Dialect::Omp,
+        lines[1].as_bytes(),
+        Locus::new(1, 0, lines[1].len() as u64),
+    )
+    .expect("locus");
+    assert!(
+        matches!(header.events(), [listen::Event::Session(declaration)] if declaration.identity == identity)
+    );
+
+    // The three roots omp tells apart: home itself, the temporary tree, anywhere else.
+    for (cwd, directory) in [
+        ("/home/lane", "-"),
+        ("/private/tmp/scratch/tree", "-tmp-scratch-tree"),
+        ("/srv/tree", "--srv-tree--"),
+    ] {
+        let (path, _) = omp::session_file(sessions, home, temp, Path::new(cwd), identity, at);
+        assert_eq!(
+            path.parent(),
+            Some(sessions.join(directory).as_path()),
+            "{cwd}"
+        );
+    }
 }

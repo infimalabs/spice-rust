@@ -313,14 +313,14 @@ pub const CLAUDE: Vendor = Vendor {
 
 /// Built-in oh-my-pi extension value.
 ///
-/// omp exports no session variable into the tools it runs, so the thread
-/// environment name is empty and never matches; the session identity reaches
-/// the lane through the `get_state` reply the supervisor requests at launch.
+/// omp exports no session variable into the tools it runs, so the lane pins
+/// the session before launch and carries its identity under a name of its
+/// own; the `get_state` reply the supervisor requests at launch confirms it.
 pub const OMP: Vendor = Vendor {
     name: "omp",
     label: "oh-my-pi",
     dialect: Dialect::Omp,
-    thread_id_environment: "",
+    thread_id_environment: omp::SESSION_ENVIRONMENT,
     transcript: TranscriptLayout {
         home_environment: "PI_CODING_AGENT_DIR",
         default_home: ".omp/agent",
@@ -515,7 +515,7 @@ mod tests {
         assert_eq!(OMP.stdout().format, StdoutFormat::JsonLines);
         assert_eq!(OMP.tool_envelope(), ToolEnvelope::Direct);
         assert_eq!(OMP.dialect(), Dialect::Omp);
-        assert_eq!(OMP.thread_id_environment(), "");
+        assert_eq!(OMP.thread_id_environment(), omp::SESSION_ENVIRONMENT);
         assert_eq!(OMP.transcript_layout().default_home, ".omp/agent");
         assert_eq!(
             CODEX.neutral_launch_prompt(Path::new(".agents/skills/spice/SKILL.md")),

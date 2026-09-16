@@ -303,6 +303,7 @@ mod tests {
                 steer::hook::INBOX,
                 vendor::CODEX.thread_id_environment(),
                 vendor::CLAUDE.thread_id_environment(),
+                vendor::OMP.thread_id_environment(),
             ]
         );
         for variable in spice::cargo_isolation::DEVELOPER_CHILD_EXCLUDED_VARIABLES {

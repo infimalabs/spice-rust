@@ -178,6 +178,7 @@ fn compiler_child_receives_semantic_inputs_but_no_operational_routing() {
         wire::SpiceVariable::PreCommitPaths,
         wire::SpiceVariable::PreCommitSource,
         wire::SpiceVariable::RtkExecutable,
+        wire::SpiceVariable::Session,
         wire::SpiceVariable::WrapperSpice,
     ];
     let mut input = routing

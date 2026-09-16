@@ -86,6 +86,9 @@ pub enum SpiceVariable {
     /// Exact RTK executable selected for supervised shell rewriting.
     #[serde(rename = "SPICE_RS_RTK_EXECUTABLE")] // env-policy: allow
     RtkExecutable,
+    /// Session identity a lane pinned for a vendor that exports none of its own.
+    #[serde(rename = "SPICE_RS_SESSION")] // env-policy: allow
+    Session,
     /// Exact installed Spice executable selected by the agent-shell wrapper route.
     #[serde(rename = "SPICE_RS_WRAPPER_SPICE")] // env-policy: allow
     WrapperSpice,
@@ -122,6 +125,7 @@ impl SpiceVariable {
         Self::PreCommitPaths,
         Self::PreCommitSource,
         Self::RtkExecutable,
+        Self::Session,
         Self::WrapperSpice,
     ];
 
@@ -168,6 +172,7 @@ impl SpiceVariable {
             Self::PreCommitPaths => "SPICE_RS_PRE_COMMIT_PATHS", // env-policy: allow
             Self::PreCommitSource => "SPICE_RS_PRE_COMMIT_SOURCE", // env-policy: allow
             Self::RtkExecutable => "SPICE_RS_RTK_EXECUTABLE", // env-policy: allow
+            Self::Session => "SPICE_RS_SESSION", // env-policy: allow
             Self::WrapperSpice => "SPICE_RS_WRAPPER_SPICE", // env-policy: allow
         }
     }

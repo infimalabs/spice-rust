@@ -7,6 +7,7 @@
 //! is interjected the same way for as long as the child lives.
 
 use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 
 use listen::Dialect;
 use serde::Serialize;
@@ -30,6 +31,20 @@ pub const PROMPT_REQUEST_ID: &str = "spice-prompt";
 
 /// Prefix of the request identities that carry interjected steering.
 pub const STEER_REQUEST_ID_PREFIX: &str = "spice-steer-";
+
+/// Environment name carrying the session identity the lane pinned at launch.
+///
+/// omp exports nothing of its own to the tools it runs, so the lane mints the
+/// identity before launch and carries it under this name; `spice session`
+/// inside the occupant's tools reads it back the way it reads Claude's and
+/// Codex's native variables.
+pub const SESSION_ENVIRONMENT: &str = wire::SpiceVariable::Session.as_str();
+
+/// Width of the fixed title slot that opens every omp session file.
+const TITLE_SLOT_BYTES: usize = 256;
+
+/// Session header version omp writes today.
+const SESSION_VERSION: u8 = 3;
 
 /// Build the exact current omp invocation without performing I/O.
 ///
@@ -77,6 +92,10 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
         arguments.push(OsString::from("--resume"));
         arguments.push(OsString::from(session));
     }
+    let environment = launch
+        .resume
+        .session_id()
+        .map(|session| (OsString::from(SESSION_ENVIRONMENT), OsString::from(session)));
     Ok(Record::new(
         binary,
         arguments,
@@ -84,7 +103,95 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
         RecordStream::Stdout,
         launch.resume.clone(),
     )?
-    .with_opening(opening_request(launch)))
+    .with_opening(opening_request(launch))
+    .with_environment(environment))
+}
+
+/// The session file a lane writes before launch so the identity is known.
+///
+/// omp names a session only once it starts, so a fresh lane writes the file
+/// omp would have written, where omp keeps this working directory's sessions,
+/// and resumes it by identity: an empty fixed-width title slot, then the
+/// version-3 header. `home`, `temp`, and `cwd` are the canonical directories
+/// omp encodes the working directory against; `at` is the ISO-8601 instant,
+/// to the millisecond, that names the file and stamps the header.
+#[must_use]
+pub fn session_file(
+    sessions: &Path,
+    home: &Path,
+    temp: &Path,
+    cwd: &Path,
+    identity: &str,
+    at: &str,
+) -> (PathBuf, String) {
+    let path = sessions
+        .join(session_directory(home, temp, cwd))
+        .join(format!("{}_{identity}.jsonl", at.replace([':', '.'], "-")));
+    let header = SessionHeader {
+        kind: "session",
+        version: SESSION_VERSION,
+        id: identity,
+        timestamp: at,
+        cwd: &cwd.to_string_lossy(),
+    };
+    (path, format!("{}{}\n", title_slot(at), json(&header)))
+}
+
+/// omp's session directory for `cwd`: its home-relative or temp-relative
+/// spelling under a scope prefix, or the whole absolute path bracketed.
+fn session_directory(home: &Path, temp: &Path, cwd: &Path) -> String {
+    let dashed = |path: &Path| path.to_string_lossy().replace(['/', '\\', ':'], "-");
+    for (prefix, root) in [("-", home), ("-tmp", temp)] {
+        if let Ok(relative) = cwd.strip_prefix(root) {
+            let relative = dashed(relative);
+            let separator = if prefix.ends_with('-') { "" } else { "-" };
+            return if relative.is_empty() {
+                prefix.to_owned()
+            } else {
+                format!("{prefix}{separator}{relative}")
+            };
+        }
+    }
+    format!("--{}--", dashed(cwd).trim_start_matches('-'))
+}
+
+/// An empty title padded to exactly [`TITLE_SLOT_BYTES`] with its newline.
+fn title_slot(at: &str) -> String {
+    let mut slot = TitleSlot {
+        kind: "title",
+        v: 1,
+        title: "",
+        updated_at: at,
+        pad: String::new(),
+    };
+    slot.pad = " ".repeat(TITLE_SLOT_BYTES.saturating_sub(json(&slot).len() + 1));
+    format!("{}\n", json(&slot))
+}
+
+fn json(value: &impl Serialize) -> String {
+    serde_json::to_string(value).expect("a session record is representable as JSON")
+}
+
+/// omp rewrites this line in place, so it is written key-for-key as omp does.
+#[derive(Serialize)]
+struct TitleSlot<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    v: u8,
+    title: &'a str,
+    #[serde(rename = "updatedAt")]
+    updated_at: &'a str,
+    pad: String,
+}
+
+#[derive(Serialize)]
+struct SessionHeader<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    version: u8,
+    id: &'a str,
+    timestamp: &'a str,
+    cwd: &'a str,
 }
 
 /// The skill preamble, the start prompt, and this worktree's steering anchor.

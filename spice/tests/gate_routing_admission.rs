@@ -15,7 +15,7 @@ mod routing_authority;
 #[path = "support/staged_app.rs"]
 mod staged_app;
 
-const ROUTING: [wire::SpiceVariable; 9] = [
+const ROUTING: [wire::SpiceVariable; 10] = [
     wire::SpiceVariable::AgentVendor,
     wire::SpiceVariable::Hooks,
     wire::SpiceVariable::Inbox,
@@ -24,6 +24,7 @@ const ROUTING: [wire::SpiceVariable; 9] = [
     wire::SpiceVariable::PreCommitPaths,
     wire::SpiceVariable::PreCommitSource,
     wire::SpiceVariable::RtkExecutable,
+    wire::SpiceVariable::Session,
     wire::SpiceVariable::WrapperSpice,
 ];
 const SEMANTIC_INPUT: &str = "SPICE_PROOF"; // env-policy: allow

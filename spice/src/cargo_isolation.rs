@@ -41,12 +41,13 @@ pub const RUSTC_VARIABLE: &str = "RUSTC";
 /// Cargo's supported documentation compiler override.
 pub const RUSTDOC_VARIABLE: &str = "RUSTDOC";
 /// Lane supervision state excluded from developer toolchains unless a child opts in.
-pub const DEVELOPER_CHILD_EXCLUDED_VARIABLES: [&str; 5] = [
+pub const DEVELOPER_CHILD_EXCLUDED_VARIABLES: [&str; 6] = [
     steer::hook::BASH_ENV,
     steer::hook::ZDOTDIR,
     wire::SpiceVariable::Inbox.as_str(),
     vendor::CODEX.thread_id_environment(),
     vendor::CLAUDE.thread_id_environment(),
+    vendor::OMP.thread_id_environment(),
 ];
 
 const STORE_RELATIVE: &str = "spice/source-store-v2";
