@@ -24,6 +24,10 @@ const TURN_ENDING_NACK: &[u8] = br#"{"type":"assistant","message":{"type":"messa
 "#;
 const TURN_ENDING_SILENCE: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"Finished without answering the direction."}]}}
 "#;
+/// The ack command captured as the only record of its assistant message, with
+/// the header spelled inside the tool input and nowhere else on the tape.
+const SAME_MESSAGE_TOOL_ACK: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu_fixture_ack","name":"Bash","input":{"command":"spice ack 1kKRRsDS","description":"ACK 1kKRRsDS: Resumed and finished the request."}}]}}
+"#;
 
 #[test]
 fn a_turn_ending_ack_in_the_final_transcript_retires_the_key_when_the_exit_is_accounted() {
@@ -143,6 +147,36 @@ fn a_key_the_final_transcript_does_not_answer_stays_pending_and_still_wakes_a_su
             lane: lane(),
         },
         "the unanswered direction wakes a successor to answer it"
+    );
+    fixture.finish();
+}
+
+#[test]
+fn a_header_spelled_only_inside_the_final_tool_call_is_not_evidence_and_leaves_the_key_pending() {
+    let fixture = ExitFixture::new("tool-call", &[NARRATION, SAME_MESSAGE_TOOL_ACK]);
+    let before = fact_kinds(&fixture.bus);
+    let mut diagnostic = Vec::new();
+
+    fixture.exit(&mut diagnostic);
+
+    assert_eq!(
+        fact_kinds(&fixture.bus)[before.len()..],
+        [wire::FactKind::LaneExited],
+        "the ack command captured as a tool call is not the acknowledgment"
+    );
+    assert_eq!(fixture.direction_head().disposition, Disposition::Live);
+    assert_eq!(fixture.pending_keys(), [DIRECTION_KEY]);
+    assert_eq!(
+        String::from_utf8(diagnostic).expect("diagnostic is UTF-8"),
+        format!(
+            "lane {} steering {DIRECTION_KEY} left pending at exit: \
+             steer::transcript-evidence-absent: no assistant transcript record recognizes this token\n",
+            lane()
+        )
+    );
+    assert!(
+        fixture.inbox().contains(DIRECTION_KEY),
+        "the delivered inbox still carries the direction the tool input alone named"
     );
     fixture.finish();
 }

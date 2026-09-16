@@ -112,6 +112,83 @@ fn rendering_failure_path(
     stop(fixture, restarted);
 }
 
+/// The ack command captured as its own tool call is not the acknowledgment.
+///
+/// A vendor persists the assistant text spoken before a tool call as its own
+/// record ahead of the tool record, so a header spoken as visible prose retires
+/// the key while the occupant is still seated. A header that reaches the tape
+/// only inside the tool input names the key without anyone having said it, and
+/// the key stays live until prose does.
+fn same_message_tool_call_cannot_ack(
+    fixture: &Fixture,
+    lane: wire::CanonicalUuid,
+) -> ExpectedRecognition {
+    let lane_id = lane.to_string();
+    let sent = text_directive(&invoke(
+        fixture,
+        &["steer", &lane_id, "answer before the turn ends"],
+        false,
+    ));
+    let epoch = lane_epoch(fixture, lane);
+    record_tool_call(fixture, lane, &sent.key);
+    let refused = invoke_as_lane(fixture, &lane_id, &["ack", &sent.key], false);
+    assert_text_refusal(&refused, "steer::transcript-evidence-absent");
+    let inbox = text_inbox(&invoke(fixture, &["inbox", &lane_id], false));
+    assert!(
+        inbox.lanes[0]
+            .pending
+            .iter()
+            .any(|pending| pending.directive == sent.directive),
+        "a tool input naming the header retired a directive nobody spoke"
+    );
+    let locus = record_reply(
+        fixture,
+        lane,
+        &format!("ACK {}: spoken before the turn ended", sent.key),
+        &sent.key,
+    );
+    let acknowledged = text_directive(&invoke_as_lane(
+        fixture,
+        &lane_id,
+        &["ack", &sent.key],
+        false,
+    ));
+    assert_eq!(acknowledged.directive, sent.directive);
+    assert_eq!(acknowledged.disposition, wire::Disposition::Acked);
+    ExpectedRecognition {
+        directive: sent.directive,
+        key: sent.key,
+        epoch,
+        disposition: wire::Disposition::Acked,
+        locus,
+    }
+}
+
+/// Capture the ack command as the only record of one assistant message, with
+/// the header spelled inside its tool input and nowhere else.
+fn record_tool_call(fixture: &Fixture, lane: wire::CanonicalUuid, key: &str) {
+    let record = serde_json::json!({
+        "type": "assistant",
+        "message": {
+            "type": "message",
+            "role": "assistant",
+            "content": [{
+                "type": "tool_use",
+                "id": "toolu_fixture_ack",
+                "name": "Bash",
+                "input": {
+                    "command": format!("spice ack {key}"),
+                    "description": format!("ACK {key}: applied inside the tool call alone")
+                }
+            }]
+        }
+    });
+    let mut bytes = wire::encode(&record).expect("tool call transcript record encodes");
+    bytes.push(b'\n');
+    let tape = tape::Tape::open(fixture.tape(lane)).expect("lane tape opens");
+    tape.tee(&bytes).expect("tool call record reaches tape");
+}
+
 pub(super) fn assert_refusal(output: &Output, reason: &str) {
     assert_eq!(output.status.code(), Some(REFUSAL_EXIT));
     let Outcome::Refusal(refusal): Outcome<wire::intent::DirectiveAnswer> = json_outcome(output)
@@ -144,10 +221,10 @@ fn verify_authority(
             .filter(|fact| fact.fact.kind() == kind)
             .count()
     };
-    assert_eq!(count(FactKind::SteerSent), 6);
+    assert_eq!(count(FactKind::SteerSent), 7);
     assert_eq!(
         count(FactKind::SteerAcked),
-        1 + usize::from(race == wire::Disposition::Acked)
+        2 + usize::from(race == wire::Disposition::Acked)
     );
     assert_eq!(count(FactKind::SteerDeclined), 1);
     assert_eq!(
@@ -589,8 +666,9 @@ fn steering_commands_preserve_principals_races_and_restart_state() {
     ));
     cancellation_path(&fixture, lanes.target);
     direct_input_cannot_ack(&fixture, lanes.target);
+    let spoken = same_message_tool_call_cannot_ack(&fixture, lanes.target);
     rendering_failure_path(&fixture, resident, lanes.target, &historical_key);
-    let mut expected = vec![acknowledged, declined];
+    let mut expected = vec![acknowledged, declined, spoken];
     expected.extend(raced);
     verify_authority(&fixture, lanes.target, race, &expected);
 }
