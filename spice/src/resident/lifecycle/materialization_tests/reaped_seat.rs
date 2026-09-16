@@ -1,5 +1,6 @@
 //! A seated occupant whose supervisor ending never reached the resident.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use lane::occupant::Seats;
@@ -37,6 +38,7 @@ fn a_seat_whose_exit_notice_was_lost_is_reaped_and_its_pending_inbox_wake_fires(
         &mut seats,
         &mut lifecycle,
         &config,
+        &BTreeSet::new(),
         &mut diagnostic,
     )
     .expect("a seat without a published ending sweeps clean");
@@ -58,6 +60,7 @@ fn a_seat_whose_exit_notice_was_lost_is_reaped_and_its_pending_inbox_wake_fires(
         &mut seats,
         &mut lifecycle,
         &config,
+        &BTreeSet::new(),
         &mut diagnostic,
     )
     .expect("the sweep accounts the published exit");
@@ -105,12 +108,58 @@ fn a_seat_whose_exit_notice_was_lost_is_reaped_and_its_pending_inbox_wake_fires(
         &mut seats,
         &mut lifecycle,
         &config,
+        &BTreeSet::new(),
         &mut Vec::new(),
     )
     .expect("an empty seat table sweeps clean");
     assert_eq!(fact_kinds(&bus), kinds);
     bus.verify().expect("the reaped authority verifies");
     bus.shutdown().expect("reaped fixture stops");
+    std::fs::remove_dir_all(root).expect("fixture cleanup");
+}
+
+#[test]
+fn a_seat_whose_ending_is_at_the_door_is_left_to_the_notice_arm() {
+    let root = fixture_root("noticed");
+    let paths = runtime_paths(&root);
+    let occupant = uuid(4);
+    let (bus, _projects, _projection) = occupied_fixture(occupant);
+    let config = lane::Config::default();
+    let mut lifecycle = lifecycle::Runtime::new(&config);
+    let mut diagnostic = Vec::new();
+    record_exited_for_tests(&paths, lane(), occupant, session(&root, occupant))
+        .expect("the supervisor exit record writes");
+    let mut seats = seat_published(&paths, &bus, occupant);
+    let kinds = fact_kinds(&bus);
+
+    // The supervisor published its exit and its notice reached the door
+    // during this turn: the sweep leaves the seat to the notice arm.
+    let noticed = BTreeSet::from([(lane(), occupant)]);
+    sweep_seats(
+        &bus,
+        epoch(),
+        &paths,
+        &mut seats,
+        &mut lifecycle,
+        &config,
+        &noticed,
+        &mut diagnostic,
+    )
+    .expect("a noticed ending is left to its notice");
+
+    assert!(seats.occupied(lane()), "the seat waits for the notice arm");
+    assert_eq!(residency_row(&bus).occupant, Some(occupant));
+    assert_eq!(
+        fact_kinds(&bus),
+        kinds,
+        "nothing is journaled ahead of the notice"
+    );
+    assert!(
+        diagnostic.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&diagnostic)
+    );
+    bus.shutdown().expect("noticed fixture stops");
     std::fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
@@ -143,6 +192,7 @@ fn a_seat_whose_failure_notice_was_lost_is_degraded_from_its_published_state() {
         &mut seats,
         &mut lifecycle,
         &config,
+        &BTreeSet::new(),
         &mut Vec::new(),
     )
     .expect("the sweep accounts the published failure");

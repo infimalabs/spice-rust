@@ -1,6 +1,6 @@
 //! Bounded bridge from lane capture workers into the resident event loop.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -36,12 +36,14 @@ const NOTICE_BATCH: usize = 1024;
 /// A seat sweep judges a supervisor by whether its process is gone, and a
 /// supervisor sends its ending notice and exits right after, so at the moment
 /// a sweep could speak for it that notice is in the kernel queue or already
-/// drained. [`Self::pull`] empties both queues without a scheduler turn, so a
-/// sweep that runs first still accounts the ending from its notice.
+/// drained. [`Self::pull`] empties both queues without a scheduler turn, and
+/// [`Self::noticed_endings`] stages what it pulls, so the sweep asks the door
+/// and leaves every seat whose ending is waiting there to the notice arm.
 pub(super) struct SupervisorReports {
     #[cfg(unix)]
     socket: Arc<tokio::net::UnixDatagram>,
     notices: mpsc::UnboundedReceiver<io::Result<Notice>>,
+    staged: VecDeque<io::Result<Notice>>,
     drain: tokio::task::JoinHandle<()>,
     path: PathBuf,
 }
@@ -105,14 +107,15 @@ impl SupervisorReports {
             Ok(Self {
                 socket,
                 notices,
+                staged: VecDeque::new(),
                 drain,
                 path,
             })
         }
     }
 
-    /// Everything waiting in the in-process queue and behind it in the kernel
-    /// queue, in arrival order, without waiting on the drain task.
+    /// Everything staged, waiting in the in-process queue, and behind it in
+    /// the kernel queue, in arrival order, without waiting on the drain task.
     ///
     /// The kernel queue is read through the descriptor itself: the runtime's
     /// own non-blocking read answers from readiness its I/O driver last
@@ -120,7 +123,7 @@ impl SupervisorReports {
     /// for. The drain task keeps reading after this; a datagram is taken by
     /// exactly one reader, so nothing crosses twice.
     pub(super) fn pull(&mut self) -> Vec<io::Result<Notice>> {
-        let mut notices = Vec::new();
+        let mut notices: Vec<_> = self.staged.drain(..).collect();
         while let Ok(notice) = self.notices.try_recv() {
             notices.push(notice);
         }
@@ -151,8 +154,33 @@ impl SupervisorReports {
         coalesce(notices)
     }
 
-    /// The next notice, once one has been read off the socket.
+    /// The seats whose ending notice is already at the door.
+    ///
+    /// A sweep judges a supervisor by its exit, and a supervisor sends its
+    /// ending before it exits, so an ending the sweep could see is either
+    /// accounted already or waiting here. Everything pulled stays staged in
+    /// arrival order for the notice arm, which accepts the ending after the
+    /// records that came before it.
+    pub(super) fn noticed_endings(&mut self) -> BTreeSet<(CanonicalUuid, CanonicalUuid)> {
+        let pulled = self.pull();
+        let noticed = pulled
+            .iter()
+            .filter_map(|notice| match notice {
+                Ok(Notice::Exited { lane, occupant } | Notice::Failed { lane, occupant, .. }) => {
+                    Some((*lane, *occupant))
+                }
+                _ => None,
+            })
+            .collect();
+        self.staged.extend(pulled);
+        noticed
+    }
+
+    /// The next notice: one staged by a sweep, else one read off the socket.
     pub(super) async fn recv(&mut self) -> io::Result<Notice> {
+        if let Some(staged) = self.staged.pop_front() {
+            return staged;
+        }
         self.notices.recv().await.unwrap_or_else(|| {
             Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
@@ -171,6 +199,7 @@ impl SupervisorReports {
     /// keep their place in the order.
     pub(super) fn batch(&mut self, first: io::Result<Notice>) -> Vec<io::Result<Notice>> {
         let mut notices = vec![first];
+        notices.extend(self.staged.drain(..));
         while notices.len() < NOTICE_BATCH {
             match self.notices.try_recv() {
                 Ok(notice) => notices.push(notice),

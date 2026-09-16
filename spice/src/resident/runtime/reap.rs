@@ -7,10 +7,14 @@
 //! would sweep the supervisor state and record the exit. This sweep reads
 //! that same state for every seated lane on each reconciliation, so the
 //! running resident accounts the ending itself and the wakes the lane was
-//! owed fire from the reconciliation that follows.
+//! owed fire from the reconciliation that follows. A notice that is merely
+//! waiting at the door is not lost: the sweep asks the door first and leaves
+//! that seat to the notice arm, which accounts the ending in arrival order.
 //!
 //! The closing transcript sweep lives here too: whichever path closes a seat,
 //! what its occupant wrote last is presented from the same loop turn.
+
+use std::collections::BTreeSet;
 
 use super::*;
 
@@ -65,14 +69,17 @@ pub(super) fn account_failure(
     lane_surface::supervisor_failed(bus, epoch, lane, occupant, failure)
 }
 
-/// Account every seated occupant whose supervisor already published an ending.
+/// Account every seated occupant whose supervisor published an ending and
+/// whose notice of it is not waiting at the door.
 pub(super) fn reap_ended_seats(
     bus: &Bus,
     command_surface: &command_surface::Surface<'_>,
     seats: &mut Seats,
     lifecycle: &mut lifecycle::Runtime,
     diagnostic: &mut dyn io::Write,
+    door: &mut capture::SupervisorReports,
 ) -> CommandResult<()> {
+    let noticed = door.noticed_endings();
     sweep_seats(
         bus,
         command_surface.epoch(),
@@ -80,17 +87,24 @@ pub(super) fn reap_ended_seats(
         seats,
         lifecycle,
         &command_surface.config.lane,
+        &noticed,
         diagnostic,
     )
 }
 
 /// Judge every seat against its supervisor state and account the ended ones.
 ///
-/// Each seat is judged from its own durable state, so one unreadable record
-/// leaves the other seats accounted and is reported for the next sweep to
-/// read again. A refused commit defers that seat the way a late notice is
-/// deferred: the state on disk does not change, so the next reconciliation
-/// reaches the same judgement.
+/// A seat whose ending is among the `noticed` ones is left alone: its notice
+/// is at the door, and the notice arm accounts it after the records before
+/// it. Each other seat is judged from its own durable state, so one
+/// unreadable record leaves the other seats accounted and is reported for
+/// the next sweep to read again. A refused commit defers that seat the way a
+/// late notice is deferred: the state on disk does not change, so the next
+/// reconciliation reaches the same judgement.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one sweep judges every seat by its supervisor state and the door"
+)]
 pub(in crate::resident) fn sweep_seats(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -98,12 +112,16 @@ pub(in crate::resident) fn sweep_seats(
     seats: &mut Seats,
     lifecycle: &mut lifecycle::Runtime,
     config: &lane::Config,
+    noticed: &BTreeSet<(CanonicalUuid, CanonicalUuid)>,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     for lane in seats.lanes() {
         let Some(occupant) = seats.occupant(lane).map(lane::occupant::Occupant::occupant) else {
             continue;
         };
+        if noticed.contains(&(lane, occupant)) {
+            continue;
+        }
         let ending = match supervisor::ending::published_ending(paths, lane, occupant) {
             Ok(Some(ending)) => ending,
             Ok(None) => continue,

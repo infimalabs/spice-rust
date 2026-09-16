@@ -1,5 +1,7 @@
 //! The supervisor notice socket queues a burst the resident has not read yet.
 
+use std::collections::BTreeSet;
+
 use super::*;
 
 /// One journal commit on the resident's loop outlasts a burst of tape records
@@ -100,6 +102,75 @@ fn a_pull_takes_a_notice_the_drain_task_has_not_been_scheduled_to_read() {
         matches!(&next, supervisor::Notice::Failed { failure, .. } if failure == "later"),
         "the drain task reads what the pull left: {next:?}"
     );
+    drop(reports);
+    drop(entered);
+    fs::remove_dir_all(root).expect("notice fixture cleanup");
+}
+
+/// A supervisor's ending notice can be at the door when a sweep judges that
+/// supervisor by its exit. The sweep asks the door and leaves the seat to the
+/// notice arm, which then reads what was staged in arrival order.
+#[test]
+fn a_sweep_asks_the_door_and_the_notice_arm_reads_what_it_staged_in_order() {
+    let (root, paths) = resident_fixture("supervisor-door");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .build()
+        .expect("a current-thread runtime builds");
+    let entered = runtime.enter();
+    let mut reports = capture::SupervisorReports::bind(&paths).expect("the notice socket binds");
+    let door = supervisor::capture_path(&paths);
+    let sender = std::os::unix::net::UnixDatagram::unbound().expect("an unbound sender opens");
+    let lane = test_uuid(9);
+    let occupant = test_uuid(10);
+    let send = |notice: &supervisor::Notice| {
+        let bytes = serde_json::to_vec(notice).expect("the notice serializes");
+        sender.send_to(&bytes, &door).expect("the notice is queued");
+    };
+
+    assert!(
+        reports.noticed_endings().is_empty(),
+        "an idle door notices nothing"
+    );
+    send(&supervisor::Notice::Record {
+        lane,
+        occupant,
+        stream: "stdout".to_owned(),
+        boundary: "terminal".to_owned(),
+        locus: wire::TapeLocus {
+            member: 1,
+            offset: 0,
+            length: 256,
+        },
+    });
+    send(&supervisor::Notice::Exited { lane, occupant });
+    let noticed = BTreeSet::from([(lane, occupant)]);
+    assert_eq!(
+        reports.noticed_endings(),
+        noticed,
+        "the ending at the door is noticed"
+    );
+    assert_eq!(
+        reports.noticed_endings(),
+        noticed,
+        "a staged ending stays noticed until the notice arm takes it"
+    );
+
+    let first = runtime
+        .block_on(reports.recv())
+        .expect("the staged record reads without the drain task");
+    let batch = reports.batch(Ok(first));
+    assert!(
+        matches!(
+            batch.as_slice(),
+            [
+                Ok(supervisor::Notice::Record { .. }),
+                Ok(supervisor::Notice::Exited { .. })
+            ]
+        ),
+        "the notice arm reads the record before the ending, as they arrived: {batch:?}"
+    );
+    assert!(reports.pull().is_empty(), "nothing is staged twice");
     drop(reports);
     drop(entered);
     fs::remove_dir_all(root).expect("notice fixture cleanup");

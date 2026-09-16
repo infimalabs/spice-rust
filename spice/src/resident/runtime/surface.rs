@@ -186,7 +186,7 @@ pub(super) async fn run_surface(
         progress,
     } = started;
     let channels = capture::channels();
-    let supervisor_reports = capture::SupervisorReports::bind(paths)?;
+    let mut supervisor_reports = capture::SupervisorReports::bind(paths)?;
     lane_surface::restore_seats(bus, paths, epoch, seats, progress)?;
     ingest_transcripts(bus, paths, None, progress)?;
     let mut message_startup = launch_message_startup(bus, paths, epoch, &message_publisher)?;
@@ -218,6 +218,7 @@ pub(super) async fn run_surface(
         progress,
         &mut timers,
         &mut lifecycle,
+        &mut supervisor_reports,
         &mut publication,
     )
     .await?;
@@ -230,6 +231,7 @@ pub(super) async fn run_surface(
         seats,
         &mut lifecycle,
         &mut timers,
+        &mut supervisor_reports,
         &mut control,
         &mut server_task,
         &mut inbox_projections,
@@ -284,9 +286,18 @@ async fn publish_ready_surface(
     diagnostic: &mut dyn io::Write,
     timers: &mut timers::Runtime,
     lifecycle: &mut lifecycle::Runtime,
+    door: &mut capture::SupervisorReports,
     publication: &mut SurfacePublication<'_>,
 ) -> CommandResult<()> {
-    reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle)?;
+    reconcile_wakes(
+        bus,
+        command_surface,
+        seats,
+        diagnostic,
+        timers,
+        lifecycle,
+        door,
+    )?;
     command_surface.synchronize_reads_before_publish()?;
     let residency = current_residency(bus, epoch)?;
     tokio::task::yield_now().await;
@@ -348,6 +359,7 @@ async fn await_message_startup(
     seats: &mut Seats,
     lifecycle: &mut lifecycle::Runtime,
     timers: &mut timers::Runtime,
+    door: &mut capture::SupervisorReports,
     control: &mut canvas::axum::Control,
     server_task: &mut tokio::task::JoinHandle<Result<(), io::Error>>,
     inbox_projections: &mut InboxProjections,
@@ -369,7 +381,7 @@ async fn await_message_startup(
                 ControlProjectionTurn::Control => {
                     reconcile_for_control(
                         lifecycle_reconciliation, bus, command_surface, seats, diagnostic, timers,
-                        lifecycle,
+                        lifecycle, door,
                     )?;
                     if dispatch_control_projection_burst(
                         command_surface, seats, lifecycle, control, request, inbox_projections,
@@ -499,10 +511,9 @@ async fn drive_surface(
     loop {
         tokio::select! {
             // Notices already read off the supervisor door come before any
-            // arm that reconciles, and every arm that reconciles, control,
-            // timer, and commit alike, pulls the door first, so a seat sweep
-            // never speaks for an ending whose notice is waiting in either
-            // queue.
+            // arm that reconciles, and the seat sweep every reconcile runs
+            // asks the door itself, so it never speaks for an ending whose
+            // notice is waiting in either queue.
             biased;
             report = supervisor_reports.recv() => accept_supervisor_reports(
                 bus, epoch, seats, command_surface, &message_publisher,
@@ -513,14 +524,9 @@ async fn drive_surface(
                 &mut control, &inbox_projections, lifecycle_reconciliation.control_enabled(),
             ) => match turn {
                 ControlProjectionTurn::Control => {
-                    accept_supervisor_reports(
-                        bus, epoch, seats, command_surface, &message_publisher,
-                        taste_submitter.as_deref_mut(), &mut lifecycle,
-                        supervisor_reports.pull(), &mut message_state, diagnostic,
-                    )?;
                     reconcile_for_control(
                         &mut lifecycle_reconciliation, bus, command_surface, seats, diagnostic,
-                        &mut timers, &mut lifecycle,
+                        &mut timers, &mut lifecycle, &mut supervisor_reports,
                     )?;
                     if dispatch_control_projection_burst(
                         command_surface, seats, &mut lifecycle, &mut control, request,
@@ -551,16 +557,13 @@ async fn drive_surface(
                 bus, epoch, seats, command_surface, &mut lifecycle, diagnostic, exit,
             )?,
             timer = timers.recv() => accept_timer_turn(
-                bus, epoch, seats, command_surface, &message_publisher,
-                taste_submitter.as_deref_mut(), &mut lifecycle, &mut supervisor_reports,
-                &mut message_state, diagnostic, &mut timers, &mut lifecycle_reconciliation,
-                timer,
+                bus, seats, command_surface, &mut lifecycle, &mut supervisor_reports,
+                diagnostic, &mut timers, &mut lifecycle_reconciliation, timer,
             )?,
             committed = timer_commits.recv() => accept_commit_turn(
-                bus, epoch, seats, command_surface, &message_publisher,
-                taste_submitter.as_deref_mut(), &mut lifecycle, &mut supervisor_reports,
-                &mut message_state, diagnostic, &mut timers, &mut lifecycle_reconciliation,
-                committed,
+                bus, seats, command_surface, &message_publisher, &mut lifecycle,
+                &mut supervisor_reports, &mut message_state, diagnostic, &mut timers,
+                &mut lifecycle_reconciliation, committed,
             )?,
             ending = &mut server_task => return Err(server_outcome(ending)),
         }
@@ -727,22 +730,17 @@ fn accept_record_turn(
     )
 }
 
-/// Consume one fired timer, then pull the supervisor door before the sweep
-/// the reconcile performs, so no seat is judged ahead of its own notice.
+/// Consume one fired timer, then reconcile the lifecycle it may have moved.
 #[allow(
     clippy::too_many_arguments,
-    reason = "a timer turn crosses the capture surfaces and the lifecycle it reconciles"
+    reason = "a timer turn crosses the timers, the lifecycle, and the door its sweep asks"
 )]
 fn accept_timer_turn(
     bus: &Bus,
-    epoch: CanonicalUuid,
     seats: &mut Seats,
     command_surface: &command_surface::Surface<'_>,
-    message_publisher: &canvas::stream::MessagePublisher,
-    taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
     lifecycle: &mut lifecycle::Runtime,
-    supervisor_reports: &mut capture::SupervisorReports,
-    message_state: &mut message_surface::MessageState,
+    door: &mut capture::SupervisorReports,
     diagnostic: &mut dyn io::Write,
     timers: &mut timers::Runtime,
     reconciliation: &mut lifecycle::Reconciliation,
@@ -756,18 +754,6 @@ fn accept_timer_turn(
     })?;
     let fired = timers.consume(bus, timer)?;
     accept_timer_fired(bus, command_surface, lifecycle, fired)?;
-    accept_supervisor_reports(
-        bus,
-        epoch,
-        seats,
-        command_surface,
-        message_publisher,
-        taste_judge,
-        lifecycle,
-        supervisor_reports.pull(),
-        message_state,
-        diagnostic,
-    )?;
     reconcile_lifecycle(
         reconciliation,
         bus,
@@ -776,6 +762,7 @@ fn accept_timer_turn(
         diagnostic,
         timers,
         lifecycle,
+        door,
     )
 }
 
@@ -1025,43 +1012,27 @@ fn accept_exit(
     super::deferral::defer_store_fault(accounted, diagnostic, "exit accounting")
 }
 
-/// Pull the supervisor door, then let one journal commit settle the
-/// reconciliation and the sweep it may run.
+/// Let one journal commit settle the reconciliation and the sweep it may run.
 ///
 /// Every presented record commits a fact, so this arm fires throughout a
-/// lane's ending; without the pull its sweep judged seats from published
-/// state while their notices sat unread in the kernel queue.
+/// lane's ending; the sweep asks the door before it judges any seat.
 #[allow(
     clippy::too_many_arguments,
-    reason = "a commit turn crosses the capture surfaces and the lifecycle it reconciles"
+    reason = "a commit turn crosses the message surfaces and the lifecycle it reconciles"
 )]
 fn accept_commit_turn(
     bus: &Bus,
-    epoch: CanonicalUuid,
     seats: &mut Seats,
     command_surface: &command_surface::Surface<'_>,
     message_publisher: &canvas::stream::MessagePublisher,
-    taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
     lifecycle: &mut lifecycle::Runtime,
-    supervisor_reports: &mut capture::SupervisorReports,
+    door: &mut capture::SupervisorReports,
     message_state: &mut message_surface::MessageState,
     diagnostic: &mut dyn io::Write,
     timers: &mut timers::Runtime,
     reconciliation: &mut lifecycle::Reconciliation,
     committed: Result<JournalCommit, tokio::sync::broadcast::error::RecvError>,
 ) -> CommandResult<()> {
-    accept_supervisor_reports(
-        bus,
-        epoch,
-        seats,
-        command_surface,
-        message_publisher,
-        taste_judge,
-        lifecycle,
-        supervisor_reports.pull(),
-        message_state,
-        diagnostic,
-    )?;
     match accept_commit(
         bus,
         command_surface,
@@ -1069,6 +1040,7 @@ fn accept_commit_turn(
         diagnostic,
         timers,
         lifecycle,
+        door,
         committed,
     )? {
         Some(commit) => reconciliation.settle_commit(commit),
@@ -1077,6 +1049,10 @@ fn accept_commit_turn(
     settle_spoken_acknowledgements(bus, message_publisher, message_state, diagnostic)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one commit reconciles the timers, the lifecycle, and the door its sweep asks"
+)]
 fn accept_commit(
     bus: &Bus,
     command_surface: &command_surface::Surface<'_>,
@@ -1084,6 +1060,7 @@ fn accept_commit(
     diagnostic: &mut dyn io::Write,
     timers: &mut timers::Runtime,
     lifecycle: &mut lifecycle::Runtime,
+    door: &mut capture::SupervisorReports,
     committed: Result<JournalCommit, tokio::sync::broadcast::error::RecvError>,
 ) -> CommandResult<Option<JournalCommit>> {
     match committed {
@@ -1091,7 +1068,15 @@ fn accept_commit(
             command_surface.refresh_reads()?;
             if !timers.covers(commit) {
                 super::deferral::defer_store_fault(
-                    reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle),
+                    reconcile_wakes(
+                        bus,
+                        command_surface,
+                        seats,
+                        diagnostic,
+                        timers,
+                        lifecycle,
+                        door,
+                    ),
                     diagnostic,
                     "lifecycle reconciliation",
                 )?;
@@ -1101,7 +1086,15 @@ fn accept_commit(
         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
             command_surface.refresh_reads()?;
             super::deferral::defer_store_fault(
-                reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle),
+                reconcile_wakes(
+                    bus,
+                    command_surface,
+                    seats,
+                    diagnostic,
+                    timers,
+                    lifecycle,
+                    door,
+                ),
                 diagnostic,
                 "lifecycle reconciliation",
             )?;
@@ -1147,6 +1140,10 @@ fn request_lifecycle_reconciliation(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one reconciliation crosses the timers, the lifecycle, and the door its sweep asks"
+)]
 fn reconcile_for_control(
     reconciliation: &mut lifecycle::Reconciliation,
     bus: &Bus,
@@ -1155,6 +1152,7 @@ fn reconcile_for_control(
     diagnostic: &mut dyn io::Write,
     timers: &mut timers::Runtime,
     lifecycle: &mut lifecycle::Runtime,
+    door: &mut capture::SupervisorReports,
 ) -> CommandResult<()> {
     if reconciliation.control_settles() {
         reconcile_lifecycle(
@@ -1165,11 +1163,16 @@ fn reconcile_for_control(
             diagnostic,
             timers,
             lifecycle,
+            door,
         )?;
     }
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one reconciliation crosses the timers, the lifecycle, and the door its sweep asks"
+)]
 fn reconcile_lifecycle(
     reconciliation: &mut lifecycle::Reconciliation,
     bus: &Bus,
@@ -1178,10 +1181,19 @@ fn reconcile_lifecycle(
     diagnostic: &mut dyn io::Write,
     timers: &mut timers::Runtime,
     lifecycle: &mut lifecycle::Runtime,
+    door: &mut capture::SupervisorReports,
 ) -> CommandResult<()> {
     // A deferred sweep leaves the demand pending, so the next control turn
     // drives it again instead of a timer having to notice.
-    let swept = reconcile_wakes(bus, command_surface, seats, diagnostic, timers, lifecycle);
+    let swept = reconcile_wakes(
+        bus,
+        command_surface,
+        seats,
+        diagnostic,
+        timers,
+        lifecycle,
+        door,
+    );
     if swept.is_ok() {
         reconciliation.settle();
     }
@@ -1195,9 +1207,10 @@ fn reconcile_wakes(
     diagnostic: &mut dyn io::Write,
     timers: &mut timers::Runtime,
     lifecycle: &mut lifecycle::Runtime,
+    door: &mut capture::SupervisorReports,
 ) -> CommandResult<()> {
     timers.synchronize(bus)?;
-    super::reap::reap_ended_seats(bus, command_surface, seats, lifecycle, diagnostic)?;
+    super::reap::reap_ended_seats(bus, command_surface, seats, lifecycle, diagnostic, door)?;
     let (paths, epoch) = (command_surface.paths, command_surface.epoch());
     lane_surface::reconcile_seats(bus, paths, epoch, seats, diagnostic)?;
     let wake = command_surface.reconcile_lifecycle(lifecycle, seats, diagnostic)?;
