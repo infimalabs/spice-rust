@@ -100,6 +100,33 @@ pub enum Outcome {
     },
 }
 
+impl Outcome {
+    /// The token exactly as the clause named it.
+    #[must_use]
+    pub fn token(&self) -> &str {
+        match self {
+            Self::Retired { key, .. } => key.as_str(),
+            Self::Missed { token, .. } => token,
+        }
+    }
+
+    /// Whether the clause naming this token led its line.
+    ///
+    /// A retirement is always placed, and so is a miss judged on the key
+    /// itself; only a clause that sat inside quoting or behind other prose
+    /// was never in the position to speak.
+    #[must_use]
+    pub const fn placed(&self) -> bool {
+        !matches!(
+            self,
+            Self::Missed {
+                miss: Miss::Quoted | Miss::Buried,
+                ..
+            }
+        )
+    }
+}
+
 /// One token a clause named, and where it was named.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Recognition {
@@ -139,6 +166,25 @@ pub fn scan(prose: &str, standing: &impl Standing) -> Vec<Recognition> {
         .into_iter()
         .flat_map(|acknowledgement| acknowledgement.recognitions)
         .collect()
+}
+
+/// The recognition that decides `token` in one assistant prose.
+///
+/// A placed clause outranks a quoted or buried mention of the same token
+/// wherever the two sit in the prose. The header is the marker an operator
+/// reads; a later citation of it in backticks or mid-sentence is the prose
+/// talking about the header, not a retraction of it. Between clauses of the
+/// same rank the later one decides, so a prose that places the key twice is
+/// judged by its last header and one that only mentions it reports its last
+/// mention. `None` when nothing in the prose names the token.
+#[must_use]
+pub fn decisive(prose: &str, token: &str, standing: &impl Standing) -> Option<Recognition> {
+    scan(prose, standing)
+        .into_iter()
+        .enumerate()
+        .filter(|(_, recognition)| recognition.outcome.token() == token)
+        .max_by_key(|(index, recognition)| (recognition.outcome.placed(), *index))
+        .map(|(_, recognition)| recognition)
 }
 
 /// Reads acknowledgment packets with their source header boundaries.

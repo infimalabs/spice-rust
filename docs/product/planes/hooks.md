@@ -229,7 +229,9 @@ flowchart TD
   W -- "assistant text before the command" --> M["ack command finds the record;<br/>the key retires mid-turn"]
   W -- "tool input or reasoning only" --> A["steer::transcript-evidence-absent;<br/>the key stays live"]
   W -- "assistant text ending the turn" --> X["occupant exit retires it<br/>from the final transcript"]
+  W -- "quoted or buried in assistant text" --> Q["steer::ack-missed names the miss;<br/>the key stays live"]
   A --> N["speak the header as visible text,<br/>or let the turn end on it"]
+  Q --> N
 ```
 
 **Invariant —** Assistant text on the lane tape is the sole acknowledgment
@@ -241,6 +243,14 @@ persisted by the vendor as its own assistant record ahead of the tool record,
 so a lane retires a key without ending its turn. A header that first lands as
 the turn ends is retired at occupant exit under the same recognition rules,
 with no successor woken to cite it.
+
+**Invariant —** Within one assistant prose the placed header decides its key.
+A later citation of the same key in backticks or mid-sentence is the prose
+talking about the header, not a retraction of it. A prose that only quotes or
+buries a live key is refused as `steer::ack-missed` naming that miss and the
+repair, leading a new line with the header; the live witness the lane cited has
+not moved, so the refusal never sends it to reread a snapshot that shows the
+same key.
 
 ### Command rewriting
 

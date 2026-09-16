@@ -10,7 +10,8 @@ use std::collections::BTreeMap;
 
 use steer::ack::keys::Key;
 use steer::ack::scan::{
-    Miss, Outcome, Recognition, Standing, has_acknowledgement, scan, scan_acknowledgements,
+    Miss, Outcome, Recognition, Standing, decisive, has_acknowledgement, scan,
+    scan_acknowledgements,
 };
 use wire::Disposition;
 
@@ -348,6 +349,81 @@ fn a_retired_alphabet_key_retires_when_placed_and_is_unreported_when_buried() {
         report(&scan("I mentioned ACK 1kJK6N3R: earlier.", &board())),
         vec!["1:17 1kJK6N3R buried".to_owned()]
     );
+}
+
+/// The header an operator reads decides the key, however the prose goes on
+/// to talk about it.
+///
+/// A lane that declines and then explains itself by citing the header it
+/// wrote earlier has still declined: the citation in backticks is prose about
+/// a header, not a retraction of the one placed above it, whether it sits
+/// mid-sentence and reads as buried or leads its line and reads as quoted.
+/// The scan still reports each mention by name, so nothing is hidden from a
+/// diagnostic that wants every clause; only the decision ignores them.
+#[test]
+fn a_placed_header_decides_its_key_over_a_later_quoted_mention() {
+    let board = board();
+    let prose = concat!(
+        "NACK 1kJK7Sqy: Verified on the tape; the direction names another lane.\n\n",
+        "I emitted `ACK 1kJK7Sqy: Carrying it forward now` as prose before checking.\n",
+        "`ACK 1kJK7Sqy: Carrying it forward now` is the header the operator saw.",
+    );
+
+    assert_eq!(
+        report(&scan(prose, &board)),
+        vec![
+            "1:6 1kJK7Sqy declined".to_owned(),
+            "3:16 1kJK7Sqy buried".to_owned(),
+            "4:6 1kJK7Sqy quoted".to_owned(),
+        ]
+    );
+    assert_eq!(
+        decided(prose, "1kJK7Sqy", &board),
+        Some("1:6 1kJK7Sqy declined".to_owned())
+    );
+}
+
+/// Rank first, then recency: a placed clause wins over any misplaced mention,
+/// and among clauses of one rank the later one speaks.
+#[test]
+fn the_decisive_recognition_is_the_last_of_the_highest_rank() {
+    let board = board();
+
+    for (prose, expected) in [
+        (
+            "Earlier I wrote ACK 1kJK6N3R: no.\nACK 1kJK6N3R: yes.",
+            Some("2:5 1kJK6N3R acked"),
+        ),
+        (
+            "ACK 1kJK6N3R: first thought.\nNACK 1kJK6N3R: on reflection, no.",
+            Some("2:6 1kJK6N3R declined"),
+        ),
+        (
+            "> ACK 1kJK6N3R: quoted\nI said ACK 1kJK6N3R: buried",
+            Some("2:12 1kJK6N3R buried"),
+        ),
+        ("ACK 1kJK6M0V: another key entirely.", None),
+    ] {
+        assert_eq!(
+            decided(prose, "1kJK6N3R", &board),
+            expected.map(str::to_owned),
+            "{prose:?}"
+        );
+    }
+    assert_eq!(
+        decided(
+            "ACK 1kJK8KcW: already retired.\n`ACK 1kJK8KcW: shown`",
+            "1kJK8KcW",
+            &board
+        ),
+        Some("1:5 1kJK8KcW historical".to_owned()),
+        "a miss judged on the key itself is still placed"
+    );
+}
+
+/// Renders the decisive recognition for one token the way [`report`] does.
+fn decided(prose: &str, token: &str, standing: &impl Standing) -> Option<String> {
+    decisive(prose, token, standing).map(|recognition| report(&[recognition]).remove(0))
 }
 
 /// Renders each recognition as `locus token outcome`, which is exactly the

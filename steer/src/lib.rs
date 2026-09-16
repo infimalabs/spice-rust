@@ -36,6 +36,8 @@ pub mod run;
 pub use ack::keys::{
     DISPOSITIONS, DispositionError, Key, KeyError, KeyMintError, MARKERS, Marker, disposition,
 };
-pub use ack::scan::{Locus, Miss, Outcome, Recognition, Standing, has_acknowledgement, scan};
+pub use ack::scan::{
+    Locus, Miss, Outcome, Recognition, Standing, decisive, has_acknowledgement, scan,
+};
 pub use config::{Config, WrapperReference, Wrappers};
 pub use directives::{Directive, Ledger, MediaResolutionError, Refusal, Steering};

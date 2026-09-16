@@ -565,6 +565,7 @@ pub(in crate::resident) fn dispose(
             epoch,
             command,
             residency.position(),
+            indexed.as_ref(),
             token,
             miss,
             recognition.locus,
@@ -706,18 +707,14 @@ fn record_miss(
     epoch: CanonicalUuid,
     command: &wire::AdmittedCommand,
     residency: Seq,
+    directive: Option<&journal::JournalHead<wire::SteeringHead>>,
     token: String,
     miss: Miss,
     locus: TranscriptLocus,
     lane: CanonicalUuid,
 ) -> Outcome<CommandAnswer> {
-    if !command.expected().is_empty() {
-        return refusal(
-            "steer::witness-moved",
-            Some("no live directive witness".to_owned()),
-            Some(format!("{:?}", command.expected())),
-            "read the current steering snapshot before recording a missed recognition",
-        );
+    if let Err(outcome) = miss_witness(command, directive) {
+        return outcome;
     }
     let body = wire::body::SteerMissed {
         key: token.clone(),
@@ -752,8 +749,53 @@ fn record_miss(
         "steer::ack-missed",
         Some("one live directive recognition".to_owned()),
         Some(format!("{token}:{}", miss.as_str())),
-        "read the current inbox and acknowledge a live key in new assistant prose",
+        miss_repair(miss),
     )
+}
+
+/// Admit the witness a miss arrives with.
+///
+/// The client cites the live directive whenever its inbox still carries the
+/// key, so a quoted or buried mention of a live key reaches here with that
+/// witness, and the witness holds: the directive has not moved, the prose
+/// missed. Only a witness the index no longer bears has moved, and a miss on a
+/// key no directive carries arrives with no witness at all.
+fn miss_witness(
+    command: &wire::AdmittedCommand,
+    directive: Option<&journal::JournalHead<wire::SteeringHead>>,
+) -> Result<(), Outcome<CommandAnswer>> {
+    let live = directive
+        .filter(|head| head.body().disposition == Disposition::Live)
+        .map(|head| Witness::Directive {
+            steer: head.body().directive,
+            disposition: Disposition::Live,
+        });
+    match (command.expected(), &live) {
+        ([], _) => Ok(()),
+        ([observed], Some(live)) if observed == live => Ok(()),
+        (observed, live) => Err(refusal(
+            "steer::witness-moved",
+            Some(live.as_ref().map_or_else(
+                || "no live directive witness".to_owned(),
+                |live| format!("{live:?}"),
+            )),
+            Some(format!("{observed:?}")),
+            "read the current steering snapshot before recording a missed recognition",
+        )),
+    }
+}
+
+/// The repair a missed recognition can name.
+const fn miss_repair(miss: Miss) -> &'static str {
+    match miss {
+        Miss::Quoted | Miss::Buried => {
+            "lead a new assistant prose line with the ACK or NACK header; \
+             a quoted or buried mention of the key acknowledges nothing"
+        }
+        Miss::Malformed | Miss::Unknown | Miss::Historical => {
+            "read the current inbox and acknowledge a live key in new assistant prose"
+        }
+    }
 }
 
 fn acknowledgment_miss(miss: Miss) -> wire::body::AcknowledgmentMiss {
