@@ -106,9 +106,10 @@ pub struct TailScan {
 ///
 /// Its start retreats toward the nearest preceding newline only while the
 /// allowance retains bytes and passes, so the scanner never interprets a record
-/// suffix as independent vendor evidence. The end checkpoint remains before an
-/// unterminated tail, so a later forward scan cannot miss the suffix that
-/// completes it.
+/// suffix as independent vendor evidence. The bytes that retreat crosses are
+/// paid for once: the window reads them again, and pays only from the byte
+/// it was asked for. The end checkpoint remains before an unterminated tail,
+/// so a later forward scan cannot miss the suffix that completes it.
 ///
 /// # Errors
 ///
@@ -132,7 +133,12 @@ pub fn scan_tail(
         source: source.clone(),
         next,
     };
-    let state = scan_window(&tape, dialect, &source, &extents, next, None, &mut tracker)?;
+    let window = Window {
+        start: next,
+        paid: candidate,
+        end: None,
+    };
+    let state = scan_window(&tape, dialect, &source, &extents, window, &mut tracker)?;
     let observed = tape
         .source_id()
         .map_err(|source| tape_error(root, source))?;
@@ -196,13 +202,17 @@ pub fn scan_before(
         source: before.source.clone(),
         next,
     };
+    let window = Window {
+        start: next,
+        paid: candidate,
+        end: Some(end),
+    };
     let state = scan_window(
         &tape,
         dialect,
         &before.source,
         &extents,
-        next,
-        Some(end),
+        window,
         &mut tracker,
     )?;
     let observed = tape
@@ -345,17 +355,43 @@ impl WorkTracker {
     }
 }
 
+/// One complete-record window and the byte its allowance pays from.
+///
+/// The boundary search already paid for every byte from `start` up to
+/// `paid`, the candidate it retreated from, so the window pays once.
+#[derive(Clone, Copy)]
+struct Window {
+    start: Position,
+    paid: Position,
+    end: Option<Position>,
+}
+
+impl Window {
+    /// Bytes of one extent's window the boundary search has not paid for.
+    fn unpaid(self, extent: &Extent, start: u64, end: u64) -> u64 {
+        if extent.member < self.paid.member {
+            return 0;
+        }
+        let paid = if extent.member == self.paid.member {
+            self.paid.offset
+        } else {
+            0
+        };
+        end.saturating_sub(start.max(paid))
+    }
+}
+
 fn scan_window(
     tape: &Tape,
     dialect: Dialect,
     source: &SourceId,
     extents: &[Extent],
-    position: Position,
-    end: Option<Position>,
+    window: Window,
     tracker: &mut WorkTracker,
 ) -> Result<ScanState, ScanError> {
+    let end = window.end;
     let mut state = ScanState {
-        position,
+        position: window.start,
         records: Vec::new(),
         bytes: Vec::new(),
         spans: Vec::new(),
@@ -376,8 +412,9 @@ fn scan_window(
         let extent_end = end
             .filter(|end| end.member == extent.member)
             .map_or(extent.length, |end| end.offset.min(extent.length));
-        if start < extent_end {
-            tracker.read(extent_end - start)?;
+        let unpaid = window.unpaid(extent, start, extent_end);
+        if unpaid > 0 {
+            tracker.read(unpaid)?;
         }
         let scanned = {
             let mut admit_record = || tracker.record();

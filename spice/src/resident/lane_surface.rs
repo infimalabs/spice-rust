@@ -64,7 +64,8 @@ const OCCUPIED: &str = "occupied";
 const VACANT: &str = "vacant";
 const DEGRADED: &str = "degraded";
 const RECALL_LIMIT: usize = 16;
-const CAPTURE_LIMIT: usize = 1024 * 1024;
+/// Bytes one captured record may carry; capture truncates the rest.
+pub(in crate::resident) const CAPTURE_LIMIT: usize = 1024 * 1024;
 const OUTPUT_DRAIN: Duration = Duration::from_secs(2);
 const REAP: Duration = Duration::from_secs(2);
 /// How long an occupant may take to end itself before the resident kills it.

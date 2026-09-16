@@ -20,6 +20,8 @@ const TEST_DURATION: Duration = Duration::from_secs(1);
 const SMALL_WINDOW_BYTES: u64 = 4 * 1024;
 const SMALL_WINDOW_RECORDS: usize = 4 * 1024;
 const OVERSIZED_RECORD_BYTES: usize = 512 * 1024;
+/// Index bytes and one boundary chunk of overshoot a retreat may add.
+const RETREAT_SLACK_BYTES: u64 = 64 * 1024;
 const LARGE_SEASON_RECORDS: usize = 40_000;
 const EQUAL_MEMBER_ADDITIONS: usize = 15;
 const ACTIVE_MEMBER_RECORDS: usize = 5;
@@ -132,6 +134,54 @@ fn oversized_and_delimiter_free_tails_stop_at_the_same_byte_ceiling() {
         refused("oversized-tail", b"\n"),
         refused("delimiter-free-tail", b"")
     );
+}
+
+#[test]
+fn a_window_that_begins_inside_a_record_pays_for_its_retreat_once() {
+    let scratch = Scratch::new("retreat-once");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+    let prose = line(PROSE);
+    tape.tee(&prose).expect("older record is durable");
+    let mut oversized = vec![b'x'; OVERSIZED_RECORD_BYTES];
+    oversized.push(b'\n');
+    tape.tee(&oversized).expect("oversized record is durable");
+    tape.tee(&prose).expect("newest record is durable");
+
+    // The window asks for the newest few kibibytes and begins inside the
+    // oversized record; retreating to its start costs that record once, not
+    // once to find the boundary and again to read from it.
+    let retreat = u64::try_from(OVERSIZED_RECORD_BYTES).expect("retreat fits");
+    let allowance = SMALL_WINDOW_BYTES + retreat + RETREAT_SLACK_BYTES;
+    let budget = TailBudget::new(
+        SMALL_WINDOW_BYTES,
+        allowance,
+        SMALL_WINDOW_RECORDS,
+        TEST_PASS_LIMIT,
+        TEST_DURATION,
+    )
+    .expect("bounded tail");
+    let tail = scan_tail(scratch.path(), Dialect::Codex, budget)
+        .expect("one retreat over the record is affordable");
+    assert_eq!(
+        tail.start.next,
+        Position {
+            member: 1,
+            offset: u64::try_from(prose.len()).expect("offset fits"),
+        },
+        "the window begins where the straddled record does"
+    );
+    assert_eq!(
+        tail.scan.records.len(),
+        2,
+        "the straddled record and the newest"
+    );
+    assert!(tail.work.source_bytes > retreat, "the retreat is paid");
+    assert!(
+        tail.work.source_bytes <= allowance,
+        "{}",
+        tail.work.source_bytes
+    );
+    scratch.remove();
 }
 
 #[test]

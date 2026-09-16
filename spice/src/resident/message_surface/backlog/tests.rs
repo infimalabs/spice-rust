@@ -541,6 +541,46 @@ fn startup_tail_reads_one_fixed_window_before_byte_zero() {
 }
 
 #[test]
+fn startup_tail_affords_one_captured_record_at_its_limit() {
+    // Enough newest messages that the startup window begins deep inside a
+    // record at the capture limit: the boundary allowance retreats over the
+    // rest of that record, and the window is read from where it was asked.
+    const NEWEST_MESSAGES: usize = 500;
+    let root = season_tape("limit-record", 30, 0);
+    let tape = tape::Tape::open(&root).expect("season tape reopens");
+    let mut record = vec![b'x'; lane_surface::CAPTURE_LIMIT];
+    record.push(b'\n');
+    tape.tee(&record)
+        .expect("a record at the capture limit is durable");
+    let filler = "x".repeat(1_800);
+    let mut newest = Vec::new();
+    for index in 0..NEWEST_MESSAGES {
+        newest.extend_from_slice(
+            format!(
+                "{{\"type\":\"item.completed\",\"item\":{{\"id\":\"late-{index}\",\"type\":\"agent_message\",\"text\":\"{index} {filler}\"}}}}\n"
+            )
+            .as_bytes(),
+        );
+    }
+    tape.tee(&newest).expect("newest messages are durable");
+
+    let tail = tail_backlog(&root, listen::Dialect::Codex)
+        .expect("a record at the capture limit is affordable");
+    let straddled = tail.scan.records.first().expect("the window has records");
+    assert_eq!(
+        straddled.locus.length,
+        record.len() as u64,
+        "the window begins with the whole straddled record"
+    );
+    assert_eq!(tail.scan.records.len(), NEWEST_MESSAGES + 1);
+    assert!(tail.work.source_bytes > STARTUP_WINDOW_BYTES + STARTUP_WINDOW_BYTES / 2);
+    assert!(tail.work.source_bytes <= STARTUP_SOURCE_BYTES);
+    assert!(tail.work.passes <= TAIL_PASS_LIMIT);
+
+    fs::remove_dir_all(root).expect("limit-record fixture cleanup");
+}
+
+#[test]
 fn tool_only_tail_stops_at_one_fixed_read_with_a_backward_cursor() {
     let root = season_tape("sparse-tail", 30, SPARSE_TOOL_RECORDS);
 

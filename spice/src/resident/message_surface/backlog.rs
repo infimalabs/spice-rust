@@ -24,7 +24,12 @@ const STARTUP_WINDOW_BYTES: u64 = 1024 * 1024;
 /// until the page held its visible cards; a tool-heavy lane can run for
 /// megabytes without one, so a smaller window served pages of nothing.
 const HISTORY_WINDOW_BYTES: u64 = 8 * 1024 * 1024;
-const TAIL_BOUNDARY_BYTES: u64 = 256 * 1024;
+/// Bytes one scan may spend beyond its window: the tape index it reads to
+/// find the newest members, then one longest captured record, when the window
+/// it was asked for begins inside that record.
+const TAIL_BOUNDARY_BYTES: u64 = TAIL_INDEX_BYTES + lane_surface::CAPTURE_LIMIT as u64;
+/// Tape index bytes one scan may read; a member row is tens of bytes.
+const TAIL_INDEX_BYTES: u64 = 64 * 1024;
 const STARTUP_SOURCE_BYTES: u64 = STARTUP_WINDOW_BYTES + TAIL_BOUNDARY_BYTES;
 const HISTORY_SOURCE_BYTES: u64 = HISTORY_WINDOW_BYTES + TAIL_BOUNDARY_BYTES;
 const TAIL_RECORD_LIMIT: usize = 256 * 1024;
