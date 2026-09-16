@@ -7,6 +7,8 @@
 //! the tape regardless, and this module presents exactly that accounted set,
 //! so a lost notice costs nothing the Canvas would miss until a restart.
 
+use std::borrow::Cow;
+
 use super::*;
 
 /// Every record the sweep newly accounted for the noticed lane, in tape order,
