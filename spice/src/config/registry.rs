@@ -669,7 +669,7 @@ configuration_registry! {
     }
     fixed "vendor.claude.effort" {
         kind: String,
-        builtin: Some(Builtin::String("high")),
+        builtin: Some(Builtin::String("xhigh")),
         layers: TRACKED_WORKTREE,
         class: WorktreeLocal,
         flag: None,
