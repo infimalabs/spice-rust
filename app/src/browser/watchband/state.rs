@@ -51,6 +51,13 @@ pub(in crate::browser) enum ComposerAction {
         quote: Option<String>,
         issue: String,
     },
+    /// Clear an issue only when the named family raised it, so an unrelated
+    /// composer issue survives a success elsewhere.
+    ClearIssue {
+        lane: String,
+        quote: Option<String>,
+        family: &'static str,
+    },
     Clear {
         lane: String,
     },
@@ -127,6 +134,11 @@ impl Reducible for ComposerDrafts {
                     *current_issue = Some(issue);
                 }
             }
+            ComposerAction::ClearIssue {
+                lane,
+                quote,
+                family,
+            } => clear_issue_family(next.0.draft_mut(lane), quote.as_deref(), family),
             ComposerAction::Clear { lane } => {
                 next.0.clear(&lane);
             }
@@ -138,6 +150,16 @@ impl Reducible for ComposerDrafts {
             }
         }
         Rc::new(next)
+    }
+}
+
+fn clear_issue_family(draft: &mut ComposerDraft, quote: Option<&str>, family: &str) {
+    if let Some((_, issue)) = attachment_state_mut(draft, quote)
+        && issue
+            .as_deref()
+            .is_some_and(|text| text.starts_with(family))
+    {
+        *issue = None;
     }
 }
 

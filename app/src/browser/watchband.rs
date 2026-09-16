@@ -1073,10 +1073,14 @@ fn render_composer_heading(
                         data-renewal-requested={renewal.pressed.to_string()}
                         data-renewal-next-requested={renewal.next_requested.to_string()}
                         data-renewal-refusal={renewal.refusal.clone()}
+                        data-renewal-blocked={renewal.blocked}
                         onclick={renew}
                     >
                         <strong>{renewal.heading}</strong>
                         <span>{renewal.detail}</span>
+                        if let Some(blocked) = renewal.blocked {
+                            <span class="agent-renew-blocked">{blocked}</span>
+                        }
                     </button>
                 </div>
             </details>
