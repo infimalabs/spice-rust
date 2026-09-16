@@ -1191,11 +1191,13 @@ fn render_omp_mark(lane: CanonicalUuid) -> Html {
     html! {
         <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false">
             <defs>
-                <linearGradient id={gradient} x1="0" y1="0" x2="1" y2="1">
+                // A literal tag is normalised to lowercase, and SVG knows no
+                // `lineargradient`; the dynamic form keeps its case.
+                <@{"linearGradient"} id={gradient} x1="0" y1="0" x2="1" y2="1">
                     <stop offset="0" stop-color="oklch(0.7 0.24 340)"></stop>
                     <stop offset=".5" stop-color="oklch(0.62 0.21 295)"></stop>
                     <stop offset="1" stop-color="oklch(0.81 0.14 200)"></stop>
-                </linearGradient>
+                </@>
             </defs>
             <path fill={fill} d="M10 14h44v9H43v33h-9V23h-9v22h-9V23H10z"></path>
         </svg>
