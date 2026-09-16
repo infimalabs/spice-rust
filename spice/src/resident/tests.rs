@@ -30,6 +30,8 @@ mod read_materialization_bounds;
 mod startup;
 #[path = "tests/startup_window.rs"]
 mod startup_window;
+#[path = "tests/steering_dispose.rs"]
+mod steering_dispose;
 #[path = "tests/supervisor_notices.rs"]
 mod supervisor_notices;
 #[path = "tests/sweep_publish.rs"]

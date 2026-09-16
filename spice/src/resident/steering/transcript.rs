@@ -9,6 +9,10 @@ pub(super) struct TranscriptRecognition {
 
 /// Find the latest assistant prose recognizing `token`, newest record first.
 ///
+/// Within one prose the placed header decides the token even when the same
+/// prose later quotes or buries the key, so a lane that cites its own header
+/// while explaining itself is judged by the header the operator reads.
+///
 /// A requested `disposition` must match the marker the transcript carries;
 /// `None` accepts whichever terminal marker the transcript shows, which is
 /// how the exit sweep reads an answer nobody has yet claimed on the command
@@ -131,31 +135,29 @@ fn scan_record(
             if prose.role != listen::ProseRole::Assistant {
                 continue;
             }
-            for recognition in steer::scan(&prose.text, standing).into_iter().rev() {
-                if recognition_token(&recognition.outcome) != token {
-                    continue;
-                }
-                if let ScanOutcome::Retired {
-                    disposition: observed,
-                    ..
-                } = &recognition.outcome
-                    && let Some(requested) = disposition
-                    && *observed != requested
-                {
-                    return Err(refusal(
-                        "steer::transcript-disposition-mismatch",
-                        Some(format!("{requested:?}").to_lowercase()),
-                        Some(format!("{observed:?}").to_lowercase()),
-                        "make the ack command disposition match the latest transcript marker",
-                    ));
-                }
-                return Ok(Some(RecordRecognition {
-                    event: checked_locus_part(event_index)?,
-                    line: checked_locus_part(recognition.locus.line)?,
-                    column: checked_locus_part(recognition.locus.column)?,
-                    outcome: recognition.outcome,
-                }));
+            let Some(recognition) = steer::decisive(&prose.text, token, standing) else {
+                continue;
+            };
+            if let ScanOutcome::Retired {
+                disposition: observed,
+                ..
+            } = &recognition.outcome
+                && let Some(requested) = disposition
+                && *observed != requested
+            {
+                return Err(refusal(
+                    "steer::transcript-disposition-mismatch",
+                    Some(format!("{requested:?}").to_lowercase()),
+                    Some(format!("{observed:?}").to_lowercase()),
+                    "make the ack command disposition match the latest transcript marker",
+                ));
             }
+            return Ok(Some(RecordRecognition {
+                event: checked_locus_part(event_index)?,
+                line: checked_locus_part(recognition.locus.line)?,
+                column: checked_locus_part(recognition.locus.column)?,
+                outcome: recognition.outcome,
+            }));
         }
     }
     Ok(None)
@@ -180,11 +182,4 @@ fn record_ranges(bytes: &[u8]) -> Vec<(usize, usize)> {
         ranges.push((start, bytes.len()));
     }
     ranges
-}
-
-fn recognition_token(outcome: &ScanOutcome) -> &str {
-    match outcome {
-        ScanOutcome::Retired { key, .. } => key.as_str(),
-        ScanOutcome::Missed { token, .. } => token,
-    }
 }
