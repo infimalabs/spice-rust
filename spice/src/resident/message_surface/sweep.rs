@@ -34,7 +34,9 @@ pub(super) fn swept_records<'a>(
             if record.locus == noticed.locus {
                 swept.push(Cow::Borrowed(noticed));
                 noticed_swept = true;
-            } else if let Some(record) = scanned_capture_record(noticed, record) {
+            } else if let Some(record) =
+                scanned_capture_record(noticed.lane, noticed.occupant, noticed.stream, record)
+            {
                 swept.push(Cow::Owned(record));
             }
         }
@@ -45,13 +47,42 @@ pub(super) fn swept_records<'a>(
     swept
 }
 
+/// Every record the closing sweep newly accounted for a lane whose occupant
+/// just left, in tape order, authored by that occupant.
+///
+/// No notice leads this sweep: the seat closed, and whatever its occupant
+/// wrote last is on the tape whether or not the notices for it were read
+/// before the exit was accounted.
+pub(super) fn closing_records(
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    observations: &mut [super::super::TranscriptObservation],
+) -> Vec<Cow<'static, lane::capture::CaptureRecord>> {
+    let mut swept = Vec::new();
+    for observation in observations
+        .iter_mut()
+        .filter(|observation| observation.batch.lane == lane)
+    {
+        for record in std::mem::take(&mut observation.records) {
+            if let Some(record) =
+                scanned_capture_record(lane, occupant, vendor::RecordStream::Stdout, record)
+            {
+                swept.push(Cow::Owned(record));
+            }
+        }
+    }
+    swept
+}
+
 /// One scanned record as the capture record its own notice would have carried.
 ///
 /// Residue presents nothing and carries no prose to recognize, so it is left
-/// out rather than materialized. Authorship follows the noticed record: the
-/// sweep is scoped to its lane and its occupant admitted the notice.
+/// out rather than materialized. Authorship is the caller's: a sweep is scoped
+/// to one lane and the occupant that wrote the range it covers.
 fn scanned_capture_record(
-    noticed: &lane::capture::CaptureRecord,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    stream: vendor::RecordStream,
     record: listen::Record,
 ) -> Option<lane::capture::CaptureRecord> {
     let listen::RecordPayload::Events(events) = record.payload else {
@@ -59,9 +90,9 @@ fn scanned_capture_record(
     };
     let context = record.context?;
     Some(lane::capture::CaptureRecord {
-        lane: noticed.lane,
-        occupant: noticed.occupant,
-        stream: noticed.stream,
+        lane,
+        occupant,
+        stream,
         boundary: sill::RecordBoundary::Complete,
         locus: record.locus,
         declaration: None,
@@ -70,6 +101,60 @@ fn scanned_capture_record(
             events: events.into_iter().map(|sourced| sourced.event).collect(),
         },
     })
+}
+
+/// Recognize, steer, and present every swept record in tape order.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one sweep crosses the taste, steering, and Canvas surfaces for one occupant"
+)]
+pub(super) fn present_swept<P: AgentMessagePublisher>(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    surfaces: &CaptureSurfaces<'_, P>,
+    recognition: &mut TasteRecognition<'_>,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    swept: &[Cow<'_, lane::capture::CaptureRecord>],
+    views: &mut CaptureViews<'_>,
+) -> CommandResult<()> {
+    // Session authority enriches presentation; capture admission decided
+    // freshness. Its absence keeps the non-disclosing count preview.
+    let worktree = session_worktree(bus, epoch, lane, occupant);
+    for record in swept {
+        recognize(bus, epoch, surfaces, recognition, record, views.diagnostic)?;
+        let steering = steering_ledger(bus, record)?;
+        present(
+            surfaces,
+            record,
+            steering.as_ref(),
+            worktree.as_deref(),
+            views,
+        )?;
+    }
+    Ok(())
+}
+
+/// The worktree the lane's current session names for this occupant.
+fn session_worktree(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+) -> Option<PathBuf> {
+    bus.residency_head()
+        .ok()
+        .flatten()
+        .filter(|head| head.body().epoch == epoch)
+        .and_then(|head| {
+            head.body()
+                .lanes
+                .iter()
+                .find(|row| row.lane == lane)
+                .and_then(|row| row.session.as_ref())
+                .filter(|session| session.occupant == occupant)
+                .map(|session| PathBuf::from(&session.worktree))
+        })
 }
 
 /// Recognize one record's taste candidates under the configured adjudication.

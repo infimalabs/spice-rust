@@ -8,6 +8,9 @@
 //! that same state for every seated lane on each reconciliation, so the
 //! running resident accounts the ending itself and the wakes the lane was
 //! owed fire from the reconciliation that follows.
+//!
+//! The closing transcript sweep lives here too: whichever path closes a seat,
+//! what its occupant wrote last is presented from the same loop turn.
 
 use super::*;
 
@@ -132,6 +135,52 @@ pub(in crate::resident) fn sweep_seats(
             ),
         };
         super::deferral::defer_store_fault(accounted, diagnostic, "reaped seat accounting")?;
+    }
+    Ok(())
+}
+
+/// Present what every seat vacated this turn left on its tape.
+///
+/// Every path that closes a seat, a supervisor exit or failure notice, the
+/// seat sweep for a lost ending, an operator stop, records the occupant in the
+/// seat ledger. The closing sweep runs here, after the turn, where the taste,
+/// steering, and Canvas surfaces all exist; a refused commit is deferred the
+/// way exit accounting defers it.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the closing sweep crosses the same live capture surfaces as a noticed record"
+)]
+pub(in crate::resident) fn present_closed_transcripts(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+    command_surface: &command_surface::Surface<'_>,
+    message_publisher: &canvas::stream::MessagePublisher,
+    mut taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
+    message_state: &mut message_surface::MessageState,
+    diagnostic: &mut dyn io::Write,
+) -> CommandResult<()> {
+    for (lane, occupant) in seats.take_vacated() {
+        let surfaces = CaptureSurfaces::new(
+            command_surface.paths,
+            &command_surface.config.taste,
+            &command_surface.config.steering,
+            message_publisher,
+        );
+        let recognition = taste_judge.as_deref_mut().map_or(
+            message_surface::TasteRecognition::Direct,
+            message_surface::TasteRecognition::Deferred,
+        );
+        let presented = message_surface::present_closed_transcript(
+            bus,
+            epoch,
+            &surfaces,
+            recognition,
+            lane,
+            occupant,
+            message_surface::CaptureViews::new(message_state, diagnostic),
+        );
+        super::deferral::defer_store_fault(presented, diagnostic, "closing transcript sweep")?;
     }
     Ok(())
 }

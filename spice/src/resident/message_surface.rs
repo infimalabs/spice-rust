@@ -172,7 +172,7 @@ pub(super) trait AgentMessagePublisher {
     ) -> Result<bool, canvas::stream::MessagePublishError>;
 }
 
-enum TasteRecognition<'a> {
+pub(super) enum TasteRecognition<'a> {
     Direct,
     Immediate(&'a mut dyn taste_surface::Adjudicator),
     Deferred(&'a mut taste_surface::AdjudicationSubmitter),
@@ -252,41 +252,49 @@ fn accept_capture_record_with<P: AgentMessagePublisher>(
         super::ingest_transcripts(bus, surfaces.paths, Some(record.lane), views.diagnostic)?;
     let swept = sweep::swept_records(record, &mut observations);
     views.state.observations.extend(observations);
-    // Session authority enriches presentation; capture admission decided freshness.
-    // Its absence keeps the non-disclosing count preview.
-    let worktree = bus
-        .residency_head()
-        .ok()
-        .flatten()
-        .filter(|head| head.body().epoch == epoch)
-        .and_then(|head| {
-            head.body()
-                .lanes
-                .iter()
-                .find(|lane| lane.lane == record.lane)
-                .and_then(|lane| lane.session.as_ref())
-                .filter(|session| session.occupant == record.occupant)
-                .map(|session| PathBuf::from(&session.worktree))
-        });
-    for record in &swept {
-        sweep::recognize(
-            bus,
-            epoch,
-            surfaces,
-            &mut recognition,
-            record,
-            views.diagnostic,
-        )?;
-        let steering = steering_ledger(bus, record)?;
-        sweep::present(
-            surfaces,
-            record,
-            steering.as_ref(),
-            worktree.as_deref(),
-            &mut views,
-        )?;
-    }
-    Ok(())
+    sweep::present_swept(
+        bus,
+        epoch,
+        surfaces,
+        &mut recognition,
+        record.lane,
+        record.occupant,
+        &swept,
+        &mut views,
+    )
+}
+
+/// Account and present whatever a lane's tape gained before its seat closed.
+///
+/// An occupant writes its last records moments before it exits, and the exit
+/// can be accounted before their notices are read; a notice read afterwards
+/// no longer names the seated occupant and is refused. Nothing else sweeps
+/// the tape until a restart, so the final answer never reached the Canvas.
+/// The closing sweep runs once per vacated seat, in the loop turn that
+/// vacated it, and presents the range in tape order under that occupant.
+pub(super) fn present_closed_transcript<P: AgentMessagePublisher>(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    surfaces: &CaptureSurfaces<'_, P>,
+    mut recognition: TasteRecognition<'_>,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    mut views: CaptureViews<'_>,
+) -> CommandResult<()> {
+    let mut observations =
+        super::ingest_transcripts(bus, surfaces.paths, Some(lane), views.diagnostic)?;
+    let swept = sweep::closing_records(lane, occupant, &mut observations);
+    views.state.observations.extend(observations);
+    sweep::present_swept(
+        bus,
+        epoch,
+        surfaces,
+        &mut recognition,
+        lane,
+        occupant,
+        &swept,
+        &mut views,
+    )
 }
 
 struct AgentRecord<'a> {

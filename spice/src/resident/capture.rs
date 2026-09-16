@@ -172,10 +172,16 @@ fn coalesce(notices: Vec<io::Result<Notice>>) -> Vec<io::Result<Notice>> {
     kept
 }
 
+/// The capture record one record notice names, read back from the tape.
+///
+/// A notice from an occupant the lane no longer seats is refused out loud:
+/// the closing sweep at its exit already presented that tape, and a silent
+/// refusal here is indistinguishable from a lost record.
 pub(super) fn materialize(
     paths: &super::RuntimePaths,
     residency: &wire::ResidencyHead,
     notice: Notice,
+    diagnostic: &mut dyn io::Write,
 ) -> super::CommandResult<Option<CaptureRecord>> {
     let Notice::Record {
         lane,
@@ -187,13 +193,19 @@ pub(super) fn materialize(
     else {
         return Ok(None);
     };
-    let Some(row) = residency
-        .lanes
-        .iter()
-        .find(|row| row.lane == lane && row.occupant == Some(occupant))
-    else {
+    let Some(row) = residency.lanes.iter().find(|row| row.lane == lane) else {
         return Ok(None);
     };
+    if row.occupant != Some(occupant) {
+        let _ = writeln!(
+            diagnostic,
+            "lane {lane} record notice from occupant {occupant} after its seat closed; \
+             the closing sweep presented that tape (seated now: {})",
+            row.occupant
+                .map_or_else(|| "nobody".to_owned(), |seated| seated.to_string())
+        );
+        return Ok(None);
+    }
     let Some(vendor) = super::ingest_vendor(&row.vendor) else {
         return Ok(None);
     };

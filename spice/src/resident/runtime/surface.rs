@@ -532,21 +532,9 @@ async fn drive_surface(
                     taste_submitter.as_deref_mut(), record, &mut message_state, diagnostic,
                 )?;
             }
-            completed = receive_judgment(&mut taste_completions) => {
-                let completed = completed?;
-                taste_submitter
-                    .as_deref_mut()
-                    .expect("a completion receiver always has its submitter")
-                    .finished(&completed);
-                taste_surface::complete_judgment(
-                    bus,
-                    command_surface.paths,
-                    epoch,
-                    &command_surface.config.taste,
-                    &command_surface.config.steering,
-                    completed,
-                )?;
-            }
+            completed = receive_judgment(&mut taste_completions) => accept_judgment(
+                bus, epoch, command_surface, taste_submitter.as_deref_mut(), completed?,
+            )?,
             failure = failures.recv() => {
                 accept_failure(
                     bus, epoch, seats, command_surface, &mut lifecycle, diagnostic, failure,
@@ -586,6 +574,16 @@ async fn drive_surface(
             }
             ending = &mut server_task => return Err(server_outcome(ending)),
         }
+        reap::present_closed_transcripts(
+            bus,
+            epoch,
+            seats,
+            command_surface,
+            &message_publisher,
+            taste_submitter.as_deref_mut(),
+            &mut message_state,
+            diagnostic,
+        )?;
     }
 }
 
@@ -750,7 +748,8 @@ fn accept_supervisor_report(
         );
     }
     let residency = current_residency(bus, epoch)?;
-    let Some(record) = capture::materialize(command_surface.paths, residency.body(), notice)?
+    let Some(record) =
+        capture::materialize(command_surface.paths, residency.body(), notice, diagnostic)?
     else {
         return Ok(());
     };
@@ -764,6 +763,27 @@ fn accept_supervisor_report(
         Some(record),
         message_state,
         diagnostic,
+    )
+}
+
+/// Settle one finished taste adjudication with its submitter and the journal.
+fn accept_judgment(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    command_surface: &command_surface::Surface<'_>,
+    taste_submitter: Option<&mut taste_surface::AdjudicationSubmitter>,
+    completed: taste_surface::CompletedJudgment,
+) -> CommandResult<()> {
+    taste_submitter
+        .expect("a completion receiver always has its submitter")
+        .finished(&completed);
+    taste_surface::complete_judgment(
+        bus,
+        command_surface.paths,
+        epoch,
+        &command_surface.config.taste,
+        &command_surface.config.steering,
+        completed,
     )
 }
 

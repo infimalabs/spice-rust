@@ -307,6 +307,7 @@ pub struct Seats {
     occupied: BTreeMap<CanonicalUuid, Occupant>,
     started: BTreeMap<CanonicalUuid, Activity>,
     activity: BTreeMap<CanonicalUuid, Activity>,
+    vacated: Vec<(CanonicalUuid, CanonicalUuid)>,
 }
 
 impl Seats {
@@ -317,6 +318,7 @@ impl Seats {
             occupied: BTreeMap::new(),
             started: BTreeMap::new(),
             activity: BTreeMap::new(),
+            vacated: Vec::new(),
         }
     }
 
@@ -483,7 +485,19 @@ impl Seats {
     pub fn vacate(&mut self, lane: CanonicalUuid) -> Option<Occupant> {
         self.started.remove(&lane);
         self.activity.remove(&lane);
-        self.occupied.remove(&lane)
+        let occupant = self.occupied.remove(&lane)?;
+        self.vacated.push((lane, occupant.occupant()));
+        Some(occupant)
+    }
+
+    /// Every `(lane, occupant)` vacated since the last take, in vacate order.
+    ///
+    /// A seat closes moments after its occupant wrote its last records, and
+    /// the notices for those records may still be unread when the exit is
+    /// accounted. The ledger lets the coordinator sweep each closed tape once
+    /// the turn that closed it is over, whichever path closed it.
+    pub fn take_vacated(&mut self) -> Vec<(CanonicalUuid, CanonicalUuid)> {
+        std::mem::take(&mut self.vacated)
     }
 
     /// Release every resident handle without signalling any process.
@@ -510,11 +524,11 @@ mod tests {
     use std::path::PathBuf;
     use std::time::Duration;
 
-    use super::{SeatError, Seats};
+    use super::{DetachedProcess, DetachedWait, SeatError, Seats};
     use journal::crossing::CanonicalUuid;
     use sill::{
         Argv, Cancellation, Deadlines, Environment, Output, ProcessGroup, Redaction,
-        RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
+        RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitError, WaitOutcome, WaitPolicy,
     };
 
     fn uuid(last: u8) -> CanonicalUuid {
@@ -542,6 +556,66 @@ mod tests {
             redaction: Redaction::None,
             grace: Duration::from_secs(1),
         }
+    }
+
+    /// A detached handle that never touches a process.
+    struct Detached;
+
+    impl DetachedProcess for Detached {
+        fn group(&self) -> u32 {
+            1
+        }
+
+        fn runtime_remaining(&self) -> Duration {
+            Duration::from_secs(60)
+        }
+
+        fn termination_grace(&self) -> Duration {
+            Duration::from_secs(1)
+        }
+
+        fn reap_bound(&self) -> Duration {
+            Duration::from_secs(1)
+        }
+
+        fn wait_for(self: Box<Self>, _: Duration) -> Result<DetachedWait, WaitError> {
+            unreachable!("vacating a seat waits on nothing")
+        }
+
+        fn terminate(&self) -> Result<(), WaitError> {
+            unreachable!("vacating a seat signals nothing")
+        }
+
+        fn kill(&self) -> Result<(), WaitError> {
+            unreachable!("vacating a seat signals nothing")
+        }
+
+        fn wait(self: Box<Self>) -> Result<WaitOutcome, WaitError> {
+            unreachable!("vacating a seat waits on nothing")
+        }
+    }
+
+    /// Whichever path vacates a seat, the ledger names the occupant once.
+    #[test]
+    fn vacating_a_seat_records_its_occupant_until_taken() {
+        let mut seats = Seats::new();
+        seats
+            .seat_detached(uuid(1), uuid(3), Box::new(Detached))
+            .expect("the seat takes a detached handle");
+        seats
+            .seat_detached(uuid(2), uuid(4), Box::new(Detached))
+            .expect("the second seat takes a detached handle");
+        assert!(seats.take_vacated().is_empty());
+
+        drop(seats.vacate(uuid(2)));
+        drop(seats.vacate(uuid(1)));
+        assert!(seats.vacate(uuid(1)).is_none());
+
+        assert_eq!(
+            seats.take_vacated(),
+            vec![(uuid(2), uuid(4)), (uuid(1), uuid(3))]
+        );
+        assert!(seats.take_vacated().is_empty());
     }
 
     /// An empty seat takes one group, and the seat names what sits in it.
