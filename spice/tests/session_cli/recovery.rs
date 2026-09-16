@@ -522,3 +522,75 @@ fn malformed_truncated_missing_and_unavailable_state_is_accounted_with_recovery(
     assert_unavailable_turn_identity(&scratch);
     scratch.remove();
 }
+
+fn omp_entry(timestamp: &str, id: &str, message: Value) -> Value {
+    json!({"type": "message", "id": id, "parentId": null, "timestamp": timestamp, "message": message})
+}
+
+/// omp names its tools in lower case and keys their arguments as `command`
+/// and `path`, so a session file's shell calls and file edits count exactly
+/// as Claude's and Codex's do.
+#[test]
+fn briefing_counts_omp_shell_calls_and_file_edits() {
+    let scratch = Scratch::new("omp-tools");
+    let transcript = scratch
+        .path()
+        .join("2026-09-16T08-09-36-474Z_01a0a943-9fda-77b0-bf4e-10879cc619e1.jsonl");
+    write_jsonl(
+        &transcript,
+        &[
+            json!({"type": "session", "version": 3, "id": "01a0a943-9fda-77b0-bf4e-10879cc619e1", "timestamp": "2026-09-16T08:09:36.474Z", "cwd": "/work/tree"}),
+            omp_entry(
+                "2026-09-16T08:09:37.189Z",
+                "u1",
+                json!({"role": "user", "content": [{"type": "text", "text": "run the tests, then fix the seam"}], "attribution": "user"}),
+            ),
+            omp_entry(
+                "2026-09-16T08:09:40.340Z",
+                "a1",
+                json!({"role": "assistant", "content": [{"type": "toolCall", "id": "call_1", "name": "bash", "arguments": {"command": "cargo test -p spice"}}], "usage": {"input": 4, "output": 12, "cacheRead": 0, "cacheWrite": 0}, "stopReason": "toolUse"}),
+            ),
+            omp_entry(
+                "2026-09-16T08:09:41.000Z",
+                "r1",
+                json!({"role": "toolResult", "toolCallId": "call_1", "toolName": "bash", "content": [{"type": "text", "text": "test result: ok"}], "details": {"exitCode": 0}, "isError": false}),
+            ),
+            omp_entry(
+                "2026-09-16T08:09:45.000Z",
+                "a2",
+                json!({"role": "assistant", "content": [{"type": "toolCall", "id": "call_2", "name": "edit", "arguments": {"path": "spice/src/session.rs", "oldText": "a", "newText": "b"}}], "usage": {"input": 4, "output": 12, "cacheRead": 0, "cacheWrite": 0}, "stopReason": "toolUse"}),
+            ),
+            omp_entry(
+                "2026-09-16T08:09:46.000Z",
+                "r2",
+                json!({"role": "toolResult", "toolCallId": "call_2", "toolName": "edit", "content": [{"type": "text", "text": "edited"}], "isError": false}),
+            ),
+            omp_entry(
+                "2026-09-16T08:09:50.000Z",
+                "a3",
+                json!({"role": "assistant", "content": [{"type": "text", "text": "The seam is fixed and the tests pass."}], "usage": {"input": 4, "output": 12, "cacheRead": 0, "cacheWrite": 0}, "stopReason": "stop"}),
+            ),
+        ],
+    );
+    let file = transcript.to_string_lossy().into_owned();
+
+    let recall = reply_forms(&strings(&["session", "briefing", &file]), &[], "recall");
+    let turn = &recall["window"]["turns"][0];
+    assert_eq!(turn["vendor"], "omp");
+    assert_eq!(turn["commands"], 1, "{turn}");
+    assert_eq!(turn["patches"], 1, "{turn}");
+    assert_eq!(turn["touched_paths"], json!(["spice/src/session.rs"]));
+    assert_eq!(recall["residues"], json!([]));
+
+    let commands = reply_forms(
+        &strings(&["session", "commands", &file, "--limit", "5"]),
+        &[],
+        "commands",
+    );
+    let row = &commands["rows"][0];
+    assert_eq!(row["command"], "cargo test -p spice", "{row}");
+    assert_eq!(row["status"], "completed", "{row}");
+    assert_eq!(row["exit_code"], 0, "{row}");
+
+    scratch.remove();
+}

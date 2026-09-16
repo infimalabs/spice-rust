@@ -1083,7 +1083,7 @@ fn register_tool_call(
         .or_default() += 1;
     if matches!(
         name,
-        "apply_patch" | "Edit" | "Write" | "MultiEdit" | "file_change"
+        "apply_patch" | "Edit" | "Write" | "MultiEdit" | "file_change" | "edit" | "write"
     ) {
         dataset.turns[index].patch_count = dataset.turns[index].patch_count.saturating_add(1);
         for path in tool_paths(arguments) {
@@ -1099,7 +1099,13 @@ fn register_tool_call(
     }
     let command = if matches!(
         name,
-        "exec_command" | "command_execution" | "Bash" | "shell" | "local_shell" | "container.exec"
+        "exec_command"
+            | "command_execution"
+            | "Bash"
+            | "bash"
+            | "shell"
+            | "local_shell"
+            | "container.exec"
     ) {
         let (command, cwd) = tool_command(arguments);
         let command_index = dataset.commands.len();
