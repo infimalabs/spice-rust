@@ -498,6 +498,15 @@ async fn drive_surface(
 ) -> CommandResult<()> {
     loop {
         tokio::select! {
+            // Notices already read off the supervisor door come before any
+            // arm that reconciles, so a seat sweep never speaks for an
+            // ending whose notice is waiting in the queue.
+            biased;
+            report = supervisor_reports.recv() => accept_supervisor_reports(
+                bus, epoch, seats, command_surface, &message_publisher,
+                taste_submitter.as_deref_mut(), &mut lifecycle,
+                supervisor_reports.batch(report), &mut message_state, diagnostic,
+            )?,
             (turn, request) = control_projection_turn(
                 &mut control, &inbox_projections, lifecycle_reconciliation.control_enabled(),
             ) => match turn {
@@ -542,11 +551,6 @@ async fn drive_surface(
             }
             exit = exits.recv() => accept_exit(
                 bus, epoch, seats, command_surface, &mut lifecycle, diagnostic, exit,
-            )?,
-            report = supervisor_reports.recv() => accept_supervisor_reports(
-                bus, epoch, seats, command_surface, &message_publisher,
-                taste_submitter.as_deref_mut(), &mut lifecycle,
-                supervisor_reports.batch(report), &mut message_state, diagnostic,
             )?,
             timer = timers.recv() => {
                 let timer = timer.ok_or_else(|| environment_fault(
