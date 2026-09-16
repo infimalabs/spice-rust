@@ -499,9 +499,10 @@ async fn drive_surface(
     loop {
         tokio::select! {
             // Notices already read off the supervisor door come before any
-            // arm that reconciles, and the arms that reconcile pull the door
-            // first, so a seat sweep never speaks for an ending whose notice
-            // is waiting in either queue.
+            // arm that reconciles, and every arm that reconciles, control,
+            // timer, and commit alike, pulls the door first, so a seat sweep
+            // never speaks for an ending whose notice is waiting in either
+            // queue.
             biased;
             report = supervisor_reports.recv() => accept_supervisor_reports(
                 bus, epoch, seats, command_surface, &message_publisher,
@@ -555,18 +556,12 @@ async fn drive_surface(
                 &mut message_state, diagnostic, &mut timers, &mut lifecycle_reconciliation,
                 timer,
             )?,
-            committed = timer_commits.recv() => {
-                match accept_commit(
-                    bus, command_surface, seats, diagnostic, &mut timers,
-                    &mut lifecycle, committed,
-                )? {
-                    Some(commit) => lifecycle_reconciliation.settle_commit(commit),
-                    None => lifecycle_reconciliation.settle(),
-                }
-                settle_spoken_acknowledgements(
-                    bus, &message_publisher, &mut message_state, diagnostic,
-                )?;
-            }
+            committed = timer_commits.recv() => accept_commit_turn(
+                bus, epoch, seats, command_surface, &message_publisher,
+                taste_submitter.as_deref_mut(), &mut lifecycle, &mut supervisor_reports,
+                &mut message_state, diagnostic, &mut timers, &mut lifecycle_reconciliation,
+                committed,
+            )?,
             ending = &mut server_task => return Err(server_outcome(ending)),
         }
         reap::present_closed_transcripts(
@@ -1028,6 +1023,58 @@ fn accept_exit(
         diagnostic,
     );
     super::deferral::defer_store_fault(accounted, diagnostic, "exit accounting")
+}
+
+/// Pull the supervisor door, then let one journal commit settle the
+/// reconciliation and the sweep it may run.
+///
+/// Every presented record commits a fact, so this arm fires throughout a
+/// lane's ending; without the pull its sweep judged seats from published
+/// state while their notices sat unread in the kernel queue.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a commit turn crosses the capture surfaces and the lifecycle it reconciles"
+)]
+fn accept_commit_turn(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+    command_surface: &command_surface::Surface<'_>,
+    message_publisher: &canvas::stream::MessagePublisher,
+    taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
+    lifecycle: &mut lifecycle::Runtime,
+    supervisor_reports: &mut capture::SupervisorReports,
+    message_state: &mut message_surface::MessageState,
+    diagnostic: &mut dyn io::Write,
+    timers: &mut timers::Runtime,
+    reconciliation: &mut lifecycle::Reconciliation,
+    committed: Result<JournalCommit, tokio::sync::broadcast::error::RecvError>,
+) -> CommandResult<()> {
+    accept_supervisor_reports(
+        bus,
+        epoch,
+        seats,
+        command_surface,
+        message_publisher,
+        taste_judge,
+        lifecycle,
+        supervisor_reports.pull(),
+        message_state,
+        diagnostic,
+    )?;
+    match accept_commit(
+        bus,
+        command_surface,
+        seats,
+        diagnostic,
+        timers,
+        lifecycle,
+        committed,
+    )? {
+        Some(commit) => reconciliation.settle_commit(commit),
+        None => reconciliation.settle(),
+    }
+    settle_spoken_acknowledgements(bus, message_publisher, message_state, diagnostic)
 }
 
 fn accept_commit(
