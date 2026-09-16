@@ -10,6 +10,13 @@ const FIRST_EXPIRY: &str = "2026-08-06T04:00:00.000Z";
 fn terminal_history_retains_the_stable_root_stage_and_complete_audit() {
     let snapshot = terminal_snapshot();
     let ledger = steer::Ledger::from_snapshot(&snapshot).expect("stable steering replay");
+    let mut roots = |key: &steer::Key| {
+        Ok(ledger
+            .directives()
+            .into_iter()
+            .find(|directive| directive.key() == key)
+            .map(StableRoot::from))
+    };
     let expected_escalations = [
         wire::body::SteeringTransition {
             stage: wire::body::SteeringStage::Reminded,
@@ -37,7 +44,7 @@ fn terminal_history_retains_the_stable_root_stage_and_complete_audit() {
             stage,
             escalations,
             ..
-        }) = recall_provenance(&snapshot.facts()[index], &ledger)
+        }) = recall_provenance(&snapshot.facts()[index], &mut roots)
             .expect("terminal provenance projects")
         else {
             panic!("terminal fact must project stable steering provenance")

@@ -134,23 +134,15 @@ fn steering_attachments(
             &format!("cannot inspect steering origin {key}: {error}"),
         )
     })?;
-    let snapshot = reader.steering_snapshot().map_err(|error| {
-        store_fault(
-            "task::steering-snapshot-unreadable",
-            &format!("cannot inspect steering origin {key}: {error}"),
-        )
-    })?;
-    let ledger = steer::Ledger::from_facts(snapshot.facts()).map_err(|error| {
-        store_fault(
-            "task::steering-ledger-invalid",
-            &format!("cannot inspect steering origin {key}: {error}"),
-        )
-    })?;
-    Ok(ledger
-        .directives()
-        .into_iter()
-        .find(|directive| directive.key() == key)
-        .map_or_else(Vec::new, |directive| directive.attachments().to_vec()))
+    let head = reader
+        .read(|read| read.steering_key(key.as_str()))
+        .map_err(|error| {
+            store_fault(
+                "task::steering-index-unreadable",
+                &format!("cannot inspect steering origin {key}: {error}"),
+            )
+        })?;
+    Ok(head.map_or_else(Vec::new, |head| head.body().attachments.clone()))
 }
 
 fn decode_attachment(

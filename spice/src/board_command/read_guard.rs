@@ -816,8 +816,7 @@ fn publish_task_boundary_inner(
     let opening = entry.claim().and_then(|claim| {
         snapshot
             .facts
-            .iter()
-            .find(|envelope| envelope.seq == claim.claimed)
+            .at(claim.claimed)
             .and_then(|envelope| envelope.fact.read::<body::ClaimWon>())
             .and_then(|won| won.git)
     });

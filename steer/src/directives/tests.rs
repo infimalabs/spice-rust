@@ -1,6 +1,7 @@
 use std::error::Error as _;
 
-use super::{Ledger, MediaResolutionError, Refusal, Steering, disposition_word};
+use super::refusal::disposition_word;
+use super::{Ledger, MediaResolutionError, Refusal, Steering};
 use crate::ack::keys::Key;
 use crate::ack::scan::Standing;
 use wire::body::{

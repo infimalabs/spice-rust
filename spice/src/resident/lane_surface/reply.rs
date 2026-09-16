@@ -212,14 +212,49 @@ pub(super) fn fact_lane(fact: &wire::Envelope<wire::AnyFact>) -> Option<Canonica
         })
 }
 
+/// The stable root a terminal steering fact answers for: the current indexed
+/// standing of the directive that key names.
+pub(super) struct StableRoot {
+    directive: CanonicalUuid,
+    key: String,
+    stage: wire::body::SteeringStage,
+    escalations: Vec<wire::body::SteeringTransition>,
+}
+
+impl From<&wire::SteeringHead> for StableRoot {
+    fn from(head: &wire::SteeringHead) -> Self {
+        Self {
+            directive: head.directive,
+            key: head.key.clone(),
+            stage: head.stage,
+            escalations: head.escalations.clone(),
+        }
+    }
+}
+
+#[cfg(test)]
+impl From<&steer::Directive> for StableRoot {
+    fn from(directive: &steer::Directive) -> Self {
+        Self {
+            directive: directive.directive(),
+            key: directive.key().to_string(),
+            stage: directive.stage(),
+            escalations: directive.escalations().to_vec(),
+        }
+    }
+}
+
+/// Answers one steering key with its stable root, when it has one.
+pub(super) type StableRoots<'a> = dyn FnMut(&steer::Key) -> CommandResult<Option<StableRoot>> + 'a;
+
 pub(super) fn recall_provenance(
     fact: &wire::Envelope<wire::AnyFact>,
-    steering: &steer::Ledger,
+    roots: &mut StableRoots<'_>,
 ) -> CommandResult<Option<RecallProvenance>> {
     if let Some(provenance) = recall_live_steering_provenance(fact)? {
         return Ok(Some(provenance));
     }
-    if let Some(provenance) = recall_terminal_steering_provenance(fact, steering)? {
+    if let Some(provenance) = recall_terminal_steering_provenance(fact, roots)? {
         return Ok(Some(provenance));
     }
     let provenance = match fact.fact.kind() {
@@ -329,13 +364,13 @@ fn recall_live_steering_provenance(
 
 fn recall_terminal_steering_provenance(
     fact: &wire::Envelope<wire::AnyFact>,
-    steering: &steer::Ledger,
+    roots: &mut StableRoots<'_>,
 ) -> CommandResult<Option<RecallProvenance>> {
     let provenance = match fact.fact.kind() {
         wire::FactKind::SteerAcked => {
             let body: wire::body::SteerAcked = recall_body(fact)?;
             Some(stable_terminal_provenance(
-                steering,
+                roots,
                 &body.key,
                 wire::Disposition::Acked,
                 Some(body.epoch),
@@ -345,7 +380,7 @@ fn recall_terminal_steering_provenance(
         wire::FactKind::SteerDeclined => {
             let body: wire::body::SteerDeclined = recall_body(fact)?;
             Some(stable_terminal_provenance(
-                steering,
+                roots,
                 &body.key,
                 wire::Disposition::Declined,
                 Some(body.epoch),
@@ -355,7 +390,7 @@ fn recall_terminal_steering_provenance(
         wire::FactKind::SteerLapsed => {
             let body: wire::body::SteerLapsed = recall_body(fact)?;
             Some(stable_terminal_provenance(
-                steering,
+                roots,
                 &body.key,
                 wire::Disposition::Lapsed,
                 None,
@@ -365,7 +400,7 @@ fn recall_terminal_steering_provenance(
         wire::FactKind::SteerRecovered => {
             let body: wire::body::SteerRecovered = recall_body(fact)?;
             Some(stable_terminal_provenance(
-                steering,
+                roots,
                 &body.key,
                 wire::Disposition::Live,
                 None,
@@ -375,7 +410,7 @@ fn recall_terminal_steering_provenance(
         wire::FactKind::SteerCanceled => {
             let body: wire::body::SteerCanceled = recall_body(fact)?;
             Some(stable_terminal_provenance(
-                steering,
+                roots,
                 &body.key,
                 wire::Disposition::Canceled,
                 None,
@@ -409,7 +444,7 @@ fn steering_provenance(
 }
 
 fn stable_terminal_provenance(
-    ledger: &steer::Ledger,
+    roots: &mut StableRoots<'_>,
     key: &str,
     disposition: wire::Disposition,
     epoch: Option<CanonicalUuid>,
@@ -421,34 +456,31 @@ fn stable_terminal_provenance(
             &format!("terminal steering key is invalid: {error}"),
         )
     })?;
-    let directive = ledger
-        .directives()
-        .into_iter()
-        .find(|directive| directive.key() == &key)
-        .ok_or_else(|| {
-            store_fault(
-                "recall::steering-root-missing",
-                &format!("terminal steering key {key} has no stable directive"),
-            )
-        })?;
+    let root = roots(&key)?.ok_or_else(|| {
+        store_fault(
+            "recall::steering-root-missing",
+            &format!("terminal steering key {key} has no stable directive"),
+        )
+    })?;
     Ok(steering_provenance(
-        Some(directive.directive()),
-        directive.key().to_string(),
+        Some(root.directive),
+        root.key,
         disposition,
-        Some(directive.stage()),
-        directive.escalations().to_vec(),
+        Some(root.stage),
+        root.escalations,
         epoch,
         locus,
     ))
 }
 
-/// Read one recalled fact body back out of its admitted envelope.
-fn recall_body<T: serde::de::DeserializeOwned>(
-    fact: &wire::Envelope<wire::AnyFact>,
-) -> CommandResult<T> {
-    let bytes = wire::encode(fact.fact.body())
-        .map_err(|error| store_fault("recall::fact-invalid", &error.to_string()))?;
-    wire::decode(&bytes).map_err(|error| store_fault("recall::fact-invalid", &error.to_string()))
+/// Read one recalled fact body back through its registered DTO.
+fn recall_body<T: wire::Body>(fact: &wire::Envelope<wire::AnyFact>) -> CommandResult<T> {
+    fact.fact.read::<T>().ok_or_else(|| {
+        store_fault(
+            "recall::fact-invalid",
+            &format!("a {} fact was read as {}", fact.fact.kind(), T::KIND),
+        )
+    })
 }
 
 #[cfg(test)]

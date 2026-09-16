@@ -45,8 +45,9 @@ pub(in crate::resident) use propose::tests::seed_task_claim;
 use propose::{commit_adopted, propose_drain, propose_remove, propose_seat, propose_wake};
 pub(super) use renewal::{reconcile as reconcile_renewal, set as renew};
 use reply::{
-    answer, authority_refusal, command_result, committed_lane_reply, fact_lane, lane_refusal,
-    missing_lane, next_topology_revision, recall_provenance, relevant, typed_environment_fault,
+    StableRoot, answer, authority_refusal, command_result, committed_lane_reply, fact_lane,
+    lane_refusal, missing_lane, next_topology_revision, recall_provenance, relevant,
+    typed_environment_fault,
 };
 pub(super) use restart_claim::append_startup_claims;
 pub(super) use session::{
@@ -1137,11 +1138,13 @@ pub(super) fn recall(
             "a running resident has no durable fact cursor",
         );
     };
-    let steering = match steer::Ledger::from_facts(snapshot.facts().iter()) {
-        Ok(steering) => steering,
-        Err(error) => {
-            return typed_store_fault("recall::steering-invalid", &error.to_string());
-        }
+    // A terminal steering fact answers for its directive's current indexed
+    // standing, so no ledger is folded from history for the account.
+    let mut roots = |key: &steer::Key| {
+        let key = key.to_string();
+        bus.read(move |read| read.steering_key(&key))
+            .map(|head| head.map(|head| StableRoot::from(head.body())))
+            .map_err(|error| store_fault("recall::steering-index-unreadable", &error.to_string()))
     };
     let mut recent = Vec::new();
     for fact in snapshot
@@ -1152,7 +1155,7 @@ pub(super) fn recall(
         .filter(|fact| selected.is_none_or(|lane| relevant(fact, lane)))
         .take(RECALL_LIMIT)
     {
-        let provenance = match recall_provenance(fact, &steering) {
+        let provenance = match recall_provenance(fact, &mut roots) {
             Ok(provenance) => provenance,
             Err(outcome) => return typed_outcome(outcome),
         };

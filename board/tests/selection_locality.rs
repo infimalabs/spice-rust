@@ -324,7 +324,7 @@ fn affinity_history_keeps_only_the_most_recent_claimed_cell() {
     let facts = journal.fact_snapshot().expect("claim history reads");
 
     assert_eq!(
-        board::recent_claim_cell(&[], facts.facts(), &Actor::Spice),
+        board::recent_claim_cell(&[], facts.facts().iter(), &Actor::Spice),
         Some(wire::ClaimCell {
             project: "board.third".to_owned(),
             phase: phase("todo"),
