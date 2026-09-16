@@ -215,6 +215,33 @@ able to reach it. The framing matters here more than anywhere else, because the
 rule costs the agent something immediate and buys something it cannot observe
 from inside.
 
+#### Acknowledgment evidence
+
+The transcript tape is the one place an acknowledgment is read from. A header
+is credited when the tape holds it as assistant text; nothing the ack command
+carries about itself can stand in for that text, because a command that
+witnessed its own key would retire direction nobody answered where the
+operator can read it.
+
+```mermaid
+flowchart TD
+  H["ACK or NACK header"] --> W{"where does it reach the tape?"}
+  W -- "assistant text before the command" --> M["ack command finds the record;<br/>the key retires mid-turn"]
+  W -- "tool input or reasoning only" --> A["steer::transcript-evidence-absent;<br/>the key stays live"]
+  W -- "assistant text ending the turn" --> X["occupant exit retires it<br/>from the final transcript"]
+  A --> N["speak the header as visible text,<br/>or let the turn end on it"]
+```
+
+**Invariant —** Assistant text on the lane tape is the sole acknowledgment
+evidence. The tool call that runs the ack command, its arguments, and reasoning
+blocks never retire a key, even when they spell the header exactly.
+
+**Invariant —** A header spoken as visible text before the command is
+persisted by the vendor as its own assistant record ahead of the tool record,
+so a lane retires a key without ending its turn. A header that first lands as
+the turn ends is retired at occupant exit under the same recognition rules,
+with no successor woken to cite it.
+
 ### Command rewriting
 
 The rewriter is an **optional companion tool**, not part of the harness. The
