@@ -356,7 +356,6 @@ fn automatic_claim_authority(
     let snapshot = decision
         .or(current.as_ref())
         .expect("automatic claim authority has a supplied or current snapshot");
-    let facts = snapshot.facts().iter().cloned().collect::<Vec<_>>();
     let environment = snapshot.environment();
     let mut authority = None;
     for heads in snapshot.tasks() {
@@ -393,7 +392,7 @@ fn automatic_claim_authority(
             source: bus.source_boundary(&lane).map_err(|error| {
                 store_fault("lifecycle::claim-boundary-unreadable", &error.to_string())
             })?,
-            automatic: crate::board_command::is_automatic_claim(claim.body(), &facts),
+            automatic: crate::board_command::is_automatic_claim(claim.body(), snapshot.facts()),
             thaw: indefinite && !trust_blocked,
             trust_blocked: indefinite.then_some((requirements, trust_blocked)),
         });

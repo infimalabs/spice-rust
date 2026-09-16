@@ -108,6 +108,26 @@ impl TaskFacts {
             .filter(move |row| cursor.is_none_or(|cursor| row.seq > cursor))
     }
 
+    /// The fact at one durable position, if this history retains it.
+    ///
+    /// Only the chunk spanning the position is searched, so the walk pays
+    /// for the chunks newer than it and one binary search.
+    #[must_use]
+    pub fn at(
+        &self,
+        seq: journal::crossing::Seq,
+    ) -> Option<&journal::crossing::Envelope<journal::crossing::AnyFact>> {
+        let mut cursor = self.tail.as_deref();
+        while let Some(chunk) = cursor {
+            if chunk.rows.first().is_some_and(|row| row.seq <= seq) {
+                let index = chunk.rows.binary_search_by_key(&seq, |row| row.seq).ok()?;
+                return Some(&chunk.rows[index]);
+            }
+            cursor = chunk.prior.as_deref();
+        }
+        None
+    }
+
     /// Number of decoded facts shared by this snapshot.
     #[must_use]
     pub const fn len(&self) -> usize {

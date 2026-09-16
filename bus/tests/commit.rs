@@ -251,6 +251,46 @@ fn multi_page_task_snapshots_resume_then_decode_only_the_committed_tail() {
     );
     assert_eq!(committed_tail[0].seq.get(), (RETAINED_FACTS + 1) as u64);
     assert_shared_fact_prefix(&before, &after);
+    assert!(
+        std::ptr::eq(
+            before
+                .facts()
+                .at(Seq::new(1).expect("first"))
+                .expect("first fact is retained"),
+            after
+                .facts()
+                .at(Seq::new(1).expect("first"))
+                .expect("first fact stays retained"),
+        ),
+        "a position inside the shared prefix is answered from the shared chunk"
+    );
+    assert!(
+        std::ptr::eq(
+            after.facts().at(applied.last()).expect("last bulk fact"),
+            before
+                .facts()
+                .iter()
+                .last()
+                .expect("bulk history is nonempty"),
+        ),
+        "the last position of a shared chunk is answered from that chunk"
+    );
+    assert_eq!(
+        after
+            .facts()
+            .at(committed_tail[0].seq)
+            .and_then(|fact| fact.fact.read::<body::TaskNoted>())
+            .map(|note| note.note),
+        Some("one proportional tail".to_owned()),
+        "a position in the newest chunk is answered from that chunk"
+    );
+    assert!(
+        after
+            .facts()
+            .at(Seq::new((RETAINED_FACTS + 2) as u64).expect("beyond"))
+            .is_none(),
+        "a position past the horizon is not retained"
+    );
     bus.shutdown().expect("writer shuts down");
 }
 

@@ -27,19 +27,12 @@ pub(super) struct Runtime {
     renewals: BTreeMap<TaskHandle, ArmedRenewal>,
     directives: BTreeMap<CanonicalUuid, ArmedDirective>,
     wake: Option<ArmedWake>,
-    facts: TimerFacts,
-}
-
-struct TimerSnapshot {
-    tasks: Vec<journal::TaskHeads>,
-    residency: Option<journal::JournalHead<wire::ResidencyHead>>,
-    steering: Vec<journal::JournalHead<wire::SteeringHead>>,
     horizon: Option<wire::Seq>,
 }
 
-#[derive(Default)]
-struct TimerFacts {
-    rows: Vec<wire::Envelope<wire::AnyFact>>,
+struct TimerSnapshot {
+    authority: bus::TaskSnapshot,
+    steering: Vec<journal::JournalHead<wire::SteeringHead>>,
     horizon: Option<wire::Seq>,
 }
 
@@ -149,7 +142,7 @@ impl Runtime {
             renewals: BTreeMap::new(),
             directives: BTreeMap::new(),
             wake: None,
-            facts: TimerFacts::default(),
+            horizon: None,
         })
     }
 
@@ -201,14 +194,12 @@ impl Runtime {
     /// Make process-local waits exactly match current lapse-capable claim heads.
     pub(super) fn synchronize(&mut self, bus: &Bus) -> CommandResult<()> {
         let snapshot = timer_snapshot(bus)?;
-        self.facts.synchronize(bus, snapshot.horizon)?;
-        let desired_deferrals = desired_deferrals(&snapshot.tasks, &self.projects)?;
-        let desired = desired_claims(&snapshot.tasks, snapshot.residency.as_ref())?;
-        let desired_renewals = desired_renewals(
-            &snapshot.tasks,
-            snapshot.residency.as_ref(),
-            &self.facts.rows,
-        )?;
+        self.horizon = snapshot.horizon;
+        let tasks = snapshot.authority.tasks();
+        let residency = snapshot.authority.residency();
+        let desired_deferrals = desired_deferrals(tasks, &self.projects)?;
+        let desired = desired_claims(tasks, residency)?;
+        let desired_renewals = desired_renewals(tasks, residency, snapshot.authority.facts())?;
         let desired_directives = desired_directives(&snapshot.steering, &self.steering)?;
         self.synchronize_deferrals(desired_deferrals)?;
         let stale = self
@@ -276,11 +267,10 @@ impl Runtime {
     ///
     /// Synchronization reads through the writer's current cursor, which can
     /// cover several notifications already waiting in the broadcast channel.
-    /// Replaying each of those notifications would decode the complete fact
-    /// stream again without observing any newer authority.
+    /// Replaying each of those notifications would fold the same authority
+    /// again without observing anything newer.
     pub(super) fn covers(&self, commit: bus::JournalCommit) -> bool {
-        self.facts
-            .horizon
+        self.horizon
             .is_some_and(|horizon| horizon.get() >= commit.last())
     }
 
@@ -646,47 +636,10 @@ fn timer_snapshot(bus: &Bus) -> CommandResult<TimerSnapshot> {
             continue;
         }
         return Ok(TimerSnapshot {
-            tasks: authority.tasks().to_vec(),
-            residency: authority.residency().cloned(),
+            authority,
             steering,
             horizon,
         });
-    }
-}
-
-impl TimerFacts {
-    /// Extend the timer's immutable authority stream only through one captured
-    /// cursor. Full history is decoded once at startup; every later fold reads
-    /// only facts appended since the last synchronized cursor.
-    fn synchronize(&mut self, bus: &Bus, target: Option<wire::Seq>) -> CommandResult<()> {
-        let Some(target) = target else {
-            return Ok(());
-        };
-        if self
-            .horizon
-            .is_some_and(|horizon| horizon.get() >= target.get())
-        {
-            return Ok(());
-        }
-        let reader = bus.reader();
-        while self.horizon.is_none_or(|horizon| horizon < target) {
-            let page = reader
-                .canvas_facts(
-                    journal::FactPageStart::After(self.horizon),
-                    target,
-                    journal::FactReadBudget::RETAINED,
-                )
-                .map_err(|error| store_fault("bus::timer-facts-failed", &error.to_string()))?;
-            let Some(last) = page.rows.last().map(|fact| fact.seq) else {
-                return Err(store_fault(
-                    "bus::timer-facts-incomplete",
-                    &format!("fact page ended before captured timer horizon {target}"),
-                ));
-            };
-            self.rows.extend(page.rows);
-            self.horizon = Some(last);
-        }
-        Ok(())
     }
 }
 
@@ -796,7 +749,7 @@ fn desired_claims(
 fn desired_renewals(
     tasks: &[journal::TaskHeads],
     residency: Option<&journal::JournalHead<wire::ResidencyHead>>,
-    facts: &[wire::Envelope<wire::AnyFact>],
+    facts: &bus::TaskFacts,
 ) -> CommandResult<BTreeMap<TaskHandle, RenewalAuthority>> {
     let Some(residency) = residency else {
         return Ok(BTreeMap::new());

@@ -365,8 +365,10 @@ fn assert_automatic_claim(bus: &Bus, task: &wire::TaskStamp, lane: CanonicalUuid
             .occupant(),
         claim.occupant,
     );
-    let facts = snapshot.facts().iter().cloned().collect::<Vec<_>>();
-    assert!(crate::board_command::is_automatic_claim(claim, &facts,));
+    assert!(crate::board_command::is_automatic_claim(
+        claim,
+        snapshot.facts()
+    ));
 }
 
 fn initialize_git(root: &std::path::Path) {

@@ -228,14 +228,10 @@ fn claim_deadlines() -> Result<(Instant, Instant, Instant), Outcome<CommandAnswe
     Ok((at, expiry, maximum))
 }
 
-pub(crate) fn is_automatic_claim(
-    claim: &ClaimHead,
-    facts: &[wire::Envelope<wire::AnyFact>],
-) -> bool {
-    let Ok(index) = facts.binary_search_by_key(&claim.claimed, |envelope| envelope.seq) else {
-        return false;
-    };
-    spice::claim_lease::is_automatic_claim_fact(claim, &facts[index])
+pub(crate) fn is_automatic_claim(claim: &ClaimHead, facts: &bus::TaskFacts) -> bool {
+    facts
+        .at(claim.claimed)
+        .is_some_and(|envelope| spice::claim_lease::is_automatic_claim_fact(claim, envelope))
 }
 
 fn claim_source_boundary(
