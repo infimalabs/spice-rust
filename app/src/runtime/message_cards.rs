@@ -287,6 +287,7 @@ mod tests {
             tastes: 0,
             broadcasts: 0,
             reviews: 0,
+            pending: 0,
         };
         assert!(cards.merge(std::iter::once(&badged)));
         assert_eq!(cards.entries().len(), 1);

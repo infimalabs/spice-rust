@@ -111,6 +111,84 @@ fn terminal_revision_replaces_one_retained_message_and_broadcasts_the_change() {
 }
 
 #[test]
+fn presentation_revision_moves_only_text_and_badges_and_keeps_the_final_state() {
+    let bus = fixture(1);
+    let source = Source::new(bus.reader(), epoch(), 10);
+    let publisher = source.message_publisher();
+    let mut spoken = message(0xe5, 7);
+    spoken.text = "> [ACK PENDING] Keep the current path.\n\nApplied.".to_owned();
+    spoken.badges = wire::AgentMessageBadges {
+        pending: 1,
+        ..wire::AgentMessageBadges::default()
+    };
+    publisher
+        .publish(spoken.clone())
+        .expect("spoken acknowledgement publishes");
+    let mut terminal = spoken.clone();
+    terminal.final_answer = true;
+    assert!(
+        publisher
+            .revise_final(terminal.clone())
+            .expect("terminal revision publishes")
+    );
+    let mut updates = source.subscribe_messages();
+
+    let retired_text = "> [ACK] Keep the current path.\n\nApplied.".to_owned();
+    let retired_badges = wire::AgentMessageBadges {
+        acknowledgements: 1,
+        ..wire::AgentMessageBadges::default()
+    };
+    assert!(
+        publisher
+            .revise_presentation(
+                spoken.lane,
+                spoken.locus,
+                retired_text.clone(),
+                retired_badges
+            )
+            .expect("retired presentation publishes")
+    );
+    let mut expected = terminal;
+    expected.text = retired_text.clone();
+    expected.badges = retired_badges;
+    assert_eq!(
+        updates.try_recv().expect("retired presentation broadcasts"),
+        expected,
+        "the final state the card earned survives its re-presentation"
+    );
+    assert!(
+        !publisher
+            .revise_presentation(
+                spoken.lane,
+                spoken.locus,
+                retired_text.clone(),
+                retired_badges
+            )
+            .expect("identical presentation deduplicates")
+    );
+    let absent = message(0xe6, 1);
+    assert!(
+        !publisher
+            .revise_presentation(absent.lane, absent.locus, retired_text, retired_badges)
+            .expect("a card retention does not hold is not revised")
+    );
+    assert!(updates.try_recv().is_err(), "nothing else broadcasts");
+
+    let (_, frames) = source
+        .begin(
+            &accepted(Actor::Operator),
+            &request(0xc4, vec![ViewSubject::Messages], None),
+        )
+        .expect("message subscription begins");
+    let StreamFrame::Messages { messages, .. } = &frames[0] else {
+        panic!("expected retained message snapshot")
+    };
+    assert_eq!(messages, &[expected]);
+    drop(source);
+    bus.shutdown().expect("bus shuts down");
+}
+
+#[test]
 fn retained_message_capacity_is_independent_for_each_lane() {
     let bus = fixture(1);
     let source = Source::new(bus.reader(), epoch(), 10);

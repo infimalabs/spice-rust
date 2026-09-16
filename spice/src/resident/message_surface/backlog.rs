@@ -148,9 +148,8 @@ impl BacklogReader {
             cursors: BTreeMap::new(),
             startup_work: StartupWork::default(),
             state: MessageState {
-                previews: CallPreviews::default(),
                 observations: MessageObservations::from_snapshot(snapshot),
-                prose: BTreeMap::new(),
+                ..MessageState::default()
             },
             steering,
             worktrees: SessionWorktrees::from_snapshot(snapshot),
@@ -525,9 +524,8 @@ impl DurableHistory {
             cursors: BTreeMap::new(),
             startup_work: StartupWork::default(),
             state: MessageState {
-                previews: CallPreviews::default(),
                 observations: self.observations.clone(),
-                prose: BTreeMap::new(),
+                ..MessageState::default()
             },
             steering: self.steering.clone(),
             worktrees: self.worktrees.clone(),

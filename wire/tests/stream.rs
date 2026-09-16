@@ -308,6 +308,36 @@ fn turn_activity_has_one_explicit_wire_shape() {
 }
 
 #[test]
+fn a_pending_acknowledgement_badge_is_its_own_count_and_marker() {
+    let pending = AgentMessage {
+        badges: AgentMessageBadges {
+            pending: 1,
+            ..AgentMessageBadges::default()
+        },
+        ..prose_message()
+    };
+    assert!(!pending.badges.is_empty(), "a pending count is a badge");
+    let encoded = wire::encode(&pending).expect("pending badge encodes");
+    let encoded_text = String::from_utf8_lossy(&encoded);
+    assert!(encoded_text.contains(r#""badges":{"pending":1}"#));
+    assert!(
+        !encoded_text.contains("acknowledgements"),
+        "a spoken acknowledgement the journal still holds pending earns no acknowledged count"
+    );
+    assert_eq!(
+        wire::decode::<AgentMessage>(&encoded)
+            .expect("pending badge decodes")
+            .badges,
+        pending.badges,
+    );
+    assert!(
+        !wire::stream::ACK_PENDING_MARKER.starts_with(wire::stream::ACK_MARKER)
+            && !wire::stream::ACK_MARKER.starts_with(wire::stream::ACK_PENDING_MARKER),
+        "neither acknowledgement marker reads as a prefix of the other"
+    );
+}
+
+#[test]
 fn automatic_speech_is_typed_and_has_one_absence_spelling() {
     let prose = prose_message();
     let mut explicit_null = serde_json::to_value(&prose).expect("prose becomes JSON");
@@ -326,6 +356,7 @@ fn automatic_speech_is_typed_and_has_one_absence_spelling() {
             tastes: 1,
             broadcasts: 1,
             reviews: 1,
+            pending: 1,
         },
         automatic_speech: Some(AutomaticSpeech {
             kind: AutomaticSpeechKind::Final,

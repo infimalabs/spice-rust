@@ -19,6 +19,7 @@ import { assertOrgNavigation, ORG_DESTINATION_LABELS } from "./organization-navi
 import {
   chooseCanvasView,
   reply,
+  replyAsLane,
   streamFixtureAssistantMessage,
   CONNECT_MS,
   TRANSITION_MS,
@@ -156,13 +157,19 @@ async function streamAgentProse(worktree, cards, text, { final = false } = {}) {
 }
 
 /// Steer the narrator lane, answer with an ACK packet the resident
-/// authenticates, and return the acknowledged card once its narration cursor
-/// has moved past it. An acked acknowledgement is the second automatic-speech
-/// kind beside a final answer, classified separately at the resident.
+/// authenticates, retire its key the way the agent does, and return the
+/// acknowledged card once its narration cursor has moved past it. The spoken
+/// packet awaits retirement first; only the steer::acked fact credits it. An
+/// acked acknowledgement is the second automatic-speech kind beside a final
+/// answer, classified separately at the resident.
 async function streamAcknowledgedAck(page, fixture, narrator, surface, cards, body) {
   const sent = await reply(fixture, ["steer", narrator.lane, `acknowledge ${crypto.randomUUID()}`]);
   const card = await streamAgentProse(narrator.worktree, cards, `ACK ${sent.body.key}: ${body}`);
   const key = await card.getAttribute("data-mosaic-card-key");
+  await waitForPage(page, `the "${body}" packet awaits retirement as one pending ACK`, CONNECT_MS,
+    (key) => document.querySelector(`[data-mosaic-card-key="${key}"]`)?.dataset.messagePendingCount
+      === "1", key);
+  await replyAsLane(narrator.worktree, narrator.lane, ["ack", sent.body.key]);
   await waitForPage(page, `the "${body}" packet is authenticated as one ACK`, CONNECT_MS,
     (key) => document.querySelector(`[data-mosaic-card-key="${key}"]`)?.dataset.messageAckCount
       === "1", key);

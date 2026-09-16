@@ -19,9 +19,12 @@ import { assertActivityIdentityLabels } from "./activity-identity.mjs";
 import { assertReferenceMessageCard } from "./message-card-reference.mjs";
 import { assertSyntheticComposerObservation } from "./composer-shards.mjs";
 import {
+  assertExternalOperatorReplay,
+  assertOperatorProseHidden,
+} from "./acknowledgement-replay.mjs";
+import {
   chooseCanvasView,
   reply,
-  replyAsLane,
   CONNECT_MS,
   TRANSITION_MS,
   waitForLocator as waitForElement,
@@ -331,19 +334,6 @@ export async function seatAgentOrg(
   };
 }
 
-async function assertOperatorProseHidden(console, text, label) {
-  assert.equal(
-    await console.locator('[data-card-kind="operator-message"]').count(),
-    0,
-    `${label}: Canvas renders no standalone operator cards`,
-  );
-  assert.equal(
-    await console.locator('.mosaic-message-card').filter({ hasText: text }).count(),
-    0,
-    `${label}: unacknowledged operator prose is absent from the conversation`,
-  );
-}
-
 async function assertStableOperatorAuthorship(page, fixture, console, lane, activityReplay) {
   const text = `stable operator authorship ${crypto.randomUUID()}`;
   const composer = console.locator(`.organization-agent[data-agent-lane="${lane}"]`);
@@ -373,154 +363,6 @@ async function assertStableOperatorAuthorship(page, fixture, console, lane, acti
   assert.equal(await response.getAttribute("data-message-role"), "agent");
   await reply(fixture, ["steer", "cancel", directive.directive]);
   await assertOperatorProseHidden(console, text, "canceled steering");
-}
-
-async function assertExternalOperatorReplay(page, fixture, console, lane, worktree) {
-  const quotedText = `external operator premise ${crypto.randomUUID()}`;
-  const replyText = `approved ${crypto.randomUUID()}`;
-  const text = `> ${quotedText}\n\n${replyText}`;
-  await page.evaluate(() => {
-    const socket = window.__canvasSockets.at(-1);
-    if (!socket) throw new Error("canvas WebSocket was not captured");
-    window.__externalOperatorFacts = [];
-    socket.addEventListener("message", async (event) => {
-      const text = typeof event.data === "string"
-        ? event.data
-        : event.data instanceof Blob
-          ? await event.data.text()
-          : new TextDecoder().decode(event.data);
-      const frame = JSON.parse(text);
-      if (frame.stream === "fact" && frame.fact?.fact?.kind === "steer::sent") {
-        window.__externalOperatorFacts.push(frame.fact);
-      }
-    });
-  });
-  const sent = await reply(fixture, ["steer", lane, text]);
-  await waitForPage(page, "external steer fact reaches Canvas", TRANSITION_MS, (directive) => (
-    window.__externalOperatorFacts.some((fact) => fact.fact.directive === directive)
-  ), sent.body.directive, {
-    observed: () => page.evaluate(() => window.__externalOperatorFacts),
-  });
-  const streamed = await page.evaluate((directive) => (
-    window.__externalOperatorFacts.find((fact) => fact.fact.directive === directive)
-  ), sent.body.directive);
-  assert.equal(streamed.actor, "operator", `external steer retains operator authorship: ${JSON.stringify(streamed)}`);
-  assert.equal(streamed.fact.lane, lane, "external steer fact retains its target lane");
-  await assertOperatorProseHidden(console, replyText, "external live steering");
-
-  await page.reload({ waitUntil: "networkidle" });
-  await chooseCanvasView(page, "Lanes");
-  await console.getByRole("tab", { name: /^Agents/ }).click();
-  await assertOperatorProseHidden(console, replyText, "pre-acknowledgement replay");
-
-  await writeFile(join(worktree, ".spice-ack-trigger"), `${sent.body.key}\n`);
-  const acknowledgedCard = console.locator(
-    `[data-card-kind="agent-message"][data-agent-lane="${lane}"]`,
-  ).filter({ hasText: replyText });
-  await waitForPage(page, "acknowledgement evidence reaches its assistant card", CONNECT_MS,
-    ({ lane, replyText }) => [...document.querySelectorAll(
-      `[data-card-kind="agent-message"][data-agent-lane="${lane}"]`,
-    )].some((card) => (
-      card.textContent?.includes(replyText)
-        && card.dataset.messageRole === "agent"
-        && card.dataset.messageAckCount === "1"
-        && card.dataset.messageTasteCount === "0"
-        && [...card.querySelectorAll("blockquote > p > .message-ack-pill")]
-          .map((badge) => badge.textContent).join(",") === "ACK"
-    )), { lane, replyText });
-  assert.equal(await acknowledgedCard.count(), 1, "acknowledgement renders one assistant card");
-  assert.equal(await acknowledgedCard.getAttribute("data-message-role"), "agent");
-  assert.equal(await acknowledgedCard.getAttribute("data-message-ack-count"), "1");
-  assert.equal(await acknowledgedCard.getAttribute("data-message-taste-count"), "0");
-  assert.equal(await acknowledgedCard.getAttribute("data-message-review-count"), "0");
-  assert.deepEqual(
-    await acknowledgedCard.locator(".message-ack-pill").allTextContents(),
-    ["ACK"],
-    "authenticated acknowledgement evidence renders one uncounted inline ACK pill",
-  );
-  assert.equal(
-    await acknowledgedCard.locator(".message-classifiers, .message-ack-pill .message-badge-count").count(),
-    0,
-    "the ACK pill carries no detached header and no count",
-  );
-  const outerQuote = acknowledgedCard.locator("blockquote").first();
-  assert.equal(
-    await acknowledgedCard.locator(".message-ack-pill").evaluate((element) => {
-      let depth = 0;
-      for (let node = element.parentElement; node; node = node.parentElement) {
-        if (node.tagName === "BLOCKQUOTE") depth += 1;
-      }
-      return depth;
-    }),
-    1,
-    "the ACK pill nests inside the acknowledged context quote like TASTE, REVIEW, and BROADCAST",
-  );
-  assert.equal(
-    await outerQuote.evaluate((quote) => (
-      quote.firstElementChild?.matches("p:has(> .message-ack-pill:first-child)")
-    )),
-    true,
-    "the ACK pill heads the acknowledged quote above the nested operator quote",
-  );
-  assert.doesNotMatch(
-    await acknowledgedCard.locator(".message-body").innerText(),
-    /\[ACK\]/u,
-    "the authenticated ACK marker is presentation-only",
-  );
-  assert.equal(
-    (await outerQuote.locator("blockquote").innerText()).trim(),
-    quotedText,
-    "the acknowledged operator quote remains nested",
-  );
-  assert.match(
-    (await outerQuote.innerText()).trim(),
-    new RegExp(`${replyText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`),
-    "the operator reply follows its nested quote",
-  );
-  assert.doesNotMatch(
-    (await acknowledgedCard.locator(".message-body").innerText()).trim(),
-    new RegExp(`(?:ACK|NACK)\\s+${sent.body.key}`),
-    "recognized protocol framing is absent from visible prose",
-  );
-  assert.match(
-    (await acknowledgedCard.locator(".message-body").innerText()).trim(),
-    /\nApplied$/,
-    "the assistant response follows its acknowledgement quote",
-  );
-  assert.equal(await console.locator('[data-card-kind="operator-message"]').count(), 0);
-  await waitForPage(page, "external acknowledgement Mosaic settles", TRANSITION_MS, () => {
-    const element = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
-    return element?.dataset.measurementPhase === "ready"
-      && element.dataset.measurementPending === "0";
-  });
-  const acknowledged = await replyAsLane(worktree, lane, ["ack", sent.body.key]);
-  await waitForPage(page, "external acknowledgement reaches Canvas", TRANSITION_MS, (cursor) => (
-    document.querySelector(".bar-meta")?.textContent === cursor
-  ), `cursor ${acknowledged.seq.last}`);
-  assert.equal(await acknowledgedCard.count(), 1, "acknowledgement refresh retains one assistant card");
-  assert.equal(await console.locator('[data-card-kind="operator-message"]').count(), 0);
-  await page.reload({ waitUntil: "networkidle" });
-  await chooseCanvasView(page, "Lanes");
-  await console.getByRole("tab", { name: /^Agents/ }).click();
-  await acknowledgedCard.waitFor({ timeout: CONNECT_MS });
-  assert.equal(await acknowledgedCard.count(), 1, "bootstrap restores one acknowledged assistant card");
-  assert.deepEqual(
-    await acknowledgedCard.locator("blockquote > p > .message-ack-pill").allTextContents(),
-    ["ACK"],
-    "durable replay restores the inline ACK pill inside its quote",
-  );
-  assert.equal(
-    (await acknowledgedCard.locator("blockquote blockquote").innerText()).trim(),
-    quotedText,
-    "durable replay restores the nested operator quote",
-  );
-  assert.doesNotMatch(
-    (await acknowledgedCard.locator(".message-body").innerText()).trim(),
-    new RegExp(`(?:ACK|NACK)\\s+${sent.body.key}`),
-    "durable replay keeps protocol framing hidden",
-  );
-  assert.equal(await console.locator('[data-card-kind="operator-message"]').count(), 0);
-  return replyText;
 }
 
 async function assertInlineTastePills(page, console, lane, activityReplay) {

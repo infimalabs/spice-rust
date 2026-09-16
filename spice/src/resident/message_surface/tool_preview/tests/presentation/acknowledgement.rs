@@ -31,7 +31,7 @@ fn steering_acknowledgement_renders_key_context_and_agent_prose_once() {
             event(),
         )
         .expect("acknowledgment presents"),
-        "> [ACK] Keep one tested, visible current path.\n\nLanded in the stream presentation path.",
+        "> [ACK PENDING] Keep one tested, visible current path.\n\nLanded in the stream presentation path.",
     );
 }
 
@@ -48,7 +48,7 @@ fn current_header_forms_hide_framing_and_capitalize_response_prose() {
         assert_eq!(
             present_steering_acknowledgements_with_directives(text, &directives, event())
                 .expect("acknowledgment presents"),
-            "> [ACK] Keep the current path.\n\nApplied.",
+            "> [ACK PENDING] Keep the current path.\n\nApplied.",
             "wrong presentation for {text:?}",
         );
     }
@@ -60,10 +60,11 @@ fn message_badges_require_authenticated_positive_directive_evidence() {
     assert_eq!(
         message_badges("ACK 1kQnrzNZ: applied.", Some(&directives), event(),),
         wire::AgentMessageBadges {
-            acknowledgements: 1,
+            acknowledgements: 0,
             tastes: 0,
             broadcasts: 0,
             reviews: 0,
+            pending: 1,
         },
     );
     for text in [
@@ -89,6 +90,7 @@ fn acknowledged_broadcast_marker_earns_its_own_semantic_badge() {
             tastes: 0,
             broadcasts: 1,
             reviews: 0,
+            pending: 0,
         },
     );
     assert!(message_badges("NACK 1kQnrzNZ: refused.", Some(&directives), event()).is_empty());
@@ -139,6 +141,7 @@ fn acknowledged_review_feedback_earns_a_source_bound_semantic_badge() {
             tastes: 0,
             broadcasts: 0,
             reviews: 1,
+            pending: 0,
         },
     );
     let mut other_source = original;
@@ -169,9 +172,13 @@ fn distributed_acknowledgements_render_every_context_without_repeating_the_messa
     assert_eq!(rendered.matches("The current completion path").count(), 1);
     assert_eq!(rendered.matches("Historical records").count(), 1);
     assert_eq!(rendered.matches("ACK 1kQwPZt").count(), 0);
-    assert_eq!(rendered.matches(wire::stream::ACK_MARKER).count(), 2);
-    assert!(rendered.contains("> [ACK] Keep one current completion path."));
-    assert!(rendered.contains("> [ACK] Do not execute historical records."));
+    assert_eq!(rendered.matches(wire::stream::ACK_MARKER).count(), 0);
+    assert_eq!(
+        rendered.matches(wire::stream::ACK_PENDING_MARKER).count(),
+        2
+    );
+    assert!(rendered.contains("> [ACK PENDING] Keep one current completion path."));
+    assert!(rendered.contains("> [ACK PENDING] Do not execute historical records."));
 }
 
 #[test]
@@ -189,8 +196,8 @@ fn shared_acknowledgement_prose_renders_once_after_every_context() {
         )
         .expect("shared acknowledgment presents"),
         concat!(
-            "> [ACK] Keep one current completion path.\n\n",
-            "> [ACK] Do not execute historical records.\n\n",
+            "> [ACK PENDING] Keep one current completion path.\n\n",
+            "> [ACK PENDING] Do not execute historical records.\n\n",
             "One response covers both directions."
         ),
     );
@@ -204,7 +211,7 @@ fn non_key_text_after_a_recognized_header_remains_response_prose() {
             "{marker} 1kQwPZtK nope 1kQwPZtM: Shared prose remains attached to the attempt."
         );
         let context = match marker {
-            "ACK" => "> [ACK] Keep the recognized direction visible.",
+            "ACK" => "> [ACK PENDING] Keep the recognized direction visible.",
             _ => "> Keep the recognized direction visible.",
         };
         let expected =
@@ -235,7 +242,7 @@ fn mixed_acknowledgement_dispositions_keep_their_own_keys_and_contexts() {
             event(),
         )
         .expect("mixed acknowledgments present"),
-        "> [ACK] Apply the current path.\n\nApplied.\n> Remove the safety check.\n\nUnsafe.",
+        "> [ACK PENDING] Apply the current path.\n\nApplied.\n> Remove the safety check.\n\nUnsafe.",
     );
 }
 
@@ -254,9 +261,9 @@ fn inline_packets_render_each_context_and_body_in_source_order() {
         )
         .expect("inline acknowledgments present"),
         concat!(
-            "> [ACK] Keep the first path.\n\n",
+            "> [ACK PENDING] Keep the first path.\n\n",
             "First applied.\n",
-            "> [ACK] Keep the second path.\n\n",
+            "> [ACK PENDING] Keep the second path.\n\n",
             "Second applied."
         ),
     );
@@ -276,7 +283,7 @@ fn operator_reply_quotes_remain_nested_inside_acknowledgement_context() {
             event(),
         )
         .expect("nested acknowledgment presents"),
-        "> [ACK]\n>\n> > The original assertion remains visible.\n>\n> approved\n\nApplied.",
+        "> [ACK PENDING]\n>\n> > The original assertion remains visible.\n>\n> approved\n\nApplied.",
     );
 }
 
@@ -334,6 +341,7 @@ fn task_contract_acknowledgment_hides_framing_and_earns_no_authored_context() {
             tastes: 0,
             broadcasts: 0,
             reviews: 0,
+            pending: 0,
         },
     );
 }
@@ -401,9 +409,90 @@ fn task_contract_badge_reaches_canvas_without_speech_eligibility() {
             tastes: 0,
             broadcasts: 0,
             reviews: 0,
+            pending: 0,
         },
     );
     assert!(messages[0].automatic_speech.is_none());
+}
+
+#[test]
+fn a_spoken_acknowledgement_reads_pending_until_the_journal_retires_its_key() {
+    let key = "1kQnrzNZ"
+        .parse::<steer::Key>()
+        .expect("fixture key parses");
+    let text = "ACK 1kQnrzNZ: Applied.";
+    let mut directives = directives(&[("1kQnrzNZ", "Keep the current path.")]);
+    assert_eq!(
+        present_steering_acknowledgements_with_directives(text, &directives, event())
+            .expect("pending acknowledgment presents"),
+        "> [ACK PENDING] Keep the current path.\n\nApplied.",
+    );
+    assert_eq!(
+        message_badges(text, Some(&directives), event()),
+        wire::AgentMessageBadges {
+            pending: 1,
+            ..wire::AgentMessageBadges::default()
+        },
+    );
+    let locus = wire::MessageLocus {
+        member: 1,
+        offset: 0,
+        length: 1,
+        event: 0,
+    };
+    let registered = pending::PendingPresentation::of(text, Some(&directives), event(), locus)
+        .expect("a pending key registers its card");
+    assert_eq!(registered.keys(), &BTreeSet::from([key.clone()]));
+    let publisher = Messages::default();
+    let mut state = MessageState::default();
+    let record = capture_record_for(
+        listen::Dialect::Claude,
+        br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"ACK 1kQnrzNZ: Applied."}]}}"#,
+        0,
+    );
+    publish_agent_messages(&publisher, &record, &mut state, Some(&directives))
+        .expect("pending acknowledgment publishes");
+    assert_eq!(
+        state.pending.len(),
+        1,
+        "the published card waits on its key"
+    );
+    let messages = publisher.0.lock().expect("message lock");
+    assert_eq!(messages.len(), 1);
+    assert_eq!(
+        messages[0].text,
+        "> [ACK PENDING] Keep the current path.\n\nApplied."
+    );
+    assert_eq!(messages[0].badges.pending, 1);
+    drop(messages);
+
+    let directive = directives.0.get_mut(&key).expect("fixture directive");
+    directive.disposition = wire::Disposition::Acked;
+    directive.retirement = Some(wire::body::TranscriptLocus {
+        source: None,
+        member: 1,
+        offset: 0,
+        length: 1,
+        event: 0,
+        line: 1,
+        column: 5,
+    });
+    assert_eq!(
+        present_steering_acknowledgements_with_directives(text, &directives, event())
+            .expect("retired acknowledgment presents"),
+        "> [ACK] Keep the current path.\n\nApplied.",
+    );
+    assert_eq!(
+        message_badges(text, Some(&directives), event()),
+        wire::AgentMessageBadges {
+            acknowledgements: 1,
+            ..wire::AgentMessageBadges::default()
+        },
+    );
+    assert!(
+        pending::PendingPresentation::of(text, Some(&directives), event(), locus).is_none(),
+        "a retired key leaves nothing to settle"
+    );
 }
 
 #[test]
@@ -531,6 +620,7 @@ fn mixed_current_and_historical_keys_present_every_known_context() {
             tastes: 1,
             broadcasts: 0,
             reviews: 0,
+            pending: 0,
         },
     );
 }
@@ -587,6 +677,7 @@ fn current_task_contract_and_taste_ack_hide_one_shared_protocol_header() {
             tastes: 1,
             broadcasts: 0,
             reviews: 0,
+            pending: 0,
         },
     );
     assert_eq!(
@@ -653,6 +744,7 @@ fn inline_current_control_and_retained_direction_share_classification() {
             tastes: 0,
             broadcasts: 0,
             reviews: 0,
+            pending: 0,
         },
     );
 }

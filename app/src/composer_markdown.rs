@@ -45,6 +45,7 @@ pub(crate) fn render_received_with_badges(
             tastes: badges.tastes,
             broadcasts: badges.broadcasts,
             acknowledgements: ordinary_acknowledgements(&badges),
+            pending: badges.pending,
         },
     )
 }
@@ -52,7 +53,8 @@ pub(crate) fn render_received_with_badges(
 /// Count the acknowledged contexts the resident marks with the plain ACK marker.
 ///
 /// Flavored contexts carry their own classification pill as the acknowledgement
-/// mark, so only the remainder may surface an inline ACK pill.
+/// mark, so only the remainder may surface an inline ACK pill. Pending
+/// acknowledgements are already counted apart, so they do not subtract here.
 fn ordinary_acknowledgements(badges: &wire::AgentMessageBadges) -> u32 {
     badges
         .acknowledgements
@@ -67,6 +69,7 @@ struct Classifications {
     tastes: u32,
     broadcasts: u32,
     acknowledgements: u32,
+    pending: u32,
 }
 
 /// Render received text and replace authenticated quoted classification markers inline.
@@ -151,6 +154,7 @@ struct RemainingClassifications {
     tastes: usize,
     broadcasts: usize,
     acknowledgements: usize,
+    pending: usize,
 }
 
 impl From<Classifications> for RemainingClassifications {
@@ -161,6 +165,7 @@ impl From<Classifications> for RemainingClassifications {
             tastes: remaining(classifications.tastes),
             broadcasts: remaining(classifications.broadcasts),
             acknowledgements: remaining(classifications.acknowledgements),
+            pending: remaining(classifications.pending),
         }
     }
 }
@@ -183,6 +188,11 @@ fn inline_classification_marker<'a>(
             &mut remaining.broadcasts,
             wire::stream::BROADCAST_MARKER,
             broadcast_pill_html(),
+        ),
+        (
+            &mut remaining.pending,
+            wire::stream::ACK_PENDING_MARKER,
+            ack_pending_pill_html(),
         ),
         (
             &mut remaining.acknowledgements,
@@ -257,6 +267,12 @@ fn review_pill_html() -> &'static str {
 fn ack_pill_html() -> &'static str {
     "<span class=\"message-ack-pill\" data-message-classification=\"ack\" \
      aria-label=\"Acknowledgement classification\">ACK</span>"
+}
+
+/// The spoken acknowledgement whose key the journal still holds pending.
+fn ack_pending_pill_html() -> &'static str {
+    "<span class=\"message-ack-pending-pill\" data-message-classification=\"ack-pending\" \
+     aria-label=\"Acknowledgement awaiting retirement\">ACK PENDING</span>"
 }
 
 fn markdown_is_image_only(events: &[MarkdownEvent<'_>]) -> bool {
@@ -882,6 +898,7 @@ mod tests {
                 tastes: 3,
                 broadcasts: 1,
                 reviews: 1,
+                pending: 0,
             },
         );
         assert!(!rendered.html.contains("compatibility:"));
@@ -1094,6 +1111,7 @@ mod tests {
                 tastes: 1,
                 broadcasts: 1,
                 reviews: 0,
+                pending: 0,
             },
         );
         assert_eq!(
@@ -1126,6 +1144,50 @@ mod tests {
             1
         );
         assert_eq!(mixed.html.matches("class=\"message-ack-pill\"").count(), 1);
+    }
+
+    #[test]
+    fn a_pending_acknowledgement_renders_its_own_pill_apart_from_credit() {
+        let pending = render_received_with_badges(
+            "> [ACK PENDING] Keep the current path.\n\n\
+             > [ACK] Stray credit stays literal.\n\n\
+             Applied.",
+            wire::AgentMessageBadges {
+                pending: 1,
+                ..wire::AgentMessageBadges::default()
+            },
+        );
+        assert_eq!(
+            pending
+                .html
+                .matches("class=\"message-ack-pending-pill\"")
+                .count(),
+            1
+        );
+        assert!(pending.html.contains(
+            "data-message-classification=\"ack-pending\" \
+             aria-label=\"Acknowledgement awaiting retirement\">ACK PENDING</span> Keep the current path."
+        ));
+        assert!(!pending.html.contains("class=\"message-ack-pill\""));
+        assert!(pending.html.contains("[ACK] Stray credit stays literal."));
+
+        let retired = render_received_with_badges(
+            "> [ACK] Keep the current path.\n\n> [ACK PENDING] Stray marker stays literal.",
+            wire::AgentMessageBadges {
+                acknowledgements: 1,
+                ..wire::AgentMessageBadges::default()
+            },
+        );
+        assert_eq!(
+            retired.html.matches("class=\"message-ack-pill\"").count(),
+            1
+        );
+        assert!(!retired.html.contains("message-ack-pending-pill"));
+        assert!(
+            retired
+                .html
+                .contains("[ACK PENDING] Stray marker stays literal.")
+        );
     }
 
     #[test]

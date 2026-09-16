@@ -580,6 +580,9 @@ async fn drive_surface(
                     Some(commit) => lifecycle_reconciliation.settle_commit(commit),
                     None => lifecycle_reconciliation.settle(),
                 }
+                settle_spoken_acknowledgements(
+                    bus, &message_publisher, &mut message_state, diagnostic,
+                )?;
             }
             ending = &mut server_task => return Err(server_outcome(ending)),
         }
@@ -953,6 +956,30 @@ fn accept_commit(
             "bus::lifecycle-commits-closed",
             "the durable commit stream closed while the resident was live",
         )),
+    }
+}
+
+/// Follow every commit with the cards that spoke an acknowledgement ahead of
+/// the journal, so a key retired by spice ack or exit disposal re-presents
+/// its card from the journal disposition. Canvas being unavailable is a
+/// diagnostic, as it is for live publication, not a resident fault.
+fn settle_spoken_acknowledgements(
+    bus: &Bus,
+    message_publisher: &canvas::stream::MessagePublisher,
+    message_state: &mut message_surface::MessageState,
+    diagnostic: &mut dyn io::Write,
+) -> CommandResult<()> {
+    match message_surface::settle_pending_presentations(bus, message_publisher, message_state) {
+        Ok(()) => Ok(()),
+        Err(Outcome::Fault(fault)) => {
+            let _ = writeln!(
+                diagnostic,
+                "canvas message unavailable: {}: {}",
+                fault.reason, fault.detail
+            );
+            Ok(())
+        }
+        Err(outcome) => Err(outcome),
     }
 }
 

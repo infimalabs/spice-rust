@@ -77,37 +77,30 @@ pub(super) fn publish_agent_record(
         else {
             continue;
         };
-        if projected.published.activity != AgentActivityKind::Prose {
-            publish_message(publisher, projected.published)?;
+        let ProjectedMessage {
+            published,
+            terminal,
+            pending,
+        } = projected;
+        if published.activity != AgentActivityKind::Prose {
+            publish_message(publisher, published)?;
             continue;
         }
-        if projected.published.final_answer {
+        if published.final_answer {
             explicit_final = true;
-            if let Some(previous) = state.prose.get(&record.lane)
-                && same_prose(&previous.published, &projected.published)
-            {
-                if !previous.published.final_answer {
-                    let terminal = previous.terminal.clone();
-                    revise_final_message(publisher, terminal.clone())?;
-                    state.prose.insert(
-                        record.lane,
-                        ProseState {
-                            published: terminal.clone(),
-                            terminal,
-                        },
-                    );
-                }
+            if revise_repeated_final(publisher, record.lane, &published, state)? {
                 continue;
             }
         }
-        publish_message(publisher, projected.published.clone())?;
-        let terminal = projected
-            .terminal
-            .unwrap_or_else(|| projected.published.clone());
+        publish_message(publisher, published.clone())?;
+        if let Some(pending) = pending {
+            state.pending.remember(pending);
+        }
+        let terminal = terminal.unwrap_or_else(|| published.clone());
         state.prose.insert(
             record.lane,
             ProseState {
-                published: projected.published,
+                published,
                 terminal,
             },
         );
@@ -124,6 +117,34 @@ pub(super) fn publish_agent_record(
         state.prose.remove(&record.lane);
     }
     Ok(())
+}
+
+/// Raise the previous card to final when the final answer repeats its prose,
+/// answering whether that card stood in for the repeated one.
+fn revise_repeated_final(
+    publisher: &impl AgentMessagePublisher,
+    lane: CanonicalUuid,
+    published: &wire::AgentMessage,
+    state: &mut MessageState,
+) -> CommandResult<bool> {
+    let Some(previous) = state.prose.get(&lane) else {
+        return Ok(false);
+    };
+    if !same_prose(&previous.published, published) {
+        return Ok(false);
+    }
+    if !previous.published.final_answer {
+        let terminal = previous.terminal.clone();
+        revise_final_message(publisher, terminal.clone())?;
+        state.prose.insert(
+            lane,
+            ProseState {
+                published: terminal.clone(),
+                terminal,
+            },
+        );
+    }
+    Ok(true)
 }
 
 fn begin_agent_record(
@@ -326,11 +347,34 @@ fn project_agent_event(
         unavailable_tool_terminals: unavailable_tool_terminals.to_vec(),
         media,
     };
+    let pending = pending_presentation(decoded, steering, presentation_event, published.locus);
     let terminal = terminal_prose_card(&published, decoded, steering, presentation_event);
     Ok(Some(ProjectedMessage {
         published,
         terminal,
+        pending,
     }))
+}
+
+/// The keys an assistant prose card acknowledged ahead of the journal.
+fn pending_presentation(
+    decoded: &listen::Event,
+    steering: Option<&PresentationDirectives>,
+    presentation_event: impl Fn(listen::Locus) -> PresentationEvent,
+    locus: wire::MessageLocus,
+) -> Option<pending::PendingPresentation> {
+    let listen::Event::Prose(prose) = decoded else {
+        return None;
+    };
+    if prose.role != listen::ProseRole::Assistant {
+        return None;
+    }
+    pending::PendingPresentation::of(
+        &prose.text,
+        steering,
+        presentation_event(prose.locus),
+        locus,
+    )
 }
 
 /// The final-answer twin a mid-turn prose card carries for the turn end.
