@@ -56,6 +56,10 @@ pub struct Ingestion {
 
 /// What one ingestion pass left behind.
 #[derive(Debug)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "one pass returns one value that the caller consumes at once; the empty variant is the common answer and boxing the accounted one would cost every sweep an allocation"
+)]
 pub enum Ingested {
     /// No complete record was available, so no fact was written.
     ///
@@ -72,6 +76,12 @@ pub enum Ingested {
         /// Exact durable batch whose commit instant can timestamp records that
         /// carried no vendor-authored time.
         batch: body::JournalIngested,
+        /// Every complete record the batch accounted, in tape order.
+        ///
+        /// The pass already decoded these to fold the batch. Handing them back
+        /// lets the caller present each one without a second read, and without
+        /// depending on a per-record notification that may never have arrived.
+        records: Vec<listen::Record>,
     },
 }
 
@@ -163,6 +173,7 @@ pub fn ingest(journal: &mut Journal, ingestion: Ingestion) -> Result<Ingested, I
     Ok(Ingested::Accounted {
         applied,
         batch: retained,
+        records: scan.records,
     })
 }
 

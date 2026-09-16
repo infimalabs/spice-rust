@@ -1,10 +1,12 @@
 use super::*;
 
-/// One durable accounting range and the wall-clock instant that observed it.
+/// One durable accounting range, the wall-clock instant that observed it, and
+/// every complete record the range covers in tape order.
 #[derive(Clone, Debug)]
 pub(super) struct TranscriptObservation {
     pub(super) batch: wire::body::JournalIngested,
     pub(super) at: Instant,
+    pub(super) records: Vec<listen::Record>,
 }
 
 /// Declared value owned by one vendor, absent when the registry has none.
@@ -141,9 +143,14 @@ fn ingest_lane_transcript(
         at,
     };
     match lane::ingest::ingest(journal, ingestion) {
-        Ok(lane::ingest::Ingested::Accounted { applied, batch }) => {
-            Ok(Some((applied, TranscriptObservation { batch, at })))
-        }
+        Ok(lane::ingest::Ingested::Accounted {
+            applied,
+            batch,
+            records,
+        }) => Ok(Some((
+            applied,
+            TranscriptObservation { batch, at, records },
+        ))),
         Ok(lane::ingest::Ingested::Unchanged) => Ok(None),
         Err(error) => Err(format!(
             "lane {} transcript not accounted: {error}",

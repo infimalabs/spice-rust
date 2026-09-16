@@ -555,10 +555,10 @@ async fn drive_surface(
             exit = exits.recv() => accept_exit(
                 bus, epoch, seats, command_surface, &mut lifecycle, diagnostic, exit,
             )?,
-            report = supervisor_reports.recv() => accept_supervisor_report(
+            report = supervisor_reports.recv() => accept_supervisor_reports(
                 bus, epoch, seats, command_surface, &message_publisher,
-                taste_submitter.as_deref_mut(), &mut lifecycle, report,
-                &mut message_state, diagnostic,
+                taste_submitter.as_deref_mut(), &mut lifecycle,
+                supervisor_reports.batch(report), &mut message_state, diagnostic,
             )?,
             timer = timers.recv() => {
                 let timer = timer.ok_or_else(|| environment_fault(
@@ -657,6 +657,40 @@ async fn project_owed_inbox_with(
     if !inbox_projections.is_empty() {
         project(inbox_projections)?;
         tokio::task::yield_now().await;
+    }
+    Ok(())
+}
+
+/// Accept one drained batch of supervisor notices in arrival order.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a batch of supervisor notices crosses the same live capture surfaces as one"
+)]
+fn accept_supervisor_reports(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seats: &mut Seats,
+    command_surface: &command_surface::Surface<'_>,
+    message_publisher: &canvas::stream::MessagePublisher,
+    mut taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
+    lifecycle: &mut lifecycle::Runtime,
+    reports: Vec<io::Result<super::supervisor::Notice>>,
+    message_state: &mut message_surface::MessageState,
+    diagnostic: &mut dyn io::Write,
+) -> CommandResult<()> {
+    for report in reports {
+        accept_supervisor_report(
+            bus,
+            epoch,
+            seats,
+            command_surface,
+            message_publisher,
+            taste_judge.as_deref_mut(),
+            lifecycle,
+            report,
+            message_state,
+            diagnostic,
+        )?;
     }
     Ok(())
 }

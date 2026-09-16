@@ -16,6 +16,7 @@ mod automatic_speech;
 mod backlog;
 mod projection;
 mod session_compaction;
+mod sweep;
 mod tool_preview;
 #[cfg(test)]
 pub(super) use projection::publish_agent_messages;
@@ -227,9 +228,9 @@ fn accept_capture_record_with<P: AgentMessagePublisher>(
     epoch: CanonicalUuid,
     seats: &mut Seats,
     surfaces: &CaptureSurfaces<'_, P>,
-    recognition: TasteRecognition<'_>,
+    mut recognition: TasteRecognition<'_>,
     record: &lane::capture::CaptureRecord,
-    views: CaptureViews<'_>,
+    mut views: CaptureViews<'_>,
 ) -> CommandResult<()> {
     if !lane_surface::capture_record(bus, epoch, seats, record)? {
         return Ok(());
@@ -238,37 +239,15 @@ fn accept_capture_record_with<P: AgentMessagePublisher>(
     // keeps the transcript head level with the records the resident has taken
     // responsibility for, rather than leaving the gap for the next start to
     // find. A record the resident did not accept above does not account either.
-    let observations =
+    //
+    // The sweep is also the unit of presentation. A notice is one datagram
+    // through a finite kernel queue and may never arrive, but every record the
+    // sweep accounted is on the tape, so each of them is presented here rather
+    // than only the one this notice named.
+    let mut observations =
         super::ingest_transcripts(bus, surfaces.paths, Some(record.lane), views.diagnostic)?;
+    let swept = sweep::swept_records(record, &mut observations);
     views.state.observations.extend(observations);
-    match recognition {
-        TasteRecognition::Deferred(judge) => {
-            judge.recognize(bus, epoch, surfaces.tastes, record)?;
-        }
-        TasteRecognition::Immediate(judge) => taste_surface::recognize(
-            bus,
-            surfaces.paths,
-            epoch,
-            surfaces.tastes,
-            surfaces.steering,
-            Some(judge),
-            record,
-        )?,
-        TasteRecognition::Direct => {
-            // Disabled adjudication is deliberately direct: it starts no process
-            // or worker and publishes the deterministic reminder immediately.
-            taste_surface::recognize(
-                bus,
-                surfaces.paths,
-                epoch,
-                surfaces.tastes,
-                surfaces.steering,
-                None,
-                record,
-            )?;
-        }
-    }
-    let steering = steering_ledger(bus, record)?;
     // Session authority enriches presentation; capture admission decided freshness.
     // Its absence keeps the non-disclosing count preview.
     let worktree = bus
@@ -285,24 +264,25 @@ fn accept_capture_record_with<P: AgentMessagePublisher>(
                 .filter(|session| session.occupant == record.occupant)
                 .map(|session| PathBuf::from(&session.worktree))
         });
-    match publish_agent_messages_in(
-        surfaces.publisher,
-        record,
-        views.state,
-        steering.as_ref(),
-        worktree.as_deref(),
-    ) {
-        Ok(()) => Ok(()),
-        Err(Outcome::Fault(fault)) => {
-            let _ = writeln!(
-                views.diagnostic,
-                "canvas message unavailable: {}: {}",
-                fault.reason, fault.detail
-            );
-            Ok(())
-        }
-        Err(outcome) => Err(outcome),
+    for record in &swept {
+        sweep::recognize(
+            bus,
+            epoch,
+            surfaces,
+            &mut recognition,
+            record,
+            views.diagnostic,
+        )?;
+        let steering = steering_ledger(bus, record)?;
+        sweep::present(
+            surfaces,
+            record,
+            steering.as_ref(),
+            worktree.as_deref(),
+            &mut views,
+        )?;
     }
+    Ok(())
 }
 
 struct AgentRecord<'a> {

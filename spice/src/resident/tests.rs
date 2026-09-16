@@ -30,6 +30,10 @@ mod read_materialization_bounds;
 mod startup;
 #[path = "tests/startup_window.rs"]
 mod startup_window;
+#[path = "tests/supervisor_notices.rs"]
+mod supervisor_notices;
+#[path = "tests/sweep_publish.rs"]
+mod sweep_publish;
 
 use canvas_announcement::{
     process_spec, resident_fixture, seed_lane, seed_lane_in_lineage, seed_lane_in_worktree,

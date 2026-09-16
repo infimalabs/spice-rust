@@ -1068,7 +1068,7 @@ fn a_live_capture_record_accounts_the_tape_once_without_feedback() {
 }
 
 /// Seat one codex lane so the ingestion sweep can find it and its tape.
-fn seat_ingestion_residency(bus: &Bus, lane: CanonicalUuid, epoch: CanonicalUuid) {
+pub(super) fn seat_ingestion_residency(bus: &Bus, lane: CanonicalUuid, epoch: CanonicalUuid) {
     let at = wire::Instant::new(jiff::Timestamp::now()).expect("fixture instant");
     let origin = format!("resident:{epoch}")
         .parse::<wire::Origin>()

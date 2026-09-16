@@ -14,10 +14,13 @@ pub const SCHEMA_VERSION: u32 = 25;
 /// A sibling resident releasing this same file (its own shutdown, a commit,
 /// a read-only inspection) can hold SQLite's lock for a moment after every
 /// higher-level handoff this crate coordinates has already completed, since
-/// that handoff has no visibility into SQLite's own file lock. Five seconds
-/// comfortably outlasts that moment without masking a genuinely stuck holder.
+/// that handoff has no visibility into SQLite's own file lock. Two seconds
+/// outlasts that moment without masking a genuinely stuck holder, and it is
+/// the ceiling for any wait on the resident's event loop: that loop drains a
+/// lossy notice queue, so every second it spends inside a commit is a second
+/// in which the kernel may refuse the notices the loop exists to read.
 #[cfg(not(target_arch = "wasm32"))]
-const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+const BUSY_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[cfg(not(target_arch = "wasm32"))]
 mod guard;

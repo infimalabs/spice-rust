@@ -19,6 +19,8 @@ use super::{
 
 const COMMIT_RETRIES: usize = 4;
 const ADJUDICATION_CAPACITY: usize = 16;
+/// The fault reason a full judge request queue raises.
+pub(super) const JUDGE_SATURATED: &str = "taste::judge-worker-saturated";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Candidate {
@@ -277,7 +279,7 @@ impl AdjudicationSubmitter {
             Err(TrySendError::Full(prepared)) => {
                 self.forget(&prepared);
                 Err(environment_fault(
-                    "taste::judge-worker-saturated",
+                    JUDGE_SATURATED,
                     "the bounded judge request authority reached capacity",
                 ))
             }
