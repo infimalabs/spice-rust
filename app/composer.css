@@ -127,10 +127,7 @@
   color: color-mix(in srgb, #d97706 88%, var(--ink));
   opacity: .72;
 }
-.composer-vendor-icon--omp {
-  color: color-mix(in srgb, #f97316 88%, var(--ink));
-  opacity: .72;
-}
+.composer-vendor-icon--omp { opacity: .9; }
 .composer-shard--primary:has(.agent-action-menu[open]) .composer-vendor-icon { display: none; }
 
 .organization-surface .mosaic-composer {
