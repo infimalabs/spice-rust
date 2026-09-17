@@ -43,6 +43,14 @@ pub const ABORT_REQUEST_ID: &str = "spice-abort";
 /// Codex's native variables.
 pub const SESSION_ENVIRONMENT: &str = wire::SpiceVariable::Session.as_str();
 
+/// The tools a lane's occupant runs with, spelled as omp's `--tools` roster.
+///
+/// One agent inhabits one worktree, so omp's `task` sub-agent tool is left
+/// off the roster mechanically rather than by the skill's prose, exactly as
+/// Claude's `Task` is denied; the rest is omp's own roster for a session
+/// with no MCP server, so a tool omp adds later joins only by being named.
+pub const TOOLS: &str = "read,write,edit,bash,glob,grep,eval,todo,hub,web_search";
+
 /// Width of the fixed title slot that opens every omp session file.
 const TITLE_SLOT_BYTES: usize = 256;
 
@@ -91,6 +99,8 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
         // settings when it is off.
         OsString::from("--service-tier"),
         OsString::from(if fast_mode { "priority" } else { "none" }),
+        OsString::from("--tools"),
+        OsString::from(TOOLS),
         OsString::from("--append-system-prompt"),
         OsString::from(system_prompt(launch)),
     ];

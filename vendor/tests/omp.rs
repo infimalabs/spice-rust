@@ -84,6 +84,8 @@ fn omp_carries_every_launch_knob_and_opens_the_conversation_over_a_piped_stdin()
         "xhigh",
         "--service-tier",
         "none",
+        "--tools",
+        "read,write,edit,bash,glob,grep,eval,todo,hub,web_search",
         "--append-system-prompt",
         &system_prompt,
     ];
