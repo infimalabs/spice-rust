@@ -23,6 +23,7 @@ use std::time::{Duration, Instant as Monotonic};
 
 use serde::{Deserialize, Serialize};
 use sill::Environment;
+use steer::Key;
 use wire::CanonicalUuid;
 
 use super::super::super::RuntimePaths;
@@ -40,6 +41,7 @@ const REQUEST: &str = "request.json";
 const STATE: &str = "state.json";
 const LOG: &str = "log";
 const STOP: &str = "stop";
+const DELIVERED: &str = "delivered";
 
 /// Bytes of the log a reading keeps: the end, where a failure explains
 /// itself.
@@ -452,14 +454,8 @@ impl Jobs {
         timeout: Option<Duration>,
         notices: &[String],
     ) -> io::Result<Job> {
-        let id = crate::resident::new_uuid()
-            .to_string()
-            .split('-')
-            .next()
-            .unwrap_or_default()
-            .to_owned();
-        let directory = self.root.join(&id);
-        fs::create_dir_all(&directory)?;
+        fs::create_dir_all(&self.root)?;
+        let (id, directory) = self.claim()?;
         let request_path = directory.join(REQUEST);
         publish_json(
             &request_path,
@@ -488,6 +484,30 @@ impl Jobs {
         })
     }
 
+    /// A directory of this lane's for a new job, named by the microsecond
+    /// key the system names everything with, so a listing is a timeline; a
+    /// microsecond already taken yields the next.
+    fn claim(&self) -> io::Result<(String, PathBuf)> {
+        let mut micros = i64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(io::Error::other)?
+                .as_micros(),
+        )
+        .map_err(io::Error::other)?;
+        loop {
+            let id = Key::for_micros(micros)
+                .map_err(io::Error::other)?
+                .to_string();
+            let directory = self.root.join(&id);
+            match fs::create_dir(&directory) {
+                Ok(()) => return Ok((id, directory)),
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => micros += 1,
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
     /// One job of this lane, by the identity the model quotes: a job exists
     /// from the moment its request is recorded, before its keeper speaks.
     ///
@@ -495,7 +515,7 @@ impl Jobs {
     ///
     /// Returns `NotFound` for an identity that names no job.
     pub(in crate::resident) fn open(&self, id: &str) -> io::Result<Job> {
-        let named = !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_hexdigit());
+        let named = Key::shaped(id);
         let directory = self.root.join(id);
         let request: Request = named
             .then(|| read_json(&directory.join(REQUEST), REQUEST_BYTES))
@@ -516,7 +536,7 @@ impl Jobs {
         })
     }
 
-    /// Every job of this lane, oldest request first.
+    /// Every job of this lane, oldest first: the keys order themselves.
     ///
     /// # Errors
     ///
@@ -534,16 +554,13 @@ impl Jobs {
                 continue;
             };
             match self.open(&id) {
-                Ok(job) => {
-                    let requested = fs::metadata(entry.path().join(REQUEST))?.modified()?;
-                    jobs.push((requested, job));
-                }
+                Ok(job) => jobs.push(job),
                 Err(error) if error.kind() == ErrorKind::NotFound => {}
                 Err(error) => return Err(error),
             }
         }
-        jobs.sort_by(|(left, a), (right, b)| left.cmp(right).then_with(|| a.id.cmp(&b.id)));
-        Ok(jobs.into_iter().map(|(_, job)| job).collect())
+        jobs.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(jobs)
     }
 }
 
@@ -660,6 +677,21 @@ impl Job {
     /// Returns the failure of writing the stop request.
     pub(in crate::resident) fn stop(&self) -> io::Result<()> {
         File::create(self.directory.join(STOP)).map(drop)
+    }
+
+    /// Whether the lane has heard how the job ended: in the answer to the
+    /// call that ran it, or as steering once it was kept.
+    pub(in crate::resident) fn delivered(&self) -> bool {
+        self.directory.join(DELIVERED).exists()
+    }
+
+    /// Record that the lane has heard how the job ended.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failure of writing the record.
+    pub(in crate::resident) fn mark_delivered(&self) -> io::Result<()> {
+        File::create(self.directory.join(DELIVERED)).map(drop)
     }
 
     /// The last of the log, bounded.
@@ -806,8 +838,10 @@ mod tests {
         assert_eq!(reopened.timeout(), Some(Duration::from_secs(5)));
         assert_eq!(reopened.notices(), ["noted".to_owned()]);
         assert_eq!(reopened.ended(), Some(ended));
+        assert!(Key::shaped(job.id()), "{} is a key", job.id());
         assert!(jobs.open("../jobs").is_err());
         assert!(jobs.open("0badcafe").is_err());
+        assert!(jobs.open("1kJK6N3Rb").is_err());
         let _ = fs::remove_dir_all(root);
     }
 

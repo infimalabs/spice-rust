@@ -14,10 +14,11 @@
 //! Steering never waits on a command: direction the lane has not heard,
 //! arriving while a command runs, interrupts the call, which answers with
 //! what the command said so far while the command keeps running as a job,
-//! and the job's ending is delivered as steering of its own when it comes. The resident reaches the
-//! driver through one datagram kick per inbox publication or consent answer;
-//! a lane with no command-driven occupant has nobody listening, and the kick
-//! is lost by design.
+//! and the job's ending is delivered as steering of its own when it comes;
+//! an ending nobody was there to hear waits for the lane's next occupant.
+//! The resident reaches the driver through one datagram kick per inbox
+//! publication or consent answer; a lane with no command-driven occupant has
+//! nobody listening, and the kick is lost by design.
 
 use std::collections::HashMap;
 use std::fs;
@@ -300,16 +301,41 @@ impl<W: Write + Send + 'static> Driver<W> {
             report.exit_code,
             report.failed,
         ));
-        if let Some(job) = kept
-            && let Some(report) = terminal.follow(&job, control)
-        {
-            self.deliver(&job, &report);
+        if let Some(job) = kept {
+            self.deliver(&job, terminal.follow(&job, control).as_ref());
         }
     }
 
-    /// Deliver a kept command's ending as steering, in omp's own notice.
-    fn deliver(&self, job: &Job, report: &Report) {
-        let _delivered = self.steer(&vendor::omp::job_delivery(job.id(), &report.output));
+    /// Deliver a kept command's ending as steering, in omp's own notice, and
+    /// record that the lane heard it; a stopped job has nothing to deliver.
+    fn deliver(&self, job: &Job, report: Option<&Report>) {
+        let heard = report.is_none_or(|report| {
+            self.steer(&vendor::omp::job_delivery(job.id(), &report.output))
+                .is_ok()
+        });
+        if heard {
+            let _recorded = job.mark_delivered();
+        }
+    }
+
+    /// Say what the lane is owed at its start: the standing inbox, and the
+    /// ending of every job the lane has not heard, each followed to its end
+    /// on a thread of its own.
+    pub(in crate::resident) fn catch_up(self: &Arc<Self>) {
+        self.deliver_inbox();
+        let Some(terminal) = self.terminal.clone() else {
+            return;
+        };
+        for job in terminal.undelivered() {
+            let driver = Arc::clone(self);
+            let terminal = terminal.clone();
+            let _followed = std::thread::Builder::new()
+                .name("spice-catch-up".to_owned())
+                .spawn(move || {
+                    let report = terminal.follow(&job, &Control::new());
+                    driver.deliver(&job, report.as_ref());
+                });
+        }
     }
 
     /// End the work one withdrawn call is being answered with, if it still runs.

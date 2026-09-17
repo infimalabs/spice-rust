@@ -573,7 +573,7 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
             reporter.drive(Arc::clone(&driver));
             driver.open(&opening)?;
             let door = command::listen_for_kicks(&paths, request.lane, Arc::clone(&driver))?;
-            driver.deliver_inbox();
+            driver.catch_up();
             Ok::<_, io::Error>(door)
         })
         .transpose()?;

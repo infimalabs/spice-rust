@@ -176,7 +176,19 @@ impl Terminal {
                 wall: None,
             },
         };
+        let _heard = job.mark_delivered();
         Run::Ended(prefixed(finished(&job, &ended), diagnostic))
+    }
+
+    /// The jobs whose endings the lane has not heard: kept commands still
+    /// running, and those that ended while nobody was there to be told.
+    pub(in crate::resident) fn undelivered(&self) -> Vec<Job> {
+        self.jobs
+            .list()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|job| !job.delivered())
+            .collect()
     }
 
     /// Follow a kept command to its ending: what the delivery says, or

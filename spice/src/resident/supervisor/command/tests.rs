@@ -109,6 +109,24 @@ fn settled(scratch: &Scratch) {
     }
 }
 
+/// The lane has heard how the job ended.
+fn heard(scratch: &Scratch, job: &str) {
+    let directory = scratch.0.join("jobs").join(job);
+    let deadline = std::time::Instant::now() + ANSWER_BOUND;
+    loop {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let observer = crate::resident::daemon::observer::DirectObserver::arm(&directory)
+            .expect("the job directory is watched");
+        crate::resident::daemon::observer::wait_for_change(observer, sender, drop);
+        if directory.join("delivered").exists() {
+            return;
+        }
+        receiver
+            .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+            .unwrap_or_else(|_| panic!("job {job} is never heard"));
+    }
+}
+
 fn steer(sequence: u64, message: &str) -> serde_json::Value {
     serde_json::json!({
         "id": format!("spice-steer-{sequence}"),
@@ -217,6 +235,8 @@ fn a_shell_call_runs_in_the_lanes_terminal_and_answers_with_what_it_said() {
     );
     assert_eq!(frames[0]["result"]["details"]["exitCode"], 3);
     assert_eq!(frames[0]["result"]["isError"], true);
+    // The answer told the lane how the command ended.
+    assert!(scratch.terminal().undelivered().is_empty());
 }
 
 #[test]
@@ -357,6 +377,64 @@ fn a_rendering_that_restates_heard_direction_leaves_the_running_command_alone() 
     );
     release(&fifo);
     settled(&scratch);
+}
+
+#[test]
+fn an_ending_nobody_heard_reaches_the_lanes_next_occupant_once() {
+    let scratch = Scratch::new("caught-up");
+    let sink = Sink::default();
+    let driver = Driver::new(sink.clone(), scratch.inbox(), Some(scratch.terminal()));
+    let fifo = scratch.0.join("hold");
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo")
+            .success()
+    );
+    driver.observe(&decoded(
+        br#"{"type":"host_tool_call","id":"h1","toolCallId":"call_1","toolName":"shell","arguments":{"command":"read held < hold"}}"#,
+    ));
+    fs::write(scratch.inbox(), NEWS).expect("inbox renders");
+    driver.deliver_inbox();
+    let frames = sink.answered(2);
+    let job = frames
+        .iter()
+        .find(|frame| frame["id"] == "h1")
+        .and_then(|answer| answer["result"]["content"][0]["text"].as_str())
+        .and_then(|text| text.split_once("Backgrounded as job "))
+        .map(|(_, job)| {
+            job.trim_end_matches("; result will be delivered automatically.")
+                .to_owned()
+        })
+        .expect("the answer names the job");
+
+    // The turn ends before the command does, so nobody hears its ending.
+    driver.close();
+    release(&fifo);
+    settled(&scratch);
+    assert_eq!(sink.answered(2).len(), 2);
+
+    // The lane's next occupant hears it at its start, after the inbox.
+    let later = Sink::default();
+    let successor = Driver::new(later.clone(), scratch.inbox(), Some(scratch.terminal()));
+    successor.catch_up();
+    let frames = later.answered(2);
+    assert_eq!(frames[0], steer(1, NEWS));
+    let delivery = frames[1]["message"]
+        .as_str()
+        .expect("the ending is delivered");
+    assert!(
+        delivery.starts_with(&format!(
+            "<system-notice>\nBackground job {job} has completed. Resume your work using the \
+             result below.\n(no output)\n\nWall time: "
+        )),
+        "{delivery}"
+    );
+    heard(&scratch, &job);
+
+    // Once heard, it is owed to nobody.
+    assert!(scratch.terminal().undelivered().is_empty());
 }
 
 #[test]
