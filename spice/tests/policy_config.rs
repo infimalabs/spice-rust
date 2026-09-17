@@ -161,7 +161,7 @@ fn an_empty_tree_is_the_complete_compiled_policy() {
     assert!(root.consent().policy().rules().is_empty());
     assert!(root.gate().walk().skip().rules().is_empty());
     assert_eq!(root.board().next().band(), 2);
-    assert_eq!(root.lane().life(), Life::Drive);
+    assert_eq!(root.lane().life(), Life::Steer);
     assert_eq!(root.lane().lease().to_string(), "15m");
     assert_eq!(root.lane().runtime().to_string(), "24h");
     assert_eq!(root.lane().vendor().as_str(), "codex");

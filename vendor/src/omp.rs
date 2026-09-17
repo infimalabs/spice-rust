@@ -2,7 +2,7 @@
 //!
 //! omp is driven over `--mode rpc`: one JSON command per line on stdin, one
 //! JSON frame per line on stdout. The argument vector fixes the model,
-//! thinking level, and system prompt; the conversation itself is opened by
+//! thinking level, service tier, and system prompt; the conversation itself is opened by
 //! the request bytes the supervisor writes once stdin exists, and steering
 //! is interjected the same way for as long as the child lives.
 
@@ -50,18 +50,13 @@ const SESSION_VERSION: u8 = 3;
 ///
 /// # Errors
 ///
-/// Returns a path-specific refusal for unsupported cross-vendor fields, or the
-/// common argument-vector refusal when the binary is empty.
+/// Returns a path-specific refusal for unsupported cross-vendor fields or a
+/// fast-mode disposition left implicit, or the common argument-vector refusal
+/// when the binary is empty.
 pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, ContractError> {
     if launch.personality.is_some() {
         return Err(ContractError::Unsupported {
             path: "vendor.omp.personality",
-            vendor: VENDOR,
-        });
-    }
-    if launch.fast_mode.is_some() {
-        return Err(ContractError::Unsupported {
-            path: "vendor.omp.fast_mode",
             vendor: VENDOR,
         });
     }
@@ -71,6 +66,9 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
             vendor: VENDOR,
         });
     }
+    let fast_mode = launch.fast_mode.ok_or(ContractError::Missing {
+        path: "vendor.omp.fast_mode",
+    })?;
     let mut arguments = vec![
         OsString::from("--mode"),
         OsString::from("rpc"),
@@ -85,6 +83,11 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
         OsString::from(launch.model.as_str()),
         OsString::from("--thinking"),
         OsString::from(launch.effort.as_str()),
+        // Fast mode is the priority tier on every provider family omp serves;
+        // an explicit `none` keeps the lane's disposition ahead of omp's own
+        // settings when it is off.
+        OsString::from("--service-tier"),
+        OsString::from(if fast_mode { "priority" } else { "none" }),
         OsString::from("--append-system-prompt"),
         OsString::from(system_prompt(launch)),
     ];

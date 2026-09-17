@@ -595,6 +595,7 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "vendor.omp.binary",
     "vendor.omp.model",
     "vendor.omp.effort",
+    "vendor.omp.fast_mode",
     "listen.window",
     "lock.busy",
     "lock.taken",

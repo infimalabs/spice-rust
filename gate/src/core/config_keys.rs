@@ -105,6 +105,7 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("vendor.omp.binary", TRACKED),
     ConfigKeyDeclaration::new("vendor.omp.model", TRACKED_WORKTREE),
     ConfigKeyDeclaration::new("vendor.omp.effort", TRACKED_WORKTREE),
+    ConfigKeyDeclaration::new("vendor.omp.fast_mode", TRACKED),
     ConfigKeyDeclaration::new("listen.window", TRACKED_LOCAL),
     ConfigKeyDeclaration::new("lock.busy", TRACKED_LOCAL),
     ConfigKeyDeclaration::new("lock.taken", TRACKED_LOCAL),

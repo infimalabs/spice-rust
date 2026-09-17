@@ -510,7 +510,7 @@ fn omp_configuration(root: &crate::config::Root) -> vendor::LaunchValues<'_> {
         model: configured.model(),
         effort: configured.effort(),
         personality: None,
-        fast_mode: None,
+        fast_mode: Some(configured.fast_mode()),
         model_context_window: None,
         auto_compact_window_tokens: None,
     }

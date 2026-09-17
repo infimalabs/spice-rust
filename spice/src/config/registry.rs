@@ -748,6 +748,13 @@ configuration_registry! {
         class: WorktreeLocal,
         flag: None,
     }
+    fixed "vendor.omp.fast_mode" {
+        kind: Boolean,
+        builtin: Some(Builtin::Boolean(false)),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
     fixed "listen.window" {
         kind: Duration,
         builtin: Some(Builtin::String("90s")),

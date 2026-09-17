@@ -30,7 +30,7 @@ fn fixture(resume: Resume) -> Launch {
         model: MODEL.to_owned(),
         effort: Effort::XHigh,
         personality: None,
-        fast_mode: None,
+        fast_mode: Some(false),
         model_context_window: None,
         attribution: Attribution::Harness,
         hook: SteeringHook {
@@ -82,6 +82,8 @@ fn omp_carries_every_launch_knob_and_opens_the_conversation_over_a_piped_stdin()
         "claude-opus-5",
         "--thinking",
         "xhigh",
+        "--service-tier",
+        "none",
         "--append-system-prompt",
         &system_prompt,
     ];
@@ -163,13 +165,10 @@ fn omp_resumes_by_the_exact_session_and_the_vendor_value_renders_the_same_record
 fn omp_refuses_knobs_it_has_no_seam_for_instead_of_ignoring_them() {
     let mut personality = fixture(Resume::Fresh);
     personality.personality = Some("terse".to_owned());
-    let mut fast_mode = fixture(Resume::Fresh);
-    fast_mode.fast_mode = Some(true);
     let mut window = fixture(Resume::Fresh);
     window.model_context_window = Some(1_000_000);
     for (launch, path) in [
         (personality, "vendor.omp.personality"),
-        (fast_mode, "vendor.omp.fast_mode"),
         (window, "vendor.omp.model_context_window"),
     ] {
         assert_eq!(
@@ -184,6 +183,28 @@ fn omp_refuses_knobs_it_has_no_seam_for_instead_of_ignoring_them() {
         omp::record("", &fixture(Resume::Fresh)),
         Err(ContractError::Spec(_))
     ));
+}
+
+#[test]
+fn fast_mode_is_the_priority_service_tier_and_must_be_explicit() {
+    let mut fast = fixture(Resume::Fresh);
+    fast.fast_mode = Some(true);
+    let record = omp::record("/opt/omp", &fast).expect("valid fast record");
+    let tier = record
+        .arguments()
+        .windows(2)
+        .find(|pair| pair[0] == OsStr::new("--service-tier"))
+        .map(|pair| pair[1].as_os_str());
+    assert_eq!(tier, Some(OsStr::new("priority")));
+
+    let mut implicit = fixture(Resume::Fresh);
+    implicit.fast_mode = None;
+    assert_eq!(
+        omp::record("/opt/omp", &implicit).expect_err("refused"),
+        ContractError::Missing {
+            path: "vendor.omp.fast_mode"
+        }
+    );
 }
 
 #[test]

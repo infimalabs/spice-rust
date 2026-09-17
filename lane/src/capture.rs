@@ -314,7 +314,6 @@ mod tests {
         fs::create_dir_all(&root).expect("capture fixture root");
         let tape = Tape::open(root.join("tape")).expect("capture tape opens");
         let mut launch = launch();
-        launch.fast_mode = None;
         launch.model_context_window = None;
         let record =
             vendor::omp::record("/bin/sh", &launch).expect("fixture vendor record contract");

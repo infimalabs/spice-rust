@@ -141,6 +141,22 @@ auto_compact_window_tokens = 123456
 }
 
 #[test]
+fn omp_plan_carries_the_global_fast_mode_as_its_service_tier() {
+    let plan = compose(
+        &Root::default(),
+        inputs("omp", Environment::empty(), Resume::Fresh),
+    )
+    .expect("omp plan composes");
+    assert_eq!(plan.launch().fast_mode, Some(true));
+    let rendered = arguments(&plan.record().expect("omp plan renders"));
+    assert!(
+        rendered
+            .windows(2)
+            .any(|pair| pair == ["--service-tier", "priority"])
+    );
+}
+
+#[test]
 fn inherited_claude_compact_window_is_preserved_exactly_once() {
     let inherited = Environment::new([
         ("HOME", "/home/operator"),

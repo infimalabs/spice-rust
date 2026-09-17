@@ -238,6 +238,7 @@ pub struct OmpConfig {
     binary: Binary,
     model: LaunchValue,
     effort: ClaudeEffort,
+    fast_mode: bool,
 }
 
 impl Default for OmpConfig {
@@ -246,6 +247,7 @@ impl Default for OmpConfig {
             binary: Binary::new("omp"),
             model: LaunchValue::new(DEFAULT_OMP_MODEL),
             effort: ClaudeEffort::Xhigh,
+            fast_mode: false,
         }
     }
 }
@@ -267,6 +269,12 @@ impl OmpConfig {
     #[must_use]
     pub const fn effort(&self) -> Effort {
         self.effort.launch()
+    }
+
+    /// Explicit oh-my-pi fast-mode disposition: its priority service tier.
+    #[must_use]
+    pub const fn fast_mode(&self) -> bool {
+        self.fast_mode
     }
 }
 
