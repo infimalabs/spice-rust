@@ -32,6 +32,9 @@ pub const PROMPT_REQUEST_ID: &str = "spice-prompt";
 /// Prefix of the request identities that carry interjected steering.
 pub const STEER_REQUEST_ID_PREFIX: &str = "spice-steer-";
 
+/// Request identity of the interrupt a drain sends.
+pub const ABORT_REQUEST_ID: &str = "spice-abort";
+
 /// Environment name carrying the session identity the lane pinned at launch.
 ///
 /// omp exports nothing of its own to the tools it runs, so the lane mints the
@@ -247,6 +250,21 @@ pub fn steer_request(sequence: u64, message: &str) -> Vec<u8> {
         kind: "prompt",
         message: Some(message.to_owned()),
         streaming_behavior: Some("steer"),
+    })
+}
+
+/// The interrupt a drain sends before any signal.
+///
+/// omp stops the turn where it stands and records the assistant message as
+/// aborted, so the session and the tape both say the turn was interrupted
+/// instead of ending in a signal nothing recorded.
+#[must_use]
+pub fn abort_request() -> Vec<u8> {
+    request_line(&Request {
+        id: ABORT_REQUEST_ID.to_owned(),
+        kind: "abort",
+        message: None,
+        streaming_behavior: None,
     })
 }
 

@@ -101,7 +101,7 @@ mod tests {
 
     use super::super::test_support::record_exited_for_tests;
     use super::super::{
-        CompletionField, PersistedCompletion, STATE_VERSION, now_millis, publish_json,
+        CompletionField, PersistedCompletion, STATE_VERSION, command, now_millis, publish_json,
     };
     use super::*;
 
@@ -221,6 +221,35 @@ mod tests {
                 published.phase
             );
         }
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn a_drain_interrupts_a_driven_occupant_at_its_door_before_any_signal() {
+        let root = fixture_root("drain");
+        let paths = paths(&root);
+        let (lane, occupant) = (uuid(1), uuid(2));
+        let directory = supervisor_directory(&paths, lane, occupant);
+        fs::create_dir_all(&directory).expect("supervisor directory");
+        let live = running_state(&root, lane, occupant, std::process::id());
+        let state = directory.join("state.json");
+        publish_json(&state, &live).expect("running state publishes");
+        let door_path = command::kick_path(&paths, lane);
+        let door = std::os::unix::net::UnixDatagram::bind(&door_path).expect("door binds");
+
+        let launch = super::super::state_launch(&paths, state, live).expect("live adopts");
+        launch
+            .process
+            .terminate()
+            .expect("the door takes the interrupt, so no signal is sent");
+        let mut kick = [0u8; 256];
+        let length = door.recv(&mut kick).expect("the interrupt arrives");
+        assert_eq!(
+            serde_json::from_slice::<command::Kick>(&kick[..length]).expect("a kick"),
+            command::Kick::Abort
+        );
+        drop(door);
+        fs::remove_file(door_path).expect("door cleanup");
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 

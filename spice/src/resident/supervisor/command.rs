@@ -6,7 +6,8 @@
 //! the vendor contract composed, interjects this lane's rendered steering
 //! inbox whenever the resident republishes it, answers the dialogs the agent
 //! opens, and drops the pipe once the agent's turn completes so the child
-//! drains and exits on its own. A confirm dialog becomes one consent request
+//! drains and exits on its own. A drain interrupts the turn over the same
+//! pipe before any signal is sent. A confirm dialog becomes one consent request
 //! the resident decides; every other dialog is declined, since nobody at the
 //! lane can compose a choice or text for it. The resident reaches the driver
 //! through one datagram kick per inbox publication or consent answer; a lane
@@ -56,6 +57,8 @@ pub(in crate::resident) enum Kick {
         request: CanonicalUuid,
         confirmed: bool,
     },
+    /// The lane is being drained: interrupt the turn and end the input.
+    Abort,
 }
 
 impl<W: Write + Send> Driver<W> {
@@ -181,6 +184,16 @@ impl<W: Write + Send> Driver<W> {
         }
     }
 
+    /// Interrupt the agent's turn and end its input: how a drain begins.
+    ///
+    /// omp stops the turn where it stands and records the assistant message
+    /// as aborted, then reads the end of its input and exits on its own. The
+    /// resident's signal is only for an occupant that does neither.
+    pub(in crate::resident) fn abort(&self) {
+        let _aborted = self.write(&vendor::omp::abort_request());
+        self.close();
+    }
+
     /// End the child's input; further deliveries are dropped.
     pub(in crate::resident) fn close(&self) {
         self.stdin
@@ -247,17 +260,38 @@ pub(in crate::resident) fn answer(
     send(paths, lane, &Kick::Answer { request, confirmed });
 }
 
+/// Interrupt the driver listening at `door`, if one does.
+///
+/// A lane without a command-driven occupant has no door, and a door whose
+/// supervisor has gone refuses the datagram; either way the error says
+/// nobody is there to interrupt, so a signal is the only word left.
+///
+/// # Errors
+///
+/// Returns the send error when no driver takes the kick.
+pub(in crate::resident) fn abort(door: &Path) -> io::Result<()> {
+    send_to(door, &Kick::Abort)
+}
+
 fn send(paths: &RuntimePaths, lane: CanonicalUuid, kick: &Kick) {
+    let _sent = send_to(&kick_path(paths, lane), kick);
+}
+
+fn send_to(door: &Path, kick: &Kick) -> io::Result<()> {
     #[cfg(unix)]
     {
-        let path = kick_path(paths, lane);
         let bytes = serde_json::to_vec(kick).expect("a kick is representable as JSON");
-        if let Ok(socket) = std::os::unix::net::UnixDatagram::unbound() {
-            let _sent = socket.send_to(&bytes, path);
-        }
+        std::os::unix::net::UnixDatagram::unbound()?.send_to(&bytes, door)?;
+        Ok(())
     }
     #[cfg(not(unix))]
-    let _ = (paths, lane, kick);
+    {
+        let _ = (door, kick);
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "kick doors require Unix",
+        ))
+    }
 }
 
 /// Bind this lane's kick door and let every kick reach the driver.
@@ -290,6 +324,7 @@ pub(in crate::resident) fn listen_for_kicks(
                         Ok(Kick::Answer { request, confirmed }) => {
                             driver.answer(request, confirmed);
                         }
+                        Ok(Kick::Abort) => driver.abort(),
                         Err(_) => {}
                     }
                 }
@@ -521,6 +556,43 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&Kick::Inbox).expect("a kick serializes"),
             r#"{"kind":"inbox"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&Kick::Abort).expect("a kick serializes"),
+            r#"{"kind":"abort"}"#
+        );
+    }
+
+    #[test]
+    fn a_drain_interrupts_the_turn_and_ends_the_input() {
+        let scratch = Scratch::new("abort");
+        let sink = Sink::default();
+        let driver = Driver::new(sink.clone(), scratch.inbox());
+        driver.abort();
+        assert_eq!(
+            sink.frames(),
+            [serde_json::json!({"id": "spice-abort", "type": "abort"})]
+        );
+        assert_eq!(
+            driver.open(b"late\n").expect_err("closed").kind(),
+            io::ErrorKind::BrokenPipe
+        );
+
+        let door_path =
+            kick_path_beneath(Path::new("/tmp"), &format!("abort-{}", std::process::id()));
+        let door = std::os::unix::net::UnixDatagram::bind(&door_path).expect("door binds");
+        abort(&door_path).expect("a bound door takes the interrupt");
+        let mut kick = [0u8; KICK_BYTES];
+        let length = door.recv(&mut kick).expect("the interrupt arrives");
+        assert_eq!(
+            serde_json::from_slice::<Kick>(&kick[..length]).expect("a kick"),
+            Kick::Abort
+        );
+        drop(door);
+        fs::remove_file(door_path).expect("door cleanup");
+        assert!(
+            abort(&scratch.0.join("nobody.sock")).is_err(),
+            "without a door there is nobody to interrupt"
         );
     }
 

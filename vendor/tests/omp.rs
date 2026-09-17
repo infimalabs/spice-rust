@@ -236,6 +236,17 @@ fn the_steering_anchor_names_the_interjection_channel_and_steer_requests_carry_i
 }
 
 #[test]
+fn a_drain_interrupts_the_turn_with_one_abort_request() {
+    let abort = omp::abort_request();
+    let frame: serde_json::Value =
+        serde_json::from_slice(abort.strip_suffix(b"\n").expect("one line")).expect("JSON");
+    assert_eq!(
+        frame,
+        serde_json::json!({"id": "spice-abort", "type": "abort"})
+    );
+}
+
+#[test]
 fn the_state_reply_declares_the_session_and_content_rides_the_selected_stream() {
     let record = omp::record("/opt/omp", &fixture(Resume::Fresh)).expect("valid record");
     let locus = Locus::new(2, 17, SESSION.len() as u64);

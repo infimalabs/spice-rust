@@ -348,7 +348,7 @@ fn launch_unix(paths: &RuntimePaths, request: OccupantLaunchRequest<'_>) -> Comm
         .spawn(move || {
             let _ = supervisor.wait();
         });
-    await_running(&state, request.lane, request.occupant, events)
+    await_running(paths, &state, request.lane, request.occupant, events)
 }
 
 /// Adopt the exact live supervisor already naming a durable lane occupant.
@@ -363,13 +363,15 @@ pub(super) fn adopt(
         return Ok(None);
     };
     match state.phase {
-        Phase::Running if process_exists(state.supervisor)? => {
-            state_launch(path, state).map(Adoption::Running).map(Some)
-        }
+        Phase::Running if process_exists(state.supervisor)? => state_launch(paths, path, state)
+            .map(Adoption::Running)
+            .map(Some),
         Phase::Running => Ok(Some(Adoption::Failed(
             ending::SUPERVISOR_DISAPPEARED.to_owned(),
         ))),
-        Phase::Exited => state_launch(path, state).map(Adoption::Exited).map(Some),
+        Phase::Exited => state_launch(paths, path, state)
+            .map(Adoption::Exited)
+            .map(Some),
         Phase::Failed => Ok(Some(Adoption::Failed(ending::failure_detail(
             state.failure,
         )))),
@@ -381,6 +383,7 @@ pub(super) fn adopt(
 
 #[cfg(all(unix, not(test)))]
 fn await_running(
+    paths: &RuntimePaths,
     path: &Path,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
@@ -402,7 +405,9 @@ fn await_running(
                 // the complete launch authority; returning its handle lets the
                 // resident commit the start and then observe the exact ending
                 // instead of turning a harmless race into resident failure.
-                return state_launch_with_events(path.to_path_buf(), state, events);
+                let events = (state.phase == Phase::Running).then_some(events);
+                let door = command::kick_path(paths, lane);
+                return state_launch_inner(path.to_path_buf(), door, state, events);
             }
             Ok(state) if state.phase == Phase::Failed => {
                 return Err(store_fault(
@@ -460,7 +465,8 @@ fn await_running(
     }
 }
 
-fn state_launch(path: PathBuf, state: State) -> CommandResult<Launch> {
+fn state_launch(paths: &RuntimePaths, path: PathBuf, state: State) -> CommandResult<Launch> {
+    let door = command::kick_path(paths, state.lane);
     #[cfg(unix)]
     let events = if state.phase == Phase::Running {
         Some(StateEvents::arm(&path, state.supervisor).map_err(|error| {
@@ -471,47 +477,25 @@ fn state_launch(path: PathBuf, state: State) -> CommandResult<Launch> {
     };
     state_launch_inner(
         path,
+        door,
         state,
         #[cfg(unix)]
         events,
     )
 }
 
-#[cfg(all(unix, not(test)))]
-fn state_launch_with_events(
-    path: PathBuf,
-    state: State,
-    events: StateEvents,
-) -> CommandResult<Launch> {
-    let events = (state.phase == Phase::Running).then_some(events);
-    state_launch_inner(path, state, events)
-}
-
 fn state_launch_inner(
     path: PathBuf,
+    door: PathBuf,
     state: State,
     #[cfg(unix)] events: Option<StateEvents>,
 ) -> CommandResult<Launch> {
-    let group = state.group.ok_or_else(|| {
-        store_fault(
-            "lane::supervisor-state-invalid",
-            "running supervisor has no process group",
-        )
-    })?;
-    let session = state.session.clone().ok_or_else(|| {
-        store_fault(
-            "lane::supervisor-state-invalid",
-            "running supervisor has no session proof",
-        )
-    })?;
-    let git = state.git.clone().ok_or_else(|| {
-        store_fault(
-            "lane::supervisor-state-invalid",
-            "running supervisor has no launch Git identity",
-        )
-    })?;
+    let group = required(state.group, "process group")?;
+    let session = required(state.session.clone(), "session proof")?;
+    let git = required(state.git.clone(), "launch Git identity")?;
     let handle = Handle::new(
         path,
+        door,
         &state,
         #[cfg(unix)]
         events,
@@ -661,8 +645,20 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
     Ok(())
 }
 
+/// A field a running supervisor's published state must carry.
+fn required<T>(value: Option<T>, name: &str) -> CommandResult<T> {
+    value.ok_or_else(|| {
+        store_fault(
+            "lane::supervisor-state-invalid",
+            &format!("running supervisor has no {name}"),
+        )
+    })
+}
+
 struct Handle {
     path: PathBuf,
+    /// The kick door a command-driven occupant's driver listens at.
+    door: PathBuf,
     owner: String,
     group: u32,
     started_millis: u64,
@@ -676,26 +672,15 @@ struct Handle {
 impl Handle {
     fn new(
         path: PathBuf,
+        door: PathBuf,
         state: &State,
         #[cfg(unix)] events: Option<StateEvents>,
     ) -> CommandResult<Self> {
-        let required = |value: Option<u64>, name: &str| {
-            value.ok_or_else(|| {
-                store_fault(
-                    "lane::supervisor-state-invalid",
-                    &format!("running supervisor has no {name}"),
-                )
-            })
-        };
         Ok(Self {
             path,
+            door,
             owner: format!("lane {} detached supervisor", state.lane),
-            group: state.group.ok_or_else(|| {
-                store_fault(
-                    "lane::supervisor-state-invalid",
-                    "running supervisor has no group",
-                )
-            })?,
+            group: required(state.group, "group")?,
             started_millis: required(state.started_millis, "start instant")?,
             runtime: Duration::from_millis(required(state.runtime_millis, "runtime")?),
             grace: Duration::from_millis(required(state.grace_millis, "termination grace")?),
@@ -797,6 +782,11 @@ impl DetachedProcess for Handle {
     }
 
     fn terminate(&self) -> Result<(), WaitError> {
+        // An occupant driven over its own protocol is interrupted there; the
+        // signal is for one nobody drives, or one that stays after the ask.
+        if command::abort(&self.door).is_ok() {
+            return Ok(());
+        }
         self.signal(libc::SIGTERM, "terminating supervisor-owned process group")
     }
 
