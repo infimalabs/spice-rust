@@ -553,8 +553,8 @@ export async function assertPerOrgWatchbands(
   const secondarySpeech = secondarySurface.locator('.organization-speech input[type="range"]');
   assert.deepEqual(
     [await primarySpeech.inputValue(), await secondarySpeech.inputValue()],
-    ["1", "1"],
-    "new organizations default to Speak",
+    ["0", "0"],
+    "new teams default to Quiet",
   );
   await primarySpeech.fill("0");
   await secondarySpeech.fill("2");

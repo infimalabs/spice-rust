@@ -115,7 +115,7 @@ impl Default for LineageControl {
             import_open: false,
             arrangement_open: false,
             previous_topology: None,
-            speech: LineageSpeech::Speak,
+            speech: LineageSpeech::Quiet,
             life: LineageLife::Steer,
             preview_life: None,
             pending_life: None,

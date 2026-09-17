@@ -254,7 +254,7 @@ pub struct NarrationMessage {
     pub key: String,
     /// Prose to enqueue if the cursor admits it as live.
     pub text: String,
-    /// Resident-classified utterance eligible for default Speak mode.
+    /// Resident-classified utterance eligible for Speak mode.
     pub automatic_speech: Option<String>,
 }
 
@@ -267,7 +267,7 @@ pub struct NarrationLine {
     pub key: String,
     /// Prose to enqueue through the global arbiter.
     pub text: String,
-    /// Resident-classified utterance eligible for default Speak mode.
+    /// Resident-classified utterance eligible for Speak mode.
     pub automatic_speech: Option<String>,
 }
 
