@@ -484,6 +484,7 @@ pub(in crate::resident) fn reconcile(
         &handoff_control(&renewal),
     )?;
     ensure_context(bus, paths, epoch, &config.steering, &renewal)?;
+    super::super::consent_surface::commit_lapse(bus, runtime.reads, renewal.lane)?;
     let occupant = new_uuid();
     match super::automatic::wake_renewal(bus, paths, epoch, seats, runtime, &renewal, occupant)? {
         AutomaticWake::Started => Ok(true),

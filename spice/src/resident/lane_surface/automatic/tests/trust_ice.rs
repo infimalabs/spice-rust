@@ -27,7 +27,7 @@ fn trust_movement_refuses_a_stale_thaw_and_a_fresh_retry_restores_bounded_lease(
         capability: fixture.capability,
         epoch: fixture.epoch,
     };
-    let runtime = Runtime::new(&capabilities, &discovery, fixture.reporter());
+    let runtime = fixture.lane_runtime(&bus, &capabilities, &discovery);
     let (admitted, proven, mut seats) = admitted_thaw(&bus, &fixture, &runtime);
 
     revoke_trust(&bus, &digest);

@@ -497,8 +497,13 @@ fn producer_assignment_follows_the_specified_enumeration() {
     // disabled path remains resident recognition; historical and live
     // adjudication facts belong to the judge. Naming the exception here keeps
     // the domain rule below meaning "every other taste fact is the judge's"
-    // rather than quietly widening to whoever arrives next.
-    let recognized = [FactKind::SteerDeadLettered, FactKind::TasteReminded];
+    // rather than quietly widening to whoever arrives next. A consent lapse is
+    // the resident's recognition of a break, not a ruling through the door.
+    let recognized = [
+        FactKind::SteerDeadLettered,
+        FactKind::TasteReminded,
+        FactKind::ConsentLapsed,
+    ];
     for kind in recognized {
         assert_eq!(
             kind.producer(),

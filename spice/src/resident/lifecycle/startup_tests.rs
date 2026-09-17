@@ -16,7 +16,7 @@ fn resident_startup_leaves_a_vacant_drain_org_idle_without_work() {
         capability: fixture.capability,
         epoch: fixture.epoch,
     };
-    let lane_runtime = lane_surface::Runtime::new(&capabilities, &discovery, fixture.reporter());
+    let lane_runtime = fixture.lane_runtime(&bus, &capabilities, &discovery);
     let mut runtime = Runtime::new(&surface.config.lane);
     let mut seats = Seats::new();
     let mut diagnostic = Vec::new();
@@ -74,7 +74,7 @@ fn changing_org_policy_to_drain_waits_until_work_arrives() {
         capability: fixture.capability,
         epoch: fixture.epoch,
     };
-    let lane_runtime = lane_surface::Runtime::new(&capabilities, &discovery, fixture.reporter());
+    let lane_runtime = fixture.lane_runtime(&bus, &capabilities, &discovery);
     let mut runtime = Runtime::new(&surface.config.lane);
     let mut seats = Seats::new();
     assert_eq!(

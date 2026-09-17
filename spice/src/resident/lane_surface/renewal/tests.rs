@@ -118,7 +118,7 @@ fn handoff_pending_launches_one_fresh_successor_with_context() {
     let surface = super::super::super::load_startup_surface(&repository)
         .expect("fixture startup policy resolves");
     let capabilities = canvas::axum::Capabilities::default();
-    let lane_runtime = Runtime::new(&capabilities, &discovery, fixture.reporter());
+    let lane_runtime = fixture.lane_runtime(&bus, &capabilities, &discovery);
     let mut lifecycle = super::super::super::lifecycle::Runtime::new(&surface.config.lane);
     let mut seats = Seats::new();
 
@@ -193,7 +193,7 @@ fn predecessor_exit_advances_handoff_and_retires_its_control_before_successor_la
     let surface = super::super::super::load_startup_surface(&repository)
         .expect("fixture startup policy resolves");
     let capabilities = canvas::axum::Capabilities::default();
-    let lane_runtime = Runtime::new(&capabilities, &discovery, fixture.reporter());
+    let lane_runtime = fixture.lane_runtime(&bus, &capabilities, &discovery);
     let mut lifecycle = super::super::super::lifecycle::Runtime::new(&surface.config.lane);
     let mut seats = Seats::new();
     seats
@@ -268,7 +268,7 @@ fn launch_refusal_is_durable_and_an_explicit_retry_starts_one_successor() {
         .expect("fixture startup policy resolves");
     let original = refuse_launch_config(&fixture);
     let capabilities = canvas::axum::Capabilities::default();
-    let lane_runtime = Runtime::new(&capabilities, &discovery, fixture.reporter());
+    let lane_runtime = fixture.lane_runtime(&bus, &capabilities, &discovery);
     let mut lifecycle = super::super::super::lifecycle::Runtime::new(&surface.config.lane);
     let mut seats = Seats::new();
 

@@ -3,7 +3,9 @@ use std::error::Error;
 use std::fmt;
 
 use journal::FactSnapshot;
-use wire::body::{ConsentAsked, ConsentDenied, ConsentGranted, ConsentQueueCause, ConsentQueued};
+use wire::body::{
+    ConsentAsked, ConsentDenied, ConsentGranted, ConsentLapsed, ConsentQueueCause, ConsentQueued,
+};
 use wire::intent::{
     ConsentBudgetAnswer, ConsentPendingAnswer, ConsentPolicyAnswer, ConsentPolicyDecision,
     ConsentQueueAnswer, ConsentRuleAnswer,
@@ -88,16 +90,19 @@ impl PendingRequest {
 }
 
 impl Queue {
+    /// Every fact kind that can alter consent standing, in ask-to-close order.
+    pub const OBSERVED: &[FactKind] = &[
+        FactKind::ConsentAsked,
+        FactKind::ConsentQueued,
+        FactKind::ConsentGranted,
+        FactKind::ConsentDenied,
+        FactKind::ConsentLapsed,
+    ];
+
     /// Whether one fact kind can alter consent standing.
     #[must_use]
-    pub const fn observes(kind: FactKind) -> bool {
-        matches!(
-            kind,
-            FactKind::ConsentAsked
-                | FactKind::ConsentQueued
-                | FactKind::ConsentGranted
-                | FactKind::ConsentDenied
-        )
+    pub fn observes(kind: FactKind) -> bool {
+        Self::OBSERVED.contains(&kind)
     }
 
     /// Rebuild consent state from one complete journal snapshot.
@@ -172,6 +177,10 @@ impl Queue {
                     let denied = decode::<ConsentDenied>(envelope)?;
                     self.deny(denied, envelope.seq, envelope.cause, &envelope.origin)?;
                 }
+                FactKind::ConsentLapsed => {
+                    let lapsed = decode::<ConsentLapsed>(envelope)?;
+                    self.lapse(lapsed, envelope.seq, envelope.cause, &envelope.origin)?;
+                }
                 _ => {}
             }
         }
@@ -185,6 +194,14 @@ impl Queue {
             Some(RequestState::Pending(pending)) => Some(pending),
             Some(RequestState::Asked { .. } | RequestState::Terminal) | None => None,
         }
+    }
+
+    /// Every request one lane still has pending, in request order.
+    pub fn pending_of(&self, lane: CanonicalUuid) -> impl Iterator<Item = &PendingRequest> {
+        self.requests.values().filter_map(move |state| match state {
+            RequestState::Pending(pending) if pending.lane == lane => Some(pending),
+            RequestState::Asked { .. } | RequestState::Pending(_) | RequestState::Terminal => None,
+        })
     }
 
     /// The disposition policy gives one request nobody has asked before.
@@ -435,6 +452,29 @@ impl Queue {
         Ok(())
     }
 
+    /// A lapse closes a request nobody ruled on, so only a pending one; it
+    /// ends the request's thread exactly as a ruling does.
+    fn lapse(
+        &mut self,
+        lapsed: ConsentLapsed,
+        seq: Seq,
+        cause: Option<Seq>,
+        origin: &Origin,
+    ) -> Result<(), QueueError> {
+        if !matches!(
+            self.requests.get(&lapsed.request),
+            Some(RequestState::Pending(_))
+        ) {
+            return Err(invalid(
+                seq,
+                lapsed.request,
+                "lapse of a request that is not pending",
+            ));
+        }
+        self.terminal(lapsed.request, lapsed.lane, seq, cause, origin)?;
+        Ok(())
+    }
+
     fn terminal(
         &mut self,
         request: CanonicalUuid,
@@ -617,7 +657,8 @@ impl Error for QueueError {}
 mod tests {
     use journal::FactSnapshot;
     use wire::body::{
-        ConsentAsked, ConsentDenied, ConsentGranted, ConsentQueueCause, ConsentQueued,
+        ConsentAsked, ConsentDenied, ConsentGranted, ConsentLapsed, ConsentQueueCause,
+        ConsentQueued,
     };
     use wire::{Actor, AnyFact, Envelope, Fact, Instant, Origin, Seq, WireVersion};
 
@@ -689,6 +730,96 @@ mod tests {
                 .to_string()
                 .contains("terminal cause is not its current request disposition")
         );
+    }
+
+    #[test]
+    fn a_lapse_closes_only_a_pending_request_and_points_at_its_queue_fact() {
+        let policy = Policy::new(Answer::Queue, Vec::new()).expect("queue posture is valid");
+        let lane = uuid(2);
+        let asked = |seq, request| {
+            envelope(
+                seq,
+                None,
+                "lane:one",
+                Fact::new(ConsentAsked {
+                    request,
+                    lane,
+                    operation: "deploy".to_owned(),
+                }),
+            )
+        };
+        let queued = |seq, cause, request| {
+            envelope(
+                seq,
+                Some(cause),
+                "lane:one",
+                Fact::new(ConsentQueued {
+                    request,
+                    lane,
+                    rule: "posture".to_owned(),
+                    cause: ConsentQueueCause::Policy {},
+                }),
+            )
+        };
+        let lapsed = |seq, cause, origin, request| {
+            envelope(
+                seq,
+                Some(cause),
+                origin,
+                Fact::new(ConsentLapsed { request, lane }),
+            )
+        };
+        let (kept, closed) = (uuid(1), uuid(3));
+        let mut queue = Queue::from_facts(
+            [
+                &asked(1, kept),
+                &queued(2, 1, kept),
+                &asked(3, closed),
+                &queued(4, 3, closed),
+                &lapsed(5, 4, "lane:one", closed),
+            ],
+            &policy,
+        )
+        .expect("a lapse closes a pending request at its own origin");
+        assert_eq!(queue.pending(closed), None);
+        assert_eq!(
+            queue
+                .pending_of(lane)
+                .map(|pending| pending.request())
+                .collect::<Vec<_>>(),
+            [kept]
+        );
+        for (fact, detail) in [
+            (
+                lapsed(6, 4, "lane:one", closed),
+                "lapse of a request that is not pending",
+            ),
+            (
+                lapsed(6, 2, "lane:one", uuid(4)),
+                "lapse of a request that is not pending",
+            ),
+            (
+                lapsed(6, 1, "lane:one", kept),
+                "terminal cause is not its current request disposition",
+            ),
+            (
+                lapsed(6, 2, "resident:one", kept),
+                "terminal origin differs from its request",
+            ),
+        ] {
+            assert!(
+                queue
+                    .clone()
+                    .advance([&fact])
+                    .expect_err(detail)
+                    .to_string()
+                    .contains(detail)
+            );
+        }
+        queue
+            .advance([&lapsed(6, 2, "lane:one", kept)])
+            .expect("the kept request lapses");
+        assert_eq!(queue.pending_of(lane).count(), 0);
     }
 
     #[test]

@@ -1,5 +1,6 @@
 //! A seated occupant's confirm dialog is decided by policy, recorded at the
-//! lane's origin, and answered through the lane's kick door.
+//! lane's origin, and answered through the lane's kick door; what is still
+//! pending lapses only at an explicit break.
 
 use std::os::unix::net::UnixDatagram;
 
@@ -190,6 +191,53 @@ fn a_lane_ask_and_its_outcome_are_one_pair_at_the_lane_origin() {
         assert_eq!(outcome.origin, asked.origin);
         assert_eq!(asked.actor, Actor::Lane(lane.lane));
     }
+
+    lane.stop();
+}
+
+#[test]
+fn a_break_lapses_what_the_lane_still_has_pending_and_nothing_ruled() {
+    let lane = LaneFixture::start();
+    let occupant = lane.occupant;
+
+    assert_eq!(lane.ask(occupant, 11, "Deploy: to prod?"), "");
+    assert_eq!(lane.ask(occupant, 13, "Rename: it?"), "");
+    assert_eq!(lane.ask(occupant, 15, "Merge: it?"), "");
+    consent_surface::commit_lapse(&lane.bus, &lane.reads, test_uuid(4))
+        .expect("another lane has nothing to lapse");
+    consent_surface::commit_lapse(&lane.bus, &lane.reads, lane.lane)
+        .expect("the break lapses the lane's pending requests");
+    consent_surface::commit_lapse(&lane.bus, &lane.reads, lane.lane)
+        .expect("a second break finds nothing pending");
+
+    let generation = lane.reads.current().expect("consent pages settle");
+    assert_eq!(generation.consent().pending_of(lane.lane).count(), 0);
+    let consent_facts = lane.consent_facts();
+    let lapsed = consent_facts
+        .iter()
+        .filter(|fact| fact.fact.kind() == wire::FactKind::ConsentLapsed)
+        .collect::<Vec<_>>();
+    let queued = consent_facts
+        .iter()
+        .filter(|fact| fact.fact.kind() == wire::FactKind::ConsentQueued)
+        .map(|fact| fact.seq)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        lapsed.iter().map(|fact| fact.cause).collect::<Vec<_>>(),
+        queued.into_iter().map(Some).collect::<Vec<_>>(),
+        "each lapse points at the queue fact it closes"
+    );
+    assert_eq!(lapsed.len(), 2, "the granted request was ruled, not lapsed");
+    assert!(
+        lapsed.iter().all(|fact| fact.actor == Actor::Spice
+            && fact.origin.as_str() == format!("lane:{}", lane.lane)),
+        "a lapse is the resident's recognition, closing the request's own thread"
+    );
+    assert_eq!(
+        lapsed[0].seq.get() + 1,
+        lapsed[1].seq.get(),
+        "one break is one commit"
+    );
 
     lane.stop();
 }

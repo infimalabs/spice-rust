@@ -74,6 +74,19 @@ pub struct ConsentQueued {
     pub cause: ConsentQueueCause,
 }
 
+/// The lane reached an explicit break before anyone ruled on the request.
+///
+/// A renewal seats a fresh successor and a removal ends the seat, so no
+/// occupant remains that could act on a ruling. An exit is continuity, not a
+/// break: the occupant that resumes the session inherits the wait.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConsentLapsed {
+    /// Lapsed request.
+    pub request: CanonicalUuid,
+    /// Lane the request came from.
+    pub lane: CanonicalUuid,
+}
+
 /// A non-ACP lane's consent floor was recorded once for its occupancy.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConsentFloored {

@@ -1,3 +1,4 @@
+use std::cell::OnceCell;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -8,6 +9,7 @@ use std::os::unix::fs::PermissionsExt as _;
 
 use lane::capture::{CaptureFailure, CaptureRecord, CaptureReportError, CaptureReporter};
 
+use super::super::super::read_materializations::CurrentReads;
 use super::*;
 
 pub(in crate::resident) const SESSION: &str = "018f7777-7777-7444-8888-999999999999";
@@ -24,6 +26,7 @@ pub(in crate::resident) struct AdvisoryRtkFixture {
     probe_log: PathBuf,
     occupant_environment: PathBuf,
     launch_log: PathBuf,
+    reads: OnceCell<CurrentReads>,
 }
 
 impl AdvisoryRtkFixture {
@@ -104,6 +107,7 @@ impl AdvisoryRtkFixture {
             probe_log,
             occupant_environment,
             launch_log,
+            reads: OnceCell::new(),
         }
     }
 
@@ -123,6 +127,21 @@ impl AdvisoryRtkFixture {
 
     pub(in crate::resident) fn reporter(&self) -> Arc<dyn CaptureReporter> {
         Arc::new(SilentReporter)
+    }
+
+    /// The lane runtime over `bus`, reading consent under the queue posture.
+    ///
+    /// The reads start once and live as long as the fixture.
+    pub(in crate::resident) fn lane_runtime<'a>(
+        &'a self,
+        bus: &Bus,
+        capabilities: &'a canvas::axum::Capabilities,
+        discovery: &'a canvas::Discovery,
+    ) -> super::super::Runtime<'a> {
+        let reads = self
+            .reads
+            .get_or_init(|| CurrentReads::start_queueing(bus, &self.paths));
+        super::super::Runtime::new(capabilities, discovery, self.reporter(), reads)
     }
 
     pub(in crate::resident) fn assert_one_configured_probe_from_launch_worktree(&self) {

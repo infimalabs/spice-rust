@@ -24,6 +24,7 @@ struct Arranged {
     root: PathBuf,
     paths: RuntimePaths,
     bus: Bus,
+    reads: read_materializations::CurrentReads,
     epoch: CanonicalUuid,
     seats: Seats,
     organizations: [CanonicalUuid; 2],
@@ -42,6 +43,7 @@ impl Arranged {
         let bus = Bus::start(journal).expect("fixture bus starts");
         let epoch = test_uuid(1);
         commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
+        let reads = read_materializations::CurrentReads::start_queueing(&bus, &paths);
         let organizations = [test_uuid(2), test_uuid(8)];
         let mut seats = Seats::new();
         let mut lanes = Vec::new();
@@ -72,6 +74,7 @@ impl Arranged {
             root,
             paths,
             bus,
+            reads,
             epoch,
             seats,
             organizations,
@@ -98,8 +101,12 @@ impl Arranged {
             capability: test_uuid(98),
             epoch: self.epoch,
         };
-        let runtime =
-            lane_surface::Runtime::new(&capabilities, &discovery, Arc::new(SilentRemovalReporter));
+        let runtime = lane_surface::Runtime::new(
+            &capabilities,
+            &discovery,
+            Arc::new(SilentRemovalReporter),
+            &self.reads,
+        );
         lane_surface::state(
             &self.bus,
             &self.paths,
@@ -183,8 +190,40 @@ impl Arranged {
             }
         }
         self.bus.verify().expect("arranged authority verifies");
+        drop(self.reads);
         self.bus.shutdown().expect("fixture bus stops");
         fs::remove_dir_all(self.root).expect("fixture cleanup");
+    }
+
+    /// Queue one consent request for `lane` and return its queue fact's position.
+    fn seed_pending_consent(&self, lane: CanonicalUuid, request: CanonicalUuid) -> u64 {
+        let origin = format!("lane:{lane}").parse().expect("lane origin");
+        let mut write = write_at_origin(Actor::Lane(lane), origin, Producer::CommandDoor)
+            .expect("consent write starts");
+        let asked = write
+            .fact(
+                wire::body::ConsentAsked {
+                    request,
+                    lane,
+                    operation: "Deploy: to prod?".to_owned(),
+                },
+                FactCause::Root,
+            )
+            .expect("consent request fact builds");
+        write
+            .fact(
+                wire::body::ConsentQueued {
+                    request,
+                    lane,
+                    rule: "posture".to_owned(),
+                    cause: wire::body::ConsentQueueCause::Policy {},
+                },
+                FactCause::Pending(asked),
+            )
+            .expect("consent queue fact builds");
+        commit(&self.bus, write)
+            .expect("consent request commits")
+            .last()
     }
 
     fn seed_active_claim(&self, lane: CanonicalUuid) -> wire::TaskStamp {
@@ -556,6 +595,7 @@ fn removing_a_lane_requires_a_vacant_claim_free_seat() {
         "lane::remove-occupied",
     );
     committed_lane_change(fixture.drain(41, removed));
+    let pending = fixture.seed_pending_consent(removed, test_uuid(43));
     let answer = committed_lane_change(fixture.remove(42, removed));
 
     assert_eq!(answer.lane, removed);
@@ -590,6 +630,20 @@ fn removing_a_lane_requires_a_vacant_claim_free_seat() {
             .get("lane")
             .and_then(|lane| lane.as_str()),
         Some(removed_text.as_str()),
+    );
+    let lapsed = facts
+        .facts()
+        .iter()
+        .find(|fact| fact.fact.kind() == wire::FactKind::ConsentLapsed)
+        .expect("the removed lane's pending consent request lapses with the seat");
+    assert_eq!(
+        (lapsed.cause.map(wire::Seq::get), lapsed.origin.as_str()),
+        (Some(pending), format!("lane:{removed}").as_str()),
+        "the lapse closes the queued request's own thread",
+    );
+    assert!(
+        lapsed.seq < removed_fact.seq,
+        "the lane's requests lapse before its seat ends"
     );
 
     fixture.retire();

@@ -12,7 +12,7 @@ use std::io::Write;
 
 use bus::Bus;
 use journal::FactCause;
-use wire::body::ConsentAsked;
+use wire::body::{ConsentAsked, ConsentLapsed};
 use wire::{Actor, CanonicalUuid, Outcome, Producer, ResidencyHead};
 
 use super::read_materializations::CurrentReads;
@@ -93,10 +93,11 @@ fn decide(
         .consent()
         .decide(policy, &asked)
         .map_err(Outcome::Refusal)?;
-    let origin = format!("lane:{}", ask.lane)
-        .parse::<wire::Origin>()
-        .map_err(|error| store_fault("consent::origin-invalid", &error.to_string()))?;
-    let mut proposal = write_at_origin(Actor::Lane(ask.lane), origin, Producer::CommandDoor)?;
+    let mut proposal = write_at_origin(
+        Actor::Lane(ask.lane),
+        origin(ask.lane)?,
+        Producer::CommandDoor,
+    )?;
     proposal.guard(super::policy_surface::consent_guard(generation.cursor()));
     let asked = proposal
         .fact(asked, FactCause::Root)
@@ -114,4 +115,51 @@ fn decide(
         consent::Outcome::Denied(_) => Some(false),
         consent::Outcome::Queued(_) => None,
     })
+}
+
+/// The origin every consent fact of `lane` is written at.
+fn origin(lane: CanonicalUuid) -> CommandResult<wire::Origin> {
+    format!("lane:{lane}")
+        .parse::<wire::Origin>()
+        .map_err(|error| store_fault("consent::origin-invalid", &error.to_string()))
+}
+
+/// Lapse every request the lane still has pending, in one commit.
+///
+/// Only an explicit break lapses a request: a renewal seats a fresh
+/// successor and a removal ends the seat, so nothing remains that could act
+/// on a ruling. An exit is continuity, and the occupant that resumes the
+/// session inherits the wait. The lapse is the resident's recognition, yet
+/// it closes the request's own thread, so it is written where the request
+/// was asked, guarded on the consent cursor the pending set was read at.
+///
+/// # Errors
+///
+/// Returns the fault of a journal that could not be read or written, or the
+/// refusal of a consent state that moved while the lapse was proposed.
+pub(super) fn commit_lapse(
+    bus: &Bus,
+    reads: &CurrentReads,
+    lane: CanonicalUuid,
+) -> CommandResult<()> {
+    let generation = reads
+        .current()
+        .map_err(|error| store_fault("consent::materialization-unavailable", &error))?;
+    let mut pending = generation.consent().pending_of(lane).peekable();
+    if pending.peek().is_none() {
+        return Ok(());
+    }
+    let mut proposal = write_at_origin(Actor::Spice, origin(lane)?, Producer::ResidentRecognition)?;
+    proposal.guard(super::policy_surface::consent_guard(generation.cursor()));
+    for request in pending {
+        let lapsed = ConsentLapsed {
+            request: request.request(),
+            lane,
+        };
+        proposal
+            .fact(lapsed, FactCause::Existing(request.fact()))
+            .map_err(|error| store_fault("consent::fact-invalid", &error.to_string()))?;
+    }
+    commit(bus, proposal)?;
+    Ok(())
 }

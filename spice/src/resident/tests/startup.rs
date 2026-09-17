@@ -43,6 +43,20 @@ fn access_refusal_for(argv: &[&str]) -> String {
 
 struct NoopCaptureReporter;
 
+/// A lane runtime whose captures nobody reports.
+fn silent_runtime<'a>(
+    capabilities: &'a canvas::axum::Capabilities,
+    discovery: &'a canvas::Discovery,
+    reads: &'a read_materializations::CurrentReads,
+) -> lane_surface::Runtime<'a> {
+    lane_surface::Runtime::new(
+        capabilities,
+        discovery,
+        Arc::new(NoopCaptureReporter),
+        reads,
+    )
+}
+
 impl lane::capture::CaptureReporter for NoopCaptureReporter {
     fn record(
         &self,
@@ -482,8 +496,8 @@ fn lane_add_seats_a_vacant_lane_without_starting_an_occupant() {
         capability: test_uuid(72),
         epoch,
     };
-    let runtime =
-        lane_surface::Runtime::new(&capabilities, &discovery, Arc::new(NoopCaptureReporter));
+    let reads = read_materializations::CurrentReads::start_queueing(&bus, &paths);
+    let runtime = silent_runtime(&capabilities, &discovery, &reads);
     let mut seats = Seats::new();
     let lane = test_uuid(73);
     let body = wire::intent::LaneSeat {

@@ -15,7 +15,7 @@ fn automatic_wake_commits_advisory_rtk_for_capability_free_readback_without_repr
         capability: fixture.capability,
         epoch: fixture.epoch,
     };
-    let runtime = Runtime::new(&capabilities, &discovery, fixture.reporter());
+    let runtime = fixture.lane_runtime(&bus, &capabilities, &discovery);
     let mut seats = Seats::new();
 
     let result = wake_automatic(
@@ -68,7 +68,7 @@ fn explicit_wake_starts_an_already_seated_drain_lane() {
         capability: fixture.capability,
         epoch: fixture.epoch,
     };
-    let runtime = Runtime::new(&capabilities, &discovery, fixture.reporter());
+    let runtime = fixture.lane_runtime(&bus, &capabilities, &discovery);
     let request = LaneState {
         lane: fixture.lane,
         action: LaneAction::Wake,
@@ -115,7 +115,7 @@ fn automatic_wake_refuses_an_already_seated_drain_lane() {
         capability: fixture.capability,
         epoch: fixture.epoch,
     };
-    let runtime = Runtime::new(&capabilities, &discovery, fixture.reporter());
+    let runtime = fixture.lane_runtime(&bus, &capabilities, &discovery);
 
     let outcome = wake_automatic(
         &bus,
@@ -174,7 +174,7 @@ fn automatic_wake_never_overlaps_an_authoritatively_occupied_lane() {
         capability: fixture.capability,
         epoch: fixture.epoch,
     };
-    let runtime = Runtime::new(&capabilities, &discovery, fixture.reporter());
+    let runtime = fixture.lane_runtime(&bus, &capabilities, &discovery);
 
     let outcome = wake_automatic(
         &bus,

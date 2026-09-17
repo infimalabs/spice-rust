@@ -55,6 +55,7 @@ pub(super) use session::{
     await_session, launch_resume, record_stream, resume_session, session_fact,
 };
 
+use super::read_materializations::CurrentReads;
 use super::shutdown::{current_residency, guard_residency};
 use super::{
     CommandResult, RuntimePaths, commit, new_uuid, seq, store_fault, typed_outcome,
@@ -186,6 +187,7 @@ pub(super) struct Runtime<'a> {
     capabilities: &'a canvas::axum::Capabilities,
     discovery: &'a canvas::Discovery,
     capture: Arc<dyn CaptureReporter>,
+    reads: &'a CurrentReads,
 }
 
 impl<'a> Runtime<'a> {
@@ -193,11 +195,13 @@ impl<'a> Runtime<'a> {
         capabilities: &'a canvas::axum::Capabilities,
         discovery: &'a canvas::Discovery,
         capture: Arc<dyn CaptureReporter>,
+        reads: &'a CurrentReads,
     ) -> Self {
         Self {
             capabilities,
             discovery,
             capture,
+            reads,
         }
     }
 }
@@ -742,25 +746,8 @@ pub(super) fn remove(
     else {
         return missing_lane(request.lane);
     };
-    if row.occupant.is_some() || seats.occupied(row.lane) {
-        return lane_refusal(
-            "lane::remove-occupied",
-            Some(VACANT.to_owned()),
-            Some(row.disposition.clone()),
-            "drain the lane before removing it",
-        );
-    }
-    let active_claim = match active_claim_for_lane(bus, row.lane) {
-        Ok(active_claim) => active_claim,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    if let Some(claim) = active_claim {
-        return lane_refusal(
-            "lane::remove-claimed",
-            Some("no active claim owned by the lane".to_owned()),
-            Some(claim.to_string()),
-            "finish, review, or free the claimed task before removing the lane",
-        );
+    if let Err(refusal) = removable(bus, seats, &row) {
+        return refusal;
     }
     let capability = match super::steering::lane_capability(&row) {
         Ok(capability) => capability,
@@ -783,6 +770,9 @@ pub(super) fn remove(
         git: None,
         rtk: None,
     };
+    if let Err(outcome) = super::consent_surface::commit_lapse(bus, runtime.reads, row.lane) {
+        return typed_outcome(outcome);
+    }
     let proposal = match propose_remove(command, request, &observed, &row, answer.clone()) {
         Ok(proposal) => proposal,
         Err(outcome) => return typed_outcome(outcome),
@@ -796,6 +786,32 @@ pub(super) fn remove(
             committed_lane_reply(committed, answer)
         }
         Err(outcome) => typed_outcome(outcome),
+    }
+}
+
+/// A seat ends only once it is vacant and owns no active claim.
+fn removable(
+    bus: &Bus,
+    seats: &Seats,
+    row: &wire::LaneResidency,
+) -> Result<(), Outcome<CommandAnswer>> {
+    if row.occupant.is_some() || seats.occupied(row.lane) {
+        return Err(lane_refusal(
+            "lane::remove-occupied",
+            Some(VACANT.to_owned()),
+            Some(row.disposition.clone()),
+            "drain the lane before removing it",
+        ));
+    }
+    match active_claim_for_lane(bus, row.lane) {
+        Ok(None) => Ok(()),
+        Ok(Some(claim)) => Err(lane_refusal(
+            "lane::remove-claimed",
+            Some("no active claim owned by the lane".to_owned()),
+            Some(claim.to_string()),
+            "finish, review, or free the claimed task before removing the lane",
+        )),
+        Err(outcome) => Err(typed_outcome(outcome)),
     }
 }
 

@@ -96,6 +96,14 @@ impl CurrentReads {
         Self::start_with_budget(bus, paths, policy, journal::FactReadBudget::RETAINED)
     }
 
+    /// Reads under the queue-everything posture, for fixtures without a policy.
+    #[cfg(test)]
+    pub(super) fn start_queueing(bus: &Bus, paths: &RuntimePaths) -> Self {
+        let policy = consent::Policy::new(consent::Answer::Queue, Vec::new())
+            .expect("queue posture is valid");
+        Self::start(bus, paths, &policy).expect("consent materializer starts")
+    }
+
     pub(super) fn start_with_budget(
         bus: &Bus,
         _paths: &RuntimePaths,
@@ -281,12 +289,7 @@ fn advance_initial_generation(
     state: &mut ReadState,
     mut initial: InitialCatchUp,
 ) -> Result<Published, String> {
-    let kinds = vec![
-        wire::FactKind::ConsentAsked,
-        wire::FactKind::ConsentQueued,
-        wire::FactKind::ConsentGranted,
-        wire::FactKind::ConsentDenied,
-    ];
+    let kinds = consent::Queue::OBSERVED.to_vec();
     let page = reader
         .selected_fact_page(kinds, initial.after, initial.budget)
         .map_err(|error| format!("read materialization facts are unreadable: {error}"))?;

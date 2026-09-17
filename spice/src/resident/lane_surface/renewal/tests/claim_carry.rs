@@ -13,7 +13,7 @@ fn renewal_carries_one_claim_through_the_same_org_slot() {
     let surface = super::super::super::super::load_startup_surface(&repository)
         .expect("fixture startup policy resolves");
     let capabilities = canvas::axum::Capabilities::default();
-    let lane_runtime = Runtime::new(&capabilities, &discovery, fixture.reporter());
+    let lane_runtime = fixture.lane_runtime(&seeded.bus, &capabilities, &discovery);
     let mut lifecycle = super::super::super::super::lifecycle::Runtime::new(&surface.config.lane);
     let mut seats = Seats::new();
 

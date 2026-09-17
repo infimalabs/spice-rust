@@ -771,7 +771,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "lane remove ID",
         Operator,
         Command,
-        [LaneRemoved],
+        [LaneRemoved, ConsentLapsed],
         [Resident, OperatorCapability],
         Reply,
         "lane::remove"

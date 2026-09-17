@@ -156,6 +156,19 @@ fn announce_started_surface(
     let _ = progress.flush();
 }
 
+/// The lane and recovery runtimes commands run against, sharing one reporter.
+fn runtimes<'a>(
+    capabilities: &'a canvas::axum::Capabilities,
+    discovery: &'a canvas::Discovery,
+    reporter: &std::sync::Arc<dyn lane::capture::CaptureReporter>,
+    reads: &'a read_materializations::CurrentReads,
+) -> command_surface::Runtimes<'a> {
+    command_surface::Runtimes::new(
+        lane_surface::Runtime::new(capabilities, discovery, reporter.clone(), reads),
+        lane_recovery::Runtime::new(reporter.clone()),
+    )
+}
+
 pub(super) async fn run_surface(
     bus: &Bus,
     repository: &Repository,
@@ -197,10 +210,7 @@ pub(super) async fn run_surface(
         repository,
         paths,
         epoch,
-        command_surface::Runtimes::new(
-            lane_surface::Runtime::new(&capabilities, &discovery, channels.reporter.clone()),
-            lane_recovery::Runtime::new(channels.reporter.clone()),
-        ),
+        runtimes(&capabilities, &discovery, &channels.reporter, &reads),
         config,
         &reads,
     );

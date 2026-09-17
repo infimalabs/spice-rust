@@ -281,7 +281,8 @@ pub struct SteerCanceled {
 
 mod interaction;
 pub use interaction::{
-    ConsentAsked, ConsentDenied, ConsentFloored, ConsentGranted, ConsentQueueCause, ConsentQueued,
+    ConsentAsked, ConsentDenied, ConsentFloored, ConsentGranted, ConsentLapsed, ConsentQueueCause,
+    ConsentQueued,
 };
 
 #[path = "body/lane.rs"]

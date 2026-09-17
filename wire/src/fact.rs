@@ -242,6 +242,8 @@ vocabulary! {
     ConsentDenied = "consent::denied" by CommandDoor;
     /// The request pended to the operator while reversible work continued.
     ConsentQueued = "consent::queued" by CommandDoor;
+    /// The lane was renewed or removed before anyone ruled on the request.
+    ConsentLapsed = "consent::lapsed" by ResidentRecognition;
     /// A non-ACP lane's consent floor was recorded once for its occupancy.
     ConsentFloored = "consent::floored" by CommandDoor;
 
