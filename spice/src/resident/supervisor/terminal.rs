@@ -3,13 +3,14 @@
 //!
 //! omp's `bash` is left off the roster and the lane registers a host tool in
 //! its place, so a command never runs inside the agent process. The lane
-//! runs it through `sill` exactly as the agent's shell tool would have: the
-//! occupant's `SHELL`, in its working directory, under its environment, so
-//! the installed shell hooks intercept it the same way. What the command
-//! says comes back as the tool's result, with its exit code where omp's own
-//! `bash` keeps it.
+//! runs it through `sill` in the occupant's native shell, in its working
+//! directory, under its environment with the shell interception lifted: the
+//! lane is the wrapper here, so it applies RTK itself and steers the occupant
+//! over its own protocol rather than through a hook. What the command says
+//! comes back as the tool's result, with its exit code where omp's own `bash`
+//! keeps it.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -32,6 +33,17 @@ const REAP_DEADLINE: Duration = Duration::from_millis(500);
 
 /// How long a command has to leave on its own once the lane ends it.
 const TERMINATE_GRACE: Duration = Duration::from_secs(1);
+
+/// The shell interception the occupant's launch carries and the terminal
+/// lifts: the terminal runs the native shell itself, so no hook may re-enter
+/// the wrapper from inside a command.
+const INTERCEPTION: [&str; 5] = [
+    "SHELL",
+    steer::hook::BASH_ENV,
+    steer::hook::ZDOTDIR,
+    steer::hook::HOOKS,
+    steer::hook::NATIVE_SHELL,
+];
 
 /// Where and as whom the occupant's commands run.
 #[derive(Clone, Debug)]
@@ -63,17 +75,28 @@ impl Terminal {
         }
     }
 
-    /// The occupant's own terminal, read from its launch: its `SHELL`, in its
-    /// working directory, under its environment. An occupant launched with
+    /// The occupant's own terminal, read from its launch: its native shell,
+    /// in its working directory, under its environment with the interception
+    /// lifted and `SHELL` naming the native shell. An occupant launched with
     /// no shell has no terminal.
     pub(in crate::resident) fn from_spec(spec: &Spec) -> Option<Self> {
-        let shell = spec
-            .environment
-            .entries()
-            .iter()
-            .find(|(name, _)| name == "SHELL")
-            .map(|(_, shell)| shell.clone())?;
-        Some(Self::new(shell, spec.cwd(), spec.environment.clone()))
+        let entries = spec.environment.entries();
+        let value = |name: &str| {
+            entries
+                .iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.clone())
+        };
+        let shell = value(steer::hook::NATIVE_SHELL).or_else(|| value("SHELL"))?;
+        let environment = Environment::new(
+            entries
+                .iter()
+                .filter(|(name, _)| !INTERCEPTION.iter().any(|lifted| name == lifted))
+                .cloned()
+                .chain([(OsString::from("SHELL"), shell.clone())]),
+        )
+        .expect("lifting entries from a valid environment preserves validity");
+        Some(Self::new(shell, spec.cwd(), environment))
     }
 
     /// Run one command to its end, its deadline, or its cancellation.
@@ -82,7 +105,8 @@ impl Terminal {
         call: &ShellCall,
         cancellation: CancellationToken,
     ) -> Report {
-        let spec = match self.spec(call, cancellation) {
+        let (argv, diagnostic) = self.argv(call);
+        let spec = match self.spec(argv, call.timeout, cancellation) {
             Ok(spec) => spec,
             Err(reason) => return Report::refused(&reason),
         };
@@ -90,26 +114,63 @@ impl Terminal {
             Ok(running) => running,
             Err(error) => return Report::refused(&format!("shell launch failed: {error}")),
         };
-        match running.wait() {
+        let mut report = match running.wait() {
             Ok(outcome) => report(&outcome, call.timeout),
             Err(error) => Report::refused(&format!("shell process boundary failed: {error}")),
+        };
+        if let Some(diagnostic) = diagnostic {
+            report.output.insert(0, '\n');
+            report.output.insert_str(0, &diagnostic);
         }
+        report
     }
 
-    fn spec(&self, call: &ShellCall, cancellation: CancellationToken) -> Result<Spec, String> {
+    /// The command as the shell runs it, rewritten by RTK when the launch
+    /// configured one; a degraded rewrite runs the native command and says
+    /// why, as the wrapper does.
+    fn argv(&self, call: &ShellCall) -> (Vec<OsString>, Option<String>) {
+        let native = vec![
+            self.shell.clone(),
+            OsString::from("-c"),
+            OsString::from(&call.command),
+        ];
+        let Some(rtk) = self.variable(spice::rtk::EXECUTABLE_VARIABLE) else {
+            return (native, None);
+        };
+        let decision = spice::rtk::rewrite_in(&native, rtk, &self.cwd, &self.environment);
+        (
+            decision.command().to_vec(),
+            decision.diagnostic().map(str::to_owned),
+        )
+    }
+
+    fn variable(&self, name: &str) -> Option<&OsStr> {
+        self.environment
+            .entries()
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.as_os_str())
+    }
+
+    fn spec(
+        &self,
+        argv: Vec<OsString>,
+        timeout: Duration,
+        cancellation: CancellationToken,
+    ) -> Result<Spec, String> {
         let capture = StreamPolicy::CaptureTail {
             limit: OUTPUT_LIMIT,
         };
+        let (program, arguments) = argv
+            .split_first()
+            .ok_or_else(|| "empty shell argv".to_owned())?;
         Ok(Spec {
-            argv: Argv::new(
-                self.shell.clone(),
-                ["-c".into(), OsString::from(&call.command)],
-            )
-            .map_err(|error| format!("invalid shell argv: {error}"))?,
+            argv: Argv::new(program.clone(), arguments.to_vec())
+                .map_err(|error| format!("invalid shell argv: {error}"))?,
             cwd: self.cwd.clone(),
             environment: self.environment.clone(),
             group: ProcessGroup::New,
-            deadlines: Deadlines::new(call.timeout, OUTPUT_DRAIN, REAP_DEADLINE)
+            deadlines: Deadlines::new(timeout, OUTPUT_DRAIN, REAP_DEADLINE)
                 .map_err(|error| format!("invalid shell deadlines: {error}"))?,
             wait: WaitPolicy::new(
                 "lane terminal",
@@ -269,9 +330,38 @@ mod tests {
     }
 
     #[test]
-    fn the_terminal_is_read_from_the_occupants_own_launch() {
-        let environment =
-            Environment::new([("SHELL", "/bin/sh"), ("HOME", "/nowhere")]).expect("environment");
+    fn a_missing_rtk_runs_the_native_command_and_says_why() {
+        let environment = Environment::new([(
+            spice::rtk::EXECUTABLE_VARIABLE,
+            "/nonexistent/spice-terminal-rtk",
+        )])
+        .expect("environment");
+        let terminal = Terminal::new("/bin/sh", std::env::temp_dir(), environment);
+        let report = terminal.run(&call("printf native"), CancellationToken::new());
+        assert_eq!(report.exit_code, Some(0));
+        assert!(!report.failed);
+        let (diagnostic, output) = report.output.split_once('\n').expect("diagnostic line");
+        assert!(
+            diagnostic.starts_with("spice run: RTK rewrite degraded to native executable="),
+            "{diagnostic}"
+        );
+        assert_eq!(output, "native");
+    }
+
+    #[test]
+    fn the_terminal_is_read_from_the_occupants_own_launch_with_the_interception_lifted() {
+        let environment = Environment::new([
+            ("SHELL", "/hooks/entry.sh"),
+            ("HOME", "/nowhere"),
+            (steer::hook::BASH_ENV, "/hooks/shell/bash_env"),
+            (steer::hook::ZDOTDIR, "/hooks/shell"),
+            (steer::hook::HOOKS, "/hooks"),
+            (steer::hook::NATIVE_SHELL, "/bin/zsh"),
+            (steer::hook::INBOX, "/inbox/lane"),
+            (spice::rtk::EXECUTABLE_VARIABLE, "/tools/rtk"),
+            (spice::rtk::HISTORY_VARIABLE, "/history/lane.db"),
+        ])
+        .expect("environment");
         let spec = Spec {
             argv: Argv::new("omp", Vec::<OsString>::new()).expect("argv"),
             cwd: PathBuf::from("/work"),
@@ -285,10 +375,28 @@ mod tests {
             redaction: Redaction::None,
             grace: TERMINATE_GRACE,
         };
-        let terminal = Terminal::from_spec(&spec).expect("a launch with a SHELL has a terminal");
-        assert_eq!(terminal.shell, OsString::from("/bin/sh"));
+        let terminal = Terminal::from_spec(&spec).expect("a launch with a shell has a terminal");
+        assert_eq!(terminal.shell, OsString::from("/bin/zsh"));
         assert_eq!(terminal.cwd, PathBuf::from("/work"));
-        assert_eq!(terminal.environment.entries(), environment.entries());
+        assert_eq!(
+            terminal.environment.entries(),
+            Environment::new([
+                ("HOME", "/nowhere"),
+                (steer::hook::INBOX, "/inbox/lane"),
+                (spice::rtk::EXECUTABLE_VARIABLE, "/tools/rtk"),
+                (spice::rtk::HISTORY_VARIABLE, "/history/lane.db"),
+                ("SHELL", "/bin/zsh"),
+            ])
+            .expect("environment")
+            .entries()
+        );
+
+        let unhooked = Spec {
+            environment: Environment::new([("SHELL", "/bin/sh")]).expect("environment"),
+            ..spec.clone()
+        };
+        let terminal = Terminal::from_spec(&unhooked).expect("a plain SHELL is the terminal");
+        assert_eq!(terminal.shell, OsString::from("/bin/sh"));
 
         let bare = Spec {
             environment: Environment::empty(),

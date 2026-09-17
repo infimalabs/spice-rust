@@ -197,6 +197,20 @@ pub fn rewrite(command: &[OsString], executable: &OsStr) -> Decision {
     })
 }
 
+/// Ask the configured RTK executable to rewrite one command under the exact
+/// working directory and environment the command will run in.
+#[must_use]
+pub fn rewrite_in(
+    command: &[OsString],
+    executable: &OsStr,
+    working: &Path,
+    environment: &Environment,
+) -> Decision {
+    rewrite_with(command, executable, |arguments| {
+        run_selector_in(executable, arguments, working, environment.clone())
+    })
+}
+
 fn rewrite_with<F>(command: &[OsString], executable: &OsStr, invoke: F) -> Decision
 where
     F: FnOnce(&[String]) -> Result<SelectorResult, String>,
@@ -401,18 +415,29 @@ fn degraded(command: &[OsString], executable: &OsStr, reason: &str) -> Decision 
 }
 
 fn run_selector(executable: &OsStr, arguments: &[String]) -> Result<SelectorResult, String> {
+    let working =
+        env::current_dir().map_err(|error| format!("working directory unavailable: {error}"))?;
+    let environment =
+        ambient_environment().map_err(|error| format!("invalid selector environment: {error}"))?;
+    run_selector_in(executable, arguments, &working, environment)
+}
+
+fn run_selector_in(
+    executable: &OsStr,
+    arguments: &[String],
+    working: &Path,
+    environment: Environment,
+) -> Result<SelectorResult, String> {
     let selector_arguments = ["rewrite".to_owned(), "--".to_owned()]
         .into_iter()
         .chain(arguments.iter().cloned())
         .map(OsString::from)
         .collect::<Vec<_>>();
-    let working =
-        env::current_dir().map_err(|error| format!("working directory unavailable: {error}"))?;
     run_bounded(
         executable,
         &selector_arguments,
-        &working,
-        ambient_environment().map_err(|error| format!("invalid selector environment: {error}"))?,
+        working,
+        environment,
         None,
         SELECTOR_TIMEOUT,
         "optional RTK rewrite selector",
