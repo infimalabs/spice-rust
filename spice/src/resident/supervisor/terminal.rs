@@ -24,12 +24,20 @@ use vendor::omp::{JobCall, JobOp, ShellCall};
 pub(super) mod job;
 
 pub(in crate::resident) use job::{Control, Handle, Job, Jobs};
-use job::{Ending, Observed, Tail};
+use job::{Ended, Ending, Observed, Tail};
 
 /// How long after a stop is asked the lane waits for the keeper's ending
 /// before answering with the command still ending: the keeper's grace and
 /// the reap that follows it.
 const STOP_BOUND: Duration = Duration::from_secs(3);
+
+/// omp's margin under a deadline: the foreground window stops this far
+/// short of the deadline, as omp's own does.
+const FOREGROUND_BUFFER: Duration = Duration::from_secs(1);
+
+/// How long a follow waits between looks when nothing signals: the job's
+/// deadline is the keeper's business, so a follow is bounded only in cadence.
+const FOLLOW_CADENCE: Duration = Duration::from_secs(60);
 
 /// omp's own notice when a message backgrounds the running command.
 const STEERED: &str =
@@ -97,6 +105,16 @@ impl Terminal {
         Self { foreground, ..self }
     }
 
+    /// The foreground window for one deadline: the threshold, or the
+    /// deadline less omp's buffer when that is shorter, exactly as omp
+    /// bounds its own wait before backgrounding.
+    fn window(&self, timeout: Option<Duration>) -> Duration {
+        timeout.map_or(self.foreground, |timeout| {
+            self.foreground
+                .min(timeout.saturating_sub(FOREGROUND_BUFFER))
+        })
+    }
+
     /// The occupant's own terminal, read from its launch: its native shell,
     /// in its working directory, under its environment with the interception
     /// lifted and `SHELL` naming the native shell. An occupant launched with
@@ -131,6 +149,7 @@ impl Terminal {
             &self.cwd,
             &self.environment,
             call.timeout,
+            &call.notices,
         );
         let job = match started {
             Ok(job) => job,
@@ -138,34 +157,45 @@ impl Terminal {
                 return Run::Ended(Report::refused(&format!("shell launch failed: {error}")));
             }
         };
-        let ending = match job.observe(control, self.foreground) {
-            Ok(Observed::Ended(ending)) => ending,
-            Ok(Observed::Cancelled) => stop(&job, control).unwrap_or(Ending::Stopped),
+        let ended = match job.observe(control, self.window(call.timeout)) {
+            Ok(Observed::Ended(ended)) => ended,
+            Ok(Observed::Cancelled) => stop(&job, control).unwrap_or(Ended {
+                ending: Ending::Stopped,
+                wall: None,
+            }),
             Ok(Observed::Interrupted) => {
-                return Run::Backgrounded(prefixed(kept(&job, &[STEERED]), diagnostic), job);
+                return Run::Backgrounded(prefixed(kept(&job, Some(STEERED)), diagnostic), job);
             }
             Ok(Observed::Elapsed) => {
-                return Run::Backgrounded(prefixed(kept(&job, &[]), diagnostic), job);
+                return Run::Backgrounded(prefixed(kept(&job, None), diagnostic), job);
             }
-            Err(error) => Ending::Failed {
-                reason: format!("job observation failed: {error}"),
+            Err(error) => Ended {
+                ending: Ending::Failed {
+                    reason: format!("job observation failed: {error}"),
+                },
+                wall: None,
             },
         };
-        Run::Ended(prefixed(finished(&job, &ending), diagnostic))
+        Run::Ended(prefixed(finished(&job, &ended), diagnostic))
     }
 
-    /// Follow a kept command to its ending: what the delivery says.
-    pub(in crate::resident) fn follow(&self, job: &Job, control: &Control) -> Report {
+    /// Follow a kept command to its ending: what the delivery says, or
+    /// nothing for a stopped job, since whoever stopped it was answered and
+    /// omp delivers no cancelled job.
+    pub(in crate::resident) fn follow(&self, job: &Job, control: &Control) -> Option<Report> {
         loop {
-            match job.observe(control, job.timeout() + STOP_BOUND) {
-                Ok(Observed::Ended(ending)) => return finished(job, &ending),
-                Ok(Observed::Elapsed) => return finished(job, &Ending::Lost),
-                Ok(Observed::Cancelled | Observed::Interrupted) => {}
+            match job.observe(control, FOLLOW_CADENCE) {
+                Ok(Observed::Ended(Ended {
+                    ending: Ending::Stopped,
+                    ..
+                })) => return None,
+                Ok(Observed::Ended(ended)) => return Some(finished(job, &ended)),
+                Ok(Observed::Cancelled | Observed::Interrupted | Observed::Elapsed) => {}
                 Err(error) => {
-                    return Report::refused(&format!(
+                    return Some(Report::refused(&format!(
                         "job {} could not be followed: {error}",
                         job.id()
-                    ));
+                    )));
                 }
             }
         }
@@ -180,9 +210,9 @@ impl Terminal {
         };
         match (call.op, job) {
             (JobOp::List, _) => self.list(),
-            (JobOp::Logs, Some(job)) => snapshot(&job, job.ending().as_ref()),
+            (JobOp::Logs, Some(job)) => snapshot(&job, job.ended().as_ref()),
             (JobOp::Wait, Some(job)) => match job.observe(control, call.timeout) {
-                Ok(Observed::Ended(ending)) => snapshot(&job, Some(&ending)),
+                Ok(Observed::Ended(ended)) => snapshot(&job, Some(&ended)),
                 Ok(Observed::Elapsed) => snapshot(&job, None),
                 Ok(Observed::Interrupted) => still(&job, "wait interrupted by an incoming message"),
                 Ok(Observed::Cancelled) => still(&job, "wait cancelled"),
@@ -191,7 +221,7 @@ impl Terminal {
                 }
             },
             (JobOp::Stop, Some(job)) => match stop(&job, control) {
-                Some(ending) => snapshot(&job, Some(&ending)),
+                Some(ended) => snapshot(&job, Some(&ended)),
                 None => still(&job, "stop asked"),
             },
             (op, None) => Report::refused(&format!("job {} needs an id", op.name())),
@@ -205,7 +235,7 @@ impl Terminal {
         };
         let mut output = String::new();
         for job in &jobs {
-            let status = status(job.ending().as_ref());
+            let status = status(job.ended().as_ref().map(|ended| &ended.ending));
             output.push_str(&format!("{}  {status}  {}\n", job.id(), job.command()));
         }
         if output.is_empty() {
@@ -246,13 +276,6 @@ impl Terminal {
     }
 }
 
-impl Job {
-    /// How the job ended, if it has.
-    fn ending(&self) -> Option<Ending> {
-        self.state().ok().flatten().and_then(|state| state.ending)
-    }
-}
-
 /// One job's standing in a listing.
 fn status(ending: Option<&Ending>) -> String {
     match ending {
@@ -277,10 +300,10 @@ impl Report {
 }
 
 /// Ask the keeper to end the command and wait briefly for its ending.
-fn stop(job: &Job, control: &Control) -> Option<Ending> {
+fn stop(job: &Job, control: &Control) -> Option<Ended> {
     job.stop().ok()?;
     match job.observe(control, STOP_BOUND) {
-        Ok(Observed::Ended(ending)) => Some(ending),
+        Ok(Observed::Ended(ended)) => Some(ended),
         Ok(_) | Err(_) => None,
     }
 }
@@ -294,20 +317,46 @@ fn prefixed(mut report: Report, diagnostic: Option<String>) -> Report {
     report
 }
 
-/// A finished command as its result: what it said, then how it ended.
-///
-/// A nonzero exit is stated in omp's own words, so the model reads the same
-/// notice it would under `bash`; a signal, deadline, or cancellation is
-/// stated as such.
-fn finished(job: &Job, ending: &Ending) -> Report {
-    let mut output = transcript(job);
-    let (exit_code, notice) = notice(ending, job.timeout());
-    let failed = notice.is_some();
-    if let Some(notice) = notice {
-        append(&mut output, &notice);
+/// A finished command as its result, laid out as omp lays out its own: what
+/// it said, the wall time and notices, then how it ended when that was not
+/// a clean exit. A nonzero exit is a completed command that failed; a
+/// deadline, a stop, a signal, a launch failure, and a lost keeper are each
+/// stated as such, and every one of them is an error to the model.
+fn finished(job: &Job, ended: &Ended) -> Report {
+    let said = transcript(job);
+    let said = said.trim_end();
+    if ended.ending == Ending::Stopped {
+        let output = if said.is_empty() {
+            "Command aborted".to_owned()
+        } else {
+            format!("{said}\n\n[Command aborted]")
+        };
+        return Report {
+            output,
+            exit_code: None,
+            failed: true,
+        };
+    }
+    let mut lines = vec![if said.is_empty() { "(no output)" } else { said }.to_owned()];
+    let wall = ended
+        .wall
+        .map(|wall| format!("Wall time: {:.2} seconds", wall.as_secs_f64()));
+    let notices: Vec<String> = wall
+        .into_iter()
+        .chain(job.notices().iter().cloned())
+        .collect();
+    if !notices.is_empty() {
+        lines.push(String::new());
+        lines.extend(notices);
+    }
+    let (exit_code, footer) = footer(&ended.ending, job.timeout());
+    let failed = footer.is_some();
+    if let Some(footer) = footer {
+        lines.push(String::new());
+        lines.push(footer);
     }
     Report {
-        output,
+        output: lines.join("\n"),
         exit_code,
         failed,
     }
@@ -315,7 +364,7 @@ fn finished(job: &Job, ending: &Ending) -> Report {
 
 /// A command answered while it keeps running, as omp answers its own
 /// backgrounded `bash`: the preview, the notices, and the job it became.
-fn kept(job: &Job, notices: &[&str]) -> Report {
+fn kept(job: &Job, notice: Option<&str>) -> Report {
     let mut lines = Vec::new();
     let preview = transcript(job);
     let preview = preview.trim_end();
@@ -323,6 +372,12 @@ fn kept(job: &Job, notices: &[&str]) -> Report {
         lines.push(preview.to_owned());
         lines.push(String::new());
     }
+    let notices: Vec<&str> = job
+        .notices()
+        .iter()
+        .map(String::as_str)
+        .chain(notice)
+        .collect();
     if !notices.is_empty() {
         lines.extend(notices.iter().map(|notice| (*notice).to_owned()));
         lines.push(String::new());
@@ -338,17 +393,22 @@ fn kept(job: &Job, notices: &[&str]) -> Report {
     }
 }
 
-/// One job as the `job` tool reads it: named, what it said, how it stands.
-fn snapshot(job: &Job, ending: Option<&Ending>) -> Report {
+/// One job as the `job` tool reads it: named, then its result so far.
+fn snapshot(job: &Job, ended: Option<&Ended>) -> Report {
     let mut output = format!("[job {}] {}\n", job.id(), job.command());
-    output.push_str(&transcript(job));
-    let (exit_code, notice) = match ending {
-        Some(ending) => notice(ending, job.timeout()),
-        None => (None, Some("Command still running".to_owned())),
+    let exit_code = match ended {
+        Some(ended) => {
+            let finished = finished(job, ended);
+            output.push_str(&finished.output);
+            finished.exit_code
+        }
+        None => {
+            let mut said = transcript(job);
+            append(&mut said, "Command still running");
+            output.push_str(&said);
+            None
+        }
     };
-    if let Some(notice) = notice {
-        append(&mut output, &notice);
-    }
     Report {
         output,
         exit_code,
@@ -380,9 +440,9 @@ fn transcript(job: &Job) -> String {
     output
 }
 
-/// The exit code a result carries and the notice that states an ending
-/// other than success.
-fn notice(ending: &Ending, timeout: Duration) -> (Option<i32>, Option<String>) {
+/// The exit code a result carries and the footer that states an ending
+/// other than a clean exit, in omp's own words where it has them.
+fn footer(ending: &Ending, timeout: Option<Duration>) -> (Option<i32>, Option<String>) {
     match ending {
         Ending::Exited { code: 0 } => (Some(0), None),
         Ending::Exited { code } => (
@@ -392,9 +452,12 @@ fn notice(ending: &Ending, timeout: Duration) -> (Option<i32>, Option<String>) {
         Ending::Signalled { signal } => (None, Some(format!("Command ended by signal {signal}"))),
         Ending::TimedOut => (
             None,
-            Some(format!("Command timed out after {}s", timeout.as_secs())),
+            Some(match timeout {
+                Some(timeout) => format!("[Command timed out after {} seconds]", timeout.as_secs()),
+                None => "[Command timed out]".to_owned(),
+            }),
         ),
-        Ending::Stopped => (None, Some("Command cancelled".to_owned())),
+        Ending::Stopped => (None, Some("[Command aborted]".to_owned())),
         Ending::Failed { reason } => (None, Some(format!("Command failed to run: {reason}"))),
         Ending::Lost => (
             None,
@@ -423,11 +486,26 @@ mod tests {
 
     use super::*;
 
+    /// How long a test waits for a command to answer before it fails.
+    const TEST_BOUND: Duration = Duration::from_secs(2);
+
     fn call(command: &str) -> ShellCall {
         ShellCall {
             command: command.to_owned(),
-            timeout: Duration::from_secs(vendor::omp::SHELL_TIMEOUT_DEFAULT),
+            timeout: Some(Duration::from_secs(vendor::omp::SHELL_TIMEOUT_DEFAULT)),
+            notices: Vec::new(),
         }
+    }
+
+    /// The output with its wall time, which no two runs share, made one.
+    fn timeless(output: &str) -> String {
+        let Some((head, tail)) = output.split_once("Wall time: ") else {
+            return output.to_owned();
+        };
+        let (_, rest) = tail
+            .split_once(" seconds")
+            .expect("a wall time ends in seconds");
+        format!("{head}Wall time: N seconds{rest}")
     }
 
     fn scratch(name: &str) -> PathBuf {
@@ -474,14 +552,19 @@ mod tests {
 
     /// Wait for a file the command touches once it has said what it says.
     fn touched(path: &std::path::Path) {
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
-        while !path.exists() {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "{} never appears",
-                path.display()
-            );
-            std::thread::yield_now();
+        let directory = path.parent().expect("the file has a directory");
+        loop {
+            let watch = crate::resident::daemon::observer::DirectObserver::arm(directory)
+                .expect("the directory is watched");
+            if path.exists() {
+                return;
+            }
+            let (sender, receiver) = std::sync::mpsc::channel();
+            std::thread::spawn(move || drop(sender.send(watch.wait())));
+            receiver
+                .recv_timeout(TEST_BOUND)
+                .unwrap_or_else(|_| panic!("{} never appears", path.display()))
+                .expect("the directory is observed");
         }
     }
 
@@ -494,23 +577,76 @@ mod tests {
             &Control::new(),
         ));
         assert_eq!(
-            report,
-            Report {
-                output: "out\nerr\n\nCommand exited with code 3".to_owned(),
-                exit_code: Some(3),
-                failed: true,
-            }
+            timeless(&report.output),
+            "out\nerr\n\nWall time: N seconds\n\nCommand exited with code 3"
         );
+        assert_eq!((report.exit_code, report.failed), (Some(3), true));
 
-        let report = ended(terminal.run(&call("printf 'fine\\n'"), &Control::new()));
+        let mut noted = call("printf 'fine\\n'");
+        noted
+            .notices
+            .push("Timeout clamped to 3600s (requested 9999s; allowed range 1-3600s).".to_owned());
+        let report = ended(terminal.run(&noted, &Control::new()));
         assert_eq!(
-            report,
-            Report {
-                output: "fine\n".to_owned(),
-                exit_code: Some(0),
-                failed: false,
-            }
+            timeless(&report.output),
+            "fine\n\nWall time: N seconds\nTimeout clamped to 3600s (requested 9999s; allowed \
+             range 1-3600s)."
         );
+        assert_eq!((report.exit_code, report.failed), (Some(0), false));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_foreground_window_is_omps_threshold_bounded_by_the_deadline_less_its_buffer() {
+        let root = scratch("window");
+        let terminal = terminal(&root, Environment::empty());
+        assert_eq!(terminal.window(None), Duration::from_secs(60));
+        assert_eq!(
+            terminal.window(Some(Duration::from_secs(30))),
+            Duration::from_secs(29)
+        );
+        assert_eq!(
+            terminal.window(Some(Duration::from_secs(300))),
+            Duration::from_secs(60)
+        );
+        assert_eq!(
+            terminal.window(Some(Duration::from_secs(1))),
+            Duration::ZERO
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_deadline_shorter_than_the_buffer_opens_no_window_and_its_expiry_is_reported() {
+        let root = scratch("deadline");
+        hold(&root);
+        let terminal = terminal(&root, Environment::empty());
+        let control = Control::new();
+        let mut brief = call("cat hold");
+        brief.timeout = Some(Duration::from_millis(20));
+        // The window is empty, so the command is kept at once unless its
+        // deadline has already passed by the first look; either way the
+        // expiry is reported in omp's words.
+        let delivered = match terminal.run(&brief, &control) {
+            Run::Backgrounded(report, job) => {
+                assert_eq!(
+                    report.output,
+                    format!(
+                        "Backgrounded as job {}; result will be delivered automatically.",
+                        job.id()
+                    )
+                );
+                terminal
+                    .follow(&job, &control)
+                    .expect("an expiry is delivered")
+            }
+            Run::Ended(report) => report,
+        };
+        assert_eq!(
+            timeless(&delivered.output),
+            "(no output)\n\nWall time: N seconds\n\n[Command timed out after 0 seconds]"
+        );
+        assert_eq!((delivered.exit_code, delivered.failed), (None, true));
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -526,7 +662,7 @@ mod tests {
         assert_eq!(
             report,
             Report {
-                output: "Command cancelled".to_owned(),
+                output: "Command aborted".to_owned(),
                 exit_code: None,
                 failed: true,
             }
@@ -560,17 +696,10 @@ mod tests {
         let stopped = terminal.job(&stop, &Control::new());
         assert_eq!(
             stopped.output,
-            format!("[job {}] cat hold\n\nCommand cancelled", job.id())
+            format!("[job {}] cat hold\nCommand aborted", job.id())
         );
         assert!(!stopped.failed);
-        assert_eq!(
-            terminal.follow(&job, &control),
-            Report {
-                output: "Command cancelled".to_owned(),
-                exit_code: None,
-                failed: true,
-            }
-        );
+        assert_eq!(terminal.follow(&job, &control), None);
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -659,7 +788,7 @@ mod tests {
             diagnostic.starts_with("spice run: RTK rewrite degraded to native executable="),
             "{diagnostic}"
         );
-        assert_eq!(output, "native");
+        assert_eq!(timeless(output), "native\n\nWall time: N seconds");
         let _ = std::fs::remove_dir_all(&root);
     }
 

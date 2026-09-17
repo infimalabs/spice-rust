@@ -77,7 +77,7 @@ pub const SHELL_TIMEOUT_DEFAULT: u64 = 300;
 /// auto-background threshold, so the model's habit carries over.
 pub const SHELL_FOREGROUND: u64 = 60;
 
-/// Tightest deadline the agent may ask for, in seconds.
+/// Tightest deadline the agent may ask for, in seconds; zero asks for none.
 pub const SHELL_TIMEOUT_MIN: u64 = 1;
 
 /// Longest deadline the agent may ask for, in seconds; longer work belongs
@@ -423,17 +423,24 @@ struct Request {
 /// what the shell kept running.
 #[must_use]
 pub fn host_tools_request() -> Vec<u8> {
-    let timeout = |default: u64| {
-        serde_json::json!({
-            "type": "integer",
-            "minimum": SHELL_TIMEOUT_MIN,
-            "maximum": SHELL_TIMEOUT_MAX,
-            "description": format!(
-                "deadline in seconds; omitted means {default}, and \
-                 values are clamped to {SHELL_TIMEOUT_MIN}-{SHELL_TIMEOUT_MAX}"
-            ),
-        })
-    };
+    let deadline = serde_json::json!({
+        "type": "integer",
+        "minimum": 0,
+        "maximum": SHELL_TIMEOUT_MAX,
+        "description": format!(
+            "timeout in seconds; 0 disables the command deadline; nonzero \
+             values are clamped to {SHELL_TIMEOUT_MIN}-{SHELL_TIMEOUT_MAX}"
+        ),
+    });
+    let wait = serde_json::json!({
+        "type": "integer",
+        "minimum": SHELL_TIMEOUT_MIN,
+        "maximum": SHELL_TIMEOUT_MAX,
+        "description": format!(
+            "seconds to wait; omitted means {SHELL_FOREGROUND}, and \
+             values are clamped to {SHELL_TIMEOUT_MIN}-{SHELL_TIMEOUT_MAX}"
+        ),
+    });
     request_line(&serde_json::json!({
         "id": TOOLS_REQUEST_ID,
         "type": "set_host_tools",
@@ -445,7 +452,7 @@ pub fn host_tools_request() -> Vec<u8> {
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "description": SHELL_COMMAND_DESCRIPTION},
-                    "timeout": timeout(SHELL_TIMEOUT_DEFAULT),
+                    "timeout": deadline,
                 },
                 "required": ["command"],
                 "additionalProperties": false,
@@ -464,7 +471,7 @@ pub fn host_tools_request() -> Vec<u8> {
                         "description": JOB_OP_DESCRIPTION,
                     },
                     "id": {"type": "string", "description": JOB_ID_DESCRIPTION},
-                    "timeout": timeout(SHELL_FOREGROUND),
+                    "timeout": wait,
                 },
                 "required": ["op"],
                 "additionalProperties": false,
@@ -547,15 +554,20 @@ impl JobOp {
 pub struct ShellCall {
     /// The command line, run by the lane's shell.
     pub command: String,
-    /// How long it may run before the lane ends it.
-    pub timeout: Duration,
+    /// How long it may run before the lane ends it; `None` lifts the deadline.
+    pub timeout: Option<Duration>,
+    /// What omp notes about the call ahead of what the command says: today,
+    /// a deadline granted other than the one asked.
+    pub notices: Vec<String>,
 }
 
 impl ShellCall {
     /// Read a call from the arguments a `host_tool_call` frame carried.
     ///
-    /// The deadline is clamped exactly as omp clamps its own `bash` deadline,
-    /// so a model's habit from one carries to the other.
+    /// The deadline is read exactly as omp reads its own `bash` deadline, so
+    /// a model's habit from one carries to the other: omitted means the
+    /// default, zero lifts it, and any other value is clamped to the range
+    /// with omp's own notice when that changes it.
     ///
     /// # Errors
     ///
@@ -565,16 +577,37 @@ impl ShellCall {
             .get("command")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| "shell needs a command".to_owned())?;
-        let timeout = arguments
-            .get("timeout")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(SHELL_TIMEOUT_DEFAULT)
-            .clamp(SHELL_TIMEOUT_MIN, SHELL_TIMEOUT_MAX);
+        let asked = arguments.get("timeout").and_then(serde_json::Value::as_u64);
+        let (timeout, notices) = match asked {
+            None => (Some(SHELL_TIMEOUT_DEFAULT), Vec::new()),
+            Some(0) => (None, Vec::new()),
+            Some(asked) => {
+                let granted = asked.clamp(SHELL_TIMEOUT_MIN, SHELL_TIMEOUT_MAX);
+                let clamped = (granted != asked).then(|| {
+                    format!(
+                        "Timeout clamped to {granted}s (requested {asked}s; allowed range \
+                         {SHELL_TIMEOUT_MIN}-{SHELL_TIMEOUT_MAX}s)."
+                    )
+                });
+                (Some(granted), clamped.into_iter().collect())
+            }
+        };
         Ok(Self {
             command: command.to_owned(),
-            timeout: Duration::from_secs(timeout),
+            timeout: timeout.map(Duration::from_secs),
+            notices,
         })
     }
+}
+
+/// What omp tells the model when a background job ends, around the job's
+/// own result: the notice its `bash` jobs are delivered in.
+#[must_use]
+pub fn job_delivery(job: &str, result: &str) -> String {
+    format!(
+        "<system-notice>\nBackground job {job} has completed. Resume your work using the \
+         result below.\n{result}\n</system-notice>"
+    )
 }
 
 /// The answer to one host tool call: what the command said and how it ended.

@@ -58,7 +58,11 @@ struct Request {
     argv: Vec<OsString>,
     cwd: PathBuf,
     environment: Vec<(OsString, OsString)>,
-    timeout_millis: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    timeout_millis: Option<u64>,
+    /// What the results carry ahead of the command's output, as omp noted it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    notices: Vec<String>,
 }
 
 /// What the keeper publishes: who keeps the command, and how it ended.
@@ -69,11 +73,31 @@ pub(in crate::resident) struct State {
     pub(in crate::resident) command: String,
     pub(in crate::resident) keeper: u32,
     pub(in crate::resident) started_millis: u64,
-    pub(in crate::resident) timeout_millis: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::resident) timeout_millis: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(in crate::resident) ending: Option<Ending>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(in crate::resident) ended_millis: Option<u64>,
+}
+
+impl State {
+    /// The ending with its wall time, once the keeper has published one.
+    fn ended(&self) -> Option<Ended> {
+        let ending = self.ending.clone()?;
+        let wall = self
+            .ended_millis
+            .map(|ended| Duration::from_millis(ended.saturating_sub(self.started_millis)));
+        Some(Ended { ending, wall })
+    }
+}
+
+/// How a job ended and how long it ran, as the keeper recorded them.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::resident) struct Ended {
+    pub(in crate::resident) ending: Ending,
+    /// From the keeper's start to the ending; unknown for a lost job.
+    pub(in crate::resident) wall: Option<Duration>,
 }
 
 /// How a kept command ended.
@@ -140,7 +164,7 @@ pub(in crate::resident::supervisor) fn keep(request_path: &Path) -> io::Result<(
             tend(
                 child,
                 &receiver,
-                Duration::from_millis(request.timeout_millis),
+                request.timeout_millis.map(Duration::from_millis),
                 || watch(directory, &sender, || Keep::Changed).map(|()| stop.exists()),
             )
         }
@@ -190,7 +214,8 @@ fn spawn(directory: &Path, request: &Request, sender: mpsc::Sender<Keep>) -> Res
 }
 
 /// Wait for the command to end, ending it at its deadline or on request:
-/// the group is asked to leave, then killed once the grace elapses.
+/// the group is asked to leave, then killed once the grace elapses. Without
+/// a deadline the command runs until it ends or a stop is asked.
 ///
 /// `stop_asked` arms one watch on the job's directory and says whether a
 /// stop has been asked by now; it is consulted on every wake, so an
@@ -199,34 +224,41 @@ fn spawn(directory: &Path, request: &Request, sender: mpsc::Sender<Keep>) -> Res
 fn tend(
     group: u32,
     receiver: &mpsc::Receiver<Keep>,
-    timeout: Duration,
+    timeout: Option<Duration>,
     stop_asked: impl Fn() -> io::Result<bool>,
 ) -> Ending {
-    let mut deadline = Monotonic::now() + timeout;
+    let mut deadline = timeout.map(|timeout| Monotonic::now() + timeout);
     let mut pending: Option<Ending> = None;
     let mut changed = true;
     loop {
         if changed && pending.is_none() && stop_asked().unwrap_or(true) {
             pending = Some(Ending::Stopped);
             let _ = signal_group(group, libc::SIGTERM);
-            deadline = Monotonic::now() + TERMINATE_GRACE;
+            deadline = Some(Monotonic::now() + TERMINATE_GRACE);
         }
         changed = false;
-        let remaining = deadline.saturating_duration_since(Monotonic::now());
+        let remaining = deadline.map_or(Duration::MAX, |deadline| {
+            deadline.saturating_duration_since(Monotonic::now())
+        });
         match receiver.recv_timeout(remaining) {
-            Ok(Keep::Exited(status)) => return pending.unwrap_or_else(|| exited(status)),
+            Ok(Keep::Exited(status)) => {
+                return match pending {
+                    Some(ending) => swept(group, ending),
+                    None => exited(status),
+                };
+            }
             Ok(Keep::Failed(reason)) => return Ending::Failed { reason },
             Ok(Keep::Changed) => changed = true,
             Err(mpsc::RecvTimeoutError::Timeout) if pending.is_none() => {
                 pending = Some(Ending::TimedOut);
                 let _ = signal_group(group, libc::SIGTERM);
-                deadline = Monotonic::now() + TERMINATE_GRACE;
+                deadline = Some(Monotonic::now() + TERMINATE_GRACE);
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 let _ = signal_group(group, libc::SIGKILL);
                 return match receiver.recv() {
                     Ok(Keep::Failed(reason)) => Ending::Failed { reason },
-                    Ok(_) | Err(_) => pending.unwrap_or(Ending::Stopped),
+                    Ok(_) | Err(_) => swept(group, pending.unwrap_or(Ending::Stopped)),
                 };
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -236,6 +268,18 @@ fn tend(
             }
         }
     }
+}
+
+/// The ending of a group asked to end, once its leader has died: a leader
+/// signalled mid-fork leaves a child the signal never reached, so whoever
+/// is left in the group is asked to leave and, after the grace, killed. An
+/// empty group refuses the first signal, so the common case waits nothing.
+fn swept(group: u32, ending: Ending) -> Ending {
+    if signal_group(group, libc::SIGTERM).is_ok() {
+        thread::sleep(TERMINATE_GRACE);
+        let _ = signal_group(group, libc::SIGKILL);
+    }
+    ending
 }
 
 #[cfg(unix)]
@@ -351,7 +395,7 @@ impl Handle {
 /// How one bounded observation of a job ended.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::resident) enum Observed {
-    Ended(Ending),
+    Ended(Ended),
     Cancelled,
     Interrupted,
     Elapsed,
@@ -376,7 +420,8 @@ pub(in crate::resident) struct Job {
     directory: PathBuf,
     id: String,
     command: String,
-    timeout: Duration,
+    timeout: Option<Duration>,
+    notices: Vec<String>,
     keeper: Option<u32>,
 }
 
@@ -401,7 +446,8 @@ impl Jobs {
         argv: Vec<OsString>,
         cwd: &Path,
         environment: &Environment,
-        timeout: Duration,
+        timeout: Option<Duration>,
+        notices: &[String],
     ) -> io::Result<Job> {
         let id = crate::resident::new_uuid()
             .to_string()
@@ -421,7 +467,11 @@ impl Jobs {
                 argv,
                 cwd: cwd.to_path_buf(),
                 environment: environment.entries().to_vec(),
-                timeout_millis: u64::try_from(timeout.as_millis()).map_err(io::Error::other)?,
+                timeout_millis: timeout
+                    .map(|timeout| u64::try_from(timeout.as_millis()))
+                    .transpose()
+                    .map_err(io::Error::other)?,
+                notices: notices.to_vec(),
             },
         )?;
         let keeper = launch(&directory, &request_path, cwd, environment)?;
@@ -430,6 +480,7 @@ impl Jobs {
             id,
             command: command.to_owned(),
             timeout,
+            notices: notices.to_vec(),
             keeper,
         })
     }
@@ -456,7 +507,8 @@ impl Jobs {
             directory,
             id: request.id,
             command: request.command,
-            timeout: Duration::from_millis(request.timeout_millis),
+            timeout: request.timeout_millis.map(Duration::from_millis),
+            notices: request.notices,
             keeper,
         })
     }
@@ -532,7 +584,8 @@ fn launch_detached(
     Ok(Some(pid))
 }
 
-/// Keep the request on a thread of this process: the test's own keeper.
+/// Keep the request on a thread of this process: the test's own keeper. Like
+/// the process, it ends quietly when the job's directory is gone.
 #[cfg(test)]
 fn launch_direct(
     _directory: &Path,
@@ -543,7 +596,7 @@ fn launch_direct(
     let request_path = request_path.to_path_buf();
     thread::Builder::new()
         .name("spice-job-keeper".to_owned())
-        .spawn(move || keep(&request_path).expect("the test keeper keeps"))?;
+        .spawn(move || drop(keep(&request_path)))?;
     Ok(None)
 }
 
@@ -573,9 +626,19 @@ impl Job {
         &self.command
     }
 
-    /// How long the command may run before the keeper ends it.
-    pub(in crate::resident) fn timeout(&self) -> Duration {
+    /// How long the command may run before the keeper ends it, if bounded.
+    pub(in crate::resident) fn timeout(&self) -> Option<Duration> {
         self.timeout
+    }
+
+    /// What the results carry ahead of the command's output.
+    pub(in crate::resident) fn notices(&self) -> &[String] {
+        &self.notices
+    }
+
+    /// How the job ended, if it has.
+    pub(in crate::resident) fn ended(&self) -> Option<Ended> {
+        self.state().ok().flatten().and_then(|state| state.ended())
     }
 
     /// The job's published state, if the keeper has spoken.
@@ -642,8 +705,8 @@ impl Job {
         loop {
             watch(&self.directory, &control.sender, || Signal::Changed)?;
             if let Some(state) = self.state()? {
-                if let Some(ending) = state.ending {
-                    return Ok(Observed::Ended(ending));
+                if let Some(ended) = state.ended() {
+                    return Ok(Observed::Ended(ended));
                 }
                 keeper = keeper.or(Some(state.keeper));
             }
@@ -657,10 +720,13 @@ impl Job {
             match control.receiver.recv_timeout(remaining) {
                 Ok(Signal::Changed) => {}
                 Ok(Signal::KeeperExited) => {
-                    if let Some(Some(ending)) = self.state()?.map(|state| state.ending) {
-                        return Ok(Observed::Ended(ending));
+                    if let Some(ended) = self.state()?.and_then(|state| state.ended()) {
+                        return Ok(Observed::Ended(ended));
                     }
-                    return Ok(Observed::Ended(Ending::Lost));
+                    return Ok(Observed::Ended(Ended {
+                        ending: Ending::Lost,
+                        wall: None,
+                    }));
                 }
                 Ok(Signal::ObserverFailed(reason)) => return Err(io::Error::other(reason)),
                 Ok(Signal::Cancel) => return Ok(Observed::Cancelled),
@@ -680,6 +746,9 @@ impl Job {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// How long a test waits for a job to answer before it fails.
+    const TEST_BOUND: Duration = Duration::from_secs(2);
 
     fn scratch(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
@@ -705,15 +774,19 @@ mod tests {
                 argv("printf 'out\\n'; printf 'err\\n' >&2; exit 3"),
                 &root,
                 &Environment::empty(),
-                Duration::from_secs(5),
+                Some(Duration::from_secs(5)),
+                &["noted".to_owned()],
             )
             .expect("the job starts");
         let control = Control::new();
-        assert_eq!(
-            job.observe(&control, Duration::from_secs(30))
-                .expect("the job is observed"),
-            Observed::Ended(Ending::Exited { code: 3 })
-        );
+        let Observed::Ended(ended) = job
+            .observe(&control, TEST_BOUND)
+            .expect("the job is observed")
+        else {
+            panic!("the job ends");
+        };
+        assert_eq!(ended.ending, Ending::Exited { code: 3 });
+        assert!(ended.wall.is_some());
         assert_eq!(
             job.tail().expect("the log reads"),
             Tail {
@@ -727,15 +800,9 @@ mod tests {
         assert_eq!(listed[0].command(), "say");
         let reopened = jobs.open(job.id()).expect("the job reopens");
         assert_eq!(reopened.command(), "say");
-        assert_eq!(reopened.timeout(), Duration::from_secs(5));
-        assert_eq!(
-            reopened
-                .state()
-                .expect("the state reads")
-                .expect("the keeper spoke")
-                .ending,
-            Some(Ending::Exited { code: 3 })
-        );
+        assert_eq!(reopened.timeout(), Some(Duration::from_secs(5)));
+        assert_eq!(reopened.notices(), ["noted".to_owned()]);
+        assert_eq!(reopened.ended(), Some(ended));
         assert!(jobs.open("../jobs").is_err());
         assert!(jobs.open("0badcafe").is_err());
         let _ = fs::remove_dir_all(root);
@@ -758,13 +825,14 @@ mod tests {
                 argv("cat hold"),
                 &root,
                 &Environment::empty(),
-                Duration::from_secs(30),
+                None,
+                &[],
             )
             .expect("the job starts");
         let control = Control::new();
         control.handle().interrupt();
         assert_eq!(
-            job.observe(&control, Duration::from_secs(30))
+            job.observe(&control, TEST_BOUND)
                 .expect("the job is observed"),
             Observed::Interrupted
         );
@@ -774,11 +842,42 @@ mod tests {
             Observed::Elapsed
         );
         job.stop().expect("the stop is asked");
-        assert_eq!(
-            job.observe(&control, Duration::from_secs(30))
-                .expect("the job is observed"),
-            Observed::Ended(Ending::Stopped)
-        );
+        let Observed::Ended(ended) = job
+            .observe(&control, TEST_BOUND)
+            .expect("the job is observed")
+        else {
+            panic!("the job ends");
+        };
+        assert_eq!(ended.ending, Ending::Stopped);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_job_past_its_deadline_is_ended_as_timed_out() {
+        let root = scratch("deadline");
+        let jobs = Jobs::new(root.join("jobs"));
+        let status = ProcessCommand::new("mkfifo")
+            .arg(root.join("hold"))
+            .status()
+            .expect("mkfifo");
+        assert!(status.success());
+        let job = jobs
+            .start(
+                "hold",
+                argv("cat hold"),
+                &root,
+                &Environment::empty(),
+                Some(Duration::from_millis(20)),
+                &[],
+            )
+            .expect("the job starts");
+        let Observed::Ended(ended) = job
+            .observe(&Control::new(), TEST_BOUND)
+            .expect("the job is observed")
+        else {
+            panic!("the job ends");
+        };
+        assert_eq!(ended.ending, Ending::TimedOut);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -792,14 +891,21 @@ mod tests {
                 vec![OsString::from("/nonexistent/spice-job-shell")],
                 &root,
                 &Environment::empty(),
-                Duration::from_secs(5),
+                Some(Duration::from_secs(5)),
+                &[],
             )
             .expect("the job starts");
         let observed = job
-            .observe(&Control::new(), Duration::from_secs(30))
+            .observe(&Control::new(), TEST_BOUND)
             .expect("the job is observed");
         assert!(
-            matches!(observed, Observed::Ended(Ending::Failed { .. })),
+            matches!(
+                observed,
+                Observed::Ended(Ended {
+                    ending: Ending::Failed { .. },
+                    ..
+                })
+            ),
             "{observed:?}"
         );
         let _ = fs::remove_dir_all(root);

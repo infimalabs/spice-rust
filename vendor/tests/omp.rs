@@ -169,13 +169,15 @@ fn the_lanes_shell_is_registered_essential_in_place_of_omps_own_executors() {
         shell["parameters"]["properties"]["timeout"]["type"],
         "integer"
     );
-    assert_eq!(
-        shell["parameters"]["properties"]["timeout"]["minimum"],
-        omp::SHELL_TIMEOUT_MIN
-    );
+    assert_eq!(shell["parameters"]["properties"]["timeout"]["minimum"], 0);
     assert_eq!(
         shell["parameters"]["properties"]["timeout"]["maximum"],
         omp::SHELL_TIMEOUT_MAX
+    );
+    assert_eq!(
+        shell["parameters"]["properties"]["timeout"]["description"],
+        "timeout in seconds; 0 disables the command deadline; nonzero values are clamped to \
+         1-3600"
     );
     assert!(
         shell["description"]
@@ -241,24 +243,36 @@ fn a_shell_call_reads_its_command_and_clamps_its_deadline_as_bash_would() {
         omp::ShellCall::parse(&arguments(serde_json::json!({"command": "cargo test"}))),
         Ok(omp::ShellCall {
             command: "cargo test".to_owned(),
-            timeout: Duration::from_secs(omp::SHELL_TIMEOUT_DEFAULT),
+            timeout: Some(Duration::from_secs(omp::SHELL_TIMEOUT_DEFAULT)),
+            notices: Vec::new(),
         })
     );
     assert_eq!(
         omp::ShellCall::parse(&arguments(
             serde_json::json!({"command": "sleep 9", "timeout": 0})
-        ))
-        .expect("a command")
-        .timeout,
-        Duration::from_secs(omp::SHELL_TIMEOUT_MIN)
+        )),
+        Ok(omp::ShellCall {
+            command: "sleep 9".to_owned(),
+            timeout: None,
+            notices: Vec::new(),
+        })
     );
     assert_eq!(
         omp::ShellCall::parse(&arguments(
             serde_json::json!({"command": "sleep 9", "timeout": 999_999})
-        ))
-        .expect("a command")
-        .timeout,
-        Duration::from_secs(omp::SHELL_TIMEOUT_MAX)
+        )),
+        Ok(omp::ShellCall {
+            command: "sleep 9".to_owned(),
+            timeout: Some(Duration::from_secs(omp::SHELL_TIMEOUT_MAX)),
+            notices: vec![
+                "Timeout clamped to 3600s (requested 999999s; allowed range 1-3600s).".to_owned()
+            ],
+        })
+    );
+    assert_eq!(
+        omp::job_delivery("0badcafe", "done\n\nWall time: 0.10 seconds"),
+        "<system-notice>\nBackground job 0badcafe has completed. Resume your work using the \
+         result below.\ndone\n\nWall time: 0.10 seconds\n</system-notice>"
     );
     assert_eq!(
         omp::ShellCall::parse(&arguments(serde_json::json!({"timeout": 5}))),
