@@ -10,7 +10,8 @@
 //! in the job's state for whoever asks. The lane observes a job through its
 //! durable state: a direct kernel watch on the job's directory wakes every
 //! read, and the keeper's exit names a keeper that died without an ending.
-//! The keeper reads its stop request the same way.
+//! The keeper reads its stop request the same way, and an ending nobody
+//! hears within the grace wakes the lane, so its next occupant hears it.
 
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
@@ -42,6 +43,7 @@ const STATE: &str = "state.json";
 const LOG: &str = "log";
 const STOP: &str = "stop";
 const DELIVERED: &str = "delivered";
+const WAKE: &str = "wake";
 
 /// Bytes of the log a reading keeps: the end, where a failure explains
 /// itself.
@@ -49,6 +51,10 @@ pub(super) const LOG_TAIL: usize = 64 * 1024;
 
 /// How long a command has to leave on its own once the keeper ends it.
 const TERMINATE_GRACE: Duration = Duration::from_secs(1);
+
+/// How long an occupant has to hear an ending before the keeper wakes the
+/// lane to deliver it.
+const DELIVERY_GRACE: Duration = Duration::from_secs(2);
 
 /// What the keeper reads: the command as the model wrote it, the argv the
 /// lane runs, and where and under what to run it.
@@ -65,6 +71,9 @@ struct Request {
     /// What the results carry ahead of the command's output, as omp noted it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     notices: Vec<String>,
+    /// The lane to wake when nobody hears the ending.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lane: Option<CanonicalUuid>,
 }
 
 /// What the keeper publishes: who keeps the command, and how it ended.
@@ -179,7 +188,54 @@ pub(in crate::resident::supervisor) fn keep(request_path: &Path) -> io::Result<(
         Err(reason) => Ending::Failed { reason },
     });
     state.ended_millis = Some(now_millis()?);
-    publish_json(&state_path, &state)
+    publish_json(&state_path, &state)?;
+    if let Some(lane) = request.lane
+        && state.ending != Some(Ending::Stopped)
+        && unheard(directory, DELIVERY_GRACE)
+    {
+        wake(lane, directory);
+    }
+    Ok(())
+}
+
+/// Whether nobody has heard the ending by the end of the grace: the record
+/// an occupant leaves on delivery is awaited on the directory's watch, so an
+/// occupant that is there answers at once and a vacant lane costs the grace.
+fn unheard(directory: &Path, grace: Duration) -> bool {
+    let delivered = directory.join(DELIVERED);
+    let deadline = Monotonic::now() + grace;
+    let (sender, receiver) = mpsc::channel();
+    loop {
+        if watch(directory, &sender, Keep::woke).is_err() || delivered.exists() {
+            return !delivered.exists();
+        }
+        let remaining = deadline.saturating_duration_since(Monotonic::now());
+        if !matches!(receiver.recv_timeout(remaining), Ok(Keep::Changed)) {
+            return !delivered.exists();
+        }
+    }
+}
+
+/// Wake the lane so its next occupant hears the ending. The keeper runs in
+/// the occupant's environment, so the lane it names is unset and the wake
+/// speaks for the operator; a lane still occupied refuses, and what the
+/// wake said is kept with the job rather than in the command's log.
+fn wake(lane: CanonicalUuid, directory: &Path) {
+    let _woken = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(directory.join(WAKE))
+        .and_then(|record| {
+            let stderr = record.try_clone()?;
+            ProcessCommand::new(std::env::current_exe()?)
+                .args(["lane", "wake"])
+                .arg(lane.to_string())
+                .env_remove(steer::hook::LANE)
+                .stdin(Stdio::null())
+                .stdout(record)
+                .stderr(stderr)
+                .status()
+        });
 }
 
 /// Start the command in its own group with both streams appended to the log
@@ -413,10 +469,12 @@ pub(in crate::resident) struct Tail {
     pub(in crate::resident) truncated: bool,
 }
 
-/// Where one lane's jobs live.
+/// Where one lane's jobs live, and the lane to wake for an ending nobody
+/// hears.
 #[derive(Clone, Debug)]
 pub(in crate::resident) struct Jobs {
     root: PathBuf,
+    lane: Option<CanonicalUuid>,
 }
 
 /// One kept command, by the directory that records it.
@@ -433,11 +491,20 @@ pub(in crate::resident) struct Job {
 impl Jobs {
     /// This lane's jobs, beneath the lane's own supervisor records.
     pub(in crate::resident) fn for_lane(paths: &RuntimePaths, lane: CanonicalUuid) -> Self {
-        Self::new(paths.supervisors.join(lane.to_string()).join("jobs"))
+        Self {
+            root: paths.supervisors.join(lane.to_string()).join("jobs"),
+            lane: Some(lane),
+        }
     }
 
+    /// Jobs kept for no lane, so an ending nobody hears wakes nobody: the
+    /// keeper a test runs on its own thread spawns nothing.
+    #[cfg(test)]
     pub(in crate::resident) fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            lane: None,
+        }
     }
 
     /// Start keeping one command.
@@ -471,6 +538,7 @@ impl Jobs {
                     .transpose()
                     .map_err(io::Error::other)?,
                 notices: notices.to_vec(),
+                lane: self.lane,
             },
         )?;
         let keeper = launch(&directory, &request_path, cwd, environment)?;
@@ -797,6 +865,20 @@ mod tests {
 
     fn argv(command: &str) -> Vec<OsString> {
         ["/bin/sh", "-c", command].map(OsString::from).to_vec()
+    }
+
+    #[test]
+    fn an_ending_is_unheard_until_the_delivery_record_appears() {
+        let root = scratch("unheard");
+        assert!(unheard(&root, Duration::ZERO));
+        let heard = thread::spawn({
+            let root = root.clone();
+            move || unheard(&root, TEST_BOUND)
+        });
+        File::create(root.join(DELIVERED)).expect("the record");
+        assert!(!heard.join().expect("the wait ends"));
+        assert!(!unheard(&root, Duration::ZERO));
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
