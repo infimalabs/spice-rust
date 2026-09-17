@@ -731,6 +731,29 @@ pub struct StateAnswer {
     pub to: ResidentState,
 }
 
+/// Where one command a lane keeps stands, seen from the lane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LaneJobStanding {
+    /// The command still runs under its keeper.
+    Running,
+    /// The command ended and nobody has heard how yet.
+    Unheard,
+}
+
+/// One command a lane keeps beyond the call that started it, until the lane
+/// hears how it ended.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaneJob {
+    /// The job's key: the system's microsecond key, so a listing is a timeline.
+    pub id: String,
+    /// The command as the model wrote it.
+    pub command: String,
+    /// Whether the command still runs, or ended unheard.
+    pub standing: LaneJobStanding,
+}
+
 /// Dynamic liveness of one lane at the read barrier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -826,6 +849,10 @@ pub struct LaneAnswerRow {
     pub disposition: String,
     /// Dynamic supervised live/quiet fold at this read barrier.
     pub liveness: LaneLiveness,
+    /// Commands the lane keeps beyond the calls that started them, oldest
+    /// first: what a vacant lane is still waiting on, and will wake for.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub jobs: Vec<LaneJob>,
 }
 
 /// Current lane state read at one resident barrier.

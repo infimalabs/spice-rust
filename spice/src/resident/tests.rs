@@ -681,7 +681,7 @@ fn team_configuration_changes_only_the_typed_lifetime() {
     .expect("operator team configuration admits");
 
     let Outcome::Reply(reply) =
-        super::lane_surface::configure(&bus, epoch, &seats, &command, &request)
+        super::lane_surface::configure(&bus, &paths, epoch, &seats, &command, &request)
     else {
         panic!("team configuration replies");
     };
@@ -804,6 +804,7 @@ mod arrangement;
 
 fn arrange_lane_for_test(
     bus: &Bus,
+    paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &Seats,
     id: CanonicalUuid,
@@ -832,7 +833,8 @@ fn arrange_lane_for_test(
         epoch,
     })
     .expect("operator lane arrangement admits");
-    let Outcome::Reply(reply) = super::lane_surface::arrange(bus, epoch, seats, &command, &request)
+    let Outcome::Reply(reply) =
+        super::lane_surface::arrange(bus, paths, epoch, seats, &command, &request)
     else {
         panic!("lane arrangement replies");
     };
@@ -940,6 +942,7 @@ fn lane_arrangement_durably_reorders_and_transfers_the_existing_member() {
 
     let same_org = arrange_lane_for_test(
         &bus,
+        &paths,
         epoch,
         &seats,
         test_uuid(20),
@@ -955,6 +958,7 @@ fn lane_arrangement_durably_reorders_and_transfers_the_existing_member() {
 
     let transferred = arrange_lane_for_test(
         &bus,
+        &paths,
         epoch,
         &seats,
         test_uuid(21),

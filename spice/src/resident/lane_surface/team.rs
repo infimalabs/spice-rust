@@ -43,6 +43,7 @@ struct ConfiguredTeam {
 /// seat, capability, session, occupant, or disposition field.
 pub(in crate::resident) fn configure(
     bus: &Bus,
+    paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &Seats,
     command: &wire::AdmittedCommand,
@@ -84,7 +85,7 @@ pub(in crate::resident) fn configure(
         subscription.policy = life;
     }
     let configured_life = subscription.policy;
-    let lane_answer = match answer(&next, None, seats) {
+    let lane_answer = match answer(&next, None, seats, paths) {
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
     };
@@ -498,6 +499,7 @@ fn admit_arrangement(
 /// they commit through one law and one fact rather than racing two.
 pub(in crate::resident) fn arrange(
     bus: &Bus,
+    paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &Seats,
     command: &wire::AdmittedCommand,
@@ -543,7 +545,7 @@ pub(in crate::resident) fn arrange(
             .any(|team| team.team == subscription.team)
     });
     let teams = standings(&next.lanes);
-    let lane_answer = match answer(&next, None, seats) {
+    let lane_answer = match answer(&next, None, seats, paths) {
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
     };

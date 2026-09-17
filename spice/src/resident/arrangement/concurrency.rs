@@ -29,7 +29,14 @@ impl Arranged {
             epoch: self.epoch,
         })
         .expect("operator lane arrangement admits");
-        lane_surface::arrange(&self.bus, self.epoch, &self.seats, &command, &request)
+        lane_surface::arrange(
+            &self.bus,
+            &self.paths,
+            self.epoch,
+            &self.seats,
+            &command,
+            &request,
+        )
     }
 
     fn configure_at(
@@ -59,7 +66,14 @@ impl Arranged {
             epoch: self.epoch,
         })
         .expect("operator team configuration admits");
-        lane_surface::configure(&self.bus, self.epoch, &self.seats, &command, &request)
+        lane_surface::configure(
+            &self.bus,
+            &self.paths,
+            self.epoch,
+            &self.seats,
+            &command,
+            &request,
+        )
     }
 
     fn configure_member_at(
@@ -89,7 +103,14 @@ impl Arranged {
             epoch: self.epoch,
         })
         .expect("operator team membership admits");
-        lane_surface::configure(&self.bus, self.epoch, &self.seats, &command, &request)
+        lane_surface::configure(
+            &self.bus,
+            &self.paths,
+            self.epoch,
+            &self.seats,
+            &command,
+            &request,
+        )
     }
 
     fn committed(outcome: Outcome<CommandAnswer>) -> Box<wire::intent::LaneAnswer> {

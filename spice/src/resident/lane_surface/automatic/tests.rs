@@ -41,7 +41,8 @@ fn automatic_wake_commits_advisory_rtk_for_capability_free_readback_without_repr
     fixture.assert_one_configured_probe_from_launch_worktree();
     fixture.assert_rust_native_history_path_prepared();
     let residency = current_residency(&bus, fixture.epoch).expect("committed residency reads");
-    let answer = answer(residency.body(), None, &seats).expect("capability-free lane readback");
+    let answer = answer(residency.body(), None, &seats, &fixture.paths)
+        .expect("capability-free lane readback");
     let row = answer.lanes.first().expect("automatic lane projects");
     assert_advisory_health(row.rtk.as_ref().expect("readback retains RTK health"));
     let encoded = serde_json::to_string(&answer).expect("lane readback encodes");

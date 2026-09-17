@@ -255,6 +255,7 @@ fn configure_member(
     .expect("operator team configuration admits");
     let outcome = lane_surface::configure(
         &fixture.bus,
+        &fixture.paths,
         fixture.epoch,
         &fixture.seats,
         &command,
@@ -282,6 +283,7 @@ fn transition_sources(
     let anchor = fixture.lanes[2];
     arrange_lane_for_test(
         &fixture.bus,
+        &fixture.paths,
         fixture.epoch,
         &fixture.seats,
         test_uuid(41),

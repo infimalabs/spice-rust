@@ -31,10 +31,15 @@ pub(super) fn answer(
     head: &wire::ResidencyHead,
     selected: Option<CanonicalUuid>,
     seats: &Seats,
+    paths: &RuntimePaths,
 ) -> CommandResult<LaneAnswer> {
-    answer_at(head, selected, Monotonic::now(), |lane| {
+    let mut answer = answer_at(head, selected, Monotonic::now(), |lane| {
         seats.activity(lane)
-    })
+    })?;
+    for row in &mut answer.lanes {
+        row.jobs = terminal::unheard(&terminal::Jobs::for_lane(paths, row.lane));
+    }
+    Ok(answer)
 }
 
 fn answer_at(
@@ -84,6 +89,7 @@ fn answer_at(
                 bound: row.session.is_some(),
                 disposition: row.disposition.clone(),
                 liveness,
+                jobs: Vec::new(),
             })
         })
         .collect::<CommandResult<Vec<_>>>()?;

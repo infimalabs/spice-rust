@@ -106,7 +106,14 @@ fn changing_org_policy_to_drain_waits_until_work_arrives() {
         "team policy change re-enables members parked under prior authority"
     );
     assert!(matches!(
-        lane_surface::configure(&bus, fixture.epoch, &seats, &command, &request,),
+        lane_surface::configure(
+            &bus,
+            &fixture.paths,
+            fixture.epoch,
+            &seats,
+            &command,
+            &request,
+        ),
         Outcome::Reply(_)
     ));
 

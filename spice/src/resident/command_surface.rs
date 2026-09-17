@@ -172,7 +172,7 @@ impl<'a> Surface<'a> {
                 self.bus, self.paths, self.epoch, seats, &self.lane, command, seat,
             )),
             (CommandKind::LaneArrange, Intent::LaneArrange(arrange)) => Some(
-                lane_surface::arrange(self.bus, self.epoch, seats, command, arrange),
+                lane_surface::arrange(self.bus, self.paths, self.epoch, seats, command, arrange),
             ),
             (CommandKind::LaneState, Intent::LaneState(state)) if state.worktree.is_some() => {
                 Some(lane_recovery::import(
@@ -197,12 +197,16 @@ impl<'a> Surface<'a> {
                 command,
                 renewal,
             )),
-            (CommandKind::TeamArrange, Intent::TeamArrange(arrange)) => Some(
-                lane_surface::arrange_teams(self.bus, self.epoch, seats, command, arrange),
-            ),
-            (CommandKind::TeamConfigure, Intent::TeamConfigure(configure)) => Some(
-                lane_surface::configure(self.bus, self.epoch, seats, command, configure),
-            ),
+            (CommandKind::TeamArrange, Intent::TeamArrange(arrange)) => {
+                Some(lane_surface::arrange_teams(
+                    self.bus, self.paths, self.epoch, seats, command, arrange,
+                ))
+            }
+            (CommandKind::TeamConfigure, Intent::TeamConfigure(configure)) => {
+                Some(lane_surface::configure(
+                    self.bus, self.paths, self.epoch, seats, command, configure,
+                ))
+            }
             (CommandKind::LaneRecall, Intent::LaneRecall(recall)) => Some(lane_surface::recall(
                 self.bus, self.paths, self.epoch, seats, command, recall,
             )),

@@ -145,8 +145,13 @@ fn assert_successor_observations(
 
     let residency =
         current_residency(&seeded.bus, fixture.epoch).expect("successor metrics authority reads");
-    let answer = super::super::super::reply::answer(residency.body(), Some(fixture.lane), seats)
-        .expect("successor metrics projection succeeds");
+    let answer = super::super::super::reply::answer(
+        residency.body(),
+        Some(fixture.lane),
+        seats,
+        &fixture.paths,
+    )
+    .expect("successor metrics projection succeeds");
     let [row] = answer.lanes.as_slice() else {
         panic!("selected successor has one metrics row: {:?}", answer.lanes)
     };

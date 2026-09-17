@@ -20,6 +20,7 @@ use std::time::Duration;
 
 use sill::{Environment, Spec};
 use vendor::omp::{JobCall, JobOp, ShellCall};
+use wire::intent::{LaneJob, LaneJobStanding};
 
 pub(super) mod job;
 
@@ -183,12 +184,7 @@ impl Terminal {
     /// The jobs whose endings the lane has not heard: kept commands still
     /// running, and those that ended while nobody was there to be told.
     pub(in crate::resident) fn undelivered(&self) -> Vec<Job> {
-        self.jobs
-            .list()
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|job| !job.delivered())
-            .collect()
+        undelivered(&self.jobs)
     }
 
     /// Follow a kept command to its ending: what the delivery says, or
@@ -286,6 +282,32 @@ impl Terminal {
             .find(|(key, _)| key == name)
             .map(|(_, value)| value.as_os_str())
     }
+}
+
+/// The jobs a lane has yet to hear the end of, oldest first: still running,
+/// or ended while nobody was there.
+pub(in crate::resident) fn undelivered(jobs: &Jobs) -> Vec<Job> {
+    jobs.list()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|job| !job.delivered())
+        .collect()
+}
+
+/// What a lane is still waiting on, as its row in the lane table lists it.
+pub(in crate::resident) fn unheard(jobs: &Jobs) -> Vec<LaneJob> {
+    undelivered(jobs)
+        .into_iter()
+        .map(|job| LaneJob {
+            id: job.id().to_owned(),
+            command: job.command().to_owned(),
+            standing: if job.ended().is_some() {
+                LaneJobStanding::Unheard
+            } else {
+                LaneJobStanding::Running
+            },
+        })
+        .collect()
 }
 
 /// One job's standing in a listing.
@@ -712,6 +734,29 @@ mod tests {
         );
         assert!(!stopped.failed);
         assert_eq!(terminal.follow(&job, &control), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_lane_table_lists_what_the_lane_has_yet_to_hear() {
+        let root = scratch("unheard");
+        hold(&root);
+        let terminal = terminal(&root, Environment::empty()).foreground(Duration::from_millis(50));
+        let control = Control::new();
+        let (_, job) = kept(terminal.run(&call("cat hold"), &control));
+        let row = |standing| {
+            vec![LaneJob {
+                id: job.id().to_owned(),
+                command: "cat hold".to_owned(),
+                standing,
+            }]
+        };
+        assert_eq!(unheard(&terminal.jobs), row(LaneJobStanding::Running));
+        std::fs::write(root.join("hold"), "\n").expect("the fifo takes a line");
+        assert!(terminal.follow(&job, &control).is_some());
+        assert_eq!(unheard(&terminal.jobs), row(LaneJobStanding::Unheard));
+        job.mark_delivered().expect("the ending is heard");
+        assert!(unheard(&terminal.jobs).is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -28,7 +28,7 @@ pub(super) mod ending;
 mod entry;
 mod events;
 mod reporter;
-mod terminal;
+pub(super) mod terminal;
 #[cfg(test)]
 pub(super) mod test_support;
 

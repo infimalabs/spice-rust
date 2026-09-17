@@ -405,6 +405,7 @@ fn lane_response_with_renewals(
                 rtk: None,
                 occupant: occupant.map(uuid),
                 lineage: Vec::new(),
+                jobs: Vec::new(),
                 session: bound.then(|| "session-fixture".to_owned()),
                 bound: *bound,
                 disposition: if occupant.is_some() {

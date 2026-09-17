@@ -56,6 +56,7 @@ pub(super) use team::{arrange as arrange_teams, configure};
 
 use super::read_materializations::CurrentReads;
 use super::shutdown::{current_residency, guard_residency};
+use super::supervisor::terminal;
 use super::{
     CommandResult, RuntimePaths, commit, new_uuid, seq, store_fault, typed_outcome,
     typed_store_fault, write,
@@ -320,7 +321,7 @@ pub(super) fn reconcile_seats(
 /// Read the current lane table at one residency barrier.
 pub(super) fn read(
     bus: &Bus,
-    _paths: &RuntimePaths,
+    paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &Seats,
     _command: &wire::AdmittedCommand,
@@ -329,7 +330,7 @@ pub(super) fn read(
         Ok(head) => head,
         Err(outcome) => return typed_outcome(outcome),
     };
-    let answer = match answer(head.body(), None, seats) {
+    let answer = match answer(head.body(), None, seats, paths) {
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
     };
@@ -396,6 +397,7 @@ pub(super) fn seat(
 /// residency head's vector is the durable order read back by Canvas.
 pub(super) fn arrange(
     bus: &Bus,
+    paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &Seats,
     command: &wire::AdmittedCommand,
@@ -420,7 +422,7 @@ pub(super) fn arrange(
     };
     let mut next = next;
     next.topology_revision = topology_revision;
-    let lane_answer = match answer(&next, None, seats) {
+    let lane_answer = match answer(&next, None, seats, paths) {
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
     };
@@ -1183,7 +1185,7 @@ pub(super) fn recall(
             provenance,
         });
     }
-    let residency = match answer(head.body(), selected, seats) {
+    let residency = match answer(head.body(), selected, seats, paths) {
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
     };
