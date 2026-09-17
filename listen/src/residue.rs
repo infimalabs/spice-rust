@@ -30,6 +30,9 @@ pub struct RecordContext {
     /// The vendor dialog this record opened that waits on an answer, when it
     /// opened one.
     pub dialog: Option<Dialog>,
+    /// Identity of the dialog this record withdraws, when the vendor stopped
+    /// waiting on one it opened.
+    pub withdrawn: Option<String>,
 }
 
 /// A vendor dialog that holds the turn until it is answered.
@@ -49,6 +52,16 @@ pub enum Dialog {
         /// Identity the answer cites.
         id: String,
     },
+    /// A tool the vendor delegated to its host, which the host answers by
+    /// running it.
+    HostTool {
+        /// Identity the answer cites.
+        id: String,
+        /// The host tool the vendor named.
+        tool: String,
+        /// The arguments the model composed for it.
+        arguments: serde_json::Map<String, serde_json::Value>,
+    },
 }
 
 impl Dialog {
@@ -56,7 +69,7 @@ impl Dialog {
     #[must_use]
     pub fn id(&self) -> &str {
         match self {
-            Self::Confirm { id, .. } | Self::Prompt { id } => id,
+            Self::Confirm { id, .. } | Self::Prompt { id } | Self::HostTool { id, .. } => id,
         }
     }
 }

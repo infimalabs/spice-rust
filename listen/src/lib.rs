@@ -405,6 +405,9 @@ fn record_context(dialect: Dialect, record: &Object) -> Result<RecordContext, Re
         dialog: (dialect == Dialect::Omp)
             .then(|| omp::dialog(record))
             .flatten(),
+        withdrawn: (dialect == Dialect::Omp)
+            .then(|| omp::withdrawn(record))
+            .flatten(),
     })
 }
 

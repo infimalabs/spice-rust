@@ -85,7 +85,7 @@ fn omp_carries_every_launch_knob_and_opens_the_conversation_over_a_piped_stdin()
         "--service-tier",
         "none",
         "--tools",
-        "read,write,edit,bash,glob,grep,eval,todo,hub,web_search",
+        "read,write,edit,glob,grep,todo,web_search",
         "--append-system-prompt",
         &system_prompt,
     ];
@@ -121,11 +121,145 @@ fn omp_carries_every_launch_knob_and_opens_the_conversation_over_a_piped_stdin()
     assert_eq!(
         lines,
         [
+            serde_json::from_slice::<serde_json::Value>(
+                omp::host_tools_request()
+                    .strip_suffix(b"\n")
+                    .expect("one line")
+            )
+            .expect("JSON"),
             serde_json::json!({"id": "spice-state", "type": "get_state"}),
             serde_json::json!({"id": "spice-prompt", "type": "prompt", "message": system_prompt}),
         ]
     );
     assert!(opening.ends_with(b"\n"));
+}
+
+#[test]
+fn the_lanes_shell_is_registered_essential_in_place_of_omps_own_executors() {
+    for executor in ["bash", "eval", "hub", "task"] {
+        assert!(
+            !omp::TOOLS.split(',').any(|tool| tool == executor),
+            "{executor} would run a process the lane cannot see"
+        );
+    }
+    let frame: serde_json::Value = serde_json::from_slice(
+        omp::host_tools_request()
+            .strip_suffix(b"\n")
+            .expect("one line"),
+    )
+    .expect("JSON");
+    assert_eq!(frame["id"], "spice-tools");
+    assert_eq!(frame["type"], "set_host_tools");
+    let tools = frame["tools"].as_array().expect("a tool list");
+    assert_eq!(tools.len(), 1);
+    let shell = &tools[0];
+    assert_eq!(shell["name"], omp::SHELL_TOOL);
+    assert_eq!(shell["loadMode"], "essential");
+    assert_eq!(shell["parameters"]["type"], "object");
+    assert_eq!(
+        shell["parameters"]["required"],
+        serde_json::json!(["command"])
+    );
+    assert_eq!(shell["parameters"]["additionalProperties"], false);
+    assert_eq!(
+        shell["parameters"]["properties"]["command"]["type"],
+        "string"
+    );
+    assert_eq!(
+        shell["parameters"]["properties"]["timeout"]["type"],
+        "integer"
+    );
+    assert_eq!(
+        shell["parameters"]["properties"]["timeout"]["minimum"],
+        omp::SHELL_TIMEOUT_MIN
+    );
+    assert_eq!(
+        shell["parameters"]["properties"]["timeout"]["maximum"],
+        omp::SHELL_TIMEOUT_MAX
+    );
+    assert!(
+        shell["description"]
+            .as_str()
+            .expect("prose")
+            .contains("only way to execute"),
+        "the model must learn the shell is the sole executor"
+    );
+}
+
+#[test]
+fn a_shell_call_reads_its_command_and_clamps_its_deadline_as_bash_would() {
+    let arguments = |json: serde_json::Value| json.as_object().expect("an argument object").clone();
+    assert_eq!(
+        omp::ShellCall::parse(&arguments(serde_json::json!({"command": "cargo test"}))),
+        Ok(omp::ShellCall {
+            command: "cargo test".to_owned(),
+            timeout: Duration::from_secs(omp::SHELL_TIMEOUT_DEFAULT),
+        })
+    );
+    assert_eq!(
+        omp::ShellCall::parse(&arguments(
+            serde_json::json!({"command": "sleep 9", "timeout": 0})
+        ))
+        .expect("a command")
+        .timeout,
+        Duration::from_secs(omp::SHELL_TIMEOUT_MIN)
+    );
+    assert_eq!(
+        omp::ShellCall::parse(&arguments(
+            serde_json::json!({"command": "sleep 9", "timeout": 999_999})
+        ))
+        .expect("a command")
+        .timeout,
+        Duration::from_secs(omp::SHELL_TIMEOUT_MAX)
+    );
+    assert_eq!(
+        omp::ShellCall::parse(&arguments(serde_json::json!({"timeout": 5}))),
+        Err("shell needs a command".to_owned())
+    );
+}
+
+#[test]
+fn a_host_tool_answer_keeps_the_exit_code_where_bash_does_and_a_refusal_is_the_hosts() {
+    let frame = |bytes: Vec<u8>| -> serde_json::Value {
+        serde_json::from_slice(bytes.strip_suffix(b"\n").expect("one line")).expect("JSON")
+    };
+    assert_eq!(
+        frame(omp::host_tool_result("call-1", "ok\n", Some(0), false)),
+        serde_json::json!({
+            "type": "host_tool_result",
+            "id": "call-1",
+            "result": {
+                "content": [{"type": "text", "text": "ok\n"}],
+                "details": {"exitCode": 0},
+            },
+        })
+    );
+    assert_eq!(
+        frame(omp::host_tool_result(
+            "call-2",
+            "boom\n\nCommand exited with code 3",
+            Some(3),
+            true
+        )),
+        serde_json::json!({
+            "type": "host_tool_result",
+            "id": "call-2",
+            "result": {
+                "content": [{"type": "text", "text": "boom\n\nCommand exited with code 3"}],
+                "details": {"exitCode": 3},
+                "isError": true,
+            },
+        })
+    );
+    assert_eq!(
+        frame(omp::host_tool_refused("call-3", "shell needs a command")),
+        serde_json::json!({
+            "type": "host_tool_result",
+            "id": "call-3",
+            "result": {"content": [{"type": "text", "text": "shell needs a command"}]},
+            "isError": true,
+        })
+    );
 }
 
 #[test]

@@ -209,6 +209,39 @@ fn dialogs_that_wait_on_an_answer_are_named_while_notices_are_not() {
 }
 
 #[test]
+fn a_host_tool_call_is_a_dialog_and_its_cancellation_withdraws_it() {
+    let call = decoded(
+        br#"{"type":"host_tool_call","id":"h1","toolCallId":"call_9","toolName":"shell","arguments":{"command":"cargo test","timeout":30}}"#,
+    );
+    assert!(call.events().is_empty(), "a host tool call is silent");
+    let context = call.context().expect("a frame has context");
+    assert_eq!(
+        context.dialog,
+        Some(Dialog::HostTool {
+            id: "h1".to_owned(),
+            tool: "shell".to_owned(),
+            arguments: serde_json::json!({"command": "cargo test", "timeout": 30})
+                .as_object()
+                .expect("object")
+                .clone(),
+        })
+    );
+    assert_eq!(context.withdrawn, None);
+
+    let cancel = decoded(br#"{"type":"host_tool_cancel","id":"h2","targetId":"h1"}"#);
+    assert!(cancel.events().is_empty(), "a withdrawal is silent");
+    let context = cancel.context().expect("a frame has context");
+    assert_eq!(context.dialog, None);
+    assert_eq!(context.withdrawn, Some("h1".to_owned()));
+    assert_eq!(
+        decoded(br#"{"type":"agent_start"}"#)
+            .context()
+            .and_then(|context| context.withdrawn.clone()),
+        None
+    );
+}
+
+#[test]
 fn the_session_file_reads_under_the_same_dialect() {
     let session = decoded(TRANSCRIPT_SESSION);
     assert!(matches!(

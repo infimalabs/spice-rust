@@ -28,6 +28,7 @@ pub(super) mod ending;
 #[cfg(unix)]
 mod events;
 mod reporter;
+mod terminal;
 #[cfg(test)]
 pub(super) mod test_support;
 
@@ -581,6 +582,7 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
     let git = launch.git;
     let proof = launch.session;
     let started_millis = now_millis()?;
+    let terminal = terminal::Terminal::from_spec(&launch.spec);
     let mut running = sill::spawn_observed(launch.spec, launch.observation)?;
     let group = running.id();
     let runtime = running.spec().deadlines.runtime();
@@ -589,7 +591,7 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
     let _door = launch
         .opening
         .map(|opening| {
-            let driver = command::Driver::new(running.take_stdin()?, launch.inbox);
+            let driver = command::Driver::new(running.take_stdin()?, launch.inbox, terminal);
             reporter.drive(Arc::clone(&driver));
             driver.open(&opening)?;
             let door = command::listen_for_kicks(&paths, request.lane, Arc::clone(&driver))?;

@@ -8,8 +8,10 @@
 //! opens, and drops the pipe once the agent's turn completes so the child
 //! drains and exits on its own. A drain interrupts the turn over the same
 //! pipe before any signal is sent. A confirm dialog becomes one consent request
-//! the resident decides; every other dialog is declined, since nobody at the
-//! lane can compose a choice or text for it. The resident reaches the driver
+//! the resident decides; a call on the lane's shell runs in the lane's own
+//! terminal and answers with what the command said; every other dialog is
+//! declined, since nobody at the lane can compose a choice or text for it.
+//! The resident reaches the driver
 //! through one datagram kick per inbox publication or consent answer; a lane
 //! with no command-driven occupant has nobody listening, and the kick is lost
 //! by design.
@@ -23,9 +25,12 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use listen::{Decoded, Dialog, Event, TurnMoment};
 use serde::{Deserialize, Serialize};
+use sill::CancellationToken;
+use vendor::omp::ShellCall;
 use wire::CanonicalUuid;
 
 use super::super::RuntimePaths;
+use super::terminal::Terminal;
 
 /// Bytes one kick datagram may carry: a consent answer names one request.
 const KICK_BYTES: usize = 256;
@@ -38,6 +43,10 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     delivered: Mutex<Option<Vec<u8>>>,
     /// The confirm dialog each open consent request will answer.
     asks: Mutex<HashMap<CanonicalUuid, String>>,
+    /// Where the occupant's commands run, for an occupant that has a shell.
+    terminal: Option<Terminal>,
+    /// The commands running now, by the host tool call each answers.
+    calls: Mutex<HashMap<String, CancellationToken>>,
 }
 
 /// A confirm dialog stated as the consent request the resident decides.
@@ -61,15 +70,22 @@ pub(in crate::resident) enum Kick {
     Abort,
 }
 
-impl<W: Write + Send> Driver<W> {
-    /// Own a child's stdin and the inbox path this lane's steering renders to.
-    pub(in crate::resident) fn new(stdin: W, inbox: impl Into<PathBuf>) -> Arc<Self> {
+impl<W: Write + Send + 'static> Driver<W> {
+    /// Own a child's stdin, the inbox path this lane's steering renders to,
+    /// and the terminal its commands run in.
+    pub(in crate::resident) fn new(
+        stdin: W,
+        inbox: impl Into<PathBuf>,
+        terminal: Option<Terminal>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             stdin: Mutex::new(Some(stdin)),
             inbox: inbox.into(),
             sequence: AtomicU64::new(0),
             delivered: Mutex::new(None),
             asks: Mutex::new(HashMap::new()),
+            terminal,
+            calls: Mutex::new(HashMap::new()),
         })
     }
 
@@ -115,23 +131,34 @@ impl<W: Write + Send> Driver<W> {
     /// confirm dialog raises.
     ///
     /// A confirm holds the turn until consent answers it through
-    /// [`Self::answer`]; any other dialog is declined at once, since no
-    /// operator sees a lane's prompts and the turn would otherwise hold. A
-    /// compaction discards what the agent was told, so the standing inbox is
-    /// interjected again; the end of the agent's turn ends its input, so the
-    /// child drains and exits rather than idling for a prompt nobody sends.
-    pub(in crate::resident) fn observe(&self, decoded: &Decoded) -> Option<Ask> {
-        let asked = match decoded
-            .context()
-            .and_then(|context| context.dialog.as_ref())
-        {
+    /// [`Self::answer`]; a call on the lane's shell holds it until the
+    /// command ends; any other dialog is declined at once, since no operator
+    /// sees a lane's prompts and the turn would otherwise hold. A withdrawn
+    /// call ends its command. A compaction discards what the agent was told,
+    /// so the standing inbox is interjected again; the end of the agent's
+    /// turn ends its input, so the child drains and exits rather than idling
+    /// for a prompt nobody sends.
+    pub(in crate::resident) fn observe(self: &Arc<Self>, decoded: &Decoded) -> Option<Ask> {
+        let context = decoded.context();
+        let asked = match context.and_then(|context| context.dialog.as_ref()) {
             Some(Dialog::Confirm { id, title, message }) => Some(self.ask(id, title, message)),
+            Some(Dialog::HostTool {
+                id,
+                tool,
+                arguments,
+            }) => {
+                self.run(id, tool, arguments);
+                None
+            }
             Some(dialog) => {
                 let _declined = self.write(&vendor::omp::dialog_declined(dialog.id()));
                 None
             }
             None => None,
         };
+        if let Some(withdrawn) = context.and_then(|context| context.withdrawn.as_deref()) {
+            self.cancel(withdrawn);
+        }
         let compacted = decoded
             .events()
             .iter()
@@ -168,6 +195,76 @@ impl<W: Write + Send> Driver<W> {
         }
     }
 
+    /// Run one host tool call in the lane's terminal and answer it when the
+    /// command ends.
+    ///
+    /// The command runs on its own thread, so the stream the call arrived on
+    /// keeps being read: the withdrawal that ends the command early arrives
+    /// there. A tool the lane never registered, arguments that name no
+    /// command, or an occupant with no terminal are refused at once.
+    fn run(
+        self: &Arc<Self>,
+        id: &str,
+        tool: &str,
+        arguments: &serde_json::Map<String, serde_json::Value>,
+    ) {
+        let call = if tool == vendor::omp::SHELL_TOOL {
+            ShellCall::parse(arguments)
+        } else {
+            Err(format!("{tool} is not a tool this lane registered"))
+        };
+        let (Some(terminal), Ok(call)) = (self.terminal.clone(), call.as_ref()) else {
+            let reason = call
+                .err()
+                .unwrap_or_else(|| "this lane has no terminal".to_owned());
+            let _refused = self.write(&vendor::omp::host_tool_refused(id, &reason));
+            return;
+        };
+        let cancellation = CancellationToken::new();
+        self.calls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(id.to_owned(), cancellation.clone());
+        let driver = Arc::clone(self);
+        let call = call.clone();
+        let answered = id.to_owned();
+        let started = std::thread::Builder::new()
+            .name("spice-shell".to_owned())
+            .spawn(move || {
+                let report = terminal.run(&call, cancellation);
+                driver
+                    .calls
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .remove(&answered);
+                let _answered = driver.write(&vendor::omp::host_tool_result(
+                    &answered,
+                    &report.output,
+                    report.exit_code,
+                    report.failed,
+                ));
+            });
+        if let Err(error) = started {
+            self.cancel(id);
+            let _refused = self.write(&vendor::omp::host_tool_refused(
+                id,
+                &format!("shell thread failed: {error}"),
+            ));
+        }
+    }
+
+    /// End the command one withdrawn call is running, if it still runs.
+    fn cancel(&self, id: &str) {
+        let cancellation = self
+            .calls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(id);
+        if let Some(cancellation) = cancellation {
+            cancellation.cancel();
+        }
+    }
+
     fn ask(&self, dialog: &str, title: &str, message: &str) -> Ask {
         let request = super::super::new_uuid();
         self.asks
@@ -191,6 +288,11 @@ impl<W: Write + Send> Driver<W> {
     /// resident's signal is only for an occupant that does neither.
     pub(in crate::resident) fn abort(&self) {
         let _aborted = self.write(&vendor::omp::abort_request());
+        let running =
+            std::mem::take(&mut *self.calls.lock().unwrap_or_else(PoisonError::into_inner));
+        for cancellation in running.into_values() {
+            cancellation.cancel();
+        }
         self.close();
     }
 
@@ -428,7 +530,7 @@ mod tests {
         let scratch = Scratch::new("changes");
         let inbox = scratch.inbox();
         let sink = Sink::default();
-        let driver = Driver::new(sink.clone(), &inbox);
+        let driver = Driver::new(sink.clone(), &inbox, None);
         driver
             .open(b"{\"id\":\"spice-state\",\"type\":\"get_state\"}\n")
             .expect("open");
@@ -473,7 +575,7 @@ mod tests {
     fn a_prompt_nobody_can_compose_is_declined_while_notices_pass() {
         let scratch = Scratch::new("dialog");
         let sink = Sink::default();
-        let driver = Driver::new(sink.clone(), scratch.inbox());
+        let driver = Driver::new(sink.clone(), scratch.inbox(), None);
         assert!(
             driver
                 .observe(&decoded(
@@ -498,11 +600,137 @@ mod tests {
         );
     }
 
+    /// Frames the driver has written, once the running command has answered.
+    fn answered(sink: &Sink, frames: usize) -> Vec<serde_json::Value> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            let written = sink.frames();
+            if written.len() >= frames || std::time::Instant::now() >= deadline {
+                return written;
+            }
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn a_shell_call_runs_in_the_lanes_terminal_and_answers_with_what_it_said() {
+        let scratch = Scratch::new("shell");
+        let sink = Sink::default();
+        let terminal = Terminal::new("/bin/sh", &scratch.0, sill::Environment::empty());
+        let driver = Driver::new(sink.clone(), scratch.inbox(), Some(terminal));
+        assert!(
+            driver
+                .observe(&decoded(
+                    br#"{"type":"host_tool_call","id":"h1","toolCallId":"call_1","toolName":"shell","arguments":{"command":"printf hi; exit 3"}}"#,
+                ))
+                .is_none()
+        );
+        assert_eq!(
+            answered(&sink, 1),
+            [serde_json::json!({
+                "type": "host_tool_result",
+                "id": "h1",
+                "result": {
+                    "content": [{"type": "text", "text": "hi\n\nCommand exited with code 3"}],
+                    "details": {"exitCode": 3},
+                    "isError": true,
+                },
+            })]
+        );
+    }
+
+    #[test]
+    fn a_call_the_lane_cannot_run_is_refused_at_once() {
+        let scratch = Scratch::new("refused");
+        let sink = Sink::default();
+        let driver = Driver::new(sink.clone(), scratch.inbox(), None);
+        driver.observe(&decoded(
+            br#"{"type":"host_tool_call","id":"h1","toolCallId":"call_1","toolName":"shell","arguments":{"command":"true"}}"#,
+        ));
+        driver.observe(&decoded(
+            br#"{"type":"host_tool_call","id":"h2","toolCallId":"call_2","toolName":"deploy","arguments":{}}"#,
+        ));
+        let terminal = Terminal::new("/bin/sh", &scratch.0, sill::Environment::empty());
+        let driver = Driver::new(sink.clone(), scratch.inbox(), Some(terminal));
+        driver.observe(&decoded(
+            br#"{"type":"host_tool_call","id":"h3","toolCallId":"call_3","toolName":"shell","arguments":{"timeout":5}}"#,
+        ));
+        let refused = |id: &str, reason: &str| {
+            serde_json::json!({
+                "type": "host_tool_result",
+                "id": id,
+                "result": {"content": [{"type": "text", "text": reason}]},
+                "isError": true,
+            })
+        };
+        assert_eq!(
+            sink.frames(),
+            [
+                refused("h1", "this lane has no terminal"),
+                refused("h2", "deploy is not a tool this lane registered"),
+                refused("h3", "shell needs a command"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_withdrawn_call_and_a_drain_end_the_commands_they_cover() {
+        let scratch = Scratch::new("withdrawn");
+        let sink = Sink::default();
+        let terminal = Terminal::new("/bin/sh", &scratch.0, sill::Environment::empty());
+        let driver = Driver::new(sink.clone(), scratch.inbox(), Some(terminal));
+        // `cat` on a closed stdin ends on its own; a fifo nobody opens does
+        // not, so the command holds until it is ended.
+        let fifo = scratch.0.join("hold");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo");
+        assert!(status.success());
+        let call = |id: &str| {
+            format!(
+                r#"{{"type":"host_tool_call","id":"{id}","toolCallId":"call_{id}","toolName":"shell","arguments":{{"command":"cat {}"}}}}"#,
+                fifo.display()
+            )
+        };
+        driver.observe(&decoded(call("h1").as_bytes()));
+        driver.observe(&decoded(call("h2").as_bytes()));
+        driver.observe(&decoded(
+            br#"{"type":"host_tool_cancel","id":"h3","targetId":"h1"}"#,
+        ));
+        let first = answered(&sink, 1);
+        assert_eq!(first.len(), 1, "only the withdrawn command has ended");
+        assert_eq!(first[0]["id"], "h1");
+        assert!(
+            first[0]["result"]["content"][0]["text"]
+                .as_str()
+                .expect("text")
+                .ends_with("Command cancelled")
+        );
+
+        // A drain ends the other command too, then ends the input, so its
+        // answer has nowhere to go: omp has already withdrawn every call.
+        driver.abort();
+        assert!(
+            driver
+                .calls
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_empty()
+        );
+        let all = answered(&sink, 2);
+        assert_eq!(all.len(), 2);
+        assert_eq!(
+            all[1],
+            serde_json::json!({"id": "spice-abort", "type": "abort"})
+        );
+    }
+
     #[test]
     fn a_confirm_is_stated_as_one_request_and_answered_once_consent_rules() {
         let scratch = Scratch::new("confirm");
         let sink = Sink::default();
-        let driver = Driver::new(sink.clone(), scratch.inbox());
+        let driver = Driver::new(sink.clone(), scratch.inbox(), None);
         let ask = driver
             .observe(&decoded(
                 br#"{"type":"extension_ui_request","id":"9","method":"confirm","title":"Deploy","message":"Deploy to prod?"}"#,
@@ -567,7 +795,7 @@ mod tests {
     fn a_drain_interrupts_the_turn_and_ends_the_input() {
         let scratch = Scratch::new("abort");
         let sink = Sink::default();
-        let driver = Driver::new(sink.clone(), scratch.inbox());
+        let driver = Driver::new(sink.clone(), scratch.inbox(), None);
         driver.abort();
         assert_eq!(
             sink.frames(),
@@ -601,7 +829,7 @@ mod tests {
         let scratch = Scratch::new("closed");
         let inbox = scratch.inbox();
         let sink = Sink::default();
-        let driver = Driver::new(sink.clone(), &inbox);
+        let driver = Driver::new(sink.clone(), &inbox, None);
         driver.observe(&decoded(br#"{"type":"agent_end","messages":[]}"#));
 
         fs::write(&inbox, b"<key>\ndirective=d1\nstop\n</key>\n").expect("inbox");

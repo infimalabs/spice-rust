@@ -8,6 +8,7 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use listen::Dialect;
 use serde::Serialize;
@@ -45,11 +46,43 @@ pub const SESSION_ENVIRONMENT: &str = wire::SpiceVariable::Session.as_str();
 
 /// The tools a lane's occupant runs with, spelled as omp's `--tools` roster.
 ///
-/// One agent inhabits one worktree, so omp's `task` sub-agent tool is left
-/// off the roster mechanically rather than by the skill's prose, exactly as
-/// Claude's `Task` is denied; the rest is omp's own roster for a session
-/// with no MCP server, so a tool omp adds later joins only by being named.
-pub const TOOLS: &str = "read,write,edit,bash,glob,grep,eval,todo,hub,web_search";
+/// Every tool that would start a process is left off: `bash`, `eval`, and
+/// `hub` would run commands the lane cannot see or outlive, so the lane
+/// registers its own [`SHELL_TOOL`] instead and executes every command
+/// itself. One agent inhabits one worktree, so omp's `task` sub-agent tool
+/// is left off as well, exactly as Claude's `Task` is denied. The rest is
+/// omp's own roster for a session with no MCP server, so a tool omp adds
+/// later joins only by being named.
+pub const TOOLS: &str = "read,write,edit,glob,grep,todo,web_search";
+
+/// Request identity of the `set_host_tools` command that registers the
+/// lane's shell ahead of the first turn.
+pub const TOOLS_REQUEST_ID: &str = "spice-tools";
+
+/// Name of the host tool the lane registers in place of omp's `bash`.
+///
+/// omp refuses a host tool named after any tool it ships, so the lane's shell
+/// carries its own name; the model reaches it exactly as it would `bash`.
+pub const SHELL_TOOL: &str = "shell";
+
+/// Seconds a shell command may run when the agent names no deadline.
+pub const SHELL_TIMEOUT_DEFAULT: u64 = 300;
+
+/// Tightest deadline the agent may ask for, in seconds.
+pub const SHELL_TIMEOUT_MIN: u64 = 1;
+
+/// Longest deadline the agent may ask for, in seconds; longer work belongs
+/// to a process the lane keeps rather than one command.
+pub const SHELL_TIMEOUT_MAX: u64 = 3600;
+
+/// What the model reads about the lane's shell, in place of omp's `bash`.
+const SHELL_DESCRIPTION: &str = "Runs one shell command in the worktree and returns its \
+output. This is the only way to execute anything: the lane runs the command in its own \
+environment and ends it at the deadline. Chain order-dependent commands with `&&`. Output \
+is bounded, so narrow it in the command itself rather than paging with `head` or `tail`.";
+
+/// What the model reads about the command parameter.
+const SHELL_COMMAND_DESCRIPTION: &str = "command to execute";
 
 /// Width of the fixed title slot that opens every omp session file.
 const TITLE_SLOT_BYTES: usize = 256;
@@ -227,18 +260,20 @@ pub fn system_prompt(launch: &Launch) -> String {
 
 /// The request lines that open a launch: a state query, then the first turn.
 ///
-/// omp writes its `ready` frame before reading stdin, so both requests may be
-/// queued before the child has answered anything. The state reply declares
-/// the session; the prompt starts the turn with the same composed system
-/// prompt the arguments carry, so the agent re-grounds in the skill.
+/// omp writes its `ready` frame before reading stdin, so every request may be
+/// queued before the child has answered anything. The lane's shell is
+/// registered first so the first turn's schema carries it; the state reply
+/// declares the session; the prompt starts the turn with the same composed
+/// system prompt the arguments carry, so the agent re-grounds in the skill.
 #[must_use]
 pub fn opening_request(launch: &Launch) -> Vec<u8> {
-    let mut bytes = request_line(&Request {
+    let mut bytes = host_tools_request();
+    bytes.extend(request_line(&Request {
         id: STATE_REQUEST_ID.to_owned(),
         kind: "get_state",
         message: None,
         streaming_behavior: None,
-    });
+    }));
     bytes.extend(request_line(&Request {
         id: PROMPT_REQUEST_ID.to_owned(),
         kind: "prompt",
@@ -353,4 +388,108 @@ struct Request {
     message: Option<String>,
     #[serde(rename = "streamingBehavior", skip_serializing_if = "Option::is_none")]
     streaming_behavior: Option<&'static str>,
+}
+
+/// The `set_host_tools` command that registers the lane's shell.
+///
+/// The tool is essential, so it sits in the model's top-level schema rather
+/// than behind discovery, and its parameters are the two omp's own `bash`
+/// makes load-bearing: the command and its deadline.
+#[must_use]
+pub fn host_tools_request() -> Vec<u8> {
+    request_line(&serde_json::json!({
+        "id": TOOLS_REQUEST_ID,
+        "type": "set_host_tools",
+        "tools": [{
+            "name": SHELL_TOOL,
+            "label": "Shell",
+            "description": SHELL_DESCRIPTION,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": SHELL_COMMAND_DESCRIPTION},
+                    "timeout": {
+                        "type": "integer",
+                        "minimum": SHELL_TIMEOUT_MIN,
+                        "maximum": SHELL_TIMEOUT_MAX,
+                        "description": format!(
+                            "deadline in seconds; omitted means {SHELL_TIMEOUT_DEFAULT}, and \
+                             values are clamped to {SHELL_TIMEOUT_MIN}-{SHELL_TIMEOUT_MAX}"
+                        ),
+                    },
+                },
+                "required": ["command"],
+                "additionalProperties": false,
+            },
+            "loadMode": "essential",
+        }],
+    }))
+}
+
+/// One shell command the agent asked the lane to run.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ShellCall {
+    /// The command line, run by the lane's shell.
+    pub command: String,
+    /// How long it may run before the lane ends it.
+    pub timeout: Duration,
+}
+
+impl ShellCall {
+    /// Read a call from the arguments a `host_tool_call` frame carried.
+    ///
+    /// The deadline is clamped exactly as omp clamps its own `bash` deadline,
+    /// so a model's habit from one carries to the other.
+    ///
+    /// # Errors
+    ///
+    /// Returns the refusal text when the arguments name no command.
+    pub fn parse(arguments: &serde_json::Map<String, serde_json::Value>) -> Result<Self, String> {
+        let command = arguments
+            .get("command")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "shell needs a command".to_owned())?;
+        let timeout = arguments
+            .get("timeout")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(SHELL_TIMEOUT_DEFAULT)
+            .clamp(SHELL_TIMEOUT_MIN, SHELL_TIMEOUT_MAX);
+        Ok(Self {
+            command: command.to_owned(),
+            timeout: Duration::from_secs(timeout),
+        })
+    }
+}
+
+/// The answer to one host tool call: what the command said and how it ended.
+///
+/// The exit code rides the result's details, where omp's own `bash` keeps
+/// it, so the transcript reads the same whichever ran the command; a failed
+/// command is a tool error to the model, exactly as it is under `bash`.
+#[must_use]
+pub fn host_tool_result(id: &str, output: &str, exit_code: Option<i32>, failed: bool) -> Vec<u8> {
+    let mut result = serde_json::json!({
+        "content": [{"type": "text", "text": output}],
+        "details": {"exitCode": exit_code},
+    });
+    if failed {
+        result["isError"] = serde_json::Value::Bool(true);
+    }
+    request_line(&serde_json::json!({
+        "type": "host_tool_result",
+        "id": id,
+        "result": result,
+    }))
+}
+
+/// The answer to a host tool call the lane could not run at all: a tool it
+/// never registered, or arguments that name no command.
+#[must_use]
+pub fn host_tool_refused(id: &str, reason: &str) -> Vec<u8> {
+    request_line(&serde_json::json!({
+        "type": "host_tool_result",
+        "id": id,
+        "result": {"content": [{"type": "text", "text": reason}]},
+        "isError": true,
+    }))
 }
