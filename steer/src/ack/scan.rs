@@ -428,6 +428,13 @@ fn tokens_after(line: &str, marker_end: usize) -> Option<Header> {
         tokens.push((token_start, line[token_start..end].to_owned()));
         header_end = skip_emphasis(line, end);
         cursor = skip_horizontal(line, header_end);
+        // A comma between keys lists them; before anything else it separates.
+        if line.as_bytes().get(cursor) == Some(&b',') {
+            let listed = skip_horizontal(line, cursor + 1);
+            if key_token_end(line, skip_emphasis(line, listed), true).is_some() {
+                cursor = listed;
+            }
+        }
     }
     if tokens.is_empty() {
         return None;

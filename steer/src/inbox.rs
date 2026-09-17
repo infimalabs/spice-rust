@@ -51,6 +51,20 @@ pub fn render(seal: &Key, pending: &[&Directive]) -> String {
     rendered
 }
 
+/// The keys a rendering carries, in the order it names them.
+///
+/// A reader that already holds an earlier rendering learns from these which
+/// direction is new to the lane and which is the same direction said again.
+pub fn keys(rendered: &str) -> impl Iterator<Item = &str> {
+    rendered
+        .lines()
+        .filter(|line| line.starts_with("directive="))
+        .flat_map(|line| {
+            line.split(' ')
+                .filter_map(|field| field.strip_prefix("key="))
+        })
+}
+
 fn render_directive_body(directive: &Directive) -> String {
     let mut rendered =
         wire::media::without_media_payloads(directive.text(), directive.attachments());
@@ -129,5 +143,19 @@ impl std::error::Error for Error {
             Self::Directory(error) => Some(error),
             Self::Publication(error) => Some(error),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::keys;
+
+    #[test]
+    fn a_rendering_names_its_keys_in_order_and_nothing_else() {
+        let rendered = "<seal>\ndirective=d1 key=1kJK6N3R stage=heard expires=never\n\
+                        say key=nothing here\n\ndirective=d2 key=1kJK6M0V stage=new \
+                        expires=never control=stop\ngo\n</seal>\n";
+        assert_eq!(keys(rendered).collect::<Vec<_>>(), ["1kJK6N3R", "1kJK6M0V"]);
+        assert_eq!(keys("").count(), 0);
     }
 }

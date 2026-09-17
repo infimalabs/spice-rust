@@ -117,6 +117,25 @@ fn one_distributed_message_extracts_every_acknowledgement_once() {
     );
 }
 
+/// Keys listed with commas are the same header as keys listed with spaces;
+/// a comma that nothing keyed follows is the header's separator, as before.
+#[test]
+fn a_comma_between_keys_lists_them_and_a_comma_after_the_last_key_separates() {
+    let board = board();
+
+    assert_eq!(
+        report(&scan("ACK 1kJK6N3R, 1kJK6M0V: both handled.", &board)),
+        vec![
+            "1:5 1kJK6N3R acked".to_owned(),
+            "1:15 1kJK6M0V acked".to_owned(),
+        ],
+    );
+    let packets = scan_acknowledgements("ACK 1kJK6N3R, then the rest.", &board);
+    assert_eq!(packets.len(), 1);
+    assert_eq!(report(&packets[0].recognitions), ["1:5 1kJK6N3R acked"]);
+    assert_eq!(packets[0].separator, Some(','));
+}
+
 /// Historical standing changes disposition, not packet membership: a later
 /// key in the same header must still be parsed and judged independently.
 #[test]

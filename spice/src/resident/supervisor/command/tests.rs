@@ -307,6 +307,58 @@ fn a_withdrawn_call_and_a_drain_end_the_commands_they_cover() {
     settled(&scratch);
 }
 
+/// A rendering carrying one directive the lane has not heard.
+const NEWS: &str =
+    "<seal>\ndirective=d1 key=1kJK6N3R stage=new expires=never\nlook at this\n</seal>\n";
+
+#[test]
+fn a_rendering_that_restates_heard_direction_leaves_the_running_command_alone() {
+    let scratch = Scratch::new("restated");
+    let sink = Sink::default();
+    let driver = Driver::new(sink.clone(), scratch.inbox(), Some(scratch.terminal()));
+    let fifo = scratch.0.join("hold");
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo")
+            .success()
+    );
+    fs::write(scratch.inbox(), NEWS).expect("inbox renders");
+    driver.deliver_inbox();
+    driver.observe(&decoded(
+        br#"{"type":"host_tool_call","id":"h1","toolCallId":"call_1","toolName":"shell","arguments":{"command":"read held < hold"}}"#,
+    ));
+
+    // The same key said again, as a reminder is, waits for the turn.
+    let reminder = NEWS.replace("stage=new", "stage=reminded");
+    fs::write(scratch.inbox(), &reminder).expect("inbox renders");
+    driver.deliver_inbox();
+    let frames = sink.answered(2);
+    assert_eq!(frames, [steer(1, NEWS), steer(2, &reminder)]);
+    assert_eq!(
+        driver
+            .calls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len(),
+        1
+    );
+
+    // A second key is news, so the call answers now.
+    let more = format!("{reminder}directive=d2 key=1kJK6M0V stage=new expires=never\ngo\n");
+    fs::write(scratch.inbox(), &more).expect("inbox renders");
+    driver.deliver_inbox();
+    let frames = sink.answered(4);
+    assert!(frames.contains(&steer(3, &more)), "{frames:?}");
+    assert!(
+        frames.iter().any(|frame| frame["id"] == "h1"),
+        "the call is answered: {frames:?}"
+    );
+    release(&fifo);
+    settled(&scratch);
+}
+
 #[test]
 fn a_message_backgrounds_the_running_command_and_its_ending_is_delivered_as_steering() {
     let scratch = Scratch::new("steered");
@@ -323,13 +375,13 @@ fn a_message_backgrounds_the_running_command_and_its_ending_is_delivered_as_stee
     driver.observe(&decoded(
         br#"{"type":"host_tool_call","id":"h1","toolCallId":"call_1","toolName":"shell","arguments":{"command":"read held < hold"}}"#,
     ));
-    fs::write(scratch.inbox(), "look at this").expect("inbox renders");
+    fs::write(scratch.inbox(), NEWS).expect("inbox renders");
     driver.deliver_inbox();
 
     // The steer and the interrupted call's answer are written by two
     // threads, so only their presence is fixed.
     let frames = sink.answered(2);
-    assert!(frames.contains(&steer(1, "look at this")), "{frames:?}");
+    assert!(frames.contains(&steer(1, NEWS)), "{frames:?}");
     let answer = frames
         .iter()
         .find(|frame| frame["id"] == "h1")

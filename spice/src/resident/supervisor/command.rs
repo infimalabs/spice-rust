@@ -11,10 +11,10 @@
 //! the resident decides; a call on the lane's shell runs in the lane's own
 //! terminal and answers with what the command said; every other dialog is
 //! declined, since nobody at the lane can compose a choice or text for it.
-//! Steering never waits on a command: a message arriving while a command
-//! runs interrupts the call, which answers with what the command said so
-//! far while the command keeps running as a job, and the job's ending is
-//! delivered as steering of its own when it comes. The resident reaches the
+//! Steering never waits on a command: direction the lane has not heard,
+//! arriving while a command runs, interrupts the call, which answers with
+//! what the command said so far while the command keeps running as a job,
+//! and the job's ending is delivered as steering of its own when it comes. The resident reaches the
 //! driver through one datagram kick per inbox publication or consent answer;
 //! a lane with no command-driven occupant has nobody listening, and the kick
 //! is lost by design.
@@ -111,9 +111,18 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// interrupted first, so the message is read as soon as it is written
     /// rather than once the command ends.
     pub(in crate::resident) fn deliver_inbox(&self) {
-        let rendered = match fs::read(&self.inbox) {
-            Ok(rendered) => rendered,
-            Err(_) => return,
+        self.interject(true);
+    }
+
+    /// Interject the rendering the inbox holds now, once per rendering.
+    ///
+    /// Direction the lane has not heard interrupts the calls in flight, so the
+    /// agent sees it as early as it can; a rendering that only restates what
+    /// the lane heard, a reminder or a re-render, waits for the turn's next
+    /// boundary like any steering. After a compaction nothing is news.
+    fn interject(&self, news: bool) {
+        let Ok(rendered) = fs::read(&self.inbox) else {
+            return;
         };
         if rendered.is_empty() {
             return;
@@ -128,13 +137,21 @@ impl<W: Write + Send + 'static> Driver<W> {
         let Ok(message) = std::str::from_utf8(&rendered) else {
             return;
         };
-        for handle in self
-            .calls
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .values()
-        {
-            handle.interrupt();
+        let heard = delivered
+            .as_deref()
+            .and_then(|heard| std::str::from_utf8(heard).ok())
+            .unwrap_or_default();
+        let unheard =
+            steer::inbox::keys(message).any(|key| !steer::inbox::keys(heard).any(|h| h == key));
+        if news && unheard {
+            for handle in self
+                .calls
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .values()
+            {
+                handle.interrupt();
+            }
         }
         if self.steer(message).is_ok() {
             *delivered = Some(rendered);
@@ -188,7 +205,7 @@ impl<W: Write + Send + 'static> Driver<W> {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .take();
-            self.deliver_inbox();
+            self.interject(false);
         }
         let completed = decoded
             .context()
