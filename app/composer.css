@@ -128,6 +128,9 @@
   opacity: .72;
 }
 .composer-vendor-icon--omp { opacity: .9; }
+.composer-vendor-badge circle { fill: var(--control); }
+.composer-vendor-icon--omp-claude .composer-vendor-badge { color: color-mix(in srgb, #d97706 88%, var(--ink)); }
+.composer-vendor-icon--omp-openai .composer-vendor-badge { color: var(--ink); }
 .composer-shard--primary:has(.agent-action-menu[open]) .composer-vendor-icon { display: none; }
 
 .team-surface .mosaic-composer {

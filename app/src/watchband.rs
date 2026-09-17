@@ -21,8 +21,10 @@ use wire::{CanonicalUuid, TaskHandle};
 use crate::runtime::LaneRow;
 
 mod renewal;
+mod vendor;
 
 pub use renewal::{AgentRenewalControl, agent_renewal_control};
+pub use vendor::{composer_vendor_icon_class, omp_provider};
 
 /// Accent slots the band cycles through.
 ///
@@ -200,17 +202,6 @@ pub fn standing_title(standing: &Standing) -> String {
         parts.push(format!("session: {session}"));
     }
     parts.join("; ")
-}
-
-/// Browser composer emblem class for a vendor with a known visual identity.
-#[must_use]
-pub fn composer_vendor_icon_class(vendor: &str) -> Option<&'static str> {
-    match vendor {
-        "claude" => Some("composer-vendor-icon--claude"),
-        "codex" | "openai" => Some("composer-vendor-icon--openai"),
-        "omp" => Some("composer-vendor-icon--omp"),
-        _ => None,
-    }
 }
 
 /// The fraction of a team's width, at either edge, that joins rather than
@@ -848,19 +839,9 @@ pub fn truncate(text: &str, budget: usize) -> String {
 mod tests {
     use super::{
         MAX_TEAM_VISUAL_WEIGHT, agent_activity_name, agent_boundary_label, agent_card_kind,
-        agent_message_attribution, agent_message_label, composer_vendor_icon_class,
-        team_visual_weight, ticker_accessible_label, ticker_chunks,
+        agent_message_attribution, agent_message_label, team_visual_weight,
+        ticker_accessible_label, ticker_chunks,
     };
-
-    #[test]
-    fn composer_icons_admit_only_known_vendor_identities() {
-        for vendor in ["claude", "codex", "openai", "omp"] {
-            assert!(composer_vendor_icon_class(vendor).is_some(), "{vendor}");
-        }
-        for vendor in ["", "agent", "gemini", "Claude", "open-ai"] {
-            assert_eq!(composer_vendor_icon_class(vendor), None, "{vendor}");
-        }
-    }
 
     #[test]
     fn unnamed_agent_attribution_still_names_author_lane_and_worktree() {
