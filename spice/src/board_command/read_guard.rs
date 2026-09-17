@@ -469,64 +469,50 @@ fn task_origin_threads<'a>(
     let mut sessions = std::collections::BTreeMap::new();
     let mut origins = std::collections::BTreeMap::new();
     for fact in facts {
-        match fact.fact.kind() {
-            wire::FactKind::LaneSessionDeclared => {
-                let lane = required_fact_uuid(fact, "lane")?;
-                let occupant = required_fact_uuid(fact, "occupant")?;
-                let identity = required_fact_text(fact, "identity")?;
-                sessions.insert((lane, occupant), identity.to_owned());
-            }
-            wire::FactKind::LaneStarted => {
-                occupants.insert(
-                    required_fact_uuid(fact, "lane")?,
-                    required_fact_uuid(fact, "occupant")?,
-                );
-            }
-            wire::FactKind::TaskAdded => {
-                let task = required_fact_text(fact, "task")?
-                    .parse::<wire::TaskStamp>()
-                    .map_err(|error| {
+        if let Some(declared) = fact.fact.read::<body::LaneSessionDeclared>() {
+            sessions.insert((declared.lane, declared.occupant), declared.identity);
+            continue;
+        }
+        if let Some(started) = fact.fact.read::<body::LaneStarted>() {
+            occupants.insert(started.lane, started.occupant);
+            continue;
+        }
+        let Some(added) = fact.fact.read::<body::TaskAdded>() else {
+            continue;
+        };
+        let actor = match fact.actor {
+            wire::Actor::Operator => "operator".to_owned(),
+            wire::Actor::Spice => "spice".to_owned(),
+            wire::Actor::Lane(lane) => {
+                let occupant = occupants.get(&lane).copied().or_else(|| {
+                    residency
+                        .lanes
+                        .iter()
+                        .find(|row| row.lane == lane && row.session.is_none())
+                        .and_then(|row| row.occupant)
+                });
+                let occupant = occupant.ok_or_else(|| {
+                    protocol_fault(
+                        "board::task-origin-occupant-missing",
+                        "a lane task has no authoritative creating occupant",
+                    )
+                })?;
+                match sessions.get(&(lane, occupant)) {
+                    Some(identity) => route_actor_identity(identity).ok_or_else(|| {
                         protocol_fault(
-                            "board::task-origin-fact-invalid",
-                            &format!("task creation fact has an invalid birth stamp: {error}"),
+                            "board::task-origin-session-invalid",
+                            "the creating vendor session identity cannot name an actor task route",
                         )
-                    })?;
-                let actor = match fact.actor {
-                    wire::Actor::Operator => "operator".to_owned(),
-                    wire::Actor::Spice => "spice".to_owned(),
-                    wire::Actor::Lane(lane) => {
-                        let occupant = occupants.get(&lane).copied().or_else(|| {
-                            residency
-                                .lanes
-                                .iter()
-                                .find(|row| row.lane == lane && row.session.is_none())
-                                .and_then(|row| row.occupant)
-                        });
-                        let occupant = occupant.ok_or_else(|| {
-                            protocol_fault(
-                                "board::task-origin-occupant-missing",
-                                "a lane task has no authoritative creating occupant",
-                            )
-                        })?;
-                        match sessions.get(&(lane, occupant)) {
-                            Some(identity) => route_actor_identity(identity).ok_or_else(|| {
-                                protocol_fault(
-                                    "board::task-origin-session-invalid",
-                                    "the creating vendor session identity cannot name an actor task route",
-                                )
-                            })?,
-                            None => occupant.to_string(),
-                        }
-                    }
-                };
-                if origins.insert(task.clone(), actor).is_some() {
-                    return Err(protocol_fault(
-                        "board::task-origin-duplicate",
-                        &format!("task {task} has more than one creation fact"),
-                    ));
+                    })?,
+                    None => occupant.to_string(),
                 }
             }
-            _ => {}
+        };
+        if origins.insert(added.task.clone(), actor).is_some() {
+            return Err(protocol_fault(
+                "board::task-origin-duplicate",
+                &format!("task {} has more than one creation fact", added.task),
+            ));
         }
     }
     Ok(origins)
@@ -693,37 +679,6 @@ fn task_contexts(
         }
     }
     (claims, git)
-}
-
-fn required_fact_uuid(
-    fact: &wire::Envelope<wire::AnyFact>,
-    field: &str,
-) -> Result<wire::CanonicalUuid, Outcome<CommandAnswer>> {
-    required_fact_text(fact, field)?.parse().map_err(|error| {
-        protocol_fault(
-            "board::task-origin-fact-invalid",
-            &format!(
-                "{} fact field {field} is invalid: {error}",
-                fact.fact.kind()
-            ),
-        )
-    })
-}
-
-fn required_fact_text<'a>(
-    fact: &'a wire::Envelope<wire::AnyFact>,
-    field: &str,
-) -> Result<&'a str, Outcome<CommandAnswer>> {
-    fact.fact
-        .body()
-        .get(field)
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| {
-            protocol_fault(
-                "board::task-origin-fact-invalid",
-                &format!("{} fact has no text field {field}", fact.fact.kind()),
-            )
-        })
 }
 
 pub(super) fn positioned<T: Clone>(head: &journal::JournalHead<T>) -> Positioned<T> {
