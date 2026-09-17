@@ -151,7 +151,7 @@ fn the_lanes_shell_is_registered_essential_in_place_of_omps_own_executors() {
     assert_eq!(frame["id"], "spice-tools");
     assert_eq!(frame["type"], "set_host_tools");
     let tools = frame["tools"].as_array().expect("a tool list");
-    assert_eq!(tools.len(), 1);
+    assert_eq!(tools.len(), 2);
     let shell = &tools[0];
     assert_eq!(shell["name"], omp::SHELL_TOOL);
     assert_eq!(shell["loadMode"], "essential");
@@ -183,6 +183,54 @@ fn the_lanes_shell_is_registered_essential_in_place_of_omps_own_executors() {
             .expect("prose")
             .contains("only way to execute"),
         "the model must learn the shell is the sole executor"
+    );
+    let job = &tools[1];
+    assert_eq!(job["name"], omp::JOB_TOOL);
+    assert_eq!(job["loadMode"], "essential");
+    assert_eq!(job["parameters"]["required"], serde_json::json!(["op"]));
+    assert_eq!(
+        job["parameters"]["properties"]["op"]["enum"],
+        serde_json::json!(["list", "logs", "wait", "stop"])
+    );
+    assert_eq!(job["parameters"]["properties"]["id"]["type"], "string");
+    assert_eq!(
+        job["parameters"]["properties"]["timeout"]["maximum"],
+        omp::SHELL_TIMEOUT_MAX
+    );
+}
+
+#[test]
+fn a_job_call_names_its_op_and_the_job_every_op_but_a_listing_needs() {
+    let arguments = |json: serde_json::Value| json.as_object().expect("an argument object").clone();
+    assert_eq!(
+        omp::JobCall::parse(&arguments(serde_json::json!({"op": "list"}))),
+        Ok(omp::JobCall {
+            op: omp::JobOp::List,
+            id: None,
+            timeout: Duration::from_secs(omp::SHELL_FOREGROUND),
+        })
+    );
+    assert_eq!(
+        omp::JobCall::parse(&arguments(
+            serde_json::json!({"op": "wait", "id": "0badcafe", "timeout": 999_999})
+        )),
+        Ok(omp::JobCall {
+            op: omp::JobOp::Wait,
+            id: Some("0badcafe".to_owned()),
+            timeout: Duration::from_secs(omp::SHELL_TIMEOUT_MAX),
+        })
+    );
+    assert_eq!(
+        omp::JobCall::parse(&arguments(serde_json::json!({"op": "stop"}))),
+        Err("job stop needs an id".to_owned())
+    );
+    assert_eq!(
+        omp::JobCall::parse(&arguments(serde_json::json!({"op": "restart", "id": "1"}))),
+        Err("job has no op restart".to_owned())
+    );
+    assert_eq!(
+        omp::JobCall::parse(&arguments(serde_json::json!({"id": "1"}))),
+        Err("job needs an op".to_owned())
     );
 }
 

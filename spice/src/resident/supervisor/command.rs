@@ -11,10 +11,13 @@
 //! the resident decides; a call on the lane's shell runs in the lane's own
 //! terminal and answers with what the command said; every other dialog is
 //! declined, since nobody at the lane can compose a choice or text for it.
-//! The resident reaches the driver
-//! through one datagram kick per inbox publication or consent answer; a lane
-//! with no command-driven occupant has nobody listening, and the kick is lost
-//! by design.
+//! Steering never waits on a command: a message arriving while a command
+//! runs interrupts the call, which answers with what the command said so
+//! far while the command keeps running as a job, and the job's ending is
+//! delivered as steering of its own when it comes. The resident reaches the
+//! driver through one datagram kick per inbox publication or consent answer;
+//! a lane with no command-driven occupant has nobody listening, and the kick
+//! is lost by design.
 
 use std::collections::HashMap;
 use std::fs;
@@ -25,12 +28,11 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use listen::{Decoded, Dialog, Event, TurnMoment};
 use serde::{Deserialize, Serialize};
-use sill::CancellationToken;
-use vendor::omp::ShellCall;
+use vendor::omp::{JobCall, ShellCall};
 use wire::CanonicalUuid;
 
 use super::super::RuntimePaths;
-use super::terminal::Terminal;
+use super::terminal::{Control, Handle, Job, Report, Run, Terminal};
 
 /// Bytes one kick datagram may carry: a consent answer names one request.
 const KICK_BYTES: usize = 256;
@@ -45,8 +47,14 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     asks: Mutex<HashMap<CanonicalUuid, String>>,
     /// Where the occupant's commands run, for an occupant that has a shell.
     terminal: Option<Terminal>,
-    /// The commands running now, by the host tool call each answers.
-    calls: Mutex<HashMap<String, CancellationToken>>,
+    /// The calls being answered now, by the host tool call each answers.
+    calls: Mutex<HashMap<String, Handle>>,
+}
+
+/// What one host tool call asks of the lane.
+enum Work {
+    Shell(ShellCall),
+    Job(JobCall),
 }
 
 /// A confirm dialog stated as the consent request the resident decides.
@@ -99,7 +107,9 @@ impl<W: Write + Send + 'static> Driver<W> {
     }
 
     /// Interject the rendered inbox unless it is empty, missing, or exactly
-    /// what the agent already received.
+    /// what the agent already received. Every call being answered is
+    /// interrupted first, so the message is read as soon as it is written
+    /// rather than once the command ends.
     pub(in crate::resident) fn deliver_inbox(&self) {
         let rendered = match fs::read(&self.inbox) {
             Ok(rendered) => rendered,
@@ -118,13 +128,23 @@ impl<W: Write + Send + 'static> Driver<W> {
         let Ok(message) = std::str::from_utf8(&rendered) else {
             return;
         };
-        let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
-        if self
-            .write(&vendor::omp::steer_request(sequence, message))
-            .is_ok()
+        for handle in self
+            .calls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
         {
+            handle.interrupt();
+        }
+        if self.steer(message).is_ok() {
             *delivered = Some(rendered);
         }
+    }
+
+    /// Interject one message as steering, in sequence with the inbox.
+    fn steer(&self, message: &str) -> io::Result<()> {
+        let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
+        self.write(&vendor::omp::steer_request(sequence, message))
     }
 
     /// Let one decoded record shape delivery, and state the consent request a
@@ -195,55 +215,45 @@ impl<W: Write + Send + 'static> Driver<W> {
         }
     }
 
-    /// Run one host tool call in the lane's terminal and answer it when the
-    /// command ends.
+    /// Answer one host tool call: a command run in the lane's terminal, or a
+    /// request on the lane's jobs.
     ///
-    /// The command runs on its own thread, so the stream the call arrived on
-    /// keeps being read: the withdrawal that ends the command early arrives
-    /// there. A tool the lane never registered, arguments that name no
-    /// command, or an occupant with no terminal are refused at once.
+    /// The work runs on its own thread, so the stream the call arrived on
+    /// keeps being read: the withdrawal that ends the call early and the
+    /// message that interrupts it arrive there. A tool the lane never
+    /// registered, arguments that name no command, or an occupant with no
+    /// terminal are refused at once.
     fn run(
         self: &Arc<Self>,
         id: &str,
         tool: &str,
         arguments: &serde_json::Map<String, serde_json::Value>,
     ) {
-        let call = if tool == vendor::omp::SHELL_TOOL {
-            ShellCall::parse(arguments)
-        } else {
-            Err(format!("{tool} is not a tool this lane registered"))
+        let work = match tool {
+            vendor::omp::SHELL_TOOL => ShellCall::parse(arguments).map(Work::Shell),
+            vendor::omp::JOB_TOOL => JobCall::parse(arguments).map(Work::Job),
+            _ => Err(format!("{tool} is not a tool this lane registered")),
         };
-        let (Some(terminal), Ok(call)) = (self.terminal.clone(), call.as_ref()) else {
-            let reason = call
-                .err()
-                .unwrap_or_else(|| "this lane has no terminal".to_owned());
-            let _refused = self.write(&vendor::omp::host_tool_refused(id, &reason));
-            return;
+        let (terminal, work) = match (self.terminal.clone(), work) {
+            (Some(terminal), Ok(work)) => (terminal, work),
+            (_, work) => {
+                let reason = work
+                    .err()
+                    .unwrap_or_else(|| "this lane has no terminal".to_owned());
+                let _refused = self.write(&vendor::omp::host_tool_refused(id, &reason));
+                return;
+            }
         };
-        let cancellation = CancellationToken::new();
+        let control = Control::new();
         self.calls
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(id.to_owned(), cancellation.clone());
+            .insert(id.to_owned(), control.handle());
         let driver = Arc::clone(self);
-        let call = call.clone();
         let answered = id.to_owned();
         let started = std::thread::Builder::new()
             .name("spice-shell".to_owned())
-            .spawn(move || {
-                let report = terminal.run(&call, cancellation);
-                driver
-                    .calls
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .remove(&answered);
-                let _answered = driver.write(&vendor::omp::host_tool_result(
-                    &answered,
-                    &report.output,
-                    report.exit_code,
-                    report.failed,
-                ));
-            });
+            .spawn(move || driver.resolve(&terminal, &answered, &work, &control));
         if let Err(error) = started {
             self.cancel(id);
             let _refused = self.write(&vendor::omp::host_tool_refused(
@@ -253,15 +263,51 @@ impl<W: Write + Send + 'static> Driver<W> {
         }
     }
 
-    /// End the command one withdrawn call is running, if it still runs.
+    /// Answer one call with what its work said, then deliver the ending of a
+    /// command the answer left running.
+    fn resolve(&self, terminal: &Terminal, id: &str, work: &Work, control: &Control) {
+        let (report, kept) = match work {
+            Work::Shell(call) => match terminal.run(call, control) {
+                Run::Ended(report) => (report, None),
+                Run::Backgrounded(report, job) => (report, Some(job)),
+            },
+            Work::Job(call) => (terminal.job(call, control), None),
+        };
+        self.calls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(id);
+        let _answered = self.write(&vendor::omp::host_tool_result(
+            id,
+            &report.output,
+            report.exit_code,
+            report.failed,
+        ));
+        if let Some(job) = kept {
+            self.deliver(&job, &terminal.follow(&job, control));
+        }
+    }
+
+    /// Deliver a kept command's ending as steering, in omp's own shape: the
+    /// job, then what it said and how it ended.
+    fn deliver(&self, job: &Job, report: &Report) {
+        let _delivered = self.steer(&format!(
+            "[job {}] {}\n{}",
+            job.id(),
+            job.command(),
+            report.output
+        ));
+    }
+
+    /// End the work one withdrawn call is being answered with, if it still runs.
     fn cancel(&self, id: &str) {
-        let cancellation = self
+        let handle = self
             .calls
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(id);
-        if let Some(cancellation) = cancellation {
-            cancellation.cancel();
+        if let Some(handle) = handle {
+            handle.cancel();
         }
     }
 
@@ -290,8 +336,8 @@ impl<W: Write + Send + 'static> Driver<W> {
         let _aborted = self.write(&vendor::omp::abort_request());
         let running =
             std::mem::take(&mut *self.calls.lock().unwrap_or_else(PoisonError::into_inner));
-        for cancellation in running.into_values() {
-            cancellation.cancel();
+        for handle in running.into_values() {
+            handle.cancel();
         }
         self.close();
     }
@@ -511,6 +557,17 @@ mod tests {
         }
     }
 
+    impl Scratch {
+        fn terminal(&self) -> Terminal {
+            Terminal::new(
+                "/bin/sh",
+                &self.0,
+                sill::Environment::empty(),
+                super::super::terminal::Jobs::new(self.0.join("jobs")),
+            )
+        }
+    }
+
     fn decoded(bytes: &[u8]) -> Decoded {
         listen::decode(Dialect::Omp, bytes, Locus::new(1, 0, bytes.len() as u64))
             .expect("matching locus")
@@ -616,7 +673,7 @@ mod tests {
     fn a_shell_call_runs_in_the_lanes_terminal_and_answers_with_what_it_said() {
         let scratch = Scratch::new("shell");
         let sink = Sink::default();
-        let terminal = Terminal::new("/bin/sh", &scratch.0, sill::Environment::empty());
+        let terminal = scratch.terminal();
         let driver = Driver::new(sink.clone(), scratch.inbox(), Some(terminal));
         assert!(
             driver
@@ -650,7 +707,7 @@ mod tests {
         driver.observe(&decoded(
             br#"{"type":"host_tool_call","id":"h2","toolCallId":"call_2","toolName":"deploy","arguments":{}}"#,
         ));
-        let terminal = Terminal::new("/bin/sh", &scratch.0, sill::Environment::empty());
+        let terminal = scratch.terminal();
         let driver = Driver::new(sink.clone(), scratch.inbox(), Some(terminal));
         driver.observe(&decoded(
             br#"{"type":"host_tool_call","id":"h3","toolCallId":"call_3","toolName":"shell","arguments":{"timeout":5}}"#,
@@ -677,7 +734,7 @@ mod tests {
     fn a_withdrawn_call_and_a_drain_end_the_commands_they_cover() {
         let scratch = Scratch::new("withdrawn");
         let sink = Sink::default();
-        let terminal = Terminal::new("/bin/sh", &scratch.0, sill::Environment::empty());
+        let terminal = scratch.terminal();
         let driver = Driver::new(sink.clone(), scratch.inbox(), Some(terminal));
         // `cat` on a closed stdin ends on its own; a fifo nobody opens does
         // not, so the command holds until it is ended.
@@ -723,6 +780,81 @@ mod tests {
         assert_eq!(
             all[1],
             serde_json::json!({"id": "spice-abort", "type": "abort"})
+        );
+    }
+
+    #[test]
+    fn a_message_backgrounds_the_running_command_and_its_ending_is_delivered_as_steering() {
+        let scratch = Scratch::new("steered");
+        let sink = Sink::default();
+        let driver = Driver::new(sink.clone(), scratch.inbox(), Some(scratch.terminal()));
+        let fifo = scratch.0.join("hold");
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .expect("mkfifo")
+                .success()
+        );
+        driver.observe(&decoded(
+            br#"{"type":"host_tool_call","id":"h1","toolCallId":"call_1","toolName":"shell","arguments":{"command":"cat hold"}}"#,
+        ));
+        fs::write(scratch.inbox(), "look at this").expect("inbox renders");
+        driver.deliver_inbox();
+
+        // The steer and the interrupted call's answer are written by two
+        // threads, so only their presence is fixed.
+        let frames = answered(&sink, 2);
+        assert!(frames.contains(&steer(1, "look at this")), "{frames:?}");
+        let answer = frames
+            .iter()
+            .find(|frame| frame["id"] == "h1")
+            .expect("the call is answered");
+        let text = answer["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text");
+        let (notice, job) = text
+            .split_once("Backgrounded as job ")
+            .expect("the answer names the job");
+        assert_eq!(
+            notice,
+            "Backgrounded early to handle an incoming message; the command keeps running.\n\n"
+        );
+        let job = job.trim_end_matches("; result will be delivered automatically.");
+        assert_eq!(
+            answer["result"]["details"]["exitCode"],
+            serde_json::Value::Null
+        );
+        assert!(
+            driver
+                .calls
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_empty()
+        );
+
+        driver.observe(&decoded(
+            format!(
+                r#"{{"type":"host_tool_call","id":"h2","toolCallId":"call_2","toolName":"job","arguments":{{"op":"stop","id":"{job}"}}}}"#
+            )
+            .as_bytes(),
+        ));
+        let frames = answered(&sink, 4);
+        assert_eq!(frames.len(), 4, "{frames:?}");
+        let stopped = frames
+            .iter()
+            .find(|frame| frame["id"] == "h2")
+            .expect("the stop is answered");
+        assert_eq!(
+            stopped["result"]["content"][0]["text"],
+            format!("[job {job}] cat hold\n\nCommand cancelled")
+        );
+        assert!(
+            frames.contains(&steer(
+                2,
+                &format!("[job {job}] cat hold\nCommand cancelled")
+            )),
+            "{frames:?}"
         );
     }
 

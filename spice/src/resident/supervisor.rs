@@ -1,6 +1,5 @@
 //! Detached lane supervisors that may outlive any resident generation.
 
-use std::ffi::{OsStr, OsString};
 use std::fs::File;
 #[cfg(not(test))]
 use std::fs::{self, OpenOptions};
@@ -26,6 +25,7 @@ use wire::CanonicalUuid;
 pub(super) mod command;
 pub(super) mod ending;
 #[cfg(unix)]
+mod entry;
 mod events;
 mod reporter;
 mod terminal;
@@ -37,6 +37,7 @@ use super::lane_surface::{
 };
 use super::{CommandResult, RuntimePaths, environment_fault, store_fault};
 #[cfg(unix)]
+pub(crate) use entry::entry;
 use events::StateEvents;
 #[cfg(all(unix, not(test)))]
 use events::StateSignal;
@@ -220,30 +221,6 @@ pub(super) enum Adoption {
     Exited(Launch),
     /// The supervisor could not preserve a safely adoptable agent.
     Failed(String),
-}
-
-/// Dispatch the hidden supervisor entry before normal CLI parsing.
-pub(crate) fn entry(arguments: impl IntoIterator<Item = OsString>) -> Option<i32> {
-    let mut arguments = arguments.into_iter();
-    let _executable = arguments.next()?;
-    if arguments.next().as_deref() != Some(OsStr::new(ENTRY)) {
-        return None;
-    }
-    let Some(request) = arguments.next() else {
-        eprintln!("lane supervisor request path is missing");
-        return Some(2);
-    };
-    if arguments.next().is_some() {
-        eprintln!("lane supervisor received unexpected arguments");
-        return Some(2);
-    }
-    Some(match run(Path::new(&request)) {
-        Ok(()) => 0,
-        Err(error) => {
-            eprintln!("lane supervisor failed: {error}");
-            1
-        }
-    })
 }
 
 /// Launch a new detached supervisor from this exact executable generation.
@@ -582,7 +559,8 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
     let git = launch.git;
     let proof = launch.session;
     let started_millis = now_millis()?;
-    let terminal = terminal::Terminal::from_spec(&launch.spec);
+    let jobs = terminal::Jobs::for_lane(&paths, request.lane);
+    let terminal = terminal::Terminal::from_launch(&launch.spec, jobs);
     let mut running = sill::spawn_observed(launch.spec, launch.observation)?;
     let group = running.id();
     let runtime = running.spec().deadlines.runtime();

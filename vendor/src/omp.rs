@@ -65,8 +65,17 @@ pub const TOOLS_REQUEST_ID: &str = "spice-tools";
 /// carries its own name; the model reaches it exactly as it would `bash`.
 pub const SHELL_TOOL: &str = "shell";
 
+/// Name of the host tool through which the model follows the commands the
+/// lane backgrounded.
+pub const JOB_TOOL: &str = "job";
+
 /// Seconds a shell command may run when the agent names no deadline.
 pub const SHELL_TIMEOUT_DEFAULT: u64 = 300;
+
+/// Seconds a shell command runs in the foreground before the lane keeps it
+/// as a job and answers with what it has said so far: omp's own
+/// auto-background threshold, so the model's habit carries over.
+pub const SHELL_FOREGROUND: u64 = 60;
 
 /// Tightest deadline the agent may ask for, in seconds.
 pub const SHELL_TIMEOUT_MIN: u64 = 1;
@@ -79,10 +88,26 @@ pub const SHELL_TIMEOUT_MAX: u64 = 3600;
 const SHELL_DESCRIPTION: &str = "Runs one shell command in the worktree and returns its \
 output. This is the only way to execute anything: the lane runs the command in its own \
 environment and ends it at the deadline. Chain order-dependent commands with `&&`. Output \
-is bounded, so narrow it in the command itself rather than paging with `head` or `tail`.";
+is bounded, so narrow it in the command itself rather than paging with `head` or `tail`. A \
+command still running after 60 seconds, or when a message arrives for you, is kept as a \
+job: you get its output so far at once, it keeps running, and its result is delivered \
+automatically when it ends.";
 
 /// What the model reads about the command parameter.
 const SHELL_COMMAND_DESCRIPTION: &str = "command to execute";
+
+/// What the model reads about the lane's job tool.
+const JOB_DESCRIPTION: &str = "Follows the commands the shell kept as jobs. A job's result \
+is delivered automatically when it ends, so you never need to poll: use `list` to see every \
+job, `logs` to read what one has said so far, `stop` to end one, and `wait` only when you \
+are blocked on one. A wait returns when the job ends, when the timeout elapses, or when a \
+message arrives for you; the job keeps running.";
+
+/// What the model reads about the job operation parameter.
+const JOB_OP_DESCRIPTION: &str = "what to do: list, logs, wait, or stop";
+
+/// What the model reads about the job identity parameter.
+const JOB_ID_DESCRIPTION: &str = "the job, as the shell named it; required except for list";
 
 /// Width of the fixed title slot that opens every omp session file.
 const TITLE_SLOT_BYTES: usize = 256;
@@ -392,11 +417,23 @@ struct Request {
 
 /// The `set_host_tools` command that registers the lane's shell.
 ///
-/// The tool is essential, so it sits in the model's top-level schema rather
+/// The shell is essential, so it sits in the model's top-level schema rather
 /// than behind discovery, and its parameters are the two omp's own `bash`
-/// makes load-bearing: the command and its deadline.
+/// makes load-bearing: the command and its deadline. The job tool follows
+/// what the shell kept running.
 #[must_use]
 pub fn host_tools_request() -> Vec<u8> {
+    let timeout = |default: u64| {
+        serde_json::json!({
+            "type": "integer",
+            "minimum": SHELL_TIMEOUT_MIN,
+            "maximum": SHELL_TIMEOUT_MAX,
+            "description": format!(
+                "deadline in seconds; omitted means {default}, and \
+                 values are clamped to {SHELL_TIMEOUT_MIN}-{SHELL_TIMEOUT_MAX}"
+            ),
+        })
+    };
     request_line(&serde_json::json!({
         "id": TOOLS_REQUEST_ID,
         "type": "set_host_tools",
@@ -408,22 +445,101 @@ pub fn host_tools_request() -> Vec<u8> {
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "description": SHELL_COMMAND_DESCRIPTION},
-                    "timeout": {
-                        "type": "integer",
-                        "minimum": SHELL_TIMEOUT_MIN,
-                        "maximum": SHELL_TIMEOUT_MAX,
-                        "description": format!(
-                            "deadline in seconds; omitted means {SHELL_TIMEOUT_DEFAULT}, and \
-                             values are clamped to {SHELL_TIMEOUT_MIN}-{SHELL_TIMEOUT_MAX}"
-                        ),
-                    },
+                    "timeout": timeout(SHELL_TIMEOUT_DEFAULT),
                 },
                 "required": ["command"],
                 "additionalProperties": false,
             },
             "loadMode": "essential",
+        }, {
+            "name": JOB_TOOL,
+            "label": "Job",
+            "description": JOB_DESCRIPTION,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "op": {
+                        "type": "string",
+                        "enum": ["list", "logs", "wait", "stop"],
+                        "description": JOB_OP_DESCRIPTION,
+                    },
+                    "id": {"type": "string", "description": JOB_ID_DESCRIPTION},
+                    "timeout": timeout(SHELL_FOREGROUND),
+                },
+                "required": ["op"],
+                "additionalProperties": false,
+            },
+            "loadMode": "essential",
         }],
     }))
+}
+
+/// What the model asks of one job.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum JobOp {
+    List,
+    Logs,
+    Wait,
+    Stop,
+}
+
+/// One request on the lane's jobs.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JobCall {
+    pub op: JobOp,
+    /// The job named, absent only for a listing.
+    pub id: Option<String>,
+    /// How long a wait may last before it answers with the job still running.
+    pub timeout: Duration,
+}
+
+impl JobCall {
+    /// Read a call from the arguments a `host_tool_call` frame carried.
+    ///
+    /// # Errors
+    ///
+    /// Returns the refusal text when the operation is unknown or the job
+    /// it needs is unnamed.
+    pub fn parse(arguments: &serde_json::Map<String, serde_json::Value>) -> Result<Self, String> {
+        let op = match arguments.get("op").and_then(serde_json::Value::as_str) {
+            Some("list") => JobOp::List,
+            Some("logs") => JobOp::Logs,
+            Some("wait") => JobOp::Wait,
+            Some("stop") => JobOp::Stop,
+            Some(other) => return Err(format!("job has no op {other}")),
+            None => return Err("job needs an op".to_owned()),
+        };
+        let id = arguments
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
+        if op != JobOp::List && id.is_none() {
+            return Err(format!("job {} needs an id", op.name()));
+        }
+        let timeout = arguments
+            .get("timeout")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(SHELL_FOREGROUND)
+            .clamp(SHELL_TIMEOUT_MIN, SHELL_TIMEOUT_MAX);
+        Ok(Self {
+            op,
+            id,
+            timeout: Duration::from_secs(timeout),
+        })
+    }
+}
+
+impl JobOp {
+    /// The operation as the model spells it.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::List => "list",
+            Self::Logs => "logs",
+            Self::Wait => "wait",
+            Self::Stop => "stop",
+        }
+    }
 }
 
 /// One shell command the agent asked the lane to run.

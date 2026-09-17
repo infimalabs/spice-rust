@@ -55,14 +55,14 @@ impl ExitSender for mpsc::SyncSender<()> {
     }
 }
 
-pub(super) struct DirectObserver {
+pub(in crate::resident) struct DirectObserver {
     descriptor: libc::c_int,
     #[cfg(target_os = "macos")]
     watched: libc::c_int,
 }
 
 impl DirectObserver {
-    pub(super) fn arm(watched: &Path) -> io::Result<Self> {
+    pub(in crate::resident) fn arm(watched: &Path) -> io::Result<Self> {
         #[cfg(target_os = "linux")]
         return linux_directory_observer(watched);
         #[cfg(target_os = "macos")]
@@ -74,7 +74,12 @@ impl DirectObserver {
         ))
     }
 
-    fn wait(self) -> io::Result<()> {
+    /// Block until the watched directory changes once.
+    ///
+    /// # Errors
+    ///
+    /// Returns the kernel's refusal to deliver the change.
+    pub(in crate::resident) fn wait(self) -> io::Result<()> {
         #[cfg(target_os = "linux")]
         return wait_linux_directory(self.descriptor);
         #[cfg(target_os = "macos")]
