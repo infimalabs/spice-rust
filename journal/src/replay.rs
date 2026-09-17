@@ -1074,14 +1074,11 @@ fn verify_receipt(row: &ReceiptRow, violations: &mut Vec<Violation>) {
             return;
         }
     };
-    let kind = serde_json::from_slice::<serde_json::Value>(&row.request)
-        .ok()
-        .and_then(|value| value["kind"].as_str().map(str::to_owned));
     let canonical_agrees = command
         .canonical_json()
         .is_ok_and(|canonical| canonical.as_bytes() == row.request);
     if command.id.to_string() != row.id
-        || kind.as_deref() != Some(row.kind.as_str())
+        || command.kind.as_str() != row.kind
         || !command.v.is_current()
         || !canonical_agrees
         || row.actor.parse::<wire::Actor>().is_err()
