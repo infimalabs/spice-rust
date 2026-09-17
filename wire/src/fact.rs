@@ -66,16 +66,11 @@ impl fmt::Display for Producer {
     }
 }
 
-mod sealed {
-    /// Closes [`super::Body`] to the registered vocabulary.
-    pub trait Registered {}
-}
-
 /// A body DTO registered against exactly one kind.
 ///
 /// The trait is sealed: the vocabulary is closed, so a type outside this crate
 /// cannot register itself as a body and no kind can acquire a second one.
-pub trait Body: sealed::Registered + Serialize + serde::de::DeserializeOwned {
+pub trait Body: sealed::Registered + Serialize + serde::de::DeserializeOwned + Clone {
     /// The one kind this body is registered against.
     const KIND: FactKind;
 }
@@ -130,23 +125,45 @@ macro_rules! vocabulary {
                 }
             }
 
-            /// Validate an opaque body through the DTO registered for this kind.
-            pub(crate) fn validate_body(
+            /// Decode an opaque body through the DTO registered for this kind.
+            pub(crate) fn decode_body(
                 self,
                 body: &serde_json::Map<String, serde_json::Value>,
-            ) -> Result<(), serde_json::Error> {
+            ) -> Result<sealed::RegisteredBody, serde_json::Error> {
                 match self {
                     $(
                         Self::$variant => {
-                            decode_registered_body::<registered_body!($variant)>(body).map(drop)
+                            decode_registered_body::<registered_body!($variant)>(body)
+                                .map(sealed::RegisteredBody::$variant)
                         }
                     )+
                 }
             }
         }
 
+        mod sealed {
+            /// One registered body, decoded once from the fields it arrived as.
+            #[derive(Debug, Clone, PartialEq, Eq)]
+            pub enum RegisteredBody {
+                $($variant(registered_body!($variant)),)+
+            }
+
+            /// Closes [`super::Body`] to the registered vocabulary and lets each
+            /// registered DTO recognise itself inside a decoded body.
+            pub trait Registered: Sized {
+                fn registered(decoded: &RegisteredBody) -> Option<&Self>;
+            }
+        }
+
         $(
-            impl sealed::Registered for registered_body!($variant) {}
+            impl sealed::Registered for registered_body!($variant) {
+                fn registered(decoded: &sealed::RegisteredBody) -> Option<&Self> {
+                    match decoded {
+                        sealed::RegisteredBody::$variant(body) => Some(body),
+                        _ => None,
+                    }
+                }
+            }
 
             impl Body for registered_body!($variant) {
                 const KIND: FactKind = FactKind::$variant;
@@ -417,8 +434,8 @@ pub(crate) fn decode_registered_body<F: Body>(
 /// Read a body through its registered DTO, borrowing the fields as they stand.
 ///
 /// Nothing is cloned and nothing is re-serialized: construction follows this
-/// with one re-serialization to prove the fields round-trip exactly, and every
-/// later read of a validated body is only this decode.
+/// with one re-serialization to prove the fields round-trip exactly, and the
+/// decode is kept so no later read repeats it.
 pub(crate) fn read_registered_body<F: Body>(
     body: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<F, serde_json::Error> {
@@ -467,10 +484,11 @@ impl<'de, F: Body> Deserialize<'de> for Fact<F> {
 ///
 /// This gives up nothing the registration was protecting. The vocabulary is
 /// enforced where a fact is minted and where a typed consumer decodes one; a
-/// reader validates the body through that kind's registered DTO before keeping
-/// its fields opaque. It can re-encode a stored row for canonical verification,
-/// but its private fields prevent callers from inventing or mutating an opaque
-/// fact and sending it as a typed one.
+/// reader decodes the body through that kind's registered DTO once, keeps the
+/// fields as they arrived, and answers every later typed read from that one
+/// decode. It can re-encode a stored row for canonical verification, but its
+/// private fields prevent callers from inventing or mutating an opaque fact
+/// and sending it as a typed one.
 ///
 /// An unchecked opaque fact cannot be constructed:
 ///
@@ -484,21 +502,25 @@ impl<'de, F: Body> Deserialize<'de> for Fact<F> {
 pub struct AnyFact {
     /// Discriminant from the closed vocabulary, refused if it is not one.
     kind: FactKind,
-    /// The remaining fields, validated once and then uninterpreted.
+    /// The remaining fields as they arrived on the wire.
     #[serde(flatten)]
     body: serde_json::Map<String, serde_json::Value>,
+    /// Those fields decoded once through the kind's registered DTO.
+    #[serde(skip)]
+    decoded: sealed::RegisteredBody,
 }
 
 impl<'de> Deserialize<'de> for AnyFact {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let unchecked = UncheckedFact::deserialize(deserializer)?;
-        unchecked
+        let decoded = unchecked
             .kind
-            .validate_body(&unchecked.body)
+            .decode_body(&unchecked.body)
             .map_err(D::Error::custom)?;
         Ok(Self {
             kind: unchecked.kind,
             body: unchecked.body,
+            decoded,
         })
     }
 }
@@ -516,14 +538,13 @@ impl AnyFact {
         &self.body
     }
 
-    /// This body decoded as `F`, when `F` is registered against this kind.
+    /// This body as `F`, when `F` is registered against this kind.
     ///
     /// Naming the wrong body type is the only thing a caller can get wrong here,
-    /// and it answers [`None`]. The decode behind it cannot fail: an [`AnyFact`]
-    /// is only ever built by its [`Deserialize`] impl, and that impl runs the
-    /// kind's registered DTO across these exact fields before keeping them, so
-    /// reading them back through that DTO repeats a decode that already
-    /// succeeded on the same bytes.
+    /// and it answers [`None`]. Nothing is decoded: an [`AnyFact`] is only ever
+    /// built by its [`Deserialize`] impl, and that impl ran the kind's
+    /// registered DTO across these exact fields before keeping them, so this
+    /// hands back a copy of that one decode.
     ///
     /// This is why a caller pairs no error arm with this call. A reader that
     /// wrote one would be describing a corrupt body the store cannot hold, and
@@ -542,13 +563,7 @@ impl AnyFact {
     /// ```
     #[must_use]
     pub fn read<F: Body>(&self) -> Option<F> {
-        if self.kind != F::KIND {
-            return None;
-        }
-        Some(
-            read_registered_body(&self.body)
-                .expect("a body validated on decode reads back through its registered DTO"),
-        )
+        F::registered(&self.decoded).cloned()
     }
 }
 

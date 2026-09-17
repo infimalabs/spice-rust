@@ -862,7 +862,7 @@ mod tests {
                 Media::admit(
                     "capture.png",
                     "image/png",
-                    &format!("data:image/png;base64,{spelling}"),
+                    format!("data:image/png;base64,{spelling}"),
                 )
                 .unwrap_err(),
                 MediaError::Base64,

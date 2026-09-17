@@ -779,7 +779,8 @@ impl<'de> Deserialize<'de> for StreamFactBody {
         } else {
             unchecked
                 .kind
-                .validate_body(&unchecked.body)
+                .decode_body(&unchecked.body)
+                .map(drop)
                 .map_err(serde::de::Error::custom)?;
         }
         Ok(Self {
