@@ -103,6 +103,17 @@ pub(crate) fn session_turn(message: Option<&Object>) -> Option<TurnMoment> {
     }
 }
 
+/// The dialog one RPC frame opens that waits on an answer: a select, confirm,
+/// input, or editor request. Notices, status, widgets, titles, and URL
+/// openings expect no reply.
+pub(crate) fn dialog(record: &Object) -> Option<String> {
+    let field = |key: &str| record.get(key).and_then(Value::as_str);
+    (field("type")? == "extension_ui_request"
+        && matches!(field("method")?, "select" | "confirm" | "input" | "editor"))
+    .then(|| field("id").map(str::to_owned))
+    .flatten()
+}
+
 pub(crate) fn decode(record: &Object, locus: Locus) -> Events {
     match string(record, "type")? {
         "message_end" | "message" => message(object(record, "message")?, locus),

@@ -4,11 +4,12 @@
 //! A vendor launched over a command stream reads nothing from its arguments
 //! after start. The supervisor owns the pipe: it writes the opening request
 //! the vendor contract composed, interjects this lane's rendered steering
-//! inbox whenever the resident republishes it, and drops the pipe once the
-//! agent's turn completes so the child drains and exits on its own. The
-//! resident reaches the driver through one datagram kick per publication;
-//! a lane with no command-driven occupant has nobody listening, and the kick
-//! is lost by design.
+//! inbox whenever the resident republishes it, declines any dialog the agent
+//! opens because nobody at the lane can see it, and drops the
+//! pipe once the agent's turn completes so the child drains and exits on its
+//! own. The resident reaches the driver through one datagram kick per
+//! publication; a lane with no command-driven occupant has nobody listening,
+//! and the kick is lost by design.
 
 use std::fs;
 use std::io::{self, Write};
@@ -80,11 +81,18 @@ impl<W: Write + Send> Driver<W> {
 
     /// Let one decoded record shape delivery.
     ///
-    /// A compaction discards what the agent was told, so the standing inbox
-    /// is interjected again; the end of the agent's turn ends its input, so
-    /// the child drains and exits rather than idling for a prompt nobody
-    /// sends.
+    /// A dialog the agent opens is declined at once, since no operator sees
+    /// a lane's prompts and the turn would otherwise hold. A
+    /// compaction discards what the agent was told, so the standing inbox is
+    /// interjected again; the end of the agent's turn ends its input, so the
+    /// child drains and exits rather than idling for a prompt nobody sends.
     pub(in crate::resident) fn observe(&self, decoded: &Decoded) {
+        let dialog = decoded
+            .context()
+            .and_then(|context| context.dialog.as_deref());
+        if let Some(dialog) = dialog {
+            let _declined = self.write(&vendor::omp::dialog_declined(dialog));
+        }
         let compacted = decoded
             .events()
             .iter()
@@ -329,6 +337,27 @@ mod tests {
                 steer(2, "<key>\ndirective=d2\ngo\n</key>\n"),
                 steer(3, "<key>\ndirective=d2\ngo\n</key>\n"),
             ]
+        );
+    }
+
+    #[test]
+    fn a_dialog_nobody_can_see_is_declined_while_notices_pass() {
+        let scratch = Scratch::new("dialog");
+        let sink = Sink::default();
+        let driver = Driver::new(sink.clone(), scratch.inbox());
+        driver.observe(&decoded(
+            br#"{"type":"extension_ui_request","id":"7","method":"notify","message":"hi"}"#,
+        ));
+        driver.observe(&decoded(
+            br#"{"type":"extension_ui_request","id":"8","method":"select","title":"Which?","options":["a","b"]}"#,
+        ));
+        assert_eq!(
+            sink.frames(),
+            [serde_json::json!({
+                "type": "extension_ui_response",
+                "id": "8",
+                "cancelled": true,
+            })]
         );
     }
 

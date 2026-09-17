@@ -177,6 +177,34 @@ fn compaction_and_refusals_are_typed_while_lifecycle_frames_stay_silent() {
 }
 
 #[test]
+fn dialogs_that_wait_on_an_answer_are_named_while_notices_are_not() {
+    let dialog = |bytes: &[u8]| {
+        let decoded = decoded(bytes);
+        assert!(decoded.events().is_empty(), "a dialog frame is silent");
+        decoded.context().and_then(|context| context.dialog.clone())
+    };
+    assert_eq!(
+        dialog(br#"{"type":"extension_ui_request","id":"8","method":"select","title":"Which?","options":["a"]}"#),
+        Some("8".to_owned())
+    );
+    assert_eq!(
+        dialog(br#"{"type":"extension_ui_request","id":"9","method":"confirm","title":"Sure?","message":"m"}"#),
+        Some("9".to_owned())
+    );
+    assert_eq!(
+        dialog(br#"{"type":"extension_ui_request","id":"10","method":"notify","message":"hi"}"#),
+        None
+    );
+    assert_eq!(
+        dialog(
+            br#"{"type":"extension_ui_request","id":"11","method":"open_url","url":"https://x"}"#
+        ),
+        None
+    );
+    assert_eq!(dialog(br#"{"type":"agent_start"}"#), None);
+}
+
+#[test]
 fn the_session_file_reads_under_the_same_dialect() {
     let session = decoded(TRANSCRIPT_SESSION);
     assert!(matches!(

@@ -27,6 +27,9 @@ pub struct RecordContext {
     pub turn: Option<TurnMoment>,
     /// Model context window advertised on this record, when present.
     pub model_context_window: Option<u64>,
+    /// Identity of the vendor dialog this record opened that waits on an
+    /// answer, when it opened one.
+    pub dialog: Option<String>,
 }
 
 /// Result of decoding one complete record.

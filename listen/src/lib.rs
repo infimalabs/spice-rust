@@ -400,6 +400,9 @@ fn record_context(dialect: Dialect, record: &Object) -> Result<RecordContext, Re
         turn_id,
         turn,
         model_context_window,
+        dialog: (dialect == Dialect::Omp)
+            .then(|| omp::dialog(record))
+            .flatten(),
     })
 }
 

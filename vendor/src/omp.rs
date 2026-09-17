@@ -247,6 +247,22 @@ pub fn steer_request(sequence: u64, message: &str) -> Vec<u8> {
     })
 }
 
+/// The decline of a dialog nobody at this lane can see.
+///
+/// omp holds a turn on a select, confirm, input, or editor request until it
+/// is answered. Declining is what an operator's escape would say: a select
+/// or input reads as nothing chosen and a confirm reads false, so the agent
+/// carries on instead of waiting for an operator who is not there. Until
+/// dialogs are surfaced as consent asks, no lane answers otherwise.
+#[must_use]
+pub fn dialog_declined(id: &str) -> Vec<u8> {
+    request_line(&DialogResponse {
+        kind: "extension_ui_response",
+        id,
+        cancelled: true,
+    })
+}
+
 /// Launch omp through the sole `sill` process door.
 ///
 /// The returned child has a piped stdin the caller must feed with
@@ -265,13 +281,21 @@ pub fn launch(
     sill::spawn(record.spec(process)).map_err(LaunchError::Spawn)
 }
 
-fn request_line(request: &Request) -> Vec<u8> {
+fn request_line(request: &impl Serialize) -> Vec<u8> {
     let mut line = serde_json::to_vec(request).expect("an RPC request is representable as JSON");
     line.push(b'\n');
     line
 }
 
-/// omp reads these key-for-key, so the type declares its own order.
+/// omp reads these key-for-key, so the types declare their own order.
+#[derive(Serialize)]
+struct DialogResponse<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    id: &'a str,
+    cancelled: bool,
+}
+
 #[derive(Serialize)]
 struct Request {
     id: String,
