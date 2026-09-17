@@ -20,6 +20,8 @@ use super::*;
 mod canvas_announcement;
 #[path = "tests/closed_transcript.rs"]
 mod closed_transcript;
+#[path = "tests/lane_consent.rs"]
+mod lane_consent;
 #[path = "tests/media.rs"]
 mod media;
 #[path = "tests/message_backlog.rs"]

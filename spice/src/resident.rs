@@ -168,6 +168,7 @@ fn is_simulated_lane(lane: &wire::LaneResidency) -> bool {
 
 mod capture;
 mod command_surface;
+mod consent_surface;
 mod daemon;
 mod lane_recovery;
 mod lane_surface;

@@ -818,9 +818,7 @@ fn accept_supervisor_report(
         );
     }
     let residency = current_residency(bus, epoch)?;
-    let Some(record) =
-        capture::materialize(command_surface.paths, residency.body(), notice, diagnostic)?
-    else {
+    let Some(record) = accept_ask(command_surface, residency.body(), notice, diagnostic)? else {
         return Ok(());
     };
     accept_record(
@@ -834,6 +832,33 @@ fn accept_supervisor_report(
         message_state,
         diagnostic,
     )
+}
+
+/// Decide a lane's consent request, or hand every other notice on as the
+/// record it carries.
+fn accept_ask(
+    command_surface: &command_surface::Surface<'_>,
+    residency: &wire::ResidencyHead,
+    notice: super::supervisor::Notice,
+    diagnostic: &mut dyn io::Write,
+) -> CommandResult<Option<lane::capture::CaptureRecord>> {
+    let super::supervisor::Notice::Asked {
+        lane,
+        occupant,
+        request,
+        operation,
+    } = notice
+    else {
+        return capture::materialize(command_surface.paths, residency, notice, diagnostic);
+    };
+    let ask = consent_surface::LaneAsk {
+        lane,
+        occupant,
+        request,
+        operation,
+    };
+    let asked = command_surface.ask_consent(residency, ask, diagnostic);
+    super::deferral::defer_store_fault(asked, diagnostic, "lane consent").map(|()| None)
 }
 
 /// Settle one finished taste adjudication with its submitter and the journal.

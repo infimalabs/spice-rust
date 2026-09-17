@@ -247,19 +247,33 @@ pub fn steer_request(sequence: u64, message: &str) -> Vec<u8> {
     })
 }
 
-/// The decline of a dialog nobody at this lane can see.
+/// The decline of a dialog nobody at this lane can compose an answer to.
 ///
-/// omp holds a turn on a select, confirm, input, or editor request until it
-/// is answered. Declining is what an operator's escape would say: a select
-/// or input reads as nothing chosen and a confirm reads false, so the agent
-/// carries on instead of waiting for an operator who is not there. Until
-/// dialogs are surfaced as consent asks, no lane answers otherwise.
+/// omp holds a turn on a select, input, or editor request until it is
+/// answered. Declining is what an operator's escape would say: nothing was
+/// chosen or typed, so the agent carries on instead of waiting for an
+/// operator who is not there.
 #[must_use]
 pub fn dialog_declined(id: &str) -> Vec<u8> {
     request_line(&DialogResponse {
         kind: "extension_ui_response",
         id,
-        cancelled: true,
+        cancelled: Some(true),
+        confirmed: None,
+    })
+}
+
+/// The answer to a confirm dialog, once consent has ruled on it.
+///
+/// A confirm holds the turn exactly as any other dialog does, but it asks a
+/// yes-or-no question, so a consent grant answers yes and a denial answers no.
+#[must_use]
+pub fn dialog_confirmed(id: &str, confirmed: bool) -> Vec<u8> {
+    request_line(&DialogResponse {
+        kind: "extension_ui_response",
+        id,
+        cancelled: None,
+        confirmed: Some(confirmed),
     })
 }
 
@@ -293,7 +307,10 @@ struct DialogResponse<'a> {
     #[serde(rename = "type")]
     kind: &'static str,
     id: &'a str,
-    cancelled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cancelled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    confirmed: Option<bool>,
 }
 
 #[derive(Serialize)]

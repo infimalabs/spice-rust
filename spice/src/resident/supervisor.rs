@@ -80,6 +80,14 @@ pub(super) enum Notice {
         occupant: CanonicalUuid,
         failure: String,
     },
+    /// The occupant opened a confirm dialog, stated here as one consent
+    /// request; the answer returns through the lane's kick door.
+    Asked {
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        request: CanonicalUuid,
+        operation: String,
+    },
 }
 
 #[derive(Deserialize, Serialize)]

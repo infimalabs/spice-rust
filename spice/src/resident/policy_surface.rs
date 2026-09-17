@@ -49,9 +49,11 @@ pub(super) fn policy(reads: &CurrentReads, policy: &consent::Policy) -> Outcome<
     })
 }
 
+/// Rule on one queued request, and let the ruling reach the lane that asked.
 pub(super) fn decide(
     bus: &Bus,
     reads: &CurrentReads,
+    paths: &super::RuntimePaths,
     epoch: CanonicalUuid,
     policy: &consent::Policy,
     command: &wire::AdmittedCommand,
@@ -85,7 +87,12 @@ pub(super) fn decide(
     if let Err(error) = consent_receipt(&mut proposal, command, decide, epoch, &answer) {
         return typed_store_fault("consent::receipt-invalid", &error.to_string());
     }
-    committed_answer(bus, proposal, CommandAnswer::Consent(answer))
+    let outcome = committed_answer(bus, proposal, CommandAnswer::Consent(answer));
+    if matches!(outcome, Outcome::Reply(_)) {
+        let confirmed = decide.answer == wire::Answer::Granted;
+        super::supervisor::command::answer(paths, pending.lane(), decide.request, confirmed);
+    }
+    outcome
 }
 
 pub(super) fn trust_rule(
@@ -273,7 +280,8 @@ fn admit_decision(
     Ok(generation)
 }
 
-fn consent_guard(expected: wire::Seq) -> JournalGuard {
+/// Hold a consent write to the generation whose queue decided it.
+pub(super) fn consent_guard(expected: wire::Seq) -> JournalGuard {
     JournalGuard::new(move |read| {
         let observed = read.cursor()?;
         if observed != Some(expected) {

@@ -4,23 +4,30 @@
 //! A vendor launched over a command stream reads nothing from its arguments
 //! after start. The supervisor owns the pipe: it writes the opening request
 //! the vendor contract composed, interjects this lane's rendered steering
-//! inbox whenever the resident republishes it, declines any dialog the agent
-//! opens because nobody at the lane can see it, and drops the
-//! pipe once the agent's turn completes so the child drains and exits on its
-//! own. The resident reaches the driver through one datagram kick per
-//! publication; a lane with no command-driven occupant has nobody listening,
-//! and the kick is lost by design.
+//! inbox whenever the resident republishes it, answers the dialogs the agent
+//! opens, and drops the pipe once the agent's turn completes so the child
+//! drains and exits on its own. A confirm dialog becomes one consent request
+//! the resident decides; every other dialog is declined, since nobody at the
+//! lane can compose a choice or text for it. The resident reaches the driver
+//! through one datagram kick per inbox publication or consent answer; a lane
+//! with no command-driven occupant has nobody listening, and the kick is lost
+//! by design.
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use listen::{Decoded, Event, TurnMoment};
+use listen::{Decoded, Dialog, Event, TurnMoment};
+use serde::{Deserialize, Serialize};
 use wire::CanonicalUuid;
 
 use super::super::RuntimePaths;
+
+/// Bytes one kick datagram may carry: a consent answer names one request.
+const KICK_BYTES: usize = 256;
 
 /// One child's command stream and what has already been said on it.
 pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin> {
@@ -28,6 +35,27 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     inbox: PathBuf,
     sequence: AtomicU64,
     delivered: Mutex<Option<Vec<u8>>>,
+    /// The confirm dialog each open consent request will answer.
+    asks: Mutex<HashMap<CanonicalUuid, String>>,
+}
+
+/// A confirm dialog stated as the consent request the resident decides.
+pub(in crate::resident) struct Ask {
+    pub(in crate::resident) request: CanonicalUuid,
+    pub(in crate::resident) operation: String,
+}
+
+/// What one datagram at the lane's kick door says.
+#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(in crate::resident) enum Kick {
+    /// The lane's steering inbox was republished.
+    Inbox,
+    /// Consent ruled on a request the occupant raised.
+    Answer {
+        request: CanonicalUuid,
+        confirmed: bool,
+    },
 }
 
 impl<W: Write + Send> Driver<W> {
@@ -38,6 +66,7 @@ impl<W: Write + Send> Driver<W> {
             inbox: inbox.into(),
             sequence: AtomicU64::new(0),
             delivered: Mutex::new(None),
+            asks: Mutex::new(HashMap::new()),
         })
     }
 
@@ -79,20 +108,27 @@ impl<W: Write + Send> Driver<W> {
         }
     }
 
-    /// Let one decoded record shape delivery.
+    /// Let one decoded record shape delivery, and state the consent request a
+    /// confirm dialog raises.
     ///
-    /// A dialog the agent opens is declined at once, since no operator sees
-    /// a lane's prompts and the turn would otherwise hold. A
+    /// A confirm holds the turn until consent answers it through
+    /// [`Self::answer`]; any other dialog is declined at once, since no
+    /// operator sees a lane's prompts and the turn would otherwise hold. A
     /// compaction discards what the agent was told, so the standing inbox is
     /// interjected again; the end of the agent's turn ends its input, so the
     /// child drains and exits rather than idling for a prompt nobody sends.
-    pub(in crate::resident) fn observe(&self, decoded: &Decoded) {
-        let dialog = decoded
+    pub(in crate::resident) fn observe(&self, decoded: &Decoded) -> Option<Ask> {
+        let asked = match decoded
             .context()
-            .and_then(|context| context.dialog.as_ref());
-        if let Some(dialog) = dialog {
-            let _declined = self.write(&vendor::omp::dialog_declined(dialog.id()));
-        }
+            .and_then(|context| context.dialog.as_ref())
+        {
+            Some(Dialog::Confirm { id, title, message }) => Some(self.ask(id, title, message)),
+            Some(dialog) => {
+                let _declined = self.write(&vendor::omp::dialog_declined(dialog.id()));
+                None
+            }
+            None => None,
+        };
         let compacted = decoded
             .events()
             .iter()
@@ -110,6 +146,38 @@ impl<W: Write + Send> Driver<W> {
             .is_some_and(|turn| turn == TurnMoment::Completed);
         if completed {
             self.close();
+        }
+        asked
+    }
+
+    /// Answer the confirm dialog one consent request stands for.
+    ///
+    /// A request this driver never raised, or one it already answered, is
+    /// nobody's dialog here and says nothing.
+    pub(in crate::resident) fn answer(&self, request: CanonicalUuid, confirmed: bool) {
+        let dialog = self
+            .asks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&request);
+        if let Some(dialog) = dialog {
+            let _answered = self.write(&vendor::omp::dialog_confirmed(&dialog, confirmed));
+        }
+    }
+
+    fn ask(&self, dialog: &str, title: &str, message: &str) -> Ask {
+        let request = super::super::new_uuid();
+        self.asks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(request, dialog.to_owned());
+        Ask {
+            request,
+            operation: match (title.trim(), message.trim()) {
+                (title, "") => title.to_owned(),
+                ("", message) => message.to_owned(),
+                (title, message) => format!("{title}: {message}"),
+            },
         }
     }
 
@@ -162,22 +230,42 @@ fn kick_path_beneath(root: &Path, identity: &str) -> PathBuf {
 /// driver that misses a kick reads the current inbox on the next one, so
 /// the send is fire-and-forget.
 pub(in crate::resident) fn kick(paths: &RuntimePaths, lane: CanonicalUuid) {
+    send(paths, lane, &Kick::Inbox);
+}
+
+/// Tell whichever driver listens for this lane how consent ruled on one of
+/// its requests.
+///
+/// An occupant that has since left took its dialog with it, so the answer is
+/// as fire-and-forget as an inbox kick.
+pub(in crate::resident) fn answer(
+    paths: &RuntimePaths,
+    lane: CanonicalUuid,
+    request: CanonicalUuid,
+    confirmed: bool,
+) {
+    send(paths, lane, &Kick::Answer { request, confirmed });
+}
+
+fn send(paths: &RuntimePaths, lane: CanonicalUuid, kick: &Kick) {
     #[cfg(unix)]
     {
         let path = kick_path(paths, lane);
+        let bytes = serde_json::to_vec(kick).expect("a kick is representable as JSON");
         if let Ok(socket) = std::os::unix::net::UnixDatagram::unbound() {
-            let _sent = socket.send_to(b"inbox", path);
+            let _sent = socket.send_to(&bytes, path);
         }
     }
     #[cfg(not(unix))]
-    let _ = (paths, lane);
+    let _ = (paths, lane, kick);
 }
 
-/// Bind this lane's kick door and interject the inbox on every kick.
+/// Bind this lane's kick door and let every kick reach the driver.
 ///
 /// A stale door from an earlier supervisor is replaced. The listening thread
 /// lives as long as the supervisor process; the door is removed once the
-/// child has exited.
+/// child has exited. A datagram that says nothing this door understands is
+/// dropped, since the sender never waits for it.
 ///
 /// # Errors
 ///
@@ -195,9 +283,15 @@ pub(in crate::resident) fn listen_for_kicks(
         std::thread::Builder::new()
             .name("spice-kick".to_owned())
             .spawn(move || {
-                let mut kick = [0u8; 64];
-                while socket.recv(&mut kick).is_ok() {
-                    driver.deliver_inbox();
+                let mut kick = [0u8; KICK_BYTES];
+                while let Ok(length) = socket.recv(&mut kick) {
+                    match serde_json::from_slice(&kick[..length]) {
+                        Ok(Kick::Inbox) => driver.deliver_inbox(),
+                        Ok(Kick::Answer { request, confirmed }) => {
+                            driver.answer(request, confirmed);
+                        }
+                        Err(_) => {}
+                    }
                 }
             })?;
     }
@@ -341,16 +435,24 @@ mod tests {
     }
 
     #[test]
-    fn a_dialog_nobody_can_see_is_declined_while_notices_pass() {
+    fn a_prompt_nobody_can_compose_is_declined_while_notices_pass() {
         let scratch = Scratch::new("dialog");
         let sink = Sink::default();
         let driver = Driver::new(sink.clone(), scratch.inbox());
-        driver.observe(&decoded(
-            br#"{"type":"extension_ui_request","id":"7","method":"notify","message":"hi"}"#,
-        ));
-        driver.observe(&decoded(
-            br#"{"type":"extension_ui_request","id":"8","method":"select","title":"Which?","options":["a","b"]}"#,
-        ));
+        assert!(
+            driver
+                .observe(&decoded(
+                    br#"{"type":"extension_ui_request","id":"7","method":"notify","message":"hi"}"#,
+                ))
+                .is_none()
+        );
+        assert!(
+            driver
+                .observe(&decoded(
+                    br#"{"type":"extension_ui_request","id":"8","method":"select","title":"Which?","options":["a","b"]}"#,
+                ))
+                .is_none()
+        );
         assert_eq!(
             sink.frames(),
             [serde_json::json!({
@@ -358,6 +460,67 @@ mod tests {
                 "id": "8",
                 "cancelled": true,
             })]
+        );
+    }
+
+    #[test]
+    fn a_confirm_is_stated_as_one_request_and_answered_once_consent_rules() {
+        let scratch = Scratch::new("confirm");
+        let sink = Sink::default();
+        let driver = Driver::new(sink.clone(), scratch.inbox());
+        let ask = driver
+            .observe(&decoded(
+                br#"{"type":"extension_ui_request","id":"9","method":"confirm","title":"Deploy","message":"Deploy to prod?"}"#,
+            ))
+            .expect("a confirm raises a request");
+        assert_eq!(ask.operation, "Deploy: Deploy to prod?");
+        assert!(
+            sink.frames().is_empty(),
+            "the dialog holds until consent rules"
+        );
+
+        driver.answer(super::super::super::new_uuid(), true);
+        assert!(
+            sink.frames().is_empty(),
+            "a request nobody raised here says nothing"
+        );
+
+        driver.answer(ask.request, false);
+        driver.answer(ask.request, true);
+        assert_eq!(
+            sink.frames(),
+            [serde_json::json!({
+                "type": "extension_ui_response",
+                "id": "9",
+                "confirmed": false,
+            })],
+            "one request answers its dialog exactly once"
+        );
+
+        let untitled = driver
+            .observe(&decoded(
+                br#"{"type":"extension_ui_request","id":"10","method":"confirm","title":"","message":"Sure?"}"#,
+            ))
+            .expect("a confirm raises a request");
+        assert_eq!(untitled.operation, "Sure?");
+    }
+
+    #[test]
+    fn a_kick_names_either_the_inbox_or_one_consent_answer() {
+        let request = super::super::super::new_uuid();
+        let answer = Kick::Answer {
+            request,
+            confirmed: true,
+        };
+        let bytes = serde_json::to_vec(&answer).expect("a kick serializes");
+        assert!(bytes.len() <= KICK_BYTES, "{}", bytes.len());
+        assert_eq!(
+            serde_json::from_slice::<Kick>(&bytes).expect("a kick reads back"),
+            answer
+        );
+        assert_eq!(
+            serde_json::to_string(&Kick::Inbox).expect("a kick serializes"),
+            r#"{"kind":"inbox"}"#
         );
     }
 

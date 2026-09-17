@@ -64,14 +64,12 @@ impl DurableReporter {
 
 impl CaptureReporter for DurableReporter {
     fn record(&self, record: CaptureRecord) -> Result<(), CaptureReportError> {
-        if let Some(driver) = self
+        let asked = self
             .driver
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .as_ref()
-        {
-            driver.observe(&record.decoded);
-        }
+            .and_then(|driver| driver.observe(&record.decoded));
         // The lane observer committed the bytes to tape before this callback.
         // Resident notification is best effort; durability never depends on a
         // resident generation being present.
@@ -95,6 +93,14 @@ impl CaptureReporter for DurableReporter {
                 length: record.locus.length,
             },
         });
+        if let Some(ask) = asked {
+            self.send(&Notice::Asked {
+                lane: record.lane,
+                occupant: record.occupant,
+                request: ask.request,
+                operation: ask.operation,
+            });
+        }
         Ok(())
     }
 

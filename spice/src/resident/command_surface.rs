@@ -1,6 +1,8 @@
 //! The resident's single exhaustive command dispatcher.
 //! Every admitted command reaches exactly one domain handler from this table.
 
+use std::io;
+
 use bus::Bus;
 use lane::occupant::Seats;
 use spice::placeholder::PlaceholderReason;
@@ -9,10 +11,10 @@ use wire::intent::{CommandAnswer, Intent};
 use wire::{Actor, CanonicalUuid, CommandKind, Outcome, Refusal, Reply};
 
 use super::{
-    CommandDispatch, CommandEffects, RuntimePaths, SurfaceConfig, current_residency,
-    dispatch_proof_recognize, dispatch_release_publish, dispatch_up_change, lane_recovery,
-    lane_surface, lifecycle, policy_surface, read_materializations::CurrentReads, settings_surface,
-    steering,
+    CommandDispatch, CommandEffects, RuntimePaths, SurfaceConfig, consent_surface,
+    current_residency, dispatch_proof_recognize, dispatch_release_publish, dispatch_up_change,
+    lane_recovery, lane_surface, lifecycle, policy_surface, read_materializations::CurrentReads,
+    settings_surface, steering,
 };
 
 pub(super) struct Surface<'a> {
@@ -58,6 +60,25 @@ impl<'a> Surface<'a> {
             config,
             reads,
         }
+    }
+
+    /// Record a seated occupant's consent request and answer what policy
+    /// answers.
+    pub(super) fn ask_consent(
+        &self,
+        residency: &wire::ResidencyHead,
+        ask: consent_surface::LaneAsk,
+        diagnostic: &mut dyn io::Write,
+    ) -> super::CommandResult<()> {
+        consent_surface::ask(
+            self.bus,
+            self.reads,
+            self.paths,
+            &self.config.consent,
+            residency,
+            ask,
+            diagnostic,
+        )
     }
 
     pub(super) fn refresh_reads(&self) -> super::CommandResult<()> {
@@ -266,6 +287,7 @@ impl<'a> Surface<'a> {
                 Some(policy_surface::decide(
                     self.bus,
                     self.reads,
+                    self.paths,
                     self.epoch,
                     &self.config.consent,
                     command,
