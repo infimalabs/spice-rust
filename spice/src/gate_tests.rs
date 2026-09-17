@@ -357,6 +357,7 @@ fn git_commit_metadata_normalizes_to_the_compiler_environment() {
             OsString::from("GIT_EXEC_PATH"),
             OsString::from("/fixture/git/libexec"),
         ),
+        (OsString::from("GIT_OPTIONAL_LOCKS"), OsString::from("0")),
         (
             OsString::from("GIT_INDEX_FILE"),
             OsString::from("/fixture/git/index"),

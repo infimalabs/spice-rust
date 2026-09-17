@@ -99,6 +99,7 @@ fn retained(name: &OsStr) -> bool {
         && bytes != b"GIT_COMMITTER_NAME"
         && bytes != b"GIT_EDITOR"
         && bytes != b"GIT_EXEC_PATH"
+        && bytes != b"GIT_OPTIONAL_LOCKS"
         && !operational_routing(name)
         && !git_local_environment(name)
 }
