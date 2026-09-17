@@ -66,6 +66,27 @@ macro_rules! row {
     };
 }
 
+macro_rules! operator {
+    (
+        [$($path:literal),+], $syntax:literal, $journal:ident,
+        [$($fact:ident),*], $result:ident, $battery:literal
+    ) => {
+        row!(
+            [$($path),+], $syntax, Operator, $journal,
+            [$($fact),*], [Resident, OperatorCapability], $result, $battery
+        )
+    };
+    (
+        [$($path:literal),+], $syntax:literal, $journal:ident => $position:ident,
+        [$($fact:ident),*], $result:ident, $battery:literal
+    ) => {
+        row!(
+            [$($path),+], $syntax, Operator, $journal => $position,
+            [$($fact),*], [Resident, OperatorCapability], NO_TOOLS, $result, $battery
+        )
+    };
+}
+
 macro_rules! local_direct {
     (
         [$($path:literal),+], $syntax:literal,

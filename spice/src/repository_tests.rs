@@ -1,5 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use wire::CanonicalUuid;
+
 use super::*;
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -57,6 +59,20 @@ fn main_and_nested_repositories_resolve_the_nearest_common_state() {
     assert_eq!(state.degraded(), common.join(".spice-rs/degraded"));
     assert_eq!(state.tape(), common.join(".spice-rs/tape"));
     assert_eq!(state.rtk(), common.join(".spice-rs/rtk"));
+    assert_eq!(state.supervisors(), common.join(".spice-rs/supervisors"));
+    assert_eq!(
+        state
+            .lane_families()
+            .map(|family| family.strip_prefix(&common).expect("family is state")),
+        [
+            "tape",
+            "rtk",
+            "supervisors",
+            "steering-media",
+            "canvas-lanes"
+        ]
+        .map(|name| Path::new(".spice-rs").join(name)),
+    );
     assert_eq!(
         state.rtk_history(CanonicalUuid::new(uuid::Uuid::from_u128(1))),
         common.join(".spice-rs/rtk/00000000-0000-0000-0000-000000000001/history.db")
@@ -306,6 +322,7 @@ fn state_admission_refuses_every_link_at_its_exact_component() {
         ("canvas", Path::new("canvas")),
         ("degraded", Path::new("degraded")),
         ("tape", Path::new("tape")),
+        ("supervisors", Path::new("supervisors")),
         ("inbox", Path::new("inbox")),
     ] {
         let (repository, runtime) = state_case(&scratch, &format!("linked-{label}"));
@@ -338,6 +355,7 @@ fn state_admission_refuses_non_directory_parents_and_non_regular_leaves() {
         ("proof", Path::new("proof")),
         ("degraded", Path::new("degraded")),
         ("tape", Path::new("tape")),
+        ("supervisors", Path::new("supervisors")),
         ("inbox", Path::new("inbox")),
     ] {
         let (repository, runtime) = state_case(&scratch, &format!("file-{label}"));

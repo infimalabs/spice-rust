@@ -133,6 +133,7 @@ fn every_contract_has_an_executable_landing_disposition() {
     assert_eq!(landing(&["lane", "wake"]), Landing::Landed);
     assert_eq!(landing(&["lane", "remove"]), Landing::Landed);
     assert_eq!(landing(&["lane", "import"]), Landing::Landed);
+    assert_eq!(landing(&["lane", "purge"]), Landing::Landed);
     assert_eq!(landing(&["steer", "recover"]), Landing::Landed);
     assert_eq!(landing(&["steer", "resend"]), Landing::Landed);
     assert_eq!(landing(&["task", "modify"]), Landing::Landed);

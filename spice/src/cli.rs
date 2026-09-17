@@ -339,6 +339,7 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["lane", "wake"]
             | ["lane", "remove"]
             | ["lane", "import"]
+            | ["lane", "purge"]
             | ["recall"]
             | ["steer"]
             | ["steer", "cancel"]

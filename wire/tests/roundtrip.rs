@@ -9,9 +9,9 @@ use serde::{Deserialize, Serialize};
 use wire::manifest::ReleaseTarget;
 use wire::{
     Actor, CanonicalUuid, Command, Envelope, Fact, FactKind, Fault, FaultClass, Hello, Instant,
-    Origin, Outcome, Overflow, Packed, ProofEvidence, Refusal, RefusalDiagnostic, Rejected,
-    ReleaseNotes, Reply, ReplyPosition, Response, RtkGainReport, Seq, SeqRange, SpiceCommand,
-    TaskHandle, Version, WireVersion, Witness, body,
+    LanePurgeReport, Origin, Outcome, Overflow, Packed, ProofEvidence, Refusal, RefusalDiagnostic,
+    Rejected, ReleaseNotes, Reply, ReplyPosition, Response, RtkGainReport, Seq, SeqRange,
+    SpiceCommand, TaskHandle, Version, WireVersion, Witness, body,
 };
 
 /// Body of the `task::done` command this fixture pins.
@@ -178,6 +178,29 @@ fn version_is_the_exact_stable_six_identity_document() {
         VERSION.as_bytes(),
         "the stable machine form changed"
     );
+}
+
+#[test]
+fn lane_purge_report_names_every_retired_path_by_lane() {
+    let document = r#"{"seated":4,"purged":[{"lane":"019fe52f-10ad-7c83-9df4-511323d1b7fb","paths":["tape/019fe52f-10ad-7c83-9df4-511323d1b7fb","rtk/019fe52f-10ad-7c83-9df4-511323d1b7fb"]}]}"#;
+    let report: LanePurgeReport = round_trip(document);
+    assert_eq!(report.seated, 4);
+    assert_eq!(report.purged[0].paths.len(), 2);
+
+    for malformed in [
+        document.replace("\"seated\":4,", ""),
+        document.replace("\"paths\"", "\"files\""),
+        document.replace(
+            "\"lane\":\"019fe52f-10ad-7c83-9df4-511323d1b7fb\"",
+            "\"lane\":\"019FE52F\"",
+        ),
+        document.replace("}]}", "}],\"unknown\":true}"),
+    ] {
+        assert!(
+            wire::decode::<LanePurgeReport>(malformed.as_bytes()).is_err(),
+            "malformed lane purge report was admitted: {malformed}"
+        );
+    }
 }
 
 #[test]

@@ -434,6 +434,7 @@ impl NativeInvocation<'_> {
             | ["lane", "remove"]
             | ["lane", "import"]
             | ["recall"] => deliver(&lane_command::run(leaf, contract, configuration), form),
+            ["lane", "purge"] => deliver(&lane_command::purge::run(), form),
             ["release", "publish"] => match release_command::run(leaf, contract) {
                 release_command::RunResult::Plan(outcome) => deliver(&outcome, form),
                 release_command::RunResult::Published(outcome) => deliver(&outcome, form),
@@ -973,8 +974,7 @@ fn render_fault(error: String) -> Fault {
 }
 
 fn deliver_fault(fault: Fault, form: Form) -> ! {
-    let outcome: Outcome<()> = Outcome::Fault(fault);
-    deliver(&outcome, form)
+    deliver(&Outcome::<()>::Fault(fault), form)
 }
 
 fn terminate_stream() -> ! {

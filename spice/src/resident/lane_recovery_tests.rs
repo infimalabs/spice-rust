@@ -430,15 +430,15 @@ fn runtime_paths(fixture: &Fixture, common: std::path::PathBuf) -> RuntimePaths 
         legacy_inbox: fixture.root.join("inbox"),
         degraded: fixture.root.join("degraded"),
         tape: fixture.root.join("tape"),
+        supervisors: fixture.root.join("supervisors"),
         stage: fixture.root.join("stage"),
     }
 }
 
 /// A fixture-owned worktree for admissions that reach [`validate_worktree`].
 ///
-/// The mutation gate runs workspace tests from a materialized source snapshot,
-/// not a Git checkout, so no fixture may borrow repository identity from the
-/// directory this crate happened to be compiled in.
+/// The mutation gate runs workspace tests from a materialized source snapshot, not a
+/// Git checkout, so no fixture may borrow repository identity from its build directory.
 fn real_worktree(fixture: &Fixture) -> (String, std::path::PathBuf) {
     fs::create_dir(fixture.root.join(".git")).expect("the fixture Git directory creates");
     let repository = Repository::discover(&fixture.root).expect("the fixture is a repository");

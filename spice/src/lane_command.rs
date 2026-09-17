@@ -5,11 +5,13 @@ use std::path::{Path, PathBuf};
 
 use clap::ArgMatches;
 use spice::repository::Repository;
-use wire::intent::{CommandAnswer, LaneAction, LaneRecall, LaneSeat, LaneState};
-use wire::{CanonicalUuid, Fault, FaultClass, Outcome, Refusal};
+use wire::intent::{CommandAnswer, LaneAction, LaneAnswer, LaneRecall, LaneSeat, LaneState};
+use wire::{CanonicalUuid, Fault, FaultClass, Outcome, Refusal, Reply};
 
 use crate::cli::Contract;
 use crate::command_client::{self, SelectedCommand};
+
+pub(crate) mod purge;
 
 /// Execute one landed lane-family leaf.
 pub(crate) fn run(
@@ -172,16 +174,22 @@ fn lane_seat_body(
 }
 
 fn observe_topology(canvas: &Path) -> Result<u64, Outcome<CommandAnswer>> {
+    read_lanes(canvas).map(|reply| reply.body.topology_revision)
+}
+
+/// Read the resident's current lane table under the lane-read contract.
+fn read_lanes<B>(canvas: &Path) -> Result<Reply<Box<LaneAnswer>>, Outcome<B>> {
     let contract = crate::cli::contract(&["lane"])
         .expect("the generated CLI registry carries the lane-read contract");
     match command_client::execute(canvas, contract, SelectedCommand::LaneRead) {
-        Outcome::Reply(reply) => match reply.body {
-            CommandAnswer::Lane(answer) => Ok(answer.topology_revision),
-            _ => Err(protocol_fault(
-                "lane::answer-invalid",
-                "resident lane read returned a non-lane answer",
-            )),
-        },
+        Outcome::Reply(Reply {
+            position,
+            body: CommandAnswer::Lane(body),
+        }) => Ok(Reply { position, body }),
+        Outcome::Reply(_) => Err(protocol_fault(
+            "lane::answer-invalid",
+            "resident lane read returned a non-lane answer",
+        )),
         Outcome::Refusal(refusal) => Err(Outcome::Refusal(refusal)),
         Outcome::Fault(fault) => Err(Outcome::Fault(fault)),
     }
@@ -345,7 +353,7 @@ fn refusal(
     ))
 }
 
-fn protocol_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
+fn protocol_fault<B>(reason: &str, detail: &str) -> Outcome<B> {
     Outcome::Fault(Fault {
         class: FaultClass::Protocol,
         reason: reason.to_owned(),
@@ -353,7 +361,7 @@ fn protocol_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
     })
 }
 
-fn environment_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
+fn environment_fault<B>(reason: &str, detail: &str) -> Outcome<B> {
     Outcome::Fault(Fault {
         class: FaultClass::Environment,
         reason: reason.to_owned(),

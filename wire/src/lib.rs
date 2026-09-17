@@ -97,10 +97,11 @@ pub use media::{AgentMediaReference, Media, MediaError};
 pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use reply::{
     CanvasOpen, DemoAnswer, Fault, FaultClass, JournalBackup, JournalReindex, JournalReport,
-    JournalRestore, JournalVerification, Outcome, ProofEvidence, Refusal, RefusalDiagnostic,
-    ReleaseNotes, ReleaseNotesEntry, ReleasePlan, ReleasePlanObservations, ReleaseRegistryEvidence,
-    Reply, ReplyPosition, Response, RestoreVerification, RtkGainReport, SealedManifest, SeqRange,
-    SeqRangeError, SpiceCommand, ThreadReport, Version,
+    JournalRestore, JournalVerification, LanePurge, LanePurgeReport, Outcome, ProofEvidence,
+    Refusal, RefusalDiagnostic, ReleaseNotes, ReleaseNotesEntry, ReleasePlan,
+    ReleasePlanObservations, ReleaseRegistryEvidence, Reply, ReplyPosition, Response,
+    RestoreVerification, RtkGainReport, SealedManifest, SeqRange, SeqRangeError, SpiceCommand,
+    ThreadReport, Version,
 };
 pub use stream::{
     AgentActivityKind, AgentMessage, AgentMessageBadges, AutomaticSpeech, AutomaticSpeechKind,

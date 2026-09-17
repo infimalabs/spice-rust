@@ -19,6 +19,7 @@ pub(super) struct RuntimePaths {
     pub(super) legacy_inbox: PathBuf,
     pub(super) degraded: PathBuf,
     pub(super) tape: PathBuf,
+    pub(super) supervisors: PathBuf,
     pub(super) stage: PathBuf,
 }
 
@@ -151,6 +152,7 @@ impl RuntimePaths {
             legacy_inbox: state.runtime().join("inbox"),
             degraded: state.degraded().to_path_buf(),
             tape: state.tape().to_path_buf(),
+            supervisors: state.supervisors().to_path_buf(),
             stage: repository.worktree_root().join("dist/stage"),
         })
     }

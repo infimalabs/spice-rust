@@ -89,8 +89,6 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use wire::CanonicalUuid;
-
 /// Sole repository-common directory owned by the current Spice runtime.
 pub const STATE_DIRECTORY: &str = ".spice-rs";
 
@@ -123,6 +121,7 @@ pub struct StatePaths {
     degraded: PathBuf,
     tape: PathBuf,
     rtk: PathBuf,
+    supervisors: PathBuf,
     artifact_data: PathBuf,
     artifacts: PathBuf,
     install_record: PathBuf,
@@ -177,6 +176,7 @@ impl StatePaths {
             degraded: runtime.join("degraded"),
             tape: runtime.join("tape"),
             rtk: runtime.join("rtk"),
+            supervisors: runtime.join("supervisors"),
             artifacts: artifact_data.join("tasks"),
             install_record: runtime.join("install.json"),
             local_configuration: runtime.join("config.toml"),
@@ -308,15 +308,6 @@ impl StatePaths {
         &self.rtk
     }
 
-    /// Current RTK history database for one Rust lane identity.
-    ///
-    /// The path follows the typed-root/per-lane team used by `tape`
-    /// and `degraded`. Unowned paths elsewhere in the runtime are irrelevant.
-    #[must_use]
-    pub fn rtk_history(&self, lane: CanonicalUuid) -> PathBuf {
-        self.rtk().join(lane.to_string()).join("history.db")
-    }
-
     /// Task-addressed sidecar artifact store.
     #[must_use]
     pub fn artifacts(&self) -> &Path {
@@ -373,6 +364,7 @@ impl StatePaths {
             self.degraded(),
             self.tape(),
             self.rtk(),
+            self.supervisors(),
             &self.artifact_data,
             self.artifacts(),
             self.install_rollback_blobs(),
@@ -1010,3 +1002,5 @@ impl Error for ResolveError {
 #[cfg(test)]
 #[path = "repository_tests.rs"]
 mod tests;
+
+mod lanes;

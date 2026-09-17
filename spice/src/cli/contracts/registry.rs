@@ -409,10 +409,9 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Stream,
         "spice::up"
     ),
-    row!(
+    operator!(
         ["down"],
         "down",
-        Operator,
         Command,
         [
             UpQuiescing,
@@ -422,7 +421,6 @@ pub(super) const CONTRACTS: &[Contract] = &[
             UpVerifying,
             UpDark
         ],
-        [Resident, OperatorCapability],
         Reply,
         "spice::down"
     ),
@@ -446,13 +444,11 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "board::graph"
     ),
-    row!(
+    operator!(
         ["board", "handout"],
         "board handout OUTPUT [--at BORN]",
-        Operator,
         Read,
         [],
-        [Resident, OperatorCapability],
         Reply,
         "board::handout"
     ),
@@ -716,32 +712,20 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "dialect::ledger"
     ),
-    row!(
-        ["lane"],
-        "lane",
-        Operator,
-        Read,
-        [],
-        [Resident, OperatorCapability],
-        Reply,
-        "lane::read"
-    ),
-    row!(
+    operator!(["lane"], "lane", Read, [], Reply, "lane::read"),
+    operator!(
         ["lane", "add"],
         "lane add [WORKTREE] [--team ID] [--name DISPLAY] \
          [--life Steer|Drive|Drain] [--vendor NAME] [--model MODEL] \
          [--effort low|medium|high|xhigh|max]",
-        Operator,
         Command,
         [LaneSeated],
-        [Resident, OperatorCapability],
         Reply,
         "lane::add"
     ),
-    row!(
+    operator!(
         ["lane", "drain"],
         "lane drain ID",
-        Operator,
         Command,
         [
             LaneExited,
@@ -752,87 +736,78 @@ pub(super) const CONTRACTS: &[Contract] = &[
             LaneKilled,
             LaneDegraded
         ],
-        [Resident, OperatorCapability],
         Reply,
         "lane::drain"
     ),
-    row!(
+    operator!(
         ["lane", "wake"],
         "lane wake ID",
-        Operator,
         Command,
         [LaneSessionDeclared, LaneStarted, ClaimCarried],
-        [Resident, OperatorCapability],
         Reply,
         "lane::wake"
     ),
-    row!(
+    operator!(
         ["lane", "remove"],
         "lane remove ID",
-        Operator,
         Command,
         [LaneRemoved, ConsentLapsed],
-        [Resident, OperatorCapability],
         Reply,
         "lane::remove"
     ),
-    row!(
+    operator!(
+        ["lane", "purge"],
+        "lane purge",
+        Read,
+        [],
+        Reply,
+        "lane::purge"
+    ),
+    operator!(
         ["lane", "import"],
         "lane import ID WORKTREE",
-        Operator,
         Command,
         [LaneImported, LaneSessionDeclared, LaneStarted, ClaimCarried],
-        [Resident, OperatorCapability],
         Reply,
         "lane::import"
     ),
-    row!(
+    operator!(
         ["steer"],
         "steer LANE TEXT",
-        Operator,
         Command,
         [SteerSent],
-        [Resident, OperatorCapability],
         Reply,
         "steer::send"
     ),
-    row!(
+    operator!(
         ["steer", "cancel"],
         "steer cancel ID",
-        Operator,
         Command,
         [SteerCanceled],
-        [Resident, OperatorCapability],
         Reply,
         "steer::cancel"
     ),
-    row!(
+    operator!(
         ["steer", "resend"],
         "steer resend ID",
-        Operator,
         Command => SnapshotOrCommitted,
         [SteerEscalated],
-        [Resident, OperatorCapability],
         Reply,
         "steer::resend"
     ),
-    row!(
+    operator!(
         ["steer", "recover"],
         "steer recover ID",
-        Operator,
         Command,
         [SteerRecovered],
-        [Resident, OperatorCapability],
         Reply,
         "steer::recover"
     ),
-    row!(
+    operator!(
         ["steer", "repair"],
         "steer repair LANE",
-        Operator,
         Recovery => Snapshot,
         [],
-        [Resident, OperatorCapability],
         Reply,
         "steer::repair"
     ),
@@ -866,123 +841,78 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "lane::recall"
     ),
-    row!(
-        ["consent"],
-        "consent",
-        Operator,
-        Read,
-        [],
-        [Resident, OperatorCapability],
-        Reply,
-        "consent::read"
-    ),
-    row!(
+    operator!(["consent"], "consent", Read, [], Reply, "consent::read"),
+    operator!(
         ["consent", "allow"],
         "consent allow ID",
-        Operator,
         Command,
         [ConsentGranted],
-        [Resident, OperatorCapability],
         Reply,
         "consent::allow"
     ),
-    row!(
+    operator!(
         ["consent", "deny"],
         "consent deny ID",
-        Operator,
         Command,
         [ConsentDenied],
-        [Resident, OperatorCapability],
         Reply,
         "consent::deny"
     ),
-    row!(
+    operator!(
         ["consent", "policy"],
         "consent policy",
-        Operator,
         Read,
         [],
-        [Resident, OperatorCapability],
         Reply,
         "consent::policy"
     ),
-    row!(
-        ["taste"],
-        "taste",
-        Operator,
-        Read,
-        [],
-        [Resident, OperatorCapability],
-        Reply,
-        "taste::read"
-    ),
-    row!(
+    operator!(["taste"], "taste", Read, [], Reply, "taste::read"),
+    operator!(
         ["taste", "add"],
         "taste add TEXT [--origin ORIGIN]",
-        Operator,
         Command,
         [TaskAdded],
-        [Resident, OperatorCapability],
         Reply,
         "taste::add"
     ),
-    row!(
+    operator!(
         ["taste", "drop"],
         "taste drop NAME [--origin ORIGIN]",
-        Operator,
         Command,
         [TaskAdded],
-        [Resident, OperatorCapability],
         Reply,
         "taste::drop"
     ),
-    row!(
+    operator!(
         ["taste", "mine"],
         "taste mine",
-        Operator,
         Command,
         [TaskAdded],
-        [Resident, OperatorCapability],
         Reply,
         "taste::mine"
     ),
-    row!(
-        ["trust"],
-        "trust",
-        Operator,
-        Read,
-        [],
-        [Resident, OperatorCapability],
-        Reply,
-        "spice::trust"
-    ),
-    row!(
+    operator!(["trust"], "trust", Read, [], Reply, "spice::trust"),
+    operator!(
         ["trust", "pend"],
         "trust pend",
-        Operator,
         Command,
         [TrustPended],
-        [Resident, OperatorCapability],
         Reply,
         "spice::trust_pend"
     ),
-    row!(
+    operator!(
         ["trust", "grant"],
         "trust grant DIGEST",
-        Operator,
         Command,
         [TrustGranted],
-        [Resident, OperatorCapability],
         Reply,
         "spice::trust_grant"
     ),
-    row!(
+    operator!(
         ["trust", "revoke"],
         "trust revoke DIGEST",
-        Operator,
         Command,
         [TrustRevoked],
-        [Resident, OperatorCapability],
         Reply,
         "spice::trust_revoke"
     ),
@@ -1006,16 +936,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Plan,
         "journal::restore"
     ),
-    row!(
-        ["journal"],
-        "journal",
-        Operator,
-        Read,
-        [],
-        [Resident, OperatorCapability],
-        Reply,
-        "journal::read"
-    ),
+    operator!(["journal"], "journal", Read, [], Reply, "journal::read"),
     row!(
         ["journal", "reindex"],
         "journal reindex",
@@ -1026,13 +947,11 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "journal::reindex"
     ),
-    row!(
+    operator!(
         ["journal", "verify"],
         "journal verify",
-        Operator,
         Read,
         [],
-        [Resident, OperatorCapability],
         Reply,
         "journal::verify"
     ),

@@ -877,8 +877,7 @@ fn supervisor_directory(
     occupant: CanonicalUuid,
 ) -> PathBuf {
     paths
-        .runtime
-        .join("supervisors")
+        .supervisors
         .join(lane.to_string())
         .join(occupant.to_string())
 }
@@ -1081,6 +1080,7 @@ mod tests {
             legacy_inbox: root.join("legacy-inbox"),
             degraded: root.join("degraded"),
             tape: root.join("tape"),
+            supervisors: root.join("supervisors"),
             stage: root.join("stage"),
         }
     }

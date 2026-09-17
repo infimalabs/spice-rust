@@ -174,6 +174,26 @@ pub struct RtkGainReport {
     pub output: String,
 }
 
+/// Runtime residue retired for lanes the resident no longer seats.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LanePurgeReport {
+    /// How many lanes the resident seats; their residue is kept.
+    pub seated: u64,
+    /// Lanes no longer seated whose residue was retired, in lane order.
+    pub purged: Vec<LanePurge>,
+}
+
+/// One unseated lane and the runtime paths retired for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LanePurge {
+    /// Lane whose residue was retired.
+    pub lane: CanonicalUuid,
+    /// Retired paths relative to the runtime root, in family order.
+    pub paths: Vec<String>,
+}
+
 /// Receipt for opening the current resident's published browser surface.
 ///
 /// The operator capability is intentionally absent. It is a socket credential,

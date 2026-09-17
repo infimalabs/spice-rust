@@ -66,6 +66,7 @@ fn paths(fixture: &Fixture) -> RuntimePaths {
         legacy_inbox: fixture.root.join("inbox"),
         degraded: fixture.root.join("degraded"),
         tape: fixture.root.join("tape"),
+        supervisors: fixture.root.join("supervisors"),
         stage: fixture.root.join("stage"),
     }
 }

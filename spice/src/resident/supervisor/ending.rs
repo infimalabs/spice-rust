@@ -125,6 +125,7 @@ mod tests {
             legacy_inbox: root.join("legacy-inbox"),
             degraded: root.join("degraded"),
             tape: root.join("tape"),
+            supervisors: root.join("supervisors"),
             stage: root.join("stage"),
         }
     }

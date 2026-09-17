@@ -397,6 +397,7 @@ pub(super) fn runtime_paths(root: &Path) -> RuntimePaths {
         legacy_inbox: root.join("legacy-inbox"),
         degraded: root.join("degraded"),
         tape: root.join("tape"),
+        supervisors: root.join("supervisors"),
         stage: root.join("stage"),
     }
 }
