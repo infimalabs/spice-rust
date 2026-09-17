@@ -1,21 +1,29 @@
 //! Blocking state and process-exit observation for detached supervisors.
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant as Monotonic};
 
-use notify::{RecursiveMode, Watcher as _};
 use sill::{WaitError, WaitOutcome};
 
 use super::Handle;
-use crate::resident::daemon::observer;
+use crate::resident::daemon::observer::{self, DirectObserver};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum StateSignal {
     Changed,
     SupervisorExited,
     ObserverFailed(String),
+}
+
+impl StateSignal {
+    fn woke(woke: io::Result<()>) -> Self {
+        woke.map_or_else(
+            |error| Self::ObserverFailed(error.to_string()),
+            |()| Self::Changed,
+        )
+    }
 }
 
 impl observer::ExitSender for mpsc::Sender<StateSignal> {
@@ -28,8 +36,11 @@ impl observer::ExitSender for mpsc::Sender<StateSignal> {
     }
 }
 
+/// The state file's directory, watched directly; each wake re-arms the watch
+/// before the reader looks, so what changes between a look and the next
+/// wait is not lost.
 pub(super) struct StateEvents {
-    _watcher: notify::RecommendedWatcher,
+    directory: PathBuf,
     sender: mpsc::Sender<StateSignal>,
     receiver: mpsc::Receiver<StateSignal>,
 }
@@ -42,67 +53,59 @@ impl StateEvents {
     }
 
     pub(super) fn watch(path: &Path) -> io::Result<Self> {
-        let parent = path.parent().ok_or_else(|| {
+        let directory = path.parent().ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "supervisor state path has no parent directory",
             )
         })?;
-        let parent = parent.canonicalize()?;
-        let target = parent.join(path.file_name().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "supervisor state path has no file name",
-            )
-        })?);
         let (sender, receiver) = mpsc::channel();
-        let changed = sender.clone();
-        let mut watcher =
-            notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
-                Ok(event)
-                    if event.need_rescan() || event.paths.iter().any(|path| path == &target) =>
-                {
-                    let _ = changed.send(StateSignal::Changed);
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    let _ = changed.send(StateSignal::ObserverFailed(error.to_string()));
-                }
-            })
-            .map_err(io::Error::other)?;
-        watcher
-            .watch(&parent, RecursiveMode::NonRecursive)
-            .map_err(io::Error::other)?;
-        Ok(Self {
-            _watcher: watcher,
+        let events = Self {
+            directory: directory.to_path_buf(),
             sender,
             receiver,
-        })
+        };
+        events.arm_watch()?;
+        Ok(events)
     }
 
     pub(super) fn observe_exit(&self, supervisor: u32) {
         observer::wait_for_exit(supervisor, self.sender.clone());
     }
 
+    fn arm_watch(&self) -> io::Result<()> {
+        let observer = DirectObserver::arm(&self.directory)?;
+        observer::wait_for_change(observer, self.sender.clone(), StateSignal::woke);
+        Ok(())
+    }
+
     fn wait(&self) -> io::Result<StateSignal> {
-        self.receiver.recv().map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "supervisor state observer disconnected",
-            )
-        })
+        let signal = self.receiver.recv().map_err(|_| disconnected())?;
+        self.woken(signal)
     }
 
     pub(super) fn wait_for(&self, duration: Duration) -> io::Result<Option<StateSignal>> {
         match self.receiver.recv_timeout(duration) {
-            Ok(signal) => Ok(Some(signal)),
+            Ok(signal) => self.woken(signal).map(Some),
             Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "supervisor state observer disconnected",
-            )),
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(disconnected()),
         }
     }
+
+    /// A change reaches the reader with the next watch already armed.
+    fn woken(&self, signal: StateSignal) -> io::Result<StateSignal> {
+        if signal == StateSignal::Changed {
+            self.arm_watch()?;
+        }
+        Ok(signal)
+    }
+}
+
+fn disconnected() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::BrokenPipe,
+        "supervisor state observer disconnected",
+    )
 }
 
 impl Handle {
@@ -170,7 +173,7 @@ mod tests {
     use crate::resident::supervisor::{now_millis, publish_json};
 
     #[test]
-    fn atomic_state_publication_wakes_the_exact_path_observer() {
+    fn atomic_state_publication_wakes_the_observer() {
         let root = std::env::temp_dir().join(format!(
             "spice-supervisor-state-events-{}-{}",
             std::process::id(),
@@ -185,7 +188,7 @@ mod tests {
 
         assert_eq!(
             events
-                .wait_for(Duration::from_secs(5))
+                .wait_for(Duration::from_secs(2))
                 .expect("state observer remains connected"),
             Some(StateSignal::Changed)
         );

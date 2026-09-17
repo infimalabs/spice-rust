@@ -377,7 +377,7 @@ fn wait_for_ready(
     let warn_at = started + horizon.min(ARRIVAL_WARN_HORIZON);
     let mut warned = false;
     let (sender, receiver) = mpsc::channel();
-    wait_for_change(observer, sender.clone());
+    wait_for_change(observer, sender.clone(), Signal::woke);
     wait_for_exit(child.id(), sender.clone());
 
     if let Some(discovery) = candidate(canvas, baseline, token)? {
@@ -412,7 +412,7 @@ fn wait_for_ready(
                 if let Some(discovery) = candidate(canvas, baseline, token)? {
                     return Ok(discovery);
                 }
-                wait_for_change(next, sender.clone());
+                wait_for_change(next, sender.clone(), Signal::woke);
             }
             Ok(Signal::Exited) => {
                 if let Some(discovery) = candidate(canvas, baseline, token)? {

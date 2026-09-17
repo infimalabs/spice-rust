@@ -127,6 +127,12 @@ enum Keep {
     Failed(String),
 }
 
+impl Keep {
+    fn woke(woke: io::Result<()>) -> Self {
+        woke.map_or_else(|error| Self::Failed(error.to_string()), |()| Self::Changed)
+    }
+}
+
 /// Keep one command: run it, end it at its deadline or on request, publish
 /// how it ended.
 ///
@@ -165,7 +171,7 @@ pub(in crate::resident::supervisor) fn keep(request_path: &Path) -> io::Result<(
                 child,
                 &receiver,
                 request.timeout_millis.map(Duration::from_millis),
-                || watch(directory, &sender, || Keep::Changed).map(|()| stop.exists()),
+                || watch(directory, &sender, Keep::woke).map(|()| stop.exists()),
             )
         }
         Err(reason) => Ending::Failed { reason },
@@ -313,28 +319,16 @@ fn detach(command: &mut ProcessCommand) {
 #[cfg(not(unix))]
 fn detach(_command: &mut ProcessCommand) {}
 
-/// Send `signal()` once the directory next changes.
-///
-/// The watch is a direct kernel one, armed before the reader looks so a
-/// change between the look and the wait is not lost; it fires once, and the
-/// reader arms another after each wake. A watch the directory never wakes
-/// again holds its thread until this process ends.
+/// Send what `signal` makes of the directory's next change; the watch is
+/// armed before the reader looks.
 fn watch<T: Send + 'static>(
     directory: &Path,
     sender: &mpsc::Sender<T>,
-    signal: impl FnOnce() -> T + Send + 'static,
+    signal: impl FnOnce(io::Result<()>) -> T + Send + 'static,
 ) -> io::Result<()> {
     let observer = observer::DirectObserver::arm(directory)?;
-    let sender = sender.clone();
-    thread::Builder::new()
-        .name("spice-job-watch".to_owned())
-        .spawn(move || {
-            let signal = observer.wait().map(|()| signal());
-            if let Ok(signal) = signal {
-                let _ = sender.send(signal);
-            }
-        })
-        .map(drop)
+    observer::wait_for_change(observer, sender.clone(), signal);
+    Ok(())
 }
 
 /// What reaches a job's observer: the job's own progress, and the lane's
@@ -348,6 +342,15 @@ pub(in crate::resident) enum Signal {
     Cancel,
     /// A message arrived for the occupant; the observation should yield.
     Interrupt,
+}
+
+impl Signal {
+    fn woke(woke: io::Result<()>) -> Self {
+        woke.map_or_else(
+            |error| Self::ObserverFailed(error.to_string()),
+            |()| Self::Changed,
+        )
+    }
 }
 
 impl observer::ExitSender for mpsc::Sender<Signal> {
@@ -703,7 +706,7 @@ impl Job {
         let deadline = Monotonic::now() + bound;
         let mut observed_exit = false;
         loop {
-            watch(&self.directory, &control.sender, || Signal::Changed)?;
+            watch(&self.directory, &control.sender, Signal::woke)?;
             if let Some(state) = self.state()? {
                 if let Some(ended) = state.ended() {
                     return Ok(Observed::Ended(ended));
